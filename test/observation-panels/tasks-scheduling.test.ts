@@ -563,11 +563,11 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     row(ids.next)!.click()
     await until(() => row(ids.next)?.getAttribute("aria-selected") === "true")
     const facts = () =>
-      container.querySelector<HTMLElement>(".lazers-tasks-detail .lazers-tasks-scheduling-facts")
+      container.querySelector<HTMLElement>(".lazers-tasks-detail .lazers-tasks-meta")
         ?.textContent ?? ""
     await until(() => facts().includes("Higher-priority target plan"))
-    expect(facts()).toContain("Priority1")
-    expect(facts()).toContain("Plan 1, step 1")
+    expect(facts()).toContain("Priority 1")
+    expect(facts()).toContain("step 1")
     const parentPlanTitle = "Parent implementation with an unusually long prerequisite plan title"
     // The scheduler's plan reason and prerequisite plans are reachable from the inspector.
     const planPrerequisite = [
@@ -576,7 +576,7 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     expect(planPrerequisite.textContent).toBe(parentPlanTitle)
     planPrerequisite.click()
     await until(() => row(ids.active)?.getAttribute("aria-selected") === "true")
-    await until(() => facts().includes("Priority2"))
+    await until(() => facts().includes("Priority 2"))
 
     // The scheduler's recorded wait sets the row's state icon; the link icon opens the blocker,
     // and the machine reason stays out of the row.

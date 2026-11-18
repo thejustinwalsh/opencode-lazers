@@ -169,12 +169,12 @@ test("a dispatch pause applies only to work that has not started and outranks wa
 test("acceptance, integration, failure and cancellation stay distinct", () => {
   expect(taskRowPresentation(row({ status: "accepted" }))).toMatchObject({
     tone: "accepted",
-    icon: "circle-check",
+    icon: "ring-check",
     label: "Accepted",
   })
   expect(taskRowPresentation(row({ status: "incorporated" }))).toMatchObject({
     tone: "integrated",
-    icon: "circle-check",
+    icon: "disc-check",
     label: "Integrated",
   })
   expect(taskRowPresentation(row({ status: "failed", reason: "Check failed" }))).toMatchObject({
@@ -267,7 +267,7 @@ test("every state glyph is a circled mark: host circle icons or Tasks rings, nev
   expect(glyph({ status: "submitted" })).toBe("ring-dashed")
   expect(glyph({ status: "cancelled" })).toBe("ring-minus")
   expect(glyph({ dispatchPause: { reason: "Held", untilPlans: [] } })).toBe("ring-pause")
-  expect(glyph({ status: "incorporated" })).toBe("circle-check")
+  expect(glyph({ status: "incorporated" })).toBe("disc-check")
   expect(glyph({ status: "failed" })).toBe("circle-x")
   expect(glyph({ waiting: true })).toBe("ring-clock")
   expect(glyph({ status: "blocked" })).toBe("circle-ban-sign")
@@ -277,5 +277,11 @@ test("every state glyph is a circled mark: host circle icons or Tasks rings, nev
     expect(isRingGlyph(icon) || icon.startsWith("circle-")).toBe(true)
   }
   expect(isRingGlyph("circle-check")).toBe(false)
+  expect(isRingGlyph("ring-check")).toBe(true)
+  expect(isRingGlyph("disc-check")).toBe(true)
+  // Shape, not color, separates accepted from integrated.
+  expect(glyph({ status: "accepted" })).not.toBe(glyph({ status: "incorporated" }))
+  // A state with no word is omitted, never labelled "Unknown".
+  expect(taskRowPresentation(row({ status: "" as ExecutionListRow["status"] })).label).toBe("")
   expect(isRingGlyph("ring-dot")).toBe(true)
 })

@@ -21,7 +21,17 @@ export type TaskTone =
  * The host `status` glyphs are stacked panels, which read as layout, not state.
  */
 export type TaskRingGlyph =
-  "ring" | "ring-dot" | "ring-progress" | "ring-dashed" | "ring-pause" | "ring-minus" | "ring-clock"
+  | "ring"
+  | "ring-dot"
+  | "ring-progress"
+  | "ring-dashed"
+  | "ring-pause"
+  | "ring-minus"
+  | "ring-clock"
+  /** Outlined check: accepted, not yet integrated. */
+  | "ring-check"
+  /** Filled disc with a check: integrated. */
+  | "disc-check"
 
 /** A host icon where the host has a circled state mark, otherwise a Tasks ring glyph. */
 export type TaskGlyph = IconName | TaskRingGlyph
@@ -34,6 +44,8 @@ const ringGlyphs = new Set<string>([
   "ring-pause",
   "ring-minus",
   "ring-clock",
+  "ring-check",
+  "disc-check",
 ])
 
 export function isRingGlyph(glyph: TaskGlyph): glyph is TaskRingGlyph {
@@ -186,9 +198,9 @@ export function taskRowPresentation(
     case "submitted":
       return state("submitted", "ring-dashed", "Proposed")
     case "accepted":
-      return state("accepted", "circle-check", "Accepted", "Accepted; not yet integrated")
+      return state("accepted", "ring-check", "Accepted", "Accepted; not yet integrated")
     case "incorporated":
-      return state("integrated", "circle-check", "Integrated")
+      return state("integrated", "disc-check", "Integrated")
     case "failed":
       return state("failed", "circle-x", "Failed", row.reason)
     case "exhausted":
@@ -201,7 +213,9 @@ export function taskRowPresentation(
 }
 
 function stateWord(status: string) {
-  const word = status.split(/[^a-z]/iu).find(Boolean) ?? "Unknown"
+  const word = status.split(/[^a-z]/iu).find(Boolean)
+  // An unrecognized state has no word to show; the row omits it rather than naming a gap.
+  if (!word) return ""
   return `${word[0]!.toUpperCase()}${word.slice(1).toLowerCase()}`
 }
 

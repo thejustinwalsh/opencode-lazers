@@ -1290,6 +1290,80 @@ test("read failures retain stale scoped data and recovery preserves the selected
   }
 })
 
+test("a reconnect of the same view keeps the last tasks and read time; another view starts empty", async () => {
+  const original = page("/project")
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "view",
+      "/project",
+      transport(async () => original),
+      {},
+    )
+    await until(() => state.data.page !== undefined)
+    const asOf = state.data.asOf
+    expect(asOf).toBeGreaterThan(0)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    state.connect(
+      "view",
+      "/project",
+      transport(async () => {
+        await gate
+        throw new Error("offline")
+      }),
+      {},
+    )
+    expect(state.data.tasks).toEqual(original.tasks)
+    expect(state.data.asOf).toBe(asOf)
+    release()
+    await until(() => state.data.error !== "")
+    expect(state.data.tasks).toEqual(original.tasks)
+    expect(state.data.asOf).toBe(asOf)
+    state.connect(
+      "other",
+      "/project",
+      transport(async () => original),
+      {},
+    )
+    expect(state.data.tasks).toEqual([])
+    expect(state.data.asOf).toBeUndefined()
+  } finally {
+    state.close()
+  }
+})
+
+test("selecting a task keeps the previous detail until the new one arrives", async () => {
+  const first = page("/project", "11111111-1111-4111-8111-111111111111")
+  const found = (id: string): TaskDetail =>
+    ({ status: "found", task: { id }, reference: id }) as unknown as TaskDetail
+  const wait = deferred<TaskDetail>()
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "view",
+      "/project",
+      transport(
+        async () => first,
+        async (taskID) => (taskID === "next" ? wait.promise : found(taskID)),
+      ),
+      {},
+    )
+    await until(() => state.data.detail?.status === "found")
+    const before = state.data.detail
+    const pending = state.select("next")
+    expect(state.data.selectedID).toBe("next")
+    expect(state.data.detail).toBe(before)
+    wait.resolve(found("next"))
+    await pending
+    expect(state.data.detail).not.toBe(before)
+  } finally {
+    state.close()
+  }
+})
+
 test("F-S14-1 task read errors preserve the readable RPC envelope message", async () => {
   const message = "Observation scope is too large; narrow it"
   const state = new TaskPanelState(() => {})

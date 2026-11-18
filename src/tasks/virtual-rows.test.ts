@@ -197,3 +197,40 @@ test("size estimates follow the compact row height", () => {
   const items = flatten(model([group("r", [row("a"), row("b")])]), { hasMore: true })
   expect(items.map(estimateItemSize)).toEqual([32, 32, 32])
 })
+
+test("State: All lists open, accepted, integrated, then failed or cancelled, keeping priority order inside each", () => {
+  const at = (taskID: string, status: string) => ({ ...row(taskID), status })
+  const list = model(
+    [
+      { ...group("p1", [at("done1", "incorporated"), at("open1", "running")]), priority: 1 },
+      {
+        ...group("p2", [at("acc", "accepted"), at("open2", "queued"), at("bad", "failed")]),
+        priority: 2,
+      },
+    ],
+    [at("cancelled", "cancelled"), at("open3", "ready")],
+  )
+  expect(taskItems(flatten(list)).map((item) => item.row.taskID)).toEqual([
+    "open1",
+    "open2",
+    "open3",
+    "acc",
+    "done1",
+    "bad",
+    "cancelled",
+  ])
+})
+
+test("priority rides on listed rows only and is omitted for none", () => {
+  const list = model([
+    { ...group("p", [row("a"), row("b", ["a"])]), priority: 3 },
+    { ...group("q", [row("c")]), priority: 0 },
+  ])
+  const items = taskItems(flatten(list, { expanded: ["task:b"] }))
+  expect(items.map((item) => [item.key, item.priority])).toEqual([
+    ["task:a", 3],
+    ["task:b", 3],
+    ["task:b>a", undefined],
+    ["task:c", undefined],
+  ])
+})

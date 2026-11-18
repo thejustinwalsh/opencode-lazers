@@ -55,3 +55,24 @@ test("the link icons carry no status color and no sequencing icon exists", () =>
   for (const [selector, body] of rules)
     if (paints(body, statusColor)) expect(selector).not.toContain("lazers-tasks-row-blocker")
 })
+
+test("accepted is neutral with its own outlined glyph; only integrated is a filled disc", async () => {
+  const { taskRowPresentation } = await import("../../src/tasks/row-presentation.ts")
+  const row = (status: string) => ({
+    taskID: "t",
+    title: "t",
+    status,
+    reason: null,
+    waiting: false,
+    holdReason: null,
+    ordinal: 0,
+    contextOnly: false,
+    prerequisites: [],
+    successors: [],
+  })
+  expect(taskRowPresentation(row("accepted")).icon).toBe("ring-check")
+  expect(taskRowPresentation(row("incorporated")).icon).toBe("disc-check")
+  const accepted = rules.filter(([selector]) => selector.includes('data-tone="accepted"'))
+  expect(accepted.length).toBeGreaterThan(0)
+  for (const [, body] of accepted) expect(paints(body, successColor)).toBe(false)
+})

@@ -985,70 +985,96 @@ test("rows end in icon-only signals: a neutral link icon and the state icon, wit
   )
 })
 
-test("the inspector, not the list, carries priority, order, plan and sequencing", async () => {
+test("the inspector carries one meta line: priority, plan and step; sequencing only with dependencies", async () => {
   await withPanel(
     async (h) => {
       await until(() => Boolean(h.row(h.beta.join)))
       h.row(h.beta.join)!.click()
       await until(() => h.detailCalls.includes(h.beta.join))
-      const facts = () =>
-        h.container.querySelector<HTMLElement>(".lazers-tasks-scheduling-facts")?.textContent ?? ""
-      await until(() => facts().includes("Beta plan"))
-      expect(facts()).toContain("Priority1")
-      expect(facts()).toContain("Plan 2, step 4")
-      expect(facts()).toContain("Sequenced")
+      const metas = () =>
+        [
+          ...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-detail .lazers-tasks-meta"),
+        ].map((element) => element.textContent ?? "")
+      await until(() => metas().some((text) => text.includes("Beta plan")))
+      expect(metas()[0]).toBe("Priority 1 · Beta plan · step 4")
+      expect(metas().some((text) => text.includes("Runs after"))).toBe(true)
+      expect(h.container.querySelector(".lazers-tasks-scheduling-facts")).toBeNull()
       h.row(h.alpha[0]!)!.click()
       await until(() => h.detailCalls.includes(h.alpha[0]!))
-      await until(() => facts().includes("Alpha plan"))
-      expect(facts()).toContain("Priority2")
-      expect(facts()).toContain("Parallel-eligible")
+      await until(() => metas().some((text) => text.includes("Alpha plan")))
+      expect(metas()[0]).toContain("Priority 2 · Alpha plan")
+      // No dependencies: no Sequencing line at all.
+      expect(metas().some((text) => /Parallel|sequenc|Runs after/iu.test(text))).toBe(false)
     },
     {},
     { scheduling: true, prioritized: true },
   )
-  await withPanel(async (h) => {
-    await until(() => Boolean(h.row(h.alpha[0]!)))
-    h.row(h.alpha[0]!)!.click()
-    await until(() => h.detailCalls.includes(h.alpha[0]!))
-    await until(() =>
-      (h.container.querySelector(".lazers-tasks-scheduling-facts")?.textContent ?? "").includes(
-        "Alpha plan",
-      ),
-    )
-    expect(h.container.querySelector(".lazers-tasks-scheduling-facts")?.textContent).toContain(
-      "PriorityNone",
-    )
-  })
 })
 
-test("scheduling facts render each label before its value inside one row", async () => {
+test("each listed row carries a right-aligned priority cell, blank for none and for nested rows", async () => {
   await withPanel(
     async (h) => {
       await until(() => Boolean(h.row(h.beta.join)))
-      h.row(h.beta.join)!.click()
-      await until(() =>
-        Boolean(h.container.querySelector(".lazers-tasks-scheduling-facts .lazers-tasks-fact")),
+      const cell = (taskID: string) =>
+        h.row(taskID)!.querySelector<HTMLElement>(".lazers-tasks-row-priority")
+      expect(cell(h.beta.join)?.textContent).toBe("1")
+      expect(cell(h.alpha[0]!)?.textContent).toBe("2")
+      // Every row keeps the cell so the reference column stays aligned.
+      for (const item of h.container.querySelectorAll('[role="treeitem"]'))
+        expect(item.querySelector(".lazers-tasks-row-priority")).not.toBeNull()
+      // Nested dependency rows leave it blank.
+      h.key(h.row(h.beta.join)!, "ArrowRight")
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "true")
+      const nested = h.container.querySelector<HTMLElement>(
+        `[data-item-key="task:${h.beta.join}>${h.beta.a}"] .lazers-tasks-row-priority`,
       )
-      const rows = [...h.container.querySelectorAll<HTMLElement>(".lazers-tasks-fact")]
-      expect(rows.length).toBeGreaterThanOrEqual(3)
-      for (const row of rows) {
-        expect([...row.children].map((child) => child.tagName)).toEqual(["DT", "DD"])
-        expect(row.parentElement?.tagName).toBe("DL")
-      }
-      expect(rows.map((row) => row.firstElementChild!.textContent)).toEqual([
-        "Priority",
-        "Plan",
-        "Order",
-        "Sequencing",
-      ])
-      // The generic detail dt margin must not offset a label from its value.
-      const css = getComputedStyle(rows[0]!.firstElementChild!)
-      expect(css.marginTop).toBe("0px")
-      expect(getComputedStyle(rows[0]!).display).toBe("grid")
+      expect(nested?.textContent).toBe("")
     },
     {},
-    { prioritized: true, scheduling: true },
+    { prioritized: true },
   )
+})
+
+test("the disclosure chevron is a named button that toggles without selecting", async () => {
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(h.beta.join)))
+      const button = () =>
+        h.row(h.beta.join)!.querySelector<HTMLButtonElement>("button.lazers-tasks-disclosure")!
+      expect(button().tagName).toBe("BUTTON")
+      expect(button().getAttribute("aria-expanded")).toBe("false")
+      expect(button().getAttribute("aria-label")).toMatch(/^Expand /u)
+      expect(button().tabIndex).toBe(-1)
+      button().click()
+      await until(() => h.row(h.beta.join)?.getAttribute("aria-expanded") === "true")
+      expect(button().getAttribute("aria-label")).toMatch(/^Collapse /u)
+      expect(h.row(h.beta.join)?.getAttribute("aria-selected")).not.toBe("true")
+    },
+    {},
+    { prioritized: true },
+  )
+})
+
+test("changing the filter keeps the selection and never blanks the inspector", async () => {
+  await withPanel(async (h) => {
+    await until(() => Boolean(h.row(h.alpha[1]!)))
+    h.row(h.alpha[1]!)!.click()
+    const detail = () => h.container.querySelector(".lazers-tasks-detail")?.textContent ?? ""
+    await until(() => detail().includes("Alpha 2"))
+    h.chooseFilter("All")
+    for (let step = 0; step < 40; step++) {
+      expect(detail()).not.toContain("Loading task")
+      expect(detail()).toContain("Alpha 2")
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    await until(() => h.queryCalls.at(-1)?.state === "all" && Boolean(h.row(h.alpha[1]!)))
+    expect(h.row(h.alpha[1]!)?.getAttribute("aria-selected")).toBe("true")
+    // A filter that does not list the task keeps the inspector's content.
+    h.chooseFilter("Queued")
+    await until(() => h.queryCalls.at(-1)?.state === "queued" && Boolean(h.row(h.queue[0]!)))
+    expect(detail()).toContain("Alpha 2")
+    expect(detail()).not.toContain("Loading task")
+  })
 })
 
 test("at the list top a live reorder of the first rows keeps scrollTop", async () => {

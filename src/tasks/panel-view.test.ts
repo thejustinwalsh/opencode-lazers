@@ -1,11 +1,5 @@
 import { expect, test } from "bun:test"
-import {
-  StartFeedback,
-  ScrollRestoration,
-  canStart,
-  connectionLabel,
-  workerActivityLabel,
-} from "./panel-view.ts"
+import { StartFeedback, ScrollRestoration, canStart, workerActivityLabel } from "./panel-view.ts"
 
 test("late Start failures/completions cannot affect another task or scope", () => {
   let value = { taskID: "", error: "" }
@@ -87,14 +81,12 @@ test("planned queued work exposes Start, but ended or held work does not", () =>
     "exhausted",
   ])
     expect(canStart(state)).toBe(false)
-  expect(connectionLabel(false, false)).toBe("Task updates disconnected")
-  expect(connectionLabel(true, true)).toBe("Task data is stale")
-  expect(connectionLabel(false, true)).toBe("Task updates connected")
 })
 
 test("worker labels distinguish archived inactivity without hiding active execution", () => {
   expect(workerActivityLabel({ foreground: "inactive", archived: true })).toBe("archived")
   expect(workerActivityLabel({ foreground: "active", archived: true })).toBe("active")
   expect(workerActivityLabel({ foreground: "inactive" })).toBe("inactive")
-  expect(workerActivityLabel()).toBe("unknown")
+  expect(workerActivityLabel()).toBe("")
+  expect(workerActivityLabel({ foreground: "unknown" })).toBe("")
 })

@@ -23,6 +23,8 @@ export type VirtualTaskItem = {
   setSize: number
   posInSet: number
   parentKey?: string
+  /** Scheduler priority of the row's plan (1 is top); listed rows only, absent for none. */
+  priority?: number
   /** The row has dependencies to list. */
   expandable: boolean
   expanded: boolean
@@ -76,6 +78,22 @@ export function listedRows(model: ExecutionList) {
   return [...model.plans.flatMap((group) => group.rows), ...model.unplanned]
 }
 
+/** Open work first, then accepted, integrated, and failed or cancelled. */
+export function stateRank(status: string) {
+  switch (status) {
+    case "accepted":
+      return 1
+    case "incorporated":
+      return 2
+    case "failed":
+    case "exhausted":
+    case "cancelled":
+      return 3
+    default:
+      return 0
+  }
+}
+
 export function flattenExecutionList(input: {
   model: ExecutionList
   /** Item keys of expanded rows; everything else is collapsed. */
@@ -83,7 +101,18 @@ export function flattenExecutionList(input: {
   /** Append a loader row while another page exists. */
   hasMore?: boolean
 }): VirtualItem[] {
+  // Stable: inside one state rank the scheduler's priority order is kept.
   const top = listedRows(input.model)
+    .map((row, index) => ({ row, index }))
+    .toSorted(
+      (left, right) =>
+        stateRank(left.row.status) - stateRank(right.row.status) || left.index - right.index,
+    )
+    .map(({ row }) => row)
+  const priorityOf = new Map<string, number>()
+  for (const group of input.model.plans)
+    if (group.priority && group.priority > 0)
+      for (const row of group.rows) priorityOf.set(row.taskID, group.priority)
   const known = new Map<string, ExecutionListRow>()
   for (const row of [...input.model.related, ...top]) known.set(row.taskID, row)
   const items: VirtualItem[] = []
@@ -96,6 +125,7 @@ export function flattenExecutionList(input: {
     ancestors: ReadonlySet<string>,
     parentKey?: string,
   ) => {
+    const priority = depth === 0 ? priorityOf.get(row.taskID) : undefined
     const refs = dependencyRefs(row)
     const expandable = refs.length > 0
     const expanded = expandable && input.expanded.has(key)
@@ -108,6 +138,7 @@ export function flattenExecutionList(input: {
       setSize,
       posInSet,
       ...(parentKey ? { parentKey } : {}),
+      ...(priority ? { priority } : {}),
       expandable,
       expanded,
     })

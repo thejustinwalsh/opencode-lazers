@@ -44,15 +44,10 @@ import {
   splitFromPointer,
   splitWasAdjusted,
 } from "./panel-layout.ts"
-import { taskTitle, sourcePlanLine } from "./presentation.ts"
+import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
+import { taskTitle, taskHeading, taskReasonView, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
-import {
-  StartFeedback,
-  ScrollRestoration,
-  canStart,
-  connectionLabel,
-  workerActivityLabel,
-} from "./panel-view.ts"
+import { StartFeedback, ScrollRestoration, canStart, workerActivityLabel } from "./panel-view.ts"
 import {
   attentionLabel,
   distinctReasons,
@@ -429,6 +424,38 @@ function TaskPanel(
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
+  /**
+   * What the inspector reads. A filter, scope or reconnect replaces the list data with an empty
+   * load; the inspector keeps the last data that held a task's detail until another arrives. It
+   * is dropped only for another server, project or session.
+   */
+  const identity = () => {
+    const value = current()
+    return value ? JSON.stringify([value.server, value.project, value.session]) : ""
+  }
+  const [lastInspected, setLastInspected] = createSignal<{ identity: string; data: PanelData }>()
+  createEffect(() => {
+    const value = visible()
+    if (value?.detail) setLastInspected({ identity: identity(), data: value })
+  })
+  const status = createPanelStatus(() => {
+    const value = visible()
+    const error = scope.error ? String(scope.error) : (value?.error ?? "")
+    return {
+      subject: "tasks",
+      hasContent: Boolean(value?.page),
+      loading: !scope.error && (!value || value.loading),
+      disconnected: Boolean(value?.stale) || !props.session.server.connected,
+      ...(error ? { error } : {}),
+      ...(value?.asOf ? { asOf: value.asOf } : {}),
+    }
+  })
+  const inspected = () => {
+    const value = visible()
+    if (value?.detail) return value
+    const kept = lastInspected()
+    return kept && kept.identity === identity() ? kept.data : value
+  }
   const executionList = createMemo(() =>
     buildExecutionList({
       topology: visible()?.topology,
@@ -486,7 +513,7 @@ function TaskPanel(
     listRestore.restore(expectedKey(), Boolean(value && !value.loading), list, view.listScroll)
     detailRestore.restore(
       selectionKey(),
-      value?.detail?.status === "found",
+      value?.detail?.status === "found" && value.detail.task.id === value.selectedID,
       detail,
       view.detailScroll,
     )
@@ -504,25 +531,25 @@ function TaskPanel(
     setCopyStatus("")
   })
   const selectedTask = () => {
-    const result = visible()?.detail
+    const result = inspected()?.detail
     return result?.status === "found" ? result.task : undefined
   }
   const selectedExecution = () => {
-    const detail = visible()?.detail
+    const detail = inspected()?.detail
     return detail?.status === "found" ? detail.execution : undefined
   }
   const selectedDetail = () => {
-    const result = visible()?.detail
+    const result = inspected()?.detail
     return result?.status === "found" ? result : undefined
   }
   const selectedActivity = () => {
-    const taskID = visible()?.selectedID
-    return taskID ? visible()?.currentActivity[taskID] : undefined
+    const taskID = inspected()?.selectedID
+    return taskID ? inspected()?.currentActivity[taskID] : undefined
   }
   const selectedRecordedState = () => {
-    const taskID = visible()?.selectedID
+    const taskID = inspected()?.selectedID
     const execution = selectedExecution()
-    const node = visible()
+    const node = inspected()
       ?.topology?.plans.find((plan) => plan.id === execution?.planID)
       ?.nodes.find((item) => item.taskID === taskID)
     return (
@@ -532,9 +559,9 @@ function TaskPanel(
   const selectedIsWaiting = () => {
     const recordedState = selectedRecordedState()
     if (recordedState && terminalLifecycleStates.has(recordedState)) return false
-    const taskID = visible()?.selectedID
+    const taskID = inspected()?.selectedID
     const execution = selectedExecution()
-    const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
+    const plan = inspected()?.topology?.plans.find((item) => item.id === execution?.planID)
     const node = plan?.nodes.find((item) => item.taskID === taskID)
     const terminal = ["accepted", "incorporated", "failed", "exhausted", "cancelled"].includes(
       node?.state ?? "",
@@ -553,9 +580,9 @@ function TaskPanel(
   }
   const selectedHoldReasons = () => {
     const activity = selectedActivity()
-    const taskID = visible()?.selectedID
+    const taskID = inspected()?.selectedID
     const execution = selectedExecution()
-    const plan = visible()?.topology?.plans.find((item) => item.id === execution?.planID)
+    const plan = inspected()?.topology?.plans.find((item) => item.id === execution?.planID)
     const node = plan?.nodes.find((item) => item.taskID === taskID)
     return selectedIsWaiting()
       ? distinctReasons([
@@ -575,9 +602,9 @@ function TaskPanel(
       ? "Waiting"
       : selectedExecution()?.dispatchPause
         ? "Paused"
-        : (selectedRecordedState() ?? "Unknown")
+        : (selectedRecordedState() ?? "")
   const selectedRelations = () => {
-    const taskID = visible()?.selectedID
+    const taskID = inspected()?.selectedID
     const plan = schedulingPlan(selectedExecution()?.planID)
     const waitSet = new Set([
       ...(selectedExecution()?.waitingOn ?? []),
@@ -587,7 +614,7 @@ function TaskPanel(
     const waitingSet = new Set(waitingOn)
     const prerequisites = new Set<string>()
     const successors = new Set<string>()
-    for (const plan of visible()?.topology?.plans ?? [])
+    for (const plan of inspected()?.topology?.plans ?? [])
       for (const edge of plan.dependencies) {
         if (edge.successor === taskID && !waitingSet.has(edge.prerequisite))
           prerequisites.add(edge.prerequisite)
@@ -775,11 +802,14 @@ function TaskPanel(
       const reasons = rowHoldReasons(taskRow(), activity)
       return [
         ...(taskRow().reference ? [taskRow().reference] : []),
+        ...(item().priority ? [`priority ${item().priority}`] : []),
         taskTitle(taskRow().title),
         `recorded lifecycle ${taskRow().status}`,
         ...(showWorker()
           ? [
-              `observed foreground activity ${activity?.foreground ?? "unknown"}`,
+              ...(activity?.foreground && activity.foreground !== "unknown"
+                ? [`observed foreground activity ${activity.foreground}`]
+                : []),
               ...(activity?.workerSessionID
                 ? [`latest worker session ${activity.workerSessionID}`]
                 : []),
@@ -832,9 +862,13 @@ function TaskPanel(
             when={expandable()}
             fallback={<span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />}
           >
-            <span
+            {/* The tree's arrow keys already expand and collapse; this is the pointer target. */}
+            <button
+              type="button"
               class="lazers-tasks-disclosure"
-              aria-hidden="true"
+              tabIndex={-1}
+              aria-expanded={expanded()}
+              aria-label={`${expanded() ? "Collapse" : "Expand"} ${taskRow().reference ?? taskTitle(taskRow().title)}`}
               title={expanded() ? "Collapse dependencies" : "Expand dependencies"}
               onClick={(event) => {
                 event.stopPropagation()
@@ -842,8 +876,16 @@ function TaskPanel(
               }}
             >
               <Ui.Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
-            </span>
+            </button>
           </Show>
+          <span
+            class="lazers-tasks-row-priority"
+            style={{ "font-family": ctx.appearance.font("mono") }}
+            data-top={item().priority === 1 ? "true" : undefined}
+            aria-hidden="true"
+          >
+            {item().priority ?? ""}
+          </span>
           <Show when={taskRow().reference}>
             {(reference) => (
               <span
@@ -933,7 +975,7 @@ function TaskPanel(
     })
   }
   const selectedRow = () => {
-    const selectedID = visible()?.selectedID
+    const selectedID = inspected()?.selectedID
     return selectedID ? rowValues().find((row) => row.taskID === selectedID) : undefined
   }
   const selectedPresentation = () => {
@@ -942,7 +984,7 @@ function TaskPanel(
     if (row) return taskRowPresentation(row, activity, relationLabel)
     return taskRowPresentation(
       {
-        taskID: visible()?.selectedID ?? "",
+        taskID: inspected()?.selectedID ?? "",
         title: "",
         status: selectedRecordedState() ?? "submitted",
         reason: selectedExecution()?.reason ?? null,
@@ -964,7 +1006,7 @@ function TaskPanel(
   const selectedScheduling = () => {
     const row = selectedRow()
     if (row?.scheduling) return row.scheduling
-    const node = schedulingNode(visible()?.selectedID ?? "")
+    const node = schedulingNode(inspected()?.selectedID ?? "")
     return node
       ? {
           decision: node.decision,
@@ -977,13 +1019,13 @@ function TaskPanel(
   const selectedReservations = () => selectedScheduling()?.reservationTaskIDs ?? []
   /** Priority, plan and order of the selected task's plan; detail only, never a list decoration. */
   const selectedPlanFacts = () => {
-    const taskID = visible()?.selectedID
+    const taskID = inspected()?.selectedID
     if (!taskID) return undefined
     const planID = selectedExecution()?.planID
     const scheduled =
       schedulingPlans().find((plan) => plan.planID === planID) ??
       schedulingPlans().find((plan) => plan.nodes.some((node) => node.taskID === taskID))
-    const topology = visible()?.topology?.plans.find(
+    const topology = inspected()?.topology?.plans.find(
       (plan) => plan.id === (planID ?? scheduled?.planID),
     )
     if (scheduled)
@@ -1004,11 +1046,40 @@ function TaskPanel(
       }
     return undefined
   }
+  /** A runtime reason as one user sentence, its raw text behind Details. */
+  const renderReason = (reason: string, className: string) => {
+    const view = taskReasonView(reason)
+    return (
+      <div class={className}>
+        {view.text}
+        <Show when={view.raw}>
+          {(raw) => (
+            <details class="lazers-tasks-reason-details">
+              <summary>Details</summary>
+              <pre>{raw()}</pre>
+            </details>
+          )}
+        </Show>
+      </div>
+    )
+  }
+  /** "Priority 1 · Plan name · step 2": one line for what were four fact rows. */
+  const selectedMeta = () => {
+    const facts = selectedPlanFacts()
+    if (!facts) return ""
+    return [
+      facts.priority > 0 ? `Priority ${facts.priority}` : "",
+      [facts.title, facts.state].filter(Boolean).join(" · "),
+      facts.step !== undefined ? `step ${facts.step + 1}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ")
+  }
   const selectedSequencing = () => {
     const row = selectedRow()
     return taskSequencing(
       row ?? {
-        taskID: visible()?.selectedID ?? "",
+        taskID: inspected()?.selectedID ?? "",
         title: "",
         status: "",
         reason: null,
@@ -1034,7 +1105,7 @@ function TaskPanel(
     </button>
   )
   const selectedSourcePlan = () =>
-    visible()?.tasks.find((task) => task.taskID === visible()?.selectedID)?.sourcePlan ??
+    inspected()?.tasks.find((task) => task.taskID === inspected()?.selectedID)?.sourcePlan ??
     selectedRow()?.sourcePlan
   /** One contextual action leads; the rest stay one menu away. */
   const primaryAction = (): "start" | "architect" | "radar" | "trajectory" => {
@@ -1187,11 +1258,32 @@ function TaskPanel(
     if (state === "blocked") return "Blocked / waiting"
     return state[0]!.toUpperCase() + state.slice(1)
   }
+  /** "23 open · 4 running": the read's own count for this filter, and running only when every task is loaded. */
+  const headerCount = () => {
+    const value = visible()
+    if (!value?.page) return ""
+    const filter = stateFilter()
+    const count = String(value.page.count)
+    if (filter === "all") return count
+    const label = `${count} ${stateLabel(filter).toLowerCase()}`
+    if (filter !== "open" || value.page.nextCursor) return label
+    const running = value.tasks.filter(
+      (task) => (task.recordedState ?? task.status) === "running",
+    ).length
+    return running ? `${label} · ${running} running` : label
+  }
   let focusedSelection = ""
   createEffect(() => {
     const selectedID = visible()?.selectedID
     const key = selectionKey()
-    if (!selectedID || visible()?.detail?.status !== "found" || key === focusedSelection) return
+    const found = visible()?.detail
+    if (
+      !selectedID ||
+      found?.status !== "found" ||
+      found.task.id !== selectedID ||
+      key === focusedSelection
+    )
+      return
     focusedSelection = key
     queueMicrotask(() => {
       if (selectionKey() !== key) return
@@ -1383,12 +1475,9 @@ function TaskPanel(
         }}
       >
         <h2>Tasks</h2>
-        <span
-          class="lazers-tasks-dot"
-          data-stale={visible()?.stale || !props.session.server.connected}
-          role="img"
-          aria-label={connectionLabel(Boolean(visible()?.stale), props.session.server.connected)}
-        />
+        <Show when={headerCount()}>
+          {(text) => <span class="lazers-tasks-count">{text()}</span>}
+        </Show>
         <div class="lazers-tasks-controls">
           <span class="lazers-tasks-scope">
             <Ui.Menu
@@ -1426,11 +1515,13 @@ function TaskPanel(
                 ] as const
               ).map((state) => ({
                 label: stateLabel(state),
+                ...(state === stateFilter() ? { icon: "check" as const } : {}),
+                // The selection survives: it stays while the task is listed, and the inspector keeps
+                // its content otherwise.
                 onSelect: () =>
                   save({
                     state,
                     history: state !== "open",
-                    selectedID: null,
                     listScroll: 0,
                   }),
               }))}
@@ -1492,41 +1583,33 @@ function TaskPanel(
             save({ listScroll: event.currentTarget.scrollTop })
         }}
       >
-        <Show when={scope.error || visible()?.error}>
-          <div class="lazers-tasks-note lazers-tasks-error" role="alert">
-            {String(scope.error ?? visible()?.error)}
-            <Ui.Button variant="ghost" onClick={() => void state.refresh()}>
-              Retry
-            </Ui.Button>
-          </div>
-        </Show>
-        <Show when={visible()?.stale}>
-          <div class="lazers-tasks-note" role="status">
-            Updates disconnected. Displayed tasks may be stale.
-          </div>
-        </Show>
-        <Show when={visible()?.topologyError}>
+        <PanelStatus ui={Ui} status={status} onRetry={() => void state.refresh()} skeleton="rows" />
+        <Show when={status.showContent() && visible()?.topologyError}>
           {(message) => (
             <div class="lazers-tasks-note" role="status">
               {message()}
             </div>
           )}
         </Show>
-        <Show when={visible()?.activityError}>
+        <Show when={status.showContent() && visible()?.activityError}>
           {(message) => (
             <div class="lazers-tasks-note" role="status">
               {message()}
             </div>
           )}
         </Show>
-        <Show when={visible()?.schedulingError}>
+        <Show when={status.showContent() && visible()?.schedulingError}>
           {(message) => (
             <div class="lazers-tasks-scheduling-warning" role="status">
               {message()}
             </div>
           )}
         </Show>
-        <Show when={visible() && !visible()?.topology && !visible()?.topologyError}>
+        <Show
+          when={
+            status.showContent() && visible() && !visible()?.topology && !visible()?.topologyError
+          }
+        >
           <div class="lazers-tasks-note" role="status">
             {visible()?.scheduling && !visible()?.schedulingError
               ? "Execution topology unavailable. Showing scheduling-backed tasks where covered."
@@ -1534,101 +1617,89 @@ function TaskPanel(
           </div>
         </Show>
         <Show
-          when={visible()}
+          when={status.showContent() ? visible() : undefined}
           fallback={
-            <div class="lazers-tasks-note">
-              {!props.session.location ? (
-                "Session location is unavailable."
-              ) : (
-                <Ui.Loader size="small" />
-              )}
-            </div>
+            <Show when={!props.session.location}>
+              <div class="lazers-tasks-note">Session location is unavailable.</div>
+            </Show>
           }
         >
           {(value) => (
             <>
               <Show
-                when={!value().loading}
+                when={listedRows(executionList()).length}
                 fallback={
                   <div class="lazers-tasks-note">
-                    <Ui.Loader size="small" />
+                    {prefs().search
+                      ? "No matching tasks."
+                      : stateFilter() === "all"
+                        ? "No tasks in this view."
+                        : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
                   </div>
                 }
               >
-                <Show
-                  when={listedRows(executionList()).length}
-                  fallback={
-                    <div class="lazers-tasks-note">
-                      {prefs().search
-                        ? "No matching tasks."
-                        : stateFilter() === "all"
-                          ? "No tasks in this view."
-                          : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
-                    </div>
+                <div
+                  class="lazers-tasks-tree"
+                  role="tree"
+                  data-panel-dimmed={status.dimmed()}
+                  aria-label={`${stateLabel(stateFilter())} tasks`}
+                  style={{ height: `${virtualizer.getTotalSize()}px` }}
+                  ref={(element) => {
+                    tree = element
+                  }}
+                  onFocusIn={(event) =>
+                    setFocusedTreeKey(
+                      (event.target as Element).closest<HTMLElement>("[role=treeitem]")?.dataset
+                        .itemKey,
+                    )
                   }
+                  onFocusOut={(event) => {
+                    // A node the window reorders is detached for a moment and blurs; that is
+                    // not the person leaving the tree, and the guard below restores focus.
+                    if (!(event.target as Element).isConnected) return
+                    const next = event.relatedTarget
+                    if (!(next instanceof Node) || !event.currentTarget.contains(next))
+                      setFocusedTreeKey(undefined)
+                  }}
                 >
-                  <div
-                    class="lazers-tasks-tree"
-                    role="tree"
-                    aria-label={`${stateLabel(stateFilter())} tasks`}
-                    style={{ height: `${virtualizer.getTotalSize()}px` }}
-                    ref={(element) => {
-                      tree = element
-                    }}
-                    onFocusIn={(event) =>
-                      setFocusedTreeKey(
-                        (event.target as Element).closest<HTMLElement>("[role=treeitem]")?.dataset
-                          .itemKey,
-                      )
-                    }
-                    onFocusOut={(event) => {
-                      // A node the window reorders is detached for a moment and blurs; that is
-                      // not the person leaving the tree, and the guard below restores focus.
-                      if (!(event.target as Element).isConnected) return
-                      const next = event.relatedTarget
-                      if (!(next instanceof Node) || !event.currentTarget.contains(next))
-                        setFocusedTreeKey(undefined)
-                    }}
-                  >
-                    <Keyed each={virtualRows()} by={(virtual) => virtual.key}>
-                      {(virtual) => (
-                        <VirtualItemView
-                          virtual={virtual}
-                          measure={virtualizer.measureElement}
-                          render={(item) => {
-                            const current = () => item()
-                            switch (virtual().item.kind) {
-                              case "task":
-                                return renderTaskRow(current as Accessor<VirtualTaskItem>)
-                              case "loader":
-                                return (
-                                  <div class="lazers-tasks-loader" role="status">
-                                    <Show
-                                      when={value().moreError}
-                                      fallback={
-                                        <>
-                                          <Ui.Loader size="small" />
-                                          Loading more tasks…
-                                        </>
-                                      }
+                  <Keyed each={virtualRows()} by={(virtual) => virtual.key}>
+                    {(virtual) => (
+                      <VirtualItemView
+                        virtual={virtual}
+                        measure={virtualizer.measureElement}
+                        render={(item) => {
+                          const current = () => item()
+                          switch (virtual().item.kind) {
+                            case "task":
+                              return renderTaskRow(current as Accessor<VirtualTaskItem>)
+                            case "loader":
+                              return (
+                                <div class="lazers-tasks-loader" role="status">
+                                  <Show
+                                    when={value().moreError}
+                                    fallback={
+                                      <>
+                                        <Ui.Loader size="small" />
+                                        Loading more tasks…
+                                      </>
+                                    }
+                                  >
+                                    Could not load more tasks.
+                                    <Ui.Button
+                                      variant="ghost"
+                                      onClick={() => state.retryMore(expectedKey())}
                                     >
-                                      Could not load more tasks.
-                                      <Ui.Button
-                                        variant="ghost"
-                                        onClick={() => state.retryMore(expectedKey())}
-                                      >
-                                        Retry
-                                      </Ui.Button>
-                                    </Show>
-                                  </div>
-                                )
-                            }
-                          }}
-                        />
-                      )}
-                    </Keyed>
-                  </div>
-                </Show>
+                                      Retry
+                                    </Ui.Button>
+                                  </Show>
+                                </div>
+                              )
+                          }
+                        }}
+                      />
+                    )}
+                  </Keyed>
+                </div>
               </Show>
             </>
           )}
@@ -1692,7 +1763,7 @@ function TaskPanel(
                 <span
                   class="lazers-tasks-reference"
                   style={{ "font-family": ctx.appearance.font("mono") }}
-                  aria-label={`Task reference ${selectedDetail()?.reference ?? "unknown"}`}
+                  aria-label={`Task reference ${selectedDetail()?.reference ?? ""}`.trim()}
                 >
                   <Ui.Tooltip value={task().id}>{selectedDetail()?.reference ?? "Task"}</Ui.Tooltip>
                 </span>
@@ -1766,45 +1837,13 @@ function TaskPanel(
                   {startFeedback().error}
                 </p>
               </Show>
-              <h3 class="lazers-tasks-title" title={task().proposal.objective}>
-                {taskTitle(task().proposal.objective)}
-              </h3>
-              <dl class="lazers-tasks-scheduling-facts" aria-label="Scheduling facts">
-                <Show when={selectedPlanFacts()}>
-                  {(facts) => (
-                    <>
-                      <div class="lazers-tasks-fact">
-                        <dt>Priority</dt>
-                        <dd>{facts().priority > 0 ? facts().priority : "None"}</dd>
-                      </div>
-                      <div class="lazers-tasks-fact">
-                        <dt>Plan</dt>
-                        <dd>
-                          {facts().title}
-                          <Show when={facts().state}>{(label) => <> · {label()}</>}</Show>
-                        </dd>
-                      </div>
-                      <Show when={facts().planOrder !== undefined}>
-                        <div class="lazers-tasks-fact">
-                          <dt>Order</dt>
-                          <dd>
-                            Plan {facts().planOrder! + 1}
-                            <Show when={facts().step !== undefined}>
-                              , step {facts().step! + 1}
-                            </Show>
-                          </dd>
-                        </div>
-                      </Show>
-                    </>
-                  )}
-                </Show>
-                <div class="lazers-tasks-fact">
-                  <dt>Sequencing</dt>
-                  <dd>
-                    {selectedSequencing().label} · {selectedSequencing().detail}
-                  </dd>
-                </div>
-              </dl>
+              <h3 class="lazers-tasks-title">{taskHeading(task().proposal.objective)}</h3>
+              <Show when={selectedMeta()}>
+                {(meta) => <p class="lazers-tasks-meta">{meta()}</p>}
+              </Show>
+              <Show when={selectedSequencing().kind === "sequenced"}>
+                <p class="lazers-tasks-meta">{selectedSequencing().detail}</p>
+              </Show>
               <Show when={selectedExecution()?.dispatchPause}>
                 {(pause) => (
                   <p class="lazers-tasks-blocker" data-kind="pause" title={pause().reason}>
@@ -1843,7 +1882,7 @@ function TaskPanel(
               <Show when={selectedScheduling()?.reason || selectedReservations().length}>
                 <div class="lazers-tasks-node-reason" aria-label="Scheduling reason">
                   <Show when={selectedScheduling()?.reason}>
-                    {(reason) => <p class="lazers-tasks-node-reason-text">{reason()}</p>}
+                    {(reason) => renderReason(reason(), "lazers-tasks-node-reason-text")}
                   </Show>
                   <Show when={selectedReservations().length}>
                     <div class="lazers-tasks-node-references">
@@ -1874,11 +1913,7 @@ function TaskPanel(
                   selectedHoldReasons()[0]
                 }
               >
-                {(reason) => (
-                  <p class="lazers-tasks-blocker" title={selectedHoldReasons().join("; ")}>
-                    {reason().trim().split(/\r?\n/)[0]}
-                  </p>
-                )}
+                {renderReason(selectedHoldReasons().join("\n"), "lazers-tasks-blocker")}
               </Show>
               <Show when={objectiveExtendsTitle(task().proposal.objective)}>
                 <div class="lazers-tasks-objective">
@@ -1938,14 +1973,18 @@ function TaskPanel(
                     aria-label="Recorded lifecycle and observed foreground activity"
                   >
                     <span>Recorded {selectedRecordedState()}</span>
-                    <span class="lazers-tasks-foreground">
-                      <span
-                        class="lazers-tasks-activity-indicator"
-                        data-state={selectedActivity()?.foreground ?? "unknown"}
-                        aria-hidden="true"
-                      />
-                      Worker {workerActivityLabel(selectedActivity())}
-                    </span>
+                    <Show when={workerActivityLabel(selectedActivity())}>
+                      {(label) => (
+                        <span class="lazers-tasks-foreground">
+                          <span
+                            class="lazers-tasks-activity-indicator"
+                            data-state={selectedActivity()?.foreground}
+                            aria-hidden="true"
+                          />
+                          Worker {label()}
+                        </span>
+                      )}
+                    </Show>
                     <Show when={selectedActivity()?.unknownReason}>
                       {(reason) => (
                         <span>
