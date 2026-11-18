@@ -12,14 +12,14 @@ export function flowStateInspector(
     const currentNode = node()
     const currentSnapshot = snapshot()
     const selected = stateID()
-    let current = "Unavailable"
+    let current: string | undefined
     if (currentNode && currentSnapshot) {
       if (
         !currentNode.machineSupported ||
         currentNode.machineVersion !== currentSnapshot.machine.version
       )
         current = "Unsupported machine"
-      else if (!currentNode.snapshot) current = "Snapshot unavailable"
+      else if (!currentNode.snapshot) current = undefined
       else if (
         !currentNode.snapshotMatchesState ||
         currentNode.snapshot.value !== currentNode.state
@@ -31,9 +31,9 @@ export function flowStateInspector(
       current,
       initial: currentSnapshot?.machine.initialState === selected ? "Yes" : "No",
       matchesRecordedState: currentNode?.state === selected,
-      reason: currentNode?.reason ?? "Unavailable",
-      machine: currentSnapshot?.machine.version ?? "Unavailable",
-      taskID: currentNode?.taskID ?? "Unavailable",
+      reason: currentNode?.reason ?? undefined,
+      machine: currentSnapshot?.machine.version,
+      taskID: currentNode?.taskID,
     }
   }
 }

@@ -109,11 +109,10 @@ test("one mounted Flow inspector follows task, snapshot and selected-state chang
     expect(inspector()).toMatchObject({ current: "Unsupported machine", machine: "other-machine" })
     snapshot = undefined
     node = undefined
-    expect(inspector()).toMatchObject({
-      current: "Unavailable",
-      taskID: "Unavailable",
-      machine: "Unavailable",
-    })
+    expect(inspector().current).toBeUndefined()
+    expect(inspector().taskID).toBeUndefined()
+    expect(inspector().machine).toBeUndefined()
+    expect(inspector().reason).toBeUndefined()
   } finally {
     fixture.close()
   }

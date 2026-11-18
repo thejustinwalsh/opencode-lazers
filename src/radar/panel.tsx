@@ -31,6 +31,10 @@ import { createRadarMonitorTransport } from "./monitor-transport.ts"
 import { RadarMonitorView, clampMonitorSplit, MONITOR_SPLIT } from "./monitor-view.tsx"
 import type { MonitorScopeChoice } from "./monitor-view.tsx"
 import { panelErrorMessage } from "../panel-error.ts"
+import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
+import { RadarHeader } from "./radar-header.tsx"
+import type { RadarScopeChoice, RadarViewChoice } from "./radar-header.tsx"
+import { connectionChip } from "./monitor-model.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -90,9 +94,9 @@ export const radarStores = {
 export type RadarContext = SetupContext<{ stores: typeof radarStores }>
 
 function timeLabel(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "Unavailable"
+  if (value === null || value === undefined || !Number.isFinite(value)) return ""
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? "Unavailable" : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString()
 }
 
 function timeValue(value: number | null | undefined) {
@@ -101,30 +105,11 @@ function timeValue(value: number | null | undefined) {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
-function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: () => void }) {
-  const ctx = props.ctx
-  const Ui = ctx.ui
-  const frame = usePanel()
-  const radarLayout = ctx.main(RadarLayout)
-  const [data, setData] = createSignal<RadarPanelData>({
-    key: "",
-    loading: true,
-    stale: true,
-    resynchronizing: true,
-    error: "",
-  })
-  const [split, setSplit] = createSignal(initial.split)
-  const [layoutReadyKey, setLayoutReadyKey] = createSignal("")
-  const state = new RadarPanelState(setData)
-  const visualRestore = new ScrollRestoration()
-  const detailRestore = new ScrollRestoration()
-  let root: HTMLDivElement | undefined
-  let header: HTMLElement | undefined
-  let visual: HTMLDivElement | undefined
-  let separator: HTMLDivElement | undefined
-  let detail: HTMLDivElement | undefined
-  let endDrag: (() => void) | undefined
+type RadarLocation = ReturnType<typeof createRadarLocation>
 
+/** Resolved once for the whole panel, so switching views does not re-resolve the project. */
+function createRadarLocation(props: PanelProps) {
+  const frame = usePanel()
   const location = createLatest(
     () => {
       if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
@@ -151,6 +136,36 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
       ? value
       : undefined
   }
+  return { location, current }
+}
+
+function RadarDiagnosticsPanel(
+  props: PanelProps & { ctx: RadarContext; radarLocation: RadarLocation; onBack: () => void },
+) {
+  const ctx = props.ctx
+  const Ui = ctx.ui
+  const frame = usePanel()
+  const radarLayout = ctx.main(RadarLayout)
+  const [data, setData] = createSignal<RadarPanelData>({
+    key: "",
+    loading: true,
+    stale: true,
+    resynchronizing: true,
+    error: "",
+  })
+  const [split, setSplit] = createSignal(initial.split)
+  const [layoutReadyKey, setLayoutReadyKey] = createSignal("")
+  const state = new RadarPanelState(setData)
+  const visualRestore = new ScrollRestoration()
+  const detailRestore = new ScrollRestoration()
+  let root: HTMLDivElement | undefined
+  let header: HTMLElement | undefined
+  let visual: HTMLDivElement | undefined
+  let separator: HTMLDivElement | undefined
+  let detail: HTMLDivElement | undefined
+  let endDrag: (() => void) | undefined
+
+  const { location, current } = props.radarLocation
   const projectKey = () => {
     const value = current()
     return value ? JSON.stringify([value.server, value.project]) : ""
@@ -346,12 +361,47 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
       prefs().taskID && plan() && !plan()!.nodes.some((item) => item.taskID === prefs().taskID),
     )
   const stale = () => Boolean(visible()?.stale || !props.session.server.connected)
-  const staleLabel = () =>
-    !props.session.server.connected
-      ? "Server disconnected; observation is not live"
-      : visible()?.stale
-        ? `Observation is stale; last observation ${snapshot()?.observedAt ?? "unavailable"}`
-        : "Observation is current"
+  const scopeChoice = (): RadarScopeChoice =>
+    prefs().scope === "session"
+      ? "session"
+      : prefs().includeUnmanagedSessions
+        ? "project-all"
+        : "project"
+  const changeScope = (choice: RadarScopeChoice) =>
+    save(
+      choice === "session"
+        ? { scope: "session" }
+        : { scope: "project", includeUnmanagedSessions: choice === "project-all" },
+    )
+  const asOf = () => {
+    const observed = snapshot()?.observedAt ?? radar()?.observedAt
+    const time = observed === undefined ? Number.NaN : Date.parse(observed)
+    return Number.isFinite(time) ? time : undefined
+  }
+  const failure = () =>
+    visible()?.error || (location.error ? panelErrorMessage(location.error) : "")
+  const status = createPanelStatus(() => ({
+    subject: "Radar",
+    hasContent: Boolean(radar() || snapshot()),
+    loading: !location.error && (visible()?.loading ?? true),
+    disconnected: !props.session.server.connected,
+    ...(failure() ? { error: failure() } : {}),
+    ...(asOf() !== undefined ? { asOf: asOf()! } : {}),
+  }))
+  const connection = () =>
+    connectionChip(
+      !props.session.server.connected || (failure() && !radar() && !snapshot())
+        ? "offline"
+        : stale()
+          ? "reconnecting"
+          : "live",
+      asOf(),
+    )
+  /** The inspector and its separator exist only while something is selected. */
+  const hasDetail = () =>
+    prefs().view === "map"
+      ? Boolean(mapModel() && prefs().selectedMapID)
+      : Boolean(chosenTransition() || chosenState() || missingSelection())
   const currentPlanTransitions = () => transitions()
   const flowNode = () => node()
   const flowActiveState = () => {
@@ -406,6 +456,7 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
   return (
     <div
       class="lazers-radar"
+      data-inspector={hasDetail()}
       ref={(element) => {
         root = element
       }}
@@ -414,71 +465,61 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
         "--radar-detail-fr": `${100 - split()}fr`,
       }}
     >
-      <header
-        class="lazers-radar-header"
+      <RadarHeader
+        ui={Ui}
+        view={prefs().view === "flow" ? "flow" : "map"}
+        onView={(view) => (view === "monitor" ? props.onBack() : save({ view }))}
+        scope={scopeChoice()}
+        onScope={changeScope}
+        connection={connection()}
+        onRefresh={() => state.refreshNow()}
         ref={(element) => {
           header = element
         }}
+      />
+      <div
+        class="lazers-radar-visual"
+        data-panel-dimmed={status.dimmed()}
+        ref={(element) => {
+          visual = element
+        }}
+        onScroll={(event) => {
+          const key = `${expectedKey()}:${prefs().view}`
+          if (visualRestore.restored(key))
+            save({
+              visualScroll: event.currentTarget.scrollTop,
+              visualScrollLeft: event.currentTarget.scrollLeft,
+            })
+        }}
       >
-        <div class="lazers-radar-heading">
-          <h2>Radar</h2>
-          <span
-            class="lazers-radar-status-dot"
-            data-stale={stale()}
-            role="img"
-            aria-label={staleLabel()}
-            title={staleLabel()}
-          />
-          <span class="lazers-radar-scope">
-            <Ui.Menu
-              label={prefs().scope === "session" ? "Session" : "Project"}
-              trigger="button"
-              icon="chevron-down"
-              items={[
-                { label: "This session", onSelect: () => save({ scope: "session" }) },
-                { label: "Project", onSelect: () => save({ scope: "project" }) },
-              ]}
-            />
-          </span>
-        </div>
-        <div class="lazers-radar-controls">
-          <Ui.Button variant="ghost" onClick={props.onBack}>
-            Live monitor
-          </Ui.Button>
-          <Show when={prefs().view !== "map" ? snapshot() : undefined}>
-            {(value) => (
+        <PanelStatus ui={Ui} status={status} onRetry={() => state.refreshNow()} skeleton="chart" />
+        <Show when={prefs().view !== "map" && snapshot()}>
+          {(value) => (
+            <Show when={value().plans.length > 0}>
               <div class="lazers-radar-pickers">
-                <Show when={value().plans.length > 0}>
-                  <span class="lazers-radar-picker">
-                    <Ui.Menu
-                      label={
-                        plan()?.title ??
-                        plan()?.id.slice(0, 8) ??
-                        (planMissing() ? "Unavailable plan" : "Select plan")
-                      }
-                      trigger="button"
-                      items={value().plans.map((item) => ({
-                        label: item.title ?? item.id,
-                        onSelect: () =>
-                          save({
-                            planID: item.id,
-                            taskID: null,
-                            selectedTransition: null,
-                            selectedState: null,
-                            visualScroll: 0,
-                            detailScroll: 0,
-                          }),
-                      }))}
-                    />
-                  </span>
-                </Show>
+                <span class="lazers-radar-picker">
+                  <Ui.Menu
+                    label={plan()?.title ?? plan()?.id.slice(0, 8) ?? "Select plan"}
+                    trigger="button"
+                    items={value().plans.map((item) => ({
+                      label: item.title ?? item.id,
+                      onSelect: () =>
+                        save({
+                          planID: item.id,
+                          taskID: null,
+                          selectedTransition: null,
+                          selectedState: null,
+                          visualScroll: 0,
+                          detailScroll: 0,
+                        }),
+                    }))}
+                  />
+                </span>
                 <Show when={(plan()?.nodes.length ?? 0) > 1}>
                   <span class="lazers-radar-picker">
                     <Ui.Menu
                       label={
-                        node()
-                          ? `${node()!.state} · ${node()!.taskID.slice(0, 8)}`
-                          : "Unavailable task"
+                        node() ? `${node()!.state} · ${node()!.taskID.slice(0, 8)}` : "Select task"
                       }
                       trigger="button"
                       items={(plan()?.nodes ?? []).map((item) => ({
@@ -496,76 +537,16 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
                   </span>
                 </Show>
               </div>
-            )}
-          </Show>
-          <Show when={prefs().view === "map"}>
-            <button
-              type="button"
-              class="lazers-radar-other-sessions"
-              aria-pressed={prefs().includeUnmanagedSessions}
-              onClick={() => save({ includeUnmanagedSessions: !prefs().includeUnmanagedSessions })}
-            >
-              {prefs().includeUnmanagedSessions ? "Other sessions shown" : "Managed sessions"}
-            </button>
-          </Show>
-          <div class="lazers-radar-tabs" role="tablist" aria-label="Radar view">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={prefs().view === "map"}
-              onClick={() => save({ view: "map" })}
-            >
-              Map
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={prefs().view === "flow"}
-              onClick={() => save({ view: "flow" })}
-            >
-              Flow
-            </button>
-          </div>
-        </div>
-      </header>
-      <div
-        class="lazers-radar-visual"
-        ref={(element) => {
-          visual = element
-        }}
-        onScroll={(event) => {
-          const key = `${expectedKey()}:${prefs().view}`
-          if (visualRestore.restored(key))
-            save({
-              visualScroll: event.currentTarget.scrollTop,
-              visualScrollLeft: event.currentTarget.scrollLeft,
-            })
-        }}
-      >
-        <Show when={location.error}>
-          <div class="lazers-radar-note" data-error="true" role="alert">
-            {String(location.error)}
-          </div>
-        </Show>
-        <Show when={visible()?.error}>
-          <div class="lazers-radar-note" role="status">
-            {visible()?.error}
-            <Show when={props.session.server.connected}>
-              <Ui.Button variant="ghost" onClick={() => state.refreshNow()}>
-                Refresh
-              </Ui.Button>
             </Show>
-          </div>
+          )}
         </Show>
         <Show when={prefs().view === "map"}>
           <Show
             when={radar()}
             fallback={
-              <div class="lazers-radar-note">
-                {visible()?.loading
-                  ? "Loading operational Radar data…"
-                  : "No operational Radar data is available."}
-              </div>
+              <Show when={status.view().kind === "ready"}>
+                <div class="lazers-radar-note">No operational Radar data is available.</div>
+              </Show>
             }
           >
             {(operational) => (
@@ -618,7 +599,7 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
                 </details>
                 <Show when={visible()?.snapshotError}>
                   <div class="lazers-radar-note" role="status">
-                    Flow lifecycle detail is unavailable: {visible()?.snapshotError}
+                    Couldn't load flow detail.
                   </div>
                 </Show>
                 <Show
@@ -661,20 +642,13 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
           <Show
             when={snapshot()}
             fallback={
-              <div class="lazers-radar-note">
-                {visible()?.loading ? "Loading observation…" : "No observation is available."}
-              </div>
+              <Show when={status.view().kind === "ready"}>
+                <div class="lazers-radar-note">No observation is available.</div>
+              </Show>
             }
           >
             {(value) => (
               <>
-                <Show when={stale() && (visible()?.error || !props.session.server.connected)}>
-                  <div class="lazers-radar-note" role="status">
-                    {!props.session.server.connected
-                      ? "The server is disconnected. Displayed records are not live."
-                      : `Last observation ${timeLabel(Date.parse(value().observedAt))}.`}
-                  </div>
-                </Show>
                 <Show
                   when={value().plans.length > 0}
                   fallback={
@@ -899,145 +873,153 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
           </Show>
         </Show>
       </div>
-      <div
-        class="lazers-radar-separator"
-        ref={(element) => {
-          separator = element
-        }}
-        role="separator"
-        aria-label="Resize visualization and details"
-        aria-orientation="horizontal"
-        aria-valuemin={20}
-        aria-valuemax={80}
-        aria-valuenow={Math.round(split())}
-        tabIndex={0}
-        onPointerDown={drag}
-        onKeyDown={(event) => {
-          if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
-          event.preventDefault()
-          resize(
-            event.key === "Home"
-              ? 20
-              : event.key === "End"
-                ? 80
-                : split() + (event.key === "ArrowDown" ? 2 : -2),
-          )
-          save({ split: split() })
-        }}
-      />
-      <div
-        class="lazers-radar-detail"
-        ref={(element) => {
-          detail = element
-        }}
-        onScroll={(event) => {
-          if (detailRestore.restored(selectionKey()))
-            save({
-              detailScroll: event.currentTarget.scrollTop,
-              detailScrollLeft: event.currentTarget.scrollLeft,
-            })
-        }}
-      >
-        <Show when={prefs().view === "map"}>
-          <Show
-            when={mapModel()}
-            fallback={<div class="lazers-radar-note">Operational details are unavailable.</div>}
-          >
-            {(model) => (
-              <RadarMapInspector
-                model={model()}
-                selectedID={prefs().selectedMapID}
-                onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
-                monoFont={ctx.appearance.font("mono")}
-              />
-            )}
-          </Show>
-        </Show>
-        <Show when={prefs().view !== "map"}>
-          <Show
-            when={chosenTransition() || chosenState()}
-            fallback={
-              <div class="lazers-radar-note">
-                {missingSelection()
-                  ? "The selected record is no longer available in this observation."
-                  : "Select a recorded state or transition."}
-              </div>
-            }
-          >
-            <Show when={chosenTransition()}>
-              {(transition) => (
-                <>
-                  <h3>{transition().event}</h3>
-                  <dl>
-                    <dt>Sequence</dt>
-                    <dd>{transition().sequence}</dd>
-                    <dt>Recorded</dt>
-                    <dd>
-                      <time dateTime={timeValue(transition().recordedAt)}>
-                        {timeLabel(transition().recordedAt)}
-                      </time>
-                    </dd>
-                    <Show when={transition().from}>
-                      <dt>From</dt>
-                      <dd>{transition().from}</dd>
-                    </Show>
-                    <Show when={transition().to}>
-                      <dt>To</dt>
-                      <dd>{transition().to}</dd>
-                    </Show>
-                    <dt>Record</dt>
-                    <dd>{transition().kind}</dd>
-                    <Show when={transition().taskID}>
-                      <dt>Task</dt>
-                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                        {transition().taskID}
-                      </dd>
-                    </Show>
-                    <Show when={transition().attemptID}>
-                      <dt>Attempt</dt>
-                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                        {transition().attemptID}
-                      </dd>
-                    </Show>
-                    <Show when={transition().reason}>
-                      <dt>Reason</dt>
-                      <dd>{transition().reason}</dd>
-                    </Show>
-                  </dl>
-                </>
+      <Show when={hasDetail()}>
+        <div
+          class="lazers-radar-separator"
+          ref={(element) => {
+            separator = element
+          }}
+          role="separator"
+          aria-label="Resize visualization and details"
+          aria-orientation="horizontal"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(split())}
+          tabIndex={0}
+          onPointerDown={drag}
+          onKeyDown={(event) => {
+            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
+            event.preventDefault()
+            resize(
+              event.key === "Home"
+                ? 20
+                : event.key === "End"
+                  ? 80
+                  : split() + (event.key === "ArrowDown" ? 2 : -2),
+            )
+            save({ split: split() })
+          }}
+        />
+        <div
+          class="lazers-radar-detail"
+          ref={(element) => {
+            detail = element
+          }}
+          onScroll={(event) => {
+            if (detailRestore.restored(selectionKey()))
+              save({
+                detailScroll: event.currentTarget.scrollTop,
+                detailScrollLeft: event.currentTarget.scrollLeft,
+              })
+          }}
+        >
+          <Show when={prefs().view === "map"}>
+            <Show
+              when={mapModel()}
+              fallback={<div class="lazers-radar-note">Operational details are unavailable.</div>}
+            >
+              {(model) => (
+                <RadarMapInspector
+                  model={model()}
+                  selectedID={prefs().selectedMapID}
+                  onSelect={(id) => save({ selectedMapID: id, detailScroll: 0 })}
+                  monoFont={ctx.appearance.font("mono")}
+                />
               )}
             </Show>
-            <Show when={chosenState()}>
-              {(machineState) => {
-                const inspector = flowStateInspector(flowNode, snapshot, () => machineState().id)
-                return (
+          </Show>
+          <Show when={prefs().view !== "map"}>
+            <Show
+              when={chosenTransition() || chosenState()}
+              fallback={
+                <div class="lazers-radar-note">
+                  The selected record is no longer available in this observation.
+                </div>
+              }
+            >
+              <Show when={chosenTransition()}>
+                {(transition) => (
                   <>
-                    <h3>{machineState().id}</h3>
+                    <h3>{transition().event}</h3>
                     <dl>
-                      <dt>Type</dt>
-                      <dd>{machineState().type}</dd>
-                      <dt>Initial</dt>
-                      <dd>{inspector().initial}</dd>
-                      <dt>Current</dt>
-                      <dd>{inspector().current}</dd>
-                      <Show when={inspector().matchesRecordedState}>
-                        <dt>Recorded reason</dt>
-                        <dd>{inspector().reason}</dd>
+                      <dt>Sequence</dt>
+                      <dd>{transition().sequence}</dd>
+                      <Show when={timeLabel(transition().recordedAt)}>
+                        <dt>Recorded</dt>
+                        <dd>
+                          <time dateTime={timeValue(transition().recordedAt)}>
+                            {timeLabel(transition().recordedAt)}
+                          </time>
+                        </dd>
                       </Show>
-                      <dt>Machine</dt>
-                      <dd>{inspector().machine}</dd>
-                      <dt>Task</dt>
-                      <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                        {inspector().taskID}
-                      </dd>
+                      <Show when={transition().from}>
+                        <dt>From</dt>
+                        <dd>{transition().from}</dd>
+                      </Show>
+                      <Show when={transition().to}>
+                        <dt>To</dt>
+                        <dd>{transition().to}</dd>
+                      </Show>
+                      <dt>Record</dt>
+                      <dd>{transition().kind}</dd>
+                      <Show when={transition().taskID}>
+                        <dt>Task</dt>
+                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                          {transition().taskID}
+                        </dd>
+                      </Show>
+                      <Show when={transition().attemptID}>
+                        <dt>Attempt</dt>
+                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                          {transition().attemptID}
+                        </dd>
+                      </Show>
+                      <Show when={transition().reason}>
+                        <dt>Reason</dt>
+                        <dd>{transition().reason}</dd>
+                      </Show>
                     </dl>
                   </>
-                )
-              }}
+                )}
+              </Show>
+              <Show when={chosenState()}>
+                {(machineState) => {
+                  const inspector = flowStateInspector(flowNode, snapshot, () => machineState().id)
+                  return (
+                    <>
+                      <h3>{machineState().id}</h3>
+                      <dl>
+                        <dt>Type</dt>
+                        <dd>{machineState().type}</dd>
+                        <dt>Initial</dt>
+                        <dd>{inspector().initial}</dd>
+                        <Show when={inspector().current}>
+                          <dt>Current</dt>
+                          <dd>{inspector().current}</dd>
+                        </Show>
+                        <Show when={inspector().matchesRecordedState && inspector().reason}>
+                          <dt>Recorded reason</dt>
+                          <dd>{inspector().reason}</dd>
+                        </Show>
+                        <Show when={inspector().machine}>
+                          <dt>Machine</dt>
+                          <dd>{inspector().machine}</dd>
+                        </Show>
+                        <Show when={inspector().taskID}>
+                          <dt>Task</dt>
+                          <dd style={{ "font-family": ctx.appearance.font("mono") }}>
+                            {inspector().taskID}
+                          </dd>
+                        </Show>
+                      </dl>
+                    </>
+                  )
+                }}
+              </Show>
             </Show>
           </Show>
-        </Show>
-      </div>
+        </div>
+      </Show>
     </div>
   )
 }
@@ -1071,6 +1053,7 @@ export type RadarNavigation = {
 function RadarLiveMonitorPanel(
   props: PanelProps & {
     ctx: RadarContext
+    radarLocation: RadarLocation
     navigation: RadarNavigation
     onOpenDiagnostics: () => void
   },
@@ -1080,32 +1063,7 @@ function RadarLiveMonitorPanel(
   const [stateData, setStateData] = createSignal<RadarMonitorData>(emptyRadarMonitorData())
   const [dragSplit, setDragSplit] = createSignal<number | null>(null)
   const state = new RadarMonitorState(setStateData)
-  const location = createLatest(
-    () => {
-      if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
-      return {
-        client: props.session.server.client,
-        session: props.session.id,
-        server: props.session.server.id,
-        directory: props.session.directory,
-      }
-    },
-    async (source, signal) => {
-      // Path identity from the global project list: location.get boots an unloaded location.
-      return { ...source, ...(await resolveRadarProject(source.client, source.directory, signal)) }
-    },
-  )
-  const current = () => {
-    if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
-    const value = location.latest
-    return value &&
-      value.session === props.session.id &&
-      value.server === props.session.server.id &&
-      value.directory === props.session.directory &&
-      !location.loading
-      ? value
-      : undefined
-  }
+  const { location, current } = props.radarLocation
   const projectKey = () => {
     const value = current()
     return value ? JSON.stringify([value.server, value.project]) : ""
@@ -1197,6 +1155,13 @@ function RadarLiveMonitorPanel(
         ? { scope: "session" }
         : { scope: "project", includeUnmanagedSessions: choice === "project-all" },
     )
+  const locationStatus = createPanelStatus(() => ({
+    subject: "live activity",
+    hasContent: false,
+    loading: !location.error,
+    ...(location.error ? { error: panelErrorMessage(location.error) } : {}),
+  }))
+  const openTasks = () => ctx.layout.open(`${ctx.id}:tasks`, props.session, { tab: "select" })
   const taskTarget = (taskID: string) => {
     const value = current()
     return value
@@ -1208,11 +1173,20 @@ function RadarLiveMonitorPanel(
     <Show
       when={current()}
       fallback={
-        <div class="lazers-radar lazers-radar-monitor">
-          <div class="lazers-radar-note" role={location.error ? "alert" : "status"}>
-            {location.error
-              ? `Project identity is unavailable. ${panelErrorMessage(location.error)}`
-              : "Resolving the project location…"}
+        <div class="lazers-radar lazers-radar-monitor" data-inspector="false">
+          <RadarHeader
+            ui={ctx.ui}
+            view="monitor"
+            onView={(view) => {
+              if (view !== "monitor") props.onOpenDiagnostics()
+            }}
+            scope={prefs().scope === "session" ? "session" : "project"}
+            onScope={changeScope}
+            connection={connectionChip(location.error ? "offline" : "reconnecting")}
+            onRefresh={() => {}}
+          />
+          <div class="lazers-radar-top">
+            <PanelStatus ui={ctx.ui} status={locationStatus} skeleton="rows" />
           </div>
         </div>
       }
@@ -1236,7 +1210,12 @@ function RadarLiveMonitorPanel(
         }}
         onRefresh={() => state.refreshNow()}
         onLoadMoreHistory={() => state.loadMoreHistory()}
-        onOpenDiagnostics={props.onOpenDiagnostics}
+        onView={(view: RadarViewChoice) => {
+          if (view === "monitor") return
+          save({ view })
+          props.onOpenDiagnostics()
+        }}
+        onOpenTasks={openTasks}
         onOpenWorker={(sessionID) =>
           ctx.tabs.open({ server: props.session.server.id, id: sessionID }, { focus: true })
         }
@@ -1267,6 +1246,7 @@ function RadarLiveMonitorPanel(
 
 function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNavigation }) {
   const store = () => props.ctx.stores.radarView(props.session)
+  const radarLocation = createRadarLocation(props)
   const setDiagnostics = (open: boolean) =>
     store().update((draft) => {
       draft.diagnostics = open
@@ -1277,12 +1257,17 @@ function RadarPanel(props: PanelProps & { ctx: RadarContext; navigation: RadarNa
       fallback={
         <RadarLiveMonitorPanel
           {...props}
+          radarLocation={radarLocation}
           navigation={props.navigation}
           onOpenDiagnostics={() => setDiagnostics(true)}
         />
       }
     >
-      <RadarDiagnosticsPanel {...props} onBack={() => setDiagnostics(false)} />
+      <RadarDiagnosticsPanel
+        {...props}
+        radarLocation={radarLocation}
+        onBack={() => setDiagnostics(false)}
+      />
     </Show>
   )
 }
