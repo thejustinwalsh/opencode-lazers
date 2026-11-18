@@ -1,9 +1,12 @@
-import { Show, For, onCleanup, onMount } from "solid-js"
+import { Show, For } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { PanelStatus } from "../panel-status.tsx"
-import { ComparisonChart, comparisonChartHasPlottablePoints } from "./comparison-chart.tsx"
-import { BenchmarkChart, benchmarkSourceName } from "./benchmark-chart.tsx"
+import { ModelChart } from "./model-chart.tsx"
+import { AllModelsTable } from "./all-models-table.tsx"
+import { benchmarkSourceName, comparisonChartEmptyText } from "./chart-data.ts"
+import { formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
+import { sourceTagLabel } from "./catalog-projection.ts"
 import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import {
   boundedModelLabel,
@@ -11,6 +14,7 @@ import {
   joinSegments,
   retrievedLabel,
   formatMarketAmount,
+  formatMarketRange,
   numericValue,
   recordReferenceLabel,
   routeLabel,
@@ -18,14 +22,7 @@ import {
   sourceTitle,
 } from "./comparison-presentation.ts"
 import { KnownUsageMarketScenarioCard } from "./known-usage-card.tsx"
-import {
-  formatMoney,
-  formatNumber,
-  chartHeightBounds,
-  chartFooterReserve,
-  hasCompareLowerPane,
-  statusText,
-} from "./panel-shared.ts"
+import { formatMoney, formatNumber, hasCompareLowerPane, statusText } from "./panel-shared.ts"
 import { Disclosure, SplitPane } from "./panel-layout.tsx"
 import {
   benchmarkLabel,
@@ -117,7 +114,7 @@ export function BenchmarkEmptyState(props: {
   )
 }
 
-/** Compare mode top pane: the chart or the benchmark chart. */
+/** Compare mode top pane: the plot for the chosen basis, drawn by `ModelChart`. */
 export function CompareTop(props: { ctl: ModelsController }) {
   const ctl = props.ctl
   const {
@@ -126,59 +123,22 @@ export function CompareTop(props: { ctl: ModelsController }) {
     benchmarkAsOf,
     benchmarkEmptyText,
     benchmarkNeedsOpenRouter,
-    observedCaption,
-    openProviderSettings,
+    benchmarkPoints,
     benchmarkPriceSourceLabel,
-    chartHeight,
+    catalogLoadingLine,
     compareMode,
-    ctx,
-    decisionChartPoints,
-    dataMount,
     decisionChartReferences,
+    observedCaption,
+    observedPoints,
+    openProviderSettings,
+    projectedPoints,
     refreshAll,
-    status,
     selectCompareMode,
     selectedBenchmark,
-    setChartHeight,
     state,
+    status,
     visible,
   } = ctl
-
-  // Size the plot from the space left in the top pane. Chart data and the legend sit
-  // below the plot, so opening them scrolls the pane instead of shrinking the plot.
-  const fitChart = () => {
-    const plot = ctl.refs.topPane?.querySelector<HTMLElement>(
-      ".lazers-models-comparison-chart-plot",
-    )
-    if (
-      !ctl.refs.topPane ||
-      !plot ||
-      ctl.refs.topPane.clientHeight <= 0 ||
-      !plot.getClientRects().length
-    )
-      return
-    const offset =
-      plot.getBoundingClientRect().top -
-      ctl.refs.topPane.getBoundingClientRect().top +
-      ctl.refs.topPane.scrollTop
-    const next = Math.round(
-      Math.min(
-        chartHeightBounds.maximum,
-        Math.max(
-          chartHeightBounds.minimum,
-          ctl.refs.topPane.clientHeight - offset - chartFooterReserve,
-        ),
-      ),
-    )
-    if (next !== chartHeight()) setChartHeight(next)
-  }
-  onMount(() => {
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(() => fitChart())
-    for (const element of [ctl.refs.topPane, ctl.refs.header, ctl.refs.comparison])
-      if (element) observer.observe(element)
-    onCleanup(() => observer.disconnect())
-  })
 
   return (
     <section
@@ -193,42 +153,57 @@ export function CompareTop(props: { ctl: ModelsController }) {
         <div class="lazers-models-overview" data-panel-dimmed={status.dimmed()}>
           <section class="lazers-models-chart" aria-labelledby="lazers-models-chart-title">
             <h3 id="lazers-models-chart-title" class="lazers-models-visually-hidden">
-              {(() => {
-                if (compareMode() === "benchmark") return "Public benchmark"
-                const points = visible()?.decisionOverview?.graph.points ?? []
-                const references = decisionChartReferences()
-                if (comparisonChartHasPlottablePoints(points)) return "Task outcomes"
-                if (comparisonChartHasPlottablePoints([], references)) return "Catalog estimates"
-                return "Comparison"
-              })()}
+              {compareMode() === "benchmark"
+                ? "Public benchmark"
+                : compareMode() === "projected"
+                  ? "Projected cost"
+                  : "Task outcomes"}
             </h3>
             <Show when={compareMode() === "observed"}>
               <Show when={visible()?.decisionOverview}>
-                {(overview) => (
-                  <ComparisonChart
-                    dataMount={dataMount}
-                    points={decisionChartPoints()}
-                    references={decisionChartReferences()}
-                    frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
-                    caption={observedCaption()}
-                    selectedConfigurationID={visible()?.selectedConfigurationID}
-                    onSelect={(configurationID) => state.selectConfiguration(configurationID)}
-                    appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                    monoFontFamily={ctx.appearance.font("mono")}
-                    emptyAction={
-                      <Show when={(baseline()?.points.length ?? 0) > 0}>
-                        <Ui.Button
-                          size="small"
-                          variant="ghost-muted"
-                          onClick={() => selectCompareMode("benchmark")}
-                        >
-                          Show public benchmark
-                        </Ui.Button>
-                      </Show>
-                    }
-                  />
-                )}
+                <ModelChart
+                  points={observedPoints()}
+                  selectedID={visible()?.selectedConfigurationID ?? null}
+                  onSelect={(configurationID) => state.selectConfiguration(configurationID)}
+                  xTitle="Tokens per accepted task"
+                  yTitle="Cost per accepted task"
+                  formatX={formatAxisTokens}
+                  formatY={formatAxisMoney}
+                  xScale="auto-log"
+                  label="Model cost chart. Arrow keys move between models; Enter selects."
+                  caption={observedCaption()}
+                  emptyText={comparisonChartEmptyText(
+                    visible()?.decisionOverview?.graph.points ?? [],
+                    decisionChartReferences(),
+                  )}
+                  emptyAction={
+                    <Show when={(baseline()?.points.length ?? 0) > 0}>
+                      <Ui.Button
+                        size="small"
+                        variant="ghost-muted"
+                        onClick={() => selectCompareMode("projected")}
+                      >
+                        Show projected cost
+                      </Ui.Button>
+                    </Show>
+                  }
+                />
               </Show>
+            </Show>
+            <Show when={compareMode() === "projected"}>
+              <ModelChart
+                points={projectedPoints()}
+                selectedID={visible()?.selectedCandidateID ?? null}
+                onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                xTitle="Public coding index"
+                yTitle="Projected cost per accepted task"
+                formatX={(value) => String(Math.round(value))}
+                formatY={formatAxisMoney}
+                label="Projected cost chart. Arrow keys move between models; Enter selects."
+                backedLegend="From your runs"
+                caption="List prices × your median tokens"
+                emptyText="No model has both a list price and a public coding index yet, or there are no accepted tasks to project from."
+              />
             </Show>
             <Show when={compareMode() === "benchmark"}>
               <Show
@@ -241,45 +216,124 @@ export function CompareTop(props: { ctl: ModelsController }) {
                   />
                 }
               >
-                <BenchmarkChart
-                  dataMount={dataMount}
-                  points={baseline()?.points ?? []}
-                  gaps={baseline()?.gaps ?? []}
+                <ModelChart
+                  points={benchmarkPoints()}
                   selectedID={selectedBenchmark()?.id ?? null}
                   onSelect={(candidateID) => state.selectCandidate(candidateID)}
+                  xTitle={`List price per 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`}
+                  yTitle="Coding index"
+                  formatX={formatAxisMoney}
+                  formatY={(value) => String(Math.round(value))}
+                  label="Public benchmark chart. Arrow keys move between models; Enter selects."
+                  caption={`Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price`}
                   emptyText={benchmarkEmptyText()}
-                  caption={`Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`}
-                  appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
-                  monoFontFamily={ctx.appearance.font("mono")}
-                  dataFooter={
-                    <div class="lazers-models-benchmark-coverage">
-                      <p>
-                        {baseline()?.points.length ?? 0} plotted ·{" "}
-                        {baseline()?.unmatchedRoutes ?? 0} loaded catalog models without a benchmark
-                        match
-                        {baseline()?.ambiguousRoutes
-                          ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
-                          : ""}
-                      </p>
-                      <Show when={visible()?.comparison?.nextCursor}>
-                        <Ui.Button
-                          size="small"
-                          variant="ghost"
-                          busy={visible()?.comparisonLoading}
-                          onClick={() => void state.moreCandidates()}
-                        >
-                          Load more catalog models
-                        </Ui.Button>
-                      </Show>
-                    </div>
-                  }
                 />
+                <p class="lazers-models-benchmark-coverage">
+                  {baseline()?.points.length ?? 0} plotted · {baseline()?.unmatchedRoutes ?? 0}{" "}
+                  loaded catalog models without a benchmark match
+                  {baseline()?.ambiguousRoutes
+                    ? ` · ${baseline()!.ambiguousRoutes} with several benchmark rows, not matched by effort`
+                    : ""}
+                </p>
               </Show>
+            </Show>
+            <Show when={catalogLoadingLine()}>
+              {(line) => (
+                <p class="lazers-models-note" role="status">
+                  {line()}
+                </p>
+              )}
             </Show>
           </section>
         </div>
       </Show>
     </section>
+  )
+}
+
+/** Projected mode: the selected catalog model, its projected cost and where it came from. */
+function ProjectedSummary(props: { ctl: ModelsController }) {
+  const { catalogEntries, profile, visible } = props.ctl
+  const entry = () => catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+  return (
+    <Show
+      when={entry()}
+      fallback={
+        <p class="lazers-models-note" role="status">
+          Select a model on the chart to see its projected cost.
+        </p>
+      }
+    >
+      {(item) => (
+        <>
+          <dl class="lazers-models-stats" aria-label="Selected model facts">
+            <Show when={item().score !== null}>
+              <div>
+                <dt>coding index</dt>
+                <dd>{item().score}</dd>
+              </div>
+            </Show>
+            <Show when={item().observed}>
+              {(observed) => (
+                <>
+                  <div>
+                    <dt>measured</dt>
+                    <dd>
+                      {observed().range
+                        ? formatMarketRange(observed().range!)
+                        : formatMarketAmount(observed().usd)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>accepted</dt>
+                    <dd>
+                      {observed().terminal
+                        ? `${observed().accepted} of ${observed().terminal}`
+                        : observed().accepted}
+                    </dd>
+                  </div>
+                </>
+              )}
+            </Show>
+            <div>
+              <dt>from</dt>
+              <dd>
+                {item()
+                  .tags.map((tag) => sourceTagLabel[tag])
+                  .join(" · ")}
+              </dd>
+            </div>
+          </dl>
+          <Disclosure
+            title="Estimate basis and prices"
+            hint={item().price ? benchmarkSourceName[item().price!.source] : undefined}
+          >
+            <p>
+              List prices times the median tokens per accepted task across our{" "}
+              {profile()?.configurations ?? 0} observed configurations (
+              {profile()?.acceptedTasks ?? 0} accepted tasks):{" "}
+              {formatNumber(Math.round(profile()?.uncachedInput ?? 0))} input,{" "}
+              {formatNumber(Math.round(profile()?.cacheRead ?? 0))} cached input,{" "}
+              {formatNumber(Math.round(profile()?.output ?? 0))} output and{" "}
+              {formatNumber(Math.round(profile()?.reasoning ?? 0))} reasoning tokens.
+              {item().projection?.cacheAtInputRate
+                ? " This model lists no cache rate, so cached tokens are priced at its input rate."
+                : ""}
+            </p>
+            <Show when={item().price}>
+              {(price) => (
+                <p>
+                  {benchmarkSourceName[price().source]} list price per 1M tokens · input{" "}
+                  {formatMarketAmount(price().input)} · output {formatMarketAmount(price().output)}
+                  {price().retrievedAt ? ` · ${retrievedLabel(price().retrievedAt)}` : ""}
+                </p>
+              )}
+            </Show>
+            <SourcesDetails ctl={props.ctl} />
+          </Disclosure>
+        </>
+      )}
+    </Show>
   )
 }
 
@@ -307,7 +361,9 @@ function CompareInspector(props: { ctl: ModelsController }) {
     basisHint,
     heldInspection,
     selectTask,
-    setDataMount,
+    catalogEntries,
+    allModelsSelectedID,
+    selectEntry,
     selectedTask,
     showObservedFor,
     state,
@@ -322,6 +378,9 @@ function CompareInspector(props: { ctl: ModelsController }) {
       id="lazers-models-compare-panel"
       aria-labelledby="lazers-models-compare-tab"
     >
+      <Show when={compareMode() === "projected"}>
+        <ProjectedSummary ctl={ctl} />
+      </Show>
       <Show when={compareMode() === "benchmark"}>
         <Show
           when={selectedBenchmark()}
@@ -986,12 +1045,13 @@ function CompareInspector(props: { ctl: ModelsController }) {
           )}
         </Show>
       </Show>
-      <div
-        ref={(element) => {
-          setDataMount(element)
-          onCleanup(() => setDataMount(undefined))
-        }}
-      />
+      <Show when={catalogEntries().length > 0}>
+        <AllModelsTable
+          entries={catalogEntries()}
+          selectedID={allModelsSelectedID()}
+          onSelect={selectEntry}
+        />
+      </Show>
     </section>
   )
 }
@@ -1012,11 +1072,43 @@ function compareDetails(ctl: ModelsController) {
     selectedBenchmark,
     selectedDecisionConfiguration,
     selectedFacts,
+    catalogEntries,
+    visible,
   } = ctl
+  const projected = () =>
+    compareMode() === "projected"
+      ? catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+      : undefined
   const selected = () =>
-    compareMode() === "benchmark" ? selectedBenchmark() : selectedDecisionConfiguration()
+    compareMode() === "projected"
+      ? projected()
+      : compareMode() === "benchmark"
+        ? selectedBenchmark()
+        : selectedDecisionConfiguration()
   const header = () => {
     if (!selected()) return undefined
+    return (
+      <Show when={projected()} fallback={<ObservedOrBenchmarkHeader />}>
+        {(item) => (
+          <span class="lazers-models-selected-identity">
+            <h2>{boundedModelLabel(item().label)}</h2>
+            <code>
+              {item().route.providerID}/{item().route.modelID}
+            </code>
+            <Show when={item().projection}>
+              {(projection) => (
+                <span class="lazers-models-selected-price">
+                  <strong>{formatMarketAmount(projection().usd)}</strong> projected per accepted
+                  task
+                </span>
+              )}
+            </Show>
+          </span>
+        )}
+      </Show>
+    )
+  }
+  const ObservedOrBenchmarkHeader = () => {
     return (
       <Show
         when={compareMode() === "benchmark" ? selectedBenchmark() : undefined}
@@ -1070,9 +1162,13 @@ function compareDetails(ctl: ModelsController) {
     )
   }
   const actions = () => {
-    const entry = compareMode() === "benchmark" ? selectedBenchmark() : undefined
-    const configuration =
-      compareMode() === "benchmark" ? undefined : selectedDecisionConfiguration()
+    const entry =
+      compareMode() === "benchmark"
+        ? selectedBenchmark()
+        : compareMode() === "projected"
+          ? projected()
+          : undefined
+    const configuration = compareMode() === "observed" ? selectedDecisionConfiguration() : undefined
     if (!entry && !configuration) return undefined
     return (
       <Show

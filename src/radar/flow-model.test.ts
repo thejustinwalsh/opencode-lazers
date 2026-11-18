@@ -85,6 +85,7 @@ function live(parts: {
     calls: parts.calls ?? [],
     flow: parts.flow ?? [],
     routes: parts.routes ?? [],
+    scope: { kind: "project" },
     scheduler: { status: "scheduled", participants: 1 },
     ...(parts.workload ? { workload: parts.workload } : {}),
   } as unknown as LiveRadarResponse
@@ -351,4 +352,50 @@ test("the mockup fixture yields every destination, the failed worker and the wai
 test("Flow lists only the sessions the shared idle filter shows", () => {
   const model = createFlowModel(busy(), NOW, new Set(["arch", "lz-1"]))
   expect(model.sessions.map((item) => item.sessionID)).toEqual(["arch", "lz-1"])
+})
+
+test("code-mode execute and lz-* calls are LAZERS tools, not Other tools", () => {
+  expect(toolDestination("execute", false, false)).toMatchObject({
+    id: "lazers",
+    name: "LAZERS tools",
+    kind: "service",
+  })
+  expect(toolDestination("lz-query-tasks", false, false).name).toBe("LAZERS tools")
+  expect(toolDestination("mystery", false, false).name).toBe("Other tools")
+})
+
+test("recorded call summaries reach the feed and the doing line", () => {
+  const response = live({
+    sessions: [architect, session("lz-1")],
+    calls: [
+      {
+        ...call("lz-1", "d1", {
+          tool: "bash",
+          status: "running",
+          completedAt: null,
+          inputAt: NOW - 2_000,
+        }),
+        detail: "bun test src/runner/resume.test.ts",
+      },
+      {
+        ...call("lz-1", "d2", { tool: "read", completedAt: NOW - 9_000, inputAt: NOW - 9_500 }),
+        detail: "src/runner/lifecycle.ts",
+      },
+    ],
+  })
+  const model = createFlowModel(response, NOW)
+  expect(model.sessions.find((item) => item.sessionID === "lz-1")?.doing).toBe(
+    "▸ bash: bun test src/runner/resume.test.ts",
+  )
+  const detail = Object.fromEntries(model.feed.map((row) => [row.id, row.detail]))
+  expect(detail.d1).toBe("bun test src/runner/resume.test.ts")
+  expect(detail.d2).toBe("read src/runner/lifecycle.ts")
+})
+
+test("the session column grows with the panel, up to 420 px", () => {
+  const model = createFlowModel(busy(), NOW)
+  expect(layoutFlow(model, 500).frame.width).toBe(274)
+  expect(layoutFlow(model, 740).frame.width).toBe(333)
+  expect(layoutFlow(model, 1200).frame.width).toBe(420)
+  expect(layoutFlow(model, 360).frame.width).toBe(180)
 })

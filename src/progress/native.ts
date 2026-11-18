@@ -318,6 +318,7 @@ export function registerProgress(
             agent: call.agent,
             messageID: call.messageID,
             callID: call.id,
+            input: call.input,
             status: call.status,
             ...(call.status === "completed" ? { result: call.result } : { error: call.error }),
           })
@@ -337,6 +338,7 @@ export function registerProgress(
             agent: call.agent,
             messageID: call.messageID,
             callID: call.id,
+            input: call.input,
           })
         } catch {
           // Tool observation cannot reject a native call.

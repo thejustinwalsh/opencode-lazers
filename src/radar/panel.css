@@ -1078,6 +1078,10 @@
   fill: var(--text-strong);
   font-weight: 500;
 }
+.lazers-radar-flowcanvas .lazers-radar-flow-title {
+  fill: var(--text-weak);
+  font-size: 11.5px;
+}
 .lazers-radar-flowcanvas .lazers-radar-flow-ref {
   fill: var(--text-weak);
   font-family: var(--font-family-mono, ui-monospace, monospace);
@@ -1294,4 +1298,18 @@
   color: var(--text-weak);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* Mouse clicks leave no outline; keyboard focus gets the host ring. */
+.lazers-radar button:focus:not(:focus-visible),
+.lazers-radar [role="tab"]:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+.lazers-radar-flow-tabs > button[role="tab"]:focus-visible,
+.lazers-radar-inspector-tabs button:focus-visible,
+.lazers-radar-views button:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--border-selected);
+  outline-offset: 2px;
 }

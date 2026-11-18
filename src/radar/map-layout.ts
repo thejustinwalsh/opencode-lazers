@@ -57,25 +57,47 @@ export function layoutMap(map: RadarMap, width: number): MapLayout {
     place(node, centerX - topWidth / 2, y, topWidth)
     y += nodeHeight + rowGap
   }
+  // Items under a group are siblings: a rail runs down the group's left side and a short tick
+  // reaches each item, org-chart style, so nothing reads as a chain or a dependency.
+  const indent = 16 * scale
+  const itemGap = 10 * scale
+  const itemTop = nodeHeight + 14 * scale
+  const rails = new Map<string, number>()
   groups.forEach((group, index) => {
     const x = centerX - blockWidth / 2 + index * (columnWidth + columnGap)
     place(group, x, y, columnWidth)
+    rails.set(group.id, x + indent / 2)
     map.nodes
       .filter((node) => node.parent === group.id)
-      .forEach((item, row) => place(item, x, y + (row + 1) * (nodeHeight + rowGap), columnWidth))
+      .forEach((item, row) =>
+        place(item, x + indent, y + itemTop + row * (nodeHeight + itemGap), columnWidth - indent),
+      )
   })
   const bottom = Math.max(...[...placed.values()].map((node) => node.y + node.height))
 
+  const tickY = (node: PlacedNode) => Math.round(node.y + node.height / 2)
   const edges = map.edges.flatMap((edge): PlacedEdge[] => {
-    // Items stack in their group's column: each hangs from the one above it, so a line never
-    // runs behind a sibling and borrows its tone.
-    const siblings = map.nodes.filter((node) => node.parent === edge.from && node.kind !== "group")
-    const above = siblings[siblings.findIndex((node) => node.id === edge.to) - 1]
-    const from = placed.get(above ? above.id : edge.from)
     const to = placed.get(edge.to)
-    if (!from || !to) return []
-    const x1 = from.x + from.width / 2
-    const y1 = from.y + from.height
+    const group = placed.get(edge.from)
+    if (!to || !group) return []
+    const rail = rails.get(edge.from)
+    if (rail !== undefined && to.kind !== "group") {
+      // From the previous tick (or the group) down the rail, then across to this item.
+      const siblings = map.nodes.filter((node) => node.parent === edge.from)
+      const above = siblings[siblings.findIndex((node) => node.id === edge.to) - 1]
+      const start = above ? tickY(placed.get(above.id)!) : group.y + group.height
+      return [
+        {
+          id: edge.id,
+          from: edge.from,
+          to: edge.to,
+          tone: edge.tone,
+          d: `M${rail} ${start}V${tickY(to)}H${to.x}`,
+        },
+      ]
+    }
+    const x1 = group.x + group.width / 2
+    const y1 = group.y + group.height
     const x2 = to.x + to.width / 2
     const mid = Math.round(y1 + rowGap / 2)
     const d = Math.abs(x1 - x2) < 0.5 ? `M${x1} ${y1}V${to.y}` : `M${x1} ${y1}V${mid}H${x2}V${to.y}`

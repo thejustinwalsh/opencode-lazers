@@ -451,6 +451,8 @@ export const ModelDecisionGraphPointSchema = z
     currentMarketUSDPerAcceptedTask: Nonnegative,
     observationCount: z.int().positive(),
     acceptedTaskCount: Count,
+    /** Accepted and rejected logical tasks together; the base of the acceptance rate. */
+    terminalTaskCount: Count.optional(),
     partial: z.boolean(),
   })
   .refine((point) => point.acceptedTaskCount > 0, {

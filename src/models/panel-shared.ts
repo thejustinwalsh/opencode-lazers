@@ -30,7 +30,9 @@ const Preference = Schema.Struct({
   size: Schema.optional(Schema.Number),
   evidenceOpen: Schema.optional(Schema.Boolean),
   /** Explicit comparison choice; absent means pick from the available data. */
-  compareMode: Schema.optional(Schema.NullOr(Schema.Literals(["observed", "benchmark"]))),
+  compareMode: Schema.optional(
+    Schema.NullOr(Schema.Literals(["observed", "projected", "benchmark"])),
+  ),
   topScroll: Schema.Number,
   inspectorScroll: Schema.Number,
 })
@@ -73,10 +75,6 @@ export const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
 export const modelTaskKinds = Object.keys(modelTaskKindLabels) as ModelDecisionTaskKind[]
 
 export const clampSplit = (value: number) => Math.min(76, Math.max(24, value))
-/** Plot height bounds; the pane supplies the height in between. */
-export const chartHeightBounds = { minimum: 168, maximum: 320 } as const
-/** Legend, Chart data summary and pane padding kept visible below the plot. */
-export const chartFooterReserve = 56
 
 export function formatNumber(value: number) {
   return value.toLocaleString()

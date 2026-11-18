@@ -167,6 +167,7 @@ function PanelHeader(props: { ctl: ModelsController }) {
             onChange={selectCompareMode}
             options={[
               { value: "observed", label: "Your runs" },
+              { value: "projected", label: "Projected" },
               { value: "benchmark", label: "Benchmark" },
             ]}
           />
@@ -180,7 +181,7 @@ function ModelPanel(
   props: PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajectoryOpener },
 ) {
   const ctl = createModelsController(props)
-  const { refs, chartHeight, prefs } = ctl
+  const { refs, prefs } = ctl
   const header = <PanelHeader ctl={ctl} />
   return (
     <div
@@ -188,9 +189,7 @@ function ModelPanel(
       ref={(element) => {
         refs.root = element
       }}
-      style={{
-        ...(chartHeight() ? { "--models-chart-height": `${chartHeight()}px` } : {}),
-      }}
+      style={{}}
     >
       <Show
         when={prefs().tab === "assignments"}

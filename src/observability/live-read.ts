@@ -601,6 +601,9 @@ function toNativeObservations(
       error: text(error?.message, 240, stats),
       payloadAvailable: true,
       ...(requestedFiles ? { fileTargets: requestedFiles } : {}),
+      ...(typeof fact.detail === "string" && fact.detail
+        ? { detail: contractText(fact.detail, stats, 200) }
+        : {}),
     })
   }
 
@@ -1223,6 +1226,9 @@ export class LiveRadarReader {
         ...(native?.parentID && native.parentID.length <= 200
           ? { parentSessionID: native.parentID }
           : {}),
+        ...(fresh && native?.title?.trim()
+          ? { title: contractText(native.title.trim(), stats, 200) }
+          : {}),
         isViewSession: candidate.id === request.scope.sessionID,
         isCurrentArchitect:
           candidate.id !== request.scope.sessionID || !native
@@ -1286,6 +1292,24 @@ export class LiveRadarReader {
       if (busy) return busy
       return (right.updatedAt ?? 0) - (left.updatedAt ?? 0)
     })
+
+    // Calls and tool phases without their own summary take the one recorded for the same call.
+    const details = this.source.toolDetails(
+      sessionRows.map((row) => row.sessionID),
+      signal,
+    )
+    if (details.size > 0) {
+      for (const call of calls)
+        if (!call.detail) {
+          const detail = details.get(`${call.sessionID}\u0000${call.callID}`)
+          if (detail) call.detail = contractText(detail, stats, 200)
+        }
+      for (const item of flow)
+        if (item.kind === "tool-phase" && item.callID && !item.detail) {
+          const detail = details.get(`${item.sessionID}\u0000${item.callID}`)
+          if (detail) item.detail = contractText(detail, stats, 200)
+        }
+    }
 
     const response = {
       schemaVersion: 1 as const,
