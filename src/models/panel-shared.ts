@@ -23,7 +23,11 @@ const Preference = Schema.Struct({
   taskFilter: Schema.optional(Schema.Boolean),
   selectedCandidateID: Schema.NullOr(Schema.String),
   selectedConfigurationID: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Retired list/inspector split; read once to size the details pane. */
   split: Schema.Number,
+  /** Details pane: closed by default; size is the body's fraction of the panel. */
+  open: Schema.optional(Schema.Boolean),
+  size: Schema.optional(Schema.Number),
   evidenceOpen: Schema.optional(Schema.Boolean),
   /** Explicit comparison choice; absent means pick from the available data. */
   compareMode: Schema.optional(

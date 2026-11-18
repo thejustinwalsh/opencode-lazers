@@ -181,7 +181,7 @@ function ModelPanel(
   props: PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajectoryOpener },
 ) {
   const ctl = createModelsController(props)
-  const { refs, split, prefs } = ctl
+  const { refs, prefs } = ctl
   const header = <PanelHeader ctl={ctl} />
   return (
     <div
@@ -189,9 +189,7 @@ function ModelPanel(
       ref={(element) => {
         refs.root = element
       }}
-      style={{
-        "--models-top-size": `${split()}%`,
-      }}
+      style={{}}
     >
       <Show
         when={prefs().tab === "assignments"}

@@ -1,16 +1,23 @@
 import { Store, bindPlugin, createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
-import { For, Index, Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
+import {
+  For,
+  Index,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+} from "solid-js"
 import type { JSX } from "solid-js"
 import { Observability } from "../observability/contract.ts"
-import {
-  clampSplit,
-  rulerLabels,
-  slowSeconds,
-  splitFromKey,
-  splitFromPointer,
-} from "./panel-layout.ts"
+import { rulerLabels, slowSeconds } from "./panel-layout.ts"
+import { DetailsPane } from "../details-pane.tsx"
+import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { PanelIcon } from "./icons.tsx"
 import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
@@ -81,7 +88,11 @@ const View = Schema.Struct({
   target: Schema.optionalKey(Schema.NullOr(TaskTarget)),
   selectedKind: SelectionKind,
   selectedRecordID: Schema.String,
-  split: Schema.Number,
+  /** Retired timeline/inspector split; read once to size the details pane. */
+  split: Schema.optionalKey(Schema.Number),
+  /** Details pane: closed by default; size is the body's fraction of the panel. */
+  open: Schema.optionalKey(Schema.Boolean),
+  size: Schema.optionalKey(Schema.Number),
   zoom: Schema.optionalKey(Schema.Number),
 })
 const initial: typeof View.Type = {
@@ -91,7 +102,6 @@ const initial: typeof View.Type = {
   target: null,
   selectedKind: "",
   selectedRecordID: "",
-  split: 56,
 }
 
 export const trajectoryStores = {
@@ -255,7 +265,6 @@ function PanelView(
     error: "",
     asOf: null,
   })
-  const [split, setSplit] = createSignal(initial.split)
   const [zoom, setZoom] = createSignal(1)
   const [axisWidth, setAxisWidth] = createSignal(0)
   let axisObserver: ResizeObserver | undefined
@@ -287,9 +296,6 @@ function PanelView(
     undefined,
     { cache: trajectoryViewCache },
   )
-  let root: HTMLDivElement | undefined
-  let separator: HTMLDivElement | undefined
-  let endDrag: (() => void) | undefined
   let handledTargetRequestID = ""
 
   const source = createLatest(
@@ -359,7 +365,6 @@ function PanelView(
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   onCleanup(() => {
     state.close()
-    endDrag?.()
     axisObserver?.disconnect()
   })
 
@@ -381,7 +386,6 @@ function PanelView(
       }
     },
     ({ value, view, key }) => {
-      setSplit(clampSplit(view.split))
       // A timeline opens fitted to the panel; zoom is a deliberate, momentary choice.
       setZoom(1)
       const scope = { kind: view.scope, sessionID: value.session } as const
@@ -562,37 +566,6 @@ function PanelView(
     )
   }
 
-  const splitTo = (next: number) => setSplit(clampSplit(next))
-  const drag: JSX.EventHandler<HTMLDivElement, PointerEvent> = (event) => {
-    endDrag?.()
-    const key = expectedKey()
-    const element = event.currentTarget
-    element.setPointerCapture(event.pointerId)
-    const move = (moveEvent: PointerEvent) => {
-      const rect = root?.getBoundingClientRect()
-      if (rect)
-        splitTo(
-          splitFromPointer(
-            split(),
-            rect.top,
-            rect.height,
-            separator?.getBoundingClientRect().height ?? 0,
-            moveEvent.clientY,
-          ),
-        )
-    }
-    const end = () => {
-      element.removeEventListener("pointermove", move)
-      element.removeEventListener("pointerup", end)
-      element.removeEventListener("pointercancel", end)
-      if (expectedKey() === key) save({ split: split() })
-      endDrag = undefined
-    }
-    element.addEventListener("pointermove", move)
-    element.addEventListener("pointerup", end, { once: true })
-    element.addEventListener("pointercancel", end, { once: true })
-    endDrag = end
-  }
   const selectionForTimelineCheck = (check: {
     planID?: string | null
     attemptID: string | null
@@ -993,8 +966,10 @@ function PanelView(
   const presentation = () => taskStatePresentation(taskStatus())
   const hasTask = () =>
     Boolean(currentData()?.taskID || prefs().target?.taskID || prefs().selectedTaskID)
-  /** The split exists once a trajectory is loaded; before that there is nothing to inspect. */
-  const showSplit = () => Boolean(report())
+  const details = createMemo(() => {
+    const view = prefs()
+    return storedState({ open: view.open, size: view.size ?? sizeFromLegacySplit(view.split) })
+  })
   const recentTasks = () => (currentData()?.tasks ?? []).slice(0, 6)
   const slowView = createMemo(() => {
     const view = status.view()
@@ -1089,6 +1064,92 @@ function PanelView(
       <span class="lazers-trajectory-lane-count">{label.count.toLocaleString()}</span>
     </span>
   )
+  const hasDetailsHeader = () =>
+    Boolean(
+      currentData()?.selection &&
+      (selectedCheck() ||
+        (selection()?.kind === "attempt" && selectedAttempt()) ||
+        selectedTool() ||
+        selectedEvent()),
+    )
+  /** One line: outcome, kind and duration of the selected call. Also the collapsed pane. */
+  const detailsHeader = () => {
+    const mono = { "font-family": ctx.appearance.font("mono") }
+    const duration = (text: string) => (
+      <span class="lazers-trajectory-duration" style={mono}>
+        {text}
+      </span>
+    )
+    return (
+      <Switch>
+        <Match when={selectedCheck()}>
+          {(check) => (
+            <>
+              <OutcomeBadge
+                outcome={checkOutcome(check().result, check().state)}
+                text={checkWord(check())}
+                result={check().result}
+              />
+              <span class="lazers-trajectory-kind">
+                {check().scope === "plan" ? "Plan check" : "Check"}
+                {check().exitCode !== null ? ` · exit ${check().exitCode}` : ""}
+              </span>
+              <Show when={checkTiming(check()).durationMs !== null}>
+                {duration(durationText(checkTiming(check()).durationMs!))}
+              </Show>
+            </>
+          )}
+        </Match>
+        <Match when={selection()?.kind === "attempt" && selectedAttempt()}>
+          {(attempt) => {
+            const span = () => attemptDuration(attempt(), capturedAt())
+            return (
+              <>
+                <OutcomeBadge
+                  outcome={attemptOutcome(attempt().state)}
+                  text={capitalize(attempt().state)}
+                />
+                <span class="lazers-trajectory-kind">Attempt {attempt().number}</span>
+                <Show when={span()}>
+                  {(value) =>
+                    duration(`${durationText(value().ms)}${value().open ? " so far" : ""}`)
+                  }
+                </Show>
+              </>
+            )
+          }}
+        </Match>
+        <Match when={selectedTool()}>
+          {(tool) => {
+            const text = () =>
+              tool().start !== null && tool().end !== null && tool().end! >= tool().start!
+                ? durationText(tool().end! - tool().start!)
+                : ""
+            return (
+              <>
+                <OutcomeBadge outcome={tool().outcome} text={outcomeText[tool().outcome]} />
+                <span class="lazers-trajectory-kind" style={mono}>
+                  {tool().tool}
+                  {toolExit(tool()) !== null ? ` · exit ${toolExit(tool())}` : ""}
+                </span>
+                <Show when={text()}>{duration(text())}</Show>
+              </>
+            )
+          }}
+        </Match>
+        <Match when={selectedEvent()}>
+          {(event) => (
+            <>
+              <span class="lazers-trajectory-kind">
+                {selectedGap()?.label ?? eventTitle(event())}
+              </span>
+              <Show when={eventTime(event())}>{duration(eventTime(event()))}</Show>
+            </>
+          )}
+        </Match>
+      </Switch>
+    )
+  }
   const ScopeMenu = () => (
     <span class="lazers-trajectory-scope">
       <Ui.Menu
@@ -1104,1435 +1165,1366 @@ function PanelView(
   )
 
   return (
-    <div
-      class="lazers-trajectory"
-      data-split={showSplit()}
-      ref={(element) => {
-        root = element
-      }}
-      style={{
-        "--trajectory-visual-fr": `${split()}fr`,
-        "--trajectory-inspector-fr": `${100 - split()}fr`,
-        "--trajectory-zoom": String(zoom()),
-      }}
-    >
-      <div
-        class="lazers-trajectory-top"
-        id="lazers-trajectory-top"
-        ref={(element) => {
-          topPane = element
+    <div class="lazers-trajectory" style={{ "--trajectory-zoom": String(zoom()) }}>
+      <DetailsPane
+        ui={Ui}
+        class="lazers-trajectory-pane"
+        bodyClass="lazers-trajectory-inspector"
+        label="Resize trajectory details"
+        open={details().open}
+        size={details().size}
+        onOpen={(open) => save({ open })}
+        onSize={(size) => save({ size })}
+        empty="No call selected"
+        header={hasDetailsHeader() ? detailsHeader() : undefined}
+        bodyRef={(element) => {
+          inspectorPane = element
         }}
-      >
-        <header class="lazers-trajectory-header">
-          <Show
-            when={report() || hasTask()}
-            fallback={
-              <div class="lazers-trajectory-line1" data-line="title">
-                <h2 class="lazers-trajectory-panel-title">Trajectory</h2>
-                <span class="lazers-trajectory-spacer" />
-                <ScopeMenu />
-              </div>
-            }
+        dimmed={status.dimmed()}
+        top={
+          <div
+            class="lazers-trajectory-top"
+            id="lazers-trajectory-top"
+            ref={(element) => {
+              topPane = element
+            }}
           >
-            <div class="lazers-trajectory-line1">
-              <Show when={reference() || report()}>
-                <span
-                  class="lazers-trajectory-task-menu"
-                  style={{ "font-family": reference() ? ctx.appearance.font("mono") : undefined }}
-                >
-                  <Ui.Menu
-                    label={reference() || "Change task"}
-                    trigger="button"
-                    placement="bottom-start"
-                    disabled={menuItems().length === 0}
-                    items={menuItems()}
-                  />
-                </span>
-              </Show>
-              <Show when={report()}>
-                <span class="lazers-trajectory-state" data-tone={presentation().tone}>
-                  <StateGlyph glyph={presentation().glyph} />
-                  <span>{presentation().label}</span>
-                </span>
-              </Show>
-              <span class="lazers-trajectory-spacer" />
-              <Show when={props.openers && currentData()?.taskID && current()}>
-                <Ui.Button
-                  variant="ghost"
-                  size="small"
-                  class="lazers-trajectory-open-task"
-                  onClick={() =>
-                    props.openers!.openTask(props.session, {
-                      projectDirectory: current()!.project,
-                      taskID: currentData()!.taskID!,
-                    })
-                  }
-                >
-                  Open task
-                </Ui.Button>
-              </Show>
-              <Show when={report()}>
-                <ScopeMenu />
-              </Show>
-            </div>
-            <Show when={report()}>
-              <h2
-                class="lazers-trajectory-heading"
-                title={objectiveLonger() ? objective() : undefined}
-              >
-                {title()}
-              </h2>
-              <div class="lazers-trajectory-line3">
-                <Show when={(report()?.attempts.length ?? 0) > 0}>
-                  <span class="lazers-trajectory-attempt-menu">
-                    <Ui.Menu
-                      label={`Attempt ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
-                      trigger="button"
-                      icon="chevron-down"
-                      placement="bottom-start"
-                      items={(report()?.attempts ?? []).map((attempt) => ({
-                        label: `Attempt ${attempt.number} · ${attempt.state}`,
-                        onSelect: () => state.selectAttempt(attempt.id),
-                      }))}
-                    />
-                  </span>
-                </Show>
-                <Show when={headerModel()}>
-                  {(model) => <b class="lazers-trajectory-model-name">{modelLabel(model())}</b>}
-                </Show>
-                <Show when={headerTiming()}>
-                  {(timing) => (
-                    <span>
-                      <b>{timing().text}</b> {timing().open ? "so far" : "active"}
-                    </span>
-                  )}
-                </Show>
-                <Show when={headerAttempt()}>
-                  {(attempt) => (
-                    <span>
-                      <b>{attempt().toolCount.value.toLocaleString()}</b>{" "}
-                      {attempt().toolCount.value === 1 ? "call" : "calls"}
-                    </span>
-                  )}
-                </Show>
-                <Show when={checksForInspector().length > 0}>
-                  <span>
-                    <b>{checksForInspector().length}</b>{" "}
-                    {checksForInspector().length === 1 ? "check" : "checks"}
-                  </span>
-                </Show>
-              </div>
-            </Show>
-            <Show when={!report() && slowView() && !keepWaiting()}>
-              <div class="lazers-trajectory-skeleton" aria-hidden="true">
-                <i style={{ width: "86%" }} />
-                <i style={{ width: "52%" }} />
-              </div>
-            </Show>
-          </Show>
-        </header>
-
-        <Show
-          when={slowView() && !keepWaiting() && !report()}
-          fallback={<PanelStatus ui={Ui} status={status} onRetry={retry} skeleton="timeline" />}
-        >
-          <div class="lazers-trajectory-empty" role="status" aria-busy="true">
-            <b>Still loading this trajectory</b>
-            <span>The service has not answered for {slowSeconds(slowView()!.line) ?? 10} s.</span>
-            <div class="lazers-trajectory-actions">
-              <button type="button" class="lazers-trajectory-button" onClick={retry}>
-                Retry
-              </button>
-              <button
-                type="button"
-                class="lazers-trajectory-button"
-                data-variant="ghost"
-                onClick={() => setKeepWaiting(true)}
-              >
-                Keep waiting
-              </button>
-            </div>
-          </div>
-        </Show>
-
-        <Show when={status.view().kind === "ready" && !report()}>
-          <div class="lazers-trajectory-empty" data-state="empty">
-            <Show
-              when={(currentData()?.tasks.length ?? 0) > 0}
-              fallback={
-                <>
-                  <b>
-                    {prefs().scope === "session"
-                      ? "No LAZERS tasks belong to this session."
-                      : "No LAZERS tasks belong to this project."}
-                  </b>
-                  <Show when={prefs().scope === "session"}>
-                    <div class="lazers-trajectory-actions">
-                      <button
-                        type="button"
-                        class="lazers-trajectory-button"
-                        onClick={() => selectScope("project")}
-                      >
-                        Show project tasks
-                      </button>
-                    </div>
-                  </Show>
-                </>
-              }
-            >
+            <header class="lazers-trajectory-header">
               <Show
-                when={!currentData()?.taskID}
-                fallback={<b>No trajectory has been recorded for this task yet.</b>}
-              >
-                <b>Pick a task</b>
-                <span>
-                  Trajectory shows what a worker did on one task: calls, files and checks over time.
-                </span>
-                <div class="lazers-trajectory-actions">
-                  <span class="lazers-trajectory-choose">
-                    <Ui.Menu
-                      label="Choose task"
-                      trigger="button"
-                      icon="chevron-down"
-                      items={menuItems()}
-                    />
-                  </span>
-                </div>
-              </Show>
-            </Show>
-          </div>
-          <Show when={!currentData()?.taskID && recentTasks().length > 0}>
-            <ul class="lazers-trajectory-recent" aria-label="Recent tasks">
-              <For each={recentTasks()}>
-                {(task) => {
-                  const glyph = () => taskStatePresentation(task.status)
-                  return (
-                    <li>
-                      <button
-                        type="button"
-                        class="lazers-trajectory-recent-row"
-                        onClick={() => selectTask(task.taskID)}
-                      >
-                        <span
-                          class="lazers-trajectory-recent-ref"
-                          style={{ "font-family": ctx.appearance.font("mono") }}
-                        >
-                          {task.reference ?? ""}
-                        </span>
-                        <span class="lazers-trajectory-recent-title">
-                          {task.title ? displayTitle(task.title) : "Task"}
-                        </span>
-                        <span
-                          class="lazers-trajectory-state"
-                          data-tone={glyph().tone}
-                          title={glyph().label}
-                        >
-                          <StateGlyph glyph={glyph().glyph} />
-                        </span>
-                      </button>
-                    </li>
-                  )
-                }}
-              </For>
-            </ul>
-          </Show>
-        </Show>
-
-        <Show when={status.showContent() && report()}>
-          <section
-            class="lazers-trajectory-timeline"
-            aria-label="Timeline"
-            data-panel-dimmed={status.dimmed()}
-          >
-            <div class="lazers-trajectory-timeline-bar">
-              <span
-                class="lazers-trajectory-axis-caption"
-                title={
-                  origin() === null
-                    ? undefined
-                    : new Date(origin()!).toLocaleString(undefined, { timeZoneName: "short" })
+                when={report() || hasTask()}
+                fallback={
+                  <div class="lazers-trajectory-line1" data-line="title">
+                    <h2 class="lazers-trajectory-panel-title">Trajectory</h2>
+                    <span class="lazers-trajectory-spacer" />
+                    <ScopeMenu />
+                  </div>
                 }
               >
-                <Show when={settled()} fallback="Live · following">
-                  <Show when={origin() !== null}>Started {clock(origin()!)}</Show>
-                </Show>
-              </span>
-              <span class="lazers-trajectory-zoom" role="group" aria-label="Timeline zoom">
-                <button
-                  type="button"
-                  class="lazers-trajectory-icon-button"
-                  aria-label="Zoom out"
-                  title="Zoom out"
-                  disabled={zoom() <= ZOOM_LEVELS[0]}
-                  onClick={() => changeZoom(nextZoom(zoom(), -1))}
-                >
-                  <PanelIcon name="zoom-out" />
-                </button>
-                <button
-                  type="button"
-                  class="lazers-trajectory-icon-button"
-                  aria-label="Zoom in"
-                  title="Zoom in"
-                  disabled={zoom() >= ZOOM_LEVELS.at(-1)!}
-                  onClick={() => changeZoom(nextZoom(zoom(), 1))}
-                >
-                  <PanelIcon name="zoom-in" />
-                </button>
-                <button
-                  type="button"
-                  class="lazers-trajectory-icon-button"
-                  aria-label={zoom() === 1 ? "Timeline fits the panel" : "Fit timeline to panel"}
-                  title="Fit to panel"
-                  disabled={zoom() === 1}
-                  onClick={() => changeZoom(1)}
-                >
-                  <PanelIcon name="fit" />
-                </button>
-              </span>
-            </div>
-            <Show
-              when={timeline()?.origin !== null && timeline()?.origin !== undefined}
-              fallback={<div class="lazers-trajectory-note">No attempts have been recorded.</div>}
-            >
-              <div
-                class="lazers-trajectory-scroll"
-                data-zoomed={zoom() > 1}
-                ref={(element) => {
-                  timelineScroll = element
-                }}
-              >
-                <div class="lazers-trajectory-plot">
-                  <div class="lazers-trajectory-axis" aria-hidden="true">
-                    <span class="lazers-trajectory-label-cell" />
-                    <div
-                      class="lazers-trajectory-axis-track"
-                      ref={(element) => {
-                        axisObserver?.disconnect()
-                        setAxisWidth(element.getBoundingClientRect().width)
-                        axisObserver = new ResizeObserver((entries) =>
-                          setAxisWidth(entries[0]?.contentRect.width ?? 0),
-                        )
-                        axisObserver.observe(element)
+                <div class="lazers-trajectory-line1">
+                  <Show when={reference() || report()}>
+                    <span
+                      class="lazers-trajectory-task-menu"
+                      style={{
+                        "font-family": reference() ? ctx.appearance.font("mono") : undefined,
                       }}
                     >
-                      <For each={ruler().ticks}>
-                        {(tick) => (
-                          <span
-                            class="lazers-trajectory-tick"
-                            data-edge={
-                              place(tick.elapsedMs) < 4
-                                ? "start"
-                                : place(tick.elapsedMs) > 96
-                                  ? "end"
-                                  : undefined
-                            }
-                            style={{ left: `${place(tick.elapsedMs)}%` }}
-                          >
-                            {tick.label}
-                          </span>
-                        )}
-                      </For>
-                      <For each={ruler().breaks}>
-                        {(span) => (
-                          <span
-                            class="lazers-trajectory-idle-label"
-                            style={{ left: `${span.left + span.width / 2}%` }}
-                          >
-                            {span.label}
-                          </span>
-                        )}
-                      </For>
-                    </div>
-                  </div>
-                  <div class="lazers-trajectory-gridlines" aria-hidden="true">
-                    <For each={ticks()}>
-                      {(tick) => <span style={{ left: `${place(tick.elapsedMs)}%` }} />}
-                    </For>
-                    <For each={timeline()?.breaks ?? []}>
-                      {(span) => (
-                        <span
-                          class="lazers-trajectory-idle"
-                          title={span.label}
-                          style={{ left: `${span.left}%`, width: `${span.width}%` }}
-                        />
-                      )}
-                    </For>
-                    <For each={(tracks()?.gaps ?? []).filter((gap) => gap.kind === "gap")}>
-                      {(gap) => (
-                        <span
-                          class="lazers-trajectory-gap-band"
-                          title={gap.label}
-                          style={{ left: `${gap.left}%` }}
-                        />
-                      )}
-                    </For>
-                    <Show
-                      when={
-                        tracks()?.loadedThrough !== null && tracks()?.loadedThrough !== undefined
+                      <Ui.Menu
+                        label={reference() || "Change task"}
+                        trigger="button"
+                        placement="bottom-start"
+                        disabled={menuItems().length === 0}
+                        items={menuItems()}
+                      />
+                    </span>
+                  </Show>
+                  <Show when={report()}>
+                    <span class="lazers-trajectory-state" data-tone={presentation().tone}>
+                      <StateGlyph glyph={presentation().glyph} />
+                      <span>{presentation().label}</span>
+                    </span>
+                  </Show>
+                  <span class="lazers-trajectory-spacer" />
+                  <Show when={props.openers && currentData()?.taskID && current()}>
+                    <Ui.Button
+                      variant="ghost"
+                      size="small"
+                      class="lazers-trajectory-open-task"
+                      onClick={() =>
+                        props.openers!.openTask(props.session, {
+                          projectDirectory: current()!.project,
+                          taskID: currentData()!.taskID!,
+                        })
                       }
                     >
-                      <span
-                        class="lazers-trajectory-unloaded"
-                        style={{ left: `${tracks()!.loadedThrough}%` }}
-                        title="Later captured activity is not loaded"
-                      />
+                      Open task
+                    </Ui.Button>
+                  </Show>
+                  <Show when={report()}>
+                    <ScopeMenu />
+                  </Show>
+                </div>
+                <Show when={report()}>
+                  <h2
+                    class="lazers-trajectory-heading"
+                    title={objectiveLonger() ? objective() : undefined}
+                  >
+                    {title()}
+                  </h2>
+                  <div class="lazers-trajectory-line3">
+                    <Show when={(report()?.attempts.length ?? 0) > 0}>
+                      <span class="lazers-trajectory-attempt-menu">
+                        <Ui.Menu
+                          label={`Attempt ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
+                          trigger="button"
+                          icon="chevron-down"
+                          placement="bottom-start"
+                          items={(report()?.attempts ?? []).map((attempt) => ({
+                            label: `Attempt ${attempt.number} · ${attempt.state}`,
+                            onSelect: () => state.selectAttempt(attempt.id),
+                          }))}
+                        />
+                      </span>
+                    </Show>
+                    <Show when={headerModel()}>
+                      {(model) => <b class="lazers-trajectory-model-name">{modelLabel(model())}</b>}
+                    </Show>
+                    <Show when={headerTiming()}>
+                      {(timing) => (
+                        <span>
+                          <b>{timing().text}</b> {timing().open ? "so far" : "active"}
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={headerAttempt()}>
+                      {(attempt) => (
+                        <span>
+                          <b>{attempt().toolCount.value.toLocaleString()}</b>{" "}
+                          {attempt().toolCount.value === 1 ? "call" : "calls"}
+                        </span>
+                      )}
+                    </Show>
+                    <Show when={checksForInspector().length > 0}>
+                      <span>
+                        <b>{checksForInspector().length}</b>{" "}
+                        {checksForInspector().length === 1 ? "check" : "checks"}
+                      </span>
                     </Show>
                   </div>
+                </Show>
+                <Show when={!report() && slowView() && !keepWaiting()}>
+                  <div class="lazers-trajectory-skeleton" aria-hidden="true">
+                    <i style={{ width: "86%" }} />
+                    <i style={{ width: "52%" }} />
+                  </div>
+                </Show>
+              </Show>
+            </header>
 
-                  <div
-                    class="lazers-trajectory-attempts"
-                    role="listbox"
-                    aria-label="Attempts"
-                    aria-orientation="vertical"
-                    onKeyDown={laneKeyDown(
-                      () => (timeline()?.attempts ?? []).map((lane) => ({ id: lane.attempt.id })),
-                      activeAttempt,
-                      (mark) => state.selectAttempt(mark.id),
-                    )}
+            <Show
+              when={slowView() && !keepWaiting() && !report()}
+              fallback={<PanelStatus ui={Ui} status={status} onRetry={retry} skeleton="timeline" />}
+            >
+              <div class="lazers-trajectory-empty" role="status" aria-busy="true">
+                <b>Still loading this trajectory</b>
+                <span>
+                  The service has not answered for {slowSeconds(slowView()!.line) ?? 10} s.
+                </span>
+                <div class="lazers-trajectory-actions">
+                  <button type="button" class="lazers-trajectory-button" onClick={retry}>
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    class="lazers-trajectory-button"
+                    data-variant="ghost"
+                    onClick={() => setKeepWaiting(true)}
                   >
-                    <For each={attemptIDs()}>
-                      {(attemptID) => {
-                        const lane = () => attemptLanes().get(attemptID)!
-                        const detail = () =>
-                          report()?.attempts.find((attempt) => attempt.id === lane().attempt.id)
-                        const outcome = () => attemptOutcome(lane().attempt.state)
-                        const selected = () => attemptSelected(lane().attempt.id)
-                        const duration = () => {
-                          const value = detail()
-                          return value ? attemptDuration(value, capturedAt()) : null
-                        }
-                        return (
-                          <div
-                            class="lazers-trajectory-attempt"
-                            role="option"
-                            data-mark-id={lane().attempt.id}
-                            data-selected={
-                              selection()?.kind === "attempt" &&
-                              selection()?.id === lane().attempt.id
-                            }
-                            aria-selected={selected()}
-                            tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
-                            aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
-                            title={basisText(lane().attempt.timingBasis)}
-                            onClick={() => state.selectAttempt(lane().attempt.id)}
+                    Keep waiting
+                  </button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={status.view().kind === "ready" && !report()}>
+              <div class="lazers-trajectory-empty" data-state="empty">
+                <Show
+                  when={(currentData()?.tasks.length ?? 0) > 0}
+                  fallback={
+                    <>
+                      <b>
+                        {prefs().scope === "session"
+                          ? "No LAZERS tasks belong to this session."
+                          : "No LAZERS tasks belong to this project."}
+                      </b>
+                      <Show when={prefs().scope === "session"}>
+                        <div class="lazers-trajectory-actions">
+                          <button
+                            type="button"
+                            class="lazers-trajectory-button"
+                            onClick={() => selectScope("project")}
                           >
-                            <span class="lazers-trajectory-label-cell lazers-trajectory-attempt-label">
-                              <span class="lazers-trajectory-lane-name">Attempt</span>
-                              <span class="lazers-trajectory-lane-count">
-                                {lane().attempt.number}
-                              </span>
-                            </span>
-                            <div class="lazers-trajectory-track">
-                              <For each={lane().segments}>
-                                {(segment) => (
-                                  <span
-                                    class="lazers-trajectory-segment lazers-trajectory-rail"
-                                    data-outcome={outcome()}
-                                    data-start={segment.startRecorded ? "recorded" : "missing"}
-                                    data-end={
-                                      segment.open
-                                        ? "open"
-                                        : segment.endRecorded
-                                          ? "recorded"
-                                          : "missing"
-                                    }
-                                    data-failed={lane().attempt.state === "failed"}
-                                    hidden={!segment.visible}
-                                    title={
-                                      segment.open
-                                        ? `${basisText(segment.basis)} · still running`
-                                        : basisText(segment.basis)
-                                    }
-                                    style={{
-                                      left: `${segment.left}%`,
-                                      width: `${segment.pointOnly ? 0 : segment.width}%`,
-                                    }}
-                                  />
-                                )}
-                              </For>
-                            </div>
-                          </div>
-                        )
-                      }}
-                    </For>
-                  </div>
-
-                  <div
-                    class="lazers-trajectory-lane"
-                    data-track="tools"
-                    data-selected={laneSelected("tools")}
+                            Show project tasks
+                          </button>
+                        </div>
+                      </Show>
+                    </>
+                  }
+                >
+                  <Show
+                    when={!currentData()?.taskID}
+                    fallback={<b>No trajectory has been recorded for this task yet.</b>}
                   >
-                    <LaneLabel name="Tools" count={tracks()?.tools.length ?? 0} />
-                    <div
-                      class="lazers-trajectory-track lazers-trajectory-mark-track"
-                      role="listbox"
-                      aria-label={`Tool calls, ${tracks()?.tools.length ?? 0} placed${tracks()?.gaps.length ? `, ${tracks()!.gaps.length} gaps` : ""}`}
-                      aria-orientation="horizontal"
-                      onKeyDown={laneKeyDown(laneMarks, activeTool, (mark) =>
-                        state.selectEvent(mark.id),
-                      )}
-                      onClick={laneClick(laneMarks, (mark) => state.selectEvent(mark.id))}
-                    >
-                      <Glyphs glyphs={toolGlyphs()} />
-                      <Index each={laneMarks()}>
-                        {(item) => {
-                          const selected = () =>
-                            item().kind === "tool"
-                              ? eventSelected(item().id, (item().mark as ToolMark).aliases)
-                              : eventSelected(item().id)
-                          return (
+                    <b>Pick a task</b>
+                    <span>
+                      Trajectory shows what a worker did on one task: calls, files and checks over
+                      time.
+                    </span>
+                    <div class="lazers-trajectory-actions">
+                      <span class="lazers-trajectory-choose">
+                        <Ui.Menu
+                          label="Choose task"
+                          trigger="button"
+                          icon="chevron-down"
+                          items={menuItems()}
+                        />
+                      </span>
+                    </div>
+                  </Show>
+                </Show>
+              </div>
+              <Show when={!currentData()?.taskID && recentTasks().length > 0}>
+                <ul class="lazers-trajectory-recent" aria-label="Recent tasks">
+                  <For each={recentTasks()}>
+                    {(task) => {
+                      const glyph = () => taskStatePresentation(task.status)
+                      return (
+                        <li>
+                          <button
+                            type="button"
+                            class="lazers-trajectory-recent-row"
+                            onClick={() => selectTask(task.taskID)}
+                          >
                             <span
-                              class="lazers-trajectory-mark"
-                              role="option"
-                              data-mark-id={item().id}
-                              data-kind={item().kind}
-                              data-outcome={
-                                item().kind === "tool"
-                                  ? (item().mark as ToolMark).outcome
-                                  : (item().mark as GapMark).kind
-                              }
-                              data-gap={
-                                item().kind === "gap" && (item().mark as GapMark).kind === "gap"
-                                  ? ""
-                                  : undefined
-                              }
-                              data-span={isSpanWidth(item().width, plotPx())}
-                              aria-selected={selected()}
-                              tabIndex={activeTool() === item().id ? 0 : -1}
-                              aria-label={
-                                item().kind === "tool"
-                                  ? [
-                                      (item().mark as ToolMark).tool,
-                                      outcomeText[(item().mark as ToolMark).outcome],
-                                      at(item().at),
-                                      attemptNumber(item().mark.attemptID)
-                                        ? `attempt ${attemptNumber(item().mark.attemptID)}`
-                                        : "",
-                                    ]
-                                      .filter(Boolean)
-                                      .join(", ")
-                                  : `${(item().mark as GapMark).label}, ${at(item().at)}`
-                              }
-                              title={
-                                item().kind === "tool"
-                                  ? [
-                                      (item().mark as ToolMark).tool,
-                                      outcomeText[(item().mark as ToolMark).outcome],
-                                      at(item().at),
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")
-                                  : `${(item().mark as GapMark).label} · ${at(item().at)}`
-                              }
-                              style={{
-                                left: `${item().left}%`,
-                                width: isSpanWidth(item().width, plotPx())
-                                  ? `${item().width}%`
-                                  : undefined,
-                              }}
-                              onClick={() => state.selectEvent(item().id)}
-                            />
-                          )
-                        }}
-                      </Index>
-                    </div>
-                  </div>
+                              class="lazers-trajectory-recent-ref"
+                              style={{ "font-family": ctx.appearance.font("mono") }}
+                            >
+                              {task.reference ?? ""}
+                            </span>
+                            <span class="lazers-trajectory-recent-title">
+                              {task.title ? displayTitle(task.title) : "Task"}
+                            </span>
+                            <span
+                              class="lazers-trajectory-state"
+                              data-tone={glyph().tone}
+                              title={glyph().label}
+                            >
+                              <StateGlyph glyph={glyph().glyph} />
+                            </span>
+                          </button>
+                        </li>
+                      )
+                    }}
+                  </For>
+                </ul>
+              </Show>
+            </Show>
 
-                  <div
-                    class="lazers-trajectory-lane"
-                    data-track="files"
-                    data-selected={laneSelected("files")}
+            <Show when={status.showContent() && report()}>
+              <section
+                class="lazers-trajectory-timeline"
+                aria-label="Timeline"
+                data-panel-dimmed={status.dimmed()}
+              >
+                <div class="lazers-trajectory-timeline-bar">
+                  <span
+                    class="lazers-trajectory-axis-caption"
+                    title={
+                      origin() === null
+                        ? undefined
+                        : new Date(origin()!).toLocaleString(undefined, { timeZoneName: "short" })
+                    }
                   >
-                    <LaneLabel name="Files" count={tracks()?.files.length ?? 0} />
-                    <div
-                      class="lazers-trajectory-track lazers-trajectory-mark-track"
-                      role="listbox"
-                      aria-label={`Recorded file activity, ${tracks()?.files.length ?? 0} targets`}
-                      aria-orientation="horizontal"
-                      onKeyDown={laneKeyDown(
-                        () => tracks()?.files ?? [],
-                        activeFile,
-                        (mark: FileMark) => state.selectEvent(mark.id),
-                      )}
-                      onClick={laneClick(
-                        () => tracks()?.files ?? [],
-                        (mark) => state.selectEvent(mark.id),
-                      )}
+                    <Show when={settled()} fallback="Live · following">
+                      <Show when={origin() !== null}>Started {clock(origin()!)}</Show>
+                    </Show>
+                  </span>
+                  <span class="lazers-trajectory-zoom" role="group" aria-label="Timeline zoom">
+                    <button
+                      type="button"
+                      class="lazers-trajectory-icon-button"
+                      aria-label="Zoom out"
+                      title="Zoom out"
+                      disabled={zoom() <= ZOOM_LEVELS[0]}
+                      onClick={() => changeZoom(nextZoom(zoom(), -1))}
                     >
-                      <Glyphs glyphs={fileGlyphs()} />
-                      <Index each={tracks()?.files ?? []}>
-                        {(mark) => (
-                          <span
-                            class="lazers-trajectory-mark lazers-trajectory-file-mark"
-                            role="option"
-                            data-mark-id={mark().id}
-                            data-kind="file"
-                            data-operation={mark().operation}
-                            aria-selected={eventSelected(mark().id)}
-                            tabIndex={activeFile() === mark().id ? 0 : -1}
-                            data-outcome={mark().outcome}
-                            aria-label={[
-                              `${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}`,
-                              outcomeText[mark().outcome],
-                              at(mark().at),
-                            ]
-                              .filter(Boolean)
-                              .join(", ")}
-                            title={[
-                              operationText[mark().operation],
-                              mark().paths.join(", "),
-                              outcomeText[mark().outcome],
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                            style={{ left: `${mark().left}%` }}
-                            onClick={() => state.selectEvent(mark().id)}
-                          />
-                        )}
-                      </Index>
-                    </div>
-                  </div>
-
+                      <PanelIcon name="zoom-out" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lazers-trajectory-icon-button"
+                      aria-label="Zoom in"
+                      title="Zoom in"
+                      disabled={zoom() >= ZOOM_LEVELS.at(-1)!}
+                      onClick={() => changeZoom(nextZoom(zoom(), 1))}
+                    >
+                      <PanelIcon name="zoom-in" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lazers-trajectory-icon-button"
+                      aria-label={
+                        zoom() === 1 ? "Timeline fits the panel" : "Fit timeline to panel"
+                      }
+                      title="Fit to panel"
+                      disabled={zoom() === 1}
+                      onClick={() => changeZoom(1)}
+                    >
+                      <PanelIcon name="fit" />
+                    </button>
+                  </span>
+                </div>
+                <Show
+                  when={timeline()?.origin !== null && timeline()?.origin !== undefined}
+                  fallback={
+                    <div class="lazers-trajectory-note">No attempts have been recorded.</div>
+                  }
+                >
                   <div
-                    class="lazers-trajectory-lane lazers-trajectory-checks"
-                    data-track="checks"
-                    data-selected={laneSelected("checks")}
+                    class="lazers-trajectory-scroll"
+                    data-zoomed={zoom() > 1}
+                    ref={(element) => {
+                      timelineScroll = element
+                    }}
                   >
-                    <LaneLabel name="Checks" count={timeline()?.checks.length ?? 0} />
-                    <div
-                      class="lazers-trajectory-track lazers-trajectory-mark-track"
-                      role="listbox"
-                      aria-label={`Checks, ${timeline()?.checks.length ?? 0} recorded`}
-                      aria-orientation="horizontal"
-                      onKeyDown={laneKeyDown(checkLane, activeCheck, chooseCheck)}
-                      onClick={laneClick(
-                        () => checkLane().map((item) => ({ ...item, left: item.check.left })),
-                        chooseCheck,
-                      )}
-                    >
-                      <Glyphs glyphs={checkGlyphs()} />
-                      <For each={checkIDs()}>
-                        {(checkID) => {
-                          const entry = () => checkItems().get(checkID)!
-                          const detailed = () => selectionForTimelineCheck(entry().check)
-                          const timing = () => checkTiming(entry().check)
-                          const outcome = () =>
-                            checkOutcome(detailed()?.result ?? "unknown", entry().check.state)
-                          const selected = () => checkSelected(entry().check)
-                          const name = () =>
-                            `${entry().check.scope === "plan" ? "Plan check" : `Attempt ${attemptNumber(entry().check.attemptID) ?? "?"} check`} ${entry().check.checkID}`
-                          return (
-                            <>
-                              <Show
-                                when={
-                                  timing().status === "invalid-order" &&
-                                  entry().check.endLeft !== null
-                                }
-                              >
-                                <span
-                                  class="lazers-trajectory-check-endpoint"
-                                  aria-hidden="true"
-                                  style={{
-                                    left: `${entry().check.endLeft}%`,
-                                  }}
-                                />
-                              </Show>
+                    <div class="lazers-trajectory-plot">
+                      <div class="lazers-trajectory-axis" aria-hidden="true">
+                        <span class="lazers-trajectory-label-cell" />
+                        <div
+                          class="lazers-trajectory-axis-track"
+                          ref={(element) => {
+                            axisObserver?.disconnect()
+                            setAxisWidth(element.getBoundingClientRect().width)
+                            axisObserver = new ResizeObserver((entries) =>
+                              setAxisWidth(entries[0]?.contentRect.width ?? 0),
+                            )
+                            axisObserver.observe(element)
+                          }}
+                        >
+                          <For each={ruler().ticks}>
+                            {(tick) => (
                               <span
-                                class="lazers-trajectory-check-marker"
+                                class="lazers-trajectory-tick"
+                                data-edge={
+                                  place(tick.elapsedMs) < 4
+                                    ? "start"
+                                    : place(tick.elapsedMs) > 96
+                                      ? "end"
+                                      : undefined
+                                }
+                                style={{ left: `${place(tick.elapsedMs)}%` }}
+                              >
+                                {tick.label}
+                              </span>
+                            )}
+                          </For>
+                          <For each={ruler().breaks}>
+                            {(span) => (
+                              <span
+                                class="lazers-trajectory-idle-label"
+                                style={{ left: `${span.left + span.width / 2}%` }}
+                              >
+                                {span.label}
+                              </span>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                      <div class="lazers-trajectory-gridlines" aria-hidden="true">
+                        <For each={ticks()}>
+                          {(tick) => <span style={{ left: `${place(tick.elapsedMs)}%` }} />}
+                        </For>
+                        <For each={timeline()?.breaks ?? []}>
+                          {(span) => (
+                            <span
+                              class="lazers-trajectory-idle"
+                              title={span.label}
+                              style={{ left: `${span.left}%`, width: `${span.width}%` }}
+                            />
+                          )}
+                        </For>
+                        <For each={(tracks()?.gaps ?? []).filter((gap) => gap.kind === "gap")}>
+                          {(gap) => (
+                            <span
+                              class="lazers-trajectory-gap-band"
+                              title={gap.label}
+                              style={{ left: `${gap.left}%` }}
+                            />
+                          )}
+                        </For>
+                        <Show
+                          when={
+                            tracks()?.loadedThrough !== null &&
+                            tracks()?.loadedThrough !== undefined
+                          }
+                        >
+                          <span
+                            class="lazers-trajectory-unloaded"
+                            style={{ left: `${tracks()!.loadedThrough}%` }}
+                            title="Later captured activity is not loaded"
+                          />
+                        </Show>
+                      </div>
+
+                      <div
+                        class="lazers-trajectory-attempts"
+                        role="listbox"
+                        aria-label="Attempts"
+                        aria-orientation="vertical"
+                        onKeyDown={laneKeyDown(
+                          () =>
+                            (timeline()?.attempts ?? []).map((lane) => ({ id: lane.attempt.id })),
+                          activeAttempt,
+                          (mark) => state.selectAttempt(mark.id),
+                        )}
+                      >
+                        <For each={attemptIDs()}>
+                          {(attemptID) => {
+                            const lane = () => attemptLanes().get(attemptID)!
+                            const detail = () =>
+                              report()?.attempts.find((attempt) => attempt.id === lane().attempt.id)
+                            const outcome = () => attemptOutcome(lane().attempt.state)
+                            const selected = () => attemptSelected(lane().attempt.id)
+                            const duration = () => {
+                              const value = detail()
+                              return value ? attemptDuration(value, capturedAt()) : null
+                            }
+                            return (
+                              <div
+                                class="lazers-trajectory-attempt"
                                 role="option"
-                                data-mark-id={entry().id}
-                                data-check-id={entry().check.checkID}
-                                data-scope={entry().check.scope}
-                                data-outcome={outcome()}
-                                data-point={entry().check.pointOnly}
-                                data-result={detailed()?.result ?? "unknown"}
+                                data-mark-id={lane().attempt.id}
+                                data-selected={
+                                  selection()?.kind === "attempt" &&
+                                  selection()?.id === lane().attempt.id
+                                }
                                 aria-selected={selected()}
-                                tabIndex={activeCheck() === entry().id ? 0 : -1}
+                                tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
+                                aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
+                                title={basisText(lane().attempt.timingBasis)}
+                                onClick={() => state.selectAttempt(lane().attempt.id)}
+                              >
+                                <span class="lazers-trajectory-label-cell lazers-trajectory-attempt-label">
+                                  <span class="lazers-trajectory-lane-name">Attempt</span>
+                                  <span class="lazers-trajectory-lane-count">
+                                    {lane().attempt.number}
+                                  </span>
+                                </span>
+                                <div class="lazers-trajectory-track">
+                                  <For each={lane().segments}>
+                                    {(segment) => (
+                                      <span
+                                        class="lazers-trajectory-segment lazers-trajectory-rail"
+                                        data-outcome={outcome()}
+                                        data-start={segment.startRecorded ? "recorded" : "missing"}
+                                        data-end={
+                                          segment.open
+                                            ? "open"
+                                            : segment.endRecorded
+                                              ? "recorded"
+                                              : "missing"
+                                        }
+                                        data-failed={lane().attempt.state === "failed"}
+                                        hidden={!segment.visible}
+                                        title={
+                                          segment.open
+                                            ? `${basisText(segment.basis)} · still running`
+                                            : basisText(segment.basis)
+                                        }
+                                        style={{
+                                          left: `${segment.left}%`,
+                                          width: `${segment.pointOnly ? 0 : segment.width}%`,
+                                        }}
+                                      />
+                                    )}
+                                  </For>
+                                </div>
+                              </div>
+                            )
+                          }}
+                        </For>
+                      </div>
+
+                      <div
+                        class="lazers-trajectory-lane"
+                        data-track="tools"
+                        data-selected={laneSelected("tools")}
+                      >
+                        <LaneLabel name="Tools" count={tracks()?.tools.length ?? 0} />
+                        <div
+                          class="lazers-trajectory-track lazers-trajectory-mark-track"
+                          role="listbox"
+                          aria-label={`Tool calls, ${tracks()?.tools.length ?? 0} placed${tracks()?.gaps.length ? `, ${tracks()!.gaps.length} gaps` : ""}`}
+                          aria-orientation="horizontal"
+                          onKeyDown={laneKeyDown(laneMarks, activeTool, (mark) =>
+                            state.selectEvent(mark.id),
+                          )}
+                          onClick={laneClick(laneMarks, (mark) => state.selectEvent(mark.id))}
+                        >
+                          <Glyphs glyphs={toolGlyphs()} />
+                          <Index each={laneMarks()}>
+                            {(item) => {
+                              const selected = () =>
+                                item().kind === "tool"
+                                  ? eventSelected(item().id, (item().mark as ToolMark).aliases)
+                                  : eventSelected(item().id)
+                              return (
+                                <span
+                                  class="lazers-trajectory-mark"
+                                  role="option"
+                                  data-mark-id={item().id}
+                                  data-kind={item().kind}
+                                  data-outcome={
+                                    item().kind === "tool"
+                                      ? (item().mark as ToolMark).outcome
+                                      : (item().mark as GapMark).kind
+                                  }
+                                  data-gap={
+                                    item().kind === "gap" && (item().mark as GapMark).kind === "gap"
+                                      ? ""
+                                      : undefined
+                                  }
+                                  data-span={isSpanWidth(item().width, plotPx())}
+                                  aria-selected={selected()}
+                                  tabIndex={activeTool() === item().id ? 0 : -1}
+                                  aria-label={
+                                    item().kind === "tool"
+                                      ? [
+                                          (item().mark as ToolMark).tool,
+                                          outcomeText[(item().mark as ToolMark).outcome],
+                                          at(item().at),
+                                          attemptNumber(item().mark.attemptID)
+                                            ? `attempt ${attemptNumber(item().mark.attemptID)}`
+                                            : "",
+                                        ]
+                                          .filter(Boolean)
+                                          .join(", ")
+                                      : `${(item().mark as GapMark).label}, ${at(item().at)}`
+                                  }
+                                  title={
+                                    item().kind === "tool"
+                                      ? [
+                                          (item().mark as ToolMark).tool,
+                                          outcomeText[(item().mark as ToolMark).outcome],
+                                          at(item().at),
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" · ")
+                                      : `${(item().mark as GapMark).label} · ${at(item().at)}`
+                                  }
+                                  style={{
+                                    left: `${item().left}%`,
+                                    width: isSpanWidth(item().width, plotPx())
+                                      ? `${item().width}%`
+                                      : undefined,
+                                  }}
+                                  onClick={() => state.selectEvent(item().id)}
+                                />
+                              )
+                            }}
+                          </Index>
+                        </div>
+                      </div>
+
+                      <div
+                        class="lazers-trajectory-lane"
+                        data-track="files"
+                        data-selected={laneSelected("files")}
+                      >
+                        <LaneLabel name="Files" count={tracks()?.files.length ?? 0} />
+                        <div
+                          class="lazers-trajectory-track lazers-trajectory-mark-track"
+                          role="listbox"
+                          aria-label={`Recorded file activity, ${tracks()?.files.length ?? 0} targets`}
+                          aria-orientation="horizontal"
+                          onKeyDown={laneKeyDown(
+                            () => tracks()?.files ?? [],
+                            activeFile,
+                            (mark: FileMark) => state.selectEvent(mark.id),
+                          )}
+                          onClick={laneClick(
+                            () => tracks()?.files ?? [],
+                            (mark) => state.selectEvent(mark.id),
+                          )}
+                        >
+                          <Glyphs glyphs={fileGlyphs()} />
+                          <Index each={tracks()?.files ?? []}>
+                            {(mark) => (
+                              <span
+                                class="lazers-trajectory-mark lazers-trajectory-file-mark"
+                                role="option"
+                                data-mark-id={mark().id}
+                                data-kind="file"
+                                data-operation={mark().operation}
+                                aria-selected={eventSelected(mark().id)}
+                                tabIndex={activeFile() === mark().id ? 0 : -1}
+                                data-outcome={mark().outcome}
                                 aria-label={[
-                                  name(),
-                                  detailed() ? checkWord(detailed()!) : entry().check.state,
-                                  timingHint(entry().check),
+                                  `${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}`,
+                                  outcomeText[mark().outcome],
+                                  at(mark().at),
                                 ]
                                   .filter(Boolean)
                                   .join(", ")}
                                 title={[
-                                  name(),
-                                  outcomeText[outcome()],
-                                  basisText(entry().check.timingBasis),
+                                  operationText[mark().operation],
+                                  mark().paths.join(", "),
+                                  outcomeText[mark().outcome],
                                 ]
                                   .filter(Boolean)
                                   .join(" · ")}
-                                style={{
-                                  left: `${entry().check.left}%`,
-                                  width: `${entry().check.width}%`,
-                                }}
-                                onClick={() => chooseCheck(entry())}
+                                style={{ left: `${mark().left}%` }}
+                                onClick={() => state.selectEvent(mark().id)}
                               />
-                            </>
-                          )
-                        }}
-                      </For>
+                            )}
+                          </Index>
+                        </div>
+                      </div>
+
+                      <div
+                        class="lazers-trajectory-lane lazers-trajectory-checks"
+                        data-track="checks"
+                        data-selected={laneSelected("checks")}
+                      >
+                        <LaneLabel name="Checks" count={timeline()?.checks.length ?? 0} />
+                        <div
+                          class="lazers-trajectory-track lazers-trajectory-mark-track"
+                          role="listbox"
+                          aria-label={`Checks, ${timeline()?.checks.length ?? 0} recorded`}
+                          aria-orientation="horizontal"
+                          onKeyDown={laneKeyDown(checkLane, activeCheck, chooseCheck)}
+                          onClick={laneClick(
+                            () => checkLane().map((item) => ({ ...item, left: item.check.left })),
+                            chooseCheck,
+                          )}
+                        >
+                          <Glyphs glyphs={checkGlyphs()} />
+                          <For each={checkIDs()}>
+                            {(checkID) => {
+                              const entry = () => checkItems().get(checkID)!
+                              const detailed = () => selectionForTimelineCheck(entry().check)
+                              const timing = () => checkTiming(entry().check)
+                              const outcome = () =>
+                                checkOutcome(detailed()?.result ?? "unknown", entry().check.state)
+                              const selected = () => checkSelected(entry().check)
+                              const name = () =>
+                                `${entry().check.scope === "plan" ? "Plan check" : `Attempt ${attemptNumber(entry().check.attemptID) ?? "?"} check`} ${entry().check.checkID}`
+                              return (
+                                <>
+                                  <Show
+                                    when={
+                                      timing().status === "invalid-order" &&
+                                      entry().check.endLeft !== null
+                                    }
+                                  >
+                                    <span
+                                      class="lazers-trajectory-check-endpoint"
+                                      aria-hidden="true"
+                                      style={{
+                                        left: `${entry().check.endLeft}%`,
+                                      }}
+                                    />
+                                  </Show>
+                                  <span
+                                    class="lazers-trajectory-check-marker"
+                                    role="option"
+                                    data-mark-id={entry().id}
+                                    data-check-id={entry().check.checkID}
+                                    data-scope={entry().check.scope}
+                                    data-outcome={outcome()}
+                                    data-point={entry().check.pointOnly}
+                                    data-result={detailed()?.result ?? "unknown"}
+                                    aria-selected={selected()}
+                                    tabIndex={activeCheck() === entry().id ? 0 : -1}
+                                    aria-label={[
+                                      name(),
+                                      detailed() ? checkWord(detailed()!) : entry().check.state,
+                                      timingHint(entry().check),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(", ")}
+                                    title={[
+                                      name(),
+                                      outcomeText[outcome()],
+                                      basisText(entry().check.timingBasis),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                    style={{
+                                      left: `${entry().check.left}%`,
+                                      width: `${entry().check.width}%`,
+                                    }}
+                                    onClick={() => chooseCheck(entry())}
+                                  />
+                                </>
+                              )
+                            }}
+                          </For>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-              <div class="lazers-trajectory-coverage-line">
-                <Show
-                  when={streaming()}
-                  fallback={
-                    <>
-                      <span>{eventsTotal().toLocaleString()} events</span>
-                      <Show when={gapCount() > 0}>
-                        <span>
-                          {gapCount()} recording {gapCount() === 1 ? "gap" : "gaps"}
-                        </span>
-                      </Show>
-                      <span class="lazers-trajectory-coverage-end">
-                        <Show when={settled()} fallback="Live">
-                          Recorded
-                          <Show when={lastEnded() !== null}> · ended {clock(lastEnded()!)}</Show>
-                        </Show>
+                  <div class="lazers-trajectory-coverage-line">
+                    <Show
+                      when={streaming()}
+                      fallback={
+                        <>
+                          <span>{eventsTotal().toLocaleString()} events</span>
+                          <Show when={gapCount() > 0}>
+                            <span>
+                              {gapCount()} recording {gapCount() === 1 ? "gap" : "gaps"}
+                            </span>
+                          </Show>
+                          <span class="lazers-trajectory-coverage-end">
+                            <Show when={settled()} fallback="Live">
+                              Recorded
+                              <Show when={lastEnded() !== null}>
+                                {" "}
+                                · ended {clock(lastEnded()!)}
+                              </Show>
+                            </Show>
+                          </span>
+                        </>
+                      }
+                    >
+                      <span>
+                        {eventsLoaded().toLocaleString()} of {eventsTotal().toLocaleString()} events
                       </span>
-                    </>
-                  }
-                >
-                  <span>
-                    {eventsLoaded().toLocaleString()} of {eventsTotal().toLocaleString()} events
-                  </span>
-                  <Show
-                    when={!currentData()?.historyError}
-                    fallback={
-                      <span class="lazers-trajectory-coverage-end">
-                        <Show
-                          when={currentData()?.pageRecaptureRequired}
-                          fallback={
-                            <button
-                              type="button"
-                              class="lazers-panel-retry"
-                              onClick={() => void state.resumeActivity()}
+                      <Show
+                        when={!currentData()?.historyError}
+                        fallback={
+                          <span class="lazers-trajectory-coverage-end">
+                            <Show
+                              when={currentData()?.pageRecaptureRequired}
+                              fallback={
+                                <button
+                                  type="button"
+                                  class="lazers-panel-retry"
+                                  onClick={() => void state.resumeActivity()}
+                                >
+                                  Retry
+                                </button>
+                              }
                             >
-                              Retry
-                            </button>
-                          }
-                        >
-                          <button
-                            type="button"
-                            class="lazers-panel-retry"
-                            onClick={() => void state.recaptureActivity()}
-                          >
-                            Recapture history
-                          </button>
-                        </Show>
-                      </span>
-                    }
-                  >
-                    <span class="lazers-trajectory-coverage-end">loading the rest</span>
+                              <button
+                                type="button"
+                                class="lazers-panel-retry"
+                                onClick={() => void state.recaptureActivity()}
+                              >
+                                Recapture history
+                              </button>
+                            </Show>
+                          </span>
+                        }
+                      >
+                        <span class="lazers-trajectory-coverage-end">loading the rest</span>
+                      </Show>
+                    </Show>
+                    <Show when={currentData()?.historyError}>
+                      <div class="lazers-trajectory-error" role="alert">
+                        <span>{currentData()?.historyError}</span>
+                      </div>
+                    </Show>
+                  </div>
+                  <Show when={streaming()}>
+                    <div
+                      class="lazers-trajectory-progress"
+                      role="progressbar"
+                      aria-label="Loading events"
+                      aria-valuemin={0}
+                      aria-valuemax={eventsTotal()}
+                      aria-valuenow={eventsLoaded()}
+                    >
+                      <i style={{ width: `${progress()}%` }} />
+                    </div>
+                  </Show>
+                  <Show when={dataGaps().length > 0}>
+                    <details class="lazers-trajectory-gaps">
+                      <summary>Data gaps · {dataGaps().length}</summary>
+                      <ul>
+                        <For each={dataGaps()}>{(note) => <li>{note}</li>}</For>
+                      </ul>
+                    </details>
                   </Show>
                 </Show>
-                <Show when={currentData()?.historyError}>
-                  <div class="lazers-trajectory-error" role="alert">
-                    <span>{currentData()?.historyError}</span>
-                  </div>
-                </Show>
-              </div>
-              <Show when={streaming()}>
-                <div
-                  class="lazers-trajectory-progress"
-                  role="progressbar"
-                  aria-label="Loading events"
-                  aria-valuemin={0}
-                  aria-valuemax={eventsTotal()}
-                  aria-valuenow={eventsLoaded()}
-                >
-                  <i style={{ width: `${progress()}%` }} />
-                </div>
-              </Show>
-              <Show when={dataGaps().length > 0}>
-                <details class="lazers-trajectory-gaps">
-                  <summary>Data gaps · {dataGaps().length}</summary>
-                  <ul>
-                    <For each={dataGaps()}>{(note) => <li>{note}</li>}</For>
-                  </ul>
-                </details>
-              </Show>
+              </section>
             </Show>
-          </section>
-        </Show>
-      </div>
-
-      <Show when={showSplit()}>
-        <div
-          class="lazers-trajectory-separator"
-          ref={(element) => {
-            separator = element
-          }}
-          role="separator"
-          aria-label="Resize trajectory inspector"
-          aria-controls="lazers-trajectory-top lazers-trajectory-inspector"
-          aria-orientation="horizontal"
-          aria-valuemin={20}
-          aria-valuemax={75}
-          aria-valuenow={Math.round(split())}
-          aria-valuetext={`Timeline ${Math.round(split())}% of panel height`}
-          tabIndex={0}
-          onPointerDown={drag}
-          onKeyDown={(event) => {
-            if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(event.key))
-              return
-            event.preventDefault()
-            const key =
-              event.key === "PageUp"
-                ? "ArrowUp"
-                : event.key === "PageDown"
-                  ? "ArrowDown"
-                  : event.key
-            splitTo(splitFromKey(split(), key, event.key.startsWith("Page") ? 15 : 5))
-            save({ split: split() })
-          }}
-        />
-
-        <div
-          class="lazers-trajectory-inspector"
-          id="lazers-trajectory-inspector"
-          data-panel-dimmed={status.dimmed()}
-          ref={(element) => {
-            inspectorPane = element
-          }}
-        >
-          <Show when={currentData()?.selection}>
-            <>
-              <Show when={selectedCheck()}>
-                {(check) => {
-                  const timing = () => checkTiming(check())
-                  const start = () =>
-                    check().scope === "attempt" ? attemptStart(check().attemptID) : null
-                  const when = (value: number) =>
-                    start() === null ? (
-                      <When value={value} origin={origin()} />
-                    ) : (
-                      <When value={value} origin={start()} suffix=" into the attempt" />
-                    )
-                  const output = () => checkOutput(check())
-                  return (
-                    <>
-                      <div class="lazers-trajectory-inspector-heading">
-                        <OutcomeBadge
-                          outcome={checkOutcome(check().result, check().state)}
-                          text={checkWord(check())}
-                          result={check().result}
-                        />
-                        <span class="lazers-trajectory-kind">
-                          {check().scope === "plan" ? "Plan check" : "Check"}
-                          {check().exitCode !== null ? ` · exit ${check().exitCode}` : ""}
-                        </span>
-                        <Show when={timing().durationMs !== null}>
-                          <span
-                            class="lazers-trajectory-duration"
-                            style={{ "font-family": ctx.appearance.font("mono") }}
-                          >
-                            {durationText(timing().durationMs!)}
-                          </span>
-                        </Show>
+          </div>
+        }
+      >
+        <Show when={currentData()?.selection}>
+          <>
+            <Show when={selectedCheck()}>
+              {(check) => {
+                const timing = () => checkTiming(check())
+                const start = () =>
+                  check().scope === "attempt" ? attemptStart(check().attemptID) : null
+                const when = (value: number) =>
+                  start() === null ? (
+                    <When value={value} origin={origin()} />
+                  ) : (
+                    <When value={value} origin={start()} suffix=" into the attempt" />
+                  )
+                const output = () => checkOutput(check())
+                return (
+                  <>
+                    <pre
+                      class="lazers-trajectory-command"
+                      style={{ "font-family": ctx.appearance.font("mono") }}
+                    >
+                      {checkLabel(check())}
+                    </pre>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={check().startedAt !== null}>
+                        <Fact label="Started">{when(check().startedAt!)}</Fact>
+                      </Show>
+                      <Show when={check().endedAt !== null}>
+                        <Fact label="Ended">{when(check().endedAt!)}</Fact>
+                      </Show>
+                      <Show when={check().timedOut}>
+                        <Fact label="Result">Timed out</Fact>
+                      </Show>
+                      <Show
+                        when={!check().timedOut && check().result === "failed" && check().error}
+                      >
+                        <Fact label="Result">{firstLine(check().error!)}</Fact>
+                      </Show>
+                    </dl>
+                    <Show when={checkSources(check()).length > 0}>
+                      <div class="lazers-trajectory-source-links">
+                        <For each={checkSources(check())}>
+                          {(reference) => (
+                            <button type="button" onClick={() => openSource(reference)}>
+                              {reference.path}:{reference.line}
+                              {reference.column ? `:${reference.column}` : ""}
+                            </button>
+                          )}
+                        </For>
                       </div>
+                    </Show>
+                    <div class="lazers-trajectory-disclosures">
+                      <Show when={output()}>
+                        <Disclosure title="Output" note={lineCount(output())}>
+                          <pre>{output()}</pre>
+                        </Disclosure>
+                      </Show>
+                      <Disclosure title="Timing source" note={sourceName(check().timingBasis)}>
+                        <p class="lazers-trajectory-disclosure-body">
+                          {basisText(check().timingBasis)}
+                          {timing().status === "invalid-order" ? ` · ${timing().reason}` : ""}
+                        </p>
+                      </Disclosure>
+                    </div>
+                  </>
+                )
+              }}
+            </Show>
+
+            <Show when={selection()?.kind === "attempt" && selectedAttempt()}>
+              {(attempt) => {
+                const admitted = () => attempt().admittedModel
+                const observed = () => attempt().observedCurrentModel
+                const model = () => observed() ?? admitted()
+                const started = () => attempt().intervals.attempt.startedAt ?? attempt().startedAt
+                return (
+                  <>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={model()}>
+                        {(value) => (
+                          <Fact label="Model">
+                            {value().providerID} / {modelLabel(value())}
+                            {observed() &&
+                            admitted() &&
+                            modelLabel(observed()!) !== modelLabel(admitted()!)
+                              ? ` · admitted as ${modelLabel(admitted()!)}`
+                              : ""}
+                          </Fact>
+                        )}
+                      </Show>
+                      <Fact label="Started">
+                        <When value={started()} origin={origin()} />
+                      </Fact>
+                      <Show when={attempt().intervals.attempt.endedAt !== null}>
+                        <Fact label="Ended">
+                          <When value={attempt().intervals.attempt.endedAt!} origin={origin()} />
+                        </Fact>
+                      </Show>
+                      <Fact label="Calls">{attempt().toolCount.value.toLocaleString()}</Fact>
+                    </dl>
+                    <div class="lazers-trajectory-disclosures">
+                      <Disclosure
+                        title="Timing source"
+                        note={sourceName(attempt().intervals.attempt.basis)}
+                      >
+                        <p class="lazers-trajectory-disclosure-body">
+                          {basisText(attempt().intervals.attempt.basis)}
+                        </p>
+                      </Disclosure>
+                    </div>
+                  </>
+                )
+              }}
+            </Show>
+
+            <Show when={selectedTool()}>
+              {(tool) => {
+                const command = () => toolCommand(tool())
+                const output = () => toolOutput(tool())
+                const paths = () => tool().files?.paths ?? []
+                return (
+                  <>
+                    <Show when={command()}>
                       <pre
                         class="lazers-trajectory-command"
                         style={{ "font-family": ctx.appearance.font("mono") }}
                       >
-                        {checkLabel(check())}
+                        {command()}
                       </pre>
-                      <dl class="lazers-trajectory-facts">
-                        <Show when={check().startedAt !== null}>
-                          <Fact label="Started">{when(check().startedAt!)}</Fact>
-                        </Show>
-                        <Show when={check().endedAt !== null}>
-                          <Fact label="Ended">{when(check().endedAt!)}</Fact>
-                        </Show>
-                        <Show when={check().timedOut}>
-                          <Fact label="Result">Timed out</Fact>
-                        </Show>
-                        <Show
-                          when={!check().timedOut && check().result === "failed" && check().error}
-                        >
-                          <Fact label="Result">{firstLine(check().error!)}</Fact>
-                        </Show>
-                      </dl>
-                      <Show when={checkSources(check()).length > 0}>
-                        <div class="lazers-trajectory-source-links">
-                          <For each={checkSources(check())}>
-                            {(reference) => (
-                              <button type="button" onClick={() => openSource(reference)}>
-                                {reference.path}:{reference.line}
-                                {reference.column ? `:${reference.column}` : ""}
-                              </button>
-                            )}
-                          </For>
-                        </div>
+                    </Show>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={tool().start !== null}>
+                        <Fact label="Started">{whenText(tool().start!, tool().attemptID)}</Fact>
                       </Show>
-                      <div class="lazers-trajectory-disclosures">
-                        <Show when={output()}>
-                          <Disclosure title="Output" note={lineCount(output())}>
-                            <pre>{output()}</pre>
-                          </Disclosure>
-                        </Show>
-                        <Disclosure title="Timing source" note={sourceName(check().timingBasis)}>
-                          <p class="lazers-trajectory-disclosure-body">
-                            {basisText(check().timingBasis)}
-                            {timing().status === "invalid-order" ? ` · ${timing().reason}` : ""}
-                          </p>
+                      <Show when={tool().end !== null}>
+                        <Fact label="Ended">{whenText(tool().end!, tool().attemptID)}</Fact>
+                      </Show>
+                      <Show when={tool().outcome === "failed" && output()}>
+                        <Fact label="Result">{firstLine(output().replace(/^error\n/, ""))}</Fact>
+                      </Show>
+                    </dl>
+                    <div class="lazers-trajectory-disclosures">
+                      <Show when={output()}>
+                        <Disclosure title="Output" note={lineCount(output())}>
+                          <pre>{output()}</pre>
                         </Disclosure>
-                      </div>
-                    </>
-                  )
-                }}
-              </Show>
-
-              <Show when={selection()?.kind === "attempt" && selectedAttempt()}>
-                {(attempt) => {
-                  const duration = () => attemptDuration(attempt(), capturedAt())
-                  const admitted = () => attempt().admittedModel
-                  const observed = () => attempt().observedCurrentModel
-                  const model = () => observed() ?? admitted()
-                  const started = () => attempt().intervals.attempt.startedAt ?? attempt().startedAt
-                  return (
-                    <>
-                      <div class="lazers-trajectory-inspector-heading">
-                        <OutcomeBadge
-                          outcome={attemptOutcome(attempt().state)}
-                          text={capitalize(attempt().state)}
-                        />
-                        <span class="lazers-trajectory-kind">Attempt {attempt().number}</span>
-                        <Show when={duration()}>
-                          {(value) => (
-                            <span
-                              class="lazers-trajectory-duration"
-                              style={{ "font-family": ctx.appearance.font("mono") }}
-                            >
-                              {durationText(value().ms)}
-                              {value().open ? " so far" : ""}
-                            </span>
-                          )}
-                        </Show>
-                      </div>
-                      <dl class="lazers-trajectory-facts">
-                        <Show when={model()}>
-                          {(value) => (
-                            <Fact label="Model">
-                              {value().providerID} / {modelLabel(value())}
-                              {observed() &&
-                              admitted() &&
-                              modelLabel(observed()!) !== modelLabel(admitted()!)
-                                ? ` · admitted as ${modelLabel(admitted()!)}`
-                                : ""}
-                            </Fact>
-                          )}
-                        </Show>
-                        <Fact label="Started">
-                          <When value={started()} origin={origin()} />
-                        </Fact>
-                        <Show when={attempt().intervals.attempt.endedAt !== null}>
-                          <Fact label="Ended">
-                            <When value={attempt().intervals.attempt.endedAt!} origin={origin()} />
-                          </Fact>
-                        </Show>
-                        <Fact label="Calls">{attempt().toolCount.value.toLocaleString()}</Fact>
-                      </dl>
-                      <div class="lazers-trajectory-disclosures">
+                      </Show>
+                      <Show
+                        when={paths().length > 0}
+                        fallback={
+                          <div class="lazers-trajectory-disclosure-static">
+                            <span>Files touched</span>
+                            <span class="lazers-trajectory-disclosure-note">0</span>
+                          </div>
+                        }
+                      >
+                        <Disclosure title="Files touched" note={String(paths().length)}>
+                          <ul class="lazers-trajectory-files">
+                            <For each={paths()}>
+                              {(path) => (
+                                <li style={{ "font-family": ctx.appearance.font("mono") }}>
+                                  {path}
+                                </li>
+                              )}
+                            </For>
+                          </ul>
+                        </Disclosure>
+                      </Show>
+                      <Show when={tool().startSource || tool().endSource}>
                         <Disclosure
                           title="Timing source"
-                          note={sourceName(attempt().intervals.attempt.basis)}
+                          note={sourceName(tool().startSource ?? tool().endSource ?? "")}
                         >
                           <p class="lazers-trajectory-disclosure-body">
-                            {basisText(attempt().intervals.attempt.basis)}
+                            {[tool().startSource, tool().endSource].filter(Boolean).join(" → ")}
                           </p>
                         </Disclosure>
-                      </div>
-                    </>
-                  )
-                }}
-              </Show>
-
-              <Show when={selectedTool()}>
-                {(tool) => {
-                  const command = () => toolCommand(tool())
-                  const output = () => toolOutput(tool())
-                  const duration = () =>
-                    tool().start !== null && tool().end !== null && tool().end! >= tool().start!
-                      ? durationText(tool().end! - tool().start!)
-                      : ""
-                  const paths = () => tool().files?.paths ?? []
-                  return (
-                    <>
-                      <div class="lazers-trajectory-inspector-heading">
-                        <OutcomeBadge outcome={tool().outcome} text={outcomeText[tool().outcome]} />
-                        <span
-                          class="lazers-trajectory-kind"
-                          style={{ "font-family": ctx.appearance.font("mono") }}
-                        >
-                          {tool().tool}
-                          {toolExit(tool()) !== null ? ` · exit ${toolExit(tool())}` : ""}
-                        </span>
-                        <Show when={duration()}>
-                          <span
-                            class="lazers-trajectory-duration"
-                            style={{ "font-family": ctx.appearance.font("mono") }}
-                          >
-                            {duration()}
-                          </span>
-                        </Show>
-                      </div>
-                      <Show when={command()}>
-                        <pre
-                          class="lazers-trajectory-command"
-                          style={{ "font-family": ctx.appearance.font("mono") }}
-                        >
-                          {command()}
-                        </pre>
                       </Show>
-                      <dl class="lazers-trajectory-facts">
-                        <Show when={tool().start !== null}>
-                          <Fact label="Started">{whenText(tool().start!, tool().attemptID)}</Fact>
-                        </Show>
-                        <Show when={tool().end !== null}>
-                          <Fact label="Ended">{whenText(tool().end!, tool().attemptID)}</Fact>
-                        </Show>
-                        <Show when={tool().outcome === "failed" && output()}>
-                          <Fact label="Result">{firstLine(output().replace(/^error\n/, ""))}</Fact>
-                        </Show>
-                      </dl>
-                      <div class="lazers-trajectory-disclosures">
-                        <Show when={output()}>
-                          <Disclosure title="Output" note={lineCount(output())}>
-                            <pre>{output()}</pre>
+                      <Show when={selectedEvent()}>
+                        {(event) => (
+                          <Disclosure title="Payload">
+                            <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
                           </Disclosure>
-                        </Show>
-                        <Show
-                          when={paths().length > 0}
-                          fallback={
-                            <div class="lazers-trajectory-disclosure-static">
-                              <span>Files touched</span>
-                              <span class="lazers-trajectory-disclosure-note">0</span>
-                            </div>
-                          }
-                        >
-                          <Disclosure title="Files touched" note={String(paths().length)}>
-                            <ul class="lazers-trajectory-files">
-                              <For each={paths()}>
-                                {(path) => (
-                                  <li style={{ "font-family": ctx.appearance.font("mono") }}>
-                                    {path}
-                                  </li>
-                                )}
-                              </For>
-                            </ul>
-                          </Disclosure>
-                        </Show>
-                        <Show when={tool().startSource || tool().endSource}>
-                          <Disclosure
-                            title="Timing source"
-                            note={sourceName(tool().startSource ?? tool().endSource ?? "")}
-                          >
-                            <p class="lazers-trajectory-disclosure-body">
-                              {[tool().startSource, tool().endSource].filter(Boolean).join(" → ")}
-                            </p>
-                          </Disclosure>
-                        </Show>
-                        <Show when={selectedEvent()}>
-                          {(event) => (
-                            <Disclosure title="Payload">
-                              <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
-                            </Disclosure>
-                          )}
-                        </Show>
-                      </div>
-                    </>
-                  )
-                }}
-              </Show>
-
-              <Show when={!selectedTool() && selectedEvent()}>
-                {(event) => (
-                  <>
-                    <div class="lazers-trajectory-inspector-heading">
-                      <span class="lazers-trajectory-kind">
-                        {selectedGap()?.label ?? eventTitle(event())}
-                      </span>
-                      <Show when={eventTime(event())}>
-                        <span
-                          class="lazers-trajectory-duration"
-                          style={{ "font-family": ctx.appearance.font("mono") }}
-                        >
-                          {eventTime(event())}
-                        </span>
-                      </Show>
-                    </div>
-                    <Show when={typeof event().at === "number"}>
-                      <dl class="lazers-trajectory-facts">
-                        <Fact label="At">
-                          <When value={event().at as number} origin={origin()} />
-                        </Fact>
-                      </dl>
-                    </Show>
-                    <div class="lazers-trajectory-disclosures">
-                      <Disclosure title="Payload">
-                        <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
-                      </Disclosure>
-                    </div>
-                  </>
-                )}
-              </Show>
-            </>
-          </Show>
-
-          <Show when={report()}>
-            {(currentReport) => {
-              const usage = () => currentReport().effort.tokenUsage
-              const tokenCount = (
-                key: keyof TrajectoryReport["effort"]["tokenUsage"]["measuredSubtotal"],
-              ) => usage().total?.[key] ?? usage().measuredSubtotal[key]
-              const compact = compactCount
-              const tokensIn = () => {
-                const parts = (["uncachedInput", "cacheRead", "cacheWrite"] as const).map(
-                  tokenCount,
-                )
-                return parts.every((value) => value === null)
-                  ? null
-                  : parts.reduce<number>((sum, value) => sum + (value ?? 0), 0)
-              }
-              const shortDate = (value: string | number) =>
-                new Date(value).toLocaleDateString([], { day: "numeric", month: "short" })
-              const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
-              const marketCost = () => currentReport().effort.marketEquivalentCost
-              const marketEstimate = () => marketCost()?.observedUsageEstimate
-              const selectedEstimate = () => {
-                const estimate = marketEstimate()
-                return estimate &&
-                  (estimate.valueUSD !== null ||
-                    estimate.rangeUSD !== null ||
-                    estimate.pricedPortionUSD !== null)
-                  ? estimate
-                  : null
-              }
-              const formatMarketUSD = (value: number) =>
-                `$${new Intl.NumberFormat("en-US", {
-                  maximumSignificantDigits: 8,
-                  useGrouping: false,
-                }).format(value)}`
-              const displayedMarketCost = () => {
-                const estimate = selectedEstimate()
-                if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
-                  return `${formatMarketUSD(estimate.valueUSD)} estimate`
-                if (estimate?.rangeUSD)
-                  return `${formatMarketUSD(estimate.rangeUSD.minimum)}–${formatMarketUSD(estimate.rangeUSD.maximum)} estimate range`
-                if (estimate?.pricedPortionUSD) {
-                  const { minimum, maximum } = estimate.pricedPortionUSD
-                  const amount =
-                    minimum === maximum
-                      ? formatMarketUSD(minimum)
-                      : `${formatMarketUSD(minimum)}–${formatMarketUSD(maximum)}`
-                  return `${amount} priced portion`
-                }
-                const value = apiCost()
-                if (value !== null) return formatMarketUSD(value)
-                const subtotal = marketCost()?.subtotalUSD ?? null
-                return subtotal === null || subtotal <= 0
-                  ? ""
-                  : `${formatMarketUSD(subtotal)} subtotal`
-              }
-              const indexPriceSourceSummary = () => {
-                const index = marketCost()?.currentIndex
-                if (!index) return ""
-                const sources = index.sources.map(
-                  (source) =>
-                    `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
-                )
-                return `${sources.join("; ") || "No selected cached price source"} · ${index.freshness} freshness`
-              }
-              const priceSourceSummary = () => {
-                const estimate = selectedEstimate()
-                const estimateSources = estimate?.sources ?? []
-                if (estimateSources.length) {
-                  const descriptions = estimateSources.map(
-                    (source) =>
-                      `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation} · ${source.priceBasis}`,
-                  )
-                  return `${descriptions.join("; ")} · ${estimate?.freshness} freshness`
-                }
-                return indexPriceSourceSummary()
-              }
-              /** "OpenRouter prices · 17 Nov"; empty when no price source applied. */
-              const priceBasis = () => {
-                const name = (source: string) =>
-                  source === "openrouter-models" ? "OpenRouter" : "OpenCode"
-                const estimate = selectedEstimate()?.sources[0]
-                if (estimate)
-                  return `${name(estimate.source)} prices · ${shortDate(estimate.retrievedAt)}`
-                const index = marketCost()?.currentIndex
-                const source = index?.sources[0]
-                return index && source
-                  ? `${name(source.source)} prices · ${shortDate(index.retrievedAt)}`
-                  : ""
-              }
-              /** "OpenRouter · Nov 3": the source and date, as the Models panel words it. */
-              const priceHint = () => priceBasis().replace(" prices", "")
-              /** "$0.42" for a whole-cent price, otherwise two significant digits: "$0.016". */
-              const shortUSD = (value: number) =>
-                value >= 1 ? `$${value.toFixed(2)}` : `$${Number(value.toPrecision(2))}`
-              const costValue = () => {
-                const estimate = selectedEstimate()
-                if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
-                  return shortUSD(estimate.valueUSD)
-                if (estimate?.rangeUSD)
-                  return `${shortUSD(estimate.rangeUSD.minimum)}–${shortUSD(estimate.rangeUSD.maximum)}`
-                if (estimate?.pricedPortionUSD) {
-                  const { minimum, maximum } = estimate.pricedPortionUSD
-                  return minimum === maximum
-                    ? shortUSD(minimum)
-                    : `${shortUSD(minimum)}–${shortUSD(maximum)}`
-                }
-                const value = apiCost()
-                if (value !== null) return shortUSD(value)
-                const subtotal = marketCost()?.subtotalUSD ?? null
-                return subtotal === null || subtotal <= 0 ? "" : shortUSD(subtotal)
-              }
-              const costLabel = () => "market cost"
-              return (
-                <>
-                  <section class="lazers-trajectory-usage" aria-label="Usage">
-                    <div class="lazers-trajectory-usage-head">
-                      <strong>
-                        {currentReport().attempts.length > 1
-                          ? `Usage · all ${currentReport().attempts.length} attempts`
-                          : "Attempt usage"}
-                      </strong>
-                      <Show when={priceBasis()}>
-                        <span class="lazers-trajectory-coverage">{priceBasis()}</span>
-                      </Show>
-                    </div>
-                    <div class="lazers-trajectory-stats">
-                      <Show when={displayedMarketCost()}>
-                        <div
-                          class="lazers-trajectory-stat lazers-trajectory-cost"
-                          title={`${
-                            selectedEstimate()
-                              ? `${selectedEstimate()!.label}: ${displayedMarketCost()}. `
-                              : `API equivalent: ${displayedMarketCost()}. `
-                          }Market-equivalent worker usage is not actual provider charges or full task cost.`}
-                        >
-                          <b>{costValue()}</b>
-                          <span>{costLabel()}</span>
-                        </div>
-                      </Show>
-                      <Show when={tokensIn() !== null}>
-                        <div class="lazers-trajectory-stat">
-                          <output title={tokensIn()!.toLocaleString()}>
-                            {compact(tokensIn()!)}
-                          </output>
-                          <span>
-                            tokens in
-                            <Show when={tokenCount("cacheRead")}>
-                              {(cached) => <>{` · ${compact(cached())} cached`}</>}
-                            </Show>
-                          </span>
-                        </div>
-                      </Show>
-                      <Show when={tokenCount("output") !== null}>
-                        <div class="lazers-trajectory-stat">
-                          <output title={tokenCount("output")!.toLocaleString()}>
-                            {compact(tokenCount("output")!)}
-                          </output>
-                          <span>tokens out</span>
-                        </div>
-                      </Show>
-                      <Show when={tokenCount("reasoning")}>
-                        {(reasoning) => (
-                          <div class="lazers-trajectory-stat">
-                            <output title={reasoning().toLocaleString()}>
-                              {compact(reasoning())}
-                            </output>
-                            <span>reasoning</span>
-                          </div>
                         )}
                       </Show>
                     </div>
-                    <div class="lazers-trajectory-disclosures">
-                      <Show when={marketCost() || marketEstimate()}>
-                        <details class="lazers-trajectory-payload lazers-trajectory-valuation">
-                          <summary>
-                            <span>Estimate basis and prices</span>
-                            <Show when={priceHint()}>
-                              <span class="lazers-trajectory-disclosure-note">{priceHint()}</span>
-                            </Show>
-                          </summary>
-                          <Show when={marketCost()}>
-                            <>
-                              <Show when={priceSourceSummary()}>
-                                <div class="lazers-trajectory-coverage">
-                                  <span>{priceSourceSummary()}</span>
-                                </div>
-                              </Show>
-                              <p>{marketCost()!.meaning}</p>
-                              <Show
-                                when={
-                                  selectedEstimate() &&
-                                  apiCost() !== null &&
-                                  indexPriceSourceSummary()
-                                }
-                              >
-                                <div class="lazers-trajectory-coverage">
-                                  Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
-                                  {indexPriceSourceSummary()}
-                                </div>
-                              </Show>
-                              <Show when={marketCost()!.currentIndex}>
-                                {(index) => (
-                                  <div class="lazers-trajectory-coverage">
-                                    <div>Models index {index().indexID}</div>
-                                    <div>Read {new Date(index().retrievedAt).toLocaleString()}</div>
-                                    <For each={index().sources}>
-                                      {(source) => (
-                                        <div>
-                                          {source.source} · snapshot {source.snapshotID} ·
-                                          generation {source.generation} · {source.priceBasis} ·{" "}
-                                          {source.rateUnit}
-                                          {source.asOf ? ` · as of ${source.asOf}` : ""}
-                                        </div>
-                                      )}
-                                    </For>
-                                  </div>
-                                )}
-                              </Show>
-                              <div class="lazers-trajectory-coverage">
-                                {marketCost()!.coverage.pricedSessions} /{" "}
-                                {marketCost()!.coverage.totalUniqueSessions} sessions fully priced ·{" "}
-                                {marketCost()!.coverage.partialSessions} partial ·{" "}
-                                {marketCost()!.coverage.unpricedSessionIDs.length} unpriced
-                              </div>
-                              <For each={marketCost()!.sessions}>
-                                {(session) => (
-                                  <div class="lazers-trajectory-coverage">
-                                    <span>
-                                      Session {session.sessionID} · {session.status} · route{" "}
-                                      {session.routeAllocation.status} · price {session.pinStatus}
-                                    </span>
-                                    <span>
-                                      <For each={Object.entries(session.categories)}>
-                                        {([name, category]) => (
-                                          <span>
-                                            {name}: {category.status}
-                                            {category.valueUSD === null
-                                              ? ""
-                                              : ` · ${formatMarketUSD(category.valueUSD)}`}{" "}
-                                          </span>
-                                        )}
-                                      </For>
-                                    </span>
-                                  </div>
-                                )}
-                              </For>
-                            </>
+                  </>
+                )
+              }}
+            </Show>
+
+            <Show when={!selectedTool() && selectedEvent()}>
+              {(event) => (
+                <>
+                  <Show when={typeof event().at === "number"}>
+                    <dl class="lazers-trajectory-facts">
+                      <Fact label="At">
+                        <When value={event().at as number} origin={origin()} />
+                      </Fact>
+                    </dl>
+                  </Show>
+                  <div class="lazers-trajectory-disclosures">
+                    <Disclosure title="Payload">
+                      <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
+                    </Disclosure>
+                  </div>
+                </>
+              )}
+            </Show>
+          </>
+        </Show>
+
+        <Show when={report()}>
+          {(currentReport) => {
+            const usage = () => currentReport().effort.tokenUsage
+            const tokenCount = (
+              key: keyof TrajectoryReport["effort"]["tokenUsage"]["measuredSubtotal"],
+            ) => usage().total?.[key] ?? usage().measuredSubtotal[key]
+            const compact = compactCount
+            const tokensIn = () => {
+              const parts = (["uncachedInput", "cacheRead", "cacheWrite"] as const).map(tokenCount)
+              return parts.every((value) => value === null)
+                ? null
+                : parts.reduce<number>((sum, value) => sum + (value ?? 0), 0)
+            }
+            const shortDate = (value: string | number) =>
+              new Date(value).toLocaleDateString([], { day: "numeric", month: "short" })
+            const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
+            const marketCost = () => currentReport().effort.marketEquivalentCost
+            const marketEstimate = () => marketCost()?.observedUsageEstimate
+            const selectedEstimate = () => {
+              const estimate = marketEstimate()
+              return estimate &&
+                (estimate.valueUSD !== null ||
+                  estimate.rangeUSD !== null ||
+                  estimate.pricedPortionUSD !== null)
+                ? estimate
+                : null
+            }
+            const formatMarketUSD = (value: number) =>
+              `$${new Intl.NumberFormat("en-US", {
+                maximumSignificantDigits: 8,
+                useGrouping: false,
+              }).format(value)}`
+            const displayedMarketCost = () => {
+              const estimate = selectedEstimate()
+              if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
+                return `${formatMarketUSD(estimate.valueUSD)} estimate`
+              if (estimate?.rangeUSD)
+                return `${formatMarketUSD(estimate.rangeUSD.minimum)}–${formatMarketUSD(estimate.rangeUSD.maximum)} estimate range`
+              if (estimate?.pricedPortionUSD) {
+                const { minimum, maximum } = estimate.pricedPortionUSD
+                const amount =
+                  minimum === maximum
+                    ? formatMarketUSD(minimum)
+                    : `${formatMarketUSD(minimum)}–${formatMarketUSD(maximum)}`
+                return `${amount} priced portion`
+              }
+              const value = apiCost()
+              if (value !== null) return formatMarketUSD(value)
+              const subtotal = marketCost()?.subtotalUSD ?? null
+              return subtotal === null || subtotal <= 0
+                ? ""
+                : `${formatMarketUSD(subtotal)} subtotal`
+            }
+            const indexPriceSourceSummary = () => {
+              const index = marketCost()?.currentIndex
+              if (!index) return ""
+              const sources = index.sources.map(
+                (source) =>
+                  `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
+              )
+              return `${sources.join("; ") || "No selected cached price source"} · ${index.freshness} freshness`
+            }
+            const priceSourceSummary = () => {
+              const estimate = selectedEstimate()
+              const estimateSources = estimate?.sources ?? []
+              if (estimateSources.length) {
+                const descriptions = estimateSources.map(
+                  (source) =>
+                    `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation} · ${source.priceBasis}`,
+                )
+                return `${descriptions.join("; ")} · ${estimate?.freshness} freshness`
+              }
+              return indexPriceSourceSummary()
+            }
+            /** "OpenRouter prices · 17 Nov"; empty when no price source applied. */
+            const priceBasis = () => {
+              const name = (source: string) =>
+                source === "openrouter-models" ? "OpenRouter" : "OpenCode"
+              const estimate = selectedEstimate()?.sources[0]
+              if (estimate)
+                return `${name(estimate.source)} prices · ${shortDate(estimate.retrievedAt)}`
+              const index = marketCost()?.currentIndex
+              const source = index?.sources[0]
+              return index && source
+                ? `${name(source.source)} prices · ${shortDate(index.retrievedAt)}`
+                : ""
+            }
+            /** "OpenRouter · Nov 3": the source and date, as the Models panel words it. */
+            const priceHint = () => priceBasis().replace(" prices", "")
+            /** "$0.42" for a whole-cent price, otherwise two significant digits: "$0.016". */
+            const shortUSD = (value: number) =>
+              value >= 1 ? `$${value.toFixed(2)}` : `$${Number(value.toPrecision(2))}`
+            const costValue = () => {
+              const estimate = selectedEstimate()
+              if (estimate?.valueUSD !== null && estimate?.valueUSD !== undefined)
+                return shortUSD(estimate.valueUSD)
+              if (estimate?.rangeUSD)
+                return `${shortUSD(estimate.rangeUSD.minimum)}–${shortUSD(estimate.rangeUSD.maximum)}`
+              if (estimate?.pricedPortionUSD) {
+                const { minimum, maximum } = estimate.pricedPortionUSD
+                return minimum === maximum
+                  ? shortUSD(minimum)
+                  : `${shortUSD(minimum)}–${shortUSD(maximum)}`
+              }
+              const value = apiCost()
+              if (value !== null) return shortUSD(value)
+              const subtotal = marketCost()?.subtotalUSD ?? null
+              return subtotal === null || subtotal <= 0 ? "" : shortUSD(subtotal)
+            }
+            const costLabel = () => "market cost"
+            return (
+              <>
+                <section class="lazers-trajectory-usage" aria-label="Usage">
+                  <div class="lazers-trajectory-usage-head">
+                    <strong>
+                      {currentReport().attempts.length > 1
+                        ? `Usage · all ${currentReport().attempts.length} attempts`
+                        : "Attempt usage"}
+                    </strong>
+                    <Show when={priceBasis()}>
+                      <span class="lazers-trajectory-coverage">{priceBasis()}</span>
+                    </Show>
+                  </div>
+                  <div class="lazers-trajectory-stats">
+                    <Show when={displayedMarketCost()}>
+                      <div
+                        class="lazers-trajectory-stat lazers-trajectory-cost"
+                        title={`${
+                          selectedEstimate()
+                            ? `${selectedEstimate()!.label}: ${displayedMarketCost()}. `
+                            : `API equivalent: ${displayedMarketCost()}. `
+                        }Market-equivalent worker usage is not actual provider charges or full task cost.`}
+                      >
+                        <b>{costValue()}</b>
+                        <span>{costLabel()}</span>
+                      </div>
+                    </Show>
+                    <Show when={tokensIn() !== null}>
+                      <div class="lazers-trajectory-stat">
+                        <output title={tokensIn()!.toLocaleString()}>{compact(tokensIn()!)}</output>
+                        <span>
+                          tokens in
+                          <Show when={tokenCount("cacheRead")}>
+                            {(cached) => <>{` · ${compact(cached())} cached`}</>}
                           </Show>
-                          <Show when={marketEstimate()}>
-                            {(estimate) => (
-                              <>
-                                <div>Retained calls · {estimate().retainedCallCount}</div>
-                                <div>Estimate basis · {estimate().basis}</div>
-                                <p>{estimate().meaning}</p>
+                        </span>
+                      </div>
+                    </Show>
+                    <Show when={tokenCount("output") !== null}>
+                      <div class="lazers-trajectory-stat">
+                        <output title={tokenCount("output")!.toLocaleString()}>
+                          {compact(tokenCount("output")!)}
+                        </output>
+                        <span>tokens out</span>
+                      </div>
+                    </Show>
+                    <Show when={tokenCount("reasoning")}>
+                      {(reasoning) => (
+                        <div class="lazers-trajectory-stat">
+                          <output title={reasoning().toLocaleString()}>
+                            {compact(reasoning())}
+                          </output>
+                          <span>reasoning</span>
+                        </div>
+                      )}
+                    </Show>
+                  </div>
+                  <div class="lazers-trajectory-disclosures">
+                    <Show when={marketCost() || marketEstimate()}>
+                      <details class="lazers-trajectory-payload lazers-trajectory-valuation">
+                        <summary>
+                          <span>Estimate basis and prices</span>
+                          <Show when={priceHint()}>
+                            <span class="lazers-trajectory-disclosure-note">{priceHint()}</span>
+                          </Show>
+                        </summary>
+                        <Show when={marketCost()}>
+                          <>
+                            <Show when={priceSourceSummary()}>
+                              <div class="lazers-trajectory-coverage">
+                                <span>{priceSourceSummary()}</span>
+                              </div>
+                            </Show>
+                            <p>{marketCost()!.meaning}</p>
+                            <Show
+                              when={
+                                selectedEstimate() &&
+                                apiCost() !== null &&
+                                indexPriceSourceSummary()
+                              }
+                            >
+                              <div class="lazers-trajectory-coverage">
+                                Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
+                                {indexPriceSourceSummary()}
+                              </div>
+                            </Show>
+                            <Show when={marketCost()!.currentIndex}>
+                              {(index) => (
                                 <div class="lazers-trajectory-coverage">
-                                  <strong>Published sources and freshness</strong>
-                                  <For each={estimate().sources}>
+                                  <div>Models index {index().indexID}</div>
+                                  <div>Read {new Date(index().retrievedAt).toLocaleString()}</div>
+                                  <For each={index().sources}>
                                     {(source) => (
                                       <div>
                                         {source.source} · snapshot {source.snapshotID} · generation{" "}
-                                        {source.generation}
-                                        {source.currentGeneration !== source.generation
-                                          ? ` · current generation ${source.currentGeneration}`
-                                          : ""}{" "}
-                                        · {source.priceBasis} · {source.freshness} · read{" "}
-                                        {new Date(source.retrievedAt).toLocaleString()} ·{" "}
-                                        <a href={source.sourceURL} target="_blank" rel="noreferrer">
-                                          {source.sourceURL}
-                                        </a>
+                                        {source.generation} · {source.priceBasis} ·{" "}
+                                        {source.rateUnit}
+                                        {source.asOf ? ` · as of ${source.asOf}` : ""}
                                       </div>
                                     )}
                                   </For>
                                 </div>
+                              )}
+                            </Show>
+                            <div class="lazers-trajectory-coverage">
+                              {marketCost()!.coverage.pricedSessions} /{" "}
+                              {marketCost()!.coverage.totalUniqueSessions} sessions fully priced ·{" "}
+                              {marketCost()!.coverage.partialSessions} partial ·{" "}
+                              {marketCost()!.coverage.unpricedSessionIDs.length} unpriced
+                            </div>
+                            <For each={marketCost()!.sessions}>
+                              {(session) => (
                                 <div class="lazers-trajectory-coverage">
-                                  <strong>Selected rates · USD per token</strong>
-                                  <For each={estimate().rateSets}>
-                                    {(rateSet) => (
-                                      <div>
-                                        {rateSet.tierID}
-                                        {rateSet.minPromptTokens === null
-                                          ? ""
-                                          : ` · prompt override above ${rateSet.minPromptTokens.toLocaleString()} tokens`}
-                                        {rateSet.contextTierTokens === null
-                                          ? ""
-                                          : ` · context tier ${rateSet.contextTierTokens.toLocaleString()} tokens`}
-                                        {` · prompt ${rateSet.prompt ?? "—"} · completion ${rateSet.completion ?? "—"} · cache read ${rateSet.cacheRead ?? "—"} · cache write ${rateSet.cacheWrite ?? "—"}`}
-                                      </div>
-                                    )}
-                                  </For>
-                                  <div>
-                                    Tier attribution · {estimate().tierAttribution.status} ·{" "}
-                                    {estimate().tierAttribution.basis}
-                                    {estimate().tierAttribution.thresholdSemantics
-                                      ? ` · ${estimate().tierAttribution.thresholdSemantics}`
-                                      : ""}
-                                  </div>
+                                  <span>
+                                    Session {session.sessionID} · {session.status} · route{" "}
+                                    {session.routeAllocation.status} · price {session.pinStatus}
+                                  </span>
+                                  <span>
+                                    <For each={Object.entries(session.categories)}>
+                                      {([name, category]) => (
+                                        <span>
+                                          {name}: {category.status}
+                                          {category.valueUSD === null
+                                            ? ""
+                                            : ` · ${formatMarketUSD(category.valueUSD)}`}{" "}
+                                        </span>
+                                      )}
+                                    </For>
+                                  </span>
                                 </div>
-                                <div class="lazers-trajectory-coverage">
-                                  <strong>Secondary assumptions and limitations</strong>
-                                  <For each={estimate().assumptions}>
-                                    {(assumption) => <div>{assumption}</div>}
-                                  </For>
-                                  <div>
-                                    Recovery gaps · {estimate().recoveryGapCount} · exact historical
-                                    bill is not guaranteed.
-                                  </div>
+                              )}
+                            </For>
+                          </>
+                        </Show>
+                        <Show when={marketEstimate()}>
+                          {(estimate) => (
+                            <>
+                              <div>Retained calls · {estimate().retainedCallCount}</div>
+                              <div>Estimate basis · {estimate().basis}</div>
+                              <p>{estimate().meaning}</p>
+                              <div class="lazers-trajectory-coverage">
+                                <strong>Published sources and freshness</strong>
+                                <For each={estimate().sources}>
+                                  {(source) => (
+                                    <div>
+                                      {source.source} · snapshot {source.snapshotID} · generation{" "}
+                                      {source.generation}
+                                      {source.currentGeneration !== source.generation
+                                        ? ` · current generation ${source.currentGeneration}`
+                                        : ""}{" "}
+                                      · {source.priceBasis} · {source.freshness} · read{" "}
+                                      {new Date(source.retrievedAt).toLocaleString()} ·{" "}
+                                      <a href={source.sourceURL} target="_blank" rel="noreferrer">
+                                        {source.sourceURL}
+                                      </a>
+                                    </div>
+                                  )}
+                                </For>
+                              </div>
+                              <div class="lazers-trajectory-coverage">
+                                <strong>Selected rates · USD per token</strong>
+                                <For each={estimate().rateSets}>
+                                  {(rateSet) => (
+                                    <div>
+                                      {rateSet.tierID}
+                                      {rateSet.minPromptTokens === null
+                                        ? ""
+                                        : ` · prompt override above ${rateSet.minPromptTokens.toLocaleString()} tokens`}
+                                      {rateSet.contextTierTokens === null
+                                        ? ""
+                                        : ` · context tier ${rateSet.contextTierTokens.toLocaleString()} tokens`}
+                                      {` · prompt ${rateSet.prompt ?? "—"} · completion ${rateSet.completion ?? "—"} · cache read ${rateSet.cacheRead ?? "—"} · cache write ${rateSet.cacheWrite ?? "—"}`}
+                                    </div>
+                                  )}
+                                </For>
+                                <div>
+                                  Tier attribution · {estimate().tierAttribution.status} ·{" "}
+                                  {estimate().tierAttribution.basis}
+                                  {estimate().tierAttribution.thresholdSemantics
+                                    ? ` · ${estimate().tierAttribution.thresholdSemantics}`
+                                    : ""}
                                 </div>
-                              </>
-                            )}
-                          </Show>
-                        </details>
-                      </Show>
-                    </div>
-                  </section>
-                  <div class="lazers-trajectory-disclosures" data-section="activity">
-                    <Show when={objectiveLonger()}>
-                      <details class="lazers-trajectory-activity">
-                        <summary>Objective</summary>
-                        <p class="lazers-trajectory-objective-text">{objective()}</p>
+                              </div>
+                              <div class="lazers-trajectory-coverage">
+                                <strong>Secondary assumptions and limitations</strong>
+                                <For each={estimate().assumptions}>
+                                  {(assumption) => <div>{assumption}</div>}
+                                </For>
+                                <div>
+                                  Recovery gaps · {estimate().recoveryGapCount} · exact historical
+                                  bill is not guaranteed.
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </Show>
                       </details>
                     </Show>
+                  </div>
+                </section>
+                <div class="lazers-trajectory-disclosures" data-section="activity">
+                  <Show when={objectiveLonger()}>
                     <details class="lazers-trajectory-activity">
-                      <summary>Captured activity · {currentData()?.totalEvents ?? 0}</summary>
-                      <div class="lazers-trajectory-activity-list">
-                        <div class="lazers-trajectory-capture-note" role="status">
-                          <span>
-                            {currentData()?.historyCapturedAt
-                              ? `Captured ${new Date(currentData()!.historyCapturedAt!).toLocaleString()}${currentData()?.historyExpiresAt ? ` · expires ${new Date(currentData()!.historyExpiresAt!).toLocaleTimeString()}` : ""}`
-                              : ""}
-                          </span>
-                          <Ui.Button
-                            variant="ghost"
-                            size="small"
-                            busy={currentData()?.recapturingHistory}
-                            onClick={() => void state.recaptureActivity()}
-                          >
-                            Recapture history
-                          </Ui.Button>
+                      <summary>Objective</summary>
+                      <p class="lazers-trajectory-objective-text">{objective()}</p>
+                    </details>
+                  </Show>
+                  <details class="lazers-trajectory-activity">
+                    <summary>Captured activity · {currentData()?.totalEvents ?? 0}</summary>
+                    <div class="lazers-trajectory-activity-list">
+                      <div class="lazers-trajectory-capture-note" role="status">
+                        <span>
+                          {currentData()?.historyCapturedAt
+                            ? `Captured ${new Date(currentData()!.historyCapturedAt!).toLocaleString()}${currentData()?.historyExpiresAt ? ` · expires ${new Date(currentData()!.historyExpiresAt!).toLocaleTimeString()}` : ""}`
+                            : ""}
+                        </span>
+                        <Ui.Button
+                          variant="ghost"
+                          size="small"
+                          busy={currentData()?.recapturingHistory}
+                          onClick={() => void state.recaptureActivity()}
+                        >
+                          Recapture history
+                        </Ui.Button>
+                      </div>
+                      <Show when={currentData()?.historyError}>
+                        <div class="lazers-trajectory-error" role="alert">
+                          {currentData()?.historyError}
                         </div>
-                        <Show when={currentData()?.historyError}>
-                          <div class="lazers-trajectory-error" role="alert">
-                            {currentData()?.historyError}
-                          </div>
-                        </Show>
-                        <For each={currentData()?.events ?? []}>
+                      </Show>
+                      <For each={currentData()?.events ?? []}>
+                        {(event) => (
+                          <button
+                            type="button"
+                            class="lazers-trajectory-event"
+                            data-scroll-anchor={`history:${event.id}`}
+                            aria-pressed={
+                              currentData()?.selection?.kind === "event" &&
+                              currentData()?.selection?.id === event.id
+                            }
+                            onClick={() => state.selectEvent(event.id)}
+                          >
+                            <span class="lazers-trajectory-event-title">{eventTitle(event)}</span>
+                            <time>{eventTime(event)}</time>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </details>
+                  <Show when={(currentData()?.liveEvents.length ?? 0) > 0}>
+                    <details class="lazers-trajectory-live">
+                      <summary>Live progress · {currentData()?.liveEvents.length ?? 0}</summary>
+                      <p class="lazers-trajectory-live-note">
+                        Current progress is shown separately; captured history stays as of its
+                        capture until you recapture it.
+                      </p>
+                      <div class="lazers-trajectory-activity-list">
+                        <For each={currentData()?.liveEvents ?? []}>
                           {(event) => (
                             <button
                               type="button"
                               class="lazers-trajectory-event"
-                              data-scroll-anchor={`history:${event.id}`}
+                              data-scroll-anchor={`live:${event.id}`}
                               aria-pressed={
                                 currentData()?.selection?.kind === "event" &&
                                 currentData()?.selection?.id === event.id
@@ -2546,43 +2538,13 @@ function PanelView(
                         </For>
                       </div>
                     </details>
-                    <Show when={(currentData()?.liveEvents.length ?? 0) > 0}>
-                      <details class="lazers-trajectory-live">
-                        <summary>Live progress · {currentData()?.liveEvents.length ?? 0}</summary>
-                        <p class="lazers-trajectory-live-note">
-                          Current progress is shown separately; captured history stays as of its
-                          capture until you recapture it.
-                        </p>
-                        <div class="lazers-trajectory-activity-list">
-                          <For each={currentData()?.liveEvents ?? []}>
-                            {(event) => (
-                              <button
-                                type="button"
-                                class="lazers-trajectory-event"
-                                data-scroll-anchor={`live:${event.id}`}
-                                aria-pressed={
-                                  currentData()?.selection?.kind === "event" &&
-                                  currentData()?.selection?.id === event.id
-                                }
-                                onClick={() => state.selectEvent(event.id)}
-                              >
-                                <span class="lazers-trajectory-event-title">
-                                  {eventTitle(event)}
-                                </span>
-                                <time>{eventTime(event)}</time>
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                      </details>
-                    </Show>
-                  </div>
-                </>
-              )
-            }}
-          </Show>
-        </div>
-      </Show>
+                  </Show>
+                </div>
+              </>
+            )
+          }}
+        </Show>
+      </DetailsPane>
     </div>
   )
 }

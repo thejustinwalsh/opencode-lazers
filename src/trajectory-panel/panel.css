@@ -46,12 +46,6 @@
   font-size: 13px;
   line-height: 1.45;
 }
-.lazers-trajectory[data-split="true"] {
-  grid-template-rows:
-    minmax(0, var(--trajectory-visual-fr, 56fr))
-    8px
-    minmax(0, var(--trajectory-inspector-fr, 44fr));
-}
 .lazers-trajectory button,
 .lazers-trajectory input {
   font: inherit;
@@ -84,7 +78,6 @@
   padding: 4px var(--trajectory-inset) 0;
 }
 .lazers-trajectory-line1,
-.lazers-trajectory-inspector-heading,
 .lazers-trajectory-timeline-bar,
 .lazers-trajectory-zoom,
 .lazers-trajectory-outcome,
@@ -671,27 +664,9 @@
   line-height: 1.5;
 }
 
-.lazers-trajectory-separator {
-  position: relative;
-  cursor: row-resize;
-  touch-action: none;
-  border-top: 1px solid var(--border-weak-base);
-}
-.lazers-trajectory-separator::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  width: 22px;
-  height: 2px;
-  margin-left: -11px;
-  border-radius: 2px;
-  background: var(--border-base);
-}
 .lazers-trajectory button:focus-visible,
 .lazers-trajectory summary:focus-visible,
-.lazers-trajectory [role="option"]:focus-visible,
-.lazers-trajectory-separator:focus-visible {
+.lazers-trajectory [role="option"]:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
 }
@@ -710,9 +685,20 @@
 .lazers-trajectory-inspector > * {
   flex: none;
 }
-.lazers-trajectory-inspector-heading {
-  flex-wrap: wrap;
-  font-size: 12px;
+/* The pane header is one line: outcome, kind, then the duration at the far end. */
+.lazers-trajectory-pane .lazers-details-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lazers-trajectory-pane .lazers-details-header > * {
+  flex: none;
+}
+.lazers-trajectory-pane .lazers-details-header > .lazers-trajectory-kind {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lazers-trajectory-kind {
   min-width: 0;

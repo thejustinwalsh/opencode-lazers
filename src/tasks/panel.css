@@ -5,11 +5,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows:
-    auto
-    minmax(0, var(--task-list-fr, 48fr))
-    6px
-    minmax(0, var(--task-detail-fr, 52fr));
+  grid-template-rows: auto minmax(0, 1fr);
   font: inherit;
   /* Mockup type scale: body 13, meta 11.5, mono 12. */
   font-size: 13px;
@@ -147,8 +143,7 @@
   font-size: 11.5px;
 }
 .lazers-tasks button:focus-visible,
-.lazers-tasks summary:focus-visible,
-.lazers-tasks-separator:focus-visible {
+.lazers-tasks summary:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
 }
@@ -163,20 +158,6 @@
 .lazers-tasks-json:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
-}
-.lazers-tasks-separator {
-  position: relative;
-  cursor: row-resize;
-  touch-action: none;
-  border-top: 1px solid var(--border-base);
-}
-.lazers-tasks-separator::after {
-  content: "";
-  display: block;
-  width: 20px;
-  height: 2px;
-  margin: 2px auto;
-  background: var(--border-base);
 }
 /*
  * Inspector. One column with uniform 12px gaps: every block is a flex item with no margin of its
@@ -206,48 +187,35 @@
 .lazers-tasks-detail-loading {
   min-width: 0;
 }
-.lazers-tasks-inspector-head {
-  display: flex;
-  min-width: 0;
-  min-height: 24px;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
+/* The pane's header line is inline text: reference, glyph, state word, then the title. */
 .lazers-tasks-inspector-icon {
   display: inline-grid;
   place-items: center;
-  flex: none;
   width: 16px;
   height: 16px;
+  margin: 0 6px;
+  vertical-align: middle;
   color: var(--icon-base);
 }
 .lazers-tasks-inspector-icon :is(svg, [data-component="icon"]) {
   width: 16px;
   height: 16px;
 }
-.lazers-tasks-inspector-actions {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 2px;
-  margin-left: auto;
-  font-size: 13px;
-}
-.lazers-tasks-inspector-actions button {
-  font-size: 13px;
-}
-.lazers-tasks-reference {
-  min-width: 0;
+.lazers-tasks-copy-status {
   color: var(--text-weak);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+.lazers-tasks-reference {
+  color: var(--text-weak);
+  font-size: 12px;
 }
 .lazers-tasks-inspector-state {
   color: var(--text-weak);
-  font-size: 13px;
-  overflow-wrap: anywhere;
   text-transform: capitalize;
+}
+.lazers-tasks-inspector-title {
+  color: var(--text-base);
 }
 .lazers-tasks-inspector-state[data-waiting="true"] {
   color: var(--task-tone-warning);
@@ -256,11 +224,10 @@
   min-height: 24px;
   padding: 2px 8px;
 }
-/* The 12px gap less 6px: the title sits 6px under the head line and the meta 6px under the title. */
+/* The meta sits 6px under the title: the 12px gap less 6px. */
 .lazers-tasks-detail > .lazers-tasks-title {
   /* A clamped box hides its overflow, so a scrolling flex column would shrink it to nothing. */
   flex: none;
-  margin-top: -6px;
   font-size: 14.5px;
   font-weight: 600;
   line-height: 1.35;

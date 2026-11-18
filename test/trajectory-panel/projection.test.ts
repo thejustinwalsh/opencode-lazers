@@ -5,11 +5,7 @@ import {
   createTrajectoryTransport,
   taskChoices,
 } from "../../src/trajectory-panel/projection.ts"
-import {
-  splitFromKey,
-  splitFromPointer,
-  visibleTicks,
-} from "../../src/trajectory-panel/panel-layout.ts"
+import { visibleTicks } from "../../src/trajectory-panel/panel-layout.ts"
 import type {
   ProjectedSnapshot,
   RecordedAttempt,
@@ -421,19 +417,6 @@ test("transport adapts scoped observation RPC calls without widening task trajec
       resnapshotRequired: false,
     },
   ])
-})
-
-test("timeline split supports repeated pointer moves, keyboard steps and compact bounds", () => {
-  const moves = [120, 250, 380, 260].map((pointerY) => splitFromPointer(56, 40, 600, 8, pointerY))
-  expect(moves[0]).toBeLessThan(moves[1]!)
-  expect(moves[2]).toBeGreaterThan(moves[1]!)
-  expect(moves[3]).toBeLessThan(moves[2]!)
-  expect(splitFromKey(moves[3]!, "ArrowDown")).toBe(moves[3]! + 5)
-  expect(splitFromKey(20, "ArrowUp")).toBe(20)
-  expect(splitFromKey(75, "ArrowDown")).toBe(75)
-  expect(splitFromKey(40, "Home")).toBe(20)
-  expect(splitFromKey(40, "End")).toBe(75)
-  expect(splitFromPointer(56, 0, 8, 8, 48)).toBe(56)
 })
 
 test("elapsed tick labels thin to fit plot width without moving their times", () => {

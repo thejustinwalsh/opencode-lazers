@@ -105,7 +105,7 @@ async function until(predicate: () => boolean) {
 
 /** The selected model's name, plus its effort when the route has one. */
 function selectedName(container: ParentNode) {
-  const heading = container.querySelector(".lazers-models-inspector h2")
+  const heading = container.querySelector(".lazers-details-header h2")
   if (!heading) return undefined
   const effort = container
     .querySelector(".lazers-models-selected-identity code")
@@ -980,6 +980,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedCandidateID: CANDIDATE_C,
           selectedConfigurationID: CONFIG_ONE,
           split: 56,
+          open: true,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -991,6 +992,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           selectedCandidateID: null,
           selectedConfigurationID: null,
           split: 64,
+          open: true,
           topScroll: 0,
           inspectorScroll: 0,
         },
@@ -1730,16 +1732,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelCss).toContain("container-name: models-panel")
     expect(modelCss).toContain("@container models-panel (min-width: 720px)")
     expect(modelCss).toContain("@container models-panel (max-width: 500px)")
-    expect(modelCss).toContain(
-      "grid-template-rows: minmax(0, var(--models-top-size)) 8px minmax(0, 1fr)",
-    )
+    expect(modelCss).toContain("grid-template-rows: minmax(0, 1fr)")
+    expect(modelCss).not.toContain("--models-top-size")
     expect(modelCss).not.toContain("minmax(180px")
     expect(modelCss).not.toContain("minmax(150px")
     expect(modelCss).toContain("min-height: 0")
     expect(modelCss).toContain("overflow: auto")
-    expect(modelCss).toContain(".lazers-models-separator {")
-    expect(modelCss).toContain("cursor: row-resize")
-    expect(modelCss).toContain("touch-action: none")
+    expect(modelCss).not.toContain(".lazers-models-separator")
     expect(modelCss).not.toContain(".lazers-models-decision-rows")
     expect(modelCss).not.toContain(".lazers-models-candidates")
     expect(modelCss).not.toContain("border-right: 1px solid var(--border-weak-base)")
@@ -1821,7 +1820,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await until(
       () =>
-        containerA.querySelector(".lazers-models-inspector h2") !== null ||
+        containerA.querySelector(".lazers-details-header h2") !== null ||
         containerA.querySelector(".lazers-models-inspector [role=alert]") !== null,
     )
     expect(
@@ -1873,11 +1872,12 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )!
     expect(sourceDetails.open).toBe(false)
     expect(sourceDetails.querySelector("summary")?.textContent).toBe("Sources")
+    // The stored split of 56 % for the list leaves 44 % of the panel for the details body.
     expect(
       containerA
-        .querySelector<HTMLElement>(".lazers-models")
-        ?.style.getPropertyValue("--models-top-size"),
-    ).toBe("56%")
+        .querySelector<HTMLElement>(".lazers-details")
+        ?.style.getPropertyValue("--details-size"),
+    ).toBe("0.44")
     expect(sourceDetails.querySelector("summary")?.textContent).not.toContain("snapshots available")
     expect(sourceDetails.querySelector(".lazers-models-source")?.closest("details")).toBe(
       sourceDetails,
@@ -1934,16 +1934,18 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     initialAlternative.open = true
     expect(comparePanel.querySelector(".lazers-models-decision-rows")).toBeNull()
     const selectedInspector = containerA.querySelector<HTMLElement>(".lazers-models-inspector")!
-    const selectedHeading = selectedInspector.querySelector<HTMLElement>(
-      ".lazers-models-selected-heading",
-    )!
+    // The model, route, price and Assign action sit in the pane's sticky header, not the body.
+    const selectedHeading = containerA.querySelector<HTMLElement>(".lazers-details-bar")!
+    expect(selectedInspector.contains(selectedHeading)).toBe(false)
     expect(selectedHeading.querySelector("h2")?.textContent).toBe("GPT-6 refreshed")
     expect(selectedHeading.querySelector("code")?.textContent).toContain("openai/gpt-6 · high")
     expect(selectedHeading.querySelector("h2")?.getAttribute("aria-label")).toContain(
       "Exact route openai / gpt-6 · high",
     )
     expect(buttonWithText(selectedHeading, "Assign to UI")).toBeDefined()
-    const selectedPrice = selectedInspector.querySelector<HTMLElement>(".lazers-models-price")!
+    const selectedPrice = selectedHeading.querySelector<HTMLElement>(
+      ".lazers-models-selected-price",
+    )!
     expect(selectedPrice.textContent).toMatch(/^\$[\d.]+ – [\d.]+ per accepted task$/)
     const selectedStats = selectedInspector.querySelector<HTMLElement>(".lazers-models-stats")!
     expect(selectedStats.textContent).toContain("accepted")
@@ -2122,7 +2124,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ".lazers-models-reference-estimate",
     )!
     expect(conditionalInspection.textContent).toContain("$0.00000004–$0.00000012")
-    expect(containerA.querySelector(".lazers-models-price")?.textContent).toContain(
+    expect(containerA.querySelector(".lazers-models-selected-price")?.textContent).toContain(
       "$0.0838 – 0.204 per accepted task",
     )
     expect(conditionalInspection.textContent).toContain("Denominator · 9 accepted tasks")
@@ -2320,7 +2322,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       "OpenRouter model catalog priced subtotal only",
     )
     // A priced portion is not a price: the first view omits it and the basis disclosure explains.
-    expect(containerA.querySelector(".lazers-models-price")).toBeNull()
+    expect(containerA.querySelector(".lazers-models-selected-price")).toBeNull()
     const estimateBasis = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-inspector .lazers-models-evidence-details",
     )!
@@ -2382,7 +2384,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(
       containerA.querySelector(".lazers-models-inspector .lazers-models-estimate")?.textContent,
     ).toContain("n=9")
-    expect(containerA.querySelector(".lazers-models-price")?.textContent).toContain(
+    expect(containerA.querySelector(".lazers-models-selected-price")?.textContent).toContain(
       "per accepted task",
     )
     expect(chartDescription()).toBe(globalGraphDescription)
@@ -2449,11 +2451,11 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await until(
       () =>
         containerA
-          .querySelector(".lazers-models-price")
+          .querySelector(".lazers-models-selected-price")
           ?.textContent?.includes("per accepted task") === true,
     )
     expect(
-      containerA.querySelector(".lazers-models-price")?.closest(".lazers-models-inspector"),
+      containerA.querySelector(".lazers-models-selected-price")?.closest(".lazers-details-bar"),
     ).not.toBeNull()
     expect(
       containerA.querySelector<HTMLElement>(".lazers-models-evidence-details")?.textContent,
@@ -2597,7 +2599,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedCandidateID).toBe(
       "6:openai|10:gpt-6-mini|-",
     )
-    expect(containerA.querySelector(".lazers-models-price")?.textContent).toBe("$0.7 per 1M tokens")
+    expect(containerA.querySelector(".lazers-models-selected-price")?.textContent).toBe(
+      "$0.7 per 1M tokens",
+    )
     expect(containerA.querySelector(".lazers-models-stats")?.textContent).toContain("coding42.5")
     const benchmarkDetails = containerA.querySelector<HTMLDetailsElement>(
       ".lazers-models-benchmark-details",
@@ -2609,9 +2613,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(benchmarkDetails.textContent).toContain("does not state the effort")
     expect(benchmarkDetails.textContent).toContain("input $0.4 · output $1.6 · cache read $0.1")
     expect(benchmarkDetails.textContent).toContain("A list price is not a task cost")
-    const benchmarkActions = containerA.querySelector<HTMLElement>(
-      ".lazers-models-inspector-compare .lazers-models-selected-heading",
-    )!
+    const benchmarkActions = containerA.querySelector<HTMLElement>(".lazers-details-bar")!
     const benchmarkAssign = buttonWithText(benchmarkActions, "Assign to Systems")!
     await until(() => !benchmarkAssign.disabled)
     expect(containerA.querySelector(".lazers-models-selection-tools")).toBeNull()
@@ -2632,7 +2634,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(unknownPricePoint.getAttribute("aria-label")).toContain(
       "exact route unknown-provider / model-identity-with-a-very-long-unrecognized-name",
     )
-    expect(containerA.querySelector(".lazers-models-price")?.textContent).toContain(
+    expect(containerA.querySelector(".lazers-models-selected-price")?.textContent).toContain(
       "$0.00015 per accepted task",
     )
     unknownPricePoint.dispatchEvent(new MouseEvent("click", { bubbles: true }))
@@ -2691,99 +2693,27 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(effortDetails.textContent).not.toContain("market-equivalent cost")
     effortDetails.open = false
 
+    // The details pane keeps `open` and `size` in the stored view; its header is the collapsed state.
     const separator = containerA.querySelector<HTMLDivElement>('[role="separator"]')!
-    expect(separator.getAttribute("aria-valuemin")).toBe("24")
-    expect(separator.getAttribute("aria-valuemax")).toBe("76")
-    separator.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }))
-    expect(separator.getAttribute("aria-valuenow")).toBe("76")
+    const storedView = () =>
+      modelStore.snapshot().projects[DIRECTORY_A] as { open?: boolean; size?: number } | undefined
+    expect(separator.getAttribute("aria-orientation")).toBe("horizontal")
+    expect(separator.getAttribute("aria-valuenow")).toBe("44")
+    containerA.querySelector<HTMLElement>(".lazers-details")!.getBoundingClientRect = () =>
+      ({ top: 0, height: 500 }) as DOMRect
     separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }))
-    expect(separator.getAttribute("aria-valuenow")).toBe("71")
-    separator.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }))
-    expect(separator.getAttribute("aria-valuenow")).toBe("24")
-    const root = containerA.querySelector<HTMLDivElement>(".lazers-models")!
-    let rootHeight = 500
-    Object.defineProperty(root, "getBoundingClientRect", {
-      configurable: true,
-      value: () =>
-        ({
-          top: 0,
-          left: 0,
-          right: 800,
-          bottom: rootHeight,
-          width: 800,
-          height: rootHeight,
-        }) as DOMRect,
-    })
-    // happy-dom does not lay out CSS grid; compare the declared percentage tracks against each root height.
-    const assertSplitGeometry = (height: number) => {
-      rootHeight = height
-      const topPercent = Number.parseFloat(root.style.getPropertyValue("--models-top-size"))
-      const ariaValue = Number.parseFloat(separator.getAttribute("aria-valuenow") ?? "NaN")
-      const topHeight = (height * topPercent) / 100
-      const inspectorHeight = height - topHeight - 8
-      expect(ariaValue).toBe(topPercent)
-      expect(topPercent).toBeGreaterThanOrEqual(Number(separator.getAttribute("aria-valuemin")))
-      expect(topPercent).toBeLessThanOrEqual(Number(separator.getAttribute("aria-valuemax")))
-      expect(topHeight + 8 + inspectorHeight).toBeCloseTo(height, 6)
-      expect(topHeight).toBeGreaterThan(0)
-      expect(inspectorHeight).toBeGreaterThan(0)
-      return { topHeight, inspectorHeight, topPercent }
-    }
-    expect(assertSplitGeometry(500)).toMatchObject({
-      topHeight: 120,
-      inspectorHeight: 372,
-      topPercent: 24,
-    })
-    expect(assertSplitGeometry(900)).toMatchObject({
-      topHeight: 216,
-      inspectorHeight: 676,
-      topPercent: 24,
-    })
-    const beforeAdjacentKeyboardMove = assertSplitGeometry(500).topHeight
+    expect(storedView()?.size).toBeCloseTo(0.49)
+    expect(separator.getAttribute("aria-valuenow")).toBe("49")
     separator.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))
-    expect(separator.getAttribute("aria-valuenow")).toBe("29")
-    expect(assertSplitGeometry(500).topHeight - beforeAdjacentKeyboardMove).toBe(25)
-    expect(assertSplitGeometry(900).topHeight).toBe(261)
-    expect(assertSplitGeometry(500).topHeight).toBe(145)
-    const captureTarget = separator as HTMLDivElement & {
-      setPointerCapture?: (pointerId: number) => void
-    }
-    captureTarget.setPointerCapture ??= () => {}
-    separator.dispatchEvent(
-      new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientY: 145 }),
-    )
-    separator.dispatchEvent(
-      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 160 }),
-    )
-    expect(separator.getAttribute("aria-valuenow")).toBe("32")
-    separator.dispatchEvent(
-      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 350 }),
-    )
-    expect(separator.getAttribute("aria-valuenow")).toBe("70")
-    separator.dispatchEvent(
-      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 450 }),
-    )
-    expect(separator.getAttribute("aria-valuenow")).toBe("76")
-    expect(assertSplitGeometry(500)).toMatchObject({
-      topHeight: 380,
-      inspectorHeight: 112,
-      topPercent: 76,
-    })
-    separator.dispatchEvent(
-      new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: 325 }),
-    )
-    expect(separator.getAttribute("aria-valuenow")).toBe("65")
-    separator.dispatchEvent(
-      new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientY: 325 }),
-    )
-    expect(assertSplitGeometry(500)).toMatchObject({ topHeight: 325, topPercent: 65 })
-    expect(assertSplitGeometry(900)).toMatchObject({
-      topHeight: 585,
-      inspectorHeight: 307,
-      topPercent: 65,
-    })
-    expect(assertSplitGeometry(500).topHeight).toBe(325)
-    expect(modelStore.snapshot().projects[DIRECTORY_A]?.split).toBe(65)
+    expect(storedView()?.size).toBeCloseTo(0.44)
+    const headerText = containerA.querySelector(".lazers-details-header")?.textContent
+    separator.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+    expect(storedView()?.open).toBe(false)
+    expect(containerA.querySelector(".lazers-models-inspector")).toBeNull()
+    expect(containerA.querySelector(".lazers-details-header")?.textContent).toBe(headerText)
+    separator.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+    expect(storedView()?.open).toBe(true)
+    expect(containerA.querySelector(".lazers-models-inspector")).not.toBeNull()
 
     const firstRow = containerA.querySelector<SVGGElement>(
       `.lazers-chart [data-point-id="${CONFIG_ONE}"]`,
@@ -2818,7 +2748,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
 
     // "Assign to <persona>" opens the existing editor with the compared route as an unsaved draft.
     const assignAction = buttonWithText(
-      containerA.querySelector(".lazers-models-selected-heading")!,
+      containerA.querySelector(".lazers-details-bar")!,
       "Assign to Systems",
     )!
     await until(() => !assignAction.disabled)
@@ -2835,9 +2765,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       )?.value
     expect(draftInput("Provider ID")).toBe("openai")
     expect(draftInput("Variant / effort (optional)")).toBe("high")
-    expect(containerA.querySelector(".lazers-models-assignment-editor h3")?.textContent).toBe(
-      "Systems",
-    )
+    expect(containerA.querySelector(".lazers-details-header h2")?.textContent).toBe("Systems")
     expect(containerA.querySelector(".lazers-models-assignment-editor")?.textContent).toContain(
       "New workers use this route. Running workers keep theirs.",
     )
@@ -2913,7 +2841,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(containerA.querySelector("[data-decision-status]")).toBeNull()
     expect(containerA.textContent).not.toContain("Select a model to compare.")
     expect(assignmentEditor.getAttribute("aria-labelledby")).toBe(
-      assignmentEditor.querySelector("h3")!.id,
+      containerA.querySelector(".lazers-details-header h2")!.id,
     )
     expect(rowForPersona("UI").getAttribute("aria-pressed")).toBe("true")
     expect(rowForPersona("Systems").getAttribute("aria-pressed")).toBe("false")
@@ -2929,7 +2857,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         (input) => !input.disabled,
       ),
     ).toBe(true)
-    expect(buttonWithText(assignmentEditor, "Save")?.disabled).toBe(false)
+    expect(buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.disabled).toBe(
+      false,
+    )
     expect(
       assignmentEditor.querySelector<HTMLButtonElement>(".lazers-models-assignment-choice > button")
         ?.disabled,
@@ -2941,7 +2871,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       '[role="tab"][aria-controls="lazers-models-compare-panel"]',
     )!
     compareTab.click()
-    await until(() => containerA.querySelector(".lazers-models-selected-heading") !== null)
+    await until(() => containerA.querySelector(".lazers-details-bar") !== null)
     await until(() =>
       chartDescription().includes("An unusually long catalog-backed model display name"),
     )
@@ -2962,7 +2892,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     clickPoint(CONFIG_SINGLE)
     await until(() => selectedName(containerA) === "Qwen 7 · preview-effort")
     expect(
-      containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
+      containerA.querySelector(".lazers-details-header h2")?.getAttribute("aria-label"),
     ).toContain("Exact route qwen / qwen-7 · preview-effort")
     expect(
       containerA.querySelector(".lazers-models-selected-identity code")?.textContent,
@@ -2973,7 +2903,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     restoreHighSelection.click()
     await until(() => selectedName(containerA)?.startsWith("GPT-6") ?? false)
     expect(
-      containerA.querySelector(".lazers-models-inspector h2")?.getAttribute("aria-label"),
+      containerA.querySelector(".lazers-details-header h2")?.getAttribute("aria-label"),
     ).toContain("Exact route openai / gpt-6 · high")
     assignmentTab.click()
     await until(() => containerA.querySelector(".lazers-models-assignment-editor") !== null)
@@ -3106,7 +3036,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     await chooseCatalogModel()
     chooseVariant("high")
-    buttonWithText(currentAssignmentEditor(), "Save")?.click()
+    buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.click()
     await until(
       () =>
         containerA
@@ -3156,7 +3086,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     await chooseCatalogModel()
     chooseVariant("xhigh")
     await until(() => buttonWithText(currentAssignmentEditor(), "xhigh") !== undefined)
-    buttonWithText(currentAssignmentEditor(), "Save")?.click()
+    buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.click()
     await until(
       () =>
         containerA

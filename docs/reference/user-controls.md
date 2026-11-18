@@ -30,6 +30,10 @@ Open **Models** from the session panel menu, or run `/lz-models`.
 
 **Assignments** lists each persona's model and effort. Select a persona to change its model, effort and whether the choice applies to all projects, this project or one task. LAZERS supports the **UI**, **Systems**, and **Small task / refactoring** personas. New workers use the saved route; running workers keep theirs.
 
+## Details pane
+
+Tasks, Trajectory, Models and Radar show the selected item in a pane at the bottom of the panel: it starts collapsed to one header line with the item and its actions, and the chevron, a double-click on that line, or dragging its top edge opens it; the header stays pinned while only the body scrolls.
+
 ## Loading and connection
 
 Every panel shows a placeholder of its layout while it first loads, and offers **Retry** if that takes longer than ten seconds. If the service reconnects, the panel keeps what it last showed, dimmed, under a banner with the time of the last update and **Retry**.

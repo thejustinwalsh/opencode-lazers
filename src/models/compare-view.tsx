@@ -1,4 +1,4 @@
-import { Show, For, onCleanup, onMount } from "solid-js"
+import { Show, For } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { PanelStatus } from "../panel-status.tsx"
@@ -253,7 +253,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
 
 /** Projected mode: the selected catalog model, its projected cost and where it came from. */
 function ProjectedSummary(props: { ctl: ModelsController }) {
-  const { assignDisabled, assignMenuItems, catalogEntries, profile, visible, Ui } = props.ctl
+  const { catalogEntries, profile, visible } = props.ctl
   const entry = () => catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
   return (
     <Show
@@ -266,32 +266,6 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
     >
       {(item) => (
         <>
-          <div class="lazers-models-selected-heading">
-            <div class="lazers-models-selected-identity">
-              <h2>{boundedModelLabel(item().label)}</h2>
-              <code>
-                {item().route.providerID}/{item().route.modelID}
-              </code>
-            </div>
-            <span class="lazers-models-chip">
-              <Ui.Menu
-                label="Assign…"
-                trigger="button"
-                icon="chevron-down"
-                placement="bottom-end"
-                disabled={assignDisabled()}
-                items={assignMenuItems(() => ({ ...item().route, variant: null }))}
-              />
-            </span>
-          </div>
-          <Show when={item().projection}>
-            {(projection) => (
-              <p class="lazers-models-price">
-                <strong>{formatMarketAmount(projection().usd)}</strong>{" "}
-                <span>projected per accepted task</span>
-              </p>
-            )}
-          </Show>
           <dl class="lazers-models-stats" aria-label="Selected model facts">
             <Show when={item().score !== null}>
               <div>
@@ -368,21 +342,14 @@ function CompareInspector(props: { ctl: ModelsController }) {
   const ctl = props.ctl
   const {
     Ui,
-    assignDisabled,
-    assignMenuItems,
-    assignRoute,
-    assignSelectedRoute,
     status,
     categoryRows,
     compareMode,
     comparisonSource,
-    decisionModelFullName,
-    decisionModelLabel,
     effortDetailsSummary,
     observedConfigurationFor,
     openContributorTrajectory,
     openSelectedTrajectory,
-    personas,
     prefs,
     priceSourceOrder,
     save,
@@ -391,7 +358,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
     selectedDecisionConfiguration,
     selectedMarketEstimate,
     selectedFacts,
-    filterPersona,
     basisHint,
     heldInspection,
     selectTask,
@@ -432,54 +398,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
               value === null ? null : `${formatMarketAmount(value)}`
             return (
               <>
-                <div class="lazers-models-selected-heading">
-                  <div class="lazers-models-selected-identity">
-                    <h2
-                      title={routeLabel(route())}
-                      aria-label={`Selected model ${entry().label}. Exact route ${routeLabel(route())}.`}
-                    >
-                      {boundedModelLabel(entry().label)}
-                    </h2>
-                    <code>
-                      {route().providerID}/{route().modelID}
-                    </code>
-                  </div>
-                  <Show
-                    when={filterPersona()}
-                    fallback={
-                      <span class="lazers-models-chip">
-                        <Ui.Menu
-                          label="Assign…"
-                          trigger="button"
-                          icon="chevron-down"
-                          placement="bottom-end"
-                          disabled={assignDisabled()}
-                          items={assignMenuItems(() => ({ ...route(), variant: null }))}
-                        />
-                      </span>
-                    }
-                  >
-                    {(persona) => (
-                      <Ui.Button
-                        size="small"
-                        disabled={assignDisabled()}
-                        onClick={() =>
-                          assignRoute(persona().persona, { ...route(), variant: null })
-                        }
-                      >
-                        {`Assign to ${persona().personaLabel}`}
-                      </Ui.Button>
-                    )}
-                  </Show>
-                </div>
-                <Show when={price()}>
-                  {(rate) => (
-                    <p class="lazers-models-price">
-                      <strong>{formatMarketAmount(rate().blended)}</strong>{" "}
-                      <span>per 1M tokens</span>
-                    </p>
-                  )}
-                </Show>
                 <dl class="lazers-models-stats" aria-label="Benchmark scores">
                   <Show when={scores().codingIndex !== null}>
                     <div>
@@ -604,57 +522,8 @@ function CompareInspector(props: { ctl: ModelsController }) {
             </Show>
           }
         >
-          {(configuration) => (
+          {(_configuration) => (
             <>
-              <div class="lazers-models-selected-heading">
-                <div class="lazers-models-selected-identity">
-                  <h2
-                    title={routeLabel(configuration().route)}
-                    aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
-                  >
-                    {decisionModelLabel(configuration())}
-                  </h2>
-                  <code>
-                    {configuration().route.providerID}/{configuration().route.modelID}
-                    {configuration().route.variant ? ` · ${configuration().route.variant}` : ""}
-                  </code>
-                </div>
-                <Show
-                  when={filterPersona()}
-                  fallback={
-                    <span class="lazers-models-chip">
-                      <Ui.Menu
-                        label="Assign…"
-                        trigger="button"
-                        icon="chevron-down"
-                        placement="bottom-end"
-                        disabled={assignDisabled()}
-                        items={personas().map((persona) => ({
-                          label: persona.personaLabel,
-                          onSelect: () => assignSelectedRoute(persona.persona),
-                        }))}
-                      />
-                    </span>
-                  }
-                >
-                  {(persona) => (
-                    <Ui.Button
-                      size="small"
-                      disabled={assignDisabled()}
-                      onClick={() => assignSelectedRoute(persona().persona)}
-                    >
-                      {`Assign to ${persona().personaLabel}`}
-                    </Ui.Button>
-                  )}
-                </Show>
-              </div>
-              <Show when={selectedFacts()?.price}>
-                {(price) => (
-                  <p class="lazers-models-price">
-                    <strong>{price()}</strong> <span>per accepted task</span>
-                  </p>
-                )}
-              </Show>
               <Show when={selectedFacts()}>
                 {(facts) => (
                   <dl class="lazers-models-stats" aria-label="Selected model facts">
@@ -1187,6 +1056,162 @@ function CompareInspector(props: { ctl: ModelsController }) {
   )
 }
 
+/** The pane's one line: model name, exact route, then its price. Also the collapsed pane. */
+function compareDetails(ctl: ModelsController) {
+  const {
+    Ui,
+    assignDisabled,
+    assignMenuItems,
+    assignRoute,
+    assignSelectedRoute,
+    compareMode,
+    decisionModelFullName,
+    decisionModelLabel,
+    filterPersona,
+    personas,
+    selectedBenchmark,
+    selectedDecisionConfiguration,
+    selectedFacts,
+    catalogEntries,
+    visible,
+  } = ctl
+  const projected = () =>
+    compareMode() === "projected"
+      ? catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+      : undefined
+  const selected = () =>
+    compareMode() === "projected"
+      ? projected()
+      : compareMode() === "benchmark"
+        ? selectedBenchmark()
+        : selectedDecisionConfiguration()
+  const header = () => {
+    if (!selected()) return undefined
+    return (
+      <Show when={projected()} fallback={<ObservedOrBenchmarkHeader />}>
+        {(item) => (
+          <span class="lazers-models-selected-identity">
+            <h2>{boundedModelLabel(item().label)}</h2>
+            <code>
+              {item().route.providerID}/{item().route.modelID}
+            </code>
+            <Show when={item().projection}>
+              {(projection) => (
+                <span class="lazers-models-selected-price">
+                  <strong>{formatMarketAmount(projection().usd)}</strong> projected per accepted
+                  task
+                </span>
+              )}
+            </Show>
+          </span>
+        )}
+      </Show>
+    )
+  }
+  const ObservedOrBenchmarkHeader = () => {
+    return (
+      <Show
+        when={compareMode() === "benchmark" ? selectedBenchmark() : undefined}
+        fallback={
+          <Show when={selectedDecisionConfiguration()}>
+            {(configuration) => (
+              <span class="lazers-models-selected-identity">
+                <h2
+                  title={routeLabel(configuration().route)}
+                  aria-label={`Selected model ${decisionModelFullName(configuration())}. Exact route ${routeLabel(configuration().route)}.`}
+                >
+                  {decisionModelLabel(configuration())}
+                </h2>
+                <code>
+                  {configuration().route.providerID}/{configuration().route.modelID}
+                  {configuration().route.variant ? ` · ${configuration().route.variant}` : ""}
+                </code>
+                <Show when={selectedFacts()?.price}>
+                  {(price) => (
+                    <span class="lazers-models-selected-price">
+                      <strong>{price()}</strong> per accepted task
+                    </span>
+                  )}
+                </Show>
+              </span>
+            )}
+          </Show>
+        }
+      >
+        {(entry) => (
+          <span class="lazers-models-selected-identity">
+            <h2
+              title={routeLabel(entry().route)}
+              aria-label={`Selected model ${entry().label}. Exact route ${routeLabel(entry().route)}.`}
+            >
+              {boundedModelLabel(entry().label)}
+            </h2>
+            <code>
+              {entry().route.providerID}/{entry().route.modelID}
+            </code>
+            <Show when={entry().price}>
+              {(rate) => (
+                <span class="lazers-models-selected-price">
+                  <strong>{formatMarketAmount(rate().blended)}</strong> per 1M tokens
+                </span>
+              )}
+            </Show>
+          </span>
+        )}
+      </Show>
+    )
+  }
+  const actions = () => {
+    const entry =
+      compareMode() === "benchmark"
+        ? selectedBenchmark()
+        : compareMode() === "projected"
+          ? projected()
+          : undefined
+    const configuration = compareMode() === "observed" ? selectedDecisionConfiguration() : undefined
+    if (!entry && !configuration) return undefined
+    return (
+      <Show
+        when={filterPersona()}
+        fallback={
+          <span class="lazers-models-chip">
+            <Ui.Menu
+              label="Assign…"
+              trigger="button"
+              icon="chevron-down"
+              placement="bottom-end"
+              disabled={assignDisabled()}
+              items={
+                entry
+                  ? assignMenuItems(() => ({ ...entry.route, variant: null }))
+                  : personas().map((persona) => ({
+                      label: persona.personaLabel,
+                      onSelect: () => assignSelectedRoute(persona.persona),
+                    }))
+              }
+            />
+          </span>
+        }
+      >
+        {(persona) => (
+          <Ui.Button
+            size="small"
+            disabled={assignDisabled()}
+            onClick={() =>
+              entry
+                ? assignRoute(persona().persona, { ...entry.route, variant: null })
+                : assignSelectedRoute(persona().persona)
+            }
+          >
+            {`Assign to ${persona().personaLabel}`}
+          </Ui.Button>
+        )}
+      </Show>
+    )
+  }
+  return { header, actions }
+}
+
 export function CompareView(props: { ctl: ModelsController; header: JSX.Element }) {
   const { benchmarkNeedsOpenRouter, compareMode, status } = props.ctl
   // One loading surface, and the actionable empty state: header, filters and that, no lower pane.
@@ -1196,10 +1221,14 @@ export function CompareView(props: { ctl: ModelsController; header: JSX.Element 
       benchmark: compareMode() === "benchmark",
       benchmarkNeedsOpenRouter: benchmarkNeedsOpenRouter(),
     })
+  const details = compareDetails(props.ctl)
   return (
     <SplitPane
       solo={solo()}
       ctl={props.ctl}
+      empty="No model selected"
+      detailsHeader={details.header()}
+      detailsActions={details.actions()}
       header={props.header}
       top={<CompareTop ctl={props.ctl} />}
       bottom={<CompareInspector ctl={props.ctl} />}

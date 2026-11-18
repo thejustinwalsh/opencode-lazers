@@ -1,6 +1,6 @@
 .lazers-models {
   display: grid;
-  grid-template-rows: minmax(0, var(--models-top-size)) 8px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   container-name: models-panel;
   container-type: inline-size;
   width: 100%;
@@ -19,12 +19,9 @@
 }
 
 .lazers-models-top {
+  min-height: 0;
+  overflow: auto;
   padding: 4px 16px 10px;
-}
-
-/* Loading and empty states have no lower pane: the top pane takes the whole panel. */
-.lazers-models-top[data-solo] {
-  grid-row: 1 / -1;
 }
 
 .lazers-models-inspector {
@@ -51,16 +48,6 @@
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
-}
-
-.lazers-models-prices {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--text-weak);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .lazers-models-tabs {
@@ -310,28 +297,6 @@
   clip: rect(0, 0, 0, 0) !important;
   white-space: nowrap !important;
   border: 0 !important;
-}
-
-/* The plot owns its height; legend and Chart data stack below and never squeeze it. */
-.lazers-models-separator {
-  position: relative;
-  z-index: 1;
-  height: 8px;
-  border-top: 1px solid var(--border-weak-base);
-  background: var(--background-base);
-  cursor: row-resize;
-  touch-action: none;
-}
-
-.lazers-models-separator::after {
-  position: absolute;
-  top: 3px;
-  left: calc(50% - 11px);
-  width: 22px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--border-base);
-  content: "";
 }
 
 .lazers-models-estimate {
@@ -784,26 +749,6 @@ span.lazers-models-assignment-route {
   margin: 0;
 }
 
-.lazers-models-assignment-editor-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.lazers-models-assignment-editor-heading h3 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.lazers-models-assignment-editor-heading span {
-  color: var(--text-weak);
-  font-size: 12px;
-}
-
 .lazers-models-assignment-fields {
   display: grid;
   gap: 8px;
@@ -964,35 +909,7 @@ span.lazers-models-assignment-route {
   color: var(--text-base);
 }
 
-.lazers-models-assignment-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  min-width: 0;
-}
-
-.lazers-models-assignment-actions button {
-  box-sizing: border-box;
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: 12.5px;
-}
-
 /* Save is the one primary action: light fill from host tokens. */
-.lazers-models-assignment-actions button:first-child {
-  border: 1px solid var(--text-strong);
-  color: var(--background-base);
-  background: var(--text-strong);
-  font-weight: 500;
-}
-
-.lazers-models-assignment-actions button:first-child:disabled {
-  border-color: var(--border-base);
-  color: var(--text-weak);
-  background: var(--surface-base);
-}
 
 .lazers-models-assignment-feedback {
   display: grid;
@@ -1019,67 +936,70 @@ span.lazers-models-assignment-route {
   overflow-wrap: anywhere;
 }
 
-.lazers-models-selected-heading {
+/* The details header is one line: name, exact route, then the price; the tail truncates. */
+.lazers-models-selected-identity {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
-.lazers-models-selected-heading > button {
-  flex: 0 0 auto;
-  box-sizing: border-box;
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--border-base);
-  border-radius: 6px;
+.lazers-models-selected-identity > * {
+  flex: none;
+}
+
+.lazers-models-selected-identity h2 {
+  min-width: 0;
+  margin: 0;
   color: var(--text-strong);
-  background: var(--surface-base);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.lazers-models-selected-identity code {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-weak);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+}
+
+.lazers-models-selected-price {
+  color: var(--text-weak);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.lazers-models-selected-price strong {
+  color: var(--text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.lazers-models-pane .lazers-details-actions button {
+  box-sizing: border-box;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
   font-size: 12.5px;
   white-space: nowrap;
 }
 
-.lazers-models-selected-identity {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  min-width: 0;
+/* Save is the one primary action: light fill from host tokens. */
+.lazers-models-pane .lazers-details-actions button:first-child:not(:only-child) {
+  border: 1px solid var(--text-strong);
+  color: var(--background-base);
+  background: var(--text-strong);
+  font-weight: 500;
 }
 
-.lazers-models-selected-identity h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: 16px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-selected-identity code {
+.lazers-models-pane .lazers-details-actions button:first-child:not(:only-child):disabled {
+  border-color: var(--border-base);
   color: var(--text-weak);
-  font-family: var(--font-family-mono);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.lazers-models-selected-heading > button,
-.lazers-models-selected-heading > div:last-child:not(.lazers-models-selected-identity) {
-  flex: 0 0 auto;
-}
-
-.lazers-models-price {
-  margin: 12px 0 0;
-  color: var(--text-weak);
-  font-size: 12.5px;
-}
-
-.lazers-models-price strong {
-  color: var(--text-strong);
-  font-size: 26px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  background: var(--surface-base);
 }
 
 .lazers-models-stats {

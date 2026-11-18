@@ -1,7 +1,3 @@
-export function clampSplit(value: number) {
-  return Math.max(20, Math.min(75, value))
-}
-
 /** Keep the endpoints and thin intermediate labels to fit the measured plot width. */
 export function visibleTicks<T extends { elapsedMs: number; label: string }>(
   ticks: readonly T[],
@@ -24,26 +20,6 @@ export function visibleTicks<T extends { elapsedMs: number; label: string }>(
   }
   if (position(last) - position(selected[0]!) >= spacing) selected.push(last)
   return selected
-}
-
-export function splitFromPointer(
-  current: number,
-  rootTop: number,
-  rootHeight: number,
-  separatorHeight: number,
-  pointerY: number,
-) {
-  const available = rootHeight - separatorHeight
-  if (!Number.isFinite(available) || available <= 0) return clampSplit(current)
-  return clampSplit(((pointerY - rootTop) / available) * 100)
-}
-
-export function splitFromKey(current: number, key: string, step = 5) {
-  if (key === "Home") return 20
-  if (key === "End") return 75
-  if (key === "ArrowUp") return clampSplit(current - step)
-  if (key === "ArrowDown") return clampSplit(current + step)
-  return clampSplit(current)
 }
 
 /** Estimated width of a mono ruler label: ~6.5 px a character plus a little breathing room. */

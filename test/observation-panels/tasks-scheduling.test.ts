@@ -6,6 +6,7 @@ import { mkdir, rm } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { validProposal } from "../proposal.ts"
 import { installTasksLayout } from "./virtual-layout.ts"
+import { openedTaskView } from "./fixtures/open-details.ts"
 
 function until(predicate: () => boolean) {
   return (async () => {
@@ -473,7 +474,9 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     }
     const registrations: Array<{ token: unknown; value: unknown }> = []
     const opened: unknown[][] = []
-    const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStore = host.createReactiveStore({
+      projects: { [projectDirectory]: openedTaskView() } as Record<string, unknown>,
+    })
     const context = {
       id: "lazers",
       app: { platform: "web" },
@@ -982,7 +985,9 @@ test("keyboard navigation reaches a held task and its related dependency when to
       event: { subscribe: () => (async function* () {})() },
     }
     const registrations: Array<{ token: unknown; value: unknown }> = []
-    const taskStore = host.createReactiveStore({ projects: {} })
+    const taskStore = host.createReactiveStore({
+      projects: { [projectDirectory]: openedTaskView() } as Record<string, unknown>,
+    })
     const context = {
       id: "lazers",
       app: { platform: "web" },
