@@ -1,7 +1,6 @@
-# Radar source notes
-
 - Flow uses a 120,000 ms window: completed tool calls and model responses must be recent; current tool calls survive the age filter, while in-flight model requests are also age-checked.
-- Session calls come from `sessionCallLines`; tool destinations classify in order: asks → You, checks or verifying shells → Checks, git/worktrees → Git, file tools or file-targeted calls → Files, shells → Shell, search tools → Search, otherwise Other tools.
+- Session calls come from `sessionCallLines`; current calls use their start time (or now), while completed calls use their end/start time and are dropped outside the window.
+- Tool destinations classify in order: asks → You, checks or verifying shells → Checks, git/worktrees → Git, file tools or file-targeted calls → Files, shells → Shell, search tools → Search, otherwise Other tools.
 - Model requests become destinations only when their route resolves to a known live route; IDs are `model:<modelID>`, with responses matched by session and message.
 - The feed orders live events first, then newer events, and caps the result at 150.
 - Flow destinations and session-to-destination edges aggregate that capped feed, so unused destinations are absent.
