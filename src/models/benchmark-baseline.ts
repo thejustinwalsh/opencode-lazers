@@ -182,6 +182,8 @@ export function benchmarkBaseline(input: {
   priceSources: readonly ModelPriceSource[]
   sourceDates: BenchmarkSourceDates
   observedRoutes: ReadonlySet<string>
+  /** The score basis the user picked, when any. */
+  preferredBasis?: string | null
   label: (route: BenchmarkRoute, candidate: ModelCandidate) => string
 }): BenchmarkBaseline {
   const routes = new Map<string, ModelCandidate[]>()
@@ -193,7 +195,7 @@ export function benchmarkBaseline(input: {
   const gaps: BenchmarkBaselineGap[] = []
   let unmatchedRoutes = 0
   let ambiguousRoutes = 0
-  const { basis } = chooseScoreBasis(input.candidates)
+  const { basis } = chooseScoreBasis(input.candidates, input.preferredBasis)
   for (const [key, group] of routes) {
     // The benchmark and catalog price describe the model, so every effort of a
     // route shares them; prefer the effort-less configuration as the handle.

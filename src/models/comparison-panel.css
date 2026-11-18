@@ -1502,8 +1502,29 @@ span.lazers-models-assignment-route {
 
 .lazers-chart-modes {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   padding-bottom: 6px;
+}
+
+.lazers-score-basis {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+
+.lazers-score-basis select {
+  max-width: 190px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 6px;
+  color: var(--text-base);
+  background: transparent;
+  font: inherit;
 }
 
 .lazers-models-source-line {

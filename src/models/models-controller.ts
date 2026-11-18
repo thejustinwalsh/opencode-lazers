@@ -23,7 +23,7 @@ import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
-import { AA_BASIS } from "./public-score.ts"
+import { AA_BASIS, scoreOptions } from "./public-score.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
@@ -674,6 +674,9 @@ export function createModelsController(props: ModelsProps) {
         ...decisionChartReferences().map((reference) => routeKey(reference.estimate.route)),
       ]),
   )
+  // The user's pick between the available score bases; it drives the ranking's score column,
+  // the cost-vs-score scatter and the Benchmark view alike. Not persisted.
+  const [pickedBasis, setScoreBasisKey] = createSignal<string | null>(null)
   const baseline = createMemo(() => {
     const panel = visible()
     if (!panel) return undefined
@@ -689,6 +692,7 @@ export function createModelsController(props: ModelsProps) {
         modelsDev: comparisonSource("models-dev")?.snapshot?.retrievedAt ?? null,
       },
       observedRoutes: observedRouteKeys(),
+      preferredBasis: pickedBasis(),
       label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
     })
   })
@@ -783,6 +787,7 @@ export function createModelsController(props: ModelsProps) {
       profile: profile(),
       observed: observedFactsByRoute(),
       routed: routedRoutes(),
+      preferredBasis: pickedBasis(),
       external: visible()?.comparison?.publicCatalog ?? [],
       label: (route) =>
         modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalogOptions),
@@ -966,6 +971,11 @@ export function createModelsController(props: ModelsProps) {
   }
   /** The public score that ranks the set: the Coding Index, or one Epoch benchmark. */
   const scoreBasis = () => baseline()?.scoreBasis ?? AA_BASIS
+  const scoreOptionsList = createMemo(() => scoreOptions(visible()?.candidates ?? []))
+  const scoreBasisKey = () => {
+    const basis = scoreBasis()
+    return basis.source === "epoch" ? basis.benchmarkID : "aa"
+  }
   const benchmarkAsOf = () => {
     const snapshot = comparisonSource(
       scoreBasis().source === "epoch" ? "epoch-benchmarks" : "openrouter-benchmarks",
@@ -1436,6 +1446,9 @@ export function createModelsController(props: ModelsProps) {
     epochCoverage,
     epochCoverageLine,
     scoreBasis,
+    scoreBasisKey,
+    setScoreBasisKey,
+    scoreOptions: scoreOptionsList,
     observedCaption,
     openProviderSettings,
     benchmarkPriceSourceLabel,

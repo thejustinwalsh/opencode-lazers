@@ -5,7 +5,12 @@ import { PanelStatus } from "../panel-status.tsx"
 import { ModelChart, RankingChart } from "./model-chart.tsx"
 import { AllModelsTable } from "./all-models-table.tsx"
 import { benchmarkSourceName, comparisonChartEmptyText, projectedRankRows } from "./chart-data.ts"
-import { SMALL_SAMPLE_TERMINAL_TASKS, formatAxisMoney, formatAxisTokens } from "./chart-layout.ts"
+import {
+  RANK_LOG_RATIO,
+  SMALL_SAMPLE_TERMINAL_TASKS,
+  formatAxisMoney,
+  formatAxisTokens,
+} from "./chart-layout.ts"
 import { catalogSummaryText, entryProvenanceText } from "./catalog-projection.ts"
 import { epochScore } from "./public-score.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
@@ -176,6 +181,24 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
               { value: "scatter", label: "Cost vs score" },
             ]}
           />
+          <Show when={ctl.scoreOptions().length > 1}>
+            <label class="lazers-score-basis">
+              <span>Score:</span>
+              <select
+                aria-label="Score basis"
+                value={ctl.scoreBasisKey()}
+                onChange={(event) => ctl.setScoreBasisKey(event.currentTarget.value)}
+              >
+                <For each={ctl.scoreOptions()}>
+                  {(option) => (
+                    <option value={option.key} selected={option.key === ctl.scoreBasisKey()}>
+                      {option.basis.label} · {option.routes}
+                    </option>
+                  )}
+                </For>
+              </select>
+            </label>
+          </Show>
         </div>
       </Show>
       <Show
@@ -204,12 +227,12 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
             revealDetails(ctl)
             ctl.pickEntryID(candidateID)
           }}
-          xTitle={
-            ctl.scoreBasis().source === "epoch" ? ctl.scoreBasis().label : "Public coding index"
-          }
-          yTitle="Projected cost per accepted task"
-          formatX={(value) => String(Math.round(value))}
-          formatY={formatAxisMoney}
+          xTitle="Projected cost per accepted task"
+          yTitle={ctl.scoreBasis().label}
+          formatX={formatAxisMoney}
+          formatY={(value) => String(Math.round(value))}
+          xScale="auto-log"
+          xLogRatio={RANK_LOG_RATIO}
           label="Projected cost against score. Arrow keys move between models; Enter selects."
           backedLegend="From your runs"
           caption="List prices × your median tokens"

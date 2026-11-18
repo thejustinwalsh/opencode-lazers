@@ -553,8 +553,9 @@ export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelCha
     return [
       {
         id: entry.id,
-        x: entry.score,
-        y: entry.projection.usd,
+        // Cost on x, the public score on y: better scores sit higher.
+        x: entry.projection.usd,
+        y: entry.score,
         label: boundedModelLabel(entry.label, pointLabelLimit),
         frontier: entry.frontier,
         backed: entry.observed !== null,

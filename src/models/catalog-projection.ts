@@ -160,6 +160,8 @@ export type CatalogInput = {
   observed: ReadonlyMap<string, ObservedFacts>
   /** Routes named by the model router. */
   routed: ReadonlyArray<BenchmarkRoute>
+  /** The score basis the user picked (`aa` or an Epoch benchmark id), when any. */
+  preferredBasis?: string | null
   /** Public-catalog models no route of this install runs: listed and priced, not routable. */
   external?: ReadonlyArray<PublicCatalogItem>
   label: (route: BenchmarkRoute, candidate: ModelCandidate | undefined) => string
@@ -283,7 +285,7 @@ export function buildCatalog(input: CatalogInput): {
     order: number
   }
   const bases = new Map<string, Base>()
-  const choice = chooseScoreBasis(input.candidates)
+  const choice = chooseScoreBasis(input.candidates, input.preferredBasis)
   for (const [key, group] of groups) {
     const representative = group.find((entry) => entry.identity.variant === null) ?? group[0]!
     const exactScore = scoreOn(representative, choice.basis)?.value ?? null
