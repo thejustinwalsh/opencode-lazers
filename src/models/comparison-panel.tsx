@@ -8,14 +8,19 @@ import type { ModelsController } from "./models-controller.ts"
 import { CompareView } from "./compare-view.tsx"
 import { AssignmentsView } from "./assignments-view.tsx"
 import { Segmented } from "./panel-layout.tsx"
-import { modelPersonaLabels, modelTaskKindLabels, modelTaskKinds } from "./panel-shared.ts"
+import {
+  modelPersonaLabels,
+  modelTaskKindLabels,
+  modelTaskKinds,
+  showTaskChip,
+} from "./panel-shared.ts"
 import type { ModelsContext, ModelsPreference } from "./panel-shared.ts"
 import css from "./comparison-panel.css?inline"
 
 export { modelsStores } from "./panel-shared.ts"
 
 function personaFilterLabel(persona: ModelsPreference["persona"]) {
-  if (!persona) return "All"
+  if (!persona) return "All personas"
   return persona === "small-refactoring" ? "Refactor" : modelPersonaLabels[persona]
 }
 
@@ -24,6 +29,7 @@ function PanelHeader(props: { ctl: ModelsController }) {
   const {
     Ui,
     changeDecisionFilters,
+    clearTaskFilter,
     compareMode,
     prefs,
     pricesAsOf,
@@ -128,7 +134,7 @@ function PanelHeader(props: { ctl: ModelsController }) {
                 ]}
               />
             </span>
-            <Show when={selectedTask()}>
+            <Show when={showTaskChip(prefs(), selectedTask()?.reference) && selectedTask()}>
               {(task) => (
                 <span
                   class="lazers-models-chip lazers-models-task-select"
@@ -144,6 +150,12 @@ function PanelHeader(props: { ctl: ModelsController }) {
                       label: `${entry.reference} · ${entry.title || entry.objective} · ${entry.status}`,
                       onSelect: () => selectTask(entry.taskID),
                     }))}
+                  />
+                  <Ui.IconButton
+                    icon="close"
+                    label={`Clear task filter ${task().reference}`}
+                    size="small"
+                    onClick={clearTaskFilter}
                   />
                 </span>
               )}

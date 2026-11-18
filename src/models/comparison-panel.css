@@ -15,15 +15,16 @@
 
 .lazers-models-top,
 .lazers-models-inspector {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  padding: 12px 16px 20px;
 }
 
 .lazers-models-top {
-  padding: 8px 12px 10px;
+  padding: 4px 16px 10px;
+}
+
+/* Loading and empty states have no lower pane: the top pane takes the whole panel. */
+.lazers-models-top[data-solo] {
+  grid-row: 1 / -1;
 }
 
 .lazers-models-inspector {
@@ -33,21 +34,22 @@
 .lazers-models-header {
   display: grid;
   gap: 8px;
-  padding-bottom: 8px;
+  padding: 6px 0 8px;
 }
 
 .lazers-models-title-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+  min-height: 30px;
 }
 
 .lazers-models-title-row h2 {
   flex: 0 0 auto;
-  margin: 0;
+  margin: 0 8px 0 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -56,39 +58,38 @@
   margin-left: auto;
   overflow: hidden;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .lazers-models-tabs {
   display: flex;
-  gap: 10px;
+  gap: 14px;
   min-width: 0;
 }
 
 .lazers-models-tabs button {
   min-height: 28px;
-  padding: 0 2px;
+  padding: 0;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-bottom: 1.5px solid transparent;
   color: var(--text-weak);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .lazers-models-tabs button[aria-selected="true"] {
-  border-bottom-color: var(--border-selected);
+  border-bottom-color: var(--text-strong);
   color: var(--text-strong);
 }
 
 .lazers-models-controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
   gap: 6px 8px;
   min-width: 0;
@@ -97,46 +98,53 @@
 .lazers-models-filters {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
 
+/* Filter chips: value, then chevron; bordered, 26 px. */
 .lazers-models-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
   max-width: 100%;
 }
 
-.lazers-models-chip button,
-.lazers-models-selection-tools button {
+.lazers-models-controls > .lazers-models-segmented {
+  margin-left: auto;
+}
+
+.lazers-models-chip button {
+  box-sizing: border-box;
   flex-direction: row-reverse;
-  gap: 6px;
+  gap: 4px;
   max-width: 100%;
-  min-height: 28px;
+  height: 26px;
+  min-height: 26px;
   padding: 0 8px;
-  font-size: 13px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  color: var(--text-base);
+  background: transparent;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.lazers-models-selection-tools {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  min-width: 0;
-}
-
-.lazers-models-selection-tools > * {
-  min-width: 0;
-  max-width: 100%;
+.lazers-models-chip button[aria-label^="Clear task filter"] {
+  width: 26px;
+  padding: 0;
+  border-color: transparent;
 }
 
 .lazers-models-sources-details,
 .lazers-models-warning-details {
   min-width: 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 .lazers-models-sources-details summary,
@@ -157,7 +165,7 @@
 .lazers-models-warning-details p {
   margin: 2px 0 6px;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -170,7 +178,7 @@
 .lazers-models-source-meta,
 .lazers-models-coverage {
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -203,14 +211,14 @@
   gap: 3px;
   min-width: 0;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .lazers-models-source strong {
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
@@ -247,7 +255,7 @@
 .lazers-models-contributors p {
   margin: 2px 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -270,29 +278,25 @@
 
 .lazers-models-contributor strong {
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 .lazers-models-chart {
   min-width: 0;
-  padding: 7px 0;
-}
-
-.lazers-models-chart {
-  border-bottom: 1px solid var(--border-weak-base);
+  padding: 0;
 }
 
 .lazers-models-chart-caption {
-  margin: 0 0 4px;
+  margin: 0;
   color: var(--text-weak);
-  font-size: max(11px, 0.85em);
+  font-size: 12px;
   line-height: 1.4;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 
 .lazers-models-chart-key-hollow {
-  border-radius: 50%;
-  background: var(--surface-base);
+  background: transparent;
 }
 
 .lazers-models-benchmark-coverage {
@@ -305,7 +309,7 @@
 .lazers-models-benchmark-coverage p {
   margin: 0;
   color: var(--text-weak);
-  font-size: max(11px, 0.85em);
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -356,7 +360,7 @@
 .lazers-models-comparison-chart-data summary {
   min-height: 24px;
   color: var(--text-weak);
-  font-size: max(11px, 0.85em);
+  font-size: 12px;
   line-height: 24px;
   cursor: pointer;
 }
@@ -364,42 +368,58 @@
 .lazers-models-comparison-chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 8px;
+  gap: 2px 14px;
   min-width: 0;
   margin: 0;
   padding: 0;
   color: var(--text-weak);
-  font-size: max(11px, 0.85em);
+  font-size: 12px;
   line-height: 1.3;
   list-style: none;
+}
+
+.lazers-models-chart-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  min-width: 0;
+  padding: 0 0 8px;
+}
+
+.lazers-models-chart-foot[hidden] {
+  display: none;
+}
+
+.lazers-models-chart-foot > .lazers-models-chart-caption {
+  margin-left: auto;
 }
 
 .lazers-models-comparison-chart-legend li {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .lazers-models-chart-key {
   display: inline-block;
   flex: 0 0 auto;
+  box-sizing: border-box;
   width: 8px;
   height: 8px;
-  border: 1px solid var(--border-selected);
+  border: 1.5px solid var(--text-base);
+  border-radius: 50%;
 }
 
 .lazers-models-chart-key-canonical {
-  border-radius: 50%;
-  background: var(--text-base);
+  background: transparent;
 }
 
 .lazers-models-chart-key-frontier {
-  width: 7px;
-  height: 7px;
-  margin: 0 1px;
-  background: var(--text-base);
-  transform: rotate(45deg);
+  border-color: var(--text-interactive-base, var(--border-selected));
+  background: var(--text-interactive-base, var(--border-selected));
 }
 
 .lazers-models-comparison-chart-data ul {
@@ -419,7 +439,7 @@
   color: var(--text-weak);
   background: transparent;
   font: inherit;
-  font-size: max(11px, 0.85em);
+  font-size: 12px;
   line-height: 1.4;
   text-align: left;
   overflow-wrap: anywhere;
@@ -438,7 +458,6 @@
   z-index: 1;
   height: 8px;
   border-top: 1px solid var(--border-weak-base);
-  border-bottom: 1px solid var(--border-weak-base);
   background: var(--background-base);
   cursor: row-resize;
   touch-action: none;
@@ -446,12 +465,12 @@
 
 .lazers-models-separator::after {
   position: absolute;
-  top: 2px;
-  left: calc(50% - 16px);
-  width: 32px;
+  top: 3px;
+  left: calc(50% - 11px);
+  width: 22px;
   height: 2px;
   border-radius: 2px;
-  background: var(--text-weak);
+  background: var(--border-base);
   content: "";
 }
 
@@ -470,7 +489,7 @@
 
 .lazers-models-estimate span {
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -483,7 +502,7 @@
 .lazers-models-route-pages summary {
   min-height: 30px;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 
@@ -508,7 +527,7 @@
   min-width: 0;
   margin: 4px 0 8px;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 .lazers-models-reference-details summary {
@@ -528,14 +547,14 @@
 .lazers-models-reference-content h3 {
   margin: 4px 0 0;
   color: var(--text-base);
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 .lazers-models-reference-content p,
 .lazers-models-reference-content li {
   margin: 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -589,7 +608,7 @@
   min-width: 0;
   margin: 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -630,7 +649,7 @@
 .lazers-models-market-rates h4 {
   margin: 0 0 4px;
   color: var(--text-base);
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
@@ -639,7 +658,7 @@
   min-width: 0;
   margin: 3px 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -654,7 +673,7 @@
   min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 9px;
+  font-size: 11.5px;
 }
 
 .lazers-models-market-rates th,
@@ -718,7 +737,7 @@
 .lazers-models-task-effort-details > summary {
   min-height: 32px;
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 
@@ -737,21 +756,21 @@
 .lazers-models-inspector-block h4 {
   margin: 12px 0 6px;
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
 .lazers-models-task-reference {
   margin: 8px 0 4px;
   color: var(--text-base);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 
 .lazers-models-task-objective {
   margin: 0 0 8px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -762,7 +781,7 @@
   gap: 10px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border-weak-base);
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 .lazers-models-category-row span:last-child {
@@ -778,7 +797,7 @@
 
 .lazers-models-evidence-content code {
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: 11.5px;
 }
 
 .lazers-models-evidence-summary {
@@ -786,7 +805,7 @@
   grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr);
   gap: 5px 12px;
   margin: 0;
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 .lazers-models-evidence-summary dt {
@@ -808,21 +827,12 @@
 
 .lazers-models-benchmark-details p {
   margin: 4px 0;
-  font-size: 11px;
+  font-size: 11.5px;
   overflow-wrap: anywhere;
 }
 
 .lazers-models-evidence-details {
-  margin-top: 14px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-weak-base);
-}
-
-.lazers-models-evidence-details summary {
-  min-height: 32px;
-  color: var(--text-base);
-  font-size: 11px;
-  cursor: pointer;
+  margin-top: 0;
 }
 
 .lazers-models-evidence-content {
@@ -835,7 +845,7 @@
 .lazers-models-evidence-content p {
   margin: 4px 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -844,24 +854,26 @@
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding: 8px 0;
+  padding: 2px 0 8px;
 }
 
 .lazers-models-assignment-rows {
   display: grid;
   gap: 2px;
   min-width: 0;
+  margin: 0 -10px;
 }
 
 .lazers-models-assignment-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1.4fr) 52px;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1.4fr) auto;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  min-height: 40px;
-  padding: 6px 8px;
+  min-height: 44px;
+  padding: 6px 10px;
   border: 0;
   border-radius: 6px;
   color: var(--text-base);
@@ -895,6 +907,7 @@
 span.lazers-models-assignment-route {
   grid-column: 3 / -1;
   font-family: inherit;
+  font-size: 12px;
   color: var(--text-weak);
 }
 
@@ -906,7 +919,7 @@ span.lazers-models-assignment-route {
 
 .lazers-models-assignment-editor {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   margin: 0;
 }
@@ -922,7 +935,7 @@ span.lazers-models-assignment-route {
 .lazers-models-assignment-editor-heading h3 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
 }
 
@@ -939,7 +952,7 @@ span.lazers-models-assignment-route {
 
 .lazers-models-form-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -963,10 +976,19 @@ span.lazers-models-assignment-route {
 .lazers-models-form-control,
 .lazers-models-form-row > button,
 .lazers-models-form-row > div:not(.lazers-models-segmented) > button {
+  box-sizing: border-box;
   flex-direction: row-reverse;
   justify-content: space-between;
   gap: 8px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  color: var(--text-strong);
+  background: var(--surface-base);
   font-family: var(--font-family-mono);
+  font-size: 12px;
   text-align: left;
 }
 
@@ -977,21 +999,22 @@ span.lazers-models-assignment-route {
 .lazers-models-segmented {
   display: inline-flex;
   justify-self: start;
+  gap: 2px;
   padding: 2px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 8px;
-  background: var(--background-base);
+  border: 1px solid var(--border-base);
+  border-radius: 7px;
+  background: transparent;
 }
 
 .lazers-models-segmented button {
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 9px;
   border: 0;
-  border-radius: 6px;
-  color: var(--text-weak);
+  border-radius: 5px;
+  color: var(--text-base);
   background: transparent;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -1010,12 +1033,12 @@ span.lazers-models-assignment-route {
   gap: 8px;
   min-width: 0;
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: 7px;
   color: var(--text-base);
   background: var(--surface-base);
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .lazers-models-catalog-status {
@@ -1045,8 +1068,6 @@ span.lazers-models-assignment-route {
 }
 
 .lazers-models-catalog-error summary,
-.lazers-models-assignment-manual-route summary,
-.lazers-models-assignment-layers summary,
 .lazers-models-assignment-write-details summary {
   min-height: 32px;
   color: var(--text-base);
@@ -1090,6 +1111,29 @@ span.lazers-models-assignment-route {
   min-width: 0;
 }
 
+.lazers-models-assignment-actions button {
+  box-sizing: border-box;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+/* Save is the one primary action: light fill from host tokens. */
+.lazers-models-assignment-actions button:first-child {
+  border: 1px solid var(--text-strong);
+  color: var(--background-base);
+  background: var(--text-strong);
+  font-weight: 500;
+}
+
+.lazers-models-assignment-actions button:first-child:disabled {
+  border-color: var(--border-base);
+  color: var(--text-weak);
+  background: var(--surface-base);
+}
+
 .lazers-models-assignment-feedback {
   display: grid;
   justify-items: start;
@@ -1117,10 +1161,24 @@ span.lazers-models-assignment-route {
 
 .lazers-models-selected-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+}
+
+.lazers-models-selected-heading > button {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  color: var(--text-strong);
+  background: var(--surface-base);
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .lazers-models-selected-identity {
@@ -1134,7 +1192,7 @@ span.lazers-models-assignment-route {
 .lazers-models-selected-identity h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -1152,9 +1210,9 @@ span.lazers-models-assignment-route {
 }
 
 .lazers-models-price {
-  margin: 14px 0 0;
+  margin: 12px 0 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .lazers-models-price strong {
@@ -1168,7 +1226,7 @@ span.lazers-models-assignment-route {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 8px 16px;
-  margin: 14px 0 6px;
+  margin: 12px 0 8px;
 }
 
 .lazers-models-stats > div {
@@ -1208,8 +1266,8 @@ span.lazers-models-assignment-route {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 36px;
+  gap: 8px;
+  min-height: 32px;
   color: var(--text-base);
   font-size: 13px;
   cursor: pointer;
@@ -1221,14 +1279,20 @@ span.lazers-models-assignment-route {
 }
 
 .lazers-models-disclosure > summary::before {
-  content: "›";
+  content: "";
   flex: none;
-  width: 12px;
-  color: var(--text-weak);
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  margin: 0 5px 0 2px;
+  border-right: 1.5px solid var(--icon-base, var(--text-weak));
+  border-bottom: 1.5px solid var(--icon-base, var(--text-weak));
+  transform: rotate(-45deg);
+  transition: transform 100ms ease;
 }
 
 .lazers-models-disclosure[open] > summary::before {
-  content: "⌄";
+  transform: translateY(-2px) rotate(45deg);
 }
 
 .lazers-models-disclosure > summary > span:first-child {
@@ -1245,23 +1309,23 @@ span.lazers-models-assignment-route {
 .lazers-models-empty-state {
   display: grid;
   justify-items: center;
-  gap: 8px;
-  padding: 32px 12px;
+  gap: 6px;
+  padding: 24px 16px;
   text-align: center;
 }
 
 .lazers-models-empty-state h3 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .lazers-models-empty-state p {
   max-width: 34ch;
   margin: 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 
@@ -1269,7 +1333,7 @@ span.lazers-models-assignment-route {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .lazers-models-chart-data-slot {
@@ -1277,11 +1341,47 @@ span.lazers-models-assignment-route {
 }
 
 .lazers-models-note {
-  margin: 8px 0;
+  margin: 6px 0;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+/* The shared loading surface, laid out as the mockup: chart skeleton, one status line, two bars. */
+.lazers-models .lazers-panel-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 0;
+}
+
+.lazers-models .lazers-panel-skeleton {
+  display: contents;
+}
+
+.lazers-models .lazers-panel-skeleton-chart {
+  order: 0;
+  height: 150px;
+}
+
+.lazers-models .lazers-panel-status-line {
+  order: 1;
+  font-size: 12px;
+}
+
+.lazers-models .lazers-panel-skeleton > span {
+  order: 2;
+}
+
+.lazers-models .lazers-panel-banner {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.lazers-models .lazers-panel-failed {
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .lazers-models button:focus-visible,

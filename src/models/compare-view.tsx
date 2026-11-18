@@ -23,6 +23,7 @@ import {
   formatNumber,
   chartHeightBounds,
   chartFooterReserve,
+  hasCompareLowerPane,
   statusText,
 } from "./panel-shared.ts"
 import { Disclosure, SplitPane } from "./panel-layout.tsx"
@@ -209,6 +210,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
                     points={decisionChartPoints()}
                     references={decisionChartReferences()}
                     frontierConfigurationIDs={overview().graph.frontierConfigurationIDs}
+                    caption={observedCaption()}
                     selectedConfigurationID={visible()?.selectedConfigurationID}
                     onSelect={(configurationID) => state.selectConfiguration(configurationID)}
                     appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
@@ -246,6 +248,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
                   selectedID={selectedBenchmark()?.id ?? null}
                   onSelect={(candidateID) => state.selectCandidate(candidateID)}
                   emptyText={benchmarkEmptyText()}
+                  caption={`Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`}
                   appearanceVersion={`${ctx.appearance.mode()}|${ctx.appearance.font("mono")}`}
                   monoFontFamily={ctx.appearance.font("mono")}
                   dataFooter={
@@ -273,15 +276,6 @@ export function CompareTop(props: { ctl: ModelsController }) {
                 />
               </Show>
             </Show>
-            <Show
-              when={compareMode() === "benchmark" ? !benchmarkNeedsOpenRouter() : observedCaption()}
-            >
-              <p class="lazers-models-chart-caption">
-                {compareMode() === "benchmark"
-                  ? `Artificial Analysis Coding Index${benchmarkAsOf() ? ` (${benchmarkAsOf()})` : ""} · ${benchmarkPriceSourceLabel()} list price per 1M tokens, ${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} input:output`
-                  : observedCaption()}
-              </p>
-            </Show>
           </section>
         </div>
       </Show>
@@ -301,7 +295,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
     status,
     categoryRows,
     compareMode,
-    configurationsForGroup,
     comparisonSource,
     decisionModelFullName,
     decisionModelLabel,
@@ -321,9 +314,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
     filterPersona,
     basisHint,
     heldInspection,
-    decisionModelChoiceLabel,
-    providerChoices,
-    selectDecisionGroup,
+    selectTask,
     setDataMount,
     selectedTask,
     showObservedFor,
@@ -373,7 +364,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                     fallback={
                       <span class="lazers-models-chip">
                         <Ui.Menu
-                          label="Assign to…"
+                          label="Assign…"
                           trigger="button"
                           icon="chevron-down"
                           placement="bottom-end"
@@ -548,7 +539,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                   fallback={
                     <span class="lazers-models-chip">
                       <Ui.Menu
-                        label="Assign to…"
+                        label="Assign…"
                         trigger="button"
                         icon="chevron-down"
                         placement="bottom-end"
@@ -616,73 +607,6 @@ function CompareInspector(props: { ctl: ModelsController }) {
                     </Show>
                   </dl>
                 )}
-              </Show>
-              <Show
-                when={
-                  providerChoices().length > 1 ||
-                  configurationsForGroup(configuration().groupID).length > 1
-                }
-              >
-                <div
-                  class="lazers-models-selection-tools"
-                  role="group"
-                  aria-label="Model and effort"
-                  title={`Exact route ${routeLabel(configuration().route)}`}
-                >
-                  <Show when={providerChoices().length > 1}>
-                    <Ui.Menu
-                      label={decisionModelLabel(configuration())}
-                      trigger="button"
-                      icon="chevron-down"
-                      items={providerChoices().map((choice) => ({
-                        label: decisionModelChoiceLabel(choice),
-                        onSelect: () => selectDecisionGroup(choice.groupID),
-                      }))}
-                    />
-                  </Show>
-                  <Show when={configurationsForGroup(configuration().groupID).length > 1}>
-                    <Ui.Menu
-                      label={configuration().route.variant ?? "Default effort"}
-                      trigger="button"
-                      icon="chevron-down"
-                      items={configurationsForGroup(configuration().groupID).map((choice) => ({
-                        label: choice.route.variant ?? "Default effort",
-                        onSelect: () => state.selectConfiguration(choice.configurationID),
-                      }))}
-                    />
-                  </Show>
-                </div>
-              </Show>
-              <Show
-                when={
-                  visible()?.decisionRowsNextCursor || visible()?.decisionConfigurationsNextCursor
-                }
-              >
-                <details class="lazers-models-route-pages">
-                  <summary>More model routes and effort options</summary>
-                  <div>
-                    <Show when={visible()?.decisionRowsNextCursor}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost"
-                        busy={visible()?.decisionRowsLoading}
-                        onClick={() => void state.moreDecisionRows()}
-                      >
-                        Load more model groups
-                      </Ui.Button>
-                    </Show>
-                    <Show when={visible()?.decisionConfigurationsNextCursor}>
-                      <Ui.Button
-                        size="small"
-                        variant="ghost"
-                        busy={visible()?.decisionConfigurationsLoading}
-                        onClick={() => void state.moreDecisionConfigurations()}
-                      >
-                        Load more exact configurations
-                      </Ui.Button>
-                    </Show>
-                  </div>
-                </details>
               </Show>
               <Show when={visible()?.decisionInspectError}>
                 <div class="lazers-models-error" role="alert">
@@ -972,6 +896,17 @@ function CompareInspector(props: { ctl: ModelsController }) {
                         aria-label="Selected task execution"
                       >
                         <h3>Selected task</h3>
+                        <Show when={(visible()?.tasks.length ?? 0) > 1}>
+                          <Ui.Menu
+                            label={selectedTask()?.reference ?? "Choose a task"}
+                            trigger="button"
+                            icon="chevron-down"
+                            items={(visible()?.tasks ?? []).map((entry) => ({
+                              label: `${entry.reference} · ${entry.title || entry.objective} · ${entry.status}`,
+                              onSelect: () => selectTask(entry.taskID),
+                            }))}
+                          />
+                        </Show>
                         <Show
                           when={visible()?.selectedTaskID}
                           fallback={
@@ -1167,8 +1102,17 @@ function CompareInspector(props: { ctl: ModelsController }) {
 }
 
 export function CompareView(props: { ctl: ModelsController; header: JSX.Element }) {
+  const { benchmarkNeedsOpenRouter, compareMode, status } = props.ctl
+  // One loading surface, and the actionable empty state: header, filters and that, no lower pane.
+  const solo = () =>
+    !hasCompareLowerPane({
+      contentShown: status.showContent(),
+      benchmark: compareMode() === "benchmark",
+      benchmarkNeedsOpenRouter: benchmarkNeedsOpenRouter(),
+    })
   return (
     <SplitPane
+      solo={solo()}
       ctl={props.ctl}
       header={props.header}
       top={<CompareTop ctl={props.ctl} />}

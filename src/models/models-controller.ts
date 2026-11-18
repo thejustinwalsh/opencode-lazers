@@ -18,7 +18,7 @@ import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"
-import { ModelComparisonPanelState } from "./comparison-state.ts"
+import { ModelComparisonPanelState, isSeedable } from "./comparison-state.ts"
 import type {
   ModelCatalogOutput,
   ModelComparisonPanelData,
@@ -45,7 +45,45 @@ import {
 } from "./panel-shared.ts"
 import type { ModelsContext, Tab } from "./panel-shared.ts"
 
+const locationKey = (request: { server: string; session: string; directory: string }) =>
+  JSON.stringify([request.server, request.session, request.directory])
+
 type ModelsProps = PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajectoryOpener }
+
+/**
+ * The last comparison, selection and assignments per project and filter key, kept for the life of
+ * the plugin. Switching to another panel tab and back mounts the panel again; it renders this at
+ * once and refreshes in place instead of starting from the skeleton.
+ */
+const SNAPSHOT_LIMIT = 12
+const snapshots = new Map<string, ModelComparisonPanelData>()
+const assignmentRows = new Map<string, WorkerPersona>()
+const locations = new Map<string, { project: string; projectID: string }>()
+
+export const modelsSnapshotKey = (key: string, filters: ModelDecisionFilters) =>
+  JSON.stringify([key, filters.persona, filters.taskKind, filters.period])
+
+export function rememberModelsSnapshot(data: ModelComparisonPanelData) {
+  if (!data.key || !isSeedable(data)) return
+  const key = modelsSnapshotKey(data.key, data.decisionFilters)
+  snapshots.delete(key)
+  snapshots.set(key, data)
+  for (const oldest of snapshots.keys()) {
+    if (snapshots.size <= SNAPSHOT_LIMIT) break
+    snapshots.delete(oldest)
+  }
+}
+
+export function recallModelsSnapshot(key: string, filters: ModelDecisionFilters) {
+  return snapshots.get(modelsSnapshotKey(key, filters))
+}
+
+/** Forget everything; for tests. */
+export function resetModelsSnapshots() {
+  snapshots.clear()
+  assignmentRows.clear()
+  locations.clear()
+}
 
 /** All shared state of the Models panel; the shell and both views read from it. */
 export function createModelsController(props: ModelsProps) {
@@ -108,11 +146,22 @@ export function createModelsController(props: ModelsProps) {
       { location: { directory: value.directory } },
       { signal },
     )
+    locations.set(locationKey(value), {
+      project: location.project.canonical,
+      projectID: location.project.id,
+    })
     return {
       ...value,
       project: location.project.canonical,
       projectID: location.project.id,
     }
+  })
+  // A project already resolved once is known at once on a re-mount, so the cached comparison
+  // can render before the location read returns.
+  const knownLocation = createMemo(() => {
+    const request = locationRequest()
+    const hit = request ? locations.get(locationKey(request)) : undefined
+    return request && hit ? { ...request, ...hit } : undefined
   })
   const current = () => {
     const request = locationRequest()
@@ -124,7 +173,7 @@ export function createModelsController(props: ModelsProps) {
       value.session === props.session.id &&
       value.directory === props.session.directory
       ? value
-      : undefined
+      : knownLocation()
   }
   const prefs = () => {
     const value = current()
@@ -142,12 +191,17 @@ export function createModelsController(props: ModelsProps) {
       }
     })
   }
-  const state = new ModelComparisonPanelState(setData, (selection) =>
-    save({
-      selectedTaskID: selection.selectedTaskID,
-      selectedCandidateID: selection.selectedCandidateID,
-      selectedConfigurationID: selection.selectedConfigurationID,
-    }),
+  const state = new ModelComparisonPanelState(
+    (next) => {
+      setData(next)
+      rememberModelsSnapshot(next)
+    },
+    (selection) =>
+      save({
+        selectedTaskID: selection.selectedTaskID,
+        selectedCandidateID: selection.selectedCandidateID,
+        selectedConfigurationID: selection.selectedConfigurationID,
+      }),
   )
   const expectedKey = () => {
     const value = current()
@@ -161,7 +215,19 @@ export function createModelsController(props: ModelsProps) {
         ])
       : ""
   }
-  const visible = () => (data().key === expectedKey() ? data() : undefined)
+  const visible = () => {
+    const key = expectedKey()
+    if (data().key === key) return data()
+    // Before the connection lands on a re-mount, show the last snapshot for this project.
+    const view = prefs()
+    return key
+      ? recallModelsSnapshot(key, {
+          persona: view.persona,
+          taskKind: view.taskKind ?? null,
+          period: { from: null, to: null },
+        })
+      : undefined
+  }
 
   onCleanup(() => {
     assignmentPickerRequest++
@@ -178,6 +244,13 @@ export function createModelsController(props: ModelsProps) {
     ({ value, key }) => {
       const view = prefs()
       setSplit(clampSplit(view.split))
+      const filters: ModelDecisionFilters = {
+        persona: view.persona,
+        taskKind: view.taskKind ?? null,
+        period: { from: null, to: null },
+      }
+      const restoredRow = assignmentRows.get(key)
+      if (restoredRow && !assignmentPersona()) setAssignmentPersona(restoredRow)
       const models = value.client.rpc(Models)
       const decisions = value.client.rpc(ModelsDecision)
       const tasks = value.client.rpc(Tasks)
@@ -292,11 +365,8 @@ export function createModelsController(props: ModelsProps) {
           selectedCandidateID: view.selectedCandidateID,
           selectedConfigurationID: view.selectedConfigurationID ?? null,
         },
-        {
-          persona: view.persona,
-          taskKind: view.taskKind ?? null,
-          period: { from: null, to: null },
-        },
+        filters,
+        recallModelsSnapshot(key, filters),
       )
       onCleanup(() => state.close())
     },
@@ -745,7 +815,7 @@ export function createModelsController(props: ModelsProps) {
       period: current.period,
     }
     save({ persona: next.persona, taskKind: next.taskKind })
-    state.setDecisionFilters(next)
+    state.setDecisionFilters(next, recallModelsSnapshot(expectedKey(), next))
   }
   const selectDecisionGroup = (groupID: string) => {
     const configurations = configurationsForGroup(groupID)
@@ -809,6 +879,7 @@ export function createModelsController(props: ModelsProps) {
         : "Task override"
   const clearConfirmedAssignmentWrite = () => state.clearConfirmedAssignmentWrite()
   const selectAssignmentPersona = (persona: WorkerPersona) => {
+    assignmentRows.set(expectedKey(), persona)
     assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
     setAssignmentPrefill(undefined)
@@ -1053,8 +1124,11 @@ export function createModelsController(props: ModelsProps) {
     !visible()?.settings || Boolean(visible()?.settingsLoading) || assignmentBlocked()
   const selectTask = (taskID: string) => {
     assignmentPickerRequest++
+    save({ taskFilter: true })
     state.selectTask(taskID)
   }
+  /** Drop the task chip; the open task stays selected for the task detail below. */
+  const clearTaskFilter = () => save({ taskFilter: false })
   const tabKey: JSX.EventHandler<HTMLButtonElement, KeyboardEvent> = (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
     event.preventDefault()
@@ -1161,6 +1235,7 @@ export function createModelsController(props: ModelsProps) {
     catalogOptions,
     categoryRows,
     changeDecisionFilters,
+    clearTaskFilter,
     chartHeight,
     clearConfirmedAssignmentWrite,
     compareMode,

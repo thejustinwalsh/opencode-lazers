@@ -19,6 +19,8 @@ const Preference = Schema.Struct({
     ),
   ),
   selectedTaskID: Schema.NullOr(Schema.String),
+  /** A task was chosen as a comparison filter; the chip shows only then. */
+  taskFilter: Schema.optional(Schema.Boolean),
   selectedCandidateID: Schema.NullOr(Schema.String),
   selectedConfigurationID: Schema.optional(Schema.NullOr(Schema.String)),
   split: Schema.Number,
@@ -111,4 +113,24 @@ export function marketSummarySource(context: string) {
       "Configured price source": "Configured source",
     }[source] ?? source
   return details.includes("stale") ? `${name} · out of date` : name
+}
+
+/**
+ * The task chip is a filter, so it shows only when a task was chosen as one. The first task is
+ * opened by default for the detail below; that is not a filter and has no chip.
+ */
+export function showTaskChip(view: { taskFilter?: boolean }, taskReference: string | undefined) {
+  return Boolean(view.taskFilter && taskReference)
+}
+
+/**
+ * Compare has a lower pane (the selected model) only when there is content to inspect: not while
+ * the one loading surface shows, and not on the Benchmark empty state.
+ */
+export function hasCompareLowerPane(input: {
+  contentShown: boolean
+  benchmark: boolean
+  benchmarkNeedsOpenRouter: boolean
+}) {
+  return input.contentShown && !(input.benchmark && input.benchmarkNeedsOpenRouter)
 }

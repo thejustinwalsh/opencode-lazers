@@ -9,6 +9,8 @@ export function SplitPane(props: {
   header: JSX.Element
   top: JSX.Element
   bottom: JSX.Element
+  /** Header and top pane only: while loading or empty there is nothing to inspect, so no split. */
+  solo?: boolean
 }) {
   const { refs, save, split, setSplit, drag, current, visible, prefs } = props.ctl
   createEffect(() => {
@@ -23,6 +25,7 @@ export function SplitPane(props: {
     <>
       <div
         class="lazers-models-top"
+        data-solo={props.solo ? "" : undefined}
         ref={(element) => {
           refs.topPane = element
         }}
@@ -31,40 +34,42 @@ export function SplitPane(props: {
         {props.header}
         {props.top}
       </div>
-      <div
-        class="lazers-models-separator"
-        role="separator"
-        aria-label="Resize model comparison and inspector"
-        aria-orientation="horizontal"
-        aria-valuemin={24}
-        aria-valuemax={76}
-        aria-valuenow={split()}
-        tabIndex={0}
-        onPointerDown={drag}
-        onKeyDown={(event) => {
-          if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
-          event.preventDefault()
-          setSplit(
-            clampSplit(
-              event.key === "Home"
-                ? 24
-                : event.key === "End"
-                  ? 76
-                  : split() + (event.key === "ArrowDown" ? 5 : -5),
-            ),
-          )
-          save({ split: split() })
-        }}
-      />
-      <div
-        class="lazers-models-inspector"
-        ref={(element) => {
-          refs.inspector = element
-        }}
-        onScroll={(event) => save({ inspectorScroll: event.currentTarget.scrollTop })}
-      >
-        {props.bottom}
-      </div>
+      <Show when={!props.solo}>
+        <div
+          class="lazers-models-separator"
+          role="separator"
+          aria-label="Resize model comparison and inspector"
+          aria-orientation="horizontal"
+          aria-valuemin={24}
+          aria-valuemax={76}
+          aria-valuenow={split()}
+          tabIndex={0}
+          onPointerDown={drag}
+          onKeyDown={(event) => {
+            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
+            event.preventDefault()
+            setSplit(
+              clampSplit(
+                event.key === "Home"
+                  ? 24
+                  : event.key === "End"
+                    ? 76
+                    : split() + (event.key === "ArrowDown" ? 5 : -5),
+              ),
+            )
+            save({ split: split() })
+          }}
+        />
+        <div
+          class="lazers-models-inspector"
+          ref={(element) => {
+            refs.inspector = element
+          }}
+          onScroll={(event) => save({ inspectorScroll: event.currentTarget.scrollTop })}
+        >
+          {props.bottom}
+        </div>
+      </Show>
     </>
   )
 }
