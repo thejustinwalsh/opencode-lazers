@@ -25,3 +25,40 @@ export function sourcePlanLine(source: { section?: string; line?: number }, cont
   }
   return source.line
 }
+
+/** The full first sentence of an objective, for a heading that wraps instead of truncating. */
+export function taskHeading(objective: string) {
+  return objective
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s/)[0]!
+}
+
+const INTERRUPTED =
+  "Worker was interrupted by the service restart. Resumes when the runtime confirms the session is idle."
+
+/** Runtime reasons worth rewriting, tried in order; the first match wins. */
+const reasonMap: ReadonlyArray<readonly [RegExp, string]> = [
+  [/native idle background observation/i, INTERRUPTED],
+  [/(idle|background) (report|observation)/i, INTERRUPTED],
+  [/unknown (installer|process|settlement)/i, "The runtime is checking what was left running."],
+]
+
+/** Fallback for a runtime reason no rule covers and that still names an unknown. */
+const PENDING = "Waiting for the runtime to confirm the current state."
+
+export type TaskReasonView = {
+  /** One plain sentence in user terms; never contains "unknown". */
+  text: string
+  /** The recorded runtime reason, when it differs from `text`; shown behind "Details". */
+  raw?: string
+}
+
+/** Present a recorded runtime reason as one user sentence, keeping the raw text for Details. */
+export function taskReasonView(reason: string): TaskReasonView {
+  const raw = reason.trim()
+  const mapped = reasonMap.find(([pattern]) => pattern.test(raw))?.[1]
+  const first = raw.split(/\r?\n/)[0]!.trim()
+  const text = mapped ?? (/unknown/i.test(first) ? PENDING : first)
+  return text === raw ? { text } : { text, raw }
+}
