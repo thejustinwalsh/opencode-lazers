@@ -27,6 +27,7 @@ import {
   sessionRole,
   sessionState,
   sessionTask,
+  sessionTaskTitle,
   sessionTone,
 } from "./monitor-model.ts"
 import type { ActivityLine, LiveFlow, LiveSession } from "./monitor-model.ts"
@@ -58,7 +59,7 @@ type Props = {
   onOpenTasks?: () => void
   onOpenWorker?: (sessionID: string) => void
   onOpenTask?: (taskID: string) => void
-  onOpenTrajectory?: (taskID: string) => void
+  onOpenTrajectory?: (taskID: string, reference?: string) => void
 }
 
 type Selection = { kind: "call" | "flow"; id: string } | null
@@ -190,6 +191,11 @@ export function RadarMonitorView(props: Props) {
     const end = line.endedAt ?? (line.current ? runningEnd() : null)
     if (end === null) return ""
     return `${line.current && props.data().stale ? "≥ " : ""}${formatDuration(end - line.startedAt)}`
+  }
+  /** Inspector heading: the role and the task's title. */
+  const sessionHeading = (session: LiveSession) => {
+    const title = sessionTaskTitle(session)
+    return `${sessionRole(session).label}${title ? ` · ${title}` : ""}`
   }
   const sessionTitle = (session: LiveSession) => {
     const task = sessionTask(session)
@@ -461,7 +467,12 @@ export function RadarMonitorView(props: Props) {
         <Ui.Button
           variant="ghost"
           size="small"
-          onClick={() => props.onOpenTrajectory!(local.session.assignment!.taskID)}
+          onClick={() =>
+            props.onOpenTrajectory!(
+              local.session.assignment!.taskID,
+              sessionTask(local.session) ?? undefined,
+            )
+          }
         >
           Trajectory
         </Ui.Button>
@@ -490,6 +501,13 @@ export function RadarMonitorView(props: Props) {
     return (
       <p class="lazers-radar-facts-line">
         <Show when={model()}>{(item) => <span>{item().label}</span>}</Show>
+        <Show when={local.session.assignment?.attemptNumber}>
+          {(attempt) => (
+            <span>
+              <em>attempt</em> {attempt()}
+            </span>
+          )}
+        </Show>
         <Show when={started()}>
           <span>
             <em>started</em> {started()}
@@ -543,7 +561,7 @@ export function RadarMonitorView(props: Props) {
       />
       <div class="lazers-radar-top" ref={(element) => (top = element)}>
         <PanelStatus ui={Ui} status={status} onRetry={props.onRefresh} skeleton="rows" />
-        <Show when={live() && !nothingRunning(live()!) ? live() : undefined}>
+        <Show when={live() && monitorSegments(live()!).length > 0 ? live() : undefined}>
           {(response) => (
             <p class="lazers-radar-summary">
               <For each={monitorSegments(response())}>
@@ -655,7 +673,7 @@ export function RadarMonitorView(props: Props) {
                   <Actions session={session()} />
                 </header>
                 <h3 class="lazers-radar-inspector-title">
-                  {sessionTitle(session())}
+                  {sessionHeading(session())}
                   <Show when={selectedLine()}>
                     {(line) => <span class="lazers-radar-inspector-sub"> · {line().tool}</span>}
                   </Show>

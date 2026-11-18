@@ -1240,12 +1240,12 @@ function RadarLiveMonitorPanel(
         }
         onOpenTrajectory={
           props.navigation.openTrajectory
-            ? (taskID) => {
+            ? (taskID, reference) => {
                 const target = taskTarget(taskID)
                 if (target)
                   props.navigation.openTrajectory!(props.session, {
                     ...target,
-                    reference: `Task ${taskID.slice(0, 8)}`,
+                    reference: reference ?? `Task ${taskID.slice(0, 8)}`,
                   })
               }
             : undefined

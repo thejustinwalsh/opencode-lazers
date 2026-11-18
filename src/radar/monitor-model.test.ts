@@ -20,6 +20,7 @@ import {
   sessionRole,
   sessionState,
   sessionTask,
+  sessionTaskTitle,
 } from "./monitor-model.ts"
 import type { LiveCall, LiveFlow, LiveSession } from "./monitor-model.ts"
 
@@ -173,7 +174,12 @@ test("session identity uses role, short task, assignment state and the observed 
     label: "Architect",
     icon: "brain",
   })
-  expect(sessionTask(value)).toBe("Task 5f0c2a1e…")
+  expect(sessionTask(value)).toBeNull()
+  const labelled = session({
+    assignment: { ...value.assignment!, taskReference: "LZ-99", taskTitle: "Resume a worker" },
+  })
+  expect(sessionTask(labelled)).toBe("LZ-99 · Resume a worker")
+  expect(sessionTaskTitle(labelled)).toBe("Resume a worker")
   expect(sessionState(value)).toBe("Running")
   expect(sessionState(session({ assignment: null, state: "idle", freshness: "stale" }))).toBe(
     "Idle · stale",
@@ -332,6 +338,19 @@ test("summary segments, coverage gaps and the three connection words", () => {
     { count: 1, word: "data gap" },
   ])
   expect(
+    monitorSegments(live({ ...response, workload: { queued: 6, needsYou: 1, failed: 1 } })),
+  ).toEqual([
+    { count: 1, word: "running" },
+    { count: 1, word: "needs you" },
+    { count: 1, word: "failed" },
+    { count: 6, word: "queued" },
+  ])
+  // Zero or absent segments disappear, running included; no capacity segment ever exists.
+  expect(
+    monitorSegments(live({ sessions: [], workload: { queued: 0, needsYou: 0, failed: 3 } })),
+  ).toEqual([{ count: 3, word: "failed" }])
+  expect(monitorSegments(live({ sessions: [] }))).toEqual([])
+  expect(
     monitorSegments(
       live({
         sessions: [
@@ -395,6 +414,9 @@ test("idle state names what is true and omits what is not", () => {
   expect(idleSentence(idle)).toBe("Architect is idle and no workers are active.")
   expect(nothingRunning(live({ sessions: [session()] }))).toBe(false)
   expect(idleSentence(live({ sessions: [] }))).toBe("No sessions are running.")
+  expect(idleSentence(live({ ...idle, workload: { queued: 6, needsYou: 0, failed: 0 } }))).toBe(
+    "Architect is idle and no workers are active. 6 tasks are queued.",
+  )
 })
 
 test("missing facts are omitted, never rendered as unknown", () => {
@@ -458,4 +480,29 @@ test("workers nest under the current Architect, in rank order", () => {
   const groups = sessionGroups(response)
   expect(groups.leading).toEqual(["ses-arch", "ses-other"])
   expect(groups.children.get("ses-arch")).toEqual(["ses-w1", "ses-w2"])
+})
+
+test("workers nest under their recorded parent; the Architect is only the fallback", () => {
+  const response = live({
+    sessions: [
+      session({ sessionID: "ses-arch", isCurrentArchitect: true, state: "idle", assignment: null }),
+      session({ sessionID: "ses-lead", parentSessionID: "ses-arch" }),
+      session({ sessionID: "ses-sub", parentSessionID: "ses-lead" }),
+      session({ sessionID: "ses-orphan", parentSessionID: "ses-gone" }),
+      session({ sessionID: "ses-legacy" }),
+    ],
+  })
+  const groups = sessionGroups(response)
+  expect(groups.leading).toEqual(["ses-orphan", "ses-arch"])
+  expect(groups.children.get("ses-arch")).toEqual(["ses-lead", "ses-legacy"])
+  expect(groups.children.get("ses-lead")).toEqual(["ses-sub"])
+  const loop = sessionGroups(
+    live({
+      sessions: [
+        session({ sessionID: "a", parentSessionID: "b" }),
+        session({ sessionID: "b", parentSessionID: "a" }),
+      ],
+    }),
+  )
+  expect(loop.leading.length).toBe(2)
 })
