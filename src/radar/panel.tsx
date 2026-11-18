@@ -21,7 +21,7 @@ import { createRadarTransport } from "./transport.ts"
 import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
-import { radarProjectIdentity } from "./project.ts"
+import { isRadarLocationLoaded, resolveRadarProject } from "./project.ts"
 import { RadarLayout } from "./layout-ipc.ts"
 import { RadarMapInspector, RadarMapView } from "./map-view.tsx"
 import { createRadarMapModel } from "./map-model.ts"
@@ -136,11 +136,8 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
       }
     },
     async (source, signal) => {
-      const result = await source.client.location.get(
-        { location: { directory: source.directory } },
-        { signal },
-      )
-      return { ...source, ...radarProjectIdentity(result.project) }
+      // Path identity from the global project list: location.get boots an unloaded location.
+      return { ...source, ...(await resolveRadarProject(source.client, source.directory, signal)) }
     },
   )
   const current = () => {
@@ -217,6 +214,8 @@ function RadarDiagnosticsPanel(props: PanelProps & { ctx: RadarContext; onBack: 
         () => props.session.server.client.rpc(Observability),
         value.directory,
         () => props.session.server.connected,
+        undefined,
+        () => isRadarLocationLoaded(value.client, value.directory),
       )
       state.connect(
         key,
@@ -1092,11 +1091,8 @@ function RadarLiveMonitorPanel(
       }
     },
     async (source, signal) => {
-      const result = await source.client.location.get(
-        { location: { directory: source.directory } },
-        { signal },
-      )
-      return { ...source, ...radarProjectIdentity(result.project) }
+      // Path identity from the global project list: location.get boots an unloaded location.
+      return { ...source, ...(await resolveRadarProject(source.client, source.directory, signal)) }
     },
   )
   const current = () => {
@@ -1158,6 +1154,7 @@ function RadarLiveMonitorPanel(
         value.directory,
         () => props.session.server.connected,
         value.projectID,
+        () => isRadarLocationLoaded(value.client, value.directory),
       )
       state.connect(
         key,
