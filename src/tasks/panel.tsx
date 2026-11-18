@@ -465,7 +465,7 @@ function TaskPanel(
       ...(value?.asOf ? { asOf: value.asOf } : {}),
     }
   })
-  const inspected = () => {
+  const inspected = (): PanelData | undefined => {
     const value = visible()
     // While a reload is in flight the detail can arrive before the topology, scheduling and
     // activity it is presented with; a partial set would show the recorded lifecycle instead of
@@ -473,7 +473,10 @@ function TaskPanel(
     if (value?.detail && !value.loading) return value
     const kept = lastInspected()
     if (kept && kept.identity === identity()) return kept.data
-    return value
+    // First load: nothing complete to hold yet, so present no task rather than a partial one.
+    if (!value?.detail) return value
+    const { detail: _partial, ...withoutDetail } = value
+    return withoutDetail
   }
   const executionList = createMemo(() =>
     buildExecutionList({
