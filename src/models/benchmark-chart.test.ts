@@ -156,13 +156,8 @@ test("the frontier line holds exactly the member coordinates in a restrained das
   expect(line.lineStyle).toEqual({ color: "native-accent", width: 2, type: "dashed" })
   expect(line.emphasis).toEqual({ disabled: true })
   expect(line.blur.lineStyle.opacity).toBe(1)
-  expect(line.endLabel).toMatchObject({
-    show: true,
-    formatter: "Benchmark frontier",
-    color: "native-muted",
-    fontFamily: "Native Sans",
-    fontSize: 12,
-  })
+  // The line carries no text; the legend names it "Best trade-off".
+  expect(line.endLabel.show).toBe(false)
   const marks = option.series[0]!.data as Array<{ configurationID: string; symbol: string }>
   expect(marks.map((mark) => [mark.configurationID, mark.symbol])).toEqual([
     ["max", "diamond"],

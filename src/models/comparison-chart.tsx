@@ -454,16 +454,67 @@ function intervalRenderer(
   return renderer
 }
 
-/** Small muted caption at the last frontier point, kept inside the plot (above-left of the point). */
+export type ChartLabelItem = {
+  id: string
+  x: number
+  y: number
+  /** Possibly two lines, separated by a newline. */
+  text: string
+  side: "left" | "right" | "top"
+  /** 0 selected, 1 frontier, 2 the rest. */
+  priority: number
+  /** Provider and model, so one model is never named twice beside the selection. */
+  model: string
+}
+
+/**
+ * Which point labels fit. Keeps the selected label first, then frontier points, then the rest,
+ * and drops any label that would overlap one already kept or repeat the selected model's name.
+ * Positions are estimated from the value extents; tooltips and the data table name the rest.
+ */
+export function visibleChartLabelIDs(
+  items: readonly ChartLabelItem[],
+  box: { plotWidth: number; plotHeight: number; xMax: number; yMax: number; fontSize: number },
+) {
+  const kept: { left: number; right: number; top: number; bottom: number }[] = []
+  const shown = new Set<string>()
+  const selected = items.find((item) => item.priority === 0)
+  const ordered = items.toSorted((left, right) => left.priority - right.priority)
+  for (const item of ordered) {
+    if (item.priority > 0 && selected && item.model === selected.model) continue
+    const lines = item.text.split("\n")
+    const width = Math.max(...lines.map((line) => line.length)) * box.fontSize * 0.6
+    const height = lines.length * box.fontSize * 1.3
+    const cx = box.xMax > 0 ? (item.x / box.xMax) * box.plotWidth : 0
+    const cy = box.yMax > 0 ? box.plotHeight - (item.y / box.yMax) * box.plotHeight : 0
+    const left =
+      item.side === "right" ? cx + 8 : item.side === "left" ? cx - 8 - width : cx - width / 2
+    const top = item.side === "top" ? cy - 6 - height : cy - height / 2
+    const rect = { left, right: left + width, top, bottom: top + height }
+    const clash = kept.some(
+      (other) =>
+        rect.left < other.right + 2 &&
+        rect.right > other.left - 2 &&
+        rect.top < other.bottom + 2 &&
+        rect.bottom > other.top - 2,
+    )
+    if (clash) continue
+    kept.push(rect)
+    shown.add(item.id)
+  }
+  return shown
+}
+
+/** The frontier line carries no text; the legend names it "Best trade-off". */
 export function frontierEndLabel(
-  text: string,
-  show: boolean,
+  _text: string,
+  _show: boolean,
   theme: ComparisonChartTheme,
   fontSize: number,
 ) {
   return {
-    show,
-    formatter: text,
+    show: false,
+    formatter: "",
     position: "top" as const,
     align: "right" as const,
     verticalAlign: "bottom" as const,
@@ -584,6 +635,27 @@ export function comparisonChartOptions(
   const plotWidth = Math.max(1, layout.width - layout.grid.left - layout.grid.right)
   const labelLimit = clamp(Math.floor(plotWidth / (fontSize * 0.66)), 8, 18)
   const roomForAllLabels = plotWidth >= fontSize * 22
+  const labelItems: ChartLabelItem[] = points.map((point) => ({
+    id: point.configurationID,
+    x: point.tokensPerAcceptedTask,
+    y: point.currentMarketUSDPerAcceptedTask,
+    text: chartModelEffortLabel(point.label, point.route, labelLimit),
+    side: labelPosition(point.tokensPerAcceptedTask),
+    priority:
+      point.configurationID === data.selectedConfigurationID
+        ? 0
+        : frontier.has(point.configurationID)
+          ? 1
+          : 2,
+    model: point.route ? `${point.route.providerID}/${point.route.modelID}` : point.configurationID,
+  }))
+  const visibleLabels = visibleChartLabelIDs(labelItems, {
+    plotWidth,
+    plotHeight: Math.max(1, layout.height - layout.grid.top - layout.grid.bottom),
+    xMax: largestTokenValue * 1.1,
+    yMax: Math.max(0, ...points.map((point) => point.currentMarketUSDPerAcceptedTask)) * 1.1,
+    fontSize,
+  })
   const boundedSelectedLabels = selectedLabelData.map((item) => ({
     ...item,
     alignment: selectedLabelAlignment(item.tokens),
@@ -686,7 +758,10 @@ export function comparisonChartOptions(
             },
             label: {
               // Narrow plots keep only frontier labels; the rest stay on tooltip and keyboard.
-              show: !selected && (roomForAllLabels || frontier.has(point.configurationID)),
+              show:
+                !selected &&
+                visibleLabels.has(point.configurationID) &&
+                (roomForAllLabels || frontier.has(point.configurationID)),
               formatter: chartModelEffortLabel(point.label, point.route, labelLimit),
               position: labelPosition(point.tokensPerAcceptedTask),
               color: selected ? theme.text : theme.mutedText,
@@ -827,11 +902,6 @@ export function comparisonChartOptions(
           fontFamily: theme.fontFamily,
           fontSize,
           fontWeight: 700,
-          backgroundColor: theme.surface,
-          borderColor: theme.accent,
-          borderWidth: 1,
-          borderRadius: 2,
-          padding: [2, 4],
         },
         labelLayout: ({ labelRect }: { labelRect: { x: number; width: number } }) => {
           const plotLeft = layout.grid.left + 1

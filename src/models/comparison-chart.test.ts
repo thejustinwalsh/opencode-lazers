@@ -24,6 +24,7 @@ const {
   comparisonChartPointText,
   comparisonChartReferenceText,
   comparisonChartResponsiveLayout,
+  visibleChartLabelIDs,
   comparisonChartReferenceTooltip,
   compactTokenAxisValue,
 } = (await vite.ssrLoadModule(
@@ -509,7 +510,8 @@ test("selected point and every reference amount kind receive readable identity l
       expect(tooltip).toBe("GPT-6 Luna · high · ≈$0.1 / task")
       expect(observations.data[1]).toMatchObject({
         configurationID: nearbyPoint.configurationID,
-        label: { show: true },
+        // Another effort of the selected model is not named twice; the selection carries the label.
+        label: { show: false },
       })
     }
     expect(identities?.label).toMatchObject({ show: true })
@@ -607,13 +609,32 @@ test("observed frontier is a visible dashed accent line with an end label and de
   expect(forward.silent).toBe(true)
   expect(forward.emphasis).toEqual({ disabled: true })
   expect(forward.blur.lineStyle.opacity).toBe(1)
-  expect(forward.endLabel).toMatchObject({
-    show: true,
-    formatter: "Observed frontier",
-    color: "native-muted",
-    fontFamily: "Native Sans",
-  })
+  expect(forward.endLabel.show).toBe(false)
   const single = options([members[0]!]).series[1] as unknown as FrontierLine
   expect(single.data).toEqual([])
   expect(single.endLabel.show).toBe(false)
+})
+
+test("overlapping labels keep the selection, then the frontier, and never repeat a model", () => {
+  const box = { plotWidth: 400, plotHeight: 200, xMax: 100, yMax: 10, fontSize: 12 }
+  const item = (id: string, x: number, y: number, priority: number, model = id) => ({
+    id,
+    x,
+    y,
+    text: "Kimi K3.1 Pro",
+    side: "right" as const,
+    priority,
+    model,
+  })
+  const shown = visibleChartLabelIDs(
+    [
+      item("other", 50, 5, 2),
+      item("frontier", 50.5, 5.1, 1),
+      item("selected", 50.2, 5.05, 0, "kimi"),
+      item("same-model", 10, 1, 2, "kimi"),
+      item("apart", 5, 9, 2),
+    ],
+    box,
+  )
+  expect([...shown].sort()).toEqual(["apart", "selected"])
 })
