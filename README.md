@@ -4,7 +4,7 @@ Turn a feature request into tracked work in OpenCode.
 
 LAZERS adds an Architect agent, a task runtime, and Desktop panels to OpenCode. Architect defines the work. The runtime schedules native OpenCode workers, records checks, and returns results for review.
 
-The published v0.1.0 release was tested with OpenCode Desktop 2.2.6. This test does not promise compatibility with other versions.
+LAZERS is developed and tested against OpenCode 2.3.0, the version pinned in this repository. The published v0.1.0 release was tested with OpenCode Desktop 2.2.6. These tests do not promise compatibility with other versions.
 
 ## Start here
 
