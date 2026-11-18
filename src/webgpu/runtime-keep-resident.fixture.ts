@@ -6,8 +6,6 @@ import type { Plugin } from "@opencode/plugin/gui"
 import { InferenceBroker } from "./broker.ts"
 import { defaultFeatures } from "./features.ts"
 import type { InferenceTraceEvent } from "./inference-trace.ts"
-import type { NativeConversationMessage } from "./rpc.ts"
-import { DECISION_REPOSITORY, DECISION_REVISION, MODEL_FILES } from "./manifest.ts"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./rpc.ts"
 
 const solid: typeof import("solid-js") = await import(
@@ -19,8 +17,6 @@ let allocations = 0
 let failNextAudioLoad = false
 let heldAudioLoad: PromiseWithResolvers<void> | undefined
 let loseLastDevice: (() => void) | undefined
-let attachedOwner: string | undefined
-let lastRunntimeMessages: readonly NativeConversationMessage[] | undefined
 const traces: InferenceTraceEvent[] = []
 
 const allocate = () => {
@@ -48,8 +44,7 @@ mock.module("./runntime-adapter.ts", () => ({
     loseLastDevice = () => lost.resolve({ reason: "simulated" })
     return {
       engine: {
-        generate: (messages: readonly NativeConversationMessage[]) => {
-          lastRunntimeMessages = messages
+        generate: () => {
           return {
             async *[Symbol.asyncIterator]() {
               yield "ruNNtime "
