@@ -1140,9 +1140,32 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               const directory = options.location.directory
               const count = nextCount(`${directory}:settings`)
               record(directory, "lazers.models", "settings", input, options.signal)
-              return directory === DIRECTORY_A
-                ? settingsAuthority.settings({ taskID: input.taskID })
-                : settings(directory, input.taskID, count)
+              const agents = [
+                {
+                  agentID: "architect",
+                  label: "Architect",
+                  model: { providerID: "openai", id: "gpt-6", variant: "high" },
+                  source: "native",
+                },
+                {
+                  agentID: "lazers-implementor",
+                  label: "Implementor",
+                  model: null,
+                  source: "none",
+                },
+                {
+                  agentID: "auditor",
+                  label: "Auditor",
+                  model: { providerID: "opencode-go", id: "muse-spark-1.3-contributor" },
+                  source: "plugin-default",
+                },
+              ]
+              return {
+                ...(directory === DIRECTORY_A
+                  ? settingsAuthority.settings({ taskID: input.taskID })
+                  : settings(directory, input.taskID, count)),
+                agents,
+              }
             },
             catalog: async (
               input: { sessionID: string },
@@ -2816,8 +2839,19 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       containerA.querySelector(".lazers-models-top .lazers-models-assignment-editor"),
     ).toBeNull()
     const assignmentRows = () => [
-      ...containerA.querySelectorAll<HTMLButtonElement>(".lazers-models-assignment-row"),
+      ...containerA.querySelectorAll<HTMLButtonElement>("[data-persona-row]"),
     ]
+    const agentRows = [...containerA.querySelectorAll<HTMLElement>("[data-agent]")]
+    expect(agentRows.map((row) => row.querySelector("strong")?.textContent)).toEqual([
+      "Architect",
+      "Implementor",
+      "Auditor",
+    ])
+    expect(agentRows[0]!.textContent).toContain("gpt-6 · high")
+    expect(agentRows[1]!.textContent).toContain("Uses the session model")
+    expect(agentRows[2]!.textContent).toContain("muse-spark-1.3-contributor")
+    expect(agentRows[2]!.textContent).toContain("default")
+    expect(agentRows.every((row) => row.tagName !== "BUTTON")).toBe(true)
     const rowForPersona = (label: string) =>
       assignmentRows().find((row) => row.querySelector("strong")?.textContent === label)!
     expect(assignmentRows()).toHaveLength(3)
@@ -3145,7 +3179,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       },
     })
     expect(
-      containerA.querySelector(".lazers-models-assignment-row[aria-pressed='true']")?.textContent,
+      containerA.querySelector("[data-persona-row][aria-pressed='true']")?.textContent,
     ).toContain("gpt-6 · xhigh")
     expect(
       calls.some(
@@ -3560,10 +3594,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     if (!assignmentsTabB) throw new Error(`Missing assignments tab in B: ${containerB.innerHTML}`)
     assignmentsTabB.click()
-    await until(() => containerB.querySelectorAll(".lazers-models-assignment-row").length === 3)
-    const uiAssignmentRowB = containerB.querySelector<HTMLButtonElement>(
-      ".lazers-models-assignment-row",
-    )!
+    await until(() => containerB.querySelectorAll("[data-persona-row]").length === 3)
+    const uiAssignmentRowB = containerB.querySelector<HTMLButtonElement>("[data-persona-row]")!
     uiAssignmentRowB.click()
     await until(() => containerB.textContent?.includes("Model catalog unavailable") === true)
     const manualRouteDetailsB = containerB.querySelector<HTMLDetailsElement>(

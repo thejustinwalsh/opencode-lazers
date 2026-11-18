@@ -2,7 +2,7 @@ import { Show, For } from "solid-js"
 import type { JSX } from "solid-js"
 import type { ModelsController } from "./models-controller.ts"
 import { routeLabel } from "./comparison-presentation.ts"
-import { modelPersonaLabels } from "./panel-shared.ts"
+import { agentModelText, agentSourceText, modelPersonaLabels } from "./panel-shared.ts"
 import { PanelStatus, createPanelStatus } from "../panel-status.tsx"
 import { Segmented, SplitPane, revealDetails } from "./panel-layout.tsx"
 
@@ -10,6 +10,12 @@ const personaIcons = {
   ui: "window-cursor",
   systems: "server",
   "small-refactoring": "edit-small-2",
+} as const
+
+const agentIcons = {
+  architect: "brain",
+  "lazers-implementor": "code",
+  auditor: "review",
 } as const
 
 /** Writes recorded across the task, project and shared layers of one persona. */
@@ -56,7 +62,9 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     state,
     updateAssignmentRoute,
     visible,
+    agentRoutes,
   } = ctl
+  const agentRows = agentRoutes
 
   const assignStatus = createPanelStatus(() => ({
     subject: "assignments",
@@ -83,43 +91,80 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
         <div
           class="lazers-models-assignment-rows"
           role="group"
-          aria-label="Persona routes"
+          aria-label="Agent routes"
           data-panel-dimmed={assignStatus.dimmed()}
         >
-          <For each={personas()}>
-            {(persona) => (
-              <button
-                type="button"
-                class="lazers-models-assignment-row"
-                aria-pressed={assignmentPersona() === persona.persona}
-                disabled={assignmentBlocked()}
-                onClick={() => {
-                  revealDetails(ctl)
-                  selectAssignmentPersona(persona.persona)
-                }}
-              >
-                <Ui.Icon name={personaIcons[persona.persona]} size="small" />
-                <strong>{persona.personaLabel}</strong>
-                <Show
-                  when={persona.resolution.status === "assigned" ? persona.resolution : undefined}
-                  fallback={
-                    <span class="lazers-models-assignment-route">Uses the session model</span>
-                  }
-                >
-                  {(resolution) => (
-                    <>
-                      <code class="lazers-models-assignment-route">
-                        {resolution().route.id}
-                        {resolution().route.variant ? ` · ${resolution().route.variant}` : ""}
-                      </code>
-                      <small>{resolution().provenance.target.scope}</small>
-                    </>
-                  )}
+          <For each={agentRows()}>
+            {(agent) => (
+              <>
+                <div class="lazers-models-assignment-row" data-agent={agent.agentID} data-readonly>
+                  <Ui.Icon name={agentIcons[agent.agentID]} size="small" />
+                  <strong>{agent.label}</strong>
+                  <Show
+                    when={agentModelText(agent)}
+                    fallback={
+                      <span class="lazers-models-assignment-route">Uses the session model</span>
+                    }
+                  >
+                    {(text) => (
+                      <>
+                        <code class="lazers-models-assignment-route">{text()}</code>
+                        <small>{agentSourceText(agent.source)}</small>
+                      </>
+                    )}
+                  </Show>
+                </div>
+                <Show when={agent.agentID === "lazers-implementor"}>
+                  <For each={personas()}>
+                    {(persona) => (
+                      <button
+                        type="button"
+                        class="lazers-models-assignment-row"
+                        data-persona-row
+                        aria-pressed={assignmentPersona() === persona.persona}
+                        disabled={assignmentBlocked()}
+                        onClick={() => {
+                          revealDetails(ctl)
+                          selectAssignmentPersona(persona.persona)
+                        }}
+                      >
+                        <Ui.Icon name={personaIcons[persona.persona]} size="small" />
+                        <strong>{persona.personaLabel}</strong>
+                        <Show
+                          when={
+                            persona.resolution.status === "assigned"
+                              ? persona.resolution
+                              : undefined
+                          }
+                          fallback={
+                            <span class="lazers-models-assignment-route">
+                              Uses Implementor default
+                            </span>
+                          }
+                        >
+                          {(resolution) => (
+                            <>
+                              <code class="lazers-models-assignment-route">
+                                {resolution().route.id}
+                                {resolution().route.variant
+                                  ? ` · ${resolution().route.variant}`
+                                  : ""}
+                              </code>
+                              <small>{resolution().provenance.target.scope}</small>
+                            </>
+                          )}
+                        </Show>
+                      </button>
+                    )}
+                  </For>
                 </Show>
-              </button>
+              </>
             )}
           </For>
         </div>
+        <p class="lazers-models-assignment-hint">
+          Architect, Implementor and Auditor models are set in OpenCode agent settings.
+        </p>
       </Show>
     </section>
   )

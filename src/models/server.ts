@@ -25,6 +25,7 @@ import {
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
+import { readAgentRoutes } from "./agent-routes.ts"
 import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
 /** A background refresh gives up after this long. */
@@ -370,7 +371,8 @@ export function registerModelsServer(
             )
             signal.throwIfAborted()
             const output = withService((service) => service.settings({ taskID: request.taskID }))
-            return ModelSettingsOutputSchema.parse(output)
+            const agents = await readAgentRoutes(ctx, signal)
+            return ModelSettingsOutputSchema.parse({ ...output, agents })
           },
           catch: failure,
         }).pipe(Effect.orDie),

@@ -133,3 +133,25 @@ export function hasCompareLowerPane(input: {
 }) {
   return input.contentShown && !(input.benchmark && input.benchmarkNeedsOpenRouter)
 }
+
+/** The agents' effective models as router routes, for the Compare model set (tagged Routed). */
+export function agentRoutedModels(
+  agents: ReadonlyArray<{ model: { providerID: string; id: string } | null }>,
+): Array<{ providerID: string; modelID: string }> {
+  return agents.flatMap((agent) =>
+    agent.model ? [{ providerID: agent.model.providerID, modelID: agent.model.id }] : [],
+  )
+}
+
+/** The model line of a read-only agent row: its effective model, or what it falls back to. */
+export function agentModelText(agent: {
+  model: { id: string; variant?: string | undefined } | null
+}) {
+  return agent.model
+    ? `${agent.model.id}${agent.model.variant ? ` · ${agent.model.variant}` : ""}`
+    : null
+}
+
+export function agentSourceText(source: "native" | "plugin-default" | "none") {
+  return source === "plugin-default" ? "default" : source === "native" ? "OpenCode" : ""
+}

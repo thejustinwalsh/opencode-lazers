@@ -46,6 +46,7 @@ import {
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
+  agentRoutedModels,
   marketSummarySource,
   modelPersonaLabels,
   modelTaskKindLabels,
@@ -693,8 +694,11 @@ export function createModelsController(props: ModelsProps) {
     comparisonChartKeyboardOrder(decisionChartPoints(), decisionChartReferences()).length
   // -- The model set: observed, routed and catalog models, projected where unobserved --------
   /** Routes named by the model router: every persona's resolved route and each layer's route. */
-  const routedRoutes = createMemo(() =>
-    (visible()?.settings?.personas ?? []).flatMap((persona) =>
+  /** The LAZERS agents with the model native OpenCode resolves for each (read-only). */
+  const agentRoutes = createMemo(() => visible()?.settings?.agents ?? [])
+  const routedRoutes = createMemo(() => [
+    ...agentRoutedModels(agentRoutes()),
+    ...(visible()?.settings?.personas ?? []).flatMap((persona) =>
       [
         persona.resolution.route,
         persona.layers.task?.route,
@@ -702,7 +706,7 @@ export function createModelsController(props: ModelsProps) {
         persona.layers.shared?.route,
       ].flatMap((route) => (route ? [{ providerID: route.providerID, modelID: route.id }] : [])),
     ),
-  )
+  ])
   const observedFactsByRoute = createMemo(() => {
     const facts = new Map<string, ObservedFacts>()
     for (const mark of comparisonChartMarks({
@@ -1441,6 +1445,7 @@ export function createModelsController(props: ModelsProps) {
     openContributorTrajectory,
     openSelectedTrajectory,
     personas,
+    agentRoutes,
     prefs,
     priceSourceOrder,
     priceSourceRevision,
