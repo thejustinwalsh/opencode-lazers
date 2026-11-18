@@ -209,7 +209,7 @@ export const StartingRevisionSchema = z.discriminatedUnion("kind", [
  * Stored tasks may carry retired `kind: "human"` evidence. It is read and
  * dropped; it never gates acceptance.
  */
-function dropLegacyHumanEvidence(value: unknown): unknown {
+export function dropLegacyHumanEvidence(value: unknown): unknown {
   if (typeof value !== "object" || value === null || !("acceptance" in value)) return value
   const proposal = value as { acceptance?: unknown }
   if (!Array.isArray(proposal.acceptance)) return value

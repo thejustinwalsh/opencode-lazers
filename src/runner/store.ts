@@ -21,7 +21,7 @@ import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
 import { git, scopePatternsConflict } from "./artifacts.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
-import { PlanInput } from "./schema.ts"
+import { PlanInput, PlanSubmissionInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
@@ -3601,7 +3601,7 @@ export class RunnerStore {
     owner: string,
     timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
   ) {
-    const plan = PlanInput.parse(input)
+    const plan = PlanSubmissionInput.parse(input)
     return this.command(plan.requestID, { plan, owner }, (db) => {
       this.validatePlanDependencies(plan.afterPlans ?? [])
       const invalidCombinedTimings = invalidVerificationTimings(plan.verification, timeoutDefaults)

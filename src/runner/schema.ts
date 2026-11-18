@@ -1,7 +1,7 @@
 import { MAX_PRIORITY, NO_PRIORITY } from "./priority.ts"
 import { z } from "zod"
 import { WorkerAgent } from "./worker-agent.ts"
-import { TaskProposalSchema } from "../task.ts"
+import { TaskProposalSchema, dropLegacyHumanEvidence } from "../task.ts"
 import { VerificationPhase } from "./verification-timeout.ts"
 
 export const TaskState = z.enum([
@@ -67,7 +67,7 @@ export type ArchitectContinuityInput = z.infer<typeof ArchitectContinuityInput>
 const PlanPriority = z.int().min(NO_PRIORITY).max(MAX_PRIORITY)
 const PRIORITY_DESCRIPTION =
   "Dispatch priority: 1 is the top priority, 2 is next, and larger integers are lower (up to 2147483647). 0 or omitted means no priority and dispatches after every prioritized plan. Equal priority preserves submission order. Active workers continue."
-export const PlanInput = z
+const StrictPlanInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
     title: z
@@ -167,7 +167,14 @@ export const PlanInput = z
       if (!ids.has(disposition.taskID)) fail("dispositions", "Source task must belong to this plan")
     }
   })
-export type PlanInput = z.infer<typeof PlanInput>
+/** New plan submissions: retired `kind: "human"` evidence is rejected. */
+export const PlanSubmissionInput = StrictPlanInput
+/**
+ * Stored plan bodies and revisions: retired `kind: "human"` acceptance evidence
+ * is read and dropped, so it never gates and never makes a plan unreadable.
+ */
+export const PlanInput = z.preprocess(dropLegacyHumanEvidence, StrictPlanInput)
+export type PlanInput = z.infer<typeof StrictPlanInput>
 
 export const DispatchPause = z.strictObject({
   reason: z.string(),
