@@ -831,7 +831,12 @@ function PanelView(
   const taskStatus = () => report()?.task.status ?? ""
   /** The task reference from Tasks or Radar; never a raw id. */
   const reference = () =>
-    prefs().selectedReference ?? prefs().target?.reference ?? currentData()?.taskReference ?? ""
+    report()?.task.reference ??
+    currentData()?.tasks.find((task) => task.taskID === currentData()?.taskID)?.reference ??
+    currentData()?.taskReference ??
+    prefs().selectedReference ??
+    prefs().target?.reference ??
+    ""
   const status = createPanelStatus(() => ({
     subject: "this trajectory",
     hasContent: Boolean(report()),
@@ -940,7 +945,7 @@ function PanelView(
                   placement="bottom-start"
                   disabled={!currentData()?.tasks.length}
                   items={(currentData()?.tasks ?? []).map((task) => ({
-                    label: `${task.title ? displayTitle(task.title) : "Task"} · ${task.status}`,
+                    label: `${[task.reference, task.title ? displayTitle(task.title) : "Task"].filter(Boolean).join(" · ")} · ${task.status}`,
                     onSelect: () => selectTask(task.taskID),
                   }))}
                 />

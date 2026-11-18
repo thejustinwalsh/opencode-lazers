@@ -190,6 +190,8 @@ const Report = z
     schemaVersion: z.literal(1),
     task: z.object({
       id: z.string(),
+      /** Task reference such as LZ-137; absent from older servers and for unreferenced tasks. */
+      reference: z.string().optional(),
       revision: z.number().int().positive().optional(),
       status: z.string(),
       specification: z.object({ objective: z.string() }).strip(),
@@ -277,6 +279,7 @@ const Report = z
 const SnapshotNode = z
   .object({
     taskID: z.string(),
+    reference: z.string().optional(),
     revision: z.number().int().positive().optional(),
     objective: z.string().optional(),
     ordinal: z.number().int().nonnegative(),
@@ -402,6 +405,7 @@ export function parseTrajectoryReport(response: TrajectoryResponse): TrajectoryR
 
 export type TaskChoice = {
   taskID: string
+  reference?: string
   revision?: number
   title: string | null
   status: string
@@ -414,6 +418,7 @@ export function taskChoices(snapshot: ProjectedSnapshot): TaskChoice[] {
       if (!tasks.has(node.taskID))
         tasks.set(node.taskID, {
           taskID: node.taskID,
+          ...(node.reference ? { reference: node.reference } : {}),
           ...(node.revision === undefined ? {} : { revision: node.revision }),
           title: node.objective ?? plan.title,
           status: node.state,

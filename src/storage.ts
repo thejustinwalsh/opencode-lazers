@@ -1,4 +1,5 @@
 import { scheduledTaskPageSQL } from "./tasks/schedule-order.ts"
+import { taskReferenceFor } from "./task-reference.ts"
 import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
@@ -629,11 +630,7 @@ export class TaskRepository {
   }
 
   referenceFor(taskID: string): string | undefined {
-    return this.db
-      .query<{ reference: string }, [string, string]>(
-        "SELECT reference FROM task_references WHERE project_directory=? AND task_id=?",
-      )
-      .get(this.projectDirectory, taskID)?.reference
+    return taskReferenceFor(this.db, this.projectDirectory, taskID)
   }
 
   resolveTaskID(idOrReference: string): string | undefined {
