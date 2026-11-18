@@ -22,6 +22,8 @@ export type ActivityLine = {
   /** First requested path, only when the call's own input attributes it. */
   target: string | null
   extraTargets: number
+  /** What the call ran: its command, file or pattern, as recorded; null for older rows. */
+  detail: string | null
   startedAt: number | null
   endedAt: number | null
   error: string | null
@@ -240,6 +242,7 @@ export function sessionCallLines(live: Live, sessionID: string) {
         status,
         current: status === "starting" || status === "running",
         ...callTargets(call),
+        detail: call.detail ?? null,
         startedAt: callTime(call),
         endedAt: call.completedAt,
         error: call.error,
@@ -267,6 +270,7 @@ export function sessionCallLines(live: Live, sessionID: string) {
       current,
       target: null,
       extraTargets: 0,
+      detail: items.find((item) => item.detail)?.detail ?? null,
       startedAt: starts.length ? Math.min(...starts) : null,
       endedAt: current ? null : latest.observedAt,
       error: null,
@@ -593,13 +597,17 @@ export function formatTimer(milliseconds: number) {
 }
 
 /** One call row: tool, argument, and the call's own icon. Failed calls show their error. */
+/** What a call ran: the recorded command or file, else its first file target; null if neither. */
+export function callSummary(line: ActivityLine) {
+  if (line.detail) return line.detail
+  return line.target
+    ? `${line.target}${line.extraTargets > 0 ? ` +${line.extraTargets}` : ""}`
+    : null
+}
+
 export function callRow(line: ActivityLine) {
   const failed = line.status === "failed"
-  const argument = failed
-    ? (line.error ?? line.target)
-    : line.target
-      ? `${line.target}${line.extraTargets > 0 ? ` +${line.extraTargets}` : ""}`
-      : null
+  const argument = failed ? (line.error ?? callSummary(line)) : callSummary(line)
   return {
     tool: line.tool,
     argument,

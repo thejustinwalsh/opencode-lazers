@@ -1,5 +1,6 @@
 import type { LiveRadarResponse } from "../observability/contract.ts"
 import {
+  callSummary,
   formatAge,
   sessionCallLines,
   sessionGroups,
@@ -114,6 +115,9 @@ const ASK = /^(question|ask|permission|ask[-_ ]?user)/i
 
 /** The destination a tool call went to, or the generic tools destination. */
 export function toolDestination(tool: string, verifying: boolean, hasFileTargets: boolean) {
+  // Code mode: the Architect's `execute` runs LAZERS project tools, named `lz-*`.
+  if (/^execute$/i.test(tool) || /^lz-/i.test(tool))
+    return { id: "lazers", name: "LAZERS tools", kind: "service" as const }
   if (ASK.test(tool)) return { id: "you", name: "You", kind: "you" as const }
   if (/^(check|verify)/i.test(tool) || (verifying && SHELL.test(tool)))
     return { id: "checks", name: "Checks", kind: "service" as const }
@@ -127,10 +131,10 @@ export function toolDestination(tool: string, verifying: boolean, hasFileTargets
 
 function callDetail(line: ActivityLine) {
   if (line.status === "failed" && line.error) return line.error
-  const target = line.target
-    ? `${line.target}${line.extraTargets > 0 ? ` +${line.extraTargets}` : ""}`
-    : ""
-  return `${line.tool.toLowerCase()}${target ? ` ${target}` : ""}`
+  const summary = callSummary(line)
+  // A command reads as itself; a file or pattern reads with its tool.
+  if (summary && (SHELL.test(line.tool) || /^(check|verify)/i.test(line.tool))) return summary
+  return `${line.tool.toLowerCase()}${summary ? ` ${summary}` : ""}`
 }
 
 const compact = (value: number) =>
@@ -204,7 +208,7 @@ export function createFlowModel(
         dest.kind === "you"
           ? { text: `waiting for you · ${callDetail(running)}`, failed: false, waiting: true }
           : {
-              text: `▸ ${running.tool.toLowerCase()}${running.target ? `: ${running.target}` : ""}`,
+              text: `▸ ${running.tool.toLowerCase()}${callSummary(running) ? `: ${callSummary(running)}` : ""}`,
               failed: false,
               waiting: false,
             },

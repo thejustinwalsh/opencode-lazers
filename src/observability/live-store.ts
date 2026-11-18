@@ -7,6 +7,9 @@ import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
 
+/** Recent call summaries read per live snapshot. */
+const TOOL_DETAIL_ROWS = 400
+
 export const LIVE_LIMITS = {
   sessions: 32,
   inventoryCandidates: 256,
@@ -251,6 +254,27 @@ function journalCoverage(
     row?.coverage_kind === "legacy-or-unavailable" ? row.coverage_kind : "unavailable"
 }
 
+/**
+ * A tool row whose stored payload is over the live limit usually carries a large result. The live
+ * read needs only the call's identity, status, timing, targets, detail and error, so those fields
+ * are lifted out and the result body is left behind; the row is not dropped. Null when even this
+ * summary is over the limit.
+ */
+function compactToolPayload(column: string) {
+  const field = (name: string) => `'${name}',json(json_extract(${column},'$.${name}'))`
+  const compact = `json_object('tool',json_extract(${column},'$.tool'),'status',json_extract(${column},'$.status'),'callStatus',json_extract(${column},'$.callStatus'),'detail',json_extract(${column},'$.detail'),${[
+    "statusProvenance",
+    "execution",
+    "timing",
+    "observations",
+    "fileTargets",
+    "error",
+  ]
+    .map(field)
+    .join(",")})`
+  return `CASE WHEN json_valid(${column}) AND length(${compact})<=${LIVE_LIMITS.progressPayloadBytes} THEN ${compact} END`
+}
+
 function progressQuery(db: Database) {
   return db.query<ProgressRow, (string | number)[]>(
     `WITH recent AS (
@@ -274,7 +298,8 @@ function progressQuery(db: Database) {
             ${boundedBytePrefix("p.event_ids_json", EVENT_IDS_BYTES)}>? AS event_ids_omitted,
             CASE WHEN ${boundedBytePrefix("p.call_id", SMALL_ID_BYTES)}<=? THEN p.call_id END AS call_id,
             CASE WHEN ${boundedBytePrefix("p.message_id", SMALL_ID_BYTES)}<=? THEN p.message_id END AS message_id,
-            CASE WHEN ${boundedBytePrefix("p.payload", LIVE_LIMITS.progressPayloadBytes)}<=? THEN p.payload END AS payload,
+            CASE WHEN ${boundedBytePrefix("p.payload", LIVE_LIMITS.progressPayloadBytes)}<=? THEN p.payload
+                 WHEN p.kind='tool' THEN ${compactToolPayload("p.payload")} END AS payload,
             ${boundedBytePrefix("p.payload", LIVE_LIMITS.progressPayloadBytes)} AS payload_bytes,
             ${boundedBytePrefix("p.payload", LIVE_LIMITS.progressPayloadBytes)}>? AS payload_omitted
        FROM runner_progress p JOIN selected ON selected.seq=p.seq ORDER BY p.seq DESC`,
@@ -474,6 +499,48 @@ export class LiveReadStore {
     private readonly projectID: string,
     private readonly secret: Uint8Array,
   ) {}
+
+  /**
+   * One-line call summaries recorded for the given sessions, keyed `sessionID` NUL `callID`. This
+   * is the canonical per-call record, so it covers sessions with no runner assignment, such as
+   * the Architect. Bounded to the most recent calls; empty when the table does not exist yet.
+   */
+  toolDetails(sessionIDs: readonly string[], signal: AbortSignal): Map<string, string> {
+    const details = new Map<string, string>()
+    if (sessionIDs.length === 0) return details
+    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
+    try {
+      connection.store.read((db) => {
+        signal.throwIfAborted()
+        const exists = db
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='native_tool_calls'",
+          )
+          .get()
+        if (!exists) return
+        const rows = db
+          .query<
+            { session_id: string; call_id: string; detail: string | null },
+            (string | number)[]
+          >(
+            `SELECT session_id,COALESCE(native_call_id,context_call_id,invocation_id) AS call_id,
+                    substr(json_extract(payload,'$.detail'),1,200) AS detail
+               FROM native_tool_calls
+              WHERE project_directory=? AND session_id IN (SELECT value FROM json_each(?))
+                AND json_extract(payload,'$.detail') IS NOT NULL
+              ORDER BY last_observed_at DESC LIMIT ?`,
+          )
+          .all(this.projectDirectory, JSON.stringify(sessionIDs), TOOL_DETAIL_ROWS)
+        for (const row of rows)
+          if (row.detail) details.set(`${row.session_id}\u0000${row.call_id}`, row.detail)
+      })
+    } catch {
+      // A missing or unreadable detail table leaves rows with their tool name and targets.
+    } finally {
+      connection.close()
+    }
+    return details
+  }
 
   readCurrent(sessionID: string | null, signal: AbortSignal): LiveSourceSnapshot {
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)

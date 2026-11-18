@@ -10,6 +10,7 @@ import { privacyStats, safeError, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { observeFileTargets } from "./file-target.ts"
+import { toolDetail } from "./tool-detail.ts"
 import { sameProject } from "../project-key.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 
@@ -87,6 +88,14 @@ type ToolCall = {
   status: "completed" | "error"
   result?: Tool.Result
   error?: unknown
+  /** The call's input, read only to summarize it; never stored whole. */
+  input?: unknown
+}
+
+/** The bounded one-line summary of a call, or nothing when its input says nothing worth showing. */
+function detailField(call: { tool: string; input?: unknown }): { detail?: string } {
+  const detail = toolDetail(call.tool, call.input)
+  return detail === null ? {} : { detail }
 }
 
 export type ToolInvocation = {
@@ -1511,6 +1520,7 @@ export class ProgressRecorder {
         payload: {
           tool: safeText(call.tool, stats, 160),
           agent: safeText(call.agent, stats, 200),
+          ...detailField(call),
           observations: [
             {
               source: "tool-hook",
@@ -1684,6 +1694,7 @@ export class ProgressRecorder {
       tool: safeText(call.tool, stats, 160),
       agent: safeText(call.agent, stats, 200),
       status: call.status === "error" ? "failed" : "succeeded",
+      ...detailField(call),
       observations: [
         {
           source: "tool-hook",
@@ -1731,7 +1742,7 @@ export class ProgressRecorder {
     input: unknown
   }): number | undefined {
     if (
-      call.agent !== "lazers-implementor" ||
+      !isWorkerAgent(call.agent) ||
       !call.tool ||
       call.tool.length > 160 ||
       !call.sessionID ||
@@ -1746,7 +1757,8 @@ export class ProgressRecorder {
     const initial = this.assignmentForSession(call.sessionID)
     if (!initial || !activeAttempt(initial.attemptState)) return undefined
     const fileTargets = observeFileTargets(call.tool, call.input, initial.workspace)
-    if (!fileTargets) return undefined
+    const detail = toolDetail(call.tool, call.input)
+    if (!fileTargets && detail === null) return undefined
 
     return this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", call.sessionID)
@@ -1815,7 +1827,11 @@ export class ProgressRecorder {
         at: Date.now(),
         callID: call.callID,
         messageID: call.messageID,
-        payload: { tool: call.tool, fileTargets },
+        payload: {
+          tool: call.tool,
+          ...(fileTargets ? { fileTargets } : {}),
+          ...(detail === null ? {} : { detail }),
+        },
       })
     })
   }

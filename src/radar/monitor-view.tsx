@@ -609,7 +609,11 @@ export function RadarMonitorView(props: Props) {
   const sessionFiles = createMemo(() => [
     ...new Set(
       sessionCalls().flatMap((line) =>
-        line.record?.fileTargets?.coverage === "observed" ? line.record.fileTargets.paths : [],
+        line.record?.fileTargets?.coverage === "observed"
+          ? line.record.fileTargets.paths
+          : line.detail && /^(read|view|edit|write|multiedit)$/i.test(line.tool)
+            ? [line.detail]
+            : [],
       ),
     ),
   ])
