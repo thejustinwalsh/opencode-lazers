@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Fiber, Stream } from "effect"
 import { ObservationReads } from "./read.ts"
@@ -409,6 +410,91 @@ test("progress diagnostics are project-isolated and process scheduler totals are
     expect(processSamples).toBe(1)
   } finally {
     sharedScheduler.snapshot = originalSnapshot
+    fixture.close()
+  }
+})
+
+test("cancelled targeted status reads cannot publish stale success and close their connection", async () => {
+  const fixture = makeFixture()
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let statusStarted = false
+  const reads = new ObservationReads(
+    fixture.store,
+    {
+      session: (id) => fixture.host.session(id),
+      status: async (id) => {
+        if (id === "ses-failed") {
+          statusStarted = true
+          started.resolve()
+          await release.promise
+        }
+        const session = fixture.sessions.get(id)
+        return session
+          ? { ...session, messages: null, messageStatus: "not-read", messageError: null }
+          : null
+      },
+    },
+    "project",
+    new Uint8Array(32).fill(26),
+  )
+  let handlers: { trajectoryStatus(input: unknown): Effect.Effect<unknown> } | undefined
+  const ctx = {
+    rpc: {
+      register: (_definition: unknown, methods: typeof handlers) => {
+        handlers = methods
+        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+      },
+    },
+    session: {
+      get: ({ sessionID }: { sessionID: string }) =>
+        Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "architect",
+          time: { archived: undefined },
+        }),
+    },
+    permission: { assert: () => Effect.void },
+    event: { subscribe: () => Stream.empty },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  const scope = { kind: "project" as const, sessionID: "ses-owner" }
+
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerObservability(ctx, reads, "project")
+        }),
+      ),
+    )
+    const closeSpy = spyOn(Database.prototype, "close")
+    try {
+      const cancelled = Effect.runFork(handlers!.trajectoryStatus({ scope, taskID }))
+      await started.promise
+      fixture.store.atomic((db) =>
+        db
+          .query("UPDATE runner_attempts SET tool_count=tool_count+1 WHERE id=?")
+          .run(firstAttemptID),
+      )
+      await Effect.runPromise(Fiber.interrupt(cancelled))
+      expect((await Effect.runPromise(Fiber.await(cancelled)))._tag).toBe("Failure")
+
+      release.resolve()
+      for (let attempt = 0; attempt < 100 && closeSpy.mock.calls.length === 0; attempt++)
+        await Bun.sleep(5)
+      expect(closeSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      release.resolve()
+      if (statusStarted)
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (closeSpy.mock.calls.length) break
+          await Bun.sleep(5)
+        }
+      closeSpy.mockRestore()
+    }
+  } finally {
+    release.resolve()
     fixture.close()
   }
 })
