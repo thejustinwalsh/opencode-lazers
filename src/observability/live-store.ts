@@ -88,7 +88,8 @@ export type LiveSourceSnapshot = LiveStoreMetrics & {
 
 export type LiveHistorySourcePage = LiveStoreMetrics & {
   runnerRevision: number | null
-  attemptID: string
+  /** Null for an authorized session that has no runner attempt, such as an Architect session. */
+  attemptID: string | null
   rows: LiveProgressRow[]
   hasMore: boolean
   nextCursor: string | null
@@ -614,7 +615,19 @@ export class LiveReadStore {
               WHERE a.session_id=? AND p.project_directory=? LIMIT 1`,
           )
           .get(input.sessionID, this.projectDirectory)
-        if (!assignment) throw new LiveHistoryUnavailableError("session-unavailable")
+        if (!assignment) {
+          // Runner progress is the only history source. A session with no runner
+          // attempt (an Architect session) has none: an empty page, not a failure.
+          // A cursor can only have come from an attempt, so it is no longer valid.
+          if (cursor) throw new LiveHistoryUnavailableError("invalid-cursor")
+          return {
+            runnerRevision,
+            attemptID: null,
+            rows: [] as ProgressRow[],
+            hasMore: false,
+            nextCursor: null,
+          }
+        }
         countRows(metrics, [assignment])
         if (cursor && cursor.attemptID !== assignment.attempt_id)
           throw new LiveHistoryUnavailableError("invalid-cursor")

@@ -781,6 +781,12 @@ export class ObservationChangeTracker {
     streamGap(this.state)
   }
 
+  /** The native event subscription is attached: connected means listening, not "has heard an event". */
+  streamAttached() {
+    this.state.eventStreamConnected = true
+    this.state.gapActive = false
+  }
+
   get hasConnectedEventStream() {
     return this.state.eventStreamConnected
   }

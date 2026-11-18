@@ -657,7 +657,7 @@ export const LiveHistoryOutput = z.strictObject({
   projectID: z.string().min(1).max(200),
   scope: ObservationScopeView,
   sessionID: z.string().min(1).max(200),
-  attemptID: z.uuid(),
+  attemptID: z.uuid().nullable(),
   source: z.literal("runner-progress"),
   runnerRevision: z.int().nonnegative().nullable(),
   capturedAt: z.number().finite(),

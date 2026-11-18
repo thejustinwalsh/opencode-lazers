@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
+import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { AssociationTaskReads } from "../../src/observability/task-reads.ts"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
 import type { RadarNativeSession, RadarSessionHost } from "../../src/observability/native.ts"
+import { Tasks } from "../../src/tasks/contract.ts"
 import { registerTaskReads } from "../../src/tasks/rpc.ts"
 import type { TaskRuntime } from "../../src/runner/runtime.ts"
 import { TaskRepository } from "../../src/storage.ts"
@@ -38,8 +40,9 @@ test("registered Tasks RPC discovers durable worker links without widening proje
     | undefined
   const ctx = {
     rpc: {
-      register: (_definition: unknown, methods: typeof handlers) => {
-        handlers = methods
+      // registerTaskReads also registers the scheduling RPC; keep only the Tasks handlers.
+      register: (definition: unknown, methods: typeof handlers) => {
+        if (definition === Tasks) handlers = methods
         return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
       },
     },
@@ -213,10 +216,12 @@ test("registered observation RPC resolves scope through native sessions and enfo
     ).rejects.toThrow("Observation scope is unavailable")
     expect(nativeMetadataReads).toHaveLength(readsBeforeForeignRadar)
     foreign = false
+    // Archived sessions stay readable (60ba858c); native permission still gates them.
     archived = true
-    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
-      "Observation scope is unavailable",
-    )
+    expect(await Effect.runPromise(handlers!.snapshot({ scope }))).toMatchObject({ scope })
+    denied = true
+    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow()
+    denied = false
     archived = false
 
     const review = await Effect.runPromise(
@@ -387,6 +392,100 @@ test("registered targeted trajectory RPCs remain usable when broad history is ov
       "lz-inspect-trajectory",
       "lz-inspect-trajectory",
     ])
+  } finally {
+    fixture.close()
+  }
+})
+
+test("a root Architect session with no runner attempt resolves for live history", async () => {
+  const fixture = makeFixture()
+  let handlers:
+    { liveHistory(input: unknown, context: unknown): Effect.Effect<unknown> } | undefined
+  const ctx = {
+    rpc: {
+      register: (_definition: unknown, methods: typeof handlers) => {
+        handlers = methods
+        return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+      },
+    },
+    session: {
+      get: ({ sessionID }: { sessionID: string }) =>
+        Effect.succeed({ id: sessionID, projectID: "project", agent: "architect", time: {} }),
+    },
+    permission: { assert: () => Effect.void },
+    event: { subscribe: () => Stream.empty },
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  const radarSessions: RadarSessionHost = {
+    get: async (id): Promise<RadarNativeSession> => ({
+      id,
+      projectID: "project",
+      parentID: null,
+      directory: fixture.directory,
+      agent: "architect",
+      model: { providerID: "openai", id: "gpt-6-luna", variant: null },
+      archived: false,
+      busy: false,
+      createdAt: 1_000,
+      updatedAt: 2_000,
+    }),
+    project: async () => ({ sessions: [], truncated: false }),
+    descendants: async () => ({ sessions: [], truncated: false }),
+  }
+  const context = {
+    error: (type: string, message: string, data: unknown) => ({ type, message, data }),
+  }
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        registerObservability(
+          ctx,
+          new ObservationReads(
+            fixture.store,
+            fixture.host,
+            "project",
+            new Uint8Array(32).fill(4),
+            radarSessions,
+          ),
+          "project",
+        ),
+      ),
+    )
+    const page = await Effect.runPromise(
+      handlers!.liveHistory(
+        {
+          scope: { kind: "session", sessionID: "ses-architect-root" },
+          sessionID: "ses-architect-root",
+          limit: 20,
+        },
+        context,
+      ),
+    )
+    expect(page).toMatchObject({
+      sessionID: "ses-architect-root",
+      attemptID: null,
+      items: [],
+      nextCursor: null,
+      coverage: { hasMore: false },
+    })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("native event coverage is connected once the subscription is attached, before any event", () => {
+  const fixture = makeFixture()
+  try {
+    const tracker = new ObservationChangeTracker(
+      fixture.repository,
+      new Uint8Array(32).fill(4),
+      "project",
+    )
+    tracker.initialize()
+    expect(tracker.hasConnectedEventStream).toBe(false)
+    tracker.streamAttached()
+    expect(tracker.hasConnectedEventStream).toBe(true)
+    tracker.streamGap()
+    expect(tracker.hasConnectedEventStream).toBe(false)
   } finally {
     fixture.close()
   }

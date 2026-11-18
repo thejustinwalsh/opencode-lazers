@@ -342,19 +342,25 @@ export function registerObservability(
     )
 
     const listen = Effect.forever(
-      Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-        Effect.sync(() => section(`event:${event.type}`, () => tracker.native(event))),
-      ).pipe(
-        Effect.match({
-          onFailure: () => {
-            tracker.streamGap()
-          },
-          onSuccess: () => {
-            tracker.streamGap()
-          },
-        }),
-        Effect.andThen(Effect.sleep(1_000)),
-      ),
+      Effect.sync(() => tracker.streamAttached())
+        .pipe(
+          Effect.andThen(
+            Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
+              Effect.sync(() => section(`event:${event.type}`, () => tracker.native(event))),
+            ),
+          ),
+        )
+        .pipe(
+          Effect.match({
+            onFailure: () => {
+              tracker.streamGap()
+            },
+            onSuccess: () => {
+              tracker.streamGap()
+            },
+          }),
+          Effect.andThen(Effect.sleep(1_000)),
+        ),
     )
     yield* Effect.forkScoped(listen)
   })
