@@ -483,6 +483,9 @@ function pinFromSource(
   openRouter: SourceRead | null,
   applicability: CurrentPriceApplicability,
 ): CurrentPricePin | null {
+  // models.dev prices the catalog and unobserved models; recorded usage is repriced from the
+  // whole-model OpenRouter and OpenCode quotes only.
+  if (source === "models-dev") return null
   return source === "opencode"
     ? nativePin(native, applicability.route, applicability)
     : openRouterPin(openRouter, native, applicability.route, applicability)

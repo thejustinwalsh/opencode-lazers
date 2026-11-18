@@ -258,8 +258,10 @@ available so the user can see measured task outcomes and cost. Label the source
 of each comparison and keep unlike measures out of the same Pareto frontier.
 Use live APIs wherever the relevant data is available. Product costs, recorded
 market valuations, estimates and comparisons use an ordered price-source setting,
-independent of execution provider or subscription. Initially offer OpenRouter and
-OpenCode, defaulting to OpenRouter then OpenCode. Reuse access configured in
+independent of execution provider or subscription. Offer OpenRouter, OpenCode and
+models.dev, defaulting to that order. models.dev (MIT, the open database OpenCode itself
+uses) needs no key and lists `cost` in USD per million tokens; it is the keyless fallback that
+keeps the catalog priced when OpenRouter access is absent. Reuse access configured in
 OpenCode; skip unavailable sources and omit the cost when none provides an
 applicable price. Identify the chosen source briefly; put rates in expanded detail.
 A session's reported charge is not a market-price source, and absent prices are not zero. OpenRouter
@@ -326,6 +328,30 @@ first. Prices refresh in the background after one hour, model info (names, conte
 tool support, benchmark rows) after seven days; a price refresh keeps the stored info,
 replaces rates, adds newly listed models and keeps vanished ones until the next info
 refresh. One refresh runs at a time per project; the header refresh button forces all.
+
+Two keyless public sources join the same cache. **models.dev** (`models.dev/api.json`, about
+7 MB, parsed once on the server; only the fields in use are stored, for the providers this
+install routes plus Anthropic and OpenAI) refreshes prices hourly and model info weekly, and
+joins a route by the OpenCode provider and model id, then by name identity; a gateway's copy
+of a model is never taken as its price. **Epoch AI** (`epoch.ai/data/benchmark_data.zip`)
+supplies public coding benchmark scores, refreshed weekly: SWE-bench Verified, Aider
+polyglot, Terminal-Bench 2.0, DeepSWE, GSO-Bench and FrontierSWE, each row naming its origin
+as the hub lists it. One score ranks the set, never a mix: the Artificial Analysis Coding
+Index when OpenRouter benchmark access covers at least as many models, else SWE-bench
+Verified, unless another Epoch benchmark covers clearly more (it keeps the lead while it
+reaches 80% of the best coverage). Other benchmarks are detail rows in the selected model's
+"Public benchmark" disclosure. Epoch data is CC BY 4.0: wherever it is shown the source
+line reads "Epoch AI · CC BY 4.0" with the snapshot date; benchmarks the hub lists from
+elsewhere keep their own licences and are named by their origin. Requests are plain GETs
+with a generic User-Agent and no user, project or machine identifier.
+
+Every cross-source join (native routes, OpenRouter, models.dev, Epoch, our recorded runs and
+routes) goes through one name identity resolver (`name-identity.ts`): family, version, tier
+words, size and variants make an identity; dates, `latest`, `preview`, `:free`, routing and
+cloud prefixes do not, and effort is carried beside it. Matches record their tier (exact id,
+cross-id, identity, identity-relaxed, alias) and a row that could be two identities stays
+unmatched with the reason rather than being guessed. Coverage is shown, not hidden: "27 of 35
+SWE-bench Verified rows matched", with the unmatched names behind a nested disclosure.
 
 The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted

@@ -1,6 +1,8 @@
 import { z } from "zod"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import type { ModelEvidenceSnapshot } from "./source-schema.ts"
+import { createModelIndex, parseModelName, vendorSlug } from "./name-identity.ts"
+import type { ModelIndex } from "./name-identity.ts"
 
 export const MODEL_IDENTITY_RULE_VERSION = 1
 
@@ -44,6 +46,7 @@ export const ModelIdentityResolutionSchema = z.strictObject({
       "owner-qualified-catalog-id",
       "provider-owner-qualification",
       "verified-source-backed-route-alias",
+      "name-identity",
     ])
     .nullable(),
   catalogSourceState: z.enum(["available", "none", "missing-table", "missing-snapshot"]),
@@ -67,6 +70,7 @@ type RouteRule = {
     | "owner-qualified-catalog-id"
     | "provider-owner-qualification"
     | "verified-source-backed-route-alias"
+    | "name-identity"
   citations?: z.infer<typeof ModelIdentityRuleCitationSchema>[]
 }
 
@@ -333,12 +337,94 @@ function serializeRules(
     .sort((left, right) => compareText(left.id, right.id))
 }
 
+const catalogIndexes = new WeakMap<
+  CatalogSnapshot,
+  ModelIndex<RecordEntry<OpenRouterModelRecord>>
+>()
+
+/** The catalog snapshot indexed by every name it gives a model: id, canonical slug and title. */
+function catalogIndex(snapshot: CatalogSnapshot, source: ModelEvidenceComparisonSourceRead) {
+  let index = catalogIndexes.get(snapshot)
+  if (!index) {
+    index = createModelIndex(
+      snapshot.records.map((record, position) => ({
+        id: record.id,
+        names: [record.canonicalSlug, record.name].filter((name): name is string => Boolean(name)),
+        vendor: ownerNamespace(record.id),
+        value: { record, recordIndex: originalRecordIndex(source, position) },
+      })),
+    )
+    catalogIndexes.set(snapshot, index)
+  }
+  return index
+}
+
+/** The newest dated snapshot of an identity speaks for it; undated ones order by id. */
+function newestFirst(entries: Array<RecordEntry<OpenRouterModelRecord>>) {
+  const dateOf = (entry: RecordEntry<OpenRouterModelRecord>) =>
+    parseModelName(entry.record.canonicalSlug ?? entry.record.id).date ?? ""
+  return entries.toSorted(
+    (left, right) =>
+      compareText(dateOf(right), dateOf(left)) || compareText(left.record.id, right.record.id),
+  )
+}
+
 export type ModelIdentityResolutionResult = {
   resolution: ModelIdentityResolution
   catalogMatches: Array<RecordEntry<OpenRouterModelRecord>>
 }
 
-/** Resolve only exact, versioned route rules and exact published catalog IDs. */
+function resolveByName(
+  route: Route,
+  snapshot: CatalogSnapshot,
+  source: ModelEvidenceComparisonSourceRead,
+) {
+  const result = catalogIndex(snapshot, source).resolve(route.modelID, {
+    vendor: vendorSlug(route.providerID) ? route.providerID : null,
+  })
+  return result.status === "matched" ? result : null
+}
+
+function withNamedMatch(
+  named: NonNullable<ReturnType<typeof resolveByName>>,
+  input: { route: Route },
+  native: ReturnType<typeof boundedReferences>,
+  snapshot: CatalogSnapshot,
+  catalogState: ModelIdentityResolution["catalogSourceState"],
+): ModelIdentityResolutionResult {
+  // Dated snapshots and provider copies of one identity are one model: the newest speaks for it.
+  const entries = newestFirst(named.items.map((item) => item.value))
+  const chosen = entries[0]!
+  const references = boundedReferences(
+    entries.map(({ record, recordIndex }) =>
+      modelIdentityReference("openrouter-models", snapshot, recordIndex, record.id),
+    ),
+  )
+  return {
+    resolution: {
+      status: "exact",
+      productID: chosen.record.id,
+      rules: [{ id: `name-identity-${named.tier}-v1`, version: MODEL_IDENTITY_RULE_VERSION }],
+      basis: "name-identity",
+      catalogSourceState: catalogState,
+      evidence: {
+        native: native.records,
+        catalog: references.records,
+        nativeRecordCount: native.recordCount,
+        catalogRecordCount: references.recordCount,
+        nativeTruncated: native.truncated,
+        catalogTruncated: references.truncated,
+      },
+    },
+    catalogMatches: [chosen],
+  }
+}
+
+/**
+ * Resolve a route to its catalog model: exact versioned route rules and exact published ids
+ * first, then the name identity (dated snapshots of one model are one match, never a guess
+ * between two models).
+ */
 export function resolveModelIdentity(input: {
   route: Route
   nativeEvidence: ModelIdentityEvidenceReference[]
@@ -352,6 +438,10 @@ export function resolveModelIdentity(input: {
   const native = boundedReferences(input.nativeEvidence)
   const rules = routeRules(input.route, catalogSnapshot)
 
+  if (!rules.length && catalogSnapshot) {
+    const named = resolveByName(input.route, catalogSnapshot, input.catalogSource)
+    if (named) return withNamedMatch(named, input, native, catalogSnapshot, catalogState)
+  }
   if (!rules.length) {
     const status = catalogSnapshot ? "unsupported" : "source-unavailable"
     return {
@@ -405,6 +495,10 @@ export function resolveModelIdentity(input: {
       recordIndex: originalRecordIndex(input.catalogSource, index),
     }))
     .filter(({ record }) => rules.some((rule) => rule.catalogModelID === record.id))
+  if (!catalogMatches.length) {
+    const named = resolveByName(input.route, catalogSnapshot, input.catalogSource)
+    if (named) return withNamedMatch(named, input, native, catalogSnapshot, catalogState)
+  }
   const catalogReferences = boundedReferences(
     catalogMatches.map(({ record, recordIndex }) =>
       modelIdentityReference("openrouter-models", catalogSnapshot, recordIndex, record.id),

@@ -407,11 +407,12 @@ const mix = `${BENCHMARK_PRICE_MIX.input} input : ${BENCHMARK_PRICE_MIX.output} 
 export const benchmarkSourceName = {
   openrouter: "OpenRouter",
   opencode: "OpenCode",
+  "models-dev": "models.dev",
 } as const
 
 /** Terse model · score · price shared by tooltip, keyboard announcement and Chart data. */
 export function benchmarkPointTooltip(point: BenchmarkBaselinePoint) {
-  return `${boundedModelLabel(point.label)} · Coding ${index.format(point.benchmark.codingIndex)} · ${formatMarketAmount(point.price.blended)} / 1M tokens`
+  return `${boundedModelLabel(point.label)} · ${point.benchmark.scoreName ?? "Coding"} ${index.format(point.benchmark.codingIndex)} · ${formatMarketAmount(point.price.blended)} / 1M tokens`
 }
 
 /** Complete accessible description; names sources, units and the token mix. */
@@ -420,13 +421,13 @@ export function benchmarkPointText(point: BenchmarkBaselinePoint) {
   const tier = price.appliesBelowTokens
     ? `; base rate for prompts under ${tokenCount.format(price.appliesBelowTokens)} tokens`
     : ""
-  return `${point.label} · exact route ${routeLabel(point.route)}: Artificial Analysis Coding Index ${index.format(point.benchmark.codingIndex)} for ${point.benchmark.displayName ?? point.benchmark.modelPermaslug}; ${benchmarkSourceName[price.source]} list price ${formatMarketAmount(price.input)} input and ${formatMarketAmount(price.output)} output per 1M tokens, ${formatMarketAmount(price.blended)} per 1M at ${mix}${tier}; ${point.observed ? "has observed task outcomes for these filters" : "no observed task outcomes for these filters"}.`
+  return `${point.label} · exact route ${routeLabel(point.route)}: ${point.benchmark.scoreCaption ?? "Artificial Analysis Coding Index"} ${index.format(point.benchmark.codingIndex)} for ${point.benchmark.displayName ?? point.benchmark.modelPermaslug}; ${benchmarkSourceName[price.source]} list price ${formatMarketAmount(price.input)} input and ${formatMarketAmount(price.output)} output per 1M tokens, ${formatMarketAmount(price.blended)} per 1M at ${mix}${tier}; ${point.observed ? "has observed task outcomes for these filters" : "no observed task outcomes for these filters"}.`
 }
 
 export function benchmarkGapText(gap: BenchmarkBaselineGap) {
   return gap.reason === "no-price"
     ? `${boundedModelLabel(gap.label)} · not plotted, no price`
-    : `${boundedModelLabel(gap.label)} · not plotted, no Coding Index`
+    : `${boundedModelLabel(gap.label)} · not plotted, no ${gap.benchmark.scoreName ?? "Coding Index"}`
 }
 
 /**
@@ -525,7 +526,7 @@ function projectedLines(entry: CatalogEntry) {
     ...(entry.projection
       ? [`Projected ≈${formatMarketAmount(entry.projection.usd)} per accepted task`]
       : []),
-    ...(entry.score !== null ? [`Coding index ${entry.score}`] : []),
+    ...(entry.score !== null ? [`${entry.scoreName ?? "Coding index"} ${entry.score}`] : []),
     ...(measured
       ? [
           `Measured ${measured.range ? formatMarketRange(measured.range) : formatMarketAmount(measured.usd)} · ${
@@ -596,7 +597,7 @@ export function benchmarkChartPoints(points: readonly BenchmarkBaselinePoint[]):
     frontier: frontier.has(point.id),
     tooltip: [
       point.label,
-      `Coding index ${index.format(point.benchmark.codingIndex)}`,
+      `${point.benchmark.scoreName ?? "Coding index"} ${index.format(point.benchmark.codingIndex)}`,
       `${formatMarketAmount(point.price.blended)} per 1M tokens (${mix})`,
       `${benchmarkSourceName[point.price.source]} list price`,
     ],

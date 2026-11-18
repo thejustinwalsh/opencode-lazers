@@ -22,6 +22,8 @@ import type { CatalogEntry, ObservedFacts } from "./catalog-projection.ts"
 import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
+import type { ModelEvidenceSource } from "./source-schema.ts"
+import { AA_BASIS } from "./public-score.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
@@ -46,6 +48,7 @@ import {
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
+  agentRoutedModels,
   marketSummarySource,
   modelPersonaLabels,
   modelTaskKindLabels,
@@ -662,9 +665,8 @@ export function createModelsController(props: ModelsProps) {
       ? latest
       : { sources: [...MODEL_PRICE_SOURCES], configured: false }
   }
-  const comparisonSource = (
-    source: "native-catalog" | "openrouter-models" | "openrouter-benchmarks",
-  ) => visible()?.comparison?.sources.find((entry) => entry.source === source)
+  const comparisonSource = (source: ModelEvidenceSource) =>
+    visible()?.comparison?.sources.find((entry) => entry.source === source)
   const observedRouteKeys = createMemo(
     () =>
       new Set([
@@ -684,6 +686,7 @@ export function createModelsController(props: ModelsProps) {
       sourceDates: {
         openrouter: comparisonSource("openrouter-models")?.snapshot?.retrievedAt ?? null,
         opencode: comparisonSource("native-catalog")?.snapshot?.retrievedAt ?? null,
+        modelsDev: comparisonSource("models-dev")?.snapshot?.retrievedAt ?? null,
       },
       observedRoutes: observedRouteKeys(),
       label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
@@ -693,8 +696,11 @@ export function createModelsController(props: ModelsProps) {
     comparisonChartKeyboardOrder(decisionChartPoints(), decisionChartReferences()).length
   // -- The model set: observed, routed and catalog models, projected where unobserved --------
   /** Routes named by the model router: every persona's resolved route and each layer's route. */
-  const routedRoutes = createMemo(() =>
-    (visible()?.settings?.personas ?? []).flatMap((persona) =>
+  /** The LAZERS agents with the model native OpenCode resolves for each (read-only). */
+  const agentRoutes = createMemo(() => visible()?.settings?.agents ?? [])
+  const routedRoutes = createMemo(() => [
+    ...agentRoutedModels(agentRoutes()),
+    ...(visible()?.settings?.personas ?? []).flatMap((persona) =>
       [
         persona.resolution.route,
         persona.layers.task?.route,
@@ -702,7 +708,7 @@ export function createModelsController(props: ModelsProps) {
         persona.layers.shared?.route,
       ].flatMap((route) => (route ? [{ providerID: route.providerID, modelID: route.id }] : [])),
     ),
-  )
+  ])
   const observedFactsByRoute = createMemo(() => {
     const facts = new Map<string, ObservedFacts>()
     for (const mark of comparisonChartMarks({
@@ -772,6 +778,7 @@ export function createModelsController(props: ModelsProps) {
       sourceDates: {
         openrouter: comparisonSource("openrouter-models")?.snapshot?.retrievedAt ?? null,
         opencode: comparisonSource("native-catalog")?.snapshot?.retrievedAt ?? null,
+        modelsDev: comparisonSource("models-dev")?.snapshot?.retrievedAt ?? null,
       },
       profile: profile(),
       observed: observedFactsByRoute(),
@@ -816,6 +823,8 @@ export function createModelsController(props: ModelsProps) {
       "native-catalog": "OpenCode catalog",
       "openrouter-models": "OpenRouter catalog",
       "openrouter-benchmarks": "OpenRouter benchmarks",
+      "models-dev": "models.dev",
+      "epoch-benchmarks": "Epoch AI benchmarks",
     } as const
     return (visible()?.comparison?.sources ?? [])
       .filter((source) => !source.snapshot && source.refresh?.state !== "refreshing")
@@ -938,16 +947,32 @@ export function createModelsController(props: ModelsProps) {
       .map((source) => benchmarkSourceName[source])
     return names.length ? names.join(" / ") : "Catalog"
   }
+  /** The public score that ranks the set: the Coding Index, or one Epoch benchmark. */
+  const scoreBasis = () => baseline()?.scoreBasis ?? AA_BASIS
   const benchmarkAsOf = () => {
-    const snapshot = comparisonSource("openrouter-benchmarks")?.snapshot
+    const snapshot = comparisonSource(
+      scoreBasis().source === "epoch" ? "epoch-benchmarks" : "openrouter-benchmarks",
+    )?.snapshot
     const date = snapshot?.asOf ?? snapshot?.retrievedAt
     return date ? formatDate(date) : undefined
   }
-  /** The comparison loaded but the benchmark snapshot never arrived: OpenRouter is not set up. */
+  /** The comparison loaded but no benchmark source has delivered anything: none is reachable. */
   const benchmarkNeedsOpenRouter = () =>
     Boolean(visible()?.comparison) &&
     !comparisonSource("openrouter-benchmarks")?.snapshot &&
+    !comparisonSource("epoch-benchmarks")?.snapshot &&
     !(baseline()?.points.length || baseline()?.gaps.length)
+  /** How many Epoch rows reach a model of this catalog, with the names that did not. */
+  const epochCoverage = () => visible()?.comparison?.publicCoverage?.epoch ?? null
+  /** "34 of 35 SWE-bench Verified rows matched", for the ranking benchmark. */
+  const epochCoverageLine = () => {
+    const coverage = epochCoverage()
+    if (!coverage) return undefined
+    const wanted = scoreBasis().benchmarkID ?? "swe-bench-verified"
+    const row =
+      coverage.benchmarks.find((entry) => entry.benchmarkID === wanted) ?? coverage.benchmarks[0]
+    return row ? `${row.matched} of ${row.rows} ${row.benchmark} rows matched` : undefined
+  }
   const benchmarkEmptyText = () => {
     const current = baseline()
     if (!current || current.points.length + current.gaps.length === 0)
@@ -1391,6 +1416,9 @@ export function createModelsController(props: ModelsProps) {
     benchmarkAsOf,
     benchmarkEmptyText,
     benchmarkNeedsOpenRouter,
+    epochCoverage,
+    epochCoverageLine,
+    scoreBasis,
     observedCaption,
     openProviderSettings,
     benchmarkPriceSourceLabel,
@@ -1441,6 +1469,7 @@ export function createModelsController(props: ModelsProps) {
     openContributorTrajectory,
     openSelectedTrajectory,
     personas,
+    agentRoutes,
     prefs,
     priceSourceOrder,
     priceSourceRevision,

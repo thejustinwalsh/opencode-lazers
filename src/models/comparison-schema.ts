@@ -1,6 +1,9 @@
 import { z } from "zod"
 import {
+  EpochBenchmarkRecordSchema,
+  MODEL_EVIDENCE_SOURCES,
   ModelEvidenceRefreshStatusSchema,
+  ModelsDevModelRecordSchema,
   ModelEvidenceSnapshotSummarySchema,
   ModelEvidenceSourceSchema,
   NativeModelEvidenceRecordSchema,
@@ -50,6 +53,7 @@ const CorrespondenceSchema = z.strictObject({
       "owner-qualified-catalog-id",
       "provider-owner-qualification",
       "verified-source-backed-route-alias",
+      "name-identity",
     ])
     .nullable(),
   evidence: EvidenceReferencesSchema,
@@ -57,7 +61,7 @@ const CorrespondenceSchema = z.strictObject({
 
 const BenchmarkCorrespondenceSchema = z.strictObject({
   status: z.enum(["exact", "unresolved", "ambiguous"]),
-  basis: z.literal("published-canonical-slug").nullable(),
+  basis: z.enum(["published-canonical-slug", "name-identity"]).nullable(),
   evidence: EvidenceReferencesSchema,
 })
 
@@ -112,14 +116,43 @@ export const ModelComparisonCandidateSchema = z.strictObject({
   externalBenchmark: OpenRouterBenchmarkEvidenceRecordSchema.nullable(),
   externalBenchmarkEvidence: EvidenceReferencesSchema,
   effortApplicability: EffortApplicabilitySchema,
+  /** The route's models.dev entry: an exact provider and model id match. Absent on old reads. */
+  publicModel: ModelsDevModelRecordSchema.nullable().optional(),
+  /** Epoch coding-benchmark rows matched to this model by explicit normalisation. */
+  publicBenchmarks: z.array(EpochBenchmarkRecordSchema).max(100).optional(),
 })
+
+export const PublicCoverageSchema = z.strictObject({
+  epoch: z
+    .strictObject({
+      benchmarks: z
+        .array(
+          z.strictObject({
+            benchmarkID: z.string().min(1).max(512),
+            benchmark: z.string().min(1).max(512),
+            rows: z.number().int().nonnegative(),
+            matched: z.number().int().nonnegative(),
+          }),
+        )
+        .max(50),
+      unmatched: z
+        .array(
+          z.strictObject({ name: z.string().min(1).max(512), reason: z.string().min(1).max(512) }),
+        )
+        .max(200),
+    })
+    .nullable(),
+})
+export type PublicCoverage = z.infer<typeof PublicCoverageSchema>
 
 export const ModelComparisonOutputSchema = z.strictObject({
   filters: ModelComparisonFiltersSchema,
-  sources: z.array(ModelComparisonSourceSchema).length(3),
+  sources: z.array(ModelComparisonSourceSchema).length(MODEL_EVIDENCE_SOURCES.length),
   candidates: z.array(ModelComparisonCandidateSchema).max(100),
   totalCandidates: z.number().int().nonnegative().max(200_000),
   nextCursor: z.string().max(8192).nullable(),
+  /** How many public benchmark rows reach a model of this catalog. First page only. */
+  publicCoverage: PublicCoverageSchema.optional(),
 })
 export type ModelComparisonOutput = z.infer<typeof ModelComparisonOutputSchema>
 
@@ -127,6 +160,9 @@ export const ModelComparisonSnapshotSelectionSchema = z.strictObject({
   "native-catalog": z.uuid().nullable(),
   "openrouter-models": z.uuid().nullable(),
   "openrouter-benchmarks": z.uuid().nullable(),
+  // Absent in cursors issued before these sources existed.
+  "models-dev": z.uuid().nullable().optional(),
+  "epoch-benchmarks": z.uuid().nullable().optional(),
 })
 export type ModelComparisonSnapshotSelection = z.infer<
   typeof ModelComparisonSnapshotSelectionSchema

@@ -977,7 +977,7 @@ test("price-source settings persist an ordered whole-model policy without changi
       policy: {
         schemaVersion: 1,
         revision: 0,
-        sources: ["openrouter", "opencode"],
+        sources: ["openrouter", "opencode", "models-dev"],
         fallback: "whole-model",
       },
       access: { openrouter: "configured", opencode: "unknown" },
@@ -1187,6 +1187,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
     ],
     catalogFailure: () => nativeReadFails,
     fetcher: async (input, init) => {
+      // The public sources are not what this test is about; they are unreachable here.
+      if (/models\.dev|epoch\.ai/.test(String(input))) return new Response("n/a", { status: 404 })
       fetchCalls += 1
       expect(String(input)).toBe("https://openrouter.ai/api/v1/models")
       expect(new Headers(init?.headers).get("authorization")).toBeNull()
@@ -1249,7 +1251,7 @@ test("registered price reads use the recorded native catalog outcome and preserv
       await Effect.runPromise(methods.priceSources({ sessionID: "ses-native" })),
     )
     expect(priceSettings).toMatchObject({
-      policy: { sources: ["openrouter", "opencode"], fallback: "whole-model" },
+      policy: { sources: ["openrouter", "opencode", "models-dev"], fallback: "whole-model" },
       access: { openrouter: "configured", opencode: "configured" },
     })
 
@@ -1521,7 +1523,7 @@ test("price-source access reports uncertainty from host metadata without leaking
     )
     expect(output).toMatchObject({
       access: { openrouter: "unknown", opencode: "unknown" },
-      policy: { sources: ["openrouter", "opencode"] },
+      policy: { sources: ["openrouter", "opencode", "models-dev"] },
     })
     expect(JSON.stringify(output)).not.toContain("credential-value")
     expect(harness.sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
@@ -1652,7 +1654,13 @@ test("Models evidence RPC reads cached state without credentials and refreshes o
     const empty = (await Effect.runPromise(
       methods.sourceEvidence({ sessionID: "ses-native" }),
     )) as { sources: Array<{ source: string; state: string; latestSnapshotID: string | null }> }
-    expect(empty.sources.map(({ state }) => state)).toEqual(["never", "never", "never"])
+    expect(empty.sources.map(({ state }) => state)).toEqual([
+      "never",
+      "never",
+      "never",
+      "never",
+      "never",
+    ])
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
 
     const refreshed = (await Effect.runPromise(
@@ -1803,7 +1811,7 @@ test("Models comparison is an authorized read-only projection with honest missin
       candidates: [],
       nextCursor: null,
     })
-    expect(output.sources).toHaveLength(3)
+    expect(output.sources).toHaveLength(5)
     expect(output.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

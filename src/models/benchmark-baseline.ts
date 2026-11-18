@@ -1,5 +1,7 @@
 import type { ModelCandidate } from "./comparison-state.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import { AA_BASIS, chooseScoreBasis, scoreOn } from "./public-score.ts"
+import type { ScoreBasis } from "./public-score.ts"
 
 /**
  * Public benchmark baseline: one point per native route whose OpenRouter catalog
@@ -29,6 +31,10 @@ export type BenchmarkPrice = {
 }
 
 export type BenchmarkScores = {
+  /** What the score is called; the Coding Index unless an Epoch benchmark ranks the set. */
+  scoreName?: string
+  /** Where the score is from, with attribution; the Artificial Analysis line when absent. */
+  scoreCaption?: string
   displayName: string | null
   modelPermaslug: string
   codingIndex: number | null
@@ -65,11 +71,14 @@ export type BenchmarkBaseline = {
   /** Loaded catalog routes whose benchmark match is ambiguous (several rows). */
   ambiguousRoutes: number
   priceSources: ModelPriceSource[]
+  /** Which public score the points carry: the Coding Index, or one Epoch benchmark. */
+  scoreBasis: ScoreBasis
 }
 
 export type BenchmarkSourceDates = {
   openrouter: string | null
   opencode: string | null
+  modelsDev?: string | null
 }
 
 export function routeKey(route: BenchmarkRoute) {
@@ -134,6 +143,22 @@ function openCodePrice(candidate: ModelCandidate, retrievedAt: string | null) {
   }
 }
 
+/** models.dev list price: USD per million tokens, for the route's own provider or its first party. */
+function modelsDevPrice(candidate: ModelCandidate, retrievedAt: string | null) {
+  const prices = candidate.publicModel?.prices
+  if (!prices || prices.input === null || prices.output === null) return null
+  return {
+    source: "models-dev" as const,
+    input: prices.input,
+    output: prices.output,
+    cacheRead: prices.cacheRead,
+    cacheWrite: prices.cacheWrite,
+    blended: blend(prices.input, prices.output),
+    appliesBelowTokens: null,
+    retrievedAt,
+  }
+}
+
 /** First applicable price in the configured order; unavailable sources are skipped. */
 export function benchmarkPrice(
   candidate: ModelCandidate,
@@ -144,7 +169,9 @@ export function benchmarkPrice(
     const price =
       source === "openrouter"
         ? openRouterPrice(candidate, dates.openrouter)
-        : openCodePrice(candidate, dates.opencode)
+        : source === "opencode"
+          ? openCodePrice(candidate, dates.opencode)
+          : modelsDevPrice(candidate, dates.modelsDev ?? null)
     if (price) return price
   }
   return null
@@ -166,11 +193,54 @@ export function benchmarkBaseline(input: {
   const gaps: BenchmarkBaselineGap[] = []
   let unmatchedRoutes = 0
   let ambiguousRoutes = 0
+  const { basis } = chooseScoreBasis(input.candidates)
   for (const [key, group] of routes) {
     // The benchmark and catalog price describe the model, so every effort of a
     // route shares them; prefer the effort-less configuration as the handle.
     const representative =
       group.find((candidate) => candidate.identity.variant === null) ?? group[0]!
+    if (basis.source === "epoch") {
+      const score = scoreOn(representative, basis)
+      const price = benchmarkPrice(representative, input.priceSources, input.sourceDates)
+      if (!score) {
+        unmatchedRoutes++
+        continue
+      }
+      const route = {
+        providerID: representative.identity.providerID,
+        modelID: representative.identity.modelID,
+      }
+      const scores: BenchmarkScores = {
+        scoreName: basis.label,
+        scoreCaption: basis.caption,
+        displayName: score.displayName,
+        modelPermaslug: score.permaslug,
+        codingIndex: score.value,
+        agenticIndex: null,
+        intelligenceIndex: null,
+      }
+      const label = input.label(route, representative)
+      if (!price) {
+        gaps.push({
+          id: representative.candidateID,
+          route,
+          label,
+          benchmark: scores,
+          price,
+          reason: "no-price",
+        })
+        continue
+      }
+      points.push({
+        id: representative.candidateID,
+        route,
+        label,
+        benchmark: { ...scores, codingIndex: score.value },
+        price,
+        observed: input.observedRoutes.has(key),
+      })
+      continue
+    }
     const benchmark = representative.externalBenchmark
     if (representative.benchmarkCorrespondence.status === "ambiguous") ambiguousRoutes++
     if (representative.benchmarkCorrespondence.status !== "exact" || !benchmark) {
@@ -220,5 +290,6 @@ export function benchmarkBaseline(input: {
     unmatchedRoutes,
     ambiguousRoutes,
     priceSources: [...input.priceSources],
+    scoreBasis: basis,
   }
 }

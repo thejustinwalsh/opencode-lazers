@@ -85,7 +85,13 @@ const candidate = (modelID: string) => ({
   },
 })
 
-const sources = ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const
+const sources = [
+  "native-catalog",
+  "openrouter-models",
+  "openrouter-benchmarks",
+  "models-dev",
+  "epoch-benchmarks",
+] as const
 const legacyClassification = {
   revision: 0,
   classification: null,

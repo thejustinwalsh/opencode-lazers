@@ -3,6 +3,9 @@ import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./ben
 import { paretoFrontier } from "./chart-layout.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import { createModelIndex, vendorSlug } from "./name-identity.ts"
+import { chooseScoreBasis, scoreOn } from "./public-score.ts"
+import type { ScoreBasis } from "./public-score.ts"
 
 /**
  * The model set behind "Projected" and the ranked table: a best-effort union, each entry tagged
@@ -134,8 +137,10 @@ export type CatalogEntry = {
   price: BenchmarkPrice | null
   /** Projected from list prices; absent without a price or a token profile. */
   projection: Projection | null
-  /** Public coding index, when a benchmark row matches. */
+  /** The public score on the set's basis, when a benchmark row matches. */
   score: number | null
+  /** What `score` is called (the Coding index, or an Epoch benchmark in percent). */
+  scoreName?: string
   /** Context window in tokens, when the catalog lists one. */
   contextTokens: number | null
   observed: ObservedFacts | null
@@ -183,6 +188,9 @@ export type CatalogSummary = {
   routed: number
   /** Where the ordering came from, when it was a source's listing. */
   orderSource: ModelPriceSource | null
+  /** The public score that ranks the set, and how many loaded models it reaches. */
+  scoreBasis: ScoreBasis
+  scored: number
 }
 
 /** Text and tools: a model is excluded only when its source says it lacks one of them. */
@@ -201,16 +209,28 @@ function textAndTools(candidate: ModelCandidate) {
   )
 }
 
-/** Position in the first configured source that lists the model; later is larger. */
+/** Room between one source's positions and the next, so a source rank always dominates. */
+const SOURCE_STRIDE = 1e15
+
+/**
+ * Where the first configured source that lists the model puts it; later is larger. A source
+ * earlier in the order always sorts before a later one. models.dev has no list order of its
+ * own, so it orders by release date, newest first.
+ */
 function listingOrder(candidate: ModelCandidate, sources: readonly ModelPriceSource[]) {
-  for (const source of sources) {
+  for (const [rank, source] of sources.entries()) {
+    if (source === "models-dev") {
+      const released = Date.parse(candidate.publicModel?.releaseDate ?? "")
+      if (Number.isFinite(released)) return rank * SOURCE_STRIDE + (4e12 - released)
+      continue
+    }
     const references =
       source === "openrouter"
         ? candidate.externalModelEvidence.records
         : candidate.native.evidence.records
     const wanted = source === "openrouter" ? "openrouter-models" : "native-catalog"
     const found = references.find((reference) => reference.source === wanted)
-    if (found) return found.recordIndex
+    if (found) return rank * SOURCE_STRIDE + found.recordIndex
   }
   return Number.POSITIVE_INFINITY
 }
@@ -233,12 +253,10 @@ export function buildCatalog(input: CatalogInput): {
     order: number
   }
   const bases = new Map<string, Base>()
+  const choice = chooseScoreBasis(input.candidates)
   for (const [key, group] of groups) {
     const representative = group.find((entry) => entry.identity.variant === null) ?? group[0]!
-    const exactScore =
-      representative.benchmarkCorrespondence.status === "exact"
-        ? (representative.externalBenchmark?.codingIndex ?? null)
-        : null
+    const exactScore = scoreOn(representative, choice.basis)?.value ?? null
     bases.set(key, {
       key,
       route: {
@@ -261,16 +279,29 @@ export function buildCatalog(input: CatalogInput): {
     .filter((base) => base.score !== null)
     .toSorted((a, b) => b.score! - a.score!)
   const primary = new Set<string>()
-  let ordering = "public coding index"
+  let ordering = "public score"
   let orderSource: ModelPriceSource | null = null
   if (scored.length >= CATALOG_TOP)
     for (const base of scored.slice(0, CATALOG_TOP)) primary.add(base.key)
   else {
     for (const base of scored) primary.add(base.key)
-    orderSource = input.priceSources[0] ?? null
+    // The first source that actually lists a priced model gives the order.
+    orderSource =
+      input.priceSources.find((source) =>
+        priced.some((base) => {
+          const order = base.order
+          return (
+            Number.isFinite(order) &&
+            Math.floor(order / SOURCE_STRIDE) === input.priceSources.indexOf(source)
+          )
+        }),
+      ) ??
+      input.priceSources[0] ??
+      null
+    const orderText = orderSource === "models-dev" ? "release date, newest first" : "listing order"
     ordering = scored.length
-      ? "public coding index, then listing order"
-      : `${orderSource ? sourceKeyLabel[orderSource] : "source"} listing order`
+      ? `public score, then ${orderText}`
+      : `${orderSource ? sourceKeyLabel[orderSource] : "source"} ${orderText}`
     for (const base of priced
       .filter((entry) => !primary.has(entry.key))
       .toSorted((a, b) => a.order - b.order)
@@ -288,17 +319,54 @@ export function buildCatalog(input: CatalogInput): {
       catalogKeys.add(base.key)
     }
 
+  // Our own runs and routes name models in their own spelling (`opencode-go/kimi-k3.1-pro`);
+  // they join the catalog's entry for the same model, by name identity, rather than sitting alone.
+  const catalogIndex = createModelIndex(
+    [...bases.values()].map((base) => {
+      const candidate = base.representative
+      return {
+        id: base.route.modelID,
+        names: [
+          candidate?.native.name,
+          candidate?.externalModel?.id,
+          candidate?.externalModel?.canonicalSlug,
+          candidate?.externalModel?.name,
+          candidate?.publicModel?.name,
+        ].filter((name): name is string => Boolean(name)),
+        vendor: vendorSlug(base.route.providerID) ? base.route.providerID : null,
+        value: base.key,
+      }
+    }),
+  )
+  const joinedKey = (route: BenchmarkRoute) => {
+    const key = routeKey(route)
+    if (bases.has(key)) return key
+    const result = catalogIndex.resolve(route.modelID, {
+      vendor: vendorSlug(route.providerID) ? route.providerID : null,
+    })
+    if (result.status !== "matched") return key
+    const keys = new Set(result.items.map((item) => item.value))
+    return keys.size === 1 ? [...keys][0]! : key
+  }
+  const observedFacts = new Map<string, ObservedFacts>()
+  for (const [key, facts] of input.observed) {
+    const [providerID, modelID] = key.split("\u0000") as [string, string]
+    const target = joinedKey({ providerID, modelID })
+    // Efforts and provider copies are one model here; the best-sampled one speaks for it.
+    if ((observedFacts.get(target)?.accepted ?? -1) < facts.accepted)
+      observedFacts.set(target, facts)
+  }
   const tags = new Map<string, Set<SourceTag>>()
   const add = (key: string, tag: SourceTag) => tags.set(key, (tags.get(key) ?? new Set()).add(tag))
-  for (const key of input.observed.keys()) add(key, "observed")
-  for (const route of input.routed) add(routeKey(route), "routed")
+  for (const key of observedFacts.keys()) add(key, "observed")
+  for (const route of input.routed) add(joinedKey(route), "routed")
   for (const key of catalogKeys) add(key, "catalog")
 
   const entries: CatalogEntry[] = [...tags.entries()].map(([key, set]) => {
     const base = bases.get(key)
     const [providerID, modelID] = key.split("\u0000") as [string, string]
     const route = base?.route ?? { providerID, modelID }
-    const observed = input.observed.get(key) ?? null
+    const observed = observedFacts.get(key) ?? null
     const representative = base?.representative
     return {
       id: representative?.candidateID ?? key,
@@ -308,6 +376,7 @@ export function buildCatalog(input: CatalogInput): {
       price: base?.price ?? null,
       projection: base?.price && input.profile ? projectCost(input.profile, base.price) : null,
       score: base?.score ?? null,
+      scoreName: choice.basis.label,
       contextTokens:
         representative?.native.contextTokens ??
         representative?.externalModel?.contextLength ??
@@ -331,6 +400,8 @@ export function buildCatalog(input: CatalogInput): {
       openai: byok.openai,
       routed: entries.filter((entry) => entry.tags.includes("routed")).length,
       orderSource,
+      scoreBasis: choice.basis,
+      scored: scored.length,
     },
   }
 }
@@ -372,4 +443,5 @@ export function rankCatalog(entries: readonly CatalogEntry[]): CatalogEntry[] {
 export const sourceKeyLabel: Record<ModelPriceSource, string> = {
   openrouter: "OpenRouter",
   opencode: "OpenCode",
+  "models-dev": "models.dev",
 }

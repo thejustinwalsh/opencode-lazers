@@ -24,7 +24,13 @@ const legacyClassification = {
 } as const
 
 const evidence = { records: [], recordCount: 0, truncated: false }
-const sources = ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const
+const sources = [
+  "native-catalog",
+  "openrouter-models",
+  "openrouter-benchmarks",
+  "models-dev",
+  "epoch-benchmarks",
+] as const
 
 function candidate(
   providerID: string,

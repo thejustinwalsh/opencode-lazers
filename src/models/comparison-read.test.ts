@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -10,6 +10,8 @@ import {
 import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
 import { readModelComparison } from "./comparison-read.ts"
+import { parseEpochArchive } from "./epoch-parse.ts"
+import { parseModelsDev } from "./models-dev-parse.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 
 const projectDirectory = "/comparison-project"
@@ -191,6 +193,19 @@ test("comparison preserves exact route identity, dated evidence, original prices
         snapshotID: benchmarks.snapshotID,
         retrievedAt: benchmarks.retrievedAt,
         refreshState: "succeeded",
+      },
+      // Never fetched in this fixture: begun, nothing stored.
+      {
+        source: "models-dev",
+        snapshotID: undefined,
+        retrievedAt: undefined,
+        refreshState: "refreshing",
+      },
+      {
+        source: "epoch-benchmarks",
+        snapshotID: undefined,
+        retrievedAt: undefined,
+        refreshState: "refreshing",
       },
     ])
     expect(
@@ -558,6 +573,82 @@ test("a missing pinned snapshot remains missing instead of falling forward to th
       snapshot: null,
     })
     expect(output.candidates).toEqual([])
+  } finally {
+    reader.close()
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("candidates carry their models.dev entry and Epoch rows, and coverage lists what did not match", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  const fixtureFile = (name: string) => join(import.meta.dir, "fixtures", name)
+  try {
+    const generations = writer.beginRefresh()
+    writer.saveSnapshot(
+      snapshot("native-catalog", projectDirectory, generations["native-catalog"], [
+        nativeRecord({
+          providerID: "anthropic",
+          id: "claude-haiku-4-5",
+          variants: null,
+          price: null,
+        }),
+        nativeRecord({ providerID: "opencode-go", id: "glm-5.2", variants: null, price: null }),
+        nativeRecord({ providerID: "openai", id: "gpt-5", variants: null, price: null }),
+      ]),
+    )
+    const devPayload = JSON.parse(readFileSync(fixtureFile("models-dev.excerpt.json"), "utf8"))
+    writer.saveSnapshot(
+      snapshot(
+        "models-dev",
+        projectDirectory,
+        generations["models-dev"],
+        parseModelsDev(devPayload),
+      ),
+    )
+    writer.saveSnapshot(
+      snapshot(
+        "epoch-benchmarks",
+        projectDirectory,
+        generations["epoch-benchmarks"],
+        parseEpochArchive(
+          new Uint8Array(readFileSync(fixtureFile("epoch-benchmark-data.excerpt.zip"))),
+        ),
+      ),
+    )
+    const output = readModelComparison(reader, { limit: 100 })
+    const byModel = (id: string) =>
+      output.candidates.find(({ identity }) => identity.modelID === id)!
+
+    // models.dev joins by the OpenCode provider and model id, and carries its price per 1M tokens.
+    expect(byModel("claude-haiku-4-5").publicModel).toMatchObject({
+      providerID: "anthropic",
+      prices: { input: 1, output: 5 },
+    })
+    // Epoch rows join by name identity: `gpt-5-2025-08-07_high` and `_medium` are rows of gpt-5.
+    expect(byModel("gpt-5").publicBenchmarks?.map(({ modelVersion }) => modelVersion)).toEqual(
+      expect.arrayContaining(["gpt-5-2025-08-07_high", "gpt-5-2025-08-07_medium"]),
+    )
+    expect(byModel("glm-5.2").publicBenchmarks?.[0]).toMatchObject({
+      benchmarkID: "swe-bench-verified",
+      score: 0.787,
+    })
+
+    // Coverage is first-class: per benchmark, and the names that matched no model, with why.
+    const epoch = output.publicCoverage?.epoch
+    expect(
+      epoch?.benchmarks.find(({ benchmarkID }) => benchmarkID === "swe-bench-verified"),
+    ).toMatchObject({ rows: 6 })
+    expect(epoch?.unmatched.map(({ name }) => name)).toContain("yi-lightning")
+    expect(output.sources.map(({ source }) => source)).toContain("epoch-benchmarks")
+
+    // Later pages repeat neither the coverage nor the unmatched list.
+    const first = readModelComparison(reader, { limit: 1 })
+    const next = readModelComparison(reader, { limit: 1, cursor: first.nextCursor! })
+    expect(next.publicCoverage).toBeUndefined()
   } finally {
     reader.close()
     writer.close()

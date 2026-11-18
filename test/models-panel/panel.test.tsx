@@ -429,7 +429,7 @@ test("incomplete retries expose a partial known subtotal without implying a task
   }
 })
 
-test("the benchmark empty state names what is needed and offers settings and retry", () => {
+test("the benchmark empty state says no source is reachable and offers settings and retry", () => {
   const ui = {
     Button: (props: { children: unknown }) => `[${String(props.children)}]`,
   }
@@ -441,8 +441,10 @@ test("the benchmark empty state names what is needed and offers settings and ret
     }),
   )
   const text = renderedText(markup)
-  expect(text).toContain("Benchmarks need OpenRouter")
-  expect(text).toContain("Connect OpenRouter in OpenCode")
+  // Epoch AI needs no key, so the empty state is about reachability, not OpenRouter.
+  expect(text).toContain("No benchmark source reachable")
+  expect(text).toContain("Epoch AI, which needs no key")
+  expect(text).not.toContain("Benchmarks need OpenRouter")
   expect(text).toContain("[Open provider settings]")
   expect(text).toContain("[Retry]")
   expect(text).not.toMatch(/unknown|unavailable/i)

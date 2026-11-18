@@ -5,6 +5,8 @@ export const MODEL_EVIDENCE_SOURCES = [
   "native-catalog",
   "openrouter-models",
   "openrouter-benchmarks",
+  "models-dev",
+  "epoch-benchmarks",
 ] as const
 
 export const ModelEvidenceSourceSchema = z.enum(MODEL_EVIDENCE_SOURCES)
@@ -15,6 +17,8 @@ export const MODEL_EVIDENCE_QUERIES = {
   "openrouter-models": "GET https://openrouter.ai/api/v1/models",
   "openrouter-benchmarks":
     "GET https://openrouter.ai/api/v1/benchmarks?source=artificial-analysis&task_type=coding",
+  "models-dev": "GET https://models.dev/api.json",
+  "epoch-benchmarks": "GET https://epoch.ai/data/benchmark_data.zip",
 } as const satisfies Record<ModelEvidenceSource, string>
 
 export const MODEL_EVIDENCE_SOURCE_URLS = {
@@ -22,7 +26,12 @@ export const MODEL_EVIDENCE_SOURCE_URLS = {
   "openrouter-models": "https://openrouter.ai/api/v1/models",
   "openrouter-benchmarks":
     "https://openrouter.ai/api/v1/benchmarks?source=artificial-analysis&task_type=coding",
+  "models-dev": "https://models.dev/api.json",
+  "epoch-benchmarks": "https://epoch.ai/data/benchmark_data.zip",
 } as const satisfies Record<ModelEvidenceSource, string>
+
+/** Required wherever Epoch AI data is shown (CC BY 4.0). */
+export const EPOCH_ATTRIBUTION = "Epoch AI · CC BY 4.0"
 
 const BoundedText = z.string().min(1).max(512)
 const NullableText = z.string().max(512).nullable()
@@ -118,10 +127,59 @@ export const OpenRouterBenchmarkEvidenceRecordSchema = z.strictObject({
     .nullable(),
 })
 
+/** One model from models.dev, keyed by its provider id (the ids OpenCode itself uses). */
+export const ModelsDevModelRecordSchema = z.strictObject({
+  kind: z.literal("models-dev-model"),
+  providerID: BoundedText,
+  id: BoundedText,
+  name: NullableText,
+  canonicalModelID: NullableText,
+  releaseDate: NullableText,
+  lastUpdated: NullableText,
+  status: NullableText,
+  contextTokens: FiniteNonnegative.nullable(),
+  outputTokens: FiniteNonnegative.nullable(),
+  toolCall: z.boolean().nullable(),
+  reasoning: z.boolean().nullable(),
+  inputModalities: OptionalTextList,
+  outputModalities: OptionalTextList,
+  /** models.dev publishes `cost` in USD per million tokens (checked against OpenRouter). */
+  prices: z
+    .strictObject({
+      unit: z.literal("USD per million tokens"),
+      input: FiniteNonnegative.nullable(),
+      output: FiniteNonnegative.nullable(),
+      cacheRead: FiniteNonnegative.nullable(),
+      cacheWrite: FiniteNonnegative.nullable(),
+    })
+    .nullable(),
+})
+
+/** One published coding-benchmark row from the Epoch AI benchmarking hub. */
+export const EpochBenchmarkRecordSchema = z.strictObject({
+  kind: z.literal("epoch-benchmark"),
+  benchmarkID: BoundedText,
+  benchmark: BoundedText,
+  /** Who ran it, as the hub lists it: "Epoch AI" for its own runs, else the external source. */
+  origin: BoundedText,
+  /** The hub's row id for the model, e.g. `gpt-5-2025-08-07_high`. */
+  modelVersion: BoundedText,
+  /** The canonical identity key of `modelVersion` (see name-identity.ts). */
+  modelKey: BoundedText,
+  effort: NullableText,
+  /** Fraction correct, 0 to 1. */
+  score: FiniteNonnegative,
+  stderr: FiniteNonnegative.nullable(),
+  agent: NullableText,
+  releaseDate: NullableText,
+})
+
 export const ModelEvidenceRecordSchema = z.discriminatedUnion("kind", [
   NativeModelEvidenceRecordSchema,
   OpenRouterModelEvidenceRecordSchema,
   OpenRouterBenchmarkEvidenceRecordSchema,
+  ModelsDevModelRecordSchema,
+  EpochBenchmarkRecordSchema,
 ])
 export type ModelEvidenceRecord = z.infer<typeof ModelEvidenceRecordSchema>
 
@@ -160,6 +218,20 @@ export const ModelEvidenceSnapshotSchema = z.discriminatedUnion("source", [
     sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["openrouter-benchmarks"]),
     records: z.array(OpenRouterBenchmarkEvidenceRecordSchema).max(2_000),
   }),
+  z.strictObject({
+    ...SnapshotFields,
+    source: z.literal("models-dev"),
+    query: z.literal(MODEL_EVIDENCE_QUERIES["models-dev"]),
+    sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["models-dev"]),
+    records: z.array(ModelsDevModelRecordSchema).max(2_000),
+  }),
+  z.strictObject({
+    ...SnapshotFields,
+    source: z.literal("epoch-benchmarks"),
+    query: z.literal(MODEL_EVIDENCE_QUERIES["epoch-benchmarks"]),
+    sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["epoch-benchmarks"]),
+    records: z.array(EpochBenchmarkRecordSchema).max(2_000),
+  }),
 ])
 export type ModelEvidenceSnapshot = z.infer<typeof ModelEvidenceSnapshotSchema>
 
@@ -183,6 +255,20 @@ export const ModelEvidenceSnapshotSummarySchema = z.discriminatedUnion("source",
     source: z.literal("openrouter-benchmarks"),
     query: z.literal(MODEL_EVIDENCE_QUERIES["openrouter-benchmarks"]),
     sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["openrouter-benchmarks"]),
+    recordCount: z.number().int().nonnegative().max(2_000),
+  }),
+  z.strictObject({
+    ...SnapshotFields,
+    source: z.literal("models-dev"),
+    query: z.literal(MODEL_EVIDENCE_QUERIES["models-dev"]),
+    sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["models-dev"]),
+    recordCount: z.number().int().nonnegative().max(2_000),
+  }),
+  z.strictObject({
+    ...SnapshotFields,
+    source: z.literal("epoch-benchmarks"),
+    query: z.literal(MODEL_EVIDENCE_QUERIES["epoch-benchmarks"]),
+    sourceURL: z.literal(MODEL_EVIDENCE_SOURCE_URLS["epoch-benchmarks"]),
     recordCount: z.number().int().nonnegative().max(2_000),
   }),
 ])

@@ -1,6 +1,6 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
-import { WorkerPersona } from "../runner/schema.ts"
+import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { ModelComparisonOutputSchema, ModelComparisonReadInputSchema } from "./comparison-schema.ts"
 import {
   ModelMappingRecordSchema,
@@ -80,6 +80,21 @@ export const ModelSettingsOutputSchema = z.strictObject({
   projectDirectory: z.string().min(1),
   taskID: z.uuid().nullable(),
   personas: z.array(ModelPersonaSettingsSchema).length(3),
+  /**
+   * Every agent LAZERS starts, with the model native OpenCode resolves for it. Read-only: these
+   * models are set in OpenCode agent settings, not in LAZERS. Absent from older servers.
+   */
+  agents: z
+    .array(
+      z.strictObject({
+        agentID: z.enum(["architect", "lazers-implementor", "auditor"]),
+        label: z.string().min(1),
+        /** The effective model; null when the agent pins none and uses the session's. */
+        model: ModelPolicy.nullable(),
+        source: z.enum(["native", "plugin-default", "none"]),
+      }),
+    )
+    .optional(),
 })
 export type ModelSettingsOutput = z.infer<typeof ModelSettingsOutputSchema>
 

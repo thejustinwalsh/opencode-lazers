@@ -1,3 +1,4 @@
+import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 import { z } from "zod"
 import type {
   ModelComparisonCandidateSchema,
@@ -447,6 +448,10 @@ export function sourceTitle(source: ModelSource["source"]) {
       return "OpenRouter model metadata"
     case "openrouter-benchmarks":
       return "External coding benchmarks"
+    case "models-dev":
+      return "models.dev prices and model info"
+    case "epoch-benchmarks":
+      return "Epoch AI coding benchmarks"
   }
 }
 
@@ -480,7 +485,7 @@ export function sourceState(source: ModelSource) {
     new Date(value).toLocaleDateString([], { day: "numeric", month: "short" })
   // A model list carries prices (fetched hourly) and model info (kept a week): two times. The
   // benchmark rows are info only.
-  const isList = source.source !== "openrouter-benchmarks"
+  const isList = source.source !== "openrouter-benchmarks" && source.source !== "epoch-benchmarks"
   const times = isList
     ? [
         `prices ${clock(source.snapshot.retrievedAt)}`,
@@ -491,7 +496,13 @@ export function sourceState(source: ModelSource) {
     source.refresh?.state === "failed" && source.refresh.completedAt
       ? `refresh failed ${clock(source.refresh.completedAt)} · using ${day(source.snapshot.retrievedAt)} data`
       : undefined
-  return joinSegments([`${source.snapshot.recordCount.toLocaleString()} records`, ...times, failed])
+  return joinSegments([
+    `${source.snapshot.recordCount.toLocaleString()} records`,
+    // CC BY 4.0 requires the source and authors wherever the data is shown.
+    source.source === "epoch-benchmarks" ? EPOCH_ATTRIBUTION : undefined,
+    ...times,
+    failed,
+  ])
 }
 
 /** A local date and time; absent when there is none. */

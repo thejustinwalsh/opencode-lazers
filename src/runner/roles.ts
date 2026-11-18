@@ -10,6 +10,12 @@ import { Effect } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
 
+/** The Auditor's model when native OpenCode configuration pins none. */
+export const AUDITOR_DEFAULT_MODEL = {
+  providerID: "opencode-go",
+  id: "muse-spark-1.3-contributor",
+} as const
+
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
   ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
@@ -30,10 +36,7 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
             "\n\n",
           )
           if (id === "auditor")
-            agent.model ??= Schema.decodeUnknownSync(Model.Ref)({
-              providerID: "opencode-go",
-              id: "muse-spark-1.3-contributor",
-            })
+            agent.model ??= Schema.decodeUnknownSync(Model.Ref)(AUDITOR_DEFAULT_MODEL)
           // Preserve native defaults and configured rules before our delegation denials.
           const permissions: typeof agent.permissions = [
             ...Agent.Info.default(Agent.ID.make(id)).permissions,

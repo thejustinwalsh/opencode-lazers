@@ -1,8 +1,17 @@
 import { z } from "zod"
 
-export const MODEL_PRICE_SOURCES = ["openrouter", "opencode"] as const
+/**
+ * The price sources in their default order. models.dev needs no key, so it is always available
+ * and is the fallback that keeps the catalog priced when OpenRouter access is absent.
+ */
+export const MODEL_PRICE_SOURCES = ["openrouter", "opencode", "models-dev"] as const
 export const ModelPriceSourceSchema = z.enum(MODEL_PRICE_SOURCES)
 export type ModelPriceSource = z.infer<typeof ModelPriceSourceSchema>
+/**
+ * The sources recorded usage is repriced from. models.dev prices the catalog and unobserved
+ * models; it carries no per-quote provenance a valuation pin needs.
+ */
+export const ModelPricePinSourceSchema = z.enum(["openrouter", "opencode"])
 
 const SourceOrderSchema = z
   .array(ModelPriceSourceSchema)
@@ -38,6 +47,8 @@ export const ModelPriceSourceSettingsSchema = z.strictObject({
   access: z.strictObject({
     openrouter: ModelPriceSourceAccessSchema,
     opencode: ModelPriceSourceAccessSchema,
+    // Keyless and always available; absent in settings saved before the source existed.
+    "models-dev": ModelPriceSourceAccessSchema.optional(),
   }),
 })
 export type ModelPriceSourceSettings = z.infer<typeof ModelPriceSourceSettingsSchema>
