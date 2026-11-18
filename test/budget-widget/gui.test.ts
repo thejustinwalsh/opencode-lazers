@@ -63,15 +63,15 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     expect(api.requests).toBe(1)
     expect(root.querySelectorAll(".lazers-budget").length).toBe(2)
     expect(root.querySelector(".lazers-budget")?.textContent).toBe("60%")
-    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("warning")
+    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("normal")
     const tooltipLines = () => [...root.querySelectorAll(".lazers-budget-tooltip")][0]!.children
     expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
-      "OpenCode Go · 60%",
+      "OpenCode Go · 60% of the monthly allowance",
       expect.stringContaining("Monthly 60% · resets"),
       expect.stringContaining("5-hour 112.3% · resets"),
     ])
     expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toBe(
-      "OpenCode Go 60%, monthly allowance. Open provider budget settings.",
+      "OpenCode Go · 60% of the monthly allowance. Open LAZERS settings.",
     )
     api.setSettings({ mode: "rolling" })
     await tick()
@@ -84,7 +84,11 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     button.focus()
     expect(dom.document.activeElement).toBe(button)
     button.click()
-    expect(api.openedPage).toBe("budget")
+    // The budget has no page of its own: the ring opens the one LAZERS page.
+    expect(api.openedPage).toBe("lazers")
+    // Only the chosen provider's fields render.
+    expect(root.querySelector('[aria-label="Allowance"]')).not.toBeNull()
+    expect(root.querySelector('[aria-label="Weekly budget in US dollars"]')).toBeNull()
     api.setCompact(false)
     api.setUsage({
       ...unavailable(),
@@ -93,50 +97,61 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
       byokUSD: 60.2,
       coverageStart: Date.now() - 3600000,
       observedAt: Date.now(),
-      reason: "Configured key only; earlier weekly usage unknown.",
+      reason: "Configured key only; spend before tracking started is not counted.",
     })
     api.setSettings({ provider: "openrouter" })
     await tick()
     expect(root.querySelector(".lazers-budget")?.textContent).toBe("$181")
     expect(root.querySelector(".lazers-budget")?.textContent).not.toContain("*")
     expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
-      "OpenRouter · $181 / $300 weekly budget",
-      "Credits $120",
-      "BYOK $60",
+      "OpenRouter · $181 of $300 this week",
+      "Credits $120 · BYOK $60",
       expect.stringContaining("Configured key · since"),
-      "Earlier weekly usage unknown",
       expect.stringContaining("Resets"),
     ])
     expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toBe(
-      "OpenRouter $181, configured-key tracked spend. Open provider budget settings.",
+      "OpenRouter · $181 of $300 this week. Open LAZERS settings.",
     )
-    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("warning")
+    expect(root.querySelector('[aria-label="Allowance"]')).toBeNull()
+    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("normal")
     api.setSettings({ weeklyUSD: 200 })
     await tick()
+    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("warning")
+    api.setSettings({ weeklyUSD: 180 })
+    await tick()
     expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("critical")
-    const budget = root.querySelector<HTMLInputElement>('input[type="number"]')!
+    api.setSettings({ weeklyUSD: 200 })
+    await tick()
+    const budget = root.querySelector<HTMLInputElement>(
+      '[aria-label="Weekly budget in US dollars"]',
+    )!
     budget.value = "0"
-    budget.dispatchEvent(new dom.Event("change", { bubbles: true }))
+    budget.dispatchEvent(new dom.Event("input", { bubbles: true }))
     await tick()
     expect(api.settings().weeklyUSD).toBe(200)
-    expect(root.querySelector('[role="status"]')?.textContent).toContain("greater than zero")
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("greater than zero")
     api.setConnected(false)
     await tick()
-    expect(root.querySelector(".lazers-budget")?.textContent).toBe("—")
+    // No reading: a dashed ring and no text. Never a dash or "unknown".
+    expect(root.querySelector(".lazers-budget")?.textContent).toBe("")
     api.setUsage({
-      ...unavailable("Tracking started; earlier weekly usage unknown."),
+      ...unavailable("Tracking started this week; earlier spend is not counted."),
       coverageStart: Date.now(),
     })
     api.setConnected(true)
     api.replaceClient()
     await tick()
-    expect(root.querySelector(".lazers-budget")?.textContent).toBe("—")
-    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("unknown")
+    expect(root.querySelector(".lazers-budget")?.textContent).toBe("")
+    expect(root.querySelector(".lazers-budget")?.getAttribute("data-tone")).toBe("none")
+    expect(root.querySelector(".lazers-budget .budget-value")).toBeNull()
     expect([...tooltipLines()].map((line) => line.textContent)).toEqual([
-      "OpenRouter · — / $200 weekly budget",
-      "Tracking started; earlier weekly usage unknown.",
+      "OpenRouter",
+      "Tracking started this week; earlier spend is not counted.",
       expect.stringContaining("Configured key · since"),
     ])
+    expect(root.querySelector(".lazers-budget")?.getAttribute("aria-label")).toBe(
+      "OpenRouter usage, no reading yet. Open LAZERS settings.",
+    )
     api.setSettings({ enabled: false })
     await tick()
     const calls = api.requests

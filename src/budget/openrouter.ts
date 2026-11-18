@@ -81,7 +81,7 @@ export function observe(
         lastByok: counters.byok,
       },
       usage: {
-        ...unavailable("Tracking started; earlier weekly usage unknown."),
+        ...unavailable("Tracking started this week; earlier spend is not counted."),
         observedAt: now,
         coverageStart: now,
       },
@@ -91,7 +91,7 @@ export function observe(
     usage: {
       ...unavailable(),
       status: "available",
-      reason: "Configured key only · since observed baseline; earlier weekly usage unknown.",
+      reason: "Configured key only; spend before tracking started is not counted.",
       creditUSD: counters.credit - previous.credit,
       byokUSD: counters.byok - previous.byok,
       coverageStart: previous.observedAt,

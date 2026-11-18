@@ -1,6 +1,6 @@
 import { createComponent, createRoot, createSignal } from "solid-js"
 import { render } from "solid-js/web"
-import { SettingsPage, Slot, Style } from "@opencode/plugin/gui"
+import { Slot, Style } from "@opencode/plugin/gui"
 import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import { setupBudget } from "../../src/budget/gui.tsx"
 import { defaults, unavailable } from "../../src/budget/contract.ts"
@@ -61,6 +61,51 @@ export function harness(root: HTMLElement, initial: Settings = defaults) {
           </span>
         </span>
       ),
+      SettingsSection: (props: {
+        title?: string
+        children: import("solid-js").JSX.Element
+        footer?: import("solid-js").JSX.Element
+      }) => (
+        <section aria-label={props.title}>
+          <h2>{props.title}</h2>
+          {props.children}
+          {props.footer}
+        </section>
+      ),
+      SettingsRow: (props: {
+        title: import("solid-js").JSX.Element
+        description?: import("solid-js").JSX.Element
+        children?: import("solid-js").JSX.Element
+      }) => (
+        <div class="fixture-row">
+          <span>{props.title}</span>
+          <span>{props.description}</span>
+          {props.children}
+        </div>
+      ),
+      Select: (props: {
+        label: string
+        value: string | undefined
+        options: readonly { value: string; label: string }[]
+        onChange(value: string): void
+      }) => (
+        <select
+          aria-label={props.label}
+          value={props.value}
+          onChange={(e) => props.onChange(e.currentTarget.value)}
+        >
+          {props.options.map((option) => (
+            <option value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      ),
+      TextInput: (props: { label: string; value: string; onInput(value: string): void }) => (
+        <input
+          aria-label={props.label}
+          value={props.value}
+          onInput={(e) => props.onInput(e.currentTarget.value)}
+        />
+      ),
       Switch: (props: { label: string; checked: boolean; onChange(value: boolean): void }) => (
         <label>
           {props.label}
@@ -76,11 +121,12 @@ export function harness(root: HTMLElement, initial: Settings = defaults) {
     },
     add: (token: unknown, value: unknown) => contributions.push({ token, value }),
   }
+  let Section!: ReturnType<typeof setupBudget>
   const setupDispose = createRoot((dispose) => {
     createComponent(PluginContext.Provider, {
       value: ctx as never,
       get children() {
-        setupBudget(ctx as never, store)
+        Section = setupBudget(ctx as never, store)
         return null
       },
     })
@@ -88,9 +134,6 @@ export function harness(root: HTMLElement, initial: Settings = defaults) {
   })
   const slot = contributions.find((c) => c.token === Slot)!.value as {
     render(input: unknown): import("solid-js").JSX.Element
-  }
-  const page = contributions.find((c) => c.token === SettingsPage)!.value as {
-    render(): import("solid-js").JSX.Element
   }
   const style = document.createElement("style")
   style.textContent = contributions.find((c) => c.token === Style)!.value as string
@@ -125,7 +168,7 @@ export function harness(root: HTMLElement, initial: Settings = defaults) {
                   }),
                 )}
               </div>
-              {page.render()}
+              <Section />
             </>
           )
         },

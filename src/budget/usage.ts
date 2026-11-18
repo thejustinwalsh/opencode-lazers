@@ -43,15 +43,16 @@ export async function fetchGo(key: string, signal: AbortSignal, fetcher: UsageFe
   return parseGo(await response.json())
 }
 
+/** Neutral under budget, warning from 80 %, critical at or over budget. `none` has no reading. */
 export function ring(percent: number | null) {
   return {
     fraction: percent === null ? 0 : Math.min(100, Math.max(0, percent)) / 100,
     tone:
       percent === null
-        ? "unknown"
-        : percent >= 90
+        ? "none"
+        : percent >= 100
           ? "critical"
-          : percent >= 60
+          : percent >= 80
             ? "warning"
             : "normal",
   }

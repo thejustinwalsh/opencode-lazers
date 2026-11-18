@@ -18,12 +18,12 @@ const go = () => parseGo({ usage: { monthly: meter(59.99), rolling: meter(112.3)
 test("Go uses raw percentages, validates both meters, and clamps only circle geometry", () => {
   const value = go()
   expect(value.monthly?.percent).toBe(59.99)
-  expect(ring(59.99).tone).toBe("normal")
-  expect(ring(60).tone).toBe("warning")
-  expect(ring(89.99).tone).toBe("warning")
-  expect(ring(90).tone).toBe("critical")
+  expect(ring(79.99).tone).toBe("normal")
+  expect(ring(80).tone).toBe("warning")
+  expect(ring(99.99).tone).toBe("warning")
+  expect(ring(100).tone).toBe("critical")
   expect(ring(112.3)).toEqual({ fraction: 1, tone: "critical" })
-  expect(ring(null).tone).toBe("unknown")
+  expect(ring(null).tone).toBe("none")
   for (const percent of [-1, NaN, Infinity, "0", null]) {
     expect(() =>
       parseGo({ usage: { monthly: { ...meter(0), percent }, rolling: meter(0) } }),
@@ -66,7 +66,7 @@ test("first observation is not zero; persisted baseline yields only observed del
   expect(second.usage.creditUSD).toBeCloseTo(2.4)
   expect(second.usage.byokUSD).toBeCloseTo(3.2)
   expect(second.usage.coverageStart).toBe(now)
-  expect(second.usage.reason).toContain("earlier weekly usage unknown")
+  expect(second.usage.reason).toContain("spend before tracking started is not counted")
   expect(
     observe(second.baseline, { credit: 102.4, byok: 23.2 }, week, now + 120_000).usage.status,
   ).toBe("available")

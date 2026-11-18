@@ -93,7 +93,8 @@ export default Plugin.define({
     }
   },
   setup(ctx) {
-    setupBudget(ctx, ctx.stores.budget)
+    const pageID = "lazers"
+    const BudgetSection = setupBudget(ctx, ctx.stores.budget, pageID)
     ctx.add(Style, nativeBusyStyles)
     ctx.add(Style, panelStatusStyles)
     const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
@@ -146,37 +147,20 @@ export default Plugin.define({
       },
     })
     const Ui = ctx.ui
-    const pageID = "lazers"
-    const Overview = bindPlugin(() => (
-      <>
-        <header>
-          <div class="lazers-local-eyebrow">Plugin settings</div>
-          <h1>LAZERS</h1>
-          <p>Task workflows, agents, and optional local intelligence.</p>
-        </header>
-        <section aria-labelledby="lazers-workflow-title">
-          <h2 id="lazers-workflow-title">Task workflow</h2>
-          <p>
-            Architect, saved tasks, and the Tasks panel work independently of local inference.
-            Architect uses your selected OpenCode model; local task review is an optional extra
-            check.
-          </p>
-        </section>
-      </>
-    ))
+    const pageLede =
+      "Architect, tasks and panels work without local inference. Everything below is optional."
     if (ctx.app.platform !== "desktop") {
       ctx.add(SettingsPage, {
         id: pageID,
         title: "LAZERS",
         icon: "settings-gear",
         render: () => (
-          <div class="lazers-local">
-            <Overview />
-            <section>
-              <h2>Local inference</h2>
-              <p>Local WebGPU features can be configured in OpenCode Desktop.</p>
-            </section>
-          </div>
+          <Ui.SettingsLayout
+            title="LAZERS"
+            description="Architect, tasks and panels work here. Local inference runs in OpenCode Desktop."
+          >
+            <BudgetSection />
+          </Ui.SettingsLayout>
         ),
       })
       return
@@ -276,6 +260,15 @@ export default Plugin.define({
               : cachedBytes() > 0
                 ? "Some models are cached"
                 : "Not downloaded"
+      const [previewing, setPreviewing] = createSignal(false)
+      let previewAudio: HTMLAudioElement | undefined
+      const stopPreview = () => {
+        if (!previewAudio) return
+        previewAudio.pause()
+        URL.revokeObjectURL(previewAudio.src)
+        previewAudio = undefined
+        setPreviewing(false)
+      }
       let test: AbortController | undefined
       const testAborted = () => test?.signal.aborted === true
       createEffect(() => {
@@ -284,14 +277,16 @@ export default Plugin.define({
             test: "questions",
             decision: "decisions",
             speak: "readAloud",
+            preview: "readAloud",
             transcribe: "dictation",
           } as const
-        )[action() as "test" | "decision" | "speak" | "transcribe"]
+        )[action() as "test" | "decision" | "speak" | "preview" | "transcribe"]
         if (!features().enabled || (key && !enabled(key))) test?.abort()
         if (!enabled("readAloud") && speechURL()) {
           URL.revokeObjectURL(speechURL())
           setSpeechURL("")
         }
+        if (!enabled("readAloud")) stopPreview()
       })
       let cacheRefreshing = false
       const refresh = async () => {
@@ -315,6 +310,7 @@ export default Plugin.define({
         onCleanup(() => {
           clearInterval(timer)
           test?.abort()
+          stopPreview()
           if (speechURL()) URL.revokeObjectURL(speechURL())
         })
       })
@@ -338,9 +334,11 @@ export default Plugin.define({
           setReply("")
           const result = await runtime.generate(prompt(), test.signal)
           if (!result.ok) throw new Error(result.error)
-          setReply(
-            `${result.text}\n\n${result.promptTokens ?? "unknown"} input tokens · ${result.completionTokens ?? "unknown"} output tokens`,
-          )
+          const tokens = [
+            result.promptTokens === undefined ? "" : `${result.promptTokens} input tokens`,
+            result.completionTokens === undefined ? "" : `${result.completionTokens} output tokens`,
+          ].filter(Boolean)
+          setReply(tokens.length ? `${result.text}\n\n${tokens.join(" · ")}` : result.text)
         })
       const clear = async () => {
         if (
@@ -374,6 +372,45 @@ export default Plugin.define({
           await refresh()
         }
       }
+      const wav = (base64: string) =>
+        new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: "audio/wav" })
+      /** Speaks one sentence in the selected voice, so the picker is chosen by ear. */
+      const previewVoice = () => {
+        if (previewing()) return stopPreview()
+        const voice = VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label
+        void perform("preview", async () => {
+          test = new AbortController()
+          const result = await runtime.speak(`This is the ${voice} voice.`, test.signal)
+          if (!result.ok || !result.audioBase64)
+            throw new Error(result.error || "The model returned no speech")
+          const audio = new Audio(URL.createObjectURL(wav(result.audioBase64)))
+          previewAudio = audio
+          audio.addEventListener("ended", stopPreview)
+          setPreviewing(true)
+          await audio.play()
+        })
+      }
+      const keepAlive = () => ctx.stores.runtime.value?.keepAliveMs
+      const keepAliveOptions = () => {
+        const standard = [
+          { value: String(NEVER_UNLOAD_MS), label: "Always" },
+          { value: "60000", label: "1 minute" },
+          { value: "300000", label: "5 minutes" },
+          { value: "900000", label: "15 minutes" },
+        ]
+        const current = keepAlive()
+        return current === undefined || standard.some((option) => option.value === String(current))
+          ? standard
+          : [...standard, { value: String(current), label: keepAliveLabel(current) }]
+      }
+      const runtimeLine = () =>
+        features().enabled
+          ? runtime.detail()
+          : runtime.state() === "disabled"
+            ? "Off"
+            : runtime.state() === "error"
+              ? runtime.detail()
+              : "Stopping local work…"
       const testDecision = () =>
         perform("decision", async () => {
           test = new AbortController()
@@ -398,18 +435,38 @@ export default Plugin.define({
           setDecisionReply(JSON.stringify(result))
         })
       return (
-        <div class="lazers-local">
-          <Overview />
-          <section aria-labelledby="lazers-local-title">
+        <Ui.SettingsLayout title="LAZERS" description={pageLede}>
+          <div class="lazers-settings-head">
             <h2 id="lazers-local-title">Local inference</h2>
-            <p>
-              Run optional LiquidAI models on this device. Turning this off stops local work and
-              releases GPU memory. Downloaded models are kept.
-            </p>
-            <div class="lazers-local-toggle">
-              <h3>Enable local WebGPU inference</h3>
+            <span role="status">{runtimeLine()}</span>
+          </div>
+          <Ui.SettingsSection
+            footer={
+              <>
+                <Show when={!features().enabled && runtime.state() === "error"}>
+                  <Ui.Button
+                    size="small"
+                    onClick={() => {
+                      void runtime.unload()
+                    }}
+                  >
+                    Retry GPU cleanup
+                  </Ui.Button>
+                </Show>
+                <Show when={settingsError()}>
+                  <p class="lazers-settings-hint" role="alert">
+                    {settingsError()}
+                  </p>
+                </Show>
+              </>
+            }
+          >
+            <Ui.SettingsRow
+              title="Run local models on this device"
+              description="Off releases GPU memory. Downloads are kept."
+            >
               <Ui.Switch
-                label="Enable local WebGPU inference"
+                label="Run local models on this device"
                 hideLabel
                 checked={features().enabled}
                 disabled={!settingsReady() || saving()}
@@ -417,150 +474,114 @@ export default Plugin.define({
                   void configure("enabled", value)
                 }}
               />
-            </div>
-            <Show when={!features().enabled}>
-              <p role="status">
-                {runtime.state() === "disabled"
-                  ? "Local inference is off."
-                  : runtime.state() === "error"
-                    ? runtime.detail()
-                    : "Stopping local work…"}
-              </p>
-              <Show when={runtime.state() === "error"}>
-                <Ui.Button
-                  onClick={() => {
-                    void runtime.unload()
-                  }}
-                >
-                  Retry GPU cleanup
-                </Ui.Button>
-              </Show>
-            </Show>
-            <div class="lazers-local-features">
-              {(
+            </Ui.SettingsRow>
+            {(
+              [
+                ["questions", "Local questions", "For agents and the test panel."],
+                ["decisions", "System One decisions", "The typed decisions API."],
                 [
-                  [
-                    "questions",
-                    "Local questions",
-                    "General local questions for agents and the test panel.",
-                  ],
-                  ["decisions", "System One decisions", "Typed decisions and the System One API."],
-                  [
-                    "review",
-                    "Task review",
-                    "Advisory checks before submission. Requires System One decisions.",
-                  ],
-                  [
-                    "dictation",
-                    "Dictation and transcription",
-                    "Microphone button, push-to-talk shortcut, and audio transcription.",
-                  ],
-                  [
-                    "readAloud",
-                    "Read aloud and speech",
-                    "Speaker button, local speech generation, and voice tests.",
-                  ],
-                ] as const
-              ).map(([key, label, description]) => (
-                <div class="lazers-local-toggle">
-                  <div>
-                    <h3>{label}</h3>
-                    <p>{description}</p>
-                  </div>
-                  <Ui.Switch
-                    label={label}
-                    hideLabel
-                    checked={features()[key]}
+                  "review",
+                  "Task review",
+                  "An advisory check before submission. Needs System One decisions.",
+                ],
+                ["dictation", "Dictation", "The microphone button and push-to-talk."],
+                ["readAloud", "Read aloud", "The speaker button and speech."],
+              ] as const
+            ).map(([key, label, description]) => (
+              <Ui.SettingsRow title={label} description={description}>
+                <Ui.Switch
+                  label={label}
+                  hideLabel
+                  checked={features()[key]}
+                  disabled={
+                    !settingsReady() ||
+                    saving() ||
+                    !features().enabled ||
+                    (key === "review" && !features().decisions)
+                  }
+                  onChange={(value) => {
+                    void configure(key, value)
+                  }}
+                />
+              </Ui.SettingsRow>
+            ))}
+          </Ui.SettingsSection>
+          <Ui.SettingsSection
+            footer={
+              <Show when={downloading()}>
+                <progress
+                  class="lazers-settings-progress"
+                  aria-label="Model download"
+                  value={cachedBytes()}
+                  max={MODEL_BYTES + DECISION_BYTES}
+                />
+              </Show>
+            }
+          >
+            <Show when={features().enabled}>
+              <Ui.SettingsRow
+                title="Keep model loaded"
+                description="How long an idle model stays in GPU memory. Always avoids the reload wait."
+              >
+                <Ui.Select
+                  label="Keep model loaded"
+                  value={keepAlive() === undefined ? undefined : String(keepAlive())}
+                  options={keepAliveOptions()}
+                  onChange={(value) => ctx.stores.runtime.set({ keepAliveMs: Number(value) })}
+                />
+              </Ui.SettingsRow>
+              <Ui.SettingsRow title="Voice" description="Used by Read aloud.">
+                <div class="lazers-settings-controls">
+                  <Ui.Button
+                    size="small"
+                    icon="outline-audio"
                     disabled={
-                      !settingsReady() ||
-                      saving() ||
-                      !features().enabled ||
-                      (key === "review" && !features().decisions)
+                      !enabled("readAloud") || (Boolean(action()) && action() !== "preview")
                     }
-                    onChange={(value) => {
-                      void configure(key, value)
+                    busy={action() === "preview" && !previewing()}
+                    onClick={previewVoice}
+                  >
+                    {previewing() ? "Stop" : "Preview"}
+                  </Ui.Button>
+                  <Ui.Select
+                    label="Voice"
+                    value={ctx.stores.voice.value?.selected ?? DEFAULT_VOICE}
+                    disabled={!enabled("readAloud")}
+                    options={voiceKeys.map((key) => ({ value: key, label: VOICES[key].label }))}
+                    onChange={(selected) => {
+                      stopPreview()
+                      ctx.stores.voice.set({ selected })
                     }}
                   />
                 </div>
-              ))}
-            </div>
-            <Show when={settingsError()}>
-              <p role="alert">{settingsError()}</p>
+              </Ui.SettingsRow>
             </Show>
-          </section>
-          <Show when={features().enabled}>
-            <section aria-labelledby="lazers-runtime-title">
-              <div class="lazers-local-row">
-                <div>
-                  <h2 id="lazers-runtime-title">GPU runtime</h2>
-                  <p role="status">{runtime.detail()}</p>
-                </div>
-                <span class="lazers-local-state">{runtime.state()}</span>
-              </div>
-              <p>Local features load models on demand and share GPU memory.</p>
-              <Ui.Menu
-                label={`Unload when idle: ${keepAliveLabel(ctx.stores.runtime.value?.keepAliveMs)}`}
-                trigger="button"
-                items={[
-                  { label: "Never (default)", value: NEVER_UNLOAD_MS },
-                  { label: "After 1 minute", value: 60_000 },
-                  { label: "After 5 minutes", value: 300_000 },
-                  { label: "After 15 minutes", value: 900_000 },
-                ].map((item) => ({
-                  label: item.label,
-                  onSelect: () => ctx.stores.runtime.set({ keepAliveMs: item.value }),
-                }))}
-              />
-            </section>
-            <section aria-labelledby="lazers-voice-title">
-              <h2 id="lazers-voice-title">Voice</h2>
-              <p>Read aloud speaks with this language and gender.</p>
-              <Ui.Menu
-                label={`Voice: ${VOICES[ctx.stores.voice.value?.selected ?? DEFAULT_VOICE].label}`}
-                trigger="button"
-                disabled={!enabled("readAloud")}
-                items={voiceKeys.map((key) => ({
-                  label: `${VOICES[key].label}${key === DEFAULT_VOICE ? " (default)" : ""}`,
-                  onSelect: () => ctx.stores.voice.set({ selected: key }),
-                }))}
-              />
-            </section>
-          </Show>
-          <section aria-labelledby="lazers-cache-title">
-            <div class="lazers-local-row">
-              <div>
-                <h2 id="lazers-cache-title">Downloaded models</h2>
-                <p>{cacheLabel()}</p>
-              </div>
-              <span class="lazers-local-size">
-                {formatBytes(cachedBytes())} / {formatBytes(MODEL_BYTES + DECISION_BYTES)}
-              </span>
-            </div>
-            <Show when={downloading()}>
-              <progress
-                aria-label="Model download"
-                value={cachedBytes()}
-                max={MODEL_BYTES + DECISION_BYTES}
-              />
-            </Show>
-            <Ui.Button
-              icon="trash"
-              variant="danger"
-              disabled={
-                Boolean(action()) ||
-                runtime.state() === "loading" ||
-                runtime.state() === "busy" ||
-                (cache()?.cachedBytes ?? 0) + (decisionCache()?.cachedBytes ?? 0) === 0
-              }
-              onClick={() => {
-                void clear()
-              }}
+            <Ui.SettingsRow
+              title="Downloaded models"
+              description={`${cacheLabel()} · ${formatBytes(cachedBytes())} of ${formatBytes(MODEL_BYTES + DECISION_BYTES)}`}
             >
-              Remove downloaded models
-            </Ui.Button>
-          </section>
-          <details class="lazers-local-diagnostics">
-            <summary>Advanced diagnostics</summary>
+              <Ui.Button
+                size="small"
+                icon="trash"
+                disabled={
+                  Boolean(action()) ||
+                  runtime.state() === "loading" ||
+                  runtime.state() === "busy" ||
+                  (cache()?.cachedBytes ?? 0) + (decisionCache()?.cachedBytes ?? 0) === 0
+                }
+                onClick={() => {
+                  void clear()
+                }}
+              >
+                Remove
+              </Ui.Button>
+            </Ui.SettingsRow>
+          </Ui.SettingsSection>
+          <BudgetSection />
+          <details class="lazers-local lazers-local-diagnostics">
+            <summary>
+              Advanced diagnostics <span>GPU, model identity, renderer capture</span>
+            </summary>
             <p class="lazers-local-meta">
               Service completion contract: {runtime.contractStatus()} · required{" "}
               <code>{GENERATION_RESULT_CONTRACT_REVISION}</code>
@@ -615,7 +636,7 @@ export default Plugin.define({
                 <p class="lazers-local-meta">
                   Trigger: {rendererCapture()?.stopTrigger} ·{" "}
                   {rendererCapture()?.triggeredAt === undefined
-                    ? "time unavailable"
+                    ? ""
                     : new Date(rendererCapture()!.triggeredAt!).toISOString()}
                 </p>
               </Show>
@@ -787,14 +808,7 @@ export default Plugin.define({
                         if (!result.ok || !result.audioBase64)
                           throw new Error(result.error || "The model returned no speech")
                         if (speechURL()) URL.revokeObjectURL(speechURL())
-                        setSpeechURL(
-                          URL.createObjectURL(
-                            new Blob(
-                              [Uint8Array.from(atob(result.audioBase64), (c) => c.charCodeAt(0))],
-                              { type: "audio/wav" },
-                            ),
-                          ),
-                        )
+                        setSpeechURL(URL.createObjectURL(wav(result.audioBase64)))
                       })
                     }}
                   >
@@ -907,9 +921,11 @@ export default Plugin.define({
             </Show>
           </details>
           <Show when={error() || cache()?.error || decisionCache()?.error}>
-            <p role="alert">{error() || cache()?.error || decisionCache()?.error}</p>
+            <p class="lazers-settings-hint" role="alert">
+              {error() || cache()?.error || decisionCache()?.error}
+            </p>
           </Show>
-        </div>
+        </Ui.SettingsLayout>
       )
     })
     registerInferenceIndicator(
@@ -927,30 +943,30 @@ export default Plugin.define({
     ctx.add(
       Style,
       `
-      .lazers-local { max-width: 720px; margin: 0 auto; padding: 32px 24px; color: var(--text-base); font: inherit; }
-      .lazers-local header { margin-bottom: 32px; }
-      .lazers-local h1 { font-size: 24px; font-weight: 600; margin: 8px 0; }
+      .lazers-local { color: var(--text-base); font: inherit; }
       .lazers-local h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
       .lazers-local p { color: var(--text-weak); font-size: 13px; line-height: 1.5; margin: 4px 0 12px; }
       .lazers-local section { padding: 24px 0; border-top: 1px solid var(--border-weak-base); }
+      .lazers-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: -8px; }
+      .lazers-settings-head h2 { margin: 0; color: var(--text-strong); font-size: 14px; font-weight: 500; }
+      .lazers-settings-head span { min-width: 0; color: var(--text-weak); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+      .lazers-settings-controls { display: flex; align-items: center; gap: 8px; }
+      .lazers-settings-number { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+      .lazers-settings-hint { margin: 8px 0 0; color: var(--text-weak); font-size: 12px; line-height: 1.5; }
+      .lazers-settings-progress { width: 100%; height: 4px; margin-top: 8px; }
       .lazers-local-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
       .lazers-local-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }
-      .lazers-local-features { display: grid; gap: 20px; margin-top: 24px; }
-      .lazers-local-toggle { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-      .lazers-local-toggle h3 { margin: 0; font-size: 13px; font-weight: 500; }
-      .lazers-local-toggle p { margin: 4px 0 0; font-size: 12px; }
-      .lazers-local-eyebrow, .lazers-local-state { color: var(--text-weak); font-size: 12px; }
-      .lazers-local-state { padding-top: 2px; text-transform: capitalize; }
       .lazers-local-size { white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; }
       .lazers-local p.lazers-local-meta { font-size: 12px; color: var(--text-weaker); }
       .lazers-local-path, .lazers-local-reply { overflow-wrap: anywhere; white-space: pre-wrap; font: 12px/1.6 var(--font-family-mono, monospace); }
       .lazers-local-reply { padding: 16px; background: var(--surface-base); border: 1px solid var(--border-weak-base); border-radius: 8px; }
       .lazers-local progress { width: 100%; height: 4px; }
-      .lazers-local-diagnostics summary { padding: 16px 0; cursor: pointer; font-size: 13px; font-weight: 500; }
+      .lazers-local-diagnostics summary { display: flex; align-items: baseline; gap: 12px; padding: 16px 0; cursor: pointer; font-size: 13px; font-weight: 500; }
+      .lazers-local-diagnostics summary span { margin-left: auto; color: var(--text-weak); font-size: 12px; font-weight: 400; }
       .lazers-local-audio-label { display: grid; gap: 8px; margin-top: 20px; font-size: 13px; }
       .lazers-local audio { width: 100%; max-width: 420px; }
       ${inferenceIndicatorStyles}
-      @media (max-width: 560px) { .lazers-local { padding: 24px 16px; } .lazers-local-row { flex-wrap: wrap; gap: 4px; } }
+      @media (max-width: 560px) { .lazers-local-row { flex-wrap: wrap; gap: 4px; } }
     `,
     )
     return () => runtime.dispose()
