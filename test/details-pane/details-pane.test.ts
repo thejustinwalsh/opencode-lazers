@@ -198,6 +198,6 @@ test("size is the last expanded height: collapsing never overwrites it, opening 
     new dom.window.MouseEvent("dblclick", { bubbles: true }) as unknown as Event,
   )
   expect([pane.open(), pane.size()]).toEqual([false, 0.6])
-  expect(q(".lazers-details")!.style.getPropertyValue("--details-size")).toBe("0.6")
+  expect(q<HTMLElement>(".lazers-details")!.style.getPropertyValue("--details-size")).toBe("0.6")
   pane.dispose()
 })
