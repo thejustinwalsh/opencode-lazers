@@ -342,7 +342,7 @@ test("journal is an explicitly selected bounded view and leaves compact/full inp
   expect(() => InspectPlanInput.parse({ view: "journal" })).toThrow()
   expect(() => InspectPlanInput.parse({ planID, view: "journal", limit: 0 })).toThrow()
   expect(() => InspectPlanInput.parse({ planID, view: "journal", limit: 1.5 })).toThrow()
-  expect(() => InspectPlanInput.parse({ planID, limit: 10 })).toThrow()
+  expect(() => InspectPlanInput.parse({ planID, cursor: "x" })).toThrow()
   expect(() => InspectPlanInput.parse({ planID, view: "journal", full: true })).toThrow()
   expect(() =>
     InspectPlanInput.parse({
@@ -634,4 +634,112 @@ test("missing retained tables are reported without creating schema or writing ro
   })
   expect(tables()).toEqual(beforeTables)
   expect(afterChanges).toBe(beforeChanges)
+})
+
+function seedTransitions(f: ReturnType<typeof fixture>, planID: string, count: number) {
+  f.store.atomic((db) => {
+    const insert = db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
+    )
+    for (let index = 0; index < count; index++)
+      insert.run(
+        planID,
+        null,
+        1,
+        index % 2 ? "NOISE_A" : "NOISE_B",
+        JSON.stringify({ index }),
+        index,
+      )
+  })
+}
+
+function transitionTotal(f: ReturnType<typeof fixture>, planID: string) {
+  return f.store.read(
+    (db) =>
+      (
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT COUNT(*) AS n FROM runner_transitions WHERE plan_id=?",
+          )
+          .get(planID) as { n: number }
+      ).n,
+  )
+}
+
+test("full plan detail reads a bounded page of an enormous history and pages older rows", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  seedTransitions(f, receipt.planID, 20_000)
+  const total = transitionTotal(f, receipt.planID)
+  const detail = inspectPlan(f.store, { planID: receipt.planID, full: true }) as unknown as {
+    activity: { id: number }[]
+    paging: { limit: number; activity: { next: number | null; returned: number } }
+  }
+  expect(detail.activity).toHaveLength(200)
+  expect(detail.paging.activity.returned).toBe(200)
+  expect(detail.paging.activity.next).toBe(detail.activity[0]!.id)
+  const ids = detail.activity.map((row) => row.id)
+  expect(ids).toEqual([...ids].sort((a, b) => a - b))
+
+  const seen = new Set(ids)
+  let next = detail.paging.activity.next
+  let pages = 1
+  while (next !== null) {
+    const page = inspectPlan(f.store, {
+      planID: receipt.planID,
+      full: true,
+      activityBefore: next,
+    }) as unknown as typeof detail
+    for (const row of page.activity) {
+      expect(row.id).toBeLessThan(next)
+      expect(seen.has(row.id)).toBe(false)
+      seen.add(row.id)
+    }
+    next = page.paging.activity.next
+    pages++
+  }
+  expect(seen.size).toBe(total)
+  expect(pages).toBe(Math.ceil(total / 200))
+})
+
+test("detail materializes at most limit rows per list regardless of history size", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  seedTransitions(f, receipt.planID, 20_000)
+  const small = f.store.detail(receipt.planID, { limit: 5 })
+  expect(small.activity).toHaveLength(5)
+  expect(small.paging.limit).toBe(5)
+  expect(small.paging.activity.next).not.toBeNull()
+})
+
+test("compact inspection aggregates history in SQL so totals still cover everything", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  seedTransitions(f, receipt.planID, 20_000)
+  const compact = inspectPlan(f.store, {
+    planID: receipt.planID,
+    full: false,
+  }) as unknown as CompactPlanDetail & {
+    counts: { transitionsByEvent: Record<string, number> }
+  }
+  expect(compact.counts.transitionsByEvent.NOISE_A).toBe(10_000)
+  expect(compact.counts.transitionsByEvent.NOISE_B).toBe(10_000)
+})
+
+test("history queries are served by plan-scoped indexes", () => {
+  const f = fixture()
+  const explain = (sql: string) =>
+    f.store.read((db) =>
+      db
+        .query<{ detail: string }, [string]>(`EXPLAIN QUERY PLAN ${sql}`)
+        .all("p")
+        .map((row) => row.detail)
+        .join(" "),
+    )
+  expect(
+    explain("SELECT * FROM runner_transitions WHERE plan_id=? AND id<9 ORDER BY id DESC LIMIT 201"),
+  ).toContain("runner_transitions_plan_id")
+  expect(
+    explain("SELECT event,COUNT(*) FROM runner_transitions WHERE plan_id=? GROUP BY event"),
+  ).toContain("runner_transitions_plan_event")
 })
