@@ -137,7 +137,18 @@ test("identity distinguishes ambiguous, unsupported, absent, and unavailable evi
     nativeEvidence: [],
     catalogSource: sourceRead(catalogSnapshot),
   })
+  // The same model under a gateway's own provider id still joins, by name identity.
   expect(unsupported.resolution).toMatchObject({
+    status: "exact",
+    productID: "openai/gpt-6-luna",
+    basis: "name-identity",
+  })
+  const unpublished = resolveModelIdentity({
+    route: { providerID: "unrelated-provider", modelID: "unpublished-local-id" },
+    nativeEvidence: [],
+    catalogSource: sourceRead(catalogSnapshot),
+  })
+  expect(unpublished.resolution).toMatchObject({
     status: "unsupported",
     productID: null,
     rules: [],
@@ -179,7 +190,7 @@ test("identity distinguishes ambiguous, unsupported, absent, and unavailable evi
   })
 })
 
-test("aliases require exact route rules and exact catalog IDs, never names or slug suffixes", () => {
+test("a renamed or differently spelled route joins by name identity, never across tiers", () => {
   const changedID = ModelEvidenceSnapshotSchema.parse({
     ...catalogSnapshot,
     records: catalogSnapshot.records.map((record) =>
@@ -188,31 +199,30 @@ test("aliases require exact route rules and exact catalog IDs, never names or sl
         : record,
     ),
   })
+  // `preview` does not change which model it is.
   expect(resolveCaptured(5, sourceRead(changedID)).resolution).toMatchObject({
-    status: "supported-but-absent",
-    productID: "anthropic/claude-fable-5",
-    evidence: { catalogRecordCount: 0 },
-  })
-
-  const fuzzyRoute = resolveModelIdentity({
-    route: { providerID: "anthropic", modelID: "Claude Fable 5" },
-    nativeEvidence: [],
-    catalogSource: sourceRead(catalogSnapshot),
-  })
-  expect(fuzzyRoute.resolution).toMatchObject({
-    status: "supported-but-absent",
-    productID: "anthropic/Claude Fable 5",
-  })
-  const suffixRoute = resolveModelIdentity({
-    route: { providerID: "anthropic", modelID: "claude-fable-5-preview" },
-    nativeEvidence: [],
-    catalogSource: sourceRead(catalogSnapshot),
-  })
-  expect(suffixRoute.resolution).toMatchObject({
-    status: "supported-but-absent",
+    status: "exact",
     productID: "anthropic/claude-fable-5-preview",
+    basis: "name-identity",
   })
-  expect(suffixRoute.resolution.productID).not.toBe("anthropic/claude-fable-5")
+  for (const modelID of ["Claude Fable 5", "claude-fable-5-preview", "claude-fable-5-20260101"]) {
+    expect(
+      resolveModelIdentity({
+        route: { providerID: "anthropic", modelID },
+        nativeEvidence: [],
+        catalogSource: sourceRead(catalogSnapshot),
+      }).resolution,
+    ).toMatchObject({ status: "exact", productID: "anthropic/claude-fable-5" })
+  }
+  // Another tier or version is another model.
+  for (const modelID of ["claude-fable-5-mini", "claude-fable-6"]) {
+    const result = resolveModelIdentity({
+      route: { providerID: "anthropic", modelID },
+      nativeEvidence: [],
+      catalogSource: sourceRead(catalogSnapshot),
+    })
+    expect(result.resolution.productID).not.toBe("anthropic/claude-fable-5")
+  }
 })
 
 test("route-alias citations bind catalog provenance to the selected snapshot", () => {
@@ -452,16 +462,24 @@ test("exact OpenCode Go routes use source-backed OpenRouter identities and selec
     })
   }
 
-  for (const modelID of [
-    "kimi-k3.1-pro-preview",
-    "kimi-k3.1-pro:fast",
-    "kimi-k3.1-pro-batch",
-    "kimi-k3.1-pro-20261023",
-    "qwen3.8-flash-preview",
-    "qwen3.8-flash:fast",
-    "qwen3.8-flash-batch",
-    "qwen3.8-flash-20260826",
-  ]) {
+  // Spelling noise (preview, batch, dates) is the same model; an unknown suffix is not.
+  for (const [modelID, productID] of [
+    ["kimi-k3.1-pro-preview", "moonshotai/kimi-k3.1-pro"],
+    ["kimi-k3.1-pro-batch", "moonshotai/kimi-k3.1-pro"],
+    ["kimi-k3.1-pro-20261023", "moonshotai/kimi-k3.1-pro"],
+    ["qwen3.8-flash-preview", "qwen/qwen3.8-flash"],
+    ["qwen3.8-flash-batch", "qwen/qwen3.8-flash"],
+    ["qwen3.8-flash-20260826", "qwen/qwen3.8-flash"],
+  ] as const) {
+    expect(
+      resolveModelIdentity({
+        route: { providerID: "opencode-go", modelID },
+        nativeEvidence: [],
+        catalogSource: sourceRead(selectedCatalog),
+      }).resolution,
+    ).toMatchObject({ status: "exact", productID, basis: "name-identity" })
+  }
+  for (const modelID of ["kimi-k3.1-pro:fast", "qwen3.8-flash:fast"]) {
     expect(
       resolveModelIdentity({
         route: { providerID: "opencode-go", modelID },
