@@ -10,23 +10,29 @@ OpenCode permissions still control native tools and file access. Answer any perm
 
 ## Tasks
 
-Open **Tasks** from the session panel menu, or run `/lz-tasks`. Choose **This session** or **Project tasks**. Search tasks and filter by task state.
+Open **Tasks** from the session panel menu, or run `/lz-tasks`. Choose **This session** or **Project tasks**. Search tasks and filter by task state: **Open**, **Queued**, **Running**, **Blocked / waiting**, **Paused**, **Completed**, **Failed / exhausted**, **Cancelled**, or **All**. The header counts the tasks in the current filter.
 
-Use the task details to review its objective, dependencies, worker activity, checks, and result. Filter by **Open**, **Queued**, **Running**, **Blocked**, **Paused**, **Completed**, **Failed**, **Cancelled**, or **All**.
+The list is flat and ordered by priority, shown in the column before each reference. Use the chevron to expand a task's dependencies in place. The glyph at the end of a row is its state: an outlined check is accepted, and the filled green check is integrated. **All** lists open work first, then accepted, integrated, failed and cancelled tasks.
 
-The panel offers **Start** only when a plan can start under the runtime's rules.
+Select a task to review its objective, done-when checklist, dependencies, worker activity, checks, and result below the divider. Changing the filter keeps the selection. The panel offers **Start** only when a plan can start under the runtime's rules.
 
 ## Radar and Trajectory
 
-Open **Radar** from the session panel menu, or run `/lz-radar`, to watch live session activity: each session's role, task, model and effort, current tool calls with their targets and durations, and recent model and tool events. Choose **This session**, **Project**, or **Project · all sessions**. Select a session, call or event to inspect it below the divider, then open its worker, task or trajectory. **Diagnostics** in the actions menu shows the **Map** and **Flow** state chart. Attempt and check history lives in **Trajectory**.
+Open **Radar** from the session panel menu, or run `/lz-radar`, to watch live session activity. **Monitor** lists each session's role, task, model and effort, state and current tool calls, with workers indented under their Architect. **Map** and **Flow** show the system map and the task state chart. Choose **This session**, **Project**, or **Project · all sessions**. Select a session, call or event to open its details below the divider, then open its worker, task or trajectory. The connection reads **Live**, **Reconnecting** or **Offline**.
 
-Open **Trajectory** from the session panel menu, or run `/lz-trajectory`, to inspect task attempts, checks, and recorded usage. Choose a task and scope. Select an attempt or check to inspect its details. Task links in other LAZERS panels can open the matching trajectory.
+Open **Trajectory** from the session panel menu, or run `/lz-trajectory`, to inspect a task's attempts, tool calls, file activity and checks on one timeline. Long idle stretches are compressed into labelled breaks; hatched marks are recording gaps. Select a mark to see its command, timing and result. **Open task** shows the task in Tasks. Task links in other LAZERS panels can open the matching trajectory.
 
 ## Models
 
-Open **Models** from the session panel menu, or run `/lz-models`. Use **Assignments** to set the provider, model, and optional variant or effort for a **Shared default**, **Project override**, or **Task override**. LAZERS supports the **UI**, **Systems**, and **Small task / refactoring** personas.
+Open **Models** from the session panel menu, or run `/lz-models`.
 
-Use **Compare** to inspect task histories, usage, and configured price evidence. Filter by persona or task kind. Estimates can be partial or unknown when usage or prices are missing. A model catalog or price lookup does not start inference.
+**Compare** plots models by cost and tokens per accepted task from your runs, or by public benchmark and list price under **Benchmark**. Filter by persona or task kind. Select a model to see its price, results and an **Assign to** button; the estimate basis, runs and the chart's data table are in the disclosures below. A model catalog or price lookup does not start inference.
+
+**Assignments** lists each persona's model and effort. Select a persona to change its model, effort and whether the choice applies to all projects, this project or one task. LAZERS supports the **UI**, **Systems**, and **Small task / refactoring** personas. New workers use the saved route; running workers keep theirs.
+
+## Loading and connection
+
+Every panel shows a placeholder of its layout while it first loads, and offers **Retry** if that takes longer than ten seconds. If the service reconnects, the panel keeps what it last showed, dimmed, under a banner with the time of the last update and **Retry**.
 
 ## Settings
 
