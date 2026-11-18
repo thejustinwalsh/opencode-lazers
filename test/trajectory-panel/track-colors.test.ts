@@ -25,8 +25,10 @@ test("no track hue resolves to a success or green token", () => {
   // Tool marks are a violet mixed from the theme's interactive and critical tokens: themes map
   // their named violets to blue or orange, which would match the attempt or files track.
   expect(css).toMatch(
-    /--trajectory-hue-tools: color-mix\(\s*in oklch,\s*var\(--text-interactive-base[^;]*var\(--icon-critical-base/,
+    /--lazers-hue-tools: color-mix\(\s*in oklch,\s*var\(--text-interactive-base[^;]*var\(--icon-critical-base/,
   )
+  // The shared definition (also used by Radar) feeds the Trajectory token.
+  expect(declaration("--trajectory-hue-tools")).toContain("var(--lazers-hue-tools)")
   expect(declaration("--trajectory-hue-tools")).not.toMatch(/syntax-string|syntax-keyword/)
 })
 
