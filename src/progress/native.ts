@@ -202,7 +202,8 @@ async function reconstructSession(
     const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
     finishContext("succeeded")
     if (!assignmentIsCurrent()) return "stale" as const
-    recorder.reconcileMessages(assignment.sessionID, messages)
+    await recorder.reconcileMessagesAsync(assignment.sessionID, messages)
+    if (!assignmentIsCurrent()) return "stale" as const
     return "complete" as const
   } catch (error) {
     finishContext("failed")

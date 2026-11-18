@@ -25,7 +25,7 @@ export const schemaModules = {
     tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
   },
   runner: {
-    generation: 7,
+    generation: 8,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",
@@ -62,6 +62,7 @@ export const schemaModules = {
       "runner_progress",
       "native_tool_calls",
       "runner_progress_reminders",
+      "runner_progress_reconciled",
     ],
   },
   priority: {

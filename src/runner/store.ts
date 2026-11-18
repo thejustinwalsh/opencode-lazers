@@ -1016,6 +1016,11 @@ export class RunnerStore {
         ON native_tool_calls(project_directory,session_id,first_observed_at);
       CREATE INDEX IF NOT EXISTS native_tool_calls_parent
         ON native_tool_calls(project_directory,session_id,parent_call_id);
+      CREATE TABLE IF NOT EXISTS runner_progress_reconciled (
+        project_directory TEXT NOT NULL, attempt_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL, light TEXT NOT NULL, full TEXT,
+        PRIMARY KEY(project_directory,attempt_id,message_id)
+      );
       CREATE TABLE IF NOT EXISTS runner_progress_reminders (
         attempt_id TEXT PRIMARY KEY REFERENCES runner_attempts(id),
         session_id TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE, ownership_json TEXT NOT NULL,

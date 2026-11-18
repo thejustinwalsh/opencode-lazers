@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
-import { ProgressRecorder, lightMessagesSignature } from "./recorder.ts"
+import { ProgressRecorder, messageLightSignature } from "./recorder.ts"
 import { registerProgressReconstruction } from "./reconstruction.ts"
 import { SESSION_OWNER_NEGATIVE_TTL_MS } from "./session-owners.ts"
 
@@ -125,15 +125,14 @@ test("light message signature tracks structure and tail changes, never runs acce
     time: { created: 1 },
     content: [{ type: "text", text: "x".repeat(5_000) }],
   }
-  const base = lightMessagesSignature([message], false)!
-  expect(lightMessagesSignature([structuredClone(message)], false)).toBe(base)
-  expect(lightMessagesSignature([message], true)).not.toBe(base)
-  expect(lightMessagesSignature([message, { id: "m2", type: "user" }], false)).not.toBe(base)
+  const base = messageLightSignature(message)!
+  expect(messageLightSignature(structuredClone(message))).toBe(base)
+  expect(messageLightSignature({ ...message, content: [] })).not.toBe(base)
   expect(
-    lightMessagesSignature(
-      [{ ...message, content: [{ type: "text", text: "x".repeat(5_000) + "y" }] }],
-      false,
-    ),
+    messageLightSignature({
+      ...message,
+      content: [{ type: "text", text: "x".repeat(5_000) + "y" }],
+    }),
   ).not.toBe(base)
   let touched = false
   const hostile = {
@@ -143,7 +142,7 @@ test("light message signature tracks structure and tail changes, never runs acce
       return "x"
     },
   }
-  expect(lightMessagesSignature([hostile], false)).toBeUndefined()
+  expect(messageLightSignature(hostile)).toBeUndefined()
   expect(touched).toBe(false)
 })
 
@@ -159,11 +158,9 @@ test("unchanged retained messages skip the full fingerprint and rewrite nothing"
     }))
     recorder.reconcileMessages(workerSession, messages)
     const rows = fixture.store.progressFacts([firstAttemptID]).length
-    const memo = (
-      recorder as unknown as { recoveryMemos: Map<string, { light?: string; fingerprint: string }> }
-    ).recoveryMemos.get(workerSession)!
-    expect(memo.light).toBeDefined()
-    const fingerprint = memo.fingerprint
+    const stats = recorder.reconcileStats
+    const processed = stats.messages
+    expect(processed).toBe(2_000)
 
     let atomicWrites = 0
     const run = fixture.store.atomic.bind(fixture.store)
@@ -174,11 +171,7 @@ test("unchanged retained messages skip the full fingerprint and rewrite nothing"
     recorder.reconcileMessages(workerSession, structuredClone(messages))
 
     expect(fixture.store.progressFacts([firstAttemptID]).length).toBe(rows)
-    expect(
-      (
-        recorder as unknown as { recoveryMemos: Map<string, { fingerprint: string }> }
-      ).recoveryMemos.get(workerSession)!.fingerprint,
-    ).toBe(fingerprint)
+    expect(stats.messages).toBe(processed)
     expect(atomicWrites).toBeGreaterThan(0)
   } finally {
     fixture.close()

@@ -131,20 +131,26 @@ type JsonObject = Record<string, unknown>
 
 type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
 
-const MAX_RECOVERY_MEMOS = 256
+const MAX_RECONCILE_STATES = 256
+/** One synchronous slice of reconcile work stays near this long before yielding. */
+const RECONCILE_SLICE_MS = 20
+const RECONCILE_CHUNK_MESSAGES = 25
+/** Messages whose full content fingerprint is re-verified per run (rolling window). */
+const RECONCILE_VERIFY_PER_RUN = 20
+const RECONCILE_STAMP_VERSION = "m1"
 
-/** Light signatures are trusted for this long before a full content fingerprint re-verifies. */
-const FULL_FINGERPRINT_VERIFY_MS = 60_000
+type ReconciledStamp = { light: string; full?: string }
 
-type RecoveryMemo = {
+type SessionReconcileState = {
   assignmentFingerprint: string
-  fingerprint: string
-  /** Incremental signature: count, ids and update stamps; avoids re-encoding every message. */
-  light?: string
-  fullVerifiedAt?: number
-  progressFingerprint: string
-  revision: number
+  /** Durable per-message stamps (mirrors runner_progress_reconciled for this attempt). */
+  stamps: Map<string, ReconciledStamp>
+  verifyCursor: number
+  gapsRecorded: boolean
+  boundRecorded: boolean
 }
+
+type DirtyMessage = { raw: unknown; id: string; light: string | undefined; full?: string }
 
 type TimingSource = "native-event" | "recovery" | "runtime"
 
@@ -371,24 +377,25 @@ function encodeRecoveryFingerprintValue(
   }
 }
 
-/** Hash only ordinary retained data; unusual objects fall back to full reconciliation. */
-function retainedMessagesFingerprint(
-  messages: readonly unknown[],
-  hasMoreThanBound: boolean,
-): string | undefined {
+/** Full content fingerprint of one ordinary retained message; unusual objects return undefined. */
+function messageFullFingerprint(message: unknown): string | undefined {
   try {
-    const encoded = encodeRecoveryFingerprintValue(messages, new Set())
+    const encoded = encodeRecoveryFingerprintValue(message, new Set())
     if (encoded === undefined) return undefined
-    return createHash("sha256")
-      .update(JSON.stringify([hasMoreThanBound, encoded]))
-      .digest("hex")
+    return createHash("sha256").update(JSON.stringify(encoded)).digest("hex")
   } catch {
     // Proxies and malformed retained data must retain the original recovery path.
     return undefined
   }
 }
 
-function shallowSignature(value: unknown, depth: number, out: string[]) {
+function shallowSignature(
+  value: unknown,
+  depth: number,
+  out: string[],
+  timestampField = false,
+  timestampContainer?: "time" | "retry",
+) {
   if (typeof value === "string") {
     out.push(
       value.length <= 24
@@ -397,6 +404,12 @@ function shallowSignature(value: unknown, depth: number, out: string[]) {
     )
   } else if (value === null || typeof value !== "object") {
     out.push(String(value))
+  } else if (DateTime.isDateTime(value)) {
+    // Zone presentation is not durable: stamp the same epoch millis the projection records.
+    // Outside known timestamp fields a DateTime is unusual data and forces reprocessing.
+    const encoded = timestampField ? encodeEffectDateTime(value) : undefined
+    if (encoded === undefined) throw new Error("unsafe retained value")
+    out.push(String(dateMillis(value)))
   } else if (depth <= 0) {
     out.push(Array.isArray(value) ? `[${value.length}]` : "{}")
   } else if (Array.isArray(value)) {
@@ -410,24 +423,28 @@ function shallowSignature(value: unknown, depth: number, out: string[]) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key)
       // Never run user code: accessors keep the original full-reconciliation path.
       if (!descriptor || descriptor.get || descriptor.set) throw new Error("unsafe retained value")
-      shallowSignature(descriptor.value, depth - 1, out)
+      shallowSignature(
+        descriptor.value,
+        depth - 1,
+        out,
+        (timestampContainer === "time" && RECOVERY_TIME_FIELDS.has(key)) ||
+          (timestampContainer === "retry" && key === "at"),
+        key === "time" || key === "retry" ? key : undefined,
+      )
     }
     out.push("}")
   }
 }
 
 /**
- * Cheap change signature over retained messages: structure, counts, stamps, string lengths and
- * string edges. No recursive tagged encode, JSON serialization or hashing of full content;
- * the full fingerprint re-verifies periodically to bound any residual blind spot.
+ * Cheap per-message change stamp: structure, stamps, string lengths and string edges.
+ * No recursive tagged encode, JSON serialization of content or secret redaction; deterministic,
+ * so it is persisted and survives restarts. Undefined means "always reprocess".
  */
-export function lightMessagesSignature(
-  messages: readonly unknown[],
-  hasMoreThanBound: boolean,
-): string | undefined {
+export function messageLightSignature(message: unknown): string | undefined {
   try {
-    const out: string[] = [String(messages.length), hasMoreThanBound ? "+" : "="]
-    for (const message of messages) shallowSignature(message, 6, out)
+    const out: string[] = [RECONCILE_STAMP_VERSION]
+    shallowSignature(message, 6, out)
     return createHash("sha256").update(out.join("|")).digest("hex")
   } catch {
     return undefined
@@ -982,7 +999,10 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
  * OpenCode observations, recovery and runtime verification facts.
  */
 export class ProgressRecorder {
-  private readonly recoveryMemos = new Map<string, RecoveryMemo>()
+  private readonly reconcileStates = new Map<string, SessionReconcileState>()
+  private readonly reconcileInflight = new Map<string, Promise<void>>()
+  /** Work counters for tests and diagnostics; never persisted. */
+  readonly reconcileStats = { stamped: 0, messages: 0, parts: 0 }
   private owners: SessionOwners | undefined
 
   constructor(
@@ -1059,71 +1079,6 @@ export class ProgressRecorder {
     if (assignment && where === "session")
       (this.owners ??= sessionOwners(this.store.repository)).markOwned(assignment.sessionID)
     return assignment
-  }
-
-  private observationRevisionIn(db: Database): number | undefined {
-    const row = db
-      .query<{ revision: number }, [string]>(
-        "SELECT revision FROM observation_revisions WHERE project_directory=?",
-      )
-      .get(this.store.repository.projectDirectory)
-    return row?.revision
-  }
-
-  private progressFingerprintIn(db: Database, assignment: ProgressAssignment): string {
-    const rows = db
-      .query<
-        {
-          seq: number
-          project_id: string
-          plan_id: string
-          task_id: string
-          attempt_id: string
-          session_id: string
-          at: number
-          recorded_at: number | null
-          source: string
-          sources_json: string
-          kind: string
-          event_ids_json: string
-          call_id: string | null
-          message_id: string | null
-          dedupe_key: string
-          payload: string
-        },
-        [string, string, string]
-      >(
-        `SELECT seq,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
-                sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload
-         FROM runner_progress
-         WHERE project_directory=? AND attempt_id=? AND session_id=? ORDER BY seq`,
-      )
-      .iterate(this.store.repository.projectDirectory, assignment.attemptID, assignment.sessionID)
-    const hash = createHash("sha256")
-    for (const row of rows)
-      hash
-        .update(
-          JSON.stringify([
-            row.seq,
-            row.project_id,
-            row.plan_id,
-            row.task_id,
-            row.attempt_id,
-            row.session_id,
-            row.at,
-            row.recorded_at,
-            row.source,
-            row.sources_json,
-            row.kind,
-            row.event_ids_json,
-            row.call_id,
-            row.message_id,
-            row.dedupe_key,
-            row.payload,
-          ]),
-        )
-        .update("\0")
-    return hash.digest("hex")
   }
 
   assignmentForSession(sessionID: string): ProgressAssignment | undefined {
@@ -2192,337 +2147,451 @@ export class ProgressRecorder {
     return fact ? this.appendForSession(sessionID, fact, verifiedToolSession) : undefined
   }
 
-  /** Reconcile only retained public session messages; it never invokes execution. */
+  /**
+   * Reconcile only retained public session messages; it never invokes execution.
+   * Synchronous drain of the same chunked engine, for callers that cannot yield.
+   */
   reconcileMessages(sessionID: string, rawMessages: readonly unknown[]): void {
+    const steps = this.reconcileSteps(sessionID, rawMessages)
+    while (!steps.next().done) {
+      // Each step is one short transaction; the sync caller simply continues.
+    }
+  }
+
+  /**
+   * Incremental, chunked reconcile: each slice is its own short transaction and the
+   * event loop runs between slices. Overlapping runs for a session are serialized.
+   */
+  reconcileMessagesAsync(sessionID: string, rawMessages: readonly unknown[]): Promise<void> {
+    const prior = this.reconcileInflight.get(sessionID)
+    const run = (async () => {
+      if (prior) await prior.catch(() => undefined)
+      const steps = this.reconcileSteps(sessionID, rawMessages)
+      while (!steps.next().done) await new Promise<void>((resolve) => setImmediate(resolve))
+    })()
+    const tracked: Promise<void> = run.finally(() => {
+      if (this.reconcileInflight.get(sessionID) === tracked)
+        this.reconcileInflight.delete(sessionID)
+    })
+    this.reconcileInflight.set(sessionID, tracked)
+    return tracked
+  }
+
+  private loadReconcileState(
+    assignment: ProgressAssignment,
+    assignmentFingerprint: string,
+  ): SessionReconcileState {
+    const rows = this.store.repository.read((db) =>
+      db
+        .query<{ message_id: string; light: string; full: string | null }, [string, string]>(
+          `SELECT message_id,light,full FROM runner_progress_reconciled
+           WHERE project_directory=? AND attempt_id=?`,
+        )
+        .all(this.store.repository.projectDirectory, assignment.attemptID),
+    )
+    const stamps = new Map<string, ReconciledStamp>()
+    for (const row of rows)
+      stamps.set(row.message_id, { light: row.light, ...(row.full ? { full: row.full } : {}) })
+    return {
+      assignmentFingerprint,
+      stamps,
+      verifyCursor: 0,
+      gapsRecorded: false,
+      boundRecorded: false,
+    }
+  }
+
+  private *reconcileSteps(
+    sessionID: string,
+    rawMessages: readonly unknown[],
+  ): Generator<void, void, void> {
     const messages = rawMessages.slice(0, 10_000)
     const hasMoreThanBound = rawMessages.length > messages.length
-    const light = lightMessagesSignature(messages, hasMoreThanBound)
-    const prior = this.recoveryMemos.get(sessionID)
-    const now = Date.now()
-    const lightUnchanged =
-      light !== undefined &&
-      prior?.light === light &&
-      prior.fullVerifiedAt !== undefined &&
-      now - prior.fullVerifiedAt < FULL_FINGERPRINT_VERIFY_MS
-    // Unchanged light signature: reuse the memoized full fingerprint instead of re-hashing everything.
-    const fingerprint = lightUnchanged
-      ? prior.fingerprint
-      : retainedMessagesFingerprint(messages, hasMoreThanBound)
-    const fullVerifiedAt = lightUnchanged ? prior.fullVerifiedAt! : now
     this.reconcileReminder(sessionID, rawMessages)
-    this.store.atomic((db) => {
-      const assignment = this.assignmentQuery(db, "session", sessionID)
-      if (!assignment) {
-        this.recoveryMemos.delete(sessionID)
+    const assignment = this.assignmentForSession(sessionID)
+    if (!assignment) {
+      this.reconcileStates.delete(sessionID)
+      return
+    }
+    const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
+    let state = this.reconcileStates.get(sessionID)
+    if (!state || state.assignmentFingerprint !== assignmentFingerprint)
+      state = this.loadReconcileState(assignment, assignmentFingerprint)
+    // Bounded per-recorder LRU of warm sessions; evicted sessions reload from SQLite.
+    this.reconcileStates.delete(sessionID)
+    this.reconcileStates.set(sessionID, state)
+    while (this.reconcileStates.size > MAX_RECONCILE_STATES) {
+      const oldest = this.reconcileStates.keys().next().value
+      if (oldest === undefined) break
+      this.reconcileStates.delete(oldest)
+    }
+
+    // 1. Cheap per-message change stamps decide what is new or changed.
+    const dirty: DirtyMessage[] = []
+    const dirtyIDs = new Set<string>()
+    let sliceStart = performance.now()
+    for (const raw of messages) {
+      const id = text(object(raw)?.id)
+      if (!id) continue
+      this.reconcileStats.stamped++
+      const light = messageLightSignature(raw)
+      const stamp = state.stamps.get(id)
+      if (light === undefined || stamp?.light !== light) {
+        dirty.push({ raw, id, light })
+        dirtyIDs.add(id)
+      }
+      if (performance.now() - sliceStart > RECONCILE_SLICE_MS) {
+        yield
+        sliceStart = performance.now()
+      }
+    }
+
+    // 2. Rolling content verification: a bounded window per run re-checks the full
+    // fingerprint of messages the light stamp calls unchanged, covering its blind spot.
+    const verifyCount = Math.min(RECONCILE_VERIFY_PER_RUN, messages.length)
+    for (let n = 0; n < verifyCount; n++) {
+      const raw = messages[state.verifyCursor++ % messages.length]
+      const id = text(object(raw)?.id)
+      if (!id || dirtyIDs.has(id)) continue
+      const stamp = state.stamps.get(id)
+      if (!stamp?.full) continue
+      const full = messageFullFingerprint(raw)
+      if (full !== undefined && full !== stamp.full) {
+        dirty.push({ raw, id, light: stamp.light })
+        dirtyIDs.add(id)
+      }
+    }
+
+    // 3. Process the backlog in bounded transactions, yielding between them.
+    let index = 0
+    while (index < dirty.length) {
+      const done: DirtyMessage[] = []
+      let stale = false
+      const chunkStart = performance.now()
+      this.store.atomic((db) => {
+        const current = this.assignmentQuery(db, "session", sessionID)
+        if (!current || recoveryAssignmentFingerprint(current) !== assignmentFingerprint) {
+          stale = true
+          return
+        }
+        while (index < dirty.length && done.length < RECONCILE_CHUNK_MESSAGES) {
+          if (done.length > 0 && performance.now() - chunkStart > RECONCILE_SLICE_MS) break
+          const item = dirty[index++]!
+          this.reconcileMessageIn(db, current, item.raw)
+          this.reconcileStats.messages++
+          item.full = item.light === undefined ? undefined : messageFullFingerprint(item.raw)
+          // Unusual retained data (no full fingerprint) is never stamped: it always reprocesses.
+          if (item.light !== undefined && item.full !== undefined) {
+            db.query(
+              `INSERT INTO runner_progress_reconciled(project_directory,attempt_id,session_id,message_id,light,full)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(project_directory,attempt_id,message_id)
+               DO UPDATE SET light=excluded.light,full=excluded.full`,
+            ).run(
+              this.store.repository.projectDirectory,
+              current.attemptID,
+              sessionID,
+              item.id,
+              item.light,
+              item.full,
+            )
+          }
+          done.push(item)
+        }
+      })
+      if (stale) {
+        this.reconcileStates.delete(sessionID)
         return
       }
-      const revision = this.observationRevisionIn(db)
-      const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
-      const memo = this.recoveryMemos.get(sessionID)
-      const reusable =
-        fingerprint !== undefined &&
-        revision !== undefined &&
-        memo?.assignmentFingerprint === assignmentFingerprint &&
-        memo.fingerprint === fingerprint
-      let reusableProgressFingerprint: string | undefined
-      if (reusable && memo.revision !== revision) {
-        const currentProgressFingerprint = this.progressFingerprintIn(db, assignment)
-        if (currentProgressFingerprint === memo.progressFingerprint) memo.revision = revision
-        else reusableProgressFingerprint = currentProgressFingerprint
-      }
-      if (reusable && memo.revision === revision) {
-        // Keep hot sessions in the bounded per-recorder LRU. The revision fence
-        // notices writes anywhere in this project. When it advances, compare only
-        // this attempt's durable facts so unrelated sessions do not evict a warm hit.
-        this.recoveryMemos.delete(sessionID)
-        this.recoveryMemos.set(sessionID, memo)
-        return
-      }
-      this.recoveryMemos.delete(sessionID)
-      for (const raw of messages) {
-        const message = object(raw)
-        const messageID = text(message?.id)
-        if (!message || !messageID) continue
-        const messageTime = object(message.time)
-        const messageCreatedAt = dateMillis(messageTime?.created)
-        const at = messageCreatedAt ?? Date.now()
-        if (
-          (message.type === "user" || message.type === "synthetic") &&
-          isNativeInput(raw) &&
-          typeof message.text === "string"
-        ) {
-          this.appendIn(db, assignment, {
+      for (const item of done)
+        if (item.light !== undefined && item.full !== undefined)
+          state.stamps.set(item.id, { light: item.light, full: item.full })
+      if (index < dirty.length) yield
+    }
+
+    // 4. Boundary gaps: once per warm session, again whenever messages changed.
+    const needBound = hasMoreThanBound && !state.boundRecorded
+    if (dirty.length > 0 || !state.gapsRecorded || needBound) {
+      let stale = false
+      this.store.atomic((db) => {
+        const current = this.assignmentQuery(db, "session", sessionID)
+        if (!current || recoveryAssignmentFingerprint(current) !== assignmentFingerprint) {
+          stale = true
+          return
+        }
+        if (hasMoreThanBound) {
+          this.appendIn(db, current, {
             source: "recovery",
-            sourceType: `retained-${message.type}-message.text`,
-            kind: "visible-text",
-            dedupeKey: `input:${sessionID}:${messageID}`,
-            at,
-            messageID,
-            payload: {
-              text: safeText(message.text, privacyStats()),
-              messageType: message.type,
-              createdAt: messageCreatedAt ?? null,
-            },
-          })
-        }
-        if (message.type === "assistant") {
-          const parts = Array.isArray(message.content) ? message.content : []
-          for (const [index, rawPart] of parts.entries()) {
-            const part = object(rawPart)
-            if (!part) continue
-            const stats = privacyStats()
-            if (part.type === "text" && typeof part.text === "string") {
-              this.appendIn(db, assignment, {
-                source: "recovery",
-                sourceType: "retained-assistant-message.text",
-                kind: "visible-text",
-                dedupeKey: `text:${sessionID}:${messageID}:${index}`,
-                at,
-                messageID,
-                payload: { text: safeText(part.text, stats) },
-              })
-            } else if (part.type === "tool") {
-              this.recordRecoveredToolIn(db, assignment, messageID, part, at)
-            }
-          }
-          const tokens = object(message.tokens)
-          const messageCost = number(message.cost)
-          const streamedAt = dateMillis(messageTime?.streamed)
-          const completedAt = dateMillis(messageTime?.completed)
-          const status = message.error
-            ? "failed"
-            : completedAt !== undefined
-              ? "ended"
-              : streamedAt !== undefined
-                ? "streamed"
-                : messageCreatedAt !== undefined
-                  ? "started"
-                  : "unknown"
-          const assistantTiming = factTiming({
-            startedAt: timedEndpoint(
-              messageTime?.created,
-              "recovery",
-              "retained-assistant-message.time.created",
-              "Retained assistant message start time",
-            ),
-            streamedAt: timedEndpoint(
-              messageTime?.streamed,
-              "recovery",
-              "retained-assistant-message.time.streamed",
-              "Retained assistant provider response-body end before tool settlement",
-            ),
-            completedAt: timedEndpoint(
-              messageTime?.completed,
-              "recovery",
-              "retained-assistant-message.time.completed",
-              "Retained assistant completion after tool settlement",
-            ),
-          })
-          const routeEvidence = Object.hasOwn(message, "model")
-            ? routeEvidenceFromModel(message.model, privacyStats())
-            : undefined
-          const route = object(routeEvidence?.route)
-          if (
-            assistantTiming ||
-            tokens ||
-            messageCost !== undefined ||
-            message.error ||
-            routeEvidence
-          ) {
-            const payload: Record<string, unknown> = {
-              status,
-              ...(routeEvidence ? { routeEvidence } : {}),
-              ...(route ? { route } : {}),
-              ...(tokens || messageCost !== undefined
-                ? {
-                    measurementBasis: "additive-step-measurement",
-                    usage: measuredUsage(tokens, messageCost),
-                  }
-                : {}),
-              observations: [
-                {
-                  source: "recovery",
-                  eventType: "retained-assistant-message",
-                  at: messageCreatedAt ?? null,
-                  unit: EPOCH_MILLIS,
-                  meaning:
-                    "Retained assistant message creation when available; endpoints are separate",
-                  status,
-                  messageID,
-                  ...(route ? { route } : {}),
-                  ...(routeEvidence ? { routeEvidence } : {}),
-                },
-              ],
-              ...(assistantTiming ? { timing: assistantTiming } : {}),
-              ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
-            }
-            this.appendIn(db, assignment, {
-              source: "recovery",
-              sourceType: "retained-assistant-message",
-              kind: "step",
-              dedupeKey: `step:${sessionID}:${messageID}`,
-              at,
-              messageID,
-              payload,
-            })
-          }
-          const retry = object(message.retry)
-          if (retry) {
-            const retryAttempt = number(retry.attempt)
-            const error = errorView(retry.error, privacyStats())
-            const retryAt = dateMillis(retry.at)
-            const retryTiming = factTiming({
-              scheduledAt: timedEndpoint(
-                retry.at,
-                "recovery",
-                "retained-assistant-message.retry.at",
-                "Retained provider retry scheduled time",
-              ),
-            })
-            this.appendIn(db, assignment, {
-              source: "recovery",
-              sourceType: "retained-assistant-message.retry",
-              kind: "provider-retry",
-              dedupeKey: `retry:${sessionID}:${messageID}:${retryAttempt ?? "unknown"}`,
-              at: retryAt ?? at,
-              messageID,
-              payload: {
-                ...(retryAttempt !== undefined ? { attempt: retryAttempt } : {}),
-                ...(error !== undefined ? { error } : {}),
-                ...(retryTiming ? { timing: retryTiming } : {}),
-              },
-            })
-          }
-          if (message.error) {
-            this.appendIn(db, assignment, {
-              source: "recovery",
-              sourceType: "retained-assistant-message.error",
-              kind: "execution-outcome",
-              dedupeKey: `assistant-error:${sessionID}:${messageID}`,
-              at,
-              messageID,
-              payload: { outcome: "failed", error: errorView(message.error, privacyStats()) },
-            })
-          }
-          continue
-        }
-        if (message.type === "shell") {
-          const stats = privacyStats()
-          const shellID = text(message.shellID)
-          if (shellID) {
-            const output = object(message.output)
-            const shellOutput = text(output?.output)
-            const shellTiming = factTiming({
-              createdAt: timedEndpoint(
-                messageTime?.created,
-                "recovery",
-                "retained-shell-message.time.created",
-                "Retained shell message creation; not process start",
-              ),
-              completedAt: timedEndpoint(
-                messageTime?.completed,
-                "recovery",
-                "retained-shell-message.time.completed",
-                "Retained shell completion time",
-              ),
-            })
-            this.appendIn(db, assignment, {
-              source: "recovery",
-              sourceType: "retained-shell-message",
-              kind: "shell",
-              dedupeKey: `shell:${sessionID}:${shellID}`,
-              at,
-              messageID,
-              payload: {
-                shellID,
-                status: text(message.status) ?? "unknown",
-                ...(text(message.command)
-                  ? { command: safeText(text(message.command)!, stats) }
-                  : {}),
-                ...(number(message.exit) !== undefined ? { exit: number(message.exit) } : {}),
-                ...(shellOutput ? { output: safeText(shellOutput, stats) } : {}),
-                ...(output?.truncated === true ? { truncated: true } : {}),
-                ...(shellTiming ? { timing: shellTiming } : {}),
-              },
-            })
-          }
-          continue
-        }
-        if (message.type === "idle") {
-          const outcome = text(message.outcome)
-          const error = errorView(message.error, privacyStats())
-          this.appendIn(db, assignment, {
-            source: "recovery",
-            sourceType: "retained-session-idle-message",
-            kind: "execution-outcome",
-            dedupeKey: `turn:${sessionID}:${messageID}`,
-            at,
-            messageID,
-            payload: {
-              outcome:
-                outcome && ["succeeded", "failed", "interrupted"].includes(outcome)
-                  ? outcome
-                  : "unknown",
-              ...(error !== undefined ? { error } : {}),
-              basis: "retained-session-turn-marker",
-            },
-          })
-          continue
-        }
-        if (message.type === "compaction") {
-          this.appendIn(db, assignment, {
-            source: "recovery",
-            sourceType: "retained-compaction-message",
             kind: "gap",
-            dedupeKey: `compaction-gap:${sessionID}:${messageID}`,
-            at,
-            messageID,
-            payload: {
-              reason:
-                "Session compaction may omit earlier public messages; the private summary is not retained in progress facts.",
-            },
+            dedupeKey: `recovery-gap:${current.attemptID}:message-bound`,
+            at: Date.now(),
+            payload: { reason: "Retained public session context exceeded the recovery bound." },
           })
         }
-      }
-      if (rawMessages.length > messages.length) {
-        this.appendIn(db, assignment, {
+        this.appendIn(db, current, {
           source: "recovery",
           kind: "gap",
-          dedupeKey: `recovery-gap:${assignment.attemptID}:message-bound`,
+          dedupeKey: `recovery-gap:${current.attemptID}:public-context-only`,
           at: Date.now(),
-          payload: { reason: "Retained public session context exceeded the recovery bound." },
+          payload: {
+            reason:
+              "The native event stream has no durable cursor and session.context is not guaranteed complete; facts outside retained public messages cannot be reconstructed.",
+          },
         })
+      })
+      if (stale) {
+        this.reconcileStates.delete(sessionID)
+        return
       }
+      state.gapsRecorded = true
+      if (hasMoreThanBound) state.boundRecorded = true
+    }
+  }
+
+  /** Record one retained message's durable facts; the unit of incremental work. */
+  private reconcileMessageIn(db: Database, assignment: ProgressAssignment, raw: unknown): void {
+    const sessionID = assignment.sessionID
+    const message = object(raw)
+    const messageID = text(message?.id)
+    if (!message || !messageID) return
+    const messageTime = object(message.time)
+    const messageCreatedAt = dateMillis(messageTime?.created)
+    const at = messageCreatedAt ?? Date.now()
+    if (
+      (message.type === "user" || message.type === "synthetic") &&
+      isNativeInput(raw) &&
+      typeof message.text === "string"
+    ) {
       this.appendIn(db, assignment, {
         source: "recovery",
-        kind: "gap",
-        dedupeKey: `recovery-gap:${assignment.attemptID}:public-context-only`,
-        at: Date.now(),
+        sourceType: `retained-${message.type}-message.text`,
+        kind: "visible-text",
+        dedupeKey: `input:${sessionID}:${messageID}`,
+        at,
+        messageID,
         payload: {
-          reason:
-            "The native event stream has no durable cursor and session.context is not guaranteed complete; facts outside retained public messages cannot be reconstructed.",
+          text: safeText(message.text, privacyStats()),
+          messageType: message.type,
+          createdAt: messageCreatedAt ?? null,
         },
       })
-      const completedRevision = this.observationRevisionIn(db)
-      if (fingerprint !== undefined && completedRevision !== undefined) {
-        const progressFingerprint =
-          revision === completedRevision && reusableProgressFingerprint !== undefined
-            ? reusableProgressFingerprint
-            : this.progressFingerprintIn(db, assignment)
-        this.recoveryMemos.set(sessionID, {
-          assignmentFingerprint,
-          revision: completedRevision,
-          fingerprint,
-          ...(light === undefined ? {} : { light, fullVerifiedAt }),
-          progressFingerprint,
-        })
-        while (this.recoveryMemos.size > MAX_RECOVERY_MEMOS) {
-          const oldest = this.recoveryMemos.keys().next().value
-          if (oldest === undefined) break
-          this.recoveryMemos.delete(oldest)
+    }
+    if (message.type === "assistant") {
+      const parts = Array.isArray(message.content) ? message.content : []
+      for (const [index, rawPart] of parts.entries()) {
+        const part = object(rawPart)
+        if (!part) continue
+        this.reconcileStats.parts++
+        const stats = privacyStats()
+        if (part.type === "text" && typeof part.text === "string") {
+          this.appendIn(db, assignment, {
+            source: "recovery",
+            sourceType: "retained-assistant-message.text",
+            kind: "visible-text",
+            dedupeKey: `text:${sessionID}:${messageID}:${index}`,
+            at,
+            messageID,
+            payload: { text: safeText(part.text, stats) },
+          })
+        } else if (part.type === "tool") {
+          this.recordRecoveredToolIn(db, assignment, messageID, part, at)
         }
       }
-    })
+      const tokens = object(message.tokens)
+      const messageCost = number(message.cost)
+      const streamedAt = dateMillis(messageTime?.streamed)
+      const completedAt = dateMillis(messageTime?.completed)
+      const status = message.error
+        ? "failed"
+        : completedAt !== undefined
+          ? "ended"
+          : streamedAt !== undefined
+            ? "streamed"
+            : messageCreatedAt !== undefined
+              ? "started"
+              : "unknown"
+      const assistantTiming = factTiming({
+        startedAt: timedEndpoint(
+          messageTime?.created,
+          "recovery",
+          "retained-assistant-message.time.created",
+          "Retained assistant message start time",
+        ),
+        streamedAt: timedEndpoint(
+          messageTime?.streamed,
+          "recovery",
+          "retained-assistant-message.time.streamed",
+          "Retained assistant provider response-body end before tool settlement",
+        ),
+        completedAt: timedEndpoint(
+          messageTime?.completed,
+          "recovery",
+          "retained-assistant-message.time.completed",
+          "Retained assistant completion after tool settlement",
+        ),
+      })
+      const routeEvidence = Object.hasOwn(message, "model")
+        ? routeEvidenceFromModel(message.model, privacyStats())
+        : undefined
+      const route = object(routeEvidence?.route)
+      if (
+        assistantTiming ||
+        tokens ||
+        messageCost !== undefined ||
+        message.error ||
+        routeEvidence
+      ) {
+        const payload: Record<string, unknown> = {
+          status,
+          ...(routeEvidence ? { routeEvidence } : {}),
+          ...(route ? { route } : {}),
+          ...(tokens || messageCost !== undefined
+            ? {
+                measurementBasis: "additive-step-measurement",
+                usage: measuredUsage(tokens, messageCost),
+              }
+            : {}),
+          observations: [
+            {
+              source: "recovery",
+              eventType: "retained-assistant-message",
+              at: messageCreatedAt ?? null,
+              unit: EPOCH_MILLIS,
+              meaning: "Retained assistant message creation when available; endpoints are separate",
+              status,
+              messageID,
+              ...(route ? { route } : {}),
+              ...(routeEvidence ? { routeEvidence } : {}),
+            },
+          ],
+          ...(assistantTiming ? { timing: assistantTiming } : {}),
+          ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
+        }
+        this.appendIn(db, assignment, {
+          source: "recovery",
+          sourceType: "retained-assistant-message",
+          kind: "step",
+          dedupeKey: `step:${sessionID}:${messageID}`,
+          at,
+          messageID,
+          payload,
+        })
+      }
+      const retry = object(message.retry)
+      if (retry) {
+        const retryAttempt = number(retry.attempt)
+        const error = errorView(retry.error, privacyStats())
+        const retryAt = dateMillis(retry.at)
+        const retryTiming = factTiming({
+          scheduledAt: timedEndpoint(
+            retry.at,
+            "recovery",
+            "retained-assistant-message.retry.at",
+            "Retained provider retry scheduled time",
+          ),
+        })
+        this.appendIn(db, assignment, {
+          source: "recovery",
+          sourceType: "retained-assistant-message.retry",
+          kind: "provider-retry",
+          dedupeKey: `retry:${sessionID}:${messageID}:${retryAttempt ?? "unknown"}`,
+          at: retryAt ?? at,
+          messageID,
+          payload: {
+            ...(retryAttempt !== undefined ? { attempt: retryAttempt } : {}),
+            ...(error !== undefined ? { error } : {}),
+            ...(retryTiming ? { timing: retryTiming } : {}),
+          },
+        })
+      }
+      if (message.error) {
+        this.appendIn(db, assignment, {
+          source: "recovery",
+          sourceType: "retained-assistant-message.error",
+          kind: "execution-outcome",
+          dedupeKey: `assistant-error:${sessionID}:${messageID}`,
+          at,
+          messageID,
+          payload: { outcome: "failed", error: errorView(message.error, privacyStats()) },
+        })
+      }
+      return
+    }
+    if (message.type === "shell") {
+      const stats = privacyStats()
+      const shellID = text(message.shellID)
+      if (shellID) {
+        const output = object(message.output)
+        const shellOutput = text(output?.output)
+        const shellTiming = factTiming({
+          createdAt: timedEndpoint(
+            messageTime?.created,
+            "recovery",
+            "retained-shell-message.time.created",
+            "Retained shell message creation; not process start",
+          ),
+          completedAt: timedEndpoint(
+            messageTime?.completed,
+            "recovery",
+            "retained-shell-message.time.completed",
+            "Retained shell completion time",
+          ),
+        })
+        this.appendIn(db, assignment, {
+          source: "recovery",
+          sourceType: "retained-shell-message",
+          kind: "shell",
+          dedupeKey: `shell:${sessionID}:${shellID}`,
+          at,
+          messageID,
+          payload: {
+            shellID,
+            status: text(message.status) ?? "unknown",
+            ...(text(message.command) ? { command: safeText(text(message.command)!, stats) } : {}),
+            ...(number(message.exit) !== undefined ? { exit: number(message.exit) } : {}),
+            ...(shellOutput ? { output: safeText(shellOutput, stats) } : {}),
+            ...(output?.truncated === true ? { truncated: true } : {}),
+            ...(shellTiming ? { timing: shellTiming } : {}),
+          },
+        })
+      }
+      return
+    }
+    if (message.type === "idle") {
+      const outcome = text(message.outcome)
+      const error = errorView(message.error, privacyStats())
+      this.appendIn(db, assignment, {
+        source: "recovery",
+        sourceType: "retained-session-idle-message",
+        kind: "execution-outcome",
+        dedupeKey: `turn:${sessionID}:${messageID}`,
+        at,
+        messageID,
+        payload: {
+          outcome:
+            outcome && ["succeeded", "failed", "interrupted"].includes(outcome)
+              ? outcome
+              : "unknown",
+          ...(error !== undefined ? { error } : {}),
+          basis: "retained-session-turn-marker",
+        },
+      })
+      return
+    }
+    if (message.type === "compaction") {
+      this.appendIn(db, assignment, {
+        source: "recovery",
+        sourceType: "retained-compaction-message",
+        kind: "gap",
+        dedupeKey: `compaction-gap:${sessionID}:${messageID}`,
+        at,
+        messageID,
+        payload: {
+          reason:
+            "Session compaction may omit earlier public messages; the private summary is not retained in progress facts.",
+        },
+      })
+    }
   }
 
   private recordRecoveredToolIn(
@@ -3127,9 +3196,14 @@ export class ProgressRecorder {
         )
         return
       }
-      const matching = messages
-        .map(object)
-        .find((message) => message?.type === "synthetic" && message.id === reminder.message_id)
+      let matching: JsonObject | undefined
+      for (const candidate of messages) {
+        const message = object(candidate)
+        if (message?.type === "synthetic" && message.id === reminder.message_id) {
+          matching = message
+          break
+        }
+      }
       const metadata = object(matching?.metadata)
       const claim = this.reminderClaimIn(db, assignment.attemptID, sessionID, reminder.message_id)
       const matchesOwnership = Boolean(claim && sameReminderOwnership(metadata, claim.ownership))

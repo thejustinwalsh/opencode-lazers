@@ -166,15 +166,12 @@ function retainedToolHistory(size: number) {
 function observeReplayWork(recorder: ProgressRecorder) {
   let appendAttempts = 0
   let reminderReconciliations = 0
-  let progressFingerprintReads = 0
   const instrumented = recorder as unknown as {
     appendIn: (db: Database, assignment: unknown, fact: unknown) => number
     reconcileReminder: (sessionID: string, messages: readonly unknown[]) => void
-    progressFingerprintIn: (db: Database, assignment: unknown) => string
   }
   const appendIn = instrumented.appendIn
   const reconcileReminder = instrumented.reconcileReminder
-  const progressFingerprintIn = instrumented.progressFingerprintIn
   instrumented.appendIn = (...args) => {
     appendAttempts++
     return appendIn.apply(recorder, args)
@@ -183,19 +180,11 @@ function observeReplayWork(recorder: ProgressRecorder) {
     reminderReconciliations++
     return reconcileReminder.apply(recorder, args)
   }
-  instrumented.progressFingerprintIn = (...args) => {
-    progressFingerprintReads++
-    return progressFingerprintIn.apply(recorder, args)
-  }
   return {
     appendAttempts: () => appendAttempts,
     reminderReconciliations: () => reminderReconciliations,
-    progressFingerprintReads: () => progressFingerprintReads,
     resetAppendAttempts: () => {
       appendAttempts = 0
-    },
-    resetProgressFingerprintReads: () => {
-      progressFingerprintReads = 0
     },
   }
 }
@@ -1804,16 +1793,13 @@ test("warm unchanged recovery skips per-message fact append and merge attempts a
       // The pre-memo repeated-replay path attempted one tool and one assistant
       // step append per message, followed by the fixed recovery-gap append.
       expect(work.appendAttempts()).toBe(2 * historySize + 1)
-      expect(work.progressFingerprintReads()).toBe(1)
       const durable = state()
 
       work.resetAppendAttempts()
-      work.resetProgressFingerprintReads()
       recorder.reconcileMessages(workerSession, history)
 
       expect(work.reminderReconciliations()).toBe(2)
       expect(work.appendAttempts()).toBe(0)
-      expect(work.progressFingerprintReads()).toBe(0)
       expect(state()).toEqual(durable)
     } finally {
       fixture.close()
@@ -1833,16 +1819,9 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
     otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
     const otherRecorder = new ProgressRecorder(new RunnerStore(otherRepository), "project")
     const cache = recorder as unknown as {
-      recoveryMemos: Map<
+      reconcileStates: Map<
         string,
-        {
-          assignmentFingerprint: string
-          fingerprint: string
-          light?: string
-          fullVerifiedAt?: number
-          progressFingerprint: string
-          revision: number
-        }
+        { assignmentFingerprint: string; stamps: Map<string, { light: string; full?: string }> }
       >
     }
     const retainedFor = (sessionID: string) => [
@@ -1875,39 +1854,33 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
 
     replayAll()
     expect(work.appendAttempts()).toBe(122 * 3)
-    expect(work.progressFingerprintReads()).toBe(122)
-    expect(cache.recoveryMemos.size).toBe(122)
-    expect(cache.recoveryMemos.size).toBeLessThanOrEqual(256)
-    const retainedMetadata = [...cache.recoveryMemos.entries()]
+    expect(cache.reconcileStates.size).toBe(122)
+    expect(cache.reconcileStates.size).toBeLessThanOrEqual(256)
+    const retainedMetadata = [...cache.reconcileStates.entries()]
     expect(retainedMetadata.every(([sessionID]) => sessionIDs.includes(sessionID))).toBe(true)
     expect(
       retainedMetadata.every(
         ([, memo]) =>
-          Object.keys(memo).toSorted().join(",") ===
-            "assignmentFingerprint,fingerprint,fullVerifiedAt,light,progressFingerprint,revision" &&
-          /^[a-f0-9]{64}$/.test(memo.light ?? "") &&
           /^[a-f0-9]{64}$/.test(memo.assignmentFingerprint) &&
-          /^[a-f0-9]{64}$/.test(memo.fingerprint) &&
-          /^[a-f0-9]{64}$/.test(memo.progressFingerprint),
+          [...memo.stamps.values()].every(
+            (stamp) =>
+              /^[a-f0-9]{64}$/.test(stamp.light) && /^[a-f0-9]{64}$/.test(stamp.full ?? ""),
+          ),
       ),
     ).toBe(true)
-    expect(JSON.stringify(retainedMetadata)).not.toContain("private")
+    expect(JSON.stringify([...retainedMetadata.map(([, memo]) => [...memo.stamps])])).not.toContain(
+      "private",
+    )
     const cold = state()
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     replayAll()
     expect(work.appendAttempts()).toBe(0)
-    // Earlier session writes during the cold pass advanced the project revision;
-    // compare those sessions' compact durable-fact digests once, then refresh their fence.
-    expect(work.progressFingerprintReads()).toBe(121)
     expect(state()).toEqual(cold)
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     replayAll()
     expect(work.appendAttempts()).toBe(0)
-    expect(work.progressFingerprintReads()).toBe(0)
     const warm = state()
 
     otherRecorder.recordNativeObservation({
@@ -1921,20 +1894,16 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
     expect(afterUnrelatedActivity.sequence).not.toEqual(warm.sequence)
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     replayAll()
     expect(work.appendAttempts()).toBe(0)
-    expect(work.progressFingerprintReads()).toBe(122)
     const afterRecheck = state()
     expect(afterRecheck).toEqual(afterUnrelatedActivity)
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     replayAll()
     expect(work.appendAttempts()).toBe(0)
-    expect(work.progressFingerprintReads()).toBe(0)
     expect(state()).toEqual(afterRecheck)
-    expect(cache.recoveryMemos.size).toBe(122)
+    expect(cache.reconcileStates.size).toBe(122)
   } finally {
     otherRepository?.close()
     fixture.close()
@@ -2134,7 +2103,8 @@ test("fresh native UTC and zoned timestamps reuse recovery by their recorded epo
     const afterNativeEvent = state()
     work.resetAppendAttempts()
     recorder.reconcileMessages(workerSession, retained("utc", late))
-    expect(work.appendAttempts()).toBe(3)
+    // Retained content is unchanged, so the native update is not re-merged by recovery.
+    expect(work.appendAttempts()).toBe(0)
     const replayedTool = state().facts.find((row) => row.call_id === "call-native-datetime")!
     expect(JSON.parse(replayedTool.payload).timing.endpoints.inputAt).toMatchObject({
       at: nativeInputAt,
@@ -2284,11 +2254,9 @@ test("retained recovery reprojects after same- and other-connection native updat
     expect(afterNativeUpdate).not.toEqual(beforeNativeUpdate)
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     recorder.reconcileMessages(workerSession, [retained])
 
-    expect(work.appendAttempts()).toBe(3)
-    expect(work.progressFingerprintReads()).toBe(1)
+    expect(work.appendAttempts()).toBe(0)
     const afterSameConnectionReplay = state()
     expect(afterSameConnectionReplay).toEqual(afterNativeUpdate)
     const sameConnectionTool = afterSameConnectionReplay.facts.find(
@@ -2324,11 +2292,9 @@ test("retained recovery reprojects after same- and other-connection native updat
     expect(afterOtherConnectionUpdate).not.toEqual(afterSameConnectionReplay)
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     recorder.reconcileMessages(workerSession, [retained])
 
-    expect(work.appendAttempts()).toBe(3)
-    expect(work.progressFingerprintReads()).toBe(1)
+    expect(work.appendAttempts()).toBe(0)
     const afterRetainedReplay = state()
     expect(afterRetainedReplay).toEqual(afterOtherConnectionUpdate)
     const replayedTool = afterRetainedReplay.facts.find((row) => row.call_id === "call-noop") as {
@@ -2350,10 +2316,8 @@ test("retained recovery reprojects after same- and other-connection native updat
     )
 
     work.resetAppendAttempts()
-    work.resetProgressFingerprintReads()
     recorder.reconcileMessages(workerSession, [retained])
     expect(work.appendAttempts()).toBe(0)
-    expect(work.progressFingerprintReads()).toBe(0)
     expect(state()).toEqual(afterRetainedReplay)
   } finally {
     otherRepository?.close()
