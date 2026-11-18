@@ -266,6 +266,35 @@ complete total. Omit genuinely unpriced costs without an unavailable label.
 The Benchmark empty state names what is missing and offers "Open provider
 settings".
 
+The plot is drawn by the plugin as SVG (`src/models/chart-layout.ts` for layout,
+`src/models/model-chart.tsx` for the view); there is no charting library. Axes end at
+the next round tick above the data so points spread across the plot; the x axis
+switches to a log scale, and its title says "· log", only when the largest token
+count is more than 50x the smallest. Plot height is clamp(width x 0.48, 220, 360).
+Every point is a focusable button (arrow keys move, Enter selects), labelled in base
+text; the selection has a halo and a strong label above it. Points closer than 10 px
+fan out while one is hovered or focused.
+
+**Best trade-off** has one definition. It is the Pareto set over cost per accepted
+task (lower), tokens per accepted task (lower) and acceptance rate (higher), among
+observed models with a complete cohort and at least two terminal tasks. A model is on
+it when no other eligible model is at least as good on all three and strictly better
+on one. The polyline joins the frontier points ordered by tokens; a frontier of one
+point draws no line. Catalog references and projections are a different measure and
+never join the observed frontier. Projected and Benchmark use cost (lower) against
+the public coding index (higher).
+
+The model set behind the table and Projected is a best-effort union, each entry tagged
+with where it came from: Observed (recorded runs), Routed (named by the model
+router's persona and layer routes) and Catalog (the configured price sources in
+order, the top 30 by public coding index, plus the current Anthropic and OpenAI
+lineups for BYOK). Nothing is hard-coded; a source that is unavailable contributes
+nothing and is named in the "Estimate basis and prices" disclosure. Unobserved
+models are projected: list prices times the median tokens per accepted task of our
+own accepted tasks, with the basis stated. The segmented control is
+`Your runs · Projected · Benchmark`. "All models" lists every entry ranked best
+trade-off first, then by cost per task.
+
 The researched default plot compares mean tokens and comparable cost per
 completed logical task, with acceptance quality alongside. Cost per accepted
 result versus accepted tasks/hour is a useful alternate. Compare compatible

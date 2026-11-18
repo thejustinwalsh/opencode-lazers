@@ -8,12 +8,22 @@ import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import type { ModelMappingTargetInput } from "./mapping-schema.ts"
 import { ModelsDecision } from "./decision-contract.ts"
 import type { ModelDecisionConfiguration, ModelDecisionFilters } from "./decision-contract.ts"
-import { comparisonChartKeyboardOrder } from "./comparison-chart.tsx"
+import {
+  benchmarkChartPoints,
+  benchmarkSourceName,
+  comparisonChartKeyboardOrder,
+  comparisonChartMarks,
+  observedChartPoints,
+  projectedChartPoints,
+  referenceAmount,
+} from "./chart-data.ts"
+import { buildCatalogSet, tokenProfile } from "./catalog-projection.ts"
+import type { CatalogEntry, ObservedFacts } from "./catalog-projection.ts"
 import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
-import type { ComparisonChartPoint, ComparisonChartReference } from "./comparison-chart.tsx"
+import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
@@ -33,7 +43,6 @@ import {
   routeLabel,
   selectedModelFacts,
 } from "./comparison-presentation.ts"
-import { benchmarkSourceName } from "./benchmark-chart.tsx"
 import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
@@ -94,7 +103,6 @@ export function createModelsController(props: ModelsProps) {
     new ModelComparisonPanelState(() => {}).data,
   )
   const [split, setSplit] = createSignal(initial.split)
-  const [chartHeight, setChartHeight] = createSignal<number>()
   const [assignmentPersona, setAssignmentPersona] = createSignal<WorkerPersona | null>(null)
   const [assignmentScope, setAssignmentScope] =
     createSignal<ModelMappingTargetInput["scope"]>("project")
@@ -681,11 +689,131 @@ export function createModelsController(props: ModelsProps) {
   })
   const observedPlottedModels = () =>
     comparisonChartKeyboardOrder(decisionChartPoints(), decisionChartReferences()).length
+  // -- The model set: observed, routed and catalog models, projected where unobserved --------
+  /** Routes named by the model router: every persona's resolved route and each layer's route. */
+  const routedRoutes = createMemo(() =>
+    (visible()?.settings?.personas ?? []).flatMap((persona) =>
+      [
+        persona.resolution.route,
+        persona.layers.task?.route,
+        persona.layers.project?.route,
+        persona.layers.shared?.route,
+      ].flatMap((route) => (route ? [{ providerID: route.providerID, modelID: route.id }] : [])),
+    ),
+  )
+  const observedFactsByRoute = createMemo(() => {
+    const facts = new Map<string, ObservedFacts>()
+    for (const mark of comparisonChartMarks({
+      points: decisionChartPoints(),
+      references: decisionChartReferences(),
+      frontierConfigurationIDs: [],
+    })) {
+      if (!mark.route) continue
+      const key = routeKey({ providerID: mark.route.providerID, modelID: mark.route.modelID })
+      // Efforts are one model here; the best-sampled effort speaks for it.
+      if ((facts.get(key)?.accepted ?? -1) >= (mark.accepted ?? 0)) continue
+      facts.set(key, {
+        configurationID: mark.configurationID,
+        usd: mark.amount,
+        ...(mark.range ? { range: mark.range } : {}),
+        tokens: mark.tokens,
+        accepted: mark.accepted ?? 0,
+        terminal: mark.terminal ?? null,
+      })
+    }
+    // A model with a price but no token measurement is listed in the table, not plotted.
+    for (const reference of decisionChartReferences()) {
+      const amount = referenceAmount(reference.estimate)
+      const route = reference.estimate.route
+      const key = routeKey({ providerID: route.providerID, modelID: route.modelID })
+      if (!amount || facts.has(key)) continue
+      facts.set(key, {
+        configurationID: reference.configurationID,
+        usd: amount.kind === "scalar" || amount.kind === "subtotal" ? amount.value : amount.minimum,
+        ...(amount.kind === "range" || amount.kind === "subtotal-range"
+          ? { range: { minimum: amount.minimum, maximum: amount.maximum } }
+          : {}),
+        tokens: null,
+        accepted: reference.estimate.acceptedTaskCount,
+        terminal: null,
+      })
+    }
+    return facts
+  })
+  /** Median tokens per accepted task by category across our observed configurations. */
+  const profile = createMemo(() =>
+    tokenProfile(
+      (visible()?.decisionOverview?.graph.referenceEstimates ?? []).map((item) => {
+        const categories = item.estimate.coverage.categories
+        return {
+          accepted: item.estimate.acceptedTaskCount,
+          tokens: {
+            uncachedInput: categories.uncachedInput.tokens,
+            cacheRead: categories.cacheRead.tokens,
+            cacheWrite: categories.cacheWrite.tokens,
+            output: categories.output.tokens,
+            reasoning: categories.reasoning.tokens,
+          },
+        }
+      }),
+    ),
+  )
+  const catalogEntries = createMemo(() => {
+    const panel = visible()
+    if (!panel) return []
+    const candidates = panel.candidates
+    const routes = candidates.map((candidate) => ({ ...candidate.identity, variant: null }))
+    const catalog = panel.catalog?.options ?? []
+    return buildCatalogSet({
+      candidates,
+      priceSources: priceSourceOrder().sources,
+      sourceDates: {
+        openrouter: comparisonSource("openrouter-models")?.snapshot?.retrievedAt ?? null,
+        opencode: comparisonSource("native-catalog")?.snapshot?.retrievedAt ?? null,
+      },
+      profile: profile(),
+      observed: observedFactsByRoute(),
+      routed: routedRoutes(),
+      label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
+    })
+  })
+  const observedPriceSourceName = () =>
+    ({ openrouter: "OpenRouter", opencode: "OpenCode", mixed: "Configured" })[
+      (visible()?.decisionOverview?.context.priceIndex.source ?? "") as
+        "openrouter" | "opencode" | "mixed"
+    ]
+  const observedPoints = createMemo(() => {
+    return observedChartPoints(
+      {
+        points: decisionChartPoints(),
+        references: decisionChartReferences(),
+        frontierConfigurationIDs: [],
+      },
+      observedPriceSourceName(),
+    )
+  })
+  const projectedPoints = createMemo(() => projectedChartPoints(catalogEntries()))
+  const benchmarkPoints = createMemo(() => benchmarkChartPoints(baseline()?.points ?? []))
+  /** The one catalog line while source data is still arriving, else nothing. */
+  const catalogLoadingLine = () => {
+    const panel = visible()
+    if (compareMode() === "observed" || !panel) return undefined
+    if (!panel.comparisonLoading && !panel.comparison?.nextCursor) return undefined
+    const names = priceSourceOrder().sources.map((source) => benchmarkSourceName[source])
+    return `Loading catalog · ${names.join(", ")}`
+  }
+  // The catalog is read a page at a time in the background once the first paint is done.
+  createEffect(() => {
+    const panel = visible()
+    if (panel?.decisionOverview && panel.comparison?.nextCursor && !panel.comparisonLoading)
+      void state.moreCandidates()
+  })
   /** Benchmark leads only when observations are sparse and the baseline has data. */
-  const compareMode = (): "observed" | "benchmark" => {
+  const compareMode = (): "observed" | "projected" | "benchmark" => {
     const chosen = prefs().compareMode
     if (chosen) return chosen
     if (!visible()?.decisionOverview) return "observed"
+    // Projected is a choice, never the default: it is not backed by the user's runs alone.
     return observedPlottedModels() < 2 && (baseline()?.points.length ?? 0) > 0
       ? "benchmark"
       : "observed"
@@ -741,7 +869,30 @@ export function createModelsController(props: ModelsProps) {
       ...(tasks ? { progress: `${tasks} task${tasks === 1 ? "" : "s"} so far` } : {}),
     }
   })
-  const selectCompareMode = (mode: "observed" | "benchmark") => save({ compareMode: mode })
+  /** The row to mark as selected in "All models": by configuration when observed. */
+  const allModelsSelectedID = () => {
+    const configurationID = visible()?.selectedConfigurationID
+    if (compareMode() === "observed" && configurationID)
+      return (
+        catalogEntries().find((item) => item.observed?.configurationID === configurationID)?.id ??
+        null
+      )
+    return visible()?.selectedCandidateID ?? null
+  }
+  /** A table row selects its point: the observed configuration, or the candidate in Projected. */
+  const selectEntry = (entry: CatalogEntry) => {
+    if (compareMode() === "observed" && entry.observed) {
+      state.selectConfiguration(entry.observed.configurationID)
+      return
+    }
+    if (compareMode() === "benchmark") state.selectCandidate(entry.id)
+    else {
+      selectCompareMode("projected")
+      state.selectCandidate(entry.id)
+    }
+  }
+  const selectCompareMode = (mode: "observed" | "projected" | "benchmark") =>
+    save({ compareMode: mode })
   const observedScopeLabel = () => {
     const filters = visible()?.decisionFilters
     const scope = [
@@ -1240,9 +1391,16 @@ export function createModelsController(props: ModelsProps) {
     categoryRows,
     changeDecisionFilters,
     clearTaskFilter,
-    chartHeight,
     clearConfirmedAssignmentWrite,
     compareMode,
+    allModelsSelectedID,
+    selectEntry,
+    catalogEntries,
+    catalogLoadingLine,
+    observedPoints,
+    profile,
+    projectedPoints,
+    benchmarkPoints,
     pricesAsOf,
     heldInspection,
     dataMount,
@@ -1305,7 +1463,6 @@ export function createModelsController(props: ModelsProps) {
     setAssignmentPrefill,
     setAssignmentRoute,
     setAssignmentScope,
-    setChartHeight,
     setPriceSourceRevision,
     setSplit,
     showObservedFor,

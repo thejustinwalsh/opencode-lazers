@@ -1325,6 +1325,7 @@ function buildSnapshotData(
         currentMarketUSDPerAcceptedTask: efficiency.currentMarketUSDPerAcceptedTask,
         observationCount: efficiency.observationCount,
         acceptedTaskCount: row.cohort.acceptedTaskCount,
+        terminalTaskCount: row.cohort.terminalTaskCount,
         partial: efficiency.status === "partial",
       },
     ]
