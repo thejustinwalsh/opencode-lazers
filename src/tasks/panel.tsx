@@ -719,6 +719,7 @@ function TaskPanel(
       model: executionList(),
       expanded: expandedKeys(),
       hasMore: hasMore(),
+      order: (inspected()?.tasks ?? []).map((task) => task.taskID),
     }),
   )
   const itemByKey = createMemo(() => new Map(items().map((item) => [item.key, item])))

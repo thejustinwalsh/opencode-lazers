@@ -197,7 +197,7 @@ test("counting costs a few milliseconds at the live database size", () => {
         sort: "schedule",
         search: "",
         limit: 31,
-        state: "open",
+        state: "all",
         stateCounts,
       }),
     )

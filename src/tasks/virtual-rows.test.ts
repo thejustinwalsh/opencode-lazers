@@ -198,27 +198,19 @@ test("size estimates follow the compact row height", () => {
   expect(items.map(estimateItemSize)).toEqual([32, 32, 32])
 })
 
-test("State: All lists open, accepted, integrated, then failed or cancelled, keeping priority order inside each", () => {
-  const at = (taskID: string, status: string) => ({ ...row(taskID), status })
+test("top-level rows follow the read's order, not the plan grouping; unlisted rows come last", () => {
   const list = model(
-    [
-      { ...group("p1", [at("done1", "incorporated"), at("open1", "running")]), priority: 1 },
-      {
-        ...group("p2", [at("acc", "accepted"), at("open2", "queued"), at("bad", "failed")]),
-        priority: 2,
-      },
-    ],
-    [at("cancelled", "cancelled"), at("open3", "ready")],
+    [{ ...group("p1", [row("a"), row("b")]), priority: 1 }, group("p2", [row("c")])],
+    [row("u")],
   )
-  expect(taskItems(flatten(list)).map((item) => item.row.taskID)).toEqual([
-    "open1",
-    "open2",
-    "open3",
-    "acc",
-    "done1",
-    "bad",
-    "cancelled",
-  ])
+  const items = flattenExecutionList({
+    model: list,
+    expanded: new Set(),
+    order: ["c", "u", "b"],
+  })
+  expect(taskItems(items).map((item) => item.row.taskID)).toEqual(["c", "u", "b", "a"])
+  // Without an order the model order stands.
+  expect(taskItems(flatten(list)).map((item) => item.row.taskID)).toEqual(["a", "b", "c", "u"])
 })
 
 test("priority rides on listed rows only and is omitted for none", () => {
