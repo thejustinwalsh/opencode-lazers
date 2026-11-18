@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
+import { isAgentSubject } from "./agent-ids.ts"
 import { ModelMappingUpdateSchema } from "./mapping-schema.ts"
 import {
   ModelMappingWriteOutputSchema,
@@ -10,7 +11,10 @@ import {
 import { ModelSettingsService } from "./service.ts"
 import { TaskRepository } from "../storage.ts"
 
-type ModelToolContext = Pick<Plugin.Context, "tool" | "permission">
+type ModelToolContext = Pick<Plugin.Context, "tool" | "permission"> & {
+  /** Re-runs the agent transforms after an agent route changes. */
+  agent?: Pick<Plugin.Context["agent"], "reload">
+}
 
 /** Register the Architect Code Mode surface against the same persisted mapping authority as RPC. */
 export function registerModelTools(ctx: ModelToolContext, repository: TaskRepository) {
@@ -62,7 +66,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
     editor.add({
       name: "lz-configure-models",
       description:
-        "Architect-only exact route update for a shared, project or existing project-task persona mapping. Supply the current expectedRevision; stale writes return a conflict with the current record and are never retried automatically. Use route null to remove an override and reveal inheritance.",
+        "Architect-only exact route update for a shared, project or existing project-task persona mapping, or a shared or project route for an agent (architect, lazers-implementor, auditor). Supply the current expectedRevision; stale writes return a conflict with the current record and are never retried automatically. Use route null to remove an override and reveal inheritance.",
       input: ModelMappingUpdateSchema,
       output: ModelMappingWriteOutputSchema,
       options: { codemode: true, pinned: true, permission: "lz-configure-models" },
@@ -85,6 +89,8 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
                   const output = withRepository((connection) =>
                     new ModelSettingsService(connection).configure(input),
                   )
+                  if (ctx.agent && output.status === "updated" && isAgentSubject(input.persona))
+                    await Effect.runPromise(ctx.agent.reload())
                   return { content: JSON.stringify(output), output }
                 },
                 catch: (error) =>

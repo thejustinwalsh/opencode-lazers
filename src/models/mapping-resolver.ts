@@ -1,4 +1,10 @@
 import { workerPersonaLabels } from "../personas/index.ts"
+import { agentLabels, isAgentSubject } from "./agent-ids.ts"
+
+const subjectLabel = (subject: string) =>
+  isAgentSubject(subject)
+    ? agentLabels[subject]
+    : workerPersonaLabels[subject as keyof typeof workerPersonaLabels]
 import {
   ModelMappingResolutionInputSchema,
   ModelMappingResolutionSchema,
@@ -26,7 +32,7 @@ export class ModelMappingResolver {
         schemaVersion: 1,
         status: "unassigned",
         persona: request.persona,
-        personaLabel: workerPersonaLabels[request.persona],
+        personaLabel: subjectLabel(request.persona),
         route: null,
         provenance: null,
       })
@@ -35,7 +41,7 @@ export class ModelMappingResolver {
       schemaVersion: 1,
       status: "assigned",
       persona: request.persona,
-      personaLabel: workerPersonaLabels[request.persona],
+      personaLabel: subjectLabel(request.persona),
       route: winner.route,
       provenance: { target: winner.target, revision: winner.revision },
     })

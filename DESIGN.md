@@ -355,6 +355,17 @@ listed them (when it is configured) and scored on the same basis; they are never
 route. A policy saved before models.dev existed gains it, last, when read; an explicitly empty
 list stays empty.
 
+Agent routes: Architect, Implementor and Auditor are top-level assignments beside the three
+persona kinds. They are rows in the same versioned mapping store (all projects, this project;
+never per task), saved through the same RPC. Each agent's model comes from, in order: the
+LAZERS route (project, then shared), the agent's native OpenCode configuration, then a plugin
+default (the Auditor only; Architect and Implementor use the session or default model). The
+agent transforms (`registerArchitect`, `registerWorker`) set `agent.model` (and its `variant`,
+the effort) from the route, and saving an agent route calls `ctx.agent.reload()` so the next
+session starts on it without a restart. An Implementor attempt resolves persona route, then the
+Implementor agent route (the transformed native agent), then native configuration. Architect
+sessions LAZERS creates or continues use the configured route over the carried model.
+
 Every cross-source join (native routes, OpenRouter, models.dev, Epoch, our recorded runs and
 routes) goes through one name identity resolver (`name-identity.ts`): family, version, tier
 words, size and variants make an identity; dates, `latest`, `preview`, `:free`, routing and

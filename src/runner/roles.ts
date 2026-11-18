@@ -9,6 +9,8 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
+import { applyAgentRoute } from "../models/agent-route-apply.ts"
+import type { AgentRouteReader } from "../models/agent-route-apply.ts"
 
 /** The Auditor's model when native OpenCode configuration pins none. */
 export const AUDITOR_DEFAULT_MODEL = {
@@ -20,7 +22,28 @@ export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
   ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
 
-export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
+/**
+ * The Implementor and Auditor agents. Model precedence per agent: the LAZERS route (this
+ * project's, else the shared one), then the native OpenCode configuration, then (Auditor only)
+ * the plugin default. An Implementor attempt's persona route still wins at dispatch.
+ */
+/**
+ * One agent's model. A LAZERS route (this project's, else the shared one) wins; otherwise the
+ * native OpenCode configuration already on the agent stands; the Auditor alone has a plugin
+ * default beneath that. Exported for tests.
+ */
+export function applyWorkerModel(
+  id: string,
+  agent: { model?: unknown },
+  routes?: AgentRouteReader,
+) {
+  const set = routes?.(id)
+  if (set) applyAgentRoute(agent, set.route)
+  else if (id === "auditor")
+    agent.model ??= Schema.decodeUnknownSync(Model.Ref)(AUDITOR_DEFAULT_MODEL)
+}
+
+export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?: AgentRouteReader) {
   return Effect.gen(function* () {
     yield* ctx.agent.transform((editor) =>
       ["lazers-implementor", "auditor"].forEach((id) =>
@@ -35,8 +58,7 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore) {
           agent.system = [source.trim(), ...(id === "auditor" ? [auditSource.trim()] : [])].join(
             "\n\n",
           )
-          if (id === "auditor")
-            agent.model ??= Schema.decodeUnknownSync(Model.Ref)(AUDITOR_DEFAULT_MODEL)
+          applyWorkerModel(id, agent, routes)
           // Preserve native defaults and configured rules before our delegation denials.
           const permissions: typeof agent.permissions = [
             ...Agent.Info.default(Agent.ID.make(id)).permissions,

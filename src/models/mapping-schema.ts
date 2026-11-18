@@ -1,5 +1,6 @@
 import { z } from "zod"
-import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
+import { ModelPolicy } from "../runner/schema.ts"
+import { ModelMappingSubject } from "./agent-ids.ts"
 
 export const ModelMappingTargetInputSchema = z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("shared") }),
@@ -21,7 +22,7 @@ export type ModelMappingTarget = z.infer<typeof ModelMappingTargetSchema>
 
 export const ModelMappingUpdateSchema = z.strictObject({
   target: ModelMappingTargetInputSchema,
-  persona: WorkerPersona,
+  persona: ModelMappingSubject,
   expectedRevision: z.int().nonnegative(),
   /** Null removes an override while retaining its revision in history. */
   route: ModelPolicy.nullable(),
@@ -31,7 +32,7 @@ export type ModelMappingUpdate = z.infer<typeof ModelMappingUpdateSchema>
 export const ModelMappingRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
   target: ModelMappingTargetSchema,
-  persona: WorkerPersona,
+  persona: ModelMappingSubject,
   revision: z.int().positive(),
   route: ModelPolicy.nullable(),
   updatedAt: z.int().nonnegative(),
@@ -39,7 +40,7 @@ export const ModelMappingRecordSchema = z.strictObject({
 export type ModelMappingRecord = z.infer<typeof ModelMappingRecordSchema>
 
 export const ModelMappingResolutionInputSchema = z.strictObject({
-  persona: WorkerPersona,
+  persona: ModelMappingSubject,
   taskID: z.uuid().optional(),
 })
 export type ModelMappingResolutionInput = z.infer<typeof ModelMappingResolutionInputSchema>
@@ -53,7 +54,7 @@ export const ModelMappingResolutionSchema = z.discriminatedUnion("status", [
   z.strictObject({
     schemaVersion: z.literal(1),
     status: z.literal("assigned"),
-    persona: WorkerPersona,
+    persona: ModelMappingSubject,
     personaLabel: z.string().min(1),
     route: ModelPolicy,
     provenance: ModelMappingProvenanceSchema,
@@ -61,7 +62,7 @@ export const ModelMappingResolutionSchema = z.discriminatedUnion("status", [
   z.strictObject({
     schemaVersion: z.literal(1),
     status: z.literal("unassigned"),
-    persona: WorkerPersona,
+    persona: ModelMappingSubject,
     personaLabel: z.string().min(1),
     route: z.null(),
     provenance: z.null(),

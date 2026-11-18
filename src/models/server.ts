@@ -26,6 +26,7 @@ import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import { readAgentRoutes } from "./agent-routes.ts"
+import { isAgentSubject } from "./agent-ids.ts"
 import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
 /** A background refresh gives up after this long. */
@@ -371,7 +372,17 @@ export function registerModelsServer(
             )
             signal.throwIfAborted()
             const output = withService((service) => service.settings({ taskID: request.taskID }))
-            const agents = await readAgentRoutes(ctx, signal)
+            // The agents' LAZERS routes: the effective model is read back from the host (after the
+            // transform applied it), and the source word says whose route it is.
+            const set = new Map(
+              withService((service) =>
+                ["architect", "lazers-implementor", "auditor"].flatMap((id) => {
+                  const route = service.mappings.agentRoute(id)
+                  return route ? [[id, route] as const] : []
+                }),
+              ),
+            )
+            const agents = await readAgentRoutes(ctx, signal, (id) => set.get(id) ?? null)
             return ModelSettingsOutputSchema.parse({ ...output, agents })
           },
           catch: failure,
@@ -397,9 +408,14 @@ export function registerModelsServer(
               expectedRevision: request.expectedRevision,
               route: request.route,
             }
-            return ModelMappingWriteOutputSchema.parse(
+            const written = ModelMappingWriteOutputSchema.parse(
               withService((service) => service.configure(update)),
             )
+            // An agent's route is applied by its transform: run the transforms again so OpenCode
+            // starts the next session of that agent on the new model, without a restart.
+            if (written.status === "updated" && isAgentSubject(update.persona))
+              await Effect.runPromise(ctx.agent.reload(), { signal })
+            return written
           },
           catch: failure,
         }).pipe(Effect.orDie),

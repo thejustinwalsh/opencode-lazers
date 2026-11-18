@@ -7,7 +7,10 @@ import { ModelSettingsInputSchema, ModelSettingsOutputSchema } from "./contract.
 import type { ModelSettingsInput, ModelSettingsOutput } from "./contract.ts"
 import type { TaskRepository } from "../storage.ts"
 
+import { LAZERS_AGENTS, agentLabels, isAgentSubject } from "./agent-ids.ts"
+
 const personas = ["ui", "systems", "small-refactoring"] as const
+const subjects = [...personas, ...LAZERS_AGENTS.map((agent) => agent.agentID)] as const
 
 /** One project-scoped facade over the existing durable mapping store and resolver. */
 export class ModelSettingsService {
@@ -32,9 +35,12 @@ export class ModelSettingsService {
       ModelSettingsOutputSchema.parse({
         projectDirectory: this.repository.projectDirectory,
         taskID: request.taskID ?? null,
-        personas: personas.map((persona) => ({
+        // Personas first, then the agents: all are routes in the one versioned store.
+        personas: subjects.map((persona) => ({
           persona,
-          personaLabel: workerPersonaLabels[persona],
+          personaLabel: isAgentSubject(persona)
+            ? agentLabels[persona]
+            : workerPersonaLabels[persona],
           layers: this.mappings.layers(persona, request.taskID),
           resolution: this.resolver.resolve({
             persona,
@@ -47,7 +53,11 @@ export class ModelSettingsService {
 
   configure(input: unknown) {
     const update: ModelMappingUpdate = ModelMappingUpdateSchema.parse(input)
-    if (update.target.scope === "task") this.ensureTask(update.target.taskID)
+    if (update.target.scope === "task") {
+      // An agent is the same agent in every task; only personas can be overridden per task.
+      if (isAgentSubject(update.persona)) throw new Error("An agent route is not task-scoped")
+      this.ensureTask(update.target.taskID)
+    }
     return this.mappings.update(update)
   }
 }

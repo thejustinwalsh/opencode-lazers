@@ -12,7 +12,8 @@ import type {
   ModelMappingTargetInput,
   ModelMappingUpdate,
 } from "./mapping-schema.ts"
-import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
+import type { ModelPolicy } from "../runner/schema.ts"
+import type { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
 import type {
   ModelDecisionConfigurations,
   ModelDecisionContext,

@@ -4,7 +4,9 @@ import type { PanelProps } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
-import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
+import type { ModelPolicy } from "../runner/schema.ts"
+import { isAgentSubject } from "./agent-ids.ts"
+import type { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
 import type { ModelMappingTargetInput } from "./mapping-schema.ts"
 import { ModelsDecision } from "./decision-contract.ts"
 import type { ModelDecisionConfiguration, ModelDecisionFilters } from "./decision-contract.ts"
@@ -1076,9 +1078,13 @@ export function createModelsController(props: ModelsProps) {
       : (visible()?.selectedTaskID ?? "Choose a task for comparison")
   }
   const projectLabel = () => current()?.project.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project"
-  const personas = () => visible()?.settings?.personas ?? []
+  const subjects = () => visible()?.settings?.personas ?? []
+  /** The worker personas: what a compared model is assigned to. */
+  const personas = () => subjects().filter((entry) => !isAgentSubject(entry.persona))
+  /** Architect, Implementor and Auditor, with the effective model each starts on. */
+  const agentSubjects = () => subjects().filter((entry) => isAgentSubject(entry.persona))
   const assignmentSettings = () =>
-    personas().find((persona) => persona.persona === assignmentPersona())
+    subjects().find((persona) => persona.persona === assignmentPersona())
   const assignmentLayer = () => assignmentSettings()?.layers[assignmentScope()] ?? null
   const catalogOptions = () =>
     (visible()?.catalog?.options ?? []).filter((option) => option.enabled !== false)
@@ -1501,6 +1507,7 @@ export function createModelsController(props: ModelsProps) {
     openContributorTrajectory,
     openSelectedTrajectory,
     personas,
+    agentSubjects,
     agentRoutes,
     prefs,
     priceSourceOrder,

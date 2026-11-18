@@ -4,22 +4,17 @@ import { Effect } from "effect"
 import { AUDITOR_DEFAULT_MODEL } from "../runner/roles.ts"
 import type { ModelPolicy } from "../runner/schema.ts"
 
-/** Every agent LAZERS itself starts, in display order. OpenCode's own built-ins are not here. */
-export const LAZERS_AGENTS = [
-  { agentID: "architect", label: "Architect" },
-  { agentID: "lazers-implementor", label: "Implementor" },
-  { agentID: "auditor", label: "Auditor" },
-] as const
-
-export type LazersAgentID = (typeof LAZERS_AGENTS)[number]["agentID"]
+import { LAZERS_AGENTS } from "./agent-ids.ts"
+export { LAZERS_AGENTS }
+type LazersAgentID = (typeof LAZERS_AGENTS)[number]["agentID"]
 
 export type AgentRoute = {
   agentID: LazersAgentID
   label: string
   /** The effective model; null when the agent pins none and uses the session's. */
   model: ModelPolicy | null
-  /** `plugin-default` only for the Auditor when native configuration pinned nothing. */
-  source: "native" | "plugin-default" | "none"
+  /** `project` or `shared` when a LAZERS route is set; `plugin-default` only for the Auditor. */
+  source: "project" | "shared" | "native" | "plugin-default" | "none"
 }
 
 /**
@@ -30,21 +25,32 @@ export type AgentRoute = {
 export async function readAgentRoutes(
   ctx: Pick<Plugin.Context, "agent">,
   signal?: AbortSignal,
+  /** Where each agent's LAZERS route comes from, when one is set. */
+  lazers: (agentID: string) => {
+    scope: "project" | "shared"
+    route: ModelPolicy
+  } | null = () => null,
 ): Promise<AgentRoute[]> {
   return Promise.all(
     LAZERS_AGENTS.map(async ({ agentID, label }): Promise<AgentRoute> => {
       try {
+        const set = lazers(agentID)
         const { data } = await Effect.runPromise(
           ctx.agent.get({ agentID: Agent.ID.make(agentID) }),
           signal ? { signal } : undefined,
         )
         const ref = data.model
-        if (!ref) return { agentID, label, model: null, source: "none" }
-        const model: ModelPolicy = {
-          providerID: String(ref.providerID),
-          id: String(ref.id),
-          ...(ref.variant !== undefined ? { variant: String(ref.variant) } : {}),
-        }
+        // The host's effective model wins (it is what a session will use); a LAZERS route the
+        // host has not applied yet is still the configured model.
+        const model: ModelPolicy | null = ref
+          ? {
+              providerID: String(ref.providerID),
+              id: String(ref.id),
+              ...(ref.variant !== undefined ? { variant: String(ref.variant) } : {}),
+            }
+          : (set?.route ?? null)
+        if (set) return { agentID, label, model, source: set.scope }
+        if (!model) return { agentID, label, model: null, source: "none" }
         const isDefault =
           agentID === "auditor" &&
           model.providerID === AUDITOR_DEFAULT_MODEL.providerID &&

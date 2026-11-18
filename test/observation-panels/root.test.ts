@@ -2851,7 +2851,25 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(agentRows[1]!.textContent).toContain("Uses the session model")
     expect(agentRows[2]!.textContent).toContain("muse-spark-1.3-contributor")
     expect(agentRows[2]!.textContent).toContain("default")
-    expect(agentRows.every((row) => row.tagName !== "BUTTON")).toBe(true)
+    // The agent rows are editable assignments like the personas: buttons, with the source word.
+    expect(agentRows.every((row) => row.tagName === "BUTTON")).toBe(true)
+    expect(agentRows[0]!.textContent).toContain("OpenCode")
+    expect(containerA.textContent).not.toContain("set in OpenCode agent settings")
+    expect(containerA.textContent).toContain("Used when LAZERS starts or continues an Architect")
+    agentRows[0]!.click()
+    expect(agentRows[0]!.getAttribute("aria-pressed")).toBe("true")
+    const agentEditor = containerA.querySelector<HTMLElement>(
+      ".lazers-models-inspector .lazers-models-assignment-editor",
+    )
+    expect(agentEditor).not.toBeNull()
+    // An agent is the same in every task: no task scope is offered for it.
+    expect(
+      [...agentEditor!.querySelectorAll("button")].some(
+        (button) => button.textContent === "This task",
+      ),
+    ).toBe(false)
+    // Implementor's kinds stay indented beneath it and read as inheriting its default.
+    expect(containerA.querySelector("[data-persona-row]")?.textContent).toBeDefined()
     const rowForPersona = (label: string) =>
       assignmentRows().find((row) => row.querySelector("strong")?.textContent === label)!
     expect(assignmentRows()).toHaveLength(3)
