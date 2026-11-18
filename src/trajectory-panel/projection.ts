@@ -5,6 +5,8 @@ import type {
   TrajectoryHistoryResponse,
   TrajectoryResponse,
 } from "../observability/contract.ts"
+import { buildAxis } from "./axis.ts"
+import type { Axis } from "./axis.ts"
 import { trajectoryChanges } from "./events.ts"
 import type { TrajectoryChange, TrajectoryEventSource } from "./events.ts"
 import { z } from "zod"
@@ -451,9 +453,20 @@ export type CheckTimeline = RecordedCheck & {
   pointOnly: boolean
   visible: boolean
 }
+/** A compressed idle stretch, positioned by the same axis as every mark. */
+export type IdleBreak = {
+  startMs: number
+  endMs: number
+  label: string
+  left: number
+  width: number
+}
 export type Timeline = {
   origin: number | null
   durationMs: number
+  /** The shared time-to-position transform; absent only for an empty timeline. */
+  axis?: Axis
+  breaks?: IdleBreak[]
   ticks: TimelineTick[]
   attempts: AttemptTimeline[]
   checks: CheckTimeline[]
@@ -654,6 +667,8 @@ export function buildTimeline(
   report?: TrajectoryReport,
   asOf?: number | null,
   extraTimes: readonly number[] = [],
+  /** Compress known idle stretches; only once every captured page is loaded. */
+  compressIdle = false,
 ): Timeline {
   const attempts = timelineAttempts(snapshot, taskID, report)
   const checks = timelineChecks(snapshot, taskID, report)
@@ -677,7 +692,18 @@ export function buildTimeline(
   const ticks: TimelineTick[] = []
   for (let elapsed = 0; elapsed <= durationMs; elapsed += step)
     ticks.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
-  const position = (at: number) => Math.max(0, Math.min(100, ((at - origin) / durationMs) * 100))
+  const axis = buildAxis(
+    durationMs,
+    values.map((value) => value - origin),
+    compressIdle,
+  )
+  const position = (at: number) => axis.place(at - origin)
+  const breaks = axis.idle.map((span) => ({
+    ...span,
+    label: `${elapsedLabel(span.endMs - span.startMs)} idle`,
+    left: axis.place(span.startMs),
+    width: axis.place(span.endMs) - axis.place(span.startMs),
+  }))
   const attemptsWithGeometry = attempts.map((attempt) => {
     const executions =
       attempt.executions.length > 0
@@ -744,6 +770,8 @@ export function buildTimeline(
   return {
     origin,
     durationMs,
+    axis,
+    breaks,
     ticks,
     attempts: attemptsWithGeometry,
     checks: checksWithGeometry,

@@ -1,3 +1,4 @@
+import { linearAxis } from "./axis.ts"
 import { isActiveAttemptState } from "./projection.ts"
 import type { Timeline, TrajectoryEvent } from "./projection.ts"
 
@@ -152,17 +153,15 @@ function mergedOutcome(events: TrajectoryEvent[], attemptActive: boolean): Outco
  * events and LAZERS progress facts for the same `sessionID + callID` become one mark.
  */
 export function buildTracks(
-  timeline: Pick<Timeline, "origin" | "durationMs">,
+  timeline: Pick<Timeline, "origin" | "durationMs" | "axis">,
   events: readonly TrajectoryEvent[],
   attemptStates: ReadonlyMap<string, string>,
   pendingAfter: number | null = null,
 ): Tracks {
   const origin = timeline.origin
   const duration = timeline.durationMs
-  const left = (at: number) =>
-    origin === null || duration <= 0
-      ? 0
-      : Math.max(0, Math.min(100, ((at - origin) / duration) * 100))
+  const axis = timeline.axis ?? linearAxis(duration)
+  const left = (at: number) => (origin === null || duration <= 0 ? 0 : axis.place(at - origin))
 
   const calls = new Map<string, Call>()
   const gaps: GapMark[] = []

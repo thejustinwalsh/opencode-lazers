@@ -216,6 +216,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     loadingActivity: false,
     stale: false,
     error: "",
+    asOf: null,
   })
   const [split, setSplit] = createSignal(initial.split)
   const [zoom, setZoom] = createSignal(1)
