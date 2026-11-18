@@ -954,12 +954,14 @@ span.lazers-models-assignment-route {
 
 .lazers-models-form-row > div:not(.lazers-models-segmented),
 .lazers-models-form-row > div:not(.lazers-models-segmented) > button,
+.lazers-models-form-row > button,
 .lazers-models-form-control {
   width: 100%;
 }
 
 /* Full-width control: mono value on the left, chevron at the right edge. */
 .lazers-models-form-control,
+.lazers-models-form-row > button,
 .lazers-models-form-row > div:not(.lazers-models-segmented) > button {
   flex-direction: row-reverse;
   justify-content: space-between;

@@ -605,8 +605,10 @@ export function comparisonChartOptions(
         amount: point.currentMarketUSDPerAcceptedTask,
       })
     }
-    for (const item of referenceMarks) {
+    // One name per selection: the reference range is labelled only when no point carries it.
+    for (const item of selectedLabels.size ? [] : referenceMarks) {
       if (item.reference.configurationID !== data.selectedConfigurationID) continue
+      if (selectedLabels.size) break
       const amount =
         item.amount.kind === "scalar" || item.amount.kind === "subtotal"
           ? item.amount.value
