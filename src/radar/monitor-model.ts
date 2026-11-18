@@ -92,6 +92,7 @@ export function sessionTask(session: LiveSession) {
   return session.assignment ? `Task ${shortID(session.assignment.taskID)}` : null
 }
 
+/** The state word, or undefined when the read gives none; the view omits the segment. */
 export function sessionState(session: LiveSession) {
   if (session.availability !== "available") return words(session.availability)
   const base = session.assignment
@@ -100,8 +101,16 @@ export function sessionState(session: LiveSession) {
       ? "Busy"
       : session.state === "idle"
         ? "Idle"
-        : "State unknown"
+        : undefined
+  if (!base) return undefined
   return session.freshness === "stale" ? `${base} · stale` : base
+}
+
+/** Visual tone of a session's state: running work, idle, or away. */
+export function sessionTone(session: LiveSession): "running" | "idle" | "away" {
+  if (session.availability !== "available") return "away"
+  if (session.assignment || session.state === "busy") return "running"
+  return session.state === "idle" ? "idle" : "away"
 }
 
 function modelLabel(route: LiveRoute) {
@@ -124,9 +133,9 @@ export function sessionModel(live: Live, session: LiveSession) {
     return {
       label: modelLabel(configured),
       basis: "configured" as const,
-      detail: `${configured.providerID} / ${modelLabel(configured)} · configured, not yet observed`,
+      detail: `${configured.providerID} / ${modelLabel(configured)}`,
     }
-  return { label: "", basis: "none" as const, detail: "Model not observed" }
+  return undefined
 }
 
 export function routeDetail(live: Live, routeID: string | null) {
@@ -153,7 +162,7 @@ function callStatus(status: string): Extract<ActivityLine, { kind: "call" }>["st
 }
 
 export function callStatusWord(status: Extract<ActivityLine, { kind: "call" }>["status"]) {
-  return status === "not-run" ? "not run" : status === "unknown" ? "status unknown" : status
+  return status === "not-run" ? "not run" : status === "unknown" ? "" : status
 }
 
 function callTargets(call: LiveCall) {
@@ -214,7 +223,7 @@ export function flowPhase(item: LiveFlow, live?: Live) {
 const callTime = (call: LiveCall) => call.inputAt ?? call.calledAt ?? call.observedAt
 
 /** Calls from runner records; sessions without them fall back to native tool phases by call ID. */
-function sessionCalls(live: Live, sessionID: string) {
+export function sessionCallLines(live: Live, sessionID: string) {
   const recorded = live.calls.filter((call) => call.sessionID === sessionID)
   if (recorded.length > 0)
     return recorded.map((call): Extract<ActivityLine, { kind: "call" }> => {
@@ -224,7 +233,7 @@ function sessionCalls(live: Live, sessionID: string) {
         id: call.id,
         sessionID,
         callID: call.callID,
-        tool: call.tool ?? "Unknown tool",
+        tool: call.tool ?? "Tool",
         status,
         current: status === "starting" || status === "running",
         ...callTargets(call),
@@ -250,7 +259,7 @@ function sessionCalls(live: Live, sessionID: string) {
       id: `flow-call:${callID}`,
       sessionID,
       callID,
-      tool: latest.tool ?? items.find((item) => item.tool)?.tool ?? "Unknown tool",
+      tool: latest.tool ?? items.find((item) => item.tool)?.tool ?? "Tool",
       status,
       current,
       target: null,
@@ -270,7 +279,7 @@ function sessionCalls(live: Live, sessionID: string) {
  */
 export function sessionActivity(live: Live, session: LiveSession): SessionActivity {
   const sessionID = session.sessionID
-  const calls = sessionCalls(live, sessionID)
+  const calls = sessionCallLines(live, sessionID)
   const current = calls.filter((call) => call.current)
   const finished = calls
     .filter((call) => !call.current)
@@ -318,23 +327,6 @@ export function sessionActivity(live: Live, session: LiveSession): SessionActivi
   return { lines, lastActivityAt: times.length ? Math.max(...times) : null }
 }
 
-export function schedulerLabel(status: Live["scheduler"]["status"]) {
-  switch (status) {
-    case "scheduled":
-      return "Scheduler running"
-    case "draining":
-      return "Scheduler draining"
-    case "registered":
-      return "Scheduler registered"
-    case "absent":
-      return "No scheduler"
-    case "stale":
-      return "Scheduler stale"
-    default:
-      return "Scheduler unknown"
-  }
-}
-
 /** Recorded-state rank: active or assigned work leads, then idle, then unknown. */
 function sessionRank(session: LiveSession) {
   if (session.state === "busy" || session.assignment) return 0
@@ -343,37 +335,73 @@ function sessionRank(session: LiveSession) {
 
 /**
  * Available sessions lead in recorded-state order; the server's order is kept within a rank so
- * rows only move when their state changes. Unavailable (historical) sessions are grouped apart.
+ * rows only move when their state changes. Workers (sessions holding an assignment) nest under
+ * the current Architect when it is in the read. The live read carries no explicit parent
+ * relation, so this is derived from `isCurrentArchitect` and `assignment`.
+ * Unavailable (historical) sessions are grouped apart.
  */
 export function sessionGroups(live: Live) {
   const available = live.sessions.filter((session) => session.availability === "available")
+  const ranked = available
+    .map((session, index) => ({ session, index }))
+    .toSorted(
+      (left, right) =>
+        sessionRank(left.session) - sessionRank(right.session) || left.index - right.index,
+    )
+    .map(({ session }) => session)
+  const architect = ranked.find((session) => session.isCurrentArchitect === true)
+  const nested = (session: LiveSession) =>
+    architect !== undefined && session !== architect && session.assignment !== null
   return {
-    leading: available
-      .map((session, index) => ({ session, index }))
-      .toSorted(
-        (left, right) =>
-          sessionRank(left.session) - sessionRank(right.session) || left.index - right.index,
-      )
-      .map(({ session }) => session.sessionID),
+    leading: ranked.filter((session) => !nested(session)).map((session) => session.sessionID),
+    children: new Map<string, string[]>(
+      architect
+        ? [[architect.sessionID, ranked.filter(nested).map((session) => session.sessionID)]]
+        : [],
+    ),
     unavailable: live.sessions
       .filter((session) => session.availability !== "available")
       .map((session) => session.sessionID),
   }
 }
 
-/** One compact status line; unavailable sessions are counted by their own group. */
-export function monitorSummary(live: Live) {
+export type SummarySegment = { count: number; word: string }
+
+/**
+ * The one line under the header. Running always appears; every other segment appears only when
+ * its number exists. The live read carries no queue, failure, attention or capacity counts, so
+ * those segments are absent until a read provides them.
+ */
+export function monitorSegments(live: Live): SummarySegment[] {
   const available = live.sessions.filter((session) => session.availability === "available")
-  const busy = available.filter((session) => session.state === "busy").length
-  const idle = available.filter((session) => session.state === "idle").length
+  const verifying = available.filter((session) => session.assignment?.state === "verifying").length
+  const running = available.filter(
+    (session) =>
+      session.assignment?.state !== "verifying" &&
+      (session.assignment !== null || session.state === "busy"),
+  ).length
+  const gaps = coverageGaps(live).length
   return [
-    schedulerLabel(live.scheduler.status),
-    `${busy} active`,
-    `${idle} idle`,
-    coverageGaps(live).length ? "incomplete" : "",
+    { count: running, word: "running" },
+    ...(verifying > 0 ? [{ count: verifying, word: "verifying" }] : []),
+    ...(gaps > 0 ? [{ count: gaps, word: gaps === 1 ? "coverage gap" : "coverage gaps" }] : []),
   ]
-    .filter(Boolean)
-    .join(" · ")
+}
+
+/** What is true when nothing is running, in one plain sentence. */
+export function idleSentence(live: Live) {
+  const architect = live.sessions.find(
+    (session) => session.availability === "available" && session.isCurrentArchitect === true,
+  )
+  return architect && architect.state === "idle"
+    ? "Architect is idle and no workers are active."
+    : "No sessions are running."
+}
+
+/** True when no available session is running or verifying work. */
+export function nothingRunning(live: Live) {
+  const [running] = monitorSegments(live)
+  return running!.count === 0 && !monitorSegments(live).some((item) => item.word === "verifying")
 }
 
 export function coverageGaps(live: Live) {
@@ -394,31 +422,44 @@ export function recentFlow(live: Live, limit = 8) {
   return live.flow.toSorted((left, right) => right.observedAt - left.observedAt).slice(0, limit)
 }
 
-/** Short connection word for the header plus a full description for its tooltip. */
-export function connectionStatus(data: RadarMonitorData) {
-  const last = data.live ? ` Last update ${clockTime(data.live.observedAt)}.` : ""
-  if (data.connection === "disconnected")
+export type ConnectionChip = {
+  word: "Live" | "Reconnecting" | "Offline"
+  state: "live" | "reconnecting" | "offline"
+  detail: string
+}
+
+/** Exactly three values. "Live" is a state, not a success; it is never green. */
+export function connectionChip(
+  kind: "live" | "reconnecting" | "offline",
+  lastUpdate?: number,
+): ConnectionChip {
+  const last = finite(lastUpdate) ? ` Last update ${clockTime(lastUpdate)}.` : ""
+  if (kind === "offline")
     return { word: "Offline", state: "offline", detail: `Server disconnected.${last}` }
-  if (data.connection === "reconnecting")
-    return { word: "Reconnecting", state: "offline", detail: `Live updates reconnecting.${last}` }
-  if (data.connection === "connecting" || (data.loading && !data.live))
-    return { word: "Connecting", state: "pending", detail: "Connecting to live updates." }
-  if (data.resynchronizing)
-    return { word: "Syncing", state: "pending", detail: `Resynchronizing live activity.${last}` }
-  if (data.stale)
+  if (kind === "reconnecting")
     return {
-      word: "Partial",
-      state: "partial",
-      detail: `Live, with incomplete runner or event coverage.${last}`,
+      word: "Reconnecting",
+      state: "reconnecting",
+      detail: `Live updates reconnecting.${last}`,
     }
   return { word: "Live", state: "live", detail: `Live updates connected.${last}` }
 }
 
+export function connectionStatus(data: RadarMonitorData): ConnectionChip {
+  const last = data.live?.observedAt
+  if (data.connection === "disconnected") return connectionChip("offline", last)
+  if (data.readError && !data.live) return connectionChip("offline", last)
+  if (data.connection === "reconnecting" || data.connection === "connecting")
+    return connectionChip("reconnecting", last)
+  if (data.readError) return connectionChip("reconnecting", last)
+  return connectionChip("live", last)
+}
+
 export function clockTime(value: number | null | undefined) {
-  if (!finite(value)) return "Time unavailable"
+  if (!finite(value)) return ""
   const date = new Date(value)
   return Number.isNaN(date.getTime())
-    ? "Time unavailable"
+    ? ""
     : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 }
 

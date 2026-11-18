@@ -386,7 +386,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     const text = () => container.textContent ?? ""
     const sessionButton = (sessionID: string) =>
       [...container.querySelectorAll<HTMLButtonElement>(".lazers-radar-session-main")].find(
-        (button) => button.title === `Session ${sessionID}`,
+        (button) => button.dataset.sessionId === sessionID,
       )
     const chooseScope = async (label: string) => {
       container.querySelector<HTMLButtonElement>(".lazers-radar-scope button")!.click()
@@ -406,11 +406,31 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       sessionID: "ses-view-architect",
       includeUnmanagedSessions: false,
     })
-    expect(text()).toContain("No model or tool events in this read")
+    expect(text()).not.toContain("No model or tool events in this read")
     expect(text()).toContain("Busy · no current call observed")
-    expect(["Live", "Partial"]).toContain(
+    expect(["Live", "Reconnecting", "Offline"]).toContain(
       container.querySelector(".lazers-radar-connection")?.textContent ?? "",
     )
+    // One header; nothing is selected, so there is no inspector and no separator.
+    expect(container.querySelectorAll(".lazers-radar-header").length).toBe(1)
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-views [role="tab"]')].map(
+        (tab) => tab.textContent,
+      ),
+    ).toEqual(["Monitor", "Map", "Flow"])
+    expect(container.querySelector(".lazers-radar-monitor-inspector")).toBeNull()
+    expect(container.querySelector('[role="separator"]')).toBeNull()
+    expect(container.querySelector(".lazers-radar-monitor")?.getAttribute("data-inspector")).toBe(
+      "false",
+    )
+    expect(text()).not.toContain("Select a session to see its details")
+    const headerShape = () =>
+      [...container.querySelector(".lazers-radar-header")!.children].map(
+        (child) => child.className || child.tagName,
+      )
+    const monitorHeaderShape = headerShape()
+    expect(text()).not.toMatch(/nknown|not observed|Not reported|None reported|Unavailable/)
+    expect(text()).not.toMatch(/ses[-_]/)
     expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe("This session")
     tracker.native({
       id: "evt-ui-architect-step",
@@ -476,8 +496,9 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => modelFlow.getAttribute("aria-pressed") === "true")
     const inspectorText = () =>
       container.querySelector(".lazers-radar-monitor-inspector")?.textContent ?? ""
-    expect(inspectorText()).toContain("msg_ui_architect")
+    expect(inspectorText()).not.toContain("msg_ui_architect")
     expect(inspectorText()).toContain("openai / gpt-6-luna · high")
+    expect(container.querySelector('[role="separator"]')).not.toBeNull()
     for (const decoy of [
       "PRIVATE ARCHITECT TEXT DECOY",
       "PRIVATE ARCHITECT OUTPUT DECOY",
@@ -504,7 +525,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         lines().some((line) => line.textContent?.includes("patch failed")),
     )
     expect(sessionButton("ses-failed")?.textContent).toContain("Worker · Task")
-    expect(sessionButton("ses-failed")?.textContent).toContain("· configured")
     expect(sessionButton("ses-failed")?.textContent).toContain("Running")
     expect(
       lines().find((line) => line.textContent?.includes("patch failed"))?.textContent,
@@ -524,11 +544,18 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     )
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
     expect(inspectorText()).toContain("ses-failed")
+    expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).toContain(
+      "Worker · Task",
+    )
+    expect(
+      [...container.querySelectorAll(".lazers-radar-inspector-tabs button")].map((tab) =>
+        tab.textContent?.replace(/\d+$/, "").trim(),
+      ),
+    ).toEqual(["Calls", "Files", "Messages"])
     expect(historyRequests).toContain("ses-failed")
     const inspectorHead = container.querySelector(".lazers-radar-inspector-head")!
-    expect(inspectorHead.querySelector(".lazers-radar-inspector-icon")).not.toBeNull()
+    expect(inspectorHead.querySelector(".lazers-radar-state-dot")).not.toBeNull()
     expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
-    expect(inspectorHead.querySelector("h3")?.textContent).toContain("Worker · Task")
     const rowStates = [
       ...container.querySelectorAll(".lazers-radar-sessions .lazers-radar-session-state"),
     ].map((state) => state.textContent ?? "")
@@ -537,11 +564,10 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       rowStates.findLastIndex((state) => state === "Busy" || state === "Running"),
     )
     expect(container.querySelector(".lazers-radar-unavailable")).toBeNull()
-    const status = container.querySelector<HTMLDetailsElement>(".lazers-radar-monitor-status")!
-    expect(status.open).toBe(false)
-    expect(status.querySelector("summary")?.textContent).toMatch(/· 1 active ·/)
-    expect(status.textContent).toContain("Journal")
-    expect(inspectorText()).not.toContain("Journal")
+    const summary = container.querySelector(".lazers-radar-summary")!
+    expect(summary.textContent).toMatch(/\d+ running/)
+    expect(summary.textContent).not.toMatch(/Scheduler|active|idle/)
+    expect(container.querySelector(".lazers-radar-monitor-status")).toBeNull()
 
     const activity = container.querySelector<HTMLDivElement>(".lazers-radar-monitor-activity")!
     const readLine = lines().find((line) => line.textContent?.includes("src/worker.ts"))!
@@ -558,7 +584,7 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       )!
     linkButton("Open worker").click()
     linkButton("Open task").click()
-    linkButton("Open trajectory").click()
+    linkButton("Trajectory").click()
     expect(opened).toEqual([
       ["worker", { server: "radar-server", id: "ses-failed" }, { focus: true }],
       ["task", { taskID: expect.any(String), projectID, projectDirectory: fixture.directory }],
@@ -608,30 +634,56 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(activity.scrollTop).toBe(37)
     expect(readLine.getAttribute("aria-pressed")).toBe("true")
     expect(legacyCalls).toEqual({ snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 })
-    expect(container.querySelector(".lazers-radar-monitor-summary")?.textContent).toMatch(
-      /(Scheduler \w+|No scheduler) · 1 active · \d+ idle/,
-    )
     expect(text()).not.toContain("Tool completed")
 
+    // The ⋯ menu keeps Refresh and no longer carries Diagnostics.
     const actions = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.getAttribute("aria-label") === "Radar actions",
     )!
     actions.click()
-    ;[...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-      .find((button) => button.textContent === "Diagnostics")!
-      .click()
-    await until(() => text().includes("Live monitor"))
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map(
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Refresh"])
+    actions.click()
+    const tab = (label: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>('.lazers-radar-views [role="tab"]')].find(
+        (button) => button.textContent === label,
+      )!
+    tab("Map").click()
+    await until(() => tab("Map")?.getAttribute("aria-selected") === "true")
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(true)
-    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].map(
-      (tab) => tab.textContent,
-    )
-    expect(tabs).toEqual(["Map", "Flow"])
+    expect(container.querySelectorAll(".lazers-radar-header").length).toBe(1)
+    expect(headerShape()).toEqual(monitorHeaderShape)
+    expect(text()).not.toContain("Live monitor")
     expect(text()).not.toContain("Timeline")
-    ;[...container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Live monitor")!
-      .click()
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["Monitor", "Map", "Flow"])
+    expect(container.querySelector(".lazers-radar-scope button")?.textContent).toBe(
+      "Project · all sessions",
+    )
+    tab("Monitor").click()
     await until(() => container.querySelector(".lazers-radar-monitor") !== null)
     expect((viewStore.value as { diagnostics?: boolean }).diagnostics).toBe(false)
+    expect(headerShape()).toEqual(monitorHeaderShape)
+
+    // Losing the service keeps the last sessions on screen, dimmed, under one banner.
+    session.server.connected = false
+    tracker.native({
+      id: "evt-ui-offline",
+      type: "session.updated",
+      data: { sessionID: "ses-failed" },
+    })
+    await until(() => container.querySelector(".lazers-panel-banner") !== null)
+    expect(container.querySelectorAll(".lazers-panel-banner").length).toBe(1)
+    expect(container.querySelector(".lazers-radar-connection")?.textContent).toBe("Offline")
+    expect(container.querySelector('[data-panel-dimmed="true"]')).not.toBeNull()
+    expect(sessionButton("ses-failed")).toBeDefined()
+    expect(text()).not.toMatch(/Syncing|Connecting|Transport|Timed out/)
   } finally {
     mounted?.dispose()
     disposeSetup?.()

@@ -14,6 +14,10 @@ export type RadarMonitorData = {
   stale: boolean
   resynchronizing: boolean
   error: string
+  /** Raw text of the last failed read or dropped link; cleared by the next good read. */
+  readError?: string
+  /** Epoch ms the kept `live` snapshot was last confirmed current. */
+  asOf?: number
   connection: "connecting" | "connected" | "reconnecting" | "disconnected"
   selectedSessionID: string | null
   history?: LiveHistoryResponse
@@ -225,6 +229,7 @@ export class RadarMonitorState {
             stale: true,
             resynchronizing: true,
             connection: "disconnected",
+            readError: "Server disconnected",
             error: this.data.live
               ? "Server disconnected; showing the last live observation."
               : "Server disconnected; live observation is unavailable.",
@@ -296,6 +301,8 @@ export class RadarMonitorState {
         )
         this.update({
           live: response,
+          asOf: Date.now(),
+          readError: "",
           loading: false,
           stale,
           resynchronizing: recovering,
@@ -327,6 +334,7 @@ export class RadarMonitorState {
           stale: true,
           resynchronizing: true,
           connection: transport.online() ? "connected" : "disconnected",
+          readError: panelErrorMessage(error),
           error: this.data.live
             ? `Live refresh failed; showing the last observation. ${panelErrorMessage(error)}`
             : `Live observation is unavailable. ${panelErrorMessage(error)}`,
@@ -354,6 +362,7 @@ export class RadarMonitorState {
           stale: true,
           resynchronizing: true,
           connection: transport.online() ? "reconnecting" : "disconnected",
+          readError: transport.online() ? panelErrorMessage(error) : "Server disconnected",
           error: transport.online()
             ? `Live updates disconnected; reconnecting. ${panelErrorMessage(error)}`
             : "Server disconnected; showing the last live observation.",

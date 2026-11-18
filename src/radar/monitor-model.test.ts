@@ -7,7 +7,12 @@ import {
   formatAge,
   formatDuration,
   lineView,
-  monitorSummary,
+  monitorSegments,
+  idleSentence,
+  nothingRunning,
+  connectionChip,
+  clockTime,
+  callStatusWord,
   recentFlow,
   sessionActivity,
   sessionGroups,
@@ -184,7 +189,7 @@ test("session identity uses role, short task, assignment state and the observed 
   })
   expect(
     sessionModel(live(), session({ observedRouteID: null, configuredRouteID: null })),
-  ).toMatchObject({ label: "", basis: "none" })
+  ).toBeUndefined()
 })
 
 test("concurrent calls stay distinct with the latest finished call and observed targets only", () => {
@@ -309,20 +314,36 @@ test("model phases and native-only tool phases describe sessions without runner 
   expect(recentFlow(response, 2).map((item) => item.id)).toEqual(["flow:step", "flow:tool-done"])
 })
 
-test("header summary, coverage gaps and connection words are distinct and neutral", () => {
+test("summary segments, coverage gaps and the three connection words", () => {
   const response = live({
     sessions: [
       session(),
-      session({ sessionID: "ses-idle", state: "idle" }),
+      session({ sessionID: "ses-idle", state: "idle", assignment: null }),
       session({ sessionID: "ses-gone", state: "unknown", availability: "missing" }),
     ],
   })
-  expect(monitorSummary(response)).toBe("Scheduler running · 1 active · 1 idle")
+  expect(monitorSegments(response)).toEqual([{ count: 1, word: "running" }])
   expect(
-    monitorSummary(
+    monitorSegments(
       live({ ...response, coverage: { ...response.coverage, journalTruncated: true } }),
     ),
-  ).toBe("Scheduler running · 1 active · 1 idle · incomplete")
+  ).toEqual([
+    { count: 1, word: "running" },
+    { count: 1, word: "coverage gap" },
+  ])
+  expect(
+    monitorSegments(
+      live({
+        sessions: [
+          session({ assignment: { ...session().assignment!, state: "verifying" } }),
+          session({ sessionID: "ses-two" }),
+        ],
+      }),
+    ),
+  ).toEqual([
+    { count: 1, word: "running" },
+    { count: 1, word: "verifying" },
+  ])
   expect(coverageGaps(response)).toEqual([])
   expect(coverageGaps(live({ coverage: { ...response.coverage, callsTruncated: true } }))).toEqual([
     "calls",
@@ -341,18 +362,59 @@ test("header summary, coverage gaps and connection words are distinct and neutra
     historyError: "",
     ...change,
   })
-  expect(connectionStatus(data({})).word).toBe("Live")
-  expect(connectionStatus(data({ stale: true })).word).toBe("Partial")
-  expect(connectionStatus(data({ stale: true, resynchronizing: true })).word).toBe("Syncing")
-  expect(connectionStatus(data({ connection: "reconnecting" })).word).toBe("Reconnecting")
-  expect(connectionStatus(data({ connection: "disconnected" }))).toMatchObject({
-    word: "Offline",
-    state: "offline",
-  })
+  const words = [
+    connectionStatus(data({})),
+    connectionStatus(data({ stale: true, resynchronizing: true })),
+    connectionStatus(data({ connection: "reconnecting" })),
+    connectionStatus(data({ connection: "disconnected" })),
+    connectionStatus(data({ live: undefined, loading: true, connection: "connecting" })),
+    connectionStatus(data({ readError: "Timed out" })),
+    connectionStatus(data({ live: undefined, readError: "Timed out" })),
+  ].map((chip) => chip.word)
+  expect(words).toEqual([
+    "Live",
+    "Live",
+    "Reconnecting",
+    "Offline",
+    "Reconnecting",
+    "Reconnecting",
+    "Offline",
+  ])
+  expect(connectionStatus(data({})).state).toBe("live")
   expect(connectionStatus(data({ connection: "disconnected" })).detail).toContain("Last update")
-  expect(
-    connectionStatus(data({ live: undefined, loading: true, connection: "connecting" })).word,
-  ).toBe("Connecting")
+  expect(connectionChip("live").detail).not.toContain("Last update")
+})
+
+test("idle state names what is true and omits what is not", () => {
+  const idle = live({
+    sessions: [
+      session({ sessionID: "ses-arch", isCurrentArchitect: true, state: "idle", assignment: null }),
+    ],
+  })
+  expect(nothingRunning(idle)).toBe(true)
+  expect(idleSentence(idle)).toBe("Architect is idle and no workers are active.")
+  expect(nothingRunning(live({ sessions: [session()] }))).toBe(false)
+  expect(idleSentence(live({ sessions: [] }))).toBe("No sessions are running.")
+})
+
+test("missing facts are omitted, never rendered as unknown", () => {
+  const bare = session({
+    state: "unknown",
+    assignment: null,
+    observedRouteID: null,
+    configuredRouteID: null,
+    selectedRouteID: null,
+  })
+  expect(sessionState(bare)).toBeUndefined()
+  expect(sessionModel(live(), bare)).toBeUndefined()
+  expect(clockTime(null)).toBe("")
+  expect(callStatusWord("unknown")).toBe("")
+  expect(sessionModel(live(), session({ observedRouteID: null }))?.detail).not.toContain(
+    "not yet observed",
+  )
+  const toolless = live({ calls: [call({ tool: null })], sessions: [session()] })
+  const lines = sessionActivity(toolless, session()).lines
+  expect(JSON.stringify(lines.map((line) => lineView(line)))).not.toMatch(/nknown|navailable/)
 })
 
 test("durations and ages are compact and labelled", () => {
@@ -377,9 +439,23 @@ test("active and assigned sessions lead; unavailable historical sessions are gro
       session({ sessionID: "ses-busy", state: "busy", assignment: null }),
     ],
   })
-  expect(sessionGroups(response)).toEqual({
-    leading: ["ses-assigned", "ses-busy", "ses-idle", "ses-unknown"],
-    unavailable: ["ses-gone-1", "ses-gone-2"],
+  const groups = sessionGroups(response)
+  expect(groups.leading).toEqual(["ses-assigned", "ses-busy", "ses-idle", "ses-unknown"])
+  expect(groups.unavailable).toEqual(["ses-gone-1", "ses-gone-2"])
+  expect(groups.children.size).toBe(0)
+  expect(monitorSegments(response)).toEqual([{ count: 2, word: "running" }])
+})
+
+test("workers nest under the current Architect, in rank order", () => {
+  const response = live({
+    sessions: [
+      session({ sessionID: "ses-w1" }),
+      session({ sessionID: "ses-arch", isCurrentArchitect: true, state: "idle", assignment: null }),
+      session({ sessionID: "ses-other", state: "idle", assignment: null }),
+      session({ sessionID: "ses-w2" }),
+    ],
   })
-  expect(monitorSummary(response)).toBe("Scheduler running · 1 active · 2 idle")
+  const groups = sessionGroups(response)
+  expect(groups.leading).toEqual(["ses-arch", "ses-other"])
+  expect(groups.children.get("ses-arch")).toEqual(["ses-w1", "ses-w2"])
 })

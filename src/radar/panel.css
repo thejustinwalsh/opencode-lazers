@@ -25,46 +25,6 @@
   max-width: 100%;
   font: inherit;
 }
-.lazers-radar-header {
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px 8px;
-}
-.lazers-radar-heading {
-  min-width: 0;
-  width: 100%;
-  display: flex;
-  flex: 1 1 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.lazers-radar-heading h2 {
-  min-width: 0;
-  margin: 0;
-  font-size: 1em;
-  font-weight: 600;
-}
-.lazers-radar-status-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border: 1.5px solid var(--text-base);
-  border-radius: 50%;
-  background: var(--text-base);
-}
-.lazers-radar-status-dot[data-stale="true"] {
-  border-style: dashed;
-  background: transparent;
-}
-.lazers-radar-heading .lazers-radar-scope {
-  margin-left: auto;
-}
 .lazers-radar-scope button,
 .lazers-radar-picker button {
   max-width: 100%;
@@ -80,15 +40,6 @@
 .lazers-radar-picker button:hover {
   background: var(--surface-base-hover);
   color: var(--text-strong);
-}
-.lazers-radar-controls {
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
 }
 .lazers-radar-pickers {
   min-width: 0;
@@ -107,52 +58,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.lazers-radar-tabs {
-  min-width: 0;
-  display: flex;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-  border-bottom: 1px solid var(--border-weak-base);
-}
-.lazers-radar-tabs button {
-  position: relative;
-  min-height: 30px;
-  padding: 4px 2px 6px;
-  border: 0;
-  background: transparent;
-  color: var(--text-weak);
-  cursor: pointer;
-}
-.lazers-radar-tabs button[aria-selected="true"] {
-  color: var(--text-strong);
-}
-.lazers-radar-tabs button[aria-selected="true"]::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: var(--border-selected);
-  content: "";
-}
-.lazers-radar-other-sessions {
-  min-height: 28px;
-  flex: 0 1 auto;
-  padding: 3px 8px;
-  border: 1px solid var(--border-weak-base);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-weak);
-  font-size: 0.82em;
-  cursor: pointer;
-}
-.lazers-radar-other-sessions[aria-pressed="true"] {
-  border-color: var(--border-selected);
-  color: var(--text-strong);
 }
 .lazers-radar-visual,
 .lazers-radar-detail {
@@ -205,102 +110,6 @@
   --radar-inset: 16px;
   --radar-row-icon: 16px;
   --radar-row-gap: 8px;
-}
-.lazers-radar-monitor-header {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-  padding: 12px var(--radar-inset) 8px;
-}
-.lazers-radar-monitor-bar {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.lazers-radar-monitor-bar h2 {
-  flex: none;
-  margin: 0;
-  font-size: 1em;
-  font-weight: 600;
-}
-.lazers-radar-monitor-bar .lazers-radar-scope {
-  min-width: 0;
-  flex: 0 1 auto;
-}
-.lazers-radar-monitor-bar .lazers-radar-scope button {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lazers-radar-connection {
-  min-width: 0;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  color: var(--text-weak);
-  font-size: 0.86em;
-  white-space: nowrap;
-}
-.lazers-radar-connection-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border: 1.5px solid var(--text-base);
-  border-radius: 50%;
-  background: var(--text-base);
-}
-.lazers-radar-connection[data-state="pending"] .lazers-radar-connection-dot,
-.lazers-radar-connection[data-state="partial"] .lazers-radar-connection-dot {
-  background: transparent;
-}
-.lazers-radar-connection[data-state="offline"] {
-  color: var(--text-warning-base, var(--text-weak));
-}
-.lazers-radar-connection[data-state="offline"] .lazers-radar-connection-dot {
-  border-style: dashed;
-  border-color: currentColor;
-  background: transparent;
-}
-.lazers-radar-monitor-status {
-  min-width: 0;
-  color: var(--text-weak);
-  font-size: 0.9em;
-  line-height: 1.4;
-}
-.lazers-radar-monitor-status > summary {
-  min-height: 24px;
-  padding: 2px 0;
-  cursor: pointer;
-}
-.lazers-radar-monitor-summary {
-  display: inline-flex;
-  max-width: calc(100% - 16px);
-  align-items: baseline;
-  gap: 4px;
-  vertical-align: top;
-}
-.lazers-radar-monitor-summary > span {
-  min-width: 0;
-  overflow-wrap: break-word;
-}
-.lazers-radar-monitor-status .lazers-radar-facts {
-  display: grid;
-  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
-  gap: 4px 12px;
-  margin: 4px 0 4px 16px;
-}
-.lazers-radar-monitor-status .lazers-radar-facts dt {
-  color: var(--text-weak);
-}
-.lazers-radar-monitor-status .lazers-radar-facts dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-base);
-  overflow-wrap: break-word;
 }
 .lazers-radar-unavailable {
   min-width: 0;
@@ -422,10 +231,6 @@
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.lazers-radar-session-model[data-basis="none"],
-.lazers-radar-session-basis {
-  color: var(--text-weak);
 }
 .lazers-radar-session-main > .lazers-radar-session-age {
   grid-area: age;
@@ -642,7 +447,8 @@ button.lazers-radar-line:hover,
 }
 @container lazers-radar (max-width: 360px) {
   /* The container is the panel root, so narrow spacing is set on its regions. */
-  .lazers-radar-monitor-header,
+  .lazers-radar-header,
+  .lazers-radar-top,
   .lazers-radar-monitor-activity,
   .lazers-radar-monitor-inspector {
     --radar-inset: 12px;
@@ -1262,10 +1068,6 @@ button.lazers-radar-line:hover,
   cursor: pointer;
 }
 @container lazers-radar (max-width: 360px) {
-  .lazers-radar-header {
-    padding-right: 12px;
-    padding-left: 12px;
-  }
   .lazers-radar-visual {
     padding-right: 12px;
     padding-left: 12px;
@@ -1278,4 +1080,255 @@ button.lazers-radar-line:hover,
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* One header for every view; nothing in it moves between Monitor, Map and Flow. */
+.lazers-radar-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px var(--radar-inset, 16px) 8px;
+}
+.lazers-radar-header h2 {
+  flex: none;
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+.lazers-radar-views {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 7px;
+}
+.lazers-radar-views button {
+  min-height: 24px;
+  padding: 1px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-radar-views button:hover {
+  color: var(--text-strong);
+}
+.lazers-radar-views button[aria-selected="true"] {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-radar-connection {
+  min-width: 0;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--text-weak);
+  font-size: 0.86em;
+  white-space: nowrap;
+}
+.lazers-radar-connection-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--icon-interactive-base, var(--text-base));
+}
+.lazers-radar-connection[data-state="reconnecting"],
+.lazers-radar-connection[data-state="offline"] {
+  color: var(--text-warning-base, var(--text-weak));
+}
+.lazers-radar-connection[data-state="reconnecting"] .lazers-radar-connection-dot,
+.lazers-radar-connection[data-state="offline"] .lazers-radar-connection-dot {
+  background: var(--icon-warning-base, currentColor);
+}
+.lazers-radar-header .lazers-radar-scope {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.lazers-radar-header .lazers-radar-scope button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Grid rows: the inspector and its separator exist only while something is selected. */
+.lazers-radar[data-inspector="false"] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.lazers-radar-monitor {
+  grid-template-rows:
+    auto
+    auto
+    minmax(0, var(--radar-visual-fr, 60fr))
+    6px
+    minmax(0, var(--radar-detail-fr, 40fr));
+}
+.lazers-radar-monitor[data-inspector="false"] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.lazers-radar-top {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.lazers-radar-top:empty {
+  display: none;
+}
+.lazers-radar-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 0;
+  padding: 0 var(--radar-inset, 16px) 8px;
+  color: var(--text-weak);
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-radar-summary strong {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* Workers sit under their Architect, joined by a guide line. */
+.lazers-radar-session-children {
+  min-width: 0;
+  display: grid;
+  margin: 0 0 0 calc(var(--radar-row-icon) / 2 + 8px);
+  padding: 0 0 0 8px;
+  border-left: 1px solid var(--border-base);
+  list-style: none;
+}
+.lazers-radar-session-children > .lazers-radar-session {
+  padding: 2px 0 4px;
+  border-bottom: 0;
+}
+.lazers-radar-session[data-selected="true"] {
+  background: transparent;
+}
+.lazers-radar-session[data-selected="true"] > .lazers-radar-session-main {
+  background: var(--surface-base-hover);
+}
+.lazers-radar-session-main > .lazers-radar-session-state[data-tone="running"] {
+  color: var(--text-interactive-base, var(--text-base));
+}
+
+.lazers-radar-idle {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 20px 16px 12px;
+  text-align: center;
+}
+.lazers-radar-idle h3 {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+}
+.lazers-radar-idle p {
+  margin: 0;
+  color: var(--text-weak);
+}
+
+/* Inspector */
+.lazers-radar-monitor-inspector .lazers-radar-inspector-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+.lazers-radar-monitor-inspector .lazers-radar-inspector-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: auto;
+  grid-row: auto;
+  color: var(--text-base);
+}
+.lazers-radar-state-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-weak);
+}
+.lazers-radar-inspector-state[data-tone="running"] .lazers-radar-state-dot {
+  background: var(--icon-interactive-base, var(--text-base));
+}
+.lazers-radar-monitor-inspector .lazers-radar-links {
+  margin: 0;
+}
+.lazers-radar-inspector-title {
+  margin: 6px 0 4px;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+.lazers-radar-facts-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0 0 8px;
+  color: var(--text-base);
+  font-size: 0.9em;
+}
+.lazers-radar-facts-line em {
+  color: var(--text-weak);
+  font-style: normal;
+}
+.lazers-radar-monitor-inspector .lazers-radar-inspector-block {
+  margin-left: 0;
+}
+.lazers-radar-inspector-tabs {
+  display: flex;
+  gap: 14px;
+  margin: 8px 0 4px;
+  border-bottom: 1px solid var(--border-weak-base);
+}
+.lazers-radar-inspector-tabs button {
+  position: relative;
+  min-height: 28px;
+  padding: 3px 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+.lazers-radar-inspector-tabs button span {
+  font-variant-numeric: tabular-nums;
+}
+.lazers-radar-inspector-tabs button[aria-selected="true"] {
+  color: var(--text-strong);
+}
+.lazers-radar-inspector-tabs button[aria-selected="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--border-selected);
+  content: "";
+}
+.lazers-radar-inspector-list {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lazers-radar-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+.lazers-radar-visual > .lazers-radar-loading,
+.lazers-radar-visual > .lazers-radar-failed {
+  padding-left: 0;
+  padding-right: 0;
 }
