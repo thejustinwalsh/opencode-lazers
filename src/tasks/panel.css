@@ -193,7 +193,7 @@
 }
 @container lazers-tasks (min-width: 480px) {
   .lazers-tasks-detail {
-    padding: 16px 24px 16px;
+    padding: 16px;
   }
   .lazers-tasks-header {
     padding-inline: 20px;
@@ -261,7 +261,7 @@
   /* A clamped box hides its overflow, so a scrolling flex column would shrink it to nothing. */
   flex: none;
   margin-top: -6px;
-  font-size: 16px;
+  font-size: 14.5px;
   font-weight: 600;
   line-height: 1.35;
   color: var(--text-strong);
