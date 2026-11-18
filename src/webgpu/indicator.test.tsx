@@ -53,10 +53,12 @@ test("registered header renders truthful names and icon-only status", async () =
     try {
       const registration = registrations.find((entry) => entry.token === Slot)?.value as {
         at: string
-        render: () => unknown
+        render: (input: { compact: boolean }) => unknown
       }
       expect(registration.at).toBe("session.header")
-      const html = renderToString(() => registration.render() as never)
+      const render = (compact = false) =>
+        renderToString(() => registration.render({ compact }) as never)
+      const html = render()
       expect(html).toContain('<button type="button"')
       expect(html).toContain('aria-label="LFM3: Loading. Open LAZERS settings."')
       expect(tooltipValues.at(-1)).toBe("LFM3: Loading. Open LAZERS settings.")
@@ -65,7 +67,7 @@ test("registered header renders truthful names and icon-only status", async () =
 
       setModelName("d1")
       setPhase("ready")
-      const available = renderToString(() => registration.render() as never)
+      const available = render()
       expect(available).toContain('<span class="lazers-local-model">d1</span>')
       expect(available).toContain('aria-label="d1: Available. Open LAZERS settings."')
       expect(available).toContain('data-phase="ready"')
@@ -73,14 +75,20 @@ test("registered header renders truthful names and icon-only status", async () =
       expect(visibleButtonText(available)).toBe("d1")
 
       setPhase("error")
-      const failed = renderToString(() => registration.render() as never)
+      // A compact header keeps the glyph and its accessible name, and drops the visible name.
+      const compact = render(true)
+      expect(compact).toContain('aria-label="d1: Error. Open LAZERS settings."')
+      expect(compact).toContain("lazers-gpu-error")
+      expect(visibleButtonText(compact)).toBe("")
+
+      const failed = render()
       expect(failed).toContain('aria-label="d1: Error. Open LAZERS settings."')
       expect(failed).toContain('data-phase="error"')
       expect(failed).toContain("lazers-gpu-error")
       expect(visibleButtonText(failed)).toBe("d1")
 
       setModelName(undefined)
-      const unknown = renderToString(() => registration.render() as never)
+      const unknown = render()
       expect(unknown).not.toContain("LFM3")
       expect(unknown).not.toContain(">d1</span>")
       expect(unknown).toContain('aria-label="Local inference: Error. Open LAZERS settings."')
@@ -125,6 +133,10 @@ test("the indicator uses a native keyboard control, semantic theme colors and re
     expect(inferenceIndicatorStyles).toContain("font: inherit")
     expect(inferenceIndicatorStyles).toContain("prefers-reduced-motion: reduce")
     expect(inferenceIndicatorStyles).not.toMatch(/#[\da-f]{3,8}\b/i)
+    // Sized to the host's 26px header controls, with a 16px glyph.
+    expect(inferenceIndicatorStyles).toContain("height: 26px")
+    expect(inferenceIndicatorStyles).toContain("min-width: 26px")
+    expect(html).toContain('width="16"')
   } finally {
     await vite.close()
   }

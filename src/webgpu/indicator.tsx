@@ -28,6 +28,8 @@ export function InferenceIndicator(props: {
   runtime: IndicatorRuntime
   Tooltip: Tooltip
   onSettings: () => void
+  /** A compact header drops the name and keeps the state glyph. */
+  compact?: boolean
 }) {
   const name = () => props.runtime.modelName()
   const phase = () => props.runtime.phase()
@@ -47,14 +49,14 @@ export function InferenceIndicator(props: {
         data-phase={phase()}
         onClick={props.onSettings}
       >
-        <Show when={name()}>
+        <Show when={!props.compact && name()}>
           {(shortName) => <span class="lazers-local-model">{shortName()}</span>}
         </Show>
         <svg
           class="lazers-local-status-icon"
           viewBox="0 0 24 24"
-          width="22"
-          height="22"
+          width="16"
+          height="16"
           fill="none"
           aria-hidden="true"
         >
@@ -92,27 +94,32 @@ export function registerInferenceIndicator(
   visible: () => boolean,
   onSettings: () => void,
 ) {
-  const Icon = bindPlugin(() => (
-    <InferenceIndicator runtime={runtime} Tooltip={ctx.ui.Tooltip} onSettings={onSettings} />
+  const Icon = bindPlugin((props: { compact: boolean }) => (
+    <InferenceIndicator
+      runtime={runtime}
+      Tooltip={ctx.ui.Tooltip}
+      onSettings={onSettings}
+      compact={props.compact}
+    />
   ))
   ctx.add(Slot, {
     at: "session.header",
-    render: () => (
+    render: (input) => (
       <Show when={visible()}>
-        <Icon />
+        <Icon compact={input.compact} />
       </Show>
     ),
   })
 }
 
 export const inferenceIndicatorStyles = `
-  .lazers-local-icon { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 40px; max-width: 100%; height: 40px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text-weak); font: inherit; white-space: nowrap; cursor: pointer; }
+  .lazers-local-icon { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 26px; max-width: 100%; height: 26px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text-weak); font: inherit; white-space: nowrap; cursor: pointer; }
   .lazers-local-icon:hover { background: var(--surface-base-hover); }
   .lazers-local-icon:focus-visible { outline: 2px solid var(--text-base); outline-offset: -2px; }
   .lazers-local-icon:active .lazers-local-status-icon { transform: scale(.94); }
   .lazers-local-model { flex: 0 0 auto; font-size: 12px; font-weight: 500; }
-  .lazers-local-status-icon { flex: 0 0 22px; color: var(--icon-base); }
-  .lazers-local-status-icon .lazers-gpu-track { stroke: currentColor; stroke-width: 1.3; opacity: .2; }
+  .lazers-local-status-icon { flex: 0 0 16px; color: var(--icon-base); }
+  .lazers-local-status-icon .lazers-gpu-track { stroke: currentColor; stroke-width: 1.5; opacity: .25; }
   .lazers-local-status-icon .lazers-gpu-orbit path { stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
   .lazers-local-status-icon .lazers-gpu-available { stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .lazers-local-status-icon .lazers-gpu-core { stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
