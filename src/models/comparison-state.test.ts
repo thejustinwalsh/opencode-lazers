@@ -23,7 +23,7 @@ import {
 } from "./decision-contract.ts"
 import type { ModelDecisionContext, ModelDecisionFilters } from "./decision-contract.ts"
 import type { ModelComparisonPanelData, ModelComparisonTransport } from "./comparison-state.ts"
-import { ModelComparisonPanelState } from "./comparison-state.ts"
+import { ModelComparisonPanelState, isSeedable } from "./comparison-state.ts"
 import {
   decisionConfigurations,
   decisionContext,
@@ -2066,6 +2066,122 @@ test("late mapping responses cannot replace a newly selected task", async () => 
     expect(state.data.settings?.taskID).toBe(idB)
     expect(state.data.settings?.personas[0]?.layers.task?.route?.id).toBe("route-20")
     expect(state.data.assignmentWrite).toBeUndefined()
+  } finally {
+    state.close()
+  }
+})
+
+test("a seeded connection shows the last snapshot at once and refreshes it in place", async () => {
+  const filters = decisionRead.filters
+  const good = coherentDecisionPage("/repo", filters, "snapshot:coherent")
+  const first = new ModelComparisonPanelState(() => {})
+  first.connect(
+    "remount-key",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async () => good.overview,
+      decisionRows: async () => good.rows,
+      decisionConfigurations: async () => good.configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  await until(() => first.data.decisionStatus === "ready" && !first.data.decisionRowsLoading)
+  const remembered = first.data
+  first.close()
+  expect(isSeedable(remembered)).toBe(true)
+
+  // The refresh never returns in this test: whatever shows is what was kept.
+  const never = () => new Promise<never>(() => {})
+  const second = new ModelComparisonPanelState(() => {})
+  second.connect(
+    "remount-key",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: never,
+      comparison: never,
+      refreshSources: never,
+      decisionOverview: never,
+      decisionRows: never,
+      decisionConfigurations: never,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+    remembered,
+  )
+  try {
+    expect(second.data.decisionOverview).toBe(remembered.decisionOverview)
+    expect(second.data.decisionStatus).toBe("ready")
+    expect(second.data.decisionRows).toBe(remembered.decisionRows)
+    expect(second.data.candidates).toBe(remembered.candidates)
+    // Loading flags describe the refresh; none of them blanks the content.
+    expect(second.data.comparisonLoading).toBe(true)
+    expect(second.data.decisionError).toBe("")
+  } finally {
+    second.close()
+  }
+
+  // A snapshot with nothing to show is never restored: that connection starts from the skeleton.
+  const blankSeed = new ModelComparisonPanelState(() => {}).data
+  expect(isSeedable(blankSeed)).toBe(false)
+  const third = new ModelComparisonPanelState(() => {})
+  third.connect(
+    "remount-key",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: never,
+      comparison: never,
+      refreshSources: never,
+      decisionOverview: never,
+      decisionRows: never,
+      decisionConfigurations: never,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+    blankSeed,
+  )
+  try {
+    expect(third.data.decisionOverview).toBeUndefined()
+    expect(third.data.decisionStatus).toBe("loading")
+  } finally {
+    third.close()
+  }
+})
+
+test("switching to filters seen before shows that result at once", async () => {
+  const filters = decisionRead.filters
+  const other: ModelDecisionFilters = { ...filters, persona: "systems" }
+  const page = (value: ModelDecisionFilters) => coherentDecisionPage("/repo", value, "snapshot:a")
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "filters-key",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      decisionOverview: async (requested) => page(requested).overview,
+      decisionRows: async (requested) => page(requested).rows,
+      decisionConfigurations: async (requested) => page(requested).configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => state.data.decisionStatus === "ready" && !state.data.decisionRowsLoading)
+    const remembered: ModelComparisonPanelData = {
+      ...state.data,
+      decisionFilters: other,
+      decisionOverview: ModelDecisionOverviewOutputSchema.parse(page(other).overview),
+    }
+    state.setDecisionFilters(other, remembered)
+    // Not the skeleton: the previous result for these filters is there before any read returns.
+    expect(state.data.decisionFilters.persona).toBe("systems")
+    expect(state.data.decisionOverview).toBe(remembered.decisionOverview)
+    expect(state.data.decisionStatus).toBe("ready")
   } finally {
     state.close()
   }
