@@ -6,7 +6,7 @@ Use this reference when you change LAZERS. It describes the current package cont
 
 LAZERS is one reusable OpenCode plugin package. The server plugin registers Architect, task tools, the scheduler, and model or context tools in [`src/index.ts`](../../src/index.ts). The Desktop bundle registers Tasks, Radar, Models, Trajectory, local inference, and settings in [`src/gui.tsx`](../../src/gui.tsx).
 
-The release was tested with OpenCode Desktop 2.2.6. The plugin SDK and API baseline is 2.2.5. These facts do not define compatibility with other host versions.
+The v0.1.0 release was tested with OpenCode Desktop 2.2.6. The current plugin SDK and API baseline is 2.3.0, the version pinned in `package.json`. These facts do not define compatibility with other host versions.
 
 ## Task specifications and plans
 
