@@ -29,6 +29,7 @@ import type {
   TrajectoryReport,
 } from "./projection.ts"
 import { createTrajectoryTransport } from "./projection.ts"
+import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
 import { registerTrajectoryPanel } from "./registration.ts"
 import {
   attemptOutcome,
@@ -85,31 +86,52 @@ function selectionFrom(view: typeof initial): Selection | null {
   return { kind: view.selectedKind, id: view.selectedRecordID }
 }
 
-function formatTime(value: number | null, origin: number | null) {
-  if (value === null) return "Unknown"
-  const absolute = new Date(value).toLocaleTimeString()
-  if (origin === null) return absolute
+const clock = (value: number) =>
+  new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })
+
+/** `+2:42` from `origin`, or empty when either side is missing. */
+function offsetText(value: number, origin: number | null) {
+  if (origin === null) return ""
   const elapsed = Math.max(0, Math.round((value - origin) / 1_000))
-  const minutes = Math.floor(elapsed / 60)
-  const seconds = elapsed % 60
-  return `${absolute} · +${minutes}:${String(seconds).padStart(2, "0")}`
+  return `+${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`
 }
 
-function elapsedText(value: number) {
-  return value < 1_000 ? `${value} ms` : `${(value / 1_000).toFixed(3)} s (${value} ms)`
+/** "2:21:15 AM · +2:42 into the attempt". */
+function clockWithOffset(value: number, origin: number | null, suffix = "") {
+  const offset = offsetText(value, origin)
+  return offset ? `${clock(value)} · ${offset}${suffix}` : clock(value)
 }
 
-function endpointText(label: string, value: number | null, origin: number | null) {
-  return value === null
-    ? `${label} · unavailable`
-    : `${label} · ${value} Unix ms · ${formatTime(value, origin)}`
+const capitalize = (word: string) => (word ? word[0]!.toUpperCase() + word.slice(1) : word)
+
+const checkWord = (check: { result: string; state: string }) =>
+  check.result === "passed"
+    ? "Passed"
+    : check.result === "failed"
+      ? "Failed"
+      : capitalize(check.state)
+
+/** The task status as a glyph outcome; the word itself is always shown beside it. */
+function statusOutcome(status: string): Outcome {
+  if (["failed", "cancelled", "exhausted", "cleanup-blocked"].includes(status)) return "failed"
+  if (["accepted", "integrated", "incorporated", "completed", "done"].includes(status))
+    return "succeeded"
+  if (["running", "verifying", "preparing", "active", "in-progress"].includes(status))
+    return "running"
+  return "unknown"
+}
+
+/** The source of a timing, without the recorder's notes about what it lacks. */
+const basisText = (basis: string) => basis.split(";")[0]!.trim()
+
+const firstLine = (text: string, max = 140) => {
+  const line = text.trim().split(/\r?\n/)[0] ?? ""
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
 function timingHint(check: { startedAt: number | null; endedAt: number | null }) {
   const timing = checkTiming(check)
-  return timing.status === "known"
-    ? `duration ${elapsedText(timing.durationMs)}`
-    : `duration unavailable: ${timing.reason}`
+  return timing.status === "known" ? `duration ${durationText(timing.durationMs)}` : ""
 }
 
 type ScrollAnchor = { key: string; offset: number; scrollTop: number } | undefined
@@ -147,24 +169,17 @@ function restoreScrollAnchor(element: HTMLElement | undefined, anchor: ScrollAnc
     target.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
 }
 
+/** Clock time of a recorded event; events without a time show none. */
 function eventTime(event: TrajectoryEvent) {
-  return typeof event.at === "number" ? new Date(event.at).toLocaleTimeString() : "Time unknown"
+  return typeof event.at === "number" ? new Date(event.at).toLocaleTimeString() : ""
 }
 
 function attemptModel(attempt: TrajectoryAttempt | undefined) {
   return attempt?.observedCurrentModel ?? attempt?.admittedModel ?? null
 }
 
-function modelLabel(model: ReturnType<typeof attemptModel>) {
-  if (!model) return "Model not recorded"
+function modelLabel(model: NonNullable<ReturnType<typeof attemptModel>>) {
   return `${model.id}${model.variant ? ` · ${model.variant}` : ""}`
-}
-
-function attemptCount(report: PanelData["report"]) {
-  if (!report) return ""
-  const attempts = report.attempts.length
-  const calls = report.effort.toolCalls.count.toLocaleString()
-  return `${attempts} ${attempts === 1 ? "attempt" : "attempts"} · ${calls} tool calls`
 }
 
 /** Recorded attempt duration; an active attempt reports elapsed time as of capture. */
@@ -378,8 +393,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   const currentData = () => visible()
   const report = () => currentData()?.report
   const selection = () => currentData()?.selection ?? null
-  const selectedTask = () =>
-    currentData()?.tasks.find((task) => task.taskID === currentData()?.taskID)
   const allTaskChecks = () => (report() ? detailedChecks(report()!) : [])
   const selectedEvent = () => selectedEventFor(currentData())
   const selectedCheck = () => {
@@ -410,6 +423,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       value.report,
       capturedAt(),
       trackTimes(loadedEvents()),
+      !value.eventCursor && !value.loadingActivity,
     )
   })
   const attemptStates = createMemo(
@@ -467,10 +481,28 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     if (!line || line.origin === null || line.durationMs <= 0) return []
     const width = axisWidth()
     const step = tickStepFor(line.durationMs, width)
+    const inside = line.breaks ?? []
     const values = []
     for (let elapsed = 0; elapsed <= line.durationMs + 0.5; elapsed += step)
-      values.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
+      if (!inside.some((span) => elapsed > span.startMs && elapsed < span.endMs))
+        values.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
     return values
+  })
+  const place = (elapsedMs: number) =>
+    timeline()?.axis?.place(elapsedMs) ?? (elapsedMs / (timeline()?.durationMs || 1)) * 100
+  /** Ruler labels, thinned for width and kept clear of the idle-break labels. */
+  const rulerTicks = createMemo(() => {
+    const line = timeline()
+    const width = axisWidth()
+    const breaks = line?.breaks ?? []
+    return visibleTicks(ticks(), line?.durationMs ?? 0, width, place).filter(
+      (tick) =>
+        !breaks.some(
+          (span) =>
+            Math.abs(((place(tick.elapsedMs) - (span.left + span.width / 2)) / 100) * width) <
+            span.label.length * 3.5 + 28,
+        ),
+    )
   })
   const tickStepFor = (durationMs: number, width: number) => {
     const maximum = Math.max(2, Math.floor((width || 240) / 64))
@@ -563,7 +595,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
     })
   }
   const origin = () => timeline()?.origin ?? null
-  const timeText = (value: number | null) => formatTime(value, origin())
   const selectScope = (scope: "session" | "project") => {
     save({
       scope,
@@ -591,12 +622,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       check.error ? `error\n${check.error}` : "",
     ]
       .filter(Boolean)
-      .join("\n\n") || "No output was recorded."
+      .join("\n\n")
   const checkSources = (check: DetailedCheck) =>
     sourceReferences(`${check.stdout ?? ""}\n${check.stderr ?? ""}\n${check.error ?? ""}`)
   const checkLabel = (check: DetailedCheck) => check.command ?? check.id
   const checkResult = (check: DetailedCheck) =>
-    check.exitCode === null ? check.result : `${check.result} · exit ${check.exitCode}`
+    check.exitCode === null ? checkWord(check) : `${checkWord(check)} · exit ${check.exitCode}`
   const attemptNumber = (id: string | null) =>
     id ? report()?.attempts.find((attempt) => attempt.id === id)?.number : undefined
   const at = (value: number) => `+${elapsedLabel(Math.max(0, value - (origin() ?? value)))}`
@@ -707,67 +738,125 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
   }
 
   const OutcomeBadge = (badge: { outcome: Outcome; text?: string; result?: string }) => (
-    <span
-      class="lazers-trajectory-result lazers-trajectory-outcome"
-      data-outcome={badge.outcome}
-      data-result={badge.result}
-    >
-      <Ui.Icon name={outcomeIcon[badge.outcome]} size="small" />
-      <span>{badge.text ?? outcomeText[badge.outcome]}</span>
-    </span>
+    <Show when={badge.text ?? outcomeText[badge.outcome]}>
+      {(text) => (
+        <span
+          class="lazers-trajectory-outcome"
+          data-outcome={badge.outcome}
+          data-result={badge.result}
+        >
+          <Ui.Icon name={outcomeIcon[badge.outcome]} size="small" />
+          <span>{text()}</span>
+        </span>
+      )}
+    </Show>
   )
-  const connectionText = () =>
-    !props.session.server.connected
-      ? "Disconnected"
-      : currentData()?.stale
-        ? "Stale"
-        : currentData()?.loading && report()
-          ? "Updating"
-          : ""
-  const title = () => displayTitle(report()?.task.specification.objective ?? "")
-  const titleTruncated = () => title() !== (report()?.task.specification.objective ?? "").trim()
+  const Fact = (fact: { label: string; children: JSX.Element }) => (
+    <>
+      <dt>{fact.label}</dt>
+      <dd>{fact.children}</dd>
+    </>
+  )
+  const Disclosure = (disclosure: { title: string; note?: string; children: JSX.Element }) => (
+    <details class="lazers-trajectory-payload">
+      <summary>
+        <span>{disclosure.title}</span>
+        <Show when={disclosure.note}>
+          <span class="lazers-trajectory-disclosure-note">{disclosure.note}</span>
+        </Show>
+      </summary>
+      {disclosure.children}
+    </details>
+  )
+  const lineCount = (text: string) => {
+    const lines = text.split(/\r?\n/).length
+    return `${lines} ${lines === 1 ? "line" : "lines"}`
+  }
+  const attemptStart = (id: string | null) => {
+    const attempt = report()?.attempts.find((item) => item.id === id)
+    return attempt ? (attempt.intervals.attempt.startedAt ?? attempt.startedAt) : null
+  }
+  /** "2:21:15 AM · +2:42 into the attempt" when the owning attempt is known. */
+  const whenText = (value: number, attemptID: string | null) => {
+    const start = attemptStart(attemptID)
+    return start === null
+      ? clockWithOffset(value, origin())
+      : clockWithOffset(value, start, " into the attempt")
+  }
+  const toolCommand = (tool: ToolMark) => {
+    for (const event of toolEvents(tool)) {
+      if (typeof event.command === "string" && event.command) return event.command
+      const input = event.input
+      if (typeof input === "object" && input !== null && !Array.isArray(input)) {
+        const command = (input as Record<string, unknown>).command
+        if (typeof command === "string" && command) return command
+      }
+    }
+    return ""
+  }
+  const objective = () => (report()?.task.specification.objective ?? "").trim()
+  const title = () => firstLine(objective(), 400)
+  const objectiveLonger = () => objective() !== title()
   const headerAttempt = () => selectedAttempt() ?? report()?.attempts.at(-1)
   const headerModel = () => attemptModel(headerAttempt())
   const headerTiming = () => {
     const attempt = headerAttempt()
-    if (!attempt) return ""
-    const duration = attemptDuration(attempt, capturedAt())
-    return duration
-      ? `${durationText(duration.ms)}${duration.open ? " so far" : ""}`
-      : "duration not recorded"
+    const duration = attempt ? attemptDuration(attempt, capturedAt()) : null
+    return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
-  const coverageParts = () => {
+  const taskStatus = () => report()?.task.status ?? ""
+  const reference = () =>
+    currentData()?.taskReference ?? report()?.task.id.slice(0, 8) ?? currentData()?.taskID ?? ""
+  const status = createPanelStatus(() => ({
+    subject: "this trajectory",
+    hasContent: Boolean(report()),
+    loading: !currentData() || Boolean(currentData()?.loading),
+    disconnected: !props.session.server.connected,
+    error: currentData()?.error || (report() ? "" : (currentData()?.historyError ?? "")),
+    ...(currentData()?.asOf ? { asOf: currentData()!.asOf! } : {}),
+  }))
+  const retry = () => {
+    const value = currentData()
+    if (value && !value.report && value.historyError) void state.recaptureActivity()
+    else void state.refresh({ force: true })
+  }
+  const streaming = () => Boolean(currentData()?.eventCursor)
+  const eventsLoaded = () => currentData()?.events.length ?? 0
+  const eventsTotal = () => Math.max(currentData()?.totalEvents ?? 0, eventsLoaded())
+  const progress = () =>
+    eventsTotal() > 0 ? Math.min(100, (eventsLoaded() / eventsTotal()) * 100) : 0
+  const lastEnded = () => {
+    const ends = (report()?.attempts ?? []).flatMap((attempt) =>
+      attempt.intervals.attempt.endedAt === null ? [] : [attempt.intervals.attempt.endedAt],
+    )
+    return ends.length ? Math.max(...ends) : null
+  }
+  const gapCount = () => tracks()?.gaps.filter((gap) => gap.kind === "gap").length ?? 0
+  /** Counts that disagree or are missing. Shown once, in one disclosure, only when present. */
+  const dataGaps = () => {
     const value = tracks()
     const line = report()
     if (!value || !line) return []
-    const parts: string[] = []
-    const placed = value.tools.length
+    const notes: string[] = []
     const recorded = line.effort.toolCalls.count
-    parts.push(
-      `${placed.toLocaleString()} ${placed === 1 ? "call" : "calls"} placed` +
-        (value.untimedTools ? ` · ${value.untimedTools.toLocaleString()} without time` : "") +
-        (recorded !== placed + value.untimedTools
-          ? ` · runner counted ${recorded.toLocaleString()}`
-          : ""),
-    )
-    parts.push(
-      `${value.files.length.toLocaleString()} file ${value.files.length === 1 ? "target" : "targets"}` +
-        (value.omittedFileTargets ? ` · ${value.omittedFileTargets} without paths` : ""),
-    )
-    const gaps = value.gaps.filter((gap) => gap.kind === "gap").length
-    const compactions = value.gaps.length - gaps
-    if (gaps) parts.push(`${gaps} recording ${gaps === 1 ? "gap" : "gaps"}`)
-    if (compactions || line.coverage.compacted)
-      parts.push(
-        compactions
-          ? `${compactions} ${compactions === 1 ? "compaction" : "compactions"}`
-          : "Context compacted",
+    if (!streaming() && recorded !== value.tools.length + value.untimedTools)
+      notes.push(
+        `${value.tools.length.toLocaleString()} calls placed on the timeline, runner counted ${recorded.toLocaleString()}`,
       )
-    if (line.coverage.unavailableSessionContexts)
-      parts.push(
-        `${line.coverage.unavailableSessionContexts} worker ${line.coverage.unavailableSessionContexts === 1 ? "session" : "sessions"} unreadable`,
+    if (!streaming() && value.untimedTools)
+      notes.push(`${value.untimedTools.toLocaleString()} calls have no time and are not placed`)
+    if (value.omittedFileTargets) notes.push(`${value.omittedFileTargets} file calls have no paths`)
+    const unreadable = line.coverage.unavailableSessionContexts
+    if (unreadable)
+      notes.push(
+        `${unreadable} worker ${unreadable === 1 ? "session" : "sessions"} could not be read`,
       )
-    return parts
+    const usage = line.effort.tokenUsage
+    if (usage.knownSessions !== usage.totalSessions)
+      notes.push(
+        `${usage.knownSessions} of ${usage.totalSessions} worker sessions have token counts`,
+      )
+    return notes
   }
   const toolEvents = (tool: ToolMark) => {
     const ids = new Set([tool.id, ...tool.aliases])
@@ -808,18 +897,19 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         }}
       >
         <header class="lazers-trajectory-header">
-          <div class="lazers-trajectory-controls">
-            <span class="lazers-trajectory-task-menu">
+          <div class="lazers-trajectory-line1">
+            <Show when={report()}>
+              <span class="lazers-trajectory-state" data-outcome={statusOutcome(taskStatus())}>
+                <Ui.Icon name={outcomeIcon[statusOutcome(taskStatus())]} size="small" />
+                <span>{capitalize(taskStatus())}</span>
+              </span>
+            </Show>
+            <span
+              class="lazers-trajectory-task-menu"
+              style={{ "font-family": ctx.appearance.font("mono") }}
+            >
               <Ui.Menu
-                label={
-                  selectedTask()?.title
-                    ? displayTitle(selectedTask()!.title!)
-                    : currentData()?.taskReference
-                      ? currentData()!.taskReference!
-                      : currentData()?.taskID
-                        ? currentData()!.taskID!.slice(0, 8)
-                        : "Choose task"
-                }
+                label={reference() || "Choose task"}
                 trigger="button"
                 placement="bottom-start"
                 disabled={!currentData()?.tasks.length}
@@ -829,106 +919,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 }))}
               />
             </span>
-            <span class="lazers-trajectory-scope">
-              <Ui.Menu
-                label={prefs().scope === "session" ? "Session" : "Project"}
-                trigger="button"
-                items={[
-                  { label: "This session", onSelect: () => selectScope("session") },
-                  { label: "Project tasks", onSelect: () => selectScope("project") },
-                ]}
-              />
-            </span>
-            <Show when={connectionText()}>
-              <span
-                class="lazers-trajectory-connection"
-                data-state={connectionText().toLowerCase()}
-                title={
-                  !props.session.server.connected
-                    ? "Trajectory updates are disconnected; showing the last loaded data."
-                    : "Showing the last loaded data; updates will resume automatically."
-                }
-              >
-                {connectionText()}
-              </span>
-            </Show>
-          </div>
-          <Show when={currentData()?.error}>
-            <div class="lazers-trajectory-error" role="alert">
-              <span>{currentData()?.error}</span>
-              <Ui.Button
-                variant="ghost"
-                size="small"
-                onClick={() => void state.refresh({ force: true })}
-              >
-                Retry status
-              </Ui.Button>
-            </div>
-          </Show>
-          <Show when={!report() && currentData()?.historyError}>
-            <div class="lazers-trajectory-error" role="alert">
-              <span>{currentData()?.historyError}</span>
-              <Ui.Button
-                variant="ghost"
-                size="small"
-                busy={currentData()?.recapturingHistory}
-                onClick={() => void state.recaptureActivity()}
-              >
-                Recapture history
-              </Ui.Button>
-            </div>
-          </Show>
-          <Show
-            when={report()}
-            fallback={
-              <div class="lazers-trajectory-note" data-state="empty">
-                {!currentData() || currentData()?.loading ? (
-                  <span class="lazers-trajectory-loading">
-                    <Ui.Loader size="small" />
-                    <span>Loading trajectory</span>
-                  </span>
-                ) : currentData()?.error || currentData()?.historyError ? (
-                  ""
-                ) : !currentData()?.tasks.length ? (
-                  <>
-                    <span>
-                      {prefs().scope === "session"
-                        ? "No LAZERS tasks belong to this session."
-                        : "No LAZERS tasks belong to this project."}
-                    </span>
-                    <Show when={prefs().scope === "session"}>
-                      <Ui.Button
-                        variant="ghost"
-                        size="small"
-                        onClick={() => selectScope("project")}
-                      >
-                        Show project tasks
-                      </Ui.Button>
-                    </Show>
-                  </>
-                ) : currentData()?.taskID ? (
-                  "No trajectory has been recorded for this task yet."
-                ) : (
-                  "Choose a task to see its trajectory."
-                )}
-              </div>
-            }
-          >
-            <h2
-              class="lazers-trajectory-heading"
-              title={titleTruncated() ? report()?.task.specification.objective : undefined}
-            >
-              {title()}
-            </h2>
-            <div class="lazers-trajectory-heading-row">
-              <span
-                class="lazers-trajectory-id"
-                style={{ "font-family": ctx.appearance.font("mono") }}
-              >
-                {currentData()?.taskReference ? `${currentData()!.taskReference} · ` : ""}
-                {report()?.task.id.slice(0, 8)}
-                {report()?.task.revision ? ` · r${report()?.task.revision}` : ""}
-              </span>
+            <Show when={report()}>
               <button
                 type="button"
                 class="lazers-trajectory-icon-button lazers-trajectory-copy"
@@ -941,51 +932,122 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
               >
                 <Ui.Icon name="outline-copy" size="small" />
               </button>
-            </div>
-            <div class="lazers-trajectory-task-meta">
-              <Show when={headerAttempt()}>
-                {(attempt) => (
-                  <span class="lazers-trajectory-model">
-                    <span class="lazers-trajectory-model-name">{modelLabel(headerModel())}</span>
-                    <span class="lazers-trajectory-model-scope">
-                      Attempt {attempt().number} · {headerTiming()}
-                    </span>
+            </Show>
+            <span class="lazers-trajectory-scope">
+              <Ui.Menu
+                label={prefs().scope === "session" ? "Session" : "Project"}
+                trigger="button"
+                items={[
+                  { label: "This session", onSelect: () => selectScope("session") },
+                  { label: "Project tasks", onSelect: () => selectScope("project") },
+                ]}
+              />
+            </span>
+          </div>
+          <Show
+            when={report()}
+            fallback={
+              <Show when={status.view().kind === "ready"}>
+                <div class="lazers-trajectory-note" data-state="empty">
+                  {!currentData()?.tasks.length ? (
+                    <>
+                      <span>
+                        {prefs().scope === "session"
+                          ? "No LAZERS tasks belong to this session."
+                          : "No LAZERS tasks belong to this project."}
+                      </span>
+                      <Show when={prefs().scope === "session"}>
+                        <Ui.Button
+                          variant="ghost"
+                          size="small"
+                          onClick={() => selectScope("project")}
+                        >
+                          Show project tasks
+                        </Ui.Button>
+                      </Show>
+                    </>
+                  ) : currentData()?.taskID ? (
+                    "No trajectory has been recorded for this task yet."
+                  ) : (
+                    <>
+                      <b>Pick a task</b>
+                      <span>
+                        Trajectory shows what a worker did on one task: calls, files and checks over
+                        time. Choose one from the menu above.
+                      </span>
+                    </>
+                  )}
+                </div>
+              </Show>
+            }
+          >
+            <h2
+              class="lazers-trajectory-heading"
+              title={objectiveLonger() ? objective() : undefined}
+            >
+              {title()}
+            </h2>
+            <div class="lazers-trajectory-line3">
+              <Show when={(report()?.attempts.length ?? 0) > 0}>
+                <span class="lazers-trajectory-attempt-menu">
+                  <Ui.Menu
+                    label={`Attempt ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
+                    trigger="button"
+                    placement="bottom-start"
+                    items={(report()?.attempts ?? []).map((attempt) => ({
+                      label: `Attempt ${attempt.number} · ${attempt.state}`,
+                      onSelect: () => state.selectAttempt(attempt.id),
+                    }))}
+                  />
+                </span>
+              </Show>
+              <Show when={headerModel()}>
+                {(model) => <b class="lazers-trajectory-model-name">{modelLabel(model())}</b>}
+              </Show>
+              <Show when={headerTiming()}>
+                {(timing) => (
+                  <span>
+                    <b>{timing().text}</b> {timing().open ? "so far" : "active"}
                   </span>
                 )}
               </Show>
+              <Show when={headerAttempt()}>
+                {(attempt) => (
+                  <span>
+                    <b>{attempt().toolCount.value.toLocaleString()}</b>{" "}
+                    {attempt().toolCount.value === 1 ? "call" : "calls"}
+                  </span>
+                )}
+              </Show>
+              <Show when={checksForInspector().length > 0}>
+                <span>
+                  <b>{checksForInspector().length}</b>{" "}
+                  {checksForInspector().length === 1 ? "check" : "checks"}
+                </span>
+              </Show>
             </div>
-            <div class="lazers-trajectory-task-meta lazers-trajectory-run-total">
-              {attemptCount(report())}
-            </div>
-            <Show when={titleTruncated()}>
-              <details class="lazers-trajectory-objective">
-                <summary>Objective</summary>
-                <p>{report()?.task.specification.objective}</p>
-              </details>
-            </Show>
           </Show>
         </header>
 
-        <Show when={report()}>
-          <section class="lazers-trajectory-timeline" aria-label="Timeline">
+        <PanelStatus ui={Ui} status={status} onRetry={retry} skeleton="timeline" />
+
+        <Show when={status.showContent() && report()}>
+          <section
+            class="lazers-trajectory-timeline"
+            aria-label="Timeline"
+            data-panel-dimmed={status.dimmed()}
+          >
             <div class="lazers-trajectory-timeline-bar">
               <span
                 class="lazers-trajectory-axis-caption"
                 title={
                   origin() === null
                     ? undefined
-                    : `Origin ${new Date(origin()!).toLocaleString(undefined, { timeZoneName: "short" })} · earliest recorded attempt start`
+                    : new Date(origin()!).toLocaleString(undefined, { timeZoneName: "short" })
                 }
               >
-                Elapsed since first attempt
-                <Show when={origin() !== null}>
-                  {" · "}
-                  <span
-                    class="lazers-trajectory-mono"
-                    style={{ "font-family": ctx.appearance.font("mono") }}
-                  >
-                    {new Date(origin()!).toLocaleTimeString()}
-                  </span>
+                <Show when={settled()} fallback="Live · following">
+                  <Show when={origin() !== null}>Started {clock(origin()!)}</Show>
                 </Show>
               </span>
               <span class="lazers-trajectory-zoom" role="group" aria-label="Timeline zoom">
@@ -1021,30 +1083,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 </button>
               </span>
             </div>
-            <Show when={capturedAt() !== null}>
-              <div
-                class="lazers-trajectory-capture-stamp"
-                title={`History captured ${new Date(capturedAt()!).toLocaleString(undefined, { timeZoneName: "short" })}${currentData()?.statusReadAt ? ` · live status read ${new Date(currentData()!.statusReadAt!).toLocaleString(undefined, { timeZoneName: "short" })}` : ""}`}
-              >
-                <span>
-                  {settled()
-                    ? `As of capture ${new Date(capturedAt()!).toLocaleTimeString()}`
-                    : currentData()?.statusReadAt
-                      ? `Live · status ${new Date(currentData()!.statusReadAt!).toLocaleTimeString()} · captured ${new Date(capturedAt()!).toLocaleTimeString()}`
-                      : `Live · captured ${new Date(capturedAt()!).toLocaleTimeString()}`}
-                </span>
-                <Show when={settled()}>
-                  <Ui.Button
-                    variant="ghost"
-                    size="small"
-                    busy={currentData()?.loading}
-                    onClick={() => void state.refresh({ force: true })}
-                  >
-                    Refresh
-                  </Ui.Button>
-                </Show>
-              </div>
-            </Show>
             <Show
               when={timeline()?.origin !== null && timeline()?.origin !== undefined}
               fallback={<div class="lazers-trajectory-note">No attempts have been recorded.</div>}
@@ -1069,15 +1107,23 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         axisObserver.observe(element)
                       }}
                     >
-                      <For each={visibleTicks(ticks(), timeline()?.durationMs ?? 0, axisWidth())}>
+                      <For each={rulerTicks()}>
                         {(tick) => (
                           <span
                             class="lazers-trajectory-tick"
-                            style={{
-                              left: `${(tick.elapsedMs / (timeline()?.durationMs || 1)) * 100}%`,
-                            }}
+                            style={{ left: `${place(tick.elapsedMs)}%` }}
                           >
                             {tick.label}
+                          </span>
+                        )}
+                      </For>
+                      <For each={timeline()?.breaks ?? []}>
+                        {(span) => (
+                          <span
+                            class="lazers-trajectory-idle-label"
+                            style={{ left: `${span.left + span.width / 2}%` }}
+                          >
+                            {span.label}
                           </span>
                         )}
                       </For>
@@ -1085,11 +1131,14 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   </div>
                   <div class="lazers-trajectory-gridlines" aria-hidden="true">
                     <For each={ticks()}>
-                      {(tick) => (
+                      {(tick) => <span style={{ left: `${place(tick.elapsedMs)}%` }} />}
+                    </For>
+                    <For each={timeline()?.breaks ?? []}>
+                      {(span) => (
                         <span
-                          style={{
-                            left: `${(tick.elapsedMs / (timeline()?.durationMs || 1)) * 100}%`,
-                          }}
+                          class="lazers-trajectory-idle"
+                          title={span.label}
+                          style={{ left: `${span.left}%`, width: `${span.width}%` }}
                         />
                       )}
                     </For>
@@ -1136,16 +1185,13 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                             data-selected={selected()}
                             aria-selected={selected()}
                             tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
-                            aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail()?.toolCount.value.toLocaleString() ?? "unknown"} calls`}
-                            title={lane().attempt.timingBasis}
+                            aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
+                            title={basisText(lane().attempt.timingBasis)}
                             onClick={() => state.selectAttempt(lane().attempt.id)}
                           >
                             <span class="lazers-trajectory-label-cell lazers-trajectory-attempt-label">
                               <span class="lazers-trajectory-attempt-number">
-                                {lane().attempt.number}
-                              </span>
-                              <span class="lazers-trajectory-tool-count">
-                                {detail()?.toolCount.value.toLocaleString() ?? "—"}
+                                Attempt {lane().attempt.number}
                               </span>
                             </span>
                             <div class="lazers-trajectory-track">
@@ -1166,8 +1212,8 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                     hidden={!segment.visible}
                                     title={
                                       segment.open
-                                        ? `${segment.basis} · open until capture; end not recorded`
-                                        : segment.basis
+                                        ? `${basisText(segment.basis)} · still running`
+                                        : basisText(segment.basis)
                                     }
                                     style={{
                                       left: `${segment.left}%`,
@@ -1201,7 +1247,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       onClick={laneClick(laneMarks, (mark) => state.selectEvent(mark.id))}
                     >
                       <Show when={laneMarks().length === 0}>
-                        <span class="lazers-trajectory-lane-empty">No timed tool calls loaded</span>
+                        <span class="lazers-trajectory-lane-empty">No timed tool calls</span>
                       </Show>
                       <Index each={laneMarks()}>
                         {(item) => {
@@ -1220,17 +1266,37 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                   ? (item().mark as ToolMark).outcome
                                   : (item().mark as GapMark).kind
                               }
+                              data-gap={
+                                item().kind === "gap" && (item().mark as GapMark).kind === "gap"
+                                  ? ""
+                                  : undefined
+                              }
                               data-span={item().width > 0.4}
                               aria-selected={selected()}
                               tabIndex={activeTool() === item().id ? 0 : -1}
                               aria-label={
                                 item().kind === "tool"
-                                  ? `${(item().mark as ToolMark).tool}, ${outcomeText[(item().mark as ToolMark).outcome]}, ${at(item().at)}${attemptNumber(item().mark.attemptID) ? `, attempt ${attemptNumber(item().mark.attemptID)}` : ""}`
+                                  ? [
+                                      (item().mark as ToolMark).tool,
+                                      outcomeText[(item().mark as ToolMark).outcome],
+                                      at(item().at),
+                                      attemptNumber(item().mark.attemptID)
+                                        ? `attempt ${attemptNumber(item().mark.attemptID)}`
+                                        : "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(", ")
                                   : `${(item().mark as GapMark).label}, ${at(item().at)}`
                               }
                               title={
                                 item().kind === "tool"
-                                  ? `${(item().mark as ToolMark).tool} · ${outcomeText[(item().mark as ToolMark).outcome]} · ${at(item().at)}`
+                                  ? [
+                                      (item().mark as ToolMark).tool,
+                                      outcomeText[(item().mark as ToolMark).outcome],
+                                      at(item().at),
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")
                                   : `${(item().mark as GapMark).label} · ${at(item().at)}`
                               }
                               style={{
@@ -1282,7 +1348,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                       )}
                     >
                       <Show when={(tracks()?.files.length ?? 0) === 0}>
-                        <span class="lazers-trajectory-lane-empty">No file targets recorded</span>
+                        <span class="lazers-trajectory-lane-empty">No file calls</span>
                       </Show>
                       <Index each={tracks()?.files ?? []}>
                         {(mark) => (
@@ -1295,8 +1361,20 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                             aria-selected={eventSelected(mark().id)}
                             tabIndex={activeFile() === mark().id ? 0 : -1}
                             data-outcome={mark().outcome}
-                            aria-label={`${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}, ${outcomeText[mark().outcome]}, ${at(mark().at)}`}
-                            title={`${operationText[mark().operation]} · ${mark().paths.join(", ")} · ${outcomeText[mark().outcome]}`}
+                            aria-label={[
+                              `${operationText[mark().operation]} ${mark().paths.join(", ")}${mark().coverage === "partial" ? " (partial)" : ""}`,
+                              outcomeText[mark().outcome],
+                              at(mark().at),
+                            ]
+                              .filter(Boolean)
+                              .join(", ")}
+                            title={[
+                              operationText[mark().operation],
+                              mark().paths.join(", "),
+                              outcomeText[mark().outcome],
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
                             style={{ left: `${mark().left}%` }}
                             onClick={() => state.selectEvent(mark().id)}
                           >
@@ -1333,9 +1411,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     >
                       <Show when={checkLane().length === 0}>
                         <span class="lazers-trajectory-lane-empty">
-                          {(timeline()?.checks.length ?? 0) > 0
-                            ? "Check times not recorded"
-                            : "No checks recorded"}
+                          {(timeline()?.checks.length ?? 0) > 0 ? "No timed checks" : "No checks"}
                         </span>
                       </Show>
                       <For each={checkIDs()}>
@@ -1401,8 +1477,20 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                                 data-result={detailed()?.result ?? "unknown"}
                                 aria-selected={selected()}
                                 tabIndex={activeCheck() === entry().id ? 0 : -1}
-                                aria-label={`${name()}, ${detailed()?.result ?? entry().check.state}, ${timingHint(entry().check)}`}
-                                title={`${name()} · ${outcomeText[outcome()]} · ${entry().check.timingBasis}`}
+                                aria-label={[
+                                  name(),
+                                  detailed() ? checkWord(detailed()!) : entry().check.state,
+                                  timingHint(entry().check),
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ")}
+                                title={[
+                                  name(),
+                                  outcomeText[outcome()],
+                                  basisText(entry().check.timingBasis),
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                                 style={{
                                   left: `${entry().check.left}%`,
                                   width: `${entry().check.width}%`,
@@ -1418,37 +1506,87 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 </div>
               </div>
               <div class="lazers-trajectory-coverage-line">
-                <For each={coverageParts()}>{(part) => <span>{part}</span>}</For>
-                <Show when={currentData()?.eventCursor}>
+                <Show
+                  when={streaming()}
+                  fallback={
+                    <>
+                      <span>{eventsTotal().toLocaleString()} events</span>
+                      <Show when={gapCount() > 0}>
+                        <span>
+                          {gapCount()} recording {gapCount() === 1 ? "gap" : "gaps"}
+                        </span>
+                      </Show>
+                      <Show when={(tracks()?.gaps.length ?? 0) - gapCount() > 0}>
+                        <span>Context compacted</span>
+                      </Show>
+                      <span class="lazers-trajectory-coverage-end">
+                        <Show when={settled()} fallback="Live">
+                          Recorded
+                          <Show when={lastEnded() !== null}> · ended {clock(lastEnded()!)}</Show>
+                        </Show>
+                      </span>
+                    </>
+                  }
+                >
                   <span>
-                    {currentData()?.events.length.toLocaleString()} of{" "}
-                    {currentData()?.totalEvents.toLocaleString()} captured events loaded
+                    {eventsLoaded().toLocaleString()} of {eventsTotal().toLocaleString()} events
                   </span>
-                  <Show when={!currentData()?.pageRecaptureRequired}>
-                    <Ui.Button
-                      variant="ghost"
-                      size="small"
-                      busy={currentData()?.loadingActivity || currentData()?.recapturingHistory}
-                      onClick={() => void state.loadMoreActivity()}
-                    >
-                      Load more
-                    </Ui.Button>
+                  <Show
+                    when={!currentData()?.historyError}
+                    fallback={
+                      <span class="lazers-trajectory-coverage-end">
+                        <Show
+                          when={currentData()?.pageRecaptureRequired}
+                          fallback={
+                            <button
+                              type="button"
+                              class="lazers-panel-retry"
+                              onClick={() => void state.resumeActivity()}
+                            >
+                              Retry
+                            </button>
+                          }
+                        >
+                          <button
+                            type="button"
+                            class="lazers-panel-retry"
+                            onClick={() => void state.recaptureActivity()}
+                          >
+                            Recapture history
+                          </button>
+                        </Show>
+                      </span>
+                    }
+                  >
+                    <span class="lazers-trajectory-coverage-end">loading the rest</span>
                   </Show>
                 </Show>
                 <Show when={currentData()?.historyError}>
                   <div class="lazers-trajectory-error" role="alert">
                     <span>{currentData()?.historyError}</span>
-                    <Ui.Button
-                      variant="ghost"
-                      size="small"
-                      busy={currentData()?.recapturingHistory}
-                      onClick={() => void state.recaptureActivity()}
-                    >
-                      Recapture history
-                    </Ui.Button>
                   </div>
                 </Show>
               </div>
+              <Show when={streaming()}>
+                <div
+                  class="lazers-trajectory-progress"
+                  role="progressbar"
+                  aria-label="Loading events"
+                  aria-valuemin={0}
+                  aria-valuemax={eventsTotal()}
+                  aria-valuenow={eventsLoaded()}
+                >
+                  <i style={{ width: `${progress()}%` }} />
+                </div>
+              </Show>
+              <Show when={dataGaps().length > 0}>
+                <details class="lazers-trajectory-gaps">
+                  <summary>Data gaps · {dataGaps().length}</summary>
+                  <ul>
+                    <For each={dataGaps()}>{(note) => <li>{note}</li>}</For>
+                  </ul>
+                </details>
+              </Show>
             </Show>
           </section>
         </Show>
@@ -1483,6 +1621,7 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
       <div
         class="lazers-trajectory-inspector"
         id="lazers-trajectory-inspector"
+        data-panel-dimmed={status.dimmed()}
         ref={(element) => {
           inspectorPane = element
         }}
@@ -1497,71 +1636,93 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
         >
           <>
             <Show when={selectedCheck()}>
-              {(check) => (
-                <>
-                  <div class="lazers-trajectory-inspector-heading">
-                    <h3>
-                      {check().scope === "attempt" && selectedAttempt()
-                        ? `Attempt ${selectedAttempt()!.number} · `
-                        : ""}
-                      {checkLabel(check())}
-                    </h3>
-                    <OutcomeBadge
-                      outcome={checkOutcome(check().result, check().state)}
-                      text={checkResult(check())}
-                      result={check().result}
-                    />
-                  </div>
-                  <div class="lazers-trajectory-metadata">
-                    <p>
-                      {check().scope === "plan" ? "Plan check" : "Attempt check"} · {check().state}
-                    </p>
-                    <p>{endpointText("Start", check().startedAt, origin())}</p>
-                    <p>{endpointText("End", check().endedAt, origin())}</p>
-                    <p
-                      role={checkTiming(check()).status === "invalid-order" ? "alert" : "status"}
-                      aria-live={
-                        checkTiming(check()).status === "invalid-order" ? "assertive" : "polite"
-                      }
-                    >
-                      {checkTiming(check()).status === "known"
-                        ? `Elapsed duration · ${elapsedText(checkTiming(check()).durationMs!)}`
-                        : `Duration unavailable · ${checkTiming(check()).reason}`}
-                    </p>
-                    <p>Timing source · {check().timingBasis}</p>
-                  </div>
-                  <div class="lazers-trajectory-source-links">
-                    <For each={checkSources(check())}>
-                      {(reference) => (
-                        <button type="button" onClick={() => openSource(reference)}>
-                          {reference.path}:{reference.line}
-                          {reference.column ? `:${reference.column}` : ""}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                  <Show when={check().scope === "attempt" && selectedAttempt()}>
-                    {(attempt) => (
-                      <button
-                        type="button"
-                        class="lazers-trajectory-session-link"
-                        onClick={() => openAttemptSession(attempt().sessionID)}
-                      >
-                        Open worker session <Ui.Icon name="square-arrow-top-right" size="small" />
-                      </button>
-                    )}
-                  </Show>
-                  <details class="lazers-trajectory-payload">
-                    <summary>Check output</summary>
-                    <div class="lazers-trajectory-metadata">
-                      <Show when={check().timedOut}>
-                        <p>Timed out</p>
+              {(check) => {
+                const timing = () => checkTiming(check())
+                const start = () =>
+                  check().scope === "attempt" ? attemptStart(check().attemptID) : null
+                const when = (value: number) =>
+                  start() === null
+                    ? clockWithOffset(value, origin())
+                    : clockWithOffset(value, start(), " into the attempt")
+                const output = () => checkOutput(check())
+                return (
+                  <>
+                    <div class="lazers-trajectory-inspector-heading">
+                      <OutcomeBadge
+                        outcome={checkOutcome(check().result, check().state)}
+                        text={checkWord(check())}
+                        result={check().result}
+                      />
+                      <span class="lazers-trajectory-kind">
+                        {check().scope === "plan" ? "Plan check" : "Attempt check"}
+                        {check().exitCode !== null ? ` · exit ${check().exitCode}` : ""}
+                      </span>
+                      <Show when={timing().durationMs !== null}>
+                        <span
+                          class="lazers-trajectory-duration"
+                          style={{ "font-family": ctx.appearance.font("mono") }}
+                        >
+                          {durationText(timing().durationMs!)}
+                        </span>
                       </Show>
                     </div>
-                    <pre>{checkOutput(check())}</pre>
-                  </details>
-                </>
-              )}
+                    <pre
+                      class="lazers-trajectory-command"
+                      style={{ "font-family": ctx.appearance.font("mono") }}
+                    >
+                      {checkLabel(check())}
+                    </pre>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={check().startedAt !== null}>
+                        <Fact label="Started">{when(check().startedAt!)}</Fact>
+                      </Show>
+                      <Show when={check().endedAt !== null}>
+                        <Fact label="Ended">{when(check().endedAt!)}</Fact>
+                      </Show>
+                      <Show when={check().timedOut}>
+                        <Fact label="Result">Timed out</Fact>
+                      </Show>
+                      <Show
+                        when={!check().timedOut && check().result === "failed" && check().error}
+                      >
+                        <Fact label="Result">{firstLine(check().error!)}</Fact>
+                      </Show>
+                    </dl>
+                    <div class="lazers-trajectory-source-links">
+                      <For each={checkSources(check())}>
+                        {(reference) => (
+                          <button type="button" onClick={() => openSource(reference)}>
+                            {reference.path}:{reference.line}
+                            {reference.column ? `:${reference.column}` : ""}
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                    <Show when={check().scope === "attempt" && selectedAttempt()}>
+                      {(attempt) => (
+                        <button
+                          type="button"
+                          class="lazers-trajectory-session-link"
+                          onClick={() => openAttemptSession(attempt().sessionID)}
+                        >
+                          Open worker session <Ui.Icon name="square-arrow-top-right" size="small" />
+                        </button>
+                      )}
+                    </Show>
+                    <Show when={output()}>
+                      <Disclosure title="Output" note={lineCount(output())}>
+                        <pre>{output()}</pre>
+                      </Disclosure>
+                    </Show>
+                    <Disclosure title="Timing source">
+                      <p class="lazers-trajectory-disclosure-body">
+                        {basisText(check().timingBasis)}
+                        {timing().status === "invalid-order" ? ` · ${timing().reason}` : ""}
+                      </p>
+                    </Disclosure>
+                  </>
+                )
+              }}
             </Show>
 
             <Show when={selection()?.kind === "attempt" && selectedAttempt()}>
@@ -1569,49 +1730,49 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                 const duration = () => attemptDuration(attempt(), capturedAt())
                 const admitted = () => attempt().admittedModel
                 const observed = () => attempt().observedCurrentModel
+                const model = () => observed() ?? admitted()
+                const started = () => attempt().intervals.attempt.startedAt ?? attempt().startedAt
                 return (
                   <>
                     <div class="lazers-trajectory-inspector-heading">
-                      <h3>Attempt {attempt().number}</h3>
                       <OutcomeBadge
                         outcome={attemptOutcome(attempt().state)}
-                        text={attempt().state}
+                        text={capitalize(attempt().state)}
                       />
+                      <span class="lazers-trajectory-kind">Attempt {attempt().number}</span>
+                      <Show when={duration()}>
+                        {(value) => (
+                          <span
+                            class="lazers-trajectory-duration"
+                            style={{ "font-family": ctx.appearance.font("mono") }}
+                          >
+                            {durationText(value().ms)}
+                            {value().open ? " so far" : ""}
+                          </span>
+                        )}
+                      </Show>
                     </div>
-                    <div class="lazers-trajectory-metadata">
-                      <p>
-                        Model ·{" "}
-                        {(observed() ?? admitted())
-                          ? `${(observed() ?? admitted())!.providerID} / ${modelLabel(observed() ?? admitted())}`
-                          : "not recorded"}
-                        {observed() &&
-                        admitted() &&
-                        modelLabel(observed()) !== modelLabel(admitted())
-                          ? ` · admitted as ${modelLabel(admitted())}`
-                          : ""}
-                      </p>
-                      <p>
-                        Started ·{" "}
-                        {timeText(attempt().intervals.attempt.startedAt ?? attempt().startedAt)}
-                      </p>
-                      <p>
-                        {attempt().intervals.attempt.endedAt !== null
-                          ? `Ended · ${timeText(attempt().intervals.attempt.endedAt)}`
-                          : duration()?.open
-                            ? `Running as of capture · ${timeText(capturedAt())}`
-                            : "End not recorded"}
-                      </p>
-                      <p>
-                        Duration ·{" "}
-                        {duration()
-                          ? `${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}`
-                          : "unavailable"}
-                      </p>
-                      <p>
-                        Tool calls · {attempt().toolCount.value.toLocaleString()} (runner count)
-                      </p>
-                      <p>Timing source · {attempt().intervals.attempt.basis}</p>
-                    </div>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={model()}>
+                        {(value) => (
+                          <Fact label="Model">
+                            {value().providerID} / {modelLabel(value())}
+                            {observed() &&
+                            admitted() &&
+                            modelLabel(observed()!) !== modelLabel(admitted()!)
+                              ? ` · admitted as ${modelLabel(admitted()!)}`
+                              : ""}
+                          </Fact>
+                        )}
+                      </Show>
+                      <Fact label="Started">{clockWithOffset(started(), origin())}</Fact>
+                      <Show when={attempt().intervals.attempt.endedAt !== null}>
+                        <Fact label="Ended">
+                          {clockWithOffset(attempt().intervals.attempt.endedAt!, origin())}
+                        </Fact>
+                      </Show>
+                      <Fact label="Calls">{attempt().toolCount.value.toLocaleString()}</Fact>
+                    </dl>
                     <button
                       type="button"
                       class="lazers-trajectory-session-link"
@@ -1619,110 +1780,79 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     >
                       Open worker session <Ui.Icon name="square-arrow-top-right" size="small" />
                     </button>
+                    <Disclosure title="Timing source">
+                      <p class="lazers-trajectory-disclosure-body">
+                        {basisText(attempt().intervals.attempt.basis)}
+                      </p>
+                    </Disclosure>
                   </>
                 )
               }}
             </Show>
 
             <Show when={selectedTool()}>
-              {(tool) => (
-                <>
-                  <div class="lazers-trajectory-inspector-heading">
-                    <h3
-                      class="lazers-trajectory-mono"
-                      style={{ "font-family": ctx.appearance.font("mono") }}
-                    >
-                      {tool().tool}
-                    </h3>
-                    <OutcomeBadge outcome={tool().outcome} />
-                  </div>
-                  <div class="lazers-trajectory-metadata">
-                    <p>
-                      {attemptNumber(tool().attemptID)
-                        ? `Attempt ${attemptNumber(tool().attemptID)} · `
-                        : ""}
-                      Tool call
-                    </p>
-                    <p>
-                      Called · {tool().start === null ? "not recorded" : timeText(tool().start)}
-                    </p>
-                    <p>Completed · {tool().end === null ? "not recorded" : timeText(tool().end)}</p>
-                    <p>
-                      Duration ·{" "}
-                      {tool().start !== null && tool().end !== null && tool().end! >= tool().start!
-                        ? durationText(tool().end! - tool().start!)
-                        : "unavailable"}
-                    </p>
-                    <p>
-                      Timing source · {tool().startSource ?? "not recorded"}
-                      {tool().endSource ? ` → ${tool().endSource}` : ""}
-                    </p>
-                  </div>
-                  <Show when={tool().files}>
-                    {(files) => (
+              {(tool) => {
+                const command = () => toolCommand(tool())
+                const output = () => toolOutput(tool())
+                const duration = () =>
+                  tool().start !== null && tool().end !== null && tool().end! >= tool().start!
+                    ? durationText(tool().end! - tool().start!)
+                    : ""
+                return (
+                  <>
+                    <div class="lazers-trajectory-inspector-heading">
+                      <OutcomeBadge outcome={tool().outcome} />
+                      <span
+                        class="lazers-trajectory-kind"
+                        style={{ "font-family": ctx.appearance.font("mono") }}
+                      >
+                        {tool().tool}
+                      </span>
+                      <Show when={duration()}>
+                        <span
+                          class="lazers-trajectory-duration"
+                          style={{ "font-family": ctx.appearance.font("mono") }}
+                        >
+                          {duration()}
+                        </span>
+                      </Show>
+                    </div>
+                    <Show when={command()}>
+                      <pre
+                        class="lazers-trajectory-command"
+                        style={{ "font-family": ctx.appearance.font("mono") }}
+                      >
+                        {command()}
+                      </pre>
+                    </Show>
+                    <dl class="lazers-trajectory-facts">
+                      <Show when={tool().start !== null}>
+                        <Fact label="Started">{whenText(tool().start!, tool().attemptID)}</Fact>
+                      </Show>
+                      <Show when={tool().end !== null}>
+                        <Fact label="Ended">{whenText(tool().end!, tool().attemptID)}</Fact>
+                      </Show>
+                      <Show when={tool().outcome === "failed" && output()}>
+                        <Fact label="Result">{firstLine(output().replace(/^error\n/, ""))}</Fact>
+                      </Show>
+                    </dl>
+                    <Show when={tool().files?.paths.length}>
                       <section class="lazers-trajectory-files" aria-label="Recorded file activity">
                         <h4>
-                          {files().operation ? operationText[files().operation!] : "File targets"}
-                          {files().coverage === "partial" ? " · some paths not recorded" : ""}
+                          {tool().files!.operation
+                            ? operationText[tool().files!.operation!]
+                            : "File targets"}
                         </h4>
-                        <Show
-                          when={files().paths.length > 0}
-                          fallback={<p>Paths were not recorded for this call.</p>}
-                        >
-                          <ul>
-                            <For each={files().paths}>
-                              {(path) => (
-                                <li style={{ "font-family": ctx.appearance.font("mono") }}>
-                                  {path}
-                                </li>
-                              )}
-                            </For>
-                          </ul>
-                        </Show>
+                        <ul>
+                          <For each={tool().files!.paths}>
+                            {(path) => (
+                              <li style={{ "font-family": ctx.appearance.font("mono") }}>{path}</li>
+                            )}
+                          </For>
+                        </ul>
                       </section>
-                    )}
-                  </Show>
-                  <Show when={tool().sessionID}>
-                    {(sessionID) => (
-                      <button
-                        type="button"
-                        class="lazers-trajectory-session-link"
-                        onClick={() => openAttemptSession(sessionID())}
-                      >
-                        Open worker session <Ui.Icon name="square-arrow-top-right" size="small" />
-                      </button>
-                    )}
-                  </Show>
-                  <Show when={toolOutput(tool())}>
-                    <details class="lazers-trajectory-payload">
-                      <summary>Result</summary>
-                      <pre>{toolOutput(tool())}</pre>
-                    </details>
-                  </Show>
-                  <Show when={selectedEvent()}>
-                    {(event) => (
-                      <details class="lazers-trajectory-payload">
-                        <summary>Payload</summary>
-                        <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
-                      </details>
-                    )}
-                  </Show>
-                </>
-              )}
-            </Show>
-
-            <Show when={!selectedTool() && selectedEvent()}>
-              {(event) => (
-                <>
-                  <div class="lazers-trajectory-inspector-heading">
-                    <h3>{selectedGap()?.label ?? eventTitle(event())}</h3>
-                    <span class="lazers-trajectory-result">{eventTime(event())}</span>
-                  </div>
-                  <div class="lazers-trajectory-metadata">
-                    <p>
-                      {event().kind} · {timeText(event().at ?? null)}
-                    </p>
-                    <Show when={event().sessionID}>
+                    </Show>
+                    <Show when={tool().sessionID}>
                       {(sessionID) => (
                         <button
                           type="button"
@@ -1733,11 +1863,65 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                         </button>
                       )}
                     </Show>
+                    <Show when={output()}>
+                      <Disclosure title="Output" note={lineCount(output())}>
+                        <pre>{output()}</pre>
+                      </Disclosure>
+                    </Show>
+                    <Show when={tool().startSource || tool().endSource}>
+                      <Disclosure title="Timing source">
+                        <p class="lazers-trajectory-disclosure-body">
+                          {[tool().startSource, tool().endSource].filter(Boolean).join(" → ")}
+                        </p>
+                      </Disclosure>
+                    </Show>
+                    <Show when={selectedEvent()}>
+                      {(event) => (
+                        <Disclosure title="Payload">
+                          <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
+                        </Disclosure>
+                      )}
+                    </Show>
+                  </>
+                )
+              }}
+            </Show>
+
+            <Show when={!selectedTool() && selectedEvent()}>
+              {(event) => (
+                <>
+                  <div class="lazers-trajectory-inspector-heading">
+                    <span class="lazers-trajectory-kind">
+                      {selectedGap()?.label ?? eventTitle(event())}
+                    </span>
+                    <Show when={eventTime(event())}>
+                      <span
+                        class="lazers-trajectory-duration"
+                        style={{ "font-family": ctx.appearance.font("mono") }}
+                      >
+                        {eventTime(event())}
+                      </span>
+                    </Show>
                   </div>
-                  <details class="lazers-trajectory-payload">
-                    <summary>Payload</summary>
+                  <Show when={typeof event().at === "number"}>
+                    <dl class="lazers-trajectory-facts">
+                      <Fact label="At">{clockWithOffset(event().at as number, origin())}</Fact>
+                    </dl>
+                  </Show>
+                  <Show when={event().sessionID}>
+                    {(sessionID) => (
+                      <button
+                        type="button"
+                        class="lazers-trajectory-session-link"
+                        onClick={() => openAttemptSession(sessionID())}
+                      >
+                        Open worker session <Ui.Icon name="square-arrow-top-right" size="small" />
+                      </button>
+                    )}
+                  </Show>
+                  <Disclosure title="Payload">
                     <pre>{JSON.stringify(eventPayload(event()), null, 2)}</pre>
-                  </details>
+                  </Disclosure>
                 </>
               )}
             </Show>
@@ -1786,13 +1970,24 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
             <Show when={report()}>
               {(currentReport) => {
                 const usage = () => currentReport().effort.tokenUsage
-                const tokenValue = (
+                const tokenCount = (
                   key: keyof TrajectoryReport["effort"]["tokenUsage"]["measuredSubtotal"],
-                ) => {
-                  const value = usage().total?.[key] ?? usage().measuredSubtotal[key]
-                  return value === null ? "—" : value.toLocaleString()
+                ) => usage().total?.[key] ?? usage().measuredSubtotal[key]
+                const compact = (value: number) =>
+                  new Intl.NumberFormat("en-US", {
+                    notation: "compact",
+                    maximumFractionDigits: 1,
+                  }).format(value)
+                const tokensIn = () => {
+                  const parts = (["uncachedInput", "cacheRead", "cacheWrite"] as const).map(
+                    tokenCount,
+                  )
+                  return parts.every((value) => value === null)
+                    ? null
+                    : parts.reduce<number>((sum, value) => sum + (value ?? 0), 0)
                 }
-                const partial = () => usage().total === null
+                const shortDate = (value: string | number) =>
+                  new Date(value).toLocaleDateString([], { day: "numeric", month: "short" })
                 const apiCost = () => currentReport().effort.recordedCost.apiEquivalentTotalUsd
                 const marketCost = () => currentReport().effort.marketEquivalentCost
                 const marketEstimate = () => marketCost()?.observedUsageEstimate
@@ -1805,7 +2000,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                     ? estimate
                     : null
                 }
-                const marketStatus = () => marketCost()?.status ?? "unknown"
                 const formatMarketUSD = (value: number) =>
                   `$${new Intl.NumberFormat("en-US", {
                     maximumSignificantDigits: 8,
@@ -1829,12 +2023,12 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   if (value !== null) return formatMarketUSD(value)
                   const subtotal = marketCost()?.subtotalUSD ?? null
                   return subtotal === null || subtotal <= 0
-                    ? "—"
+                    ? ""
                     : `${formatMarketUSD(subtotal)} subtotal`
                 }
                 const indexPriceSourceSummary = () => {
                   const index = marketCost()?.currentIndex
-                  if (!index) return "Price source unavailable"
+                  if (!index) return ""
                   const sources = index.sources.map(
                     (source) =>
                       `${source.source === "openrouter-models" ? "OpenRouter" : "OpenCode"} · generation ${source.generation}`,
@@ -1853,55 +2047,93 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                   }
                   return indexPriceSourceSummary()
                 }
-                const categories = [
-                  ["Uncached input", "uncachedInput"],
-                  ["Cache read", "cacheRead"],
-                  ["Cache write", "cacheWrite"],
-                  ["Output", "output"],
-                  ["Reasoning", "reasoning"],
-                ] as const
+                /** "OpenRouter prices · 17 Nov"; empty when no price source applied. */
+                const priceBasis = () => {
+                  const name = (source: string) =>
+                    source === "openrouter-models" ? "OpenRouter" : "OpenCode"
+                  const estimate = selectedEstimate()?.sources[0]
+                  if (estimate)
+                    return `${name(estimate.source)} prices · ${shortDate(estimate.retrievedAt)}`
+                  const index = marketCost()?.currentIndex
+                  const source = index?.sources[0]
+                  return index && source
+                    ? `${name(source.source)} prices · ${shortDate(index.retrievedAt)}`
+                    : ""
+                }
                 return (
                   <>
-                    <section class="lazers-trajectory-section" aria-label="Token usage">
+                    <section class="lazers-trajectory-section" aria-label="Usage">
                       <div class="lazers-trajectory-section-heading">
-                        <h4>Tokens</h4>
-                        <span class="lazers-trajectory-token-scope">
-                          Worker attempts only · all {currentReport().attempts.length}
-                        </span>
+                        <h4>Usage</h4>
+                        <Show when={currentReport().attempts.length > 1}>
+                          <span class="lazers-trajectory-token-scope">
+                            all {currentReport().attempts.length} attempts
+                          </span>
+                        </Show>
                       </div>
-                      <Show when={partial()}>
-                        <div class="lazers-trajectory-coverage" role="status">
-                          Known subtotal · full total unavailable; {usage().knownSessions} of{" "}
-                          {usage().totalSessions} unique worker sessions have token snapshots.
+                      <Show when={displayedMarketCost()}>
+                        <div
+                          class="lazers-trajectory-cost"
+                          title="Market-equivalent worker usage is not actual provider charges or full task cost."
+                        >
+                          <span>
+                            {selectedEstimate()
+                              ? `${selectedEstimate()!.label}${selectedEstimate()!.status === "partial" ? " · partial" : ""}`
+                              : "API equivalent"}
+                          </span>
+                          <span>{displayedMarketCost()}</span>
                         </div>
                       </Show>
-                      <For each={categories}>
-                        {([label, key]) => (
+                      <Show when={tokensIn() !== null}>
+                        <div class="lazers-trajectory-token-row">
+                          <span>
+                            Tokens in
+                            <Show when={tokenCount("cacheRead")}>
+                              {(cached) => <>{` · ${compact(cached())} cached`}</>}
+                            </Show>
+                          </span>
+                          <output title={tokensIn()!.toLocaleString()}>
+                            {compact(tokensIn()!)}
+                          </output>
+                        </div>
+                      </Show>
+                      <Show when={tokenCount("output") !== null}>
+                        <div class="lazers-trajectory-token-row">
+                          <span>Tokens out</span>
+                          <output title={tokenCount("output")!.toLocaleString()}>
+                            {compact(tokenCount("output")!)}
+                          </output>
+                        </div>
+                      </Show>
+                      <Show when={tokenCount("reasoning")}>
+                        {(reasoning) => (
                           <div class="lazers-trajectory-token-row">
-                            <span>{label}</span>
-                            <output>{tokenValue(key)}</output>
+                            <span>Reasoning</span>
+                            <output title={reasoning().toLocaleString()}>
+                              {compact(reasoning())}
+                            </output>
                           </div>
                         )}
-                      </For>
-                      <div
-                        class="lazers-trajectory-cost"
-                        title="Market-equivalent worker usage is not actual provider charges or full task cost."
-                      >
-                        <span>
-                          {selectedEstimate()
-                            ? `${selectedEstimate()!.label}${selectedEstimate()!.status === "partial" ? " · partial" : ""}`
-                            : `API equivalent · ${marketStatus()}`}
-                        </span>
-                        <span>{displayedMarketCost()}</span>
-                      </div>
-                      <Show when={marketCost()}>
+                      </Show>
+                      <Show when={priceBasis()}>
                         <div class="lazers-trajectory-coverage">
-                          <span>{priceSourceSummary()}</span>
+                          <span>{priceBasis()}</span>
                         </div>
+                      </Show>
+                      <Show when={marketCost()}>
                         <details class="lazers-trajectory-payload lazers-trajectory-valuation">
                           <summary>Pricing coverage and provenance</summary>
+                          <Show when={priceSourceSummary()}>
+                            <div class="lazers-trajectory-coverage">
+                              <span>{priceSourceSummary()}</span>
+                            </div>
+                          </Show>
                           <p>{marketCost()!.meaning}</p>
-                          <Show when={selectedEstimate() && apiCost() !== null}>
+                          <Show
+                            when={
+                              selectedEstimate() && apiCost() !== null && indexPriceSourceSummary()
+                            }
+                          >
                             <div class="lazers-trajectory-coverage">
                               Strict-index API equivalent · {formatMarketUSD(apiCost()!)} ·{" "}
                               {indexPriceSourceSummary()}
@@ -2019,29 +2251,21 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                           </details>
                         )}
                       </Show>
-                      <div class="lazers-trajectory-coverage">
-                        <span>
-                          {usage().knownSessions} / {usage().totalSessions} unique sessions ·{" "}
-                          {usage().unknownAttempts.length} worker-session token gaps
-                        </span>
-                        <span aria-hidden="true">·</span>
-                        <span>
-                          Context {currentReport().coverage.availableSessionContexts} available ·{" "}
-                          {currentReport().coverage.unavailableSessionContexts} unavailable
-                        </span>
-                        <Show when={currentReport().coverage.compacted}>
-                          <span>Compacted context; complete history is not guaranteed.</span>
-                        </Show>
-                      </div>
                     </section>
+                    <Show when={objectiveLonger()}>
+                      <details class="lazers-trajectory-activity">
+                        <summary>Objective</summary>
+                        <p class="lazers-trajectory-objective-text">{objective()}</p>
+                      </details>
+                    </Show>
                     <details class="lazers-trajectory-activity">
                       <summary>Captured activity · {currentData()?.totalEvents ?? 0}</summary>
                       <div class="lazers-trajectory-activity-list">
                         <div class="lazers-trajectory-capture-note" role="status">
                           <span>
                             {currentData()?.historyCapturedAt
-                              ? `Captured ${new Date(currentData()!.historyCapturedAt!).toLocaleString()} · expires ${new Date(currentData()!.historyExpiresAt!).toLocaleTimeString()}`
-                              : "History capture time unavailable"}
+                              ? `Captured ${new Date(currentData()!.historyCapturedAt!).toLocaleString()}${currentData()?.historyExpiresAt ? ` · expires ${new Date(currentData()!.historyExpiresAt!).toLocaleTimeString()}` : ""}`
+                              : ""}
                           </span>
                           <Ui.Button
                             variant="ghost"
@@ -2074,33 +2298,6 @@ function PanelView(props: PanelProps & { ctx: TrajectoryContext }) {
                             </button>
                           )}
                         </For>
-                        <Show when={currentData()?.eventCursor}>
-                          <Show
-                            when={currentData()?.pageRecaptureRequired}
-                            fallback={
-                              <Ui.Button
-                                variant="ghost"
-                                size="small"
-                                busy={
-                                  currentData()?.loadingActivity ||
-                                  currentData()?.recapturingHistory
-                                }
-                                onClick={() => void state.loadMoreActivity()}
-                              >
-                                Load more activity
-                              </Ui.Button>
-                            }
-                          >
-                            <Ui.Button
-                              variant="ghost"
-                              size="small"
-                              busy={currentData()?.recapturingHistory}
-                              onClick={() => void state.recaptureActivity()}
-                            >
-                              Recapture history
-                            </Ui.Button>
-                          </Show>
-                        </Show>
                       </div>
                     </details>
                     <Show when={(currentData()?.liveEvents.length ?? 0) > 0}>

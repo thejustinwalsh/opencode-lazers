@@ -53,7 +53,7 @@ export type Tracks = {
   tools: ToolMark[]
   files: FileMark[]
   gaps: GapMark[]
-  /** Distinct recorded calls whose placement time is unknown. */
+  /** Distinct recorded calls that carry no time and so are not placed. */
   untimedTools: number
   /** File-target records whose paths were omitted by the recorder. */
   omittedFileTargets: number
@@ -93,7 +93,8 @@ export const outcomeText: Record<Outcome, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   running: "Running",
-  unknown: "No result recorded",
+  /** No recorded outcome: nothing is said about it. */
+  unknown: "",
 }
 
 function endpoint(event: TrajectoryEvent, key: string) {
@@ -221,7 +222,7 @@ export function buildTracks(
       attemptID,
       sessionID: ordered.find((event) => event.sessionID)?.sessionID ?? null,
       callID: primary.kind === "worker-tool" ? (primary.callID ?? null) : nativeCallID(primary),
-      tool: ordered.find((event) => event.tool)?.tool ?? "Unknown tool",
+      tool: ordered.find((event) => event.tool)?.tool ?? "Tool",
       outcome: mergedOutcome(ordered, active),
       start: start?.at ?? null,
       end: end?.at ?? null,

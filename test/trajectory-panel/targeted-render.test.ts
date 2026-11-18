@@ -325,9 +325,14 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(costRow).toContain("Current-market observed-usage estimate")
     expect(costRow).toContain("$0.01598662 estimate")
     expect(costRow).not.toContain("$0.03197324")
-    expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toContain(
+    // The summary names the price source and date; generation and freshness sit behind the disclosure.
+    expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toMatch(
+      /^OpenRouter prices · \w+ \d+$/,
+    )
+    expect(container.querySelector(".lazers-trajectory-valuation")?.textContent).toContain(
       "OpenRouter · generation 5 · average · current freshness",
     )
+    expect(container.textContent).not.toMatch(/Unix ms|unknown|not recorded|unavailable/i)
     expect(container.querySelector(".lazers-trajectory-valuation summary")?.textContent).toContain(
       "Pricing coverage and provenance",
     )
@@ -384,12 +389,12 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     // The header model and timing follow the selected attempt.
     attemptOptions[0]!.click()
     await until(() => attemptOptions[0]!.getAttribute("aria-selected") === "true")
-    expect(container.querySelector(".lazers-trajectory-model-scope")?.textContent).toContain(
+    expect(container.querySelector(".lazers-trajectory-attempt-menu")?.textContent).toContain(
       "Attempt 1",
     )
     attemptOptions[1]!.click()
     await until(() =>
-      container.querySelector(".lazers-trajectory-model-scope")?.textContent?.includes("Attempt 2")
+      container.querySelector(".lazers-trajectory-attempt-menu")?.textContent?.includes("Attempt 2")
         ? true
         : false,
     )
@@ -398,6 +403,7 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     // An expired continuation surfaces beside the pagination controls with its recovery.
     disposePanel?.()
     forcedHistoryLimit = 2
+    expireContinuations = true
     const pagedContainer = browserDocument.createElement("main")
     browserDocument.body.append(pagedContainer)
     disposePanel = mountTrajectoryPanel(panel!, context, session, pagedContainer).dispose
@@ -406,25 +412,19 @@ test("a task target renders its scoped report timeline without a broad snapshot"
         (button) => button.textContent?.trim() === "Recapture history",
       )
     const coverage = () => pagedContainer.querySelector(".lazers-trajectory-coverage-line")
-    const loadMore = () =>
-      [...(coverage()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
-        (button) => button.textContent?.trim() === "Load more",
-      )
-    await until(() => loadMore() !== undefined)
-    expireContinuations = true
-    loadMore()!.click()
+    // Pages continue on their own; an expired continuation surfaces beside the count with its
+    // recovery, and there is never a manual Load more.
     await until(() => coverage()?.querySelector('[role="alert"]') != null)
     expect(coverage()?.querySelector('[role="alert"]')?.textContent).toContain(
       "Captured history has expired. Recapture history to continue.",
     )
     expect(recapture(coverage()!)).toBeDefined()
-    expect(loadMore()).toBeUndefined()
-    expect(coverage()?.textContent).toContain("captured events loaded")
+    expect(pagedContainer.textContent).not.toContain("Load more")
     expireContinuations = false
     recapture(coverage()!)!.click()
-    await until(
-      () => loadMore() !== undefined && coverage()?.querySelector('[role="alert"]') == null,
-    )
+    await until(() => coverage()?.querySelector('[role="alert"]') == null)
+    await until(() => coverage()?.textContent?.includes("events") === true)
+    expect(coverage()?.textContent).not.toContain("loading the rest")
   } finally {
     disposePanel?.()
     disposeSetup?.()

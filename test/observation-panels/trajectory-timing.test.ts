@@ -361,6 +361,11 @@ test("registered Trajectory panel renders proportional check intervals and preci
     let attemptEnd = pairs.models[1]
     let capturedAt = 1_793_792_604_000
     const historyCalls: Array<string | undefined> = []
+    // Later captured pages stay in flight until released, so streaming can be observed.
+    let releasePageTwo: () => void = () => {}
+    const pageTwoGate = new Promise<void>((resolve) => {
+      releasePageTwo = resolve
+    })
     let statusCalls = 0
     const capturedEventRecords = [
       event("captured-first", 1_793_792_603_400, "captured worker transition payload"),
@@ -378,6 +383,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
           cursor?: string
         }) => {
           historyCalls.push(input.cursor)
+          if (input.cursor) await pageTwoGate
           if (!input.cursor) capturedAt += historyCalls.length === 1 ? 0 : 1_000
           const index = input.cursor ? 1 : 0
           const report = makeReport(
@@ -504,9 +510,17 @@ test("registered Trajectory panel renders proportional check intervals and preci
     )
     // Opening reads the captured history once; no status read follows until a change arrives.
     expect(statusCalls).toBe(0)
-    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toStartWith(
-      "Live · captured",
+    expect(container.querySelector(".lazers-trajectory-axis-caption")?.textContent).toBe(
+      "Live · following",
     )
+    expect(container.querySelector(".lazers-trajectory-capture-stamp")).toBeNull()
+    // The inspector never shows raw milliseconds or placeholder words for missing facts.
+    const inspectorText = () =>
+      container.querySelector(".lazers-trajectory-inspector")!.textContent!
+    const noRawFacts = () => {
+      for (const banned of [/Unix ms/, /unknown/i, /not recorded/i, /unavailable/i, /\d{13}/])
+        expect(inspectorText()).not.toMatch(banned)
+    }
     const markerStarting = (label: string) =>
       [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-check-marker")].find(
         (marker) => marker.getAttribute("aria-label")?.startsWith(label),
@@ -577,7 +591,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(rail("reversed").dataset.failed).toBe("true")
     expect(rail("equal").dataset.failed).toBe("false")
     expect(container.querySelectorAll(".lazers-trajectory-check-endpoint")).toHaveLength(1)
-    expect(markerStarting("Plan check reversed")?.getAttribute("aria-label")).toContain("failed")
+    expect(markerStarting("Plan check reversed")?.getAttribute("aria-label")).toContain("Failed")
     expect(
       container.querySelector('[data-track="checks"] [role="listbox"]')?.getAttribute("style"),
     ).toBeNull()
@@ -605,20 +619,22 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(qualityRows).toHaveLength(2)
     expect(qualityRows[0]?.getAttribute("aria-pressed")).toBe("true")
     expect(qualityRows[1]?.getAttribute("aria-pressed")).toBe("false")
-    expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).toBe(
-      "bun test quality",
-    )
-    let timing = container.querySelector<HTMLElement>(
-      '.lazers-trajectory-metadata [role="status"]',
-    )!
-    expect(timing.textContent).toBe("Elapsed duration · 240 ms")
+    const command = () => container.querySelector(".lazers-trajectory-command")?.textContent
+    const duration = () =>
+      container.querySelector(".lazers-trajectory-inspector-heading .lazers-trajectory-duration")
+        ?.textContent
+    const facts = () => container.querySelector(".lazers-trajectory-facts")?.textContent ?? ""
+    const timingSource = () =>
+      [...container.querySelectorAll<HTMLDetailsElement>(".lazers-trajectory-payload")].find(
+        (details) => details.querySelector("summary")?.textContent?.startsWith("Timing source"),
+      )
+    expect(command()).toBe("bun test quality")
+    expect(duration()).toBe("240 ms")
     expect(container.querySelector(".lazers-trajectory-payload")?.hasAttribute("open")).toBe(false)
-    let metadata = container.querySelector(
-      ".lazers-trajectory-inspector .lazers-trajectory-metadata",
-    )!
-    expect(metadata.textContent).toContain("1793792604802 Unix ms")
-    expect(metadata.textContent).toContain("1793792605042 Unix ms")
-    expect(metadata.textContent).toContain("Timing source · Recorded verification receipt")
+    expect(facts()).toContain("Started")
+    expect(facts()).toContain("Ended")
+    expect(timingSource()?.textContent).toContain("Recorded verification receipt")
+    noRawFacts()
 
     qualityRows[1]!.click()
     await until(() => checkRows("quality")[1]?.getAttribute("aria-pressed") === "true")
@@ -626,15 +642,15 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(attemptQualityMarker.getAttribute("aria-selected")).toBe("true")
     expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
     expect(attemptQualityMarker.getAttribute("tabindex")).toBe("0")
-    expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).toBe(
-      "Attempt 1 · bun test quality",
-    )
-    expect(container.querySelector(".lazers-trajectory-id")?.textContent).toContain(
+    expect(command()).toBe("bun test quality")
+    expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain(
       taskID.slice(0, 8),
     )
-    expect(container.querySelector(".lazers-trajectory-inspector")?.textContent).toContain(
-      "Attempt check · completed",
+    expect(container.querySelector(".lazers-trajectory-kind")?.textContent).toBe(
+      "Attempt check · exit 0",
     )
+    expect(container.querySelector(".lazers-trajectory-outcome")?.textContent).toContain("Passed")
+    expect(facts()).toContain("into the attempt")
     expect(container.querySelector(".lazers-trajectory-session-link")?.textContent).toContain(
       "Open worker session",
     )
@@ -643,9 +659,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
       { server: "timing-server", id: workerSessionID },
       { focus: true },
     ])
-    timing = container.querySelector('.lazers-trajectory-metadata [role="status"]')!
-    expect(timing.textContent).toBe("Elapsed duration · 1.076 s (1076 ms)")
-    expect(timing.getAttribute("aria-live")).toBe("polite")
+    expect(duration()).toBe("1.1 s")
+    noRawFacts()
 
     const press = (key: string) =>
       checkTrack.dispatchEvent(
@@ -655,63 +670,42 @@ test("registered Trajectory panel renders proportional check intervals and preci
     press("Home")
     await until(() => laneOrder[0]?.getAttribute("aria-selected") === "true")
     expect(laneOrder[0]?.getAttribute("tabindex")).toBe("0")
-    const firstHeading = container.querySelector(".lazers-trajectory-inspector h3")?.textContent
+    const firstHeading = command()
     press("ArrowRight")
     await until(() => laneOrder[1]?.getAttribute("aria-selected") === "true")
     expect(laneOrder[0]?.getAttribute("aria-selected")).toBe("false")
-    expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).not.toBe(
-      firstHeading,
-    )
+    expect(command()).not.toBe(firstHeading)
 
     checkRows("quality")[0]!.click()
     await until(
       () => markerStarting("Plan check quality")?.getAttribute("aria-selected") === "true",
     )
+    // A missing optional fact removes its row; it is never spelled out as "unavailable".
     checkRow("missing")!.click()
     await until(() => checkRow("missing")?.getAttribute("aria-pressed") === "true")
-    expect(
-      container.querySelector('.lazers-trajectory-metadata [role="status"]')?.textContent,
-    ).toBe("Duration unavailable · Neither start nor end time was recorded.")
-    expect(container.querySelector(".lazers-trajectory-inspector")?.textContent).toContain(
-      "Start · unavailable",
-    )
-    expect(container.querySelector(".lazers-trajectory-inspector")?.textContent).toContain(
-      "End · unavailable",
-    )
+    expect(duration()).toBeUndefined()
+    expect(facts()).not.toContain("Started")
+    expect(facts()).not.toContain("Ended")
+    noRawFacts()
     checkRow("equal")!.click()
     await until(() => checkRow("equal")?.getAttribute("aria-pressed") === "true")
-    expect(
-      container.querySelector('.lazers-trajectory-metadata [role="status"]')?.textContent,
-    ).toBe("Elapsed duration · 0 ms")
+    expect(duration()).toBe("0 ms")
     checkRow("start-only")!.click()
     await until(() => checkRow("start-only")?.getAttribute("aria-pressed") === "true")
-    expect(
-      container.querySelector('.lazers-trajectory-metadata [role="status"]')?.textContent,
-    ).toBe("Duration unavailable · End time was not recorded.")
-    metadata = container.querySelector(".lazers-trajectory-inspector .lazers-trajectory-metadata")!
-    expect(metadata.textContent).toContain("1793792609000 Unix ms")
-    expect(metadata.textContent).toContain("End · unavailable")
+    expect(duration()).toBeUndefined()
+    expect(facts()).toContain("Started")
+    expect(facts()).not.toContain("Ended")
+    noRawFacts()
     checkRow("end-only")!.click()
     await until(() => checkRow("end-only")?.getAttribute("aria-pressed") === "true")
-    expect(
-      container.querySelector('.lazers-trajectory-metadata [role="status"]')?.textContent,
-    ).toBe("Duration unavailable · Start time was not recorded.")
-    metadata = container.querySelector(".lazers-trajectory-inspector .lazers-trajectory-metadata")!
-    expect(metadata.textContent).toContain("Start · unavailable")
-    expect(metadata.textContent).toContain("1793792610000 Unix ms")
+    expect(duration()).toBeUndefined()
+    expect(facts()).not.toContain("Started")
+    expect(facts()).toContain("Ended")
     checkRow("reversed")!.click()
     await until(() => checkRow("reversed")?.getAttribute("aria-pressed") === "true")
-    expect(container.querySelector('.lazers-trajectory-metadata [role="alert"]')?.textContent).toBe(
-      "Duration unavailable · The recorded end time precedes the start time; duration is unavailable.",
-    )
-    expect(
-      container
-        .querySelector('.lazers-trajectory-metadata [role="alert"]')
-        ?.getAttribute("aria-live"),
-    ).toBe("assertive")
-    metadata = container.querySelector(".lazers-trajectory-inspector .lazers-trajectory-metadata")!
-    expect(metadata.textContent).toContain("1793792608000 Unix ms")
-    expect(metadata.textContent).toContain("1793792607000 Unix ms")
+    expect(duration()).toBeUndefined()
+    // The data defect is reported once, behind the Timing source disclosure.
+    expect(timingSource()?.textContent).toContain("precedes the start time")
 
     qualityRows = checkRows("quality")
     qualityRows[1]!.click()
@@ -727,13 +721,23 @@ test("registered Trajectory panel renders proportional check intervals and preci
         ".lazers-trajectory-activity-list .lazers-trajectory-event",
       ),
     ]
-    // Opening loads one captured page; the tracks show partial coverage until Load more.
+    // Opening loads one captured page; the rest streams in the background with no Load more.
     expect(capturedEvents()).toHaveLength(1)
-    expect(historyCalls).toEqual([undefined])
+    await until(() => historyCalls.length === 2)
+    expect(historyCalls).toEqual([undefined, "captured-page-two"])
     expect(container.querySelector(".lazers-trajectory-coverage-line")?.textContent).toContain(
-      "1 of 2 captured events loaded",
+      "1 of 2 events",
     )
+    expect(container.querySelector(".lazers-trajectory-coverage-line")?.textContent).toContain(
+      "loading the rest",
+    )
+    expect(
+      container.querySelector(".lazers-trajectory-progress")?.getAttribute("aria-valuenow"),
+    ).toBe("1")
     expect(container.querySelector(".lazers-trajectory-unloaded")).not.toBeNull()
+    expect(container.textContent).not.toContain("Load more")
+    // Streaming draws no idle breaks: unloaded time is not idle time.
+    expect(container.querySelector(".lazers-trajectory-idle")).toBeNull()
     const initialHistoryTime = capturedEvents()[0]!.querySelector("time")?.textContent
     const initialCaptureMetadata = container.querySelector(
       ".lazers-trajectory-capture-note",
@@ -758,22 +762,11 @@ test("registered Trajectory panel renders proportional check intervals and preci
         resnapshotRequired: false,
       },
     })
-    await until(
-      () =>
-        statusCalls > beforeStatusCalls &&
-        container
-          .querySelector('.lazers-trajectory-metadata [role="status"]')
-          ?.textContent?.includes("1126 ms") === true,
-    )
+    await until(() => statusCalls > beforeStatusCalls && duration() === "1.1 s")
     expect(markerStarting("Attempt 1 check quality")?.getAttribute("aria-selected")).toBe("true")
     expect(markerStarting("Plan check quality")?.getAttribute("aria-selected")).toBe("false")
-    expect(container.querySelector(".lazers-trajectory-inspector h3")?.textContent).toBe(
-      "Attempt 1 · bun test quality",
-    )
+    expect(command()).toBe("bun test quality")
     expect(capturedEvents()[0]?.querySelector("time")?.textContent).toBe(initialHistoryTime)
-    expect(container.querySelector(".lazers-trajectory-capture-stamp")?.textContent).toContain(
-      "Live · status",
-    )
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )
@@ -781,7 +774,8 @@ test("registered Trajectory panel renders proportional check intervals and preci
     capturedEvents()[0]!.click()
     const eventHeading = () =>
       [...container.querySelectorAll<HTMLElement>(".lazers-trajectory-inspector-heading")].find(
-        (heading) => heading.querySelector("h3")?.textContent === "VERIFY · accepted",
+        (heading) =>
+          heading.querySelector(".lazers-trajectory-kind")?.textContent === "VERIFY · accepted",
       )
     await until(() => eventHeading() !== undefined)
     expect(capturedEvents()[0]?.getAttribute("aria-pressed")).toBe("true")
@@ -795,20 +789,20 @@ test("registered Trajectory panel renders proportional check intervals and preci
     )
 
     expect(capturedEvents()).toHaveLength(1)
-    expect(historyCalls).toEqual([undefined])
-    const loadMore = [...historyDetails.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent?.includes("Load more activity"),
-    )!
-    loadMore.click()
+    releasePageTwo()
     await until(() => capturedEvents().length === 2)
     expect(historyCalls).toEqual([undefined, "captured-page-two"])
     expect(container.querySelector(".lazers-trajectory-unloaded")).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-progress")).toBeNull()
+    expect(container.querySelector(".lazers-trajectory-coverage-line")?.textContent).toContain(
+      "2 events",
+    )
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )
 
     const selectedEventTime = eventHeading()?.querySelector(
-      ".lazers-trajectory-result",
+      ".lazers-trajectory-duration",
     )?.textContent
     const recapture = container.querySelector<HTMLButtonElement>(
       ".lazers-trajectory-capture-note button",
@@ -823,7 +817,7 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(historyCalls).toEqual([undefined, "captured-page-two", undefined, "captured-page-two"])
     expect(capturedEvents()).toHaveLength(2)
     expect(eventHeading()).toBeDefined()
-    expect(eventHeading()?.querySelector(".lazers-trajectory-result")?.textContent).toBe(
+    expect(eventHeading()?.querySelector(".lazers-trajectory-duration")?.textContent).toBe(
       selectedEventTime,
     )
     payload = container.querySelector<HTMLDetailsElement>(".lazers-trajectory-payload")!
