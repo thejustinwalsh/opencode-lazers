@@ -398,7 +398,13 @@ function inputIdentity(
   sources: readonly SourceRead[],
 ) {
   const relevantSources = sources
-    .filter((source) => source.source !== "openrouter-benchmarks")
+    // Benchmarks do not price anything; neither do the public sources, which pin no quotes.
+    .filter(
+      (source) =>
+        source.source !== "openrouter-benchmarks" &&
+        source.source !== "models-dev" &&
+        source.source !== "epoch-benchmarks",
+    )
     .map((source) => ({
       source: source.source,
       storage: source.storage,

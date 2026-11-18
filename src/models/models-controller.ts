@@ -1,7 +1,7 @@
 import { createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import { createPanelStatus } from "../panel-status.tsx"
 import type { PanelProps } from "@opencode/plugin/gui"
-import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import type { JSX } from "solid-js"
 import { Models } from "./contract.ts"
 import type { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
@@ -783,6 +783,7 @@ export function createModelsController(props: ModelsProps) {
       profile: profile(),
       observed: observedFactsByRoute(),
       routed: routedRoutes(),
+      external: visible()?.comparison?.publicCatalog ?? [],
       label: (route) =>
         modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalogOptions),
     })
@@ -916,18 +917,34 @@ export function createModelsController(props: ModelsProps) {
         catalogEntries().find((item) => item.observed?.configurationID === configurationID)?.id ??
         null
       )
-    return visible()?.selectedCandidateID ?? null
+    return selectedEntryID()
   }
   /** A table row selects its point: the observed configuration, or the candidate in Projected. */
+  // A public-catalog model no route runs has no candidate to select: the pick lives here.
+  const [externalPick, setExternalPick] = createSignal<string | null>(null)
+  createEffect(
+    on(
+      () => visible()?.selectedCandidateID,
+      () => setExternalPick(null),
+      { defer: true },
+    ),
+  )
+  const selectedEntryID = () => externalPick() ?? visible()?.selectedCandidateID ?? null
+  const pickEntryID = (id: string) => {
+    if (visible()?.candidates.some((candidate) => candidate.candidateID === id)) {
+      setExternalPick(null)
+      state.selectCandidate(id)
+    } else setExternalPick(id)
+  }
   const selectEntry = (entry: CatalogEntry) => {
     if (compareMode() === "observed" && entry.observed) {
       state.selectConfiguration(entry.observed.configurationID)
       return
     }
-    if (compareMode() === "benchmark") state.selectCandidate(entry.id)
+    if (compareMode() === "benchmark") pickEntryID(entry.id)
     else {
       selectCompareMode("projected")
-      state.selectCandidate(entry.id)
+      pickEntryID(entry.id)
     }
   }
   const selectCompareMode = (mode: "observed" | "projected" | "benchmark") =>
@@ -1429,6 +1446,8 @@ export function createModelsController(props: ModelsProps) {
     clearConfirmedAssignmentWrite,
     compareMode,
     allModelsSelectedID,
+    pickEntryID,
+    selectedEntryID,
     selectEntry,
     catalogEntries,
     catalogNotes,

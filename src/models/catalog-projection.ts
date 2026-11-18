@@ -1,4 +1,5 @@
-import { benchmarkPrice, routeKey } from "./benchmark-baseline.ts"
+import { BENCHMARK_PRICE_MIX, benchmarkPrice, routeKey } from "./benchmark-baseline.ts"
+import type { PublicCatalogItem } from "./comparison-schema.ts"
 import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./benchmark-baseline.ts"
 import { paretoFrontier } from "./chart-layout.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
@@ -157,6 +158,8 @@ export type CatalogInput = {
   observed: ReadonlyMap<string, ObservedFacts>
   /** Routes named by the model router. */
   routed: ReadonlyArray<BenchmarkRoute>
+  /** Public-catalog models no route of this install runs: listed and priced, not routable. */
+  external?: ReadonlyArray<PublicCatalogItem>
   label: (route: BenchmarkRoute, candidate: ModelCandidate | undefined) => string
 }
 
@@ -186,6 +189,8 @@ export type CatalogSummary = {
   anthropic: number
   openai: number
   routed: number
+  /** Models of the public catalogs beyond this install's routes (Anthropic, OpenAI, newest). */
+  external: number
   /** Where the ordering came from, when it was a source's listing. */
   orderSource: ModelPriceSource | null
   /** The public score that ranks the set, and how many loaded models it reaches. */
@@ -380,6 +385,42 @@ export function buildCatalog(input: CatalogInput): {
     if ((observedFacts.get(target)?.accepted ?? -1) < facts.accepted)
       observedFacts.set(target, facts)
   }
+  // The public catalogs' models that no route runs join the set, priced by the source that
+  // listed them (when that source is among the configured ones) and scored on the same basis.
+  const externals = new Map<
+    string,
+    { item: PublicCatalogItem; price: BenchmarkPrice; score: number | null }
+  >()
+  for (const item of input.external ?? []) {
+    const source = item.source === "models-dev" ? "models-dev" : "openrouter"
+    if (!item.prices || !input.priceSources.includes(source)) continue
+    const key = routeKey({ providerID: item.providerID, modelID: item.modelID })
+    if (bases.has(key) || externals.has(key)) continue
+    const { input: inShare, output: outShare } = BENCHMARK_PRICE_MIX
+    const price: BenchmarkPrice = {
+      source,
+      input: item.prices.input,
+      output: item.prices.output,
+      cacheRead: item.prices.cacheRead,
+      cacheWrite: item.prices.cacheWrite,
+      blended: (item.prices.input * inShare + item.prices.output * outShare) / (inShare + outShare),
+      appliesBelowTokens: null,
+      retrievedAt:
+        (source === "models-dev" ? input.sourceDates.modelsDev : input.sourceDates.openrouter) ??
+        null,
+    }
+    const rows =
+      choice.basis.source === "epoch"
+        ? item.benchmarks.filter((row) => row.benchmarkID === choice.basis.benchmarkID)
+        : []
+    const best = rows.reduce<number | null>(
+      (top, row) => (top === null || row.score > top ? row.score : top),
+      null,
+    )
+    externals.set(key, { item, price, score: best === null ? null : Math.round(best * 1000) / 10 })
+    catalogKeys.add(key)
+  }
+
   const tags = new Map<string, Set<SourceTag>>()
   const add = (key: string, tag: SourceTag) => tags.set(key, (tags.get(key) ?? new Set()).add(tag))
   for (const key of observedFacts.keys()) add(key, "observed")
@@ -392,18 +433,21 @@ export function buildCatalog(input: CatalogInput): {
     const route = base?.route ?? { providerID, modelID }
     const observed = observedFacts.get(key) ?? null
     const representative = base?.representative
+    const outside = base ? undefined : externals.get(key)
+    const price = base?.price ?? outside?.price ?? null
     return {
       id: representative?.candidateID ?? key,
       route,
-      label: input.label(route, representative),
+      label: outside ? (outside.item.name ?? modelID) : input.label(route, representative),
       tags: (["observed", "routed", "catalog"] as const).filter((tag) => set.has(tag)),
-      price: base?.price ?? null,
-      projection: base?.price && input.profile ? projectCost(input.profile, base.price) : null,
-      score: base?.score ?? null,
+      price,
+      projection: price && input.profile ? projectCost(input.profile, price) : null,
+      score: base?.score ?? outside?.score ?? null,
       scoreName: choice.basis.label,
       contextTokens:
         representative?.native.contextTokens ??
         representative?.externalModel?.contextLength ??
+        outside?.item.contextTokens ??
         null,
       observed,
       frontier: false,
@@ -423,6 +467,7 @@ export function buildCatalog(input: CatalogInput): {
       anthropic: byok.anthropic,
       openai: byok.openai,
       routed: entries.filter((entry) => entry.tags.includes("routed")).length,
+      external: externals.size,
       orderSource,
       scoreBasis: choice.basis,
       scored: scored.length,
@@ -437,6 +482,7 @@ export function catalogSummaryText(summary: CatalogSummary) {
     summary.anthropic ? `${summary.anthropic} Anthropic` : "",
     summary.openai ? `${summary.openai} OpenAI` : "",
     summary.routed ? `${summary.routed} routed` : "",
+    summary.external ? `${summary.external} more from public catalogs` : "",
   ]
     .filter(Boolean)
     .join(" · ")

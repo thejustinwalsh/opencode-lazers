@@ -142,7 +142,7 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
   const scored = () => projectedPoints().length
   // The scatter is a secondary view, offered only when enough models have a public score.
   const scatter = () => view() === "scatter" && scored() >= 5
-  const selectedID = () => visible()?.selectedCandidateID ?? null
+  const selectedID = () => ctl.selectedEntryID()
   return (
     <Show
       when={rows().length > 0}
@@ -186,7 +186,7 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
             selectedID={selectedID()}
             onSelect={(id) => {
               revealDetails(ctl)
-              state.selectCandidate(id)
+              ctl.pickEntryID(id)
             }}
             formatValue={formatMarketAmount}
             title="Projected cost per accepted task"
@@ -202,7 +202,7 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
           selectedID={selectedID()}
           onSelect={(candidateID) => {
             revealDetails(ctl)
-            state.selectCandidate(candidateID)
+            ctl.pickEntryID(candidateID)
           }}
           xTitle={
             ctl.scoreBasis().source === "epoch" ? ctl.scoreBasis().label : "Public coding index"
@@ -367,7 +367,7 @@ function ProjectedSummary(props: { ctl: ModelsController }) {
     scoreBasis,
     visible,
   } = props.ctl
-  const entry = () => catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+  const entry = () => catalogEntries().find((item) => item.id === props.ctl.selectedEntryID())
   const day = (value: string | null | undefined) =>
     value ? new Date(value).toLocaleDateString([], { day: "numeric", month: "short" }) : ""
   const perMillion = (value: number | null) =>
@@ -1310,7 +1310,7 @@ function compareDetails(ctl: ModelsController) {
   } = ctl
   const projected = () =>
     compareMode() === "projected"
-      ? catalogEntries().find((item) => item.id === visible()?.selectedCandidateID)
+      ? catalogEntries().find((item) => item.id === ctl.selectedEntryID())
       : undefined
   const selected = () =>
     compareMode() === "projected"

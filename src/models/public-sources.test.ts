@@ -481,3 +481,129 @@ test("a dated snapshot and its latest alias are one catalog entry; versions keep
   const usd = (id: string) => entries.find((entry) => entry.route.modelID === id)!.projection!.usd
   expect(usd("claude-opus-4-1")).toBeCloseTo(usd("claude-opus-4-5") * 3, 6)
 })
+
+// -- public catalog beyond the routes -----------------------------------------------------------
+
+test("the public catalogs add Anthropic and OpenAI lineups no route runs, once per model", () => {
+  const dev = parseModelsDev(modelsDevPayload(), new Set(["opencode-go"]))
+  const join = createPublicJoin({
+    modelsDev: dev,
+    epoch: epochRows(),
+    // This install routes only GLM through opencode-go: no Anthropic or OpenAI provider at all.
+    routes: [{ providerID: "opencode-go", modelID: "glm-5.2", name: "GLM 5.2" }],
+    openrouter: [
+      {
+        kind: "openrouter-model",
+        id: "acme/rocket-1",
+        canonicalSlug: null,
+        name: "Acme: Rocket 1",
+        contextLength: 128000,
+        architecture: {
+          modality: null,
+          inputModalities: ["text"],
+          outputModalities: ["text"],
+          tokenizer: null,
+          instructType: null,
+        },
+        supportedParameters: ["tools"],
+        prices: {
+          unit: "USD per token",
+          tiers: [
+            {
+              minPromptTokens: null,
+              prompt: "0.000002",
+              completion: "0.00001",
+              inputCacheRead: null,
+              inputCacheWrite: null,
+            },
+          ],
+        },
+      },
+      {
+        // An OpenRouter listing of a model models.dev already gave: one model, not two.
+        kind: "openrouter-model",
+        id: "anthropic/claude-opus-4.6",
+        canonicalSlug: null,
+        name: "Anthropic: Claude Opus 4.6",
+        contextLength: 200000,
+        architecture: {
+          modality: null,
+          inputModalities: ["text"],
+          outputModalities: ["text"],
+          tokenizer: null,
+          instructType: null,
+        },
+        supportedParameters: ["tools"],
+        prices: {
+          unit: "USD per token",
+          tiers: [
+            {
+              minPromptTokens: null,
+              prompt: "0.000005",
+              completion: "0.000025",
+              inputCacheRead: null,
+              inputCacheWrite: null,
+            },
+          ],
+        },
+      },
+    ] as never,
+  })
+  const items = join.external()
+  const ids = items.map((item) => `${item.providerID}/${item.modelID}`)
+  // Anthropic: Haiku 4.5 and Opus 4.6; Sonnet 4.5 is marked deprecated upstream and is left out.
+  expect(ids.filter((id) => id.startsWith("anthropic/")).length).toBe(2)
+  expect(ids).not.toContain("anthropic/claude-sonnet-4-5-20250929")
+  expect(ids).toContain("anthropic/claude-haiku-4-5")
+  expect(ids).not.toContain("anthropic/claude-haiku-4-5-20251001")
+  expect(ids.some((id) => id.startsWith("openai/gpt-5"))).toBe(true)
+  // GLM is already a route; the OpenRouter copy of Opus 4.6 is the same model as models.dev's.
+  expect(ids).not.toContain("opencode-go/glm-5.2")
+  expect(
+    ids.filter((id) => (id.includes("opus-4") && id.includes("4.6")) || id.includes("opus-4-6")),
+  ).toHaveLength(1)
+  expect(ids).toContain("acme/rocket-1")
+  const rocket = items.find((item) => item.modelID === "rocket-1")!
+  expect(rocket).toMatchObject({ source: "openrouter", prices: { input: 2, output: 10 } })
+  const opus = items.find((item) => item.modelID === "claude-opus-4-6")!
+  expect(opus).toMatchObject({ source: "models-dev", prices: { input: 5, output: 25 } })
+  expect(opus.benchmarks.some((row) => row.benchmarkID === "swe-bench-verified")).toBe(true)
+})
+
+test("public-catalog models join the ranked set, priced by their source and scored on its basis", () => {
+  const join = createPublicJoin({
+    modelsDev: parseModelsDev(modelsDevPayload()),
+    epoch: epochRows(),
+    routes: [],
+  })
+  const external = join.external()
+  const { entries, summary } = buildCatalog({
+    candidates: [],
+    priceSources: ["openrouter", "opencode", "models-dev"],
+    sourceDates: dates,
+    profile,
+    observed: new Map(),
+    routed: [],
+    external,
+    label: (route) => route.modelID,
+  })
+  expect(entries.length).toBe(external.length)
+  expect(summary.external).toBe(external.length)
+  const opus = entries.find((entry) => entry.route.modelID === "claude-opus-4-6")!
+  expect(opus).toMatchObject({ label: expect.any(String), tags: ["catalog"] })
+  expect(opus.price).toMatchObject({ source: "models-dev", input: 5, output: 25 })
+  expect(opus.projection!.usd).toBeGreaterThan(0)
+  // A source that is not configured contributes nothing.
+  expect(
+    buildCatalog({
+      candidates: [],
+      priceSources: ["opencode"],
+      sourceDates: dates,
+      profile,
+      observed: new Map(),
+      routed: [],
+      external,
+      label: (route) => route.modelID,
+    }).entries,
+  ).toHaveLength(0)
+})
