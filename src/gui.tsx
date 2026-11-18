@@ -947,8 +947,8 @@ export default Plugin.define({
       .lazers-local h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
       .lazers-local p { color: var(--text-weak); font-size: 13px; line-height: 1.5; margin: 4px 0 12px; }
       .lazers-local section { padding: 24px 0; border-top: 1px solid var(--border-weak-base); }
-      .lazers-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: -8px; }
-      .lazers-settings-head h2 { margin: 0; color: var(--text-strong); font-size: 14px; font-weight: 500; }
+      .lazers-settings-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: -20px; }
+      .lazers-settings-head h2 { margin: 0; color: var(--text-strong); font-size: 13px; font-weight: 500; }
       .lazers-settings-head span { min-width: 0; color: var(--text-weak); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
       .lazers-settings-controls { display: flex; align-items: center; gap: 8px; }
       .lazers-settings-number { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
