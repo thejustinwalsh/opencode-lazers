@@ -20,6 +20,7 @@ import type { Decision } from "./webgpu/decisions.ts"
 import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
 import { panelErrorMessage } from "./panel-error.ts"
 import { panelStatusStyles } from "./panel-status.tsx"
+import { detailsPaneStyles } from "./details-pane.css.ts"
 import { registerDictation } from "./webgpu/dictation.tsx"
 import { audioFilePCM16 } from "./webgpu/audio.ts"
 import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
@@ -99,6 +100,7 @@ export default Plugin.define({
     const BudgetSection = setupBudget(ctx, ctx.stores.budget, pageID)
     ctx.add(Style, nativeBusyStyles)
     ctx.add(Style, panelStatusStyles)
+    ctx.add(Style, detailsPaneStyles)
     const openTaskTrajectory: TaskTrajectoryOpener = (session, request) => {
       const target = { ...request, requestID: crypto.randomUUID() }
       ctx.stores.trajectoryView(session).update((draft) => {
