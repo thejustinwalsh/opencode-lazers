@@ -1,0 +1,16 @@
+# Trajectory marks and idle breaks
+
+- Marks use plot-relative percentages that are converted to pixels using the plot width.
+- A mark under 6 drawn pixels becomes a 2-pixel tick centered on its start.
+- A mark at least 6 pixels wide becomes a span from its start through its recorded width.
+- Members are ordered by drawn start pixel, then drawn end pixel.
+- The next member joins its current group when its start is strictly less than 3 pixels after the group's current end.
+- The group end tracks its furthest member, so proximity can form a transitive run.
+- A run draws the union; each member keeps its id, hit target, and selection, without moving timestamps.
+- A glyph is marked failed only when all its members are failed.
+- One shared axis positions timeline rails, checks, marks, ruler ticks, gridlines, and idle breaks.
+- Loading history, nonpositive duration, or no qualifying idle gap leaves the axis linear.
+- Detection uses unique valid activity times plus zero; it does not add the duration endpoint.
+- Only gaps between known points are tested; gaps of 60 seconds or more are idle breaks.
+- Each break is displayed at the lesser of its duration and the larger of 8 seconds or 2% of run duration.
+- A trailing interval after the last known point stays ordinary time, not an inferred idle break.
