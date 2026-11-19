@@ -1,5 +1,7 @@
 # Models visual refinement
 
+> Superseded for the details panes by [design/details-panes/spec.md](../details-panes/spec.md) and `DESIGN.md`. The mockup images this document links to (`tasks-focus-v2.png`, `models-approved.png`, `models-compare-v*.png`, `models-focus-v*.png`, `trajectory-review-v2.png`) were abandoned and removed on 2026-11-19; those links no longer resolve.
+
 ## Approved implementation reference
 
 The user selected [models-approved.png](models-approved.png), the exact attached

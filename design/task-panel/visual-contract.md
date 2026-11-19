@@ -1,5 +1,7 @@
 # Focused Tasks correction
 
+> Superseded for the details panes by [design/details-panes/spec.md](../details-panes/spec.md) and `DESIGN.md`. The mockup images this document links to (`tasks-focus-v2.png`, `models-approved.png`, `models-compare-v*.png`, `models-focus-v*.png`, `trajectory-review-v2.png`) were abandoned and removed on 2026-11-19; those links no longer resolve.
+
 Reference: `tasks-focus-v2.png` (1145 × 1374). Actual before capture:
 `current-panel.png`. GPT-6.1 Terra High reviewed both images and the implementation.
 

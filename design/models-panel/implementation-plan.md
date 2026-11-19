@@ -1,5 +1,7 @@
 # Models comparison implementation guide
 
+> Superseded for the details panes by [design/details-panes/spec.md](../details-panes/spec.md) and `DESIGN.md`. The mockup images this document links to (`tasks-focus-v2.png`, `models-approved.png`, `models-compare-v*.png`, `models-focus-v*.png`, `trajectory-review-v2.png`) were abandoned and removed on 2026-11-19; those links no longer resolve.
+
 Use [models-approved.png](models-approved.png) for composition and [DESIGN.md](../../DESIGN.md) for shared panel behavior. The developer is comparing routes for a task, then choosing whether to assign one. Compare is the primary view; Assignments is secondary. The image's values and smooth curve are illustrative, not product data.
 
 ## Panel composition

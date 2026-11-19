@@ -1,5 +1,7 @@
 # System panel: design and implementation plan
 
+> Superseded for the details panes by [design/details-panes/spec.md](../details-panes/spec.md) and `DESIGN.md`. The mockup images this document links to (`tasks-focus-v2.png`, `models-approved.png`, `models-compare-v*.png`, `models-focus-v*.png`, `trajectory-review-v2.png`) were abandoned and removed on 2026-11-19; those links no longer resolve.
+
 2026-10-31 · Approved design guidance for the optional System panel. The runner machine and durable runtime are available on main; this document describes the remaining scoped read projection and panel work. The panel is not implemented by this document.
 
 ## Decision and visual contract
