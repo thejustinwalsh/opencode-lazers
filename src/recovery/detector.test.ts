@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test"
-import { concernIDFor, evaluateRules, DETECTOR_THRESHOLDS } from "./detector.ts"
+import {
+  concernIDFor,
+  evaluateRules,
+  DETECTOR_THRESHOLDS,
+  type TrajectoryTail,
+} from "./detector.ts"
 import type { StrugglingFacts } from "../runner/struggling.ts"
 
 const calm: StrugglingFacts = {
@@ -14,13 +19,13 @@ const calm: StrugglingFacts = {
   toolCalls: 117,
   costUSD: null,
 }
-const quiet = {
+const quiet: TrajectoryTail = {
   throughSequence: 9,
   trailingToolFailures: 0,
   callsWithoutFileChange: 3,
   outOfScope: [],
 }
-const rules = (facts: Partial<StrugglingFacts>, tail: Partial<typeof quiet> = {}) =>
+const rules = (facts: Partial<StrugglingFacts>, tail: Partial<TrajectoryTail> = {}) =>
   evaluateRules({ ...calm, ...facts }, { ...quiet, ...tail }, "attempt a").map((f) => f.ruleID)
 
 test("a median task and quiet tail raise nothing; each rule fires at its threshold only", () => {
