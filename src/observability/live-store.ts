@@ -7,6 +7,21 @@ import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
 
+/** Recent native calls read per session that has no runner assignment. */
+const NATIVE_CALLS_PER_SESSION = 17
+
+export type NativeCallRow = {
+  session_id: string
+  call_id: string
+  message_id: string | null
+  tool: string | null
+  first_observed_at: number
+  last_observed_at: number
+  status: string | null
+  detail: string | null
+  error: string | null
+}
+
 /** Recent call summaries read per live snapshot. */
 const TOOL_DETAIL_ROWS = 400
 
@@ -540,6 +555,47 @@ export class LiveReadStore {
       connection.close()
     }
     return details
+  }
+
+  /**
+   * The most recent native calls of sessions with no runner assignment, from the canonical
+   * per-call record. The Architect has no progress rows, so this is where its calls live. Bounded
+   * to the latest 17 per session; empty when the table does not exist yet.
+   */
+  nativeCalls(sessionIDs: readonly string[], signal: AbortSignal): NativeCallRow[] {
+    if (sessionIDs.length === 0) return []
+    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
+    try {
+      return connection.store.read((db) => {
+        signal.throwIfAborted()
+        const exists = db
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='native_tool_calls'",
+          )
+          .get()
+        if (!exists) return []
+        return db
+          .query<NativeCallRow, (string | number)[]>(
+            `SELECT session_id,call_id,message_id,tool,first_observed_at,last_observed_at,status,detail,error FROM (
+               SELECT session_id,COALESCE(native_call_id,invocation_id) AS call_id,message_id,tool,
+                      first_observed_at,last_observed_at,
+                      json_extract(payload,'$.status') AS status,
+                      substr(json_extract(payload,'$.detail'),1,200) AS detail,
+                      substr(json_extract(payload,'$.error.message'),1,240) AS error,
+                      ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY last_observed_at DESC) AS rn
+                 FROM native_tool_calls
+                WHERE project_directory=? AND identity_kind='native-call'
+                  AND session_id IN (SELECT value FROM json_each(?))
+             ) WHERE rn<=?
+             ORDER BY last_observed_at DESC`,
+          )
+          .all(this.projectDirectory, JSON.stringify(sessionIDs), NATIVE_CALLS_PER_SESSION)
+      })
+    } catch {
+      return []
+    } finally {
+      connection.close()
+    }
   }
 
   readCurrent(sessionID: string | null, signal: AbortSignal): LiveSourceSnapshot {

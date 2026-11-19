@@ -495,7 +495,8 @@ const LiveSession = z.strictObject({
 const LiveToolCall = z.strictObject({
   id: z.string().min(1).max(512),
   sessionID: z.string().min(1).max(200),
-  attemptID: z.uuid(),
+  /** Null for a session with no runner assignment, such as the Architect. */
+  attemptID: z.uuid().nullable(),
   messageID: z.string().max(200).nullable(),
   callID: z.string().min(1).max(200),
   tool: z.string().max(160).nullable(),
@@ -505,7 +506,7 @@ const LiveToolCall = z.strictObject({
   calledAt: z.number().finite().nullable(),
   completedAt: z.number().finite().nullable(),
   observedAt: z.number().finite().nullable(),
-  sourceProgressSequence: z.int().positive(),
+  sourceProgressSequence: z.int().positive().nullable(),
   sourceEventID: z.string().max(200).nullable(),
   sourceEventType: z.string().max(120).nullable(),
   result: z.string().max(240).nullable(),
