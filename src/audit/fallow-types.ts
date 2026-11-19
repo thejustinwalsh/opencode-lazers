@@ -1,8 +1,7 @@
 /**
  * Report shapes of the Fallow analysis, as the WebAssembly module emits them. They are the
- * subset of `@fallow-cli/fallow-node` 3.43.2's typings that LAZERS reads, copied here so the
- * runtime and `bun check` need no native package. The native package stays a dev dependency
- * only for the parity tests.
+ * subset of the upstream Node binding's 3.43.2 typings that LAZERS reads, copied here so the
+ * runtime and `bun check` need no native package. No Fallow npm package is a dependency.
  */
 
 export interface AnalysisAction {

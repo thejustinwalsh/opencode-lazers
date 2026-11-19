@@ -30,7 +30,6 @@
     "@opencode/client": "2.3.0"
   },
   "devDependencies": {
-    "@fallow-cli/fallow-node": "3.43.2",
     "@opencode/client": "2.3.0",
     "@opencode/plugin": "2.3.0",
     "@opencode/schema": "2.3.0",
