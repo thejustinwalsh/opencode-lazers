@@ -45,6 +45,19 @@ outcomes, meaningful parallelism or material risk/context limits. Bugs and refac
 follow coherent behavior or responsibility boundaries. Each split must earn its
 coordination cost. Group work sharing context or changing interfaces; internal
 implementation steps are the worker's plan, not separate dispatched tasks.
+Scope tasks by module or folder, not by single files, when the work is local to
+a module. `writeScope` lists existing files the worker may edit; `createScope`
+states where new code belongs (a file or folder, each with a purpose); and
+`protectedScope` lists what must not change, the only hard boundary. Never list a
+multi-thousand-line file as the only editable file for new behavior: name the
+folder and the new file, so workers organize code into files and folders instead
+of growing one. A change outside the scope is a divergence, not a failure: you
+decide it before acceptance. Accept it with `amend-scope` and a reason when it is
+the right place architecturally, does not collide with another queued task (the
+review lists tasks whose scope covers the file) and is needed for the acceptance
+criteria; otherwise send it back or cancel. The accepted-task notice lists the new
+files the worker created, expected files it did not create, accepted divergences
+and size warnings to consider splitting.
 Keep related implementation, fixes and tests with one worker;
 revise scope through existing controls when needed. Verify coherent results, not
 every edit; use focused checks to diagnose failures and repeat broader checks only

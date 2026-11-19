@@ -26,6 +26,60 @@ from repository findings and inspect which cases ran. Do not create model repair
 turns for mechanically fixable formatting or lint.
 Do not fill fields with boilerplate.
 
+## Scope: what may change, where new code goes, what is off limits
+
+A scope keeps agents out of other parts of the code and the work local. It also
+states the structure you expect.
+
+```text
+writeScope     (edit)       Existing files the worker may modify.
+createScope    (create)     New files or folders you expect, each with a purpose.
+protectedScope (protected)  Paths the worker must not touch.
+```
+
+```json
+{
+  "writeScope": ["src/runner/runtime.ts", "src/runner/queue/**"],
+  "createScope": [
+    { "path": "src/runner/queue-limit.ts", "purpose": "the queue limit rule, pure and tested" },
+    { "path": "src/runner/queue/", "purpose": "new queue helpers" }
+  ],
+  "protectedScope": ["src/audit/**"]
+}
+```
+
+- Scope by module or folder (`dir/**`) when the work is local to a module. Do not
+  list a multi-thousand-line file as the only editable file for new behavior:
+  name the folder and the new file in `createScope` instead, and keep the large
+  file's edit to the call site.
+- `createScope` is additive. New files beside an edit-scoped file, in a folder
+  under it, or in a `createScope` folder need no decision whether listed or not;
+  listing them tells the worker where you want things. Tests and fixtures beside
+  or mirroring an edit-scoped source file are in scope.
+- `protectedScope` is the only hard boundary. A change there holds the task until
+  you decide (`amend-scope` naming the exact path, or cancel).
+- A task's `writeScope` and `createScope` are reserved against concurrent work, so
+  two tasks that edit or create under the same folder run one after the other.
+
+### Judging a divergence
+
+Any change outside `writeScope`, `createScope` and their sibling allowance is a
+divergence. It does not fail the task; checks and the Fallow audit run on the
+whole change. You decide it before the task is accepted. The worker first gets
+one chance, inside the single repair: "these changes are outside the task's
+scope: move/remove them or say why they are needed". If a divergence remains and
+no repair is left, the task waits for you (a hold that advertises `amend-scope`).
+Ask three questions:
+
+1. Is it the right place architecturally, or should the code live in a new file or
+   folder near what it serves?
+2. Does it collide with another task? The review lists other tasks whose scope
+   covers the file; accepting it into an active task's scope is refused.
+3. Is it needed for an acceptance criterion?
+
+Accept with `amend-scope` and a reason (recorded and shown in the acceptance
+notice), send it back (`retained-repair`), or cancel.
+
 `writeScope` is repository-relative to the assigned LAZERS checkout. It does not
 authorize writes in a sibling or other external checkout. When external
 implementation is genuinely required, a mandatory task constraint must separately

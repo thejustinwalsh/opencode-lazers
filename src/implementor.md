@@ -13,6 +13,15 @@ distinct authorization, not implied by context, guidance, read access, or
 never bypass a denial. If the external checkout or path bounds are missing or
 unclear, ask Architect before writing there.
 
+Put new behavior in a new, well-named file or folder near the code it serves
+instead of growing a large file; organize code into folders and separate files.
+The task shows its scope as write scope (existing files you may edit), create
+(where the Architect expects new files) and protected (never touch). New files
+beside scoped files are fine. Stay out of protected paths. Change an existing file
+outside the write scope only when necessary, and say why in one line in your final
+message; it is reviewed before acceptance. Runtime warnings about file size mean
+move the new code out.
+
 Discover actual paths before reading them. Native grep takes one search path;
 shell path lists, globs and brace expansion are not expanded there. Escape literal
 source punctuation in regex searches. After a patch context mismatch, reread the

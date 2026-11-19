@@ -275,6 +275,29 @@ inventories only when the location is already loaded, and the trajectory host
 checks a recorded attempt workspace by path (`ownsRecordedWorkspace`), not by
 asking the host to open the worktree.
 
+## Scope review at verify
+
+Scope is a model, not a path list: `writeScope` (edit), `createScope` (expected
+structure) and `protectedScope`. `classifyChange` (`src/runner/scope.ts`) labels
+each changed path `in-scope`, `expected-new`, `allowed-new` (a new file in a
+folder that holds an edit- or create-scoped file, or a test/fixture beside or
+mirroring one), `divergence` or `protected`. No new state exists.
+
+- `protected` stops the candidate before the checks (`SCOPE_DECISION_REQUIRED`
+  kind `protected`, `ArtifactScopeViolation`); `amend-scope` naming the exact path
+  releases it.
+- `divergence` does not block. The checks and the Fallow audit run, then
+  `decideVerification` folds the divergence into the one repair (with failures
+  and findings). With no repair left it is `SCOPE_DECISION_REQUIRED` kind
+  `divergence`, a `blocked` hold (family `scope-divergence`) that advertises
+  `amend-scope`, `retained-repair`, `reconcile` and `cancel`, so it appears in the
+  recovery bundle. `amend-scope` plus `reconcile` re-verifies and accepts.
+- `SCOPE_REPORTED` records the report (created, missing expected, divergences,
+  accepted, size warnings); `task-accepted` carries it for the Architect.
+- Reservations (`effectiveReservationScope`) are edit plus create paths; the
+  derived allowance never reserves. A divergence into another task's scope is
+  listed with that task in the report.
+
 ## Hold audit
 
 Holds raise only for real, directly observable loss, with an advertised unblock.
