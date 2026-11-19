@@ -473,6 +473,12 @@ worker finishes
 | Findings      | Pass            | No                  | Accept; the remaining findings go to the Architect as concerns                        |
 | Any           | Fail            | No                  | Today's behaviour: `FAIL` and a hold. Fallow findings are attached to the hold reason |
 
+The repair input carries every failing check, not the first. Today
+`verify()` reports one (`receipts.find(...)` before `failAttempt()`,
+`src/runner/runtime.ts`); Phase 3 changes it to collect all of them with the
+Fallow findings. Reason (owner, 2026-11-19): anything the worker is not told
+about is left for the Architect, whose fixes cost more.
+
 Fallow never spends a repair attempt of its own and never competes with a
 test failure for one. Unlike mechanical preparation, the review does not
 depend on the task declaring a quality command: it runs for every worker
@@ -725,15 +731,18 @@ the existing stall probe); each tool's output for this repository is under
 
 ### Phase 3: the task review
 
+1. `verify()` collects every failing authored check into the repair input
+   instead of the first. Lands on its own, before any Fallow code, with a test
+   that two failing checks both reach the repair attempt.
 1. Attribution in the host (complexity base-side, added-line overlap).
-2. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
+1. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
    record, the fingerprint.
-3. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
+1. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
    preparation and alongside the authored checks; one combined decision;
    receipt, guidance text,
    `REPAIR` with the findings in the repair attempt's input on `feedback`, `FALLOW_UNAVAILABLE`,
    reserved check ID, plugin option `fallowReview: "on" | "off"`.
-4. Three lines in `src/implementor.md`; contract wording in the three places
+1. Three lines in `src/implementor.md`; contract wording in the three places
    named above.
 
 Accept when, in `runtime.test.ts`: a task that adds a clone moves `REPAIR`,
