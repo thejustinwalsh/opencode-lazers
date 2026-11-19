@@ -31,7 +31,12 @@ export async function fallowReport(
   const runID = start.run.runID
   try {
     const fallow = await import("@fallow-cli/fallow-node")
-    const options = { root: start.run.workspace, threads: input.threads ?? 1, explain: true }
+    const options = {
+      root: start.run.workspace,
+      threads: input.threads ?? 1,
+      explain: true,
+      noCache: true,
+    }
     const scans = {
       deadCode: () => fallow.detectDeadCode(options),
       duplication: () => fallow.detectDuplication(options),
