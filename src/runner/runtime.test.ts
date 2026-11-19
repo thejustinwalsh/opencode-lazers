@@ -12030,6 +12030,51 @@ test("native archive failure remains visible and retries without restoring prede
   expect(f.events.filter((event) => event.startsWith("create-architect:")).length).toBe(1)
 })
 
+test("a second renewal of a session that already has a source row reuses that row", async () => {
+  const now = 2_000_000_400_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  const fence = f.store.claim(f.runtime.owner, now)!
+  const plan = f.store.plan(f.receipt.planID)!
+  const owner = f.sessions.get(plan.owner)!
+  const begin = (handoffMessageID: string) =>
+    f.store.beginArchitectRenewal({
+      schedulerOwner: f.runtime.owner,
+      fence,
+      anchorPlanID: plan.id,
+      previousSessionID: plan.owner,
+      directory: owner.directory,
+      model: JSON.stringify(owner.model),
+      idleAt: owner.idleAt!,
+      now,
+      handoffMessageID,
+    })
+  const first = begin("first-handoff")!
+  // The first renewal committed earlier and left its source scanning (state active).
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_architect_renewals SET state='committed' WHERE id=?").run(first.id)
+    db.query(
+      "UPDATE runner_architect_sources SET state='active',revision=226,scan_cursor='cursor' WHERE session_id=?",
+    ).run(plan.owner)
+  })
+  const second = begin("second-handoff")!
+  expect(second.id).not.toBe(first.id)
+  const sources = f.store.atomic((db) =>
+    db
+      .query<{ renewal_id: string; state: string; scan_cursor: string | null }, [string]>(
+        "SELECT renewal_id,state,scan_cursor FROM runner_architect_sources WHERE session_id=?",
+      )
+      .all(plan.owner),
+  )
+  expect(sources).toEqual([{ renewal_id: second.id, state: "preparing", scan_cursor: null }])
+})
+
 test("a reopened scheduler recovers a durable transfer before archival without changing workers", async () => {
   const now = 2_000_000_400_000
   const f = fixture({

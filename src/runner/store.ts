@@ -1941,6 +1941,32 @@ export class RunnerStore {
       ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state),
     )
   }
+  /**
+   * One source row per session, kept across renewals: a later renewal of a session that already
+   * has a row (an earlier renewal committed, or a retry) re-prepares it and restarts its scan.
+   */
+  private prepareArchitectSource(
+    db: Database,
+    sessionID: string,
+    renewalID: string,
+    anchorPlanID: string,
+    now: number,
+  ) {
+    db.query(
+      `INSERT INTO runner_architect_sources(
+        session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
+      ) VALUES(?,?,?,NULL,0,0,?,?) ON CONFLICT(session_id) DO UPDATE SET
+        renewal_id=excluded.renewal_id,anchor_plan_id=excluded.anchor_plan_id,
+        scan_cursor=NULL,scan_sweep=0,state=excluded.state,
+        scan_complete_at=NULL,observation_json=NULL,updated_at=excluded.updated_at`,
+    ).run(
+      sessionID,
+      renewalID,
+      anchorPlanID,
+      architectSourceTransition(this.architectSource(sessionID)?.state ?? "preparing", "PREPARE"),
+      now,
+    )
+  }
   beginArchitectRenewal(input: {
     schedulerOwner: string
     fence: number
@@ -2049,21 +2075,11 @@ export class RunnerStore {
           db.query(
             "INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id) VALUES(?,?,?)",
           ).run(latest.id, input.previousSessionID, messageID)
-        db.query(
-          `INSERT INTO runner_architect_sources(
-            session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
-          ) VALUES(?,?,?,NULL,0,0,?,?) ON CONFLICT(session_id) DO UPDATE SET
-            renewal_id=excluded.renewal_id,anchor_plan_id=excluded.anchor_plan_id,
-            scan_cursor=NULL,scan_sweep=0,state=excluded.state,
-            scan_complete_at=NULL,observation_json=NULL,updated_at=excluded.updated_at`,
-        ).run(
+        this.prepareArchitectSource(
+          db,
           input.previousSessionID,
           latest.id,
           input.anchorPlanID,
-          architectSourceTransition(
-            this.architectSource(input.previousSessionID)?.state ?? "preparing",
-            "PREPARE",
-          ),
           input.now,
         )
         db.query(
@@ -2115,17 +2131,7 @@ export class RunnerStore {
         continuityJSON,
         input.now,
       )
-      db.query(
-        `INSERT INTO runner_architect_sources(
-          session_id,renewal_id,anchor_plan_id,scan_cursor,scan_sweep,revision,state,updated_at
-        ) VALUES(?,?,?,NULL,0,0,?,?)`,
-      ).run(
-        input.previousSessionID,
-        id,
-        input.anchorPlanID,
-        architectSourceTransition("preparing", "PREPARE"),
-        input.now,
-      )
+      this.prepareArchitectSource(db, input.previousSessionID, id, input.anchorPlanID, input.now)
       db.query(
         "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
       ).run(id, input.previousSessionID)
