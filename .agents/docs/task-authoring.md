@@ -65,10 +65,12 @@ protectedScope (protected)  Paths the worker must not touch.
 
 Any change outside `writeScope`, `createScope` and their sibling allowance is a
 divergence. It does not fail the task; checks and the Fallow audit run on the
-whole change. You decide it before the task is accepted. The worker first gets
-one chance, inside the single repair: "these changes are outside the task's
-scope: move/remove them or say why they are needed". If a divergence remains and
-no repair is left, the task waits for you (a hold that advertises `amend-scope`).
+whole change. You decide it before the task is accepted: when the divergence is the only
+thing outstanding the task holds for you (a `scope-divergence` hold) with its repair
+unspent, quoting the worker's own stated reason ("no reason given" when it gave none).
+When checks or the audit send the work back anyway, the divergence rides in that one
+repair: "these changes are outside the task's scope: move/remove them or say why they
+are needed".
 Ask three questions:
 
 1. Is it the right place architecturally, or should the code live in a new file or
@@ -78,7 +80,8 @@ Ask three questions:
 3. Is it needed for an acceptance criterion?
 
 Accept with `amend-scope` and a reason (recorded and shown in the acceptance
-notice), send it back (`retained-repair`), or cancel.
+notice; the verified candidate then continues to acceptance by itself), send it back
+with `retained-repair` (artifact, attempt and a reason; uses the one repair), or cancel.
 
 `writeScope` is repository-relative to the assigned LAZERS checkout. It does not
 authorize writes in a sibling or other external checkout. When external

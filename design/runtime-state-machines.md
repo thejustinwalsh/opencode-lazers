@@ -286,12 +286,15 @@ mirroring one), `divergence` or `protected`. No new state exists.
 - `protected` stops the candidate before the checks (`SCOPE_DECISION_REQUIRED`
   kind `protected`, `ArtifactScopeViolation`); `amend-scope` naming the exact path
   releases it.
-- `divergence` does not block. The checks and the Fallow audit run, then
-  `decideVerification` folds the divergence into the one repair (with failures
-  and findings). With no repair left it is `SCOPE_DECISION_REQUIRED` kind
-  `divergence`, a `blocked` hold (family `scope-divergence`) that advertises
-  `amend-scope`, `retained-repair`, `reconcile` and `cancel`, so it appears in the
-  recovery bundle. `amend-scope` plus `reconcile` re-verifies and accepts.
+- `divergence` does not block and never spends the repair by itself. The checks and the
+  Fallow audit run. If they send the work back anyway, the divergence rides in that one
+  repair. Otherwise it is `SCOPE_DECISION_REQUIRED` kind `divergence`, a `blocked` hold
+  (family `scope-divergence`) quoting the worker's final message as its reason, advertising
+  `amend-scope`, `retained-repair` and `cancel` (plus `reconcile`), so it appears in the
+  recovery bundle. `amend-scope` covering every path continues the verified candidate to
+  acceptance with no reconcile. `retained-repair` (artifact, attempt, reason) sends it
+  back: `SCOPE_SENT_BACK`, then the ordinary `REPAIR` transition; once the repair is
+  spent it is refused and the Architect accepts or cancels.
 - `SCOPE_REPORTED` records the report (created, missing expected, divergences,
   accepted, size warnings); `task-accepted` carries it for the Architect.
 - Reservations (`effectiveReservationScope`) are edit plus create paths; the
