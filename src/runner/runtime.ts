@@ -1774,6 +1774,35 @@ export class TaskRuntime {
     return sameNativeModel(left, right)
   }
 
+  private retainedAttemptPlanModelMatches(plan: PlanRow, model: ModelPolicy) {
+    try {
+      const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+      return Boolean(planModel?.success && sameModelSnapshot(model, planModel.data))
+    } catch {
+      return false
+    }
+  }
+
+  private retainedAttemptDecisionModel(
+    plan: PlanRow,
+    model: ModelPolicy,
+    routeDecision: unknown,
+  ): ModelPolicy | undefined {
+    const decision = DispatchRouteDecisionSchema.safeParse(routeDecision)
+    if (
+      !decision.success ||
+      decision.data.status !== "resolved" ||
+      !sameModelSnapshot(model, decision.data.route)
+    )
+      return undefined
+    if (
+      decision.data.source === "explicit-plan-selection" &&
+      !this.retainedAttemptPlanModelMatches(plan, model)
+    )
+      return undefined
+    return model
+  }
+
   private retainedAttemptModel(plan: PlanRow, attempt: AttemptRow): ModelPolicy | undefined {
     try {
       const policy = JSON.parse(attempt.policy) as {
@@ -1782,25 +1811,9 @@ export class TaskRuntime {
       }
       const model = ModelPolicy.safeParse(policy.model)
       if (!model.success) return undefined
-      if (policy.routeDecision === undefined) {
-        const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-        return planModel?.success && sameModelSnapshot(model.data, planModel.data)
-          ? model.data
-          : undefined
-      }
-
-      const decision = DispatchRouteDecisionSchema.safeParse(policy.routeDecision)
-      if (
-        !decision.success ||
-        decision.data.status !== "resolved" ||
-        !sameModelSnapshot(model.data, decision.data.route)
-      )
-        return undefined
-      if (decision.data.source === "explicit-plan-selection") {
-        const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-        if (!planModel?.success || !sameModelSnapshot(model.data, planModel.data)) return undefined
-      }
-      return model.data
+      if (policy.routeDecision === undefined)
+        return this.retainedAttemptPlanModelMatches(plan, model.data) ? model.data : undefined
+      return this.retainedAttemptDecisionModel(plan, model.data, policy.routeDecision)
     } catch {
       return undefined
     }
