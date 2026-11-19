@@ -101,6 +101,24 @@ function isMissingNativeSession(
   )
 }
 
+/** The newest conversational message is an assistant response that finished and has nothing streaming. */
+function completedAssistantTail(messages: readonly SessionMessage.Info[]) {
+  const last = messages.findLast(
+    (message) =>
+      message.type === "assistant" || message.type === "user" || message.type === "synthetic",
+  )
+  return (
+    last?.type === "assistant" &&
+    last.time.completed !== undefined &&
+    last.finish !== "tool-calls" &&
+    !last.content.some(
+      (part) =>
+        part.type === "tool" &&
+        (part.state.status === "running" || part.state.status === "streaming"),
+    )
+  )
+}
+
 function pathInside(path: string, directory: string) {
   const base = resolve(directory)
   const target = resolve(path)
@@ -559,7 +577,7 @@ export function nativeHost(
           sessionIdentity(middle) !== sessionIdentity(latest) ||
           beforeState !== sessionExecutionState(middle) ||
           sessionExecutionState(middle) !== afterState)
-      const active = before.active || after.active
+      const reportedActive = before.active || after.active
       const pendingInput = before.pendingInput || after.pendingInput
       const pendingPermissions = Math.max(before.pendingPermissions, after.pendingPermissions)
       const pendingForms = Math.max(before.pendingForms, after.pendingForms)
@@ -590,6 +608,26 @@ export function nativeHost(
               (part.state.status === "running" || part.state.status === "streaming"),
           ))
       const pendingInteraction = pendingPermissions > 0 || pendingForms > 0
+      // Live background activity: read from the host now, never from a hook report.
+      const runningShells = Math.max(before.runningShells, after.runningShells)
+      const lineage = await runNative(client, () =>
+        activeSessionLineage(client, id, latest.location.directory),
+      )
+      const activeChildren = lineage.activeDescendants.length
+      // `session.active()` can keep listing a session whose execution is gone
+      // (a hung turn that was interrupted). It is contradicted when nothing else
+      // holds the worker and its newest turn already completed.
+      const contradicted =
+        reportedActive &&
+        !pendingInput &&
+        pendingPermissions === 0 &&
+        pendingForms === 0 &&
+        !observationUnstable &&
+        runningShells === 0 &&
+        activeChildren === 0
+          ? completedAssistantTail(detailed ? messages : await readMessages())
+          : false
+      const active = reportedActive && !contradicted
       const interrupted =
         !active &&
         !pendingInput &&
@@ -621,12 +659,6 @@ export function nativeHost(
                     : "completed") as "pending" | "completed" | "interrupted" | "unknown",
           }
         : undefined
-      // Live background activity: read from the host now, never from a hook report.
-      const runningShells = Math.max(before.runningShells, after.runningShells)
-      const lineage = await runNative(client, () =>
-        activeSessionLineage(client, id, latest.location.directory),
-      )
-      const activeChildren = lineage.activeDescendants.length
       const outcome =
         active || pendingInput || pendingInteraction || observationUnstable
           ? undefined
@@ -642,6 +674,7 @@ export function nativeHost(
         metadata: latest.metadata,
         archived: latest.time.archived !== undefined,
         busy: active,
+        ...(contradicted ? { staleActive: { cause: "completed-turn" } } : {}),
         ...(!observationUnstable || pendingInput ? { pendingInput } : {}),
         ...(!observationUnstable || pendingPermissions ? { pendingPermissions } : {}),
         ...(!observationUnstable || pendingForms ? { pendingForms } : {}),

@@ -1785,3 +1785,55 @@ test("a loaded worker location is still inspected for permissions, forms and she
     "shell",
   ])
 })
+
+test("an active entry contradicted by a completed turn, empty inbox and no shells counts as idle", async () => {
+  const messages = [
+    { id: "msg_user", type: "user", text: "Implement it" },
+    {
+      id: "msg_done",
+      type: "assistant",
+      time: { completed: 1 },
+      finish: "stop",
+      content: [{ type: "text", text: "Done" }],
+    },
+  ]
+  const stale = nativeLivenessFixture({
+    busy: DateTime.nowUnsafe(),
+    active: { ses_worker: { type: "running" } },
+    messages,
+  })
+  for (const options of [undefined, { messages: true }]) {
+    expect(await stale.host.session("ses_worker", options)).toMatchObject({
+      busy: false,
+      staleActive: { cause: "completed-turn" },
+    })
+  }
+
+  const streaming = nativeLivenessFixture({
+    busy: DateTime.nowUnsafe(),
+    active: { ses_worker: { type: "running" } },
+    messages: [
+      messages[0],
+      { id: "msg_part", type: "assistant", time: { created: 1 }, content: [] },
+    ],
+  })
+  expect(await streaming.host.session("ses_worker")).toMatchObject({ busy: true })
+
+  const pending = nativeLivenessFixture({
+    busy: DateTime.nowUnsafe(),
+    active: { ses_worker: { type: "running" } },
+    messages,
+    inbox: [{ id: "inbox_1", type: "synthetic", delivery: "queue" }],
+  })
+  expect(await pending.host.session("ses_worker")).toMatchObject({ busy: true })
+
+  const shell = nativeLivenessFixture({
+    busy: DateTime.nowUnsafe(),
+    active: { ses_worker: { type: "running" } },
+    messages,
+    shells: [
+      { id: "sh", status: "running", cwd: "/project/.worktrees/attempt", time: { started: 1 } },
+    ],
+  })
+  expect(await shell.host.session("ses_worker")).toMatchObject({ busy: true })
+})

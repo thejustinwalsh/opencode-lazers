@@ -225,6 +225,10 @@ export type TaskRuntimeOptions = {
   architectCacheWindowMs?: number
   /** Resume an interrupted worker without a command. Default true; tests of explicit resume turn it off. */
   autoResumeInterrupted?: boolean
+  /** A busy worker with no observable progress this long is interrupted once. Default 30 minutes; 0 disables. */
+  workerNoProgressWindowMs?: number
+  /** Cancellation waits this long after interrupting a busy worker, then settles without its idleness. Default 30 seconds. */
+  cancelIdleWaitMs?: number
   architectReuseMaxContextTokens?: number
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
@@ -474,6 +478,9 @@ export class TaskRuntime {
   private readonly now: () => number
   private readonly architectRouting: ArchitectRoutingOptions
   private readonly autoResumeInterrupted: boolean
+  private readonly workerNoProgressWindowMs: number
+  private readonly cancelIdleWaitMs: number
+  private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
@@ -495,6 +502,8 @@ export class TaskRuntime {
     this.now = options.now ?? Date.now
     this.schedulingRead = new TaskSchedulingRead(store, this.now)
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
+    this.workerNoProgressWindowMs = options.workerNoProgressWindowMs ?? 30 * 60_000
+    this.cancelIdleWaitMs = options.cancelIdleWaitMs ?? 30_000
     this.architectRouting = {
       architectCacheWindowMs: architectCacheWindowMs(
         options.architectCacheWindowMs ?? options.architectIdleWindowMs,
@@ -7283,7 +7292,10 @@ export class TaskRuntime {
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
         this.approvalWait(plan, attempt, session, fence)
       if (session.busy) {
-        await this.host.interrupt(attempt.session_id)
+        if (await this.interruptForCancel(plan, attempt, fence)) {
+          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
+          continue
+        }
         if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
         waiting = true
         continue
@@ -7317,7 +7329,10 @@ export class TaskRuntime {
         (session.pendingPermissions ?? 0) > 0 ||
         (session.pendingForms ?? 0) > 0
       ) {
-        if (session.busy) await this.host.interrupt(attempt.session_id)
+        if (session.busy && (await this.interruptForCancel(plan, attempt, fence))) {
+          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
+          continue
+        }
         waiting = true
         continue
       }
@@ -7347,28 +7362,7 @@ export class TaskRuntime {
           session.turn?.inputID,
         )
       }
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      ) {
-        waiting = true
-        continue
-      }
-      this.store.fenced(this.owner, fence, (db) =>
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
-          )
-          .run(attempt.id),
-      )
-      const node = this.store
-        .nodes(plan.id)
-        .find((candidate) => candidate.task_id === attempt.task_id)!
-      if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
+      if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
     }
     if (
       !allowPlanSettlement ||
@@ -7384,6 +7378,72 @@ export class TaskRuntime {
         .run(plan.id),
     )
     this.outcome(plan.id, { status: "cancelled" }, true)
+  }
+
+  /**
+   * Interrupt a busy worker during cancellation. True once the bounded wait since
+   * the first interrupt has elapsed: the host may keep listing the session active
+   * with nothing to interrupt, and the worktree is being discarded anyway.
+   */
+  private async interruptForCancel(plan: PlanRow, attempt: AttemptRow, fence: number) {
+    const prior = this.store.latestTransition<{ attemptID: string; sessionID: string; at: number }>(
+      plan.id,
+      attempt.task_id,
+      "CANCEL_WORKER_INTERRUPTED",
+    )
+    const first = prior?.attemptID === attempt.id ? prior : undefined
+    await this.host.interrupt(attempt.session_id)
+    if (!first) {
+      this.store.fenced(this.owner, fence, () =>
+        this.store.record(plan.id, attempt.task_id, "CANCEL_WORKER_INTERRUPTED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          at: this.now(),
+        }),
+      )
+      return false
+    }
+    return this.now() - first.at >= this.cancelIdleWaitMs
+  }
+
+  /** Cancel the attempt and its node unless an effect is unresolved. The worktree is preserved. */
+  private settleCancelledAttempt(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    workerNeverIdle: boolean,
+  ): boolean {
+    if (
+      this.store
+        .effects(plan.id)
+        .some(
+          (effect) =>
+            effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+        )
+    )
+      return false
+    if (workerNeverIdle)
+      this.store.fenced(this.owner, fence, () =>
+        this.store.record(plan.id, attempt.task_id, "WORKER_CANCEL_WITHOUT_IDLE", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          waitedMs: this.cancelIdleWaitMs,
+          retainedWorkPreserved: true,
+        }),
+      )
+    this.store.fenced(this.owner, fence, (db) =>
+      db
+        .query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
+        )
+        .run(attempt.id),
+    )
+    const node = this.store
+      .nodes(plan.id)
+      .find((candidate) => candidate.task_id === attempt.task_id)!
+    if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
+    return true
   }
 
   private cancelMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
@@ -8436,6 +8496,14 @@ export class TaskRuntime {
   }
 
   private observeUsage(attempt: AttemptRow, session: HostSession, fence: number) {
+    if (session.staleActive)
+      this.store.fenced(this.owner, fence, () =>
+        this.store.recordOnce(attempt.plan_id, attempt.task_id, "HOST_ACTIVE_STALE", {
+          attemptID: attempt.id,
+          sessionID: session.id,
+          cause: session.staleActive!.cause,
+        }),
+      )
     this.store.fenced(this.owner, fence, (db) =>
       db
         .query(
@@ -9028,6 +9096,55 @@ export class TaskRuntime {
     })
   }
 
+  /**
+   * A turn that streams nothing for the whole window is stuck: interrupt it once
+   * so the ordinary interrupted-worker path (auto-resume, hold) takes over.
+   * Background shells and child sessions count as progress.
+   */
+  private async interruptStalledWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    fence: number,
+  ) {
+    if (this.workerNoProgressWindowMs <= 0) return
+    const fingerprint = JSON.stringify([
+      session.tokens,
+      session.activityAt,
+      session.idleAt,
+      session.runningShells ?? 0,
+      session.activeChildren ?? 0,
+    ])
+    const now = this.now()
+    const seen = this.workerProgress.get(session.id)
+    if (
+      !seen ||
+      seen.fingerprint !== fingerprint ||
+      (session.runningShells ?? 0) > 0 ||
+      (session.activeChildren ?? 0) > 0
+    ) {
+      this.workerProgress.set(session.id, { fingerprint, since: now })
+      return
+    }
+    if (now - seen.since < this.workerNoProgressWindowMs) return
+    const payload = {
+      attemptID: attempt.id,
+      sessionID: session.id,
+      activityAt: session.activityAt ?? null,
+      windowMs: this.workerNoProgressWindowMs,
+    }
+    const prior = this.store.latestTransition<typeof payload>(
+      plan.id,
+      attempt.task_id,
+      "WORKER_NO_PROGRESS_INTERRUPT",
+    )
+    if (prior && JSON.stringify(prior) === JSON.stringify(payload)) return
+    await this.host.interrupt(session.id)
+    this.store.fenced(this.owner, fence, () =>
+      this.store.record(plan.id, attempt.task_id, "WORKER_NO_PROGRESS_INTERRUPT", payload),
+    )
+  }
+
   private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
     if (attempt.state === "preparing") {
       await this.prepareWorker(plan, attempt, fence)
@@ -9075,6 +9192,8 @@ export class TaskRuntime {
       this.isPriorContinuationInput(attempt, session.turn.inputID)
     )
       return
+    if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
+    else this.workerProgress.delete(session.id)
     const backgroundReason = this.backgroundBlockReason(session)
     const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
       plan.id,
