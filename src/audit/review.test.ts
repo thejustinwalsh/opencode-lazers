@@ -63,13 +63,13 @@ async function baseRepo() {
   return dir
 }
 
-test("a commit that adds a ~40-line duplicated block is reported as introduced duplication", async () => {
+test("a commit that adds a ~40-line duplicated block is anchored in the new file, naming the original", async () => {
   const dir = await baseRepo()
-  const base = await commit(dir, "base")
   const lines = Array.from({ length: 40 }, (_, i) => `console.log("line ${i}")`).join("\n")
-  writeFileSync(join(dir, "a.ts"), `export function a() {\n${lines}\n}\n`)
-  writeFileSync(join(dir, "b.ts"), `export function b() {\n${lines}\n}\n`)
-  const artifact = await commit(dir, "duplicate block")
+  writeFileSync(join(dir, "original.ts"), `export function a() {\n${lines}\n}\n`)
+  const base = await commit(dir, "base")
+  writeFileSync(join(dir, "copy.ts"), `export function b() {\n${lines}\n}\n`)
+  const artifact = await commit(dir, "copy the block into a new file")
   const result = await fallowReview({
     workspace: dir,
     baseCommit: base,
@@ -79,7 +79,13 @@ test("a commit that adds a ~40-line duplicated block is reported as introduced d
   expect(result.status).toBe("findings")
   const dup = result.introduced.find((f) => f.check === "duplication")
   expect(dup).toBeDefined()
-  expect(dup!.others!.length).toBeGreaterThan(0)
+  // Anchored in the file the task changed, not the pre-existing instance.
+  expect(dup!.file).toBe("copy.ts")
+  expect(dup!.others).toHaveLength(1)
+  expect(dup!.others![0]!.file).toBe("original.ts")
+  expect(dup!.measured).toBeUndefined()
+  expect(dup!.limit).toBeUndefined()
+  expect(dup!.subject).toMatch(/^\d+ lines$/)
 }, 30_000)
 
 test("a commit that adds a deeply nested function is introduced complexity", async () => {
@@ -97,6 +103,8 @@ test("a commit that adds a deeply nested function is introduced complexity", asy
   const complexity = result.introduced.find((f) => f.check === "complexity" && f.subject === "deep")
   expect(complexity).toBeDefined()
   expect(complexity!.status).toBe("introduced")
+  expect(complexity!.measures!.length).toBeGreaterThan(0)
+  expect(complexity!.measures![0]!.metric).toBe("cognitive")
 }, 30_000)
 
 test("editing a file without touching its old over-limit function reports nothing", async () => {
@@ -181,15 +189,30 @@ test("fallowGuidance is deterministic, bounded, and matches the fixed template",
     status: "findings",
     introduced: [
       {
-        id: "complexity:a.ts:1:f",
+        id: "complexity:src/audit/probe-clone.ts:43:probeClassify",
         check: "complexity",
         status: "introduced",
-        file: "a.ts",
-        line: 1,
-        subject: "f",
-        measured: 31,
+        file: "src/audit/probe-clone.ts",
+        line: 43,
+        subject: "probeClassify",
+        measured: 201,
         limit: 15,
-        fix: "Split `f` into smaller functions; it is cognitive 31 against a limit of 15.",
+        measures: [
+          { metric: "cognitive", measured: 201, limit: 15 },
+          { metric: "cyclomatic", measured: 58, limit: 20 },
+        ],
+        fix: "Split it into smaller named functions.",
+      },
+      {
+        id: "duplication:src/audit/probe-clone.ts:1",
+        check: "duplication",
+        status: "introduced",
+        file: "src/audit/probe-clone.ts",
+        line: 1,
+        endLine: 42,
+        subject: "42 lines",
+        others: [{ file: "src/audit/attribution.ts", line: 73, endLine: 114 }],
+        fix: "Keep one implementation and import it instead of copying it.",
       },
     ],
     concerns: [],
@@ -199,9 +222,11 @@ test("fallowGuidance is deterministic, bounded, and matches the fixed template",
   const guidance = fallowGuidance(result)
   expect(guidance).toBe(
     [
-      "Fallow review: 1 findings introduced by this task. Older findings are not counted.",
-      "1. complexity a.ts:1 `f` 31, limit 15.",
-      "   Split `f` into smaller functions; it is cognitive 31 against a limit of 15.",
+      "Fallow review: 2 findings introduced by this task. Older findings are not counted.",
+      "1. complexity src/audit/probe-clone.ts:43 `probeClassify` cognitive 201 (limit 15), cyclomatic 58 (limit 20).",
+      "   Split it into smaller named functions.",
+      "2. duplication src/audit/probe-clone.ts:1-42 repeats src/audit/attribution.ts:73-114 (42 lines).",
+      "   Keep one implementation and import it instead of copying it.",
       "Fix these inside your write scope. Do not add fallow-ignore comments.",
     ].join("\n"),
   )

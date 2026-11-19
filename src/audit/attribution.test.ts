@@ -170,15 +170,20 @@ test("addedLineRangesFromDiff follows a rename to the new path", () => {
   )
 })
 
-test("attributeDuplication keeps only groups overlapping an added range", () => {
+test("attributeDuplication anchors on the instance overlapping an added range", () => {
   const groups = [
-    { instances: [{ file: "a.ts", startLine: 10, endLine: 20 }] },
-    { instances: [{ file: "b.ts", startLine: 1, endLine: 5 }] },
+    {
+      instances: [
+        { file: "a.ts", startLine: 100, endLine: 120 }, // untouched
+        { file: "b.ts", startLine: 1, endLine: 20 }, // touched
+      ],
+    },
   ]
-  const added = new Map([["a.ts", [{ startLine: 15, endLine: 15 }]]])
+  const added = new Map([["b.ts", [{ startLine: 10, endLine: 10 }]]])
   const result = attributeDuplication(groups, added)
   expect(result).toHaveLength(1)
-  expect(result[0]!.instances[0]!.file).toBe("a.ts")
+  expect(result[0]!.anchor).toEqual({ file: "b.ts", startLine: 1, endLine: 20 })
+  expect(result[0]!.others).toEqual([{ file: "a.ts", startLine: 100, endLine: 120 }])
 })
 
 test("attributeDuplication is introduced when any one instance overlaps, not all", () => {
@@ -194,10 +199,88 @@ test("attributeDuplication is introduced when any one instance overlaps, not all
   expect(attributeDuplication(groups, added)).toHaveLength(1)
 })
 
+test("attributeDuplication picks the first overlapping instance as the anchor when several qualify", () => {
+  const groups = [
+    {
+      instances: [
+        { file: "a.ts", startLine: 1, endLine: 10 },
+        { file: "b.ts", startLine: 1, endLine: 10 },
+      ],
+    },
+  ]
+  const added = new Map([
+    ["a.ts", [{ startLine: 5, endLine: 5 }]],
+    ["b.ts", [{ startLine: 5, endLine: 5 }]],
+  ])
+  const result = attributeDuplication(groups, added)
+  expect(result[0]!.anchor.file).toBe("a.ts")
+  expect(result[0]!.others).toEqual([{ file: "b.ts", startLine: 1, endLine: 10 }])
+})
+
 test("attributeDuplication drops a group whose instances miss every added range", () => {
   const groups = [{ instances: [{ file: "a.ts", startLine: 1, endLine: 5 }] }]
   const added = new Map([["a.ts", [{ startLine: 100, endLine: 100 }]]])
   expect(attributeDuplication(groups, added)).toEqual([])
+})
+
+test("attributeDuplication merges adjacent introductions over the same file pair into one finding", () => {
+  const groups = [
+    {
+      instances: [
+        { file: "probe.ts", startLine: 1, endLine: 27 },
+        { file: "attribution.ts", startLine: 73, endLine: 99 },
+      ],
+    },
+    {
+      instances: [
+        { file: "probe.ts", startLine: 28, endLine: 42 },
+        { file: "attribution.ts", startLine: 99, endLine: 114 },
+      ],
+    },
+  ]
+  const added = new Map([["probe.ts", [{ startLine: 1, endLine: 42 }]]])
+  const result = attributeDuplication(groups, added)
+  expect(result).toHaveLength(1)
+  expect(result[0]!.anchor).toEqual({ file: "probe.ts", startLine: 1, endLine: 42 })
+  expect(result[0]!.others).toEqual([{ file: "attribution.ts", startLine: 73, endLine: 114 }])
+})
+
+test("attributeDuplication does not merge introductions whose anchors are not adjacent", () => {
+  const groups = [
+    {
+      instances: [
+        { file: "probe.ts", startLine: 1, endLine: 10 },
+        { file: "attribution.ts", startLine: 73, endLine: 82 },
+      ],
+    },
+    {
+      instances: [
+        { file: "probe.ts", startLine: 50, endLine: 60 },
+        { file: "attribution.ts", startLine: 99, endLine: 109 },
+      ],
+    },
+  ]
+  const added = new Map([["probe.ts", [{ startLine: 1, endLine: 60 }]]])
+  expect(attributeDuplication(groups, added)).toHaveLength(2)
+})
+
+test("attributeDuplication does not merge adjacent anchors that point at a different other-file set", () => {
+  const groups = [
+    {
+      instances: [
+        { file: "probe.ts", startLine: 1, endLine: 10 },
+        { file: "attribution.ts", startLine: 73, endLine: 82 },
+      ],
+    },
+    {
+      instances: [
+        { file: "probe.ts", startLine: 11, endLine: 20 },
+        { file: "config.ts", startLine: 5, endLine: 14 },
+      ],
+    },
+  ]
+  const added = new Map([["probe.ts", [{ startLine: 1, endLine: 20 }]]])
+  expect(attributeDuplication(groups, added)).toHaveLength(2)
 })
 
 test("attributeDeadCode keys on kind + path + name, ignoring line", () => {
