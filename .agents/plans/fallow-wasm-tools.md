@@ -447,6 +447,24 @@ candidate ──▶ Fallow (changed files, introduced only) ──▶ ReviewProg
 A Fallow review never rejects a task. Authored verification checks keep
 today's behaviour (fail, one repair attempt, then a hold).
 
+Complexity and duplication are treated as an extension of linting (owner
+direction, 2026-11-19). The review sits beside the existing mechanical
+preparation (`prepareVerificationCandidate`, `src/runner/runtime.ts`), which
+already runs `bun fmt` and `bun lint --fix` on changed files:
+
+```
+worker finishes
+  → format + lint --fix      runtime, automatic, fixes committed into the artifact
+  → Fallow review            runtime, up to 3 rounds, findings back to the worker
+  → authored checks          runtime, tests and typecheck, once, on the reviewed code
+  → outcome to the Architect
+```
+
+The review runs before the authored checks so the test suite runs once, on
+the code the Architect will see. Unlike mechanical preparation, it does not
+depend on the task declaring a quality command: it runs for every worker
+attempt whose changed files the analyzer supports.
+
 Thresholds come from the effective Fallow config, else Fallow's defaults
 (cyclomatic 20, cognitive 15, 50 tokens and 5 lines in `mild` mode).
 
@@ -456,7 +474,7 @@ Thresholds come from the effective Fallow config, else Fallow's defaults
 | Worker dispatched               | None                                                                                                                          |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
 | Worker mid-task                 | Complexity and duplication on its changed files                                                                               | Agent tool `lz-fallow-check`, optional       | Same record and rounds as the runtime's review; an unchanged tree replays  | Findings and a `next` instruction                                                                                                |
 | Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                      | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
-| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after authored checks pass                             | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
+| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, before authored checks          | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
 | Task accepted                   | Concerns left after the rounds; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
 | Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                 | Runtime                                      | Same rounds                                                                | Same guidance. Finding-count delta goes to the Architect                                                                         |
 | Architect review                | None automatic                                                                                                                | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
@@ -694,7 +712,8 @@ the existing stall probe); each tool's output for this repository is under
 1. Attribution in the host (complexity base-side, added-line overlap).
 2. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
    record, the fingerprint.
-3. `verify:lazers-fallow` in `TaskRuntime.verify()`, receipt, guidance text,
+3. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
+   preparation and before the authored checks; receipt, guidance text,
    continuation of the same attempt on `feedback`, `FALLOW_UNAVAILABLE`,
    reserved check ID, plugin option `fallowReview: "on" | "off"`.
 4. Three lines in `src/implementor.md`; contract wording in the three places
