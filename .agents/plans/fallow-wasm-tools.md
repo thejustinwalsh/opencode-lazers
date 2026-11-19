@@ -486,12 +486,14 @@ Complexity and duplication work with no config (Fallow defaults). Dead code
 does not: it needs entry points. On this repository 18 of 19 "unused files"
 were workers and fixtures loaded by path.
 
-Two sources, layered. Either may be absent.
+Two sources, never merged (owner decision, 2026-11-19). A config file in the
+repository is honoured first and alone; otherwise the LAZERS project config
+applies; otherwise Fallow defaults.
 
 ```
-effective config = Fallow defaults
-                 ← repo config file, if the repository has one (read at the base commit)
-                 ← LAZERS project config, if set (stored outside the repository)
+repo config file at the base commit?   yes → use it, ignore the LAZERS config
+LAZERS project config set?             yes → use it
+neither                                    → Fallow defaults, dead code off
 ```
 
 | Source                | Stored                                                               | Set by                                     | Seen by CLI and CI |
@@ -502,17 +504,20 @@ effective config = Fallow defaults
 - **Keyed by project, not path.** The project key is the normalized default
   remote (`.agents/plans/stable-change-identity.md`, "Project key"), so every
   checkout, worktree and OpenCode location of one project shares one config.
-- **The LAZERS layer wins** on any key it sets. It uses Fallow's own config
-  shape, so a config can move between the two sources unchanged.
+- **One source per check.** No key-by-key merge, so the CLI, CI and LAZERS
+  agree whenever the repository carries a config. The LAZERS config uses
+  Fallow's own shape, so it can be committed later unchanged.
+- **A stored LAZERS config that a repo file shadows is reported** by
+  `lz-fallow-config`; it is kept, not deleted.
 - **Append-only revisions.** Each change stores the full config, its hash, the
   session and agent, and a timestamp. This replaces the review a commit would
   have had.
-- **A task cannot loosen its own gate.** The repo layer is read at the
+- **A task cannot loosen its own gate.** The repo file is read at the
   attempt's base commit. Workers (Implementor, Auditor) cannot set the LAZERS
-  layer; the permission is denied in `src/runner/roles.ts` beside the
+  config; the permission is denied in `src/runner/roles.ts` beside the
   delegation tools.
-- **Receipts record both.** Each check receipt carries the hash of each layer
-  that applied.
+- **Receipts record the source.** Each check receipt carries which source
+  applied and its content hash.
 - **Plans and tasks carry no Fallow settings.**
 
 Nothing is written to the working tree:
@@ -537,14 +542,14 @@ first check in a project, no entry points in the effective config
 
 `lz-fallow-config`:
 
-| Call                | Who                | Effect                                                                                               |
-| ------------------- | ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `{}`                | Architect, Auditor | Effective config, the hash and origin of each layer, and what is missing                             |
-| `{ draft: true }`   | Architect          | A proposed config: Fallow's `recommend` output plus entry points the runtime can see. Stores nothing |
-| `{ set: <config> }` | Architect          | Validates with the analyzer, stores a new revision of the LAZERS layer. No repository write, no task |
+| Call                | Who                | Effect                                                                                                |
+| ------------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `{}`                | Architect, Auditor | Effective config, its source and hash, and what is missing                                            |
+| `{ draft: true }`   | Architect          | A proposed config: Fallow's `recommend` output plus entry points the runtime can see. Stores nothing  |
+| `{ set: <config> }` | Architect          | Validates with the analyzer, stores a new revision of the LAZERS config. No repository write, no task |
 
 Location versus project: with the config keyed by project and passed to the
-analyzer as text, OpenCode locations need no lookup. For the repo layer,
+analyzer as text, OpenCode locations need no lookup. For the repo file,
 Fallow searches upward to the workspace root and takes the first config
 (`fallow.tools/docs/configuration/overview`); the host reproduces that search
 at the base commit. Phase 1 tests both.
@@ -702,11 +707,7 @@ Phase 1 may need a step up for the engine patches; say so when it happens.
 10. **Pin.** Start at `v3.41.0` for parity with the spike, then move to the
     latest tag after Phase 1?
 
-11. **Config precedence.** The LAZERS layer overrides a repo config file key by
-    key (planned). Or should a repo file, when present, be the only source?
-12. **Who may set the LAZERS config.** The Architect by tool call (planned), or
-    only the user?
-13. **No config.** Dead code off until a config exists (recommended), or hold
+11. **No config.** Dead code off until a config exists (recommended), or hold
     the plan gate until the Architect creates one?
 
 ## Follow-ups noticed, not part of this plan
