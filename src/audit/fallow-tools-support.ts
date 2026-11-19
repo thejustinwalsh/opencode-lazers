@@ -3,7 +3,7 @@ import type {
   DuplicationReport,
   HealthFinding,
   HealthReport,
-} from "@fallow-cli/fallow-node"
+} from "./fallow-types.ts"
 import { readdir, readFile, stat } from "node:fs/promises"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { classMembersRuleEnabled } from "./config.ts"

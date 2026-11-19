@@ -1,4 +1,4 @@
-import type { DeadCodeReport, DuplicationReport, HealthReport } from "@fallow-cli/fallow-node"
+import type { DeadCodeReport, DuplicationReport, HealthReport } from "./fallow-types.ts"
 import type { TaskRepository } from "../storage.ts"
 import {
   attributeComplexity,

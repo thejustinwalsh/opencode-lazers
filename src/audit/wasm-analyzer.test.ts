@@ -3,11 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { nativeFallowAnalyzer } from "./analyzer.ts"
 import { wasmFallowAnalyzer } from "./wasm-analyzer.ts"
+import { loadNativeFallow, nativeFallowAnalyzer } from "./wasm/native-reference.ts"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 const configPath = join(root, ".fallowrc.json")
+const nativeBinding = await loadNativeFallow()
+const nativeSuite = nativeBinding ? describe : describe.skip
+const native_ = nativeBinding ? nativeFallowAnalyzer(nativeBinding) : undefined
 
 const complexKey = (f: {
   path: string
@@ -22,12 +25,12 @@ const groupKey = (g: { instances: { file: string; start_line: number; end_line: 
     .sort()
     .join("|")
 
-describe("wasmFallowAnalyzer matches nativeFallowAnalyzer on this repository", () => {
+nativeSuite("wasmFallowAnalyzer matches nativeFallowAnalyzer on this repository", () => {
   test("complexity findings, whole root and a file subset", async () => {
     const scope = { root, configPath }
     const [wasm, native] = await Promise.all([
       wasmFallowAnalyzer.complexity(scope),
-      nativeFallowAnalyzer.complexity(scope),
+      native_!.complexity(scope),
     ])
     // CRAP-only findings are native-only: the module has no coverage model.
     const expected = native.findings.filter((f) => f.exceeded !== "crap")
@@ -51,7 +54,7 @@ describe("wasmFallowAnalyzer matches nativeFallowAnalyzer on this repository", (
     const scope = { root, configPath }
     const [wasm, native] = await Promise.all([
       wasmFallowAnalyzer.duplication(scope),
-      nativeFallowAnalyzer.duplication(scope),
+      native_!.duplication(scope),
     ])
     expect(wasm.clone_groups.map(groupKey).sort()).toEqual(native.clone_groups.map(groupKey).sort())
     expect(wasm.stats.duplication_percentage).toBeCloseTo(native.stats.duplication_percentage, 6)
@@ -141,8 +144,10 @@ describe("worker behaviour", () => {
     expect(existsSync(join(root, ".fallow"))).toBe(false)
   })
 
-  test("dead code is delegated to the native binding", async () => {
-    const report = await wasmFallowAnalyzer.deadCode({ root: dir })
-    expect(Array.isArray(report.unused_files)).toBe(true)
+  test("dead code and cycles run in the module, with no native binding", async () => {
+    const dead = await wasmFallowAnalyzer.deadCode({ root: dir })
+    expect(Array.isArray(dead.unused_files)).toBe(true)
+    const cycles = await wasmFallowAnalyzer.cycles({ root: dir })
+    expect(cycles.circular_dependencies).toEqual([])
   }, 60_000)
 })

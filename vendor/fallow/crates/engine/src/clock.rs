@@ -12,7 +12,7 @@
 //! builds and for comparing two checkouts against a fixed instant.
 
 use std::path::Path;
-use std::process::Stdio;
+use crate::git_process::Stdio;
 
 /// Environment override for the run's reference epoch, in unix seconds.
 pub const CLOCK_EPOCH_ENV: &str = "FALLOW_CLOCK_EPOCH";

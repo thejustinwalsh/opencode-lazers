@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output};
+use crate::git_process::{Command, Output};
 use std::sync::OnceLock;
 
 use fallow_types::path_guard::CacheTarget;

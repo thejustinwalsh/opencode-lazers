@@ -70,6 +70,7 @@ mod base_worktree_orphans;
 mod base_worktree_registration;
 #[path = "git_env.rs"]
 mod git_env;
+pub mod git_process;
 pub mod guard;
 pub mod health;
 pub mod list_inventory;

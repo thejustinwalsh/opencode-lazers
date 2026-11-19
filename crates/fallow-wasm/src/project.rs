@@ -1,40 +1,12 @@
 //! A project held in memory: relative paths with contents plus the config.
 
-use crate::to_json;
+use crate::{Failure, Outcome, failure};
 use fallow_config::FallowConfig;
 use fallow_types::discover::{DiscoveredFile, FileId};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use wasm_bindgen::prelude::*;
-
-struct Failure {
-    code: &'static str,
-    message: String,
-}
-
-type Outcome = Result<serde_json::Value, Failure>;
-
-fn failure(code: &'static str, message: impl Into<String>) -> Failure {
-    Failure {
-        code,
-        message: message.into(),
-    }
-}
-
-fn envelope(outcome: Outcome) -> String {
-    match outcome {
-        Ok(serde_json::Value::Object(mut map)) => {
-            map.insert("ok".to_owned(), serde_json::Value::Bool(true));
-            to_json(&map)
-        }
-        Ok(other) => to_json(&serde_json::json!({ "ok": true, "value": other })),
-        Err(Failure { code, message }) => {
-            to_json(&serde_json::json!({ "error": { "code": code, "message": message } }))
-        }
-    }
-}
 
 /// Overrides a caller may pass per duplication run.
 #[derive(Deserialize, Default)]
@@ -44,6 +16,8 @@ struct DuplicationOptions {
     min_tokens: Option<usize>,
     min_lines: Option<usize>,
 }
+
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +35,6 @@ struct Group {
     instances: Vec<Instance>,
 }
 
-#[wasm_bindgen]
 pub struct Project {
     root: PathBuf,
     files: Vec<DiscoveredFile>,
@@ -70,31 +43,21 @@ pub struct Project {
     config_code: &'static str,
 }
 
-fn parse_config(name: &str, text: &str) -> Result<FallowConfig, (&'static str, String)> {
-    if text.trim().is_empty() {
+fn load_config(config_path: &str) -> Result<FallowConfig, (&'static str, String)> {
+    if config_path.is_empty() {
         return Ok(FallowConfig::default());
     }
-    let config: FallowConfig = if name.ends_with(".json") || name.ends_with(".jsonc") {
-        fallow_config::jsonc::parse_to_value(text)
-            .map_err(|error| ("config-invalid", error.to_string()))?
-    } else {
-        fallow_config::toml_input::from_str(text)
-            .map_err(|error| ("config-invalid", error.to_string()))?
-    };
-    for entry in &config.extends {
-        let lower = entry.to_ascii_lowercase();
-        if lower.starts_with("https://") || lower.starts_with("http://") {
-            return Err((
-                "remote-extends-unsupported",
-                "a remote `extends` is not supported".to_owned(),
-            ));
-        }
-        return Err((
-            "extends-unsupported",
-            format!("`extends: {entry}` needs the host to inline it"),
-        ));
-    }
-    Ok(config)
+    FallowConfig::load(std::path::Path::new(config_path)).map_err(|error| {
+        let message = format!("{error:?}");
+        let code = if message.contains("remote-extends-unsupported") {
+            "remote-extends-unsupported"
+        } else if message.contains("extends") {
+            "extends-unsupported"
+        } else {
+            "config-invalid"
+        };
+        (code, message)
+    })
 }
 
 /// Discovery skips hidden directories that are not on its allowlist.
@@ -121,20 +84,12 @@ fn globs(patterns: &[String]) -> GlobSet {
     builder.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
-#[wasm_bindgen]
 impl Project {
-    /// `paths` are relative to `root` and parallel to `contents`. `config_name`
-    /// selects the dialect by extension (`.json`, `.jsonc`, otherwise TOML).
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        root: &str,
-        paths: Vec<String>,
-        contents: Vec<String>,
-        config_name: &str,
-        config_text: &str,
-    ) -> Project {
+    /// `paths` are relative to `root`; files are read through the WASI preopen and unreadable
+    /// or oversized (over 4 MiB) ones are skipped. `config_path` is absolute or empty.
+    pub fn new(root: &str, paths: Vec<String>, config_path: &str) -> Project {
         let root = PathBuf::from(root);
-        let (config, config_code) = match parse_config(config_name, config_text) {
+        let (config, config_code) = match load_config(config_path) {
             Ok(config) => (Ok(config), ""),
             Err((code, message)) => (Err(message), code),
         };
@@ -148,12 +103,20 @@ impl Project {
         };
         let mut rows: Vec<(String, String)> = paths
             .into_iter()
-            .zip(contents)
-            .filter(|(path, _)| {
+            .filter(|path| {
                 let extension = path.rsplit_once('.').map_or("", |(_, ext)| ext);
                 fallow_core::discover::SOURCE_EXTENSIONS.contains(&extension)
                     && !ignore.is_match(path)
                     && !in_unlisted_hidden_dir(path)
+            })
+            .filter_map(|path| {
+                let absolute = root.join(&path);
+                let size = std::fs::metadata(&absolute).ok()?.len();
+                if size > MAX_FILE_BYTES {
+                    return None;
+                }
+                let content = std::fs::read_to_string(&absolute).ok()?;
+                Some((path, content))
             })
             .collect();
         // File ids follow path order, as native discovery does.
@@ -178,36 +141,31 @@ impl Project {
         }
     }
 
-    /// Number of analysable files after extension and ignore filtering.
-    #[wasm_bindgen(js_name = fileCount)]
-    pub fn file_count(&self) -> usize {
-        self.files.len()
-    }
-
     /// Clone groups of the full run. With `changed` non-empty, only the groups that touch a
     /// changed path are reported, exactly as the full run groups them.
-    pub fn duplication(&self, changed: Vec<String>, options_json: &str) -> String {
-        envelope(self.run_duplication(&changed, options_json))
+    pub fn duplication(&self, changed: &[String], options_json: &str) -> Outcome {
+        self.run_duplication(changed, options_json)
     }
 
     /// Feature-flag uses the extractor recognises: environment variables with a
     /// flag prefix, SDK calls and config-object reads. `paths` limits the files
     /// (all files when empty).
-    #[wasm_bindgen(js_name = featureFlags)]
-    pub fn feature_flags(&self, paths: Vec<String>) -> String {
-        envelope(self.run_feature_flags(&paths))
+    pub fn feature_flags(&self, paths: &[String]) -> Outcome {
+        self.run_feature_flags(paths)
     }
 
     /// Functions over the configured complexity thresholds in `paths` (all files
     /// when empty), worst first.
-    pub fn complexity(&self, paths: Vec<String>) -> String {
-        envelope(self.run_complexity(&paths))
+    pub fn complexity(&self, paths: &[String]) -> Outcome {
+        self.run_complexity(paths)
     }
 }
 
 impl Project {
-    fn config(&self) -> Result<&FallowConfig, Failure> {
-        self.config.as_ref().map_err(|message| failure(self.config_code, message.clone()))
+    pub(crate) fn config(&self) -> Result<&FallowConfig, Failure> {
+        self.config
+            .as_ref()
+            .map_err(|message| failure(self.config_code, message.clone()))
     }
 
     fn relative(&self, path: &std::path::Path) -> String {
@@ -251,7 +209,10 @@ impl Project {
             // and can group the same code differently, so the changed set only filters.
             .filter(|group| {
                 changed_paths.is_empty()
-                    || group.instances.iter().any(|i| changed_paths.contains(&i.file))
+                    || group
+                        .instances
+                        .iter()
+                        .any(|i| changed_paths.contains(&i.file))
             })
             .map(|group| Group {
                 token_count: group.token_count,
@@ -281,11 +242,14 @@ impl Project {
 
     fn run_feature_flags(&self, paths: &[String]) -> Outcome {
         self.config()?;
-        let wanted: Option<std::collections::HashSet<PathBuf>> = (!paths.is_empty())
-            .then(|| paths.iter().map(|path| self.root.join(path)).collect());
+        let wanted: Option<std::collections::HashSet<PathBuf>> =
+            (!paths.is_empty()).then(|| paths.iter().map(|path| self.root.join(path)).collect());
         let mut flags = Vec::new();
         for file in &self.files {
-            if wanted.as_ref().is_some_and(|wanted| !wanted.contains(&file.path)) {
+            if wanted
+                .as_ref()
+                .is_some_and(|wanted| !wanted.contains(&file.path))
+            {
                 continue;
             }
             let Some(source) = self.sources.get(&file.path) else {
@@ -310,11 +274,14 @@ impl Project {
         let config = self.config()?;
         let max_cyclomatic = config.health.max_cyclomatic;
         let max_cognitive = config.health.max_cognitive;
-        let wanted: Option<std::collections::HashSet<PathBuf>> = (!paths.is_empty())
-            .then(|| paths.iter().map(|path| self.root.join(path)).collect());
+        let wanted: Option<std::collections::HashSet<PathBuf>> =
+            (!paths.is_empty()).then(|| paths.iter().map(|path| self.root.join(path)).collect());
         let mut findings = Vec::new();
         for file in &self.files {
-            if wanted.as_ref().is_some_and(|wanted| !wanted.contains(&file.path)) {
+            if wanted
+                .as_ref()
+                .is_some_and(|wanted| !wanted.contains(&file.path))
+            {
                 continue;
             }
             let Some(source) = self.sources.get(&file.path) else {

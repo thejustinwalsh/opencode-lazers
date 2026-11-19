@@ -1,5 +1,5 @@
 import { isAbsolute, relative } from "node:path"
-import type { DeadCodeReport } from "@fallow-cli/fallow-node"
+import type { DeadCodeReport } from "./fallow-types.ts"
 import { attributeCycles, cycleKey } from "./attribution.ts"
 import type { AnalyzerScope, FallowAnalyzer } from "./analyzer.ts"
 import {

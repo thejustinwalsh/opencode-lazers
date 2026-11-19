@@ -17,10 +17,14 @@ pub const WORKER_STACK_SIZE: usize = 16 * 1024 * 1024;
 /// thread (`fallow_extract::parse_bounded`).
 #[must_use]
 pub fn worker_pool_builder(threads: usize) -> rayon::ThreadPoolBuilder {
-    rayon::ThreadPoolBuilder::new()
+    let builder = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .stack_size(WORKER_STACK_SIZE)
-        .start_handler(|_| fallow_extract::register_thread_stack(WORKER_STACK_SIZE))
+        .start_handler(|_| fallow_extract::register_thread_stack(WORKER_STACK_SIZE));
+    // WASI preview 1 cannot spawn threads: the calling thread is the pool's only worker.
+    #[cfg(target_os = "wasi")]
+    let builder = builder.num_threads(1).use_current_thread();
+    builder
 }
 
 /// Record that the current thread has `size` bytes of stack, so a bounded

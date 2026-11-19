@@ -1,6 +1,6 @@
 # Fallow as in-process WebAssembly tools
 
-Status: Phases 0 to 4 are built, merged and verified live in OpenCode on
+Status: Everything now runs in WebAssembly (see "Everything runs in WebAssembly", 2026-11-19; earlier sections describe the first design). Phases 0 to 4 are built, merged and verified live in OpenCode on
 2026-11-19 (see "Live verification"). Phase 5 was dropped by owner decision. Line numbers are
 as read on 2026-11-19 and will drift; function names are the stable reference.
 
@@ -255,10 +255,10 @@ vendor/fallow/                 upstream source at the pin: allowlisted crates,
                                Cargo.toml, Cargo.lock, LICENSE
 vendor/fallow/UPSTREAM.json    { repo, tag, commit, tarballSha256, importedPaths }
 vendor/fallow-patches/         numbered patches, one concern each
-crates/fallow-wasm/            our binding crate (cdylib, wasm-bindgen)
+crates/fallow-wasm/            our binding crate (WASI command, wasm32-wasip1)
 scripts/vendor-fallow.ts       import or update: fetch pin, copy allowlist, apply patches
-scripts/build-fallow-wasm.ts   cargo build → wasm-bindgen → wasm-opt → artifact + manifest
-src/audit/wasm/                built fallow.wasm, JS glue, ARTIFACT.json
+scripts/build-fallow-wasm.ts   cargo build → wasm-opt → artifact + manifest
+src/audit/wasm/                built fallow.wasm, ARTIFACT.json
 ```
 
 - **Pin.** Exact tag and commit in `UPSTREAM.json`. Start at `v3.43.2`, the
@@ -307,11 +307,10 @@ scripts/release-package.ts
   + assert the installed consumer tree holds no .node file from Fallow
 ```
 
-Target: `wasm32-unknown-unknown` with explicit host inputs. This keeps the
-earlier decision ("Prefer a library binding with explicit host inputs over a
-WASI command with broad filesystem access", `design/auditor-tooling.md:82-83`).
-A WASI build with the worktree as its only preopened directory is the fallback
-if the engine patches prove too invasive; it is not evaluated yet.
+Target: superseded. The first design chose `wasm32-unknown-unknown` with explicit host
+inputs (file contents passed in). It could not serve module resolution through
+`node_modules`, so the shipped build is `wasm32-wasip1` with a read-only preopened directory;
+see "Everything runs in WebAssembly".
 
 Runtime shape:
 
@@ -904,14 +903,133 @@ Fix these inside your write scope. Do not add fallow-ignore comments.
 
 ### What is in WebAssembly and what is not
 
-| Analysis                                   | Runs in                       | Note                                                                                        |
-| ------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------- |
-| Complexity, duplication, feature flags     | WebAssembly worker thread     | 4.85 MB module, no filesystem, network, process, clock or random import                     |
-| Dead code, import cycles                   | Native addon, where installed | They need the module resolver over a real filesystem; a virtual filesystem is separate work |
-| `lz-fallow-report` (five durable sections) | Native addon                  | Unchanged                                                                                   |
+Everything. Superseded 2026-11-19 by "Everything runs in WebAssembly" below: the native
+addon is a dev dependency used only by the parity tests.
 
-So the native dependency is still present. The task review itself needs only
-the WebAssembly module.
+## Everything runs in WebAssembly (2026-11-19)
+
+Owner decision: LAZERS requires no native binary. Dead code, import cycles, architecture,
+feature flags, duplication, health and the in-memory complexity and clone operations all run
+in `src/audit/wasm/fallow.wasm`; `lz-fallow-report`, the task review, the plan review and the
+tools use no other engine. Branch `feat/fallow-wasi`.
+
+### Approach
+
+| Choice               | Decision                                                                                                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Target               | `wasm32-wasip1`, a WASI command: JSON request on stdin, JSON envelope on stdout, panic text on stderr. One instance per request. No `wasm-bindgen`                                                                          |
+| Entry points         | `fallow-api` (vendored, `crates/api`): `run_dead_code`, `run_circular_dependencies`, `run_architecture`, `run_feature_flags`, `run_duplication`, `run_health_with_runner`, with the same serializers the napi crate uses    |
+| Filesystem           | Rust `std::fs` compiles to WASI imports. The host (`src/audit/fallow-wasi.ts`) serves them with Bun's `node:wasi`: one preopen, the real project root, plus the config's directory when it lies outside                     |
+| Read-only            | Every write-capable import returns EROFS, `path_open` refuses create, truncate, append and write rights. Bun refuses paths and symlinks that leave a preopen. The analysis passes `no_cache`, so nothing is written         |
+| Host calls           | Only `lazers_host.git_run` and `git_result`, for the `git` the engine runs (HEAD, shallow state, churn, default branch). The host allows read-only subcommands under the root and nothing else; a refusal reads as "no git" |
+| Entropy, clock, exit | `random_get` is a fixed seed (deterministic output). `proc_exit` throws a catchable error (Bun's own would end the process). Clock is Bun's                                                                                 |
+| Cancellation         | Unchanged: the worker thread hosts the module; abort or timeout terminates the worker. A trap becomes `analyzer-panic` with the stderr tail. Whole-repository report sections get a 10 minute limit, review calls keep 60 s |
+
+Evidence for each open question in the brief:
+
+- **`fs::canonicalize`** fails with `ENOENT` for every path on WASI (std calls libc
+  `realpath`, and wasi-libc's has no working directory). The vendored crates call it at about
+  400 sites. `crates/fallow-wasm/src/realpath.rs` defines the `realpath` symbol, which the
+  linker prefers to libc's. It resolves symlinks with `read_link` and `symlink_metadata`. No
+  vendor patch is needed.
+- **rayon without threads**: `worker_pool_builder` is patched (0007) to
+  `num_threads(1).use_current_thread()` on WASI. The `ignore` crate's parallel walker spawns
+  scoped threads, so discovery uses its sequential walker (0007), and the health churn load runs after
+  scoring instead of on a second thread (0007). Thread spawning fails on WASI by design, and the
+  engine's per-file stack thread already falls back to running in place.
+- **`Command::new("git")`** reaches the report: health runs `rev-parse`, `log -1`,
+  `rev-parse --is-shallow-repository`, and `log --numstat` (hotspots, change coupling);
+  dead code, architecture and cycles run `rev-parse --git-dir`, `symbolic-ref` and
+  `rev-parse --verify` for the default branch. `std::process::Command` is unsupported on WASI
+  and `Output` cannot be built, so the engine's git calls go through `fallow_engine::git_process`
+  (0008): `std::process` on native targets, a host call on WASI. Nothing is dropped:
+  hotspots (367) and change coupling equal native.
+- **Cache**: `no_cache` is set and the shim is read-only; tests assert the tree is
+  byte-identical (`.git` included) and no `.fallow` exists after every operation.
+- **Local `extends`** resolves through the filesystem (`FallowConfig::load`); a remote `extends`
+  stays an explicit `remote-extends-unsupported` error, `npm:` too.
+- **`node:wasi` in Bun 1.4.4** (the release OpenCode ships, `BUN_BE_BUN=1 opencode-cli`; also
+  the 1.4.4 canary): it has `wasiImport` and `start()` but no `getImportObject()`, so the
+  imports are `{ wasi_snapshot_preview1: wasi.wasiImport }`. It ignores `stdin`, `stdout` and
+  `stderr`, so `fd_read` and `fd_write` are replaced for fds 0 to 2. `proc_exit` is replaced as
+  above. No hand-written WASI shim was needed. One defect to know: Bun fails any symlink that
+  points outside the preopens with `ENOTCAPABLE`, so a project whose `node_modules` links to a
+  directory above the root needs that directory preopened (`extraRoots`); none of the tests,
+  and not this repository, does.
+
+Patch queue additions (`vendor/fallow-patches/`): 0007 (no threads on WASI: pool, walker,
+churn), 0008 (git through a host call). `crates/api` is now imported.
+
+### Parity against native 3.43.2
+
+`src/audit/wasm/fallow-parity.test.ts`, Bun 1.4.4 canary and 1.4.4 release. On this repository
+and on a fixture whose dependency is reached through `node_modules/dep-a -> ../packages/dep-a`.
+Each report is compared whole, field for field, with `elapsed_ms` removed. Counts are from the tree at measurement time.
+
+| Report                         | This repository                                                                                                                            | Fixture                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Dead code                      | identical (12 unused exports, 2 unused types, 6 duplicate exports, 1 unused and 1 unused dev dependency, 2 dev dependencies in production) | identical (orphan file, unused export, unused dependency; `dep-a` resolves through the link) |
+| Import cycles                  | identical                                                                                                                                  | identical (one cycle)                                                                        |
+| Architecture                   | identical                                                                                                                                  | identical                                                                                    |
+| Feature flags                  | identical                                                                                                                                  | identical                                                                                    |
+| Duplication report             | identical (191 groups)                                                                                                                     | identical                                                                                    |
+| Health                         | identical (771 findings, 367 hotspots, 622 file scores, 126 targets)                                                                       | identical                                                                                    |
+| In-memory complexity and clone | same locations, apart from CRAP-only findings                                                                                              | same count and names                                                                         |
+
+Differences from native, all of them intended:
+
+1. CRAP-only complexity findings, and `col`, `param_count`, `crap` and `actions` of
+   `HealthFinding`, are absent from the lighter in-memory `complexity` operation the review
+   uses. The `health` section (`lz-fallow-report`) has all of them.
+2. Native keeps process-wide state: a `change-coupling-skipped` diagnostic from an earlier
+   health call on the same root appears in the `workspace_diagnostics` of later sections of
+   that process. Each module call starts clean and reports it in health only.
+3. The module reads at most 4 MiB per file for the in-memory operations (as before).
+4. Run `threads` is 1.
+
+### Timings, this repository, Apple silicon, Bun 1.4.4
+
+| Analysis                             | WebAssembly | Native, `threads: 1` |
+| ------------------------------------ | ----------- | -------------------- |
+| Dead code                            | 2.1 s       | 1.2 s                |
+| Import cycles                        | 1.8 s       | 1.2 s                |
+| Architecture                         | 1.8 s       | 1.2 s                |
+| Feature flags                        | 1.8 s       | 1.1 s                |
+| Duplication report                   | 0.41 s      | 0.24 s               |
+| Health (with CSS, hotspots)          | 4.2 s       | 2.9 s                |
+| Five-section report (sum)            | 10.3 s      | 6.5 s                |
+| First call, worker and module start  | 343 ms      |                      |
+| 3-file complexity, warm worker       | 43 ms       |                      |
+| Changed-set duplication, warm worker | 544 ms      |                      |
+
+Module: 12.5 MB after `wasm-opt -Oz` (20 MB before); the 8 MB budget in this plan does not
+hold (the engine, `fallow-api`, `oxc_resolver` and the plugin set are now in the module).
+Worker RSS 171 MB after those calls. The five-section total is inside the 15 s budget.
+
+### Threads (`wasm32-wasip1-threads`): built, correct, not faster, not shipped
+
+Bun 1.4.4 supports what it needs: shared `WebAssembly.Memory`, `Atomics.wait` in workers, and
+a worker per `wasi.thread-spawn` that instantiates the same compiled module on the shared
+memory and calls `wasi_thread_start`. `wasi.start()` also accepts an object with `memory` and
+a `_start` that calls it, which binds the memory for a helper thread. Reports with 1, 4 and 8 pool
+threads equal each other. What it cost, measured on this repository:
+
+| Run                        | Dead code | Health |
+| -------------------------- | --------- | ------ |
+| Single-threaded module     | 2.0 s     | 4.2 s  |
+| Threaded module, 1 thread  | 2.7 s     | 5.4 s  |
+| Threaded module, 4 threads | 2.6 s     | 4.9 s  |
+| Threaded module, 8 threads | 3.9 s     | 5.6 s  |
+
+Findings: (1) the engine also spawns a thread per file for deep-stack parsing; each spawn
+starts a Bun worker (about 10 ms), 813 of them took 8 s, so the host must refuse spawns beyond
+the pool size (the engine falls back to running in place); (2) growing the shared memory is
+slow and an initial 128 MiB made `health` trap with an out-of-bounds access, so the module
+needs a 1 GiB initial shared memory; (3) with both fixed there is no measurable speedup and
+more threads are slower. Single-threaded stays. The code was removed rather than shipped
+unused; to retry: `rustup target add wasm32-wasip1-threads`, link flags
+`--initial-memory=1073741824 --max-memory=4294967296 --export-memory`, patch `use_current_thread`
+to apply only without `target_feature = "atomics"`, and refuse spawns beyond the pool.
 
 ## Open questions for the owner
 

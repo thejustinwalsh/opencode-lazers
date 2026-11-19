@@ -1,10 +1,18 @@
-import { readFile } from "node:fs/promises"
-import { basename, isAbsolute, relative } from "node:path"
+import { isAbsolute, relative } from "node:path"
 import { Worker } from "node:worker_threads"
-import type { DuplicationReport, HealthFinding, HealthReport } from "@fallow-cli/fallow-node"
 import { workerURL } from "../worker-url.ts"
-import { nativeFallowAnalyzer, type AnalyzerScope, type FallowAnalyzer } from "./analyzer.ts"
-import type { FallowWorkerRequest, FallowWorkerResponse } from "./fallow-worker.ts"
+import type { AnalyzerScope, FallowAnalyzer } from "./analyzer.ts"
+import type {
+  FallowWorkerKind,
+  FallowWorkerRequest,
+  FallowWorkerResponse,
+} from "./fallow-worker.ts"
+import type {
+  DeadCodeReport,
+  DuplicationReport,
+  HealthFinding,
+  HealthReport,
+} from "./fallow-types.ts"
 
 const REQUEST_TIMEOUT_MS = 60_000
 
@@ -147,7 +155,10 @@ class WorkerClient {
   }
 
   private fail(worker: Worker, error: Error): void {
-    if (this.worker === worker) this.worker = undefined
+    // A worker that was already replaced (after an abort or timeout) reports its exit late; the
+    // request now pending belongs to its successor.
+    if (this.worker !== worker) return
+    this.worker = undefined
     const pending = this.pending
     this.pending = undefined
     pending?.reject(new AnalyzerError("analyzer-unavailable", error.message))
@@ -166,13 +177,14 @@ class WorkerClient {
   private exchange(
     request: Omit<FallowWorkerRequest, "id">,
     signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<FallowWorkerResponse> {
     return new Promise((resolve, reject) => {
       const id = this.nextID++
       const worker = this.worker ?? this.spawn()
       const timer = setTimeout(
-        () => this.stop(new Error(`timeout: analyzer call exceeded ${REQUEST_TIMEOUT_MS}ms`)),
-        REQUEST_TIMEOUT_MS,
+        () => this.stop(new Error(`timeout: analyzer call exceeded ${timeoutMs}ms`)),
+        timeoutMs,
       )
       const onAbort = () =>
         this.stop(new Error(`cancelled: ${String(signal?.reason ?? "aborted")}`))
@@ -193,11 +205,12 @@ class WorkerClient {
   request(
     request: Omit<FallowWorkerRequest, "id">,
     signal: AbortSignal | undefined,
+    timeoutMs: number,
   ): Promise<FallowWorkerResponse> {
     signal?.throwIfAborted()
     const run = this.queue.then(() => {
       signal?.throwIfAborted()
-      return this.exchange(request, signal)
+      return this.exchange(request, signal, timeoutMs)
     })
     this.queue = run.catch(() => undefined)
     return run
@@ -206,85 +219,63 @@ class WorkerClient {
 
 const client = new WorkerClient()
 
-async function configText(configPath: string | undefined) {
-  if (!configPath) return { configName: "", configText: "" }
-  return { configName: basename(configPath), configText: await readFile(configPath, "utf8") }
-}
-
 function relativePaths(root: string, files: readonly string[]): string[] {
   return files.map((file) => (isAbsolute(file) ? relative(root, file) : file))
 }
 
-async function canUseNative(): Promise<boolean> {
-  try {
-    await import("@fallow-cli/fallow-node")
-    return true
-  } catch {
-    return false
-  }
-}
-
 async function call(
-  kind: "complexity" | "duplication",
+  kind: FallowWorkerKind,
   scope: AnalyzerScope,
+  options: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   const files = scope.files ? relativePaths(scope.root, scope.files) : undefined
   const response = await client.request(
     {
       kind,
       root: scope.root,
-      ...(kind === "complexity" ? { files } : { changed: files }),
-      ...(await configText(scope.configPath)),
+      ...(kind === "duplication" ? { changed: files } : { files }),
+      ...(scope.configPath ? { configPath: scope.configPath } : {}),
+      options,
     },
     scope.signal,
+    scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
   )
   if ("error" in response) throw new AnalyzerError(response.error.code, response.error.message)
   return response.report
 }
 
-/** `extends-unsupported` means the config needs host inlining; native can follow it. */
-async function withNativeFallback<T>(run: () => Promise<T>, native: () => Promise<T>): Promise<T> {
-  try {
-    return await run()
-  } catch (error) {
-    if (
-      error instanceof AnalyzerError &&
-      error.code === "extends-unsupported" &&
-      (await canUseNative())
-    )
-      return native()
-    throw error
-  }
+/** The report sections `lz-fallow-report` stores, each as the native binding would return it. */
+export type ReportSection = "deadCode" | "duplication" | "health" | "architecture" | "featureFlags"
+
+const SECTION_KIND: Record<ReportSection, FallowWorkerKind> = {
+  deadCode: "deadCode",
+  duplication: "duplicationReport",
+  health: "health",
+  architecture: "architecture",
+  featureFlags: "featureFlagReport",
 }
 
-/** Complexity and duplication run in the WebAssembly worker; dead code stays native. */
+/** One section of the full report: explained findings, CSS health included, one analysis thread. */
+export function fallowSection(
+  section: ReportSection,
+  scope: AnalyzerScope,
+): Promise<Record<string, unknown>> {
+  return call(SECTION_KIND[section], scope, { explain: true, css: true })
+}
+
+/** Every analysis runs in the WebAssembly worker; no native binding is loaded. */
 export const wasmFallowAnalyzer: FallowAnalyzer = {
-  complexity: (scope) =>
-    withNativeFallback(
-      async () => toHealthReport((await call("complexity", scope)) as unknown as WasmComplexity),
-      () => nativeFallowAnalyzer.complexity(scope),
-    ),
-  duplication: (scope) =>
-    withNativeFallback(
-      async () =>
-        toDuplicationReport((await call("duplication", scope)) as unknown as WasmDuplication),
-      () => nativeFallowAnalyzer.duplication(scope),
-    ),
+  async complexity(scope) {
+    return toHealthReport((await call("complexity", scope)) as unknown as WasmComplexity)
+  },
+  async duplication(scope) {
+    return toDuplicationReport((await call("duplication", scope)) as unknown as WasmDuplication)
+  },
   async deadCode(scope) {
-    if (!(await canUseNative()))
-      throw new AnalyzerError(
-        "dead-code-unavailable",
-        "dead code needs the native Fallow binding, which could not be loaded",
-      )
-    return nativeFallowAnalyzer.deadCode(scope)
+    return (await call("deadCode", scope)) as unknown as DeadCodeReport
   },
   async cycles(scope) {
-    if (!(await canUseNative()))
-      throw new AnalyzerError(
-        "cycles-unavailable",
-        "import cycles need the native Fallow binding, which could not be loaded",
-      )
-    return nativeFallowAnalyzer.cycles(scope)
+    return (await call("cycles", scope)) as unknown as DeadCodeReport
   },
 }
 

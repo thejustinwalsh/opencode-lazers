@@ -79,8 +79,11 @@ the distributed plugin.
    The [upstream Node binding](https://github.com/fallow-rs/fallow/tree/main/crates/napi)
    uses native N-API. The reviewed upstream install channels do not publish a
    WebAssembly analyzer. Do not wrap the CLI as-is: the full CLI has native
-   filesystem and process dependencies. Prefer a library binding with explicit
-   host inputs over a WASI command with broad filesystem access.
+   filesystem and process dependencies. Decided 2026-11-19: build the analysis
+   as a WASI preview 1 command (`wasm32-wasip1`) and serve its filesystem calls
+   from the host, read-only, over one preopened directory. A library binding
+   with file contents passed in cannot serve module resolution through
+   `node_modules`, and the vendored crates make roughly 3,600 filesystem calls.
 2. **Package the proven analyzer.** Put the built module and license in the
    release archive and replace the native Fallow dependency. Remove the unused
    similar-code and type-aware companion dependency chains. If a future
@@ -130,6 +133,9 @@ failed baseline cannot establish a mutation score.
   `fallow-engine` still fails in platform-specific Git path conversion,
   churn-cache path handling, file URLs, and dependency symlinks. Use explicit
   host inputs for those operations.
+- Superseded 2026-11-19: with the WASI build below, `fallow-api`, the whole
+  engine and the five report sections build and run for `wasm32-wasip1`. See
+  `.agents/plans/fallow-wasm-tools.md`, "Everything runs in WebAssembly".
 - A temporary binding built with `wasm-bindgen 0.2.130` ran
   `fallow_extract::parse_from_content` and `compute_css_analytics` in Bun.
   The TypeScript fixture returned one import, one export, and zero parse

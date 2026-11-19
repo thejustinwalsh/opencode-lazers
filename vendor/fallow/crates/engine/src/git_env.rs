@@ -1,7 +1,7 @@
 //! Git process environment helpers owned by the engine boundary.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use crate::git_process::{Command, Stdio};
 
 /// Environment variables that describe an enclosing git operation's repository
 /// state and should not leak into fallow-owned git subprocesses.
