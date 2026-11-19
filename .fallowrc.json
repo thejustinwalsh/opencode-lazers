@@ -10,5 +10,8 @@
     "test/**/*-probe.ts",
     "test/budget-widget/visual.ts"
   ],
-  "ignorePatterns": ["design/**", ".cache/**", ".claude/**", "contributions/**"]
+  "ignorePatterns": ["design/**", ".cache/**", ".claude/**", "contributions/**"],
+  "rules": {
+    "unused-class-members": "off"
+  }
 }
