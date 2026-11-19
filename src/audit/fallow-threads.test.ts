@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FallowModules, parseFallowThreads, sharedMemoryAvailable } from "./fallow-threads.ts"
-import { MAX_FALLOW_THREADS, runFallowModule, WasiTrap } from "./fallow-wasi.ts"
+import { MAX_FALLOW_THREADS, memoryExhausted, runFallowModule, WasiTrap } from "./fallow-wasi.ts"
 
 /** A command module that returns at once, and one that traps: stand-ins for the real modules. */
 const header = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
@@ -68,6 +68,16 @@ describe("fallowThreads option", () => {
 
   test("shared memory is available under Bun", () => {
     expect(sharedMemoryAvailable()).toBe(true)
+  })
+})
+
+describe("running out of memory", () => {
+  test("a failed allocation in a trap's stderr is a memory failure, any other trap is not", () => {
+    expect(
+      memoryExhausted("memory allocation of 27157728 bytes failed\nnote: run with RUST_BACKTRACE"),
+    ).toBe(27157728)
+    expect(memoryExhausted("panicked at src/lib.rs:1:1: index out of bounds")).toBeUndefined()
+    expect(memoryExhausted("")).toBeUndefined()
   })
 })
 

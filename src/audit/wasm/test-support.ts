@@ -46,7 +46,12 @@ export function runOp(
   const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
   const outcome = runFallowModule(
     kind === "threads" ? threadedWasmModule : wasmModule,
-    { op, root, options: { threads, explain: true, css: true }, ...extra },
+    {
+      op,
+      root,
+      options: { threads, explain: true, css: true, cache: options.cache === true },
+      ...extra,
+    },
     { maxThreads: threads, ...options, onGit: (call) => (git.push(call), options.onGit?.(call)) },
   )
   const parsed = JSON.parse(outcome.stdout) as {

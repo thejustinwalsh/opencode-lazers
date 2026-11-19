@@ -1,9 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { wasmFallowAnalyzer } from "./wasm-analyzer.ts"
+import { setFallowCache, wasmFallowAnalyzer } from "./wasm-analyzer.ts"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 const configPath = join(root, ".fallowrc.json")
@@ -69,12 +78,29 @@ describe("worker behaviour", () => {
     expect(inside.findings.map((f) => f.name)).toEqual(["secret"])
   })
 
-  test("analysis never writes a .fallow directory", async () => {
+  test("the in-memory analyses never write a .fallow directory", async () => {
     await wasmFallowAnalyzer.complexity({ root: dir })
     await wasmFallowAnalyzer.duplication({ root: dir })
     expect(existsSync(join(dir, ".fallow"))).toBe(false)
-    expect(existsSync(join(root, ".fallow"))).toBe(false)
   })
+
+  test("whole-project analysis writes Fallow's cache and nothing else, and the cache can be turned off", async () => {
+    const fixture = mkdtempSync(join(tmpdir(), "lz-wasm-cache-"))
+    try {
+      writeFileSync(join(fixture, "package.json"), '{"name":"cache-fixture"}')
+      writeFileSync(join(fixture, "a.ts"), "export const a = 1\n")
+      setFallowCache(false)
+      await wasmFallowAnalyzer.deadCode({ root: fixture })
+      expect(existsSync(join(fixture, ".fallow"))).toBe(false)
+      setFallowCache(true)
+      await wasmFallowAnalyzer.deadCode({ root: fixture })
+      expect(readFileSync(join(fixture, ".fallow/.gitignore"), "utf8")).toBe("*\n")
+      expect(readdirSync(fixture).sort()).toEqual([".fallow", "a.ts", "package.json"])
+    } finally {
+      setFallowCache(true)
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   test("dead code and cycles run in the module", async () => {
     const dead = await wasmFallowAnalyzer.deadCode({ root: dir })

@@ -185,7 +185,16 @@ fn metadata_ctime_ns(metadata: &Metadata) -> u64 {
 }
 
 /// Non-Unix platforms do not expose an inode change time.
-#[cfg(not(unix))]
+/// std exposes no change time on WASI. The host folds it into the modification time it reports
+/// (the later of the two), so the modification time carries both and stands in for the change
+/// time here; without it no fingerprint is trustworthy without reading the file, and a warm
+/// cache would read every source again.
+#[cfg(target_os = "wasi")]
+fn metadata_ctime_ns(metadata: &Metadata) -> u64 {
+    metadata_mtime_ns(metadata)
+}
+
+#[cfg(not(any(unix, target_os = "wasi")))]
 fn metadata_ctime_ns(_metadata: &Metadata) -> u64 {
     0
 }

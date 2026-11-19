@@ -15,6 +15,10 @@ publish = false
 name = "fallow-wasi"
 path = "src/main.rs"
 
+[features]
+# Allocation counters exported to the host, for measuring memory. Not part of any shipped module.
+memstats = []
+
 [dependencies]
 fallow-extract = { path = "../../vendor/fallow/crates/extract" }
 fallow-config = { path = "../../vendor/fallow/crates/config" }

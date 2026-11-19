@@ -1,0 +1,62 @@
+diff --git a/crates/extract/src/lib.rs b/crates/extract/src/lib.rs
+--- a/crates/extract/src/lib.rs
++++ b/crates/extract/src/lib.rs
+@@ -196,6 +196,45 @@
+     pub call_facts: bool,
+ }
+ 
++static RETAIN_SECURITY_FACTS: AtomicBool = AtomicBool::new(true);
++
++/// Whether parsed modules keep the facts only the security rules read (sinks, tainted bindings,
++/// sanitizer calls, security controls). They are about a third of what a module holds after
++/// extraction, so a host that never enables those rules turns them off before it parses.
++/// Cached modules are stored without them, so the host must not use a cache while the rules are
++/// on after a run with them off.
++pub fn set_retain_security_facts(retain: bool) {
++    RETAIN_SECURITY_FACTS.store(retain, Ordering::Relaxed);
++}
++
++/// Shrink a module to what the analyses read, as soon as its file has been extracted: identical
++/// `object.member` pairs collapse to one (the analyses only ask whether a pair occurs), and the
++/// security facts go when nothing will read them. Source text and syntax tree are already gone.
++fn compact_module(module: &mut ModuleInfo) {
++    let mut seen = rustc_hash::FxHashSet::default();
++    if module
++        .member_accesses
++        .iter()
++        .any(|access| !seen.insert((access.object.as_str(), access.member.as_str())))
++    {
++        seen.clear();
++        let unique: Vec<_> = module
++            .member_accesses
++            .iter()
++            .filter(|access| seen.insert((access.object.as_str(), access.member.as_str())))
++            .cloned()
++            .collect();
++        module.member_accesses = unique.into();
++    }
++    if !RETAIN_SECURITY_FACTS.load(Ordering::Relaxed) {
++        module.security_sinks = Vec::new();
++        module.security_unresolved_callee_sites = Vec::new();
++        module.tainted_bindings = Vec::new();
++        module.sanitized_sink_args = Vec::new();
++        module.security_control_sites = Vec::new();
++    }
++}
++
+ /// Parse all files, extracting imports and exports.
+ ///
+ /// Small file sets use a sequential fast path to avoid parallel scheduling
+@@ -276,7 +315,11 @@
+         if cancellation.is_some_and(|cancelled| cancelled.load(Ordering::SeqCst)) {
+             return ParseFileResult::default();
+         }
+-        parse_single_file_cached(file, cache, needs, flag_patterns, mode)
++        let mut result = parse_single_file_cached(file, cache, needs, flag_patterns, mode);
++        if let Some(module) = result.module.as_mut() {
++            compact_module(module);
++        }
++        result
+     };
+     let results: Vec<ParseFileResult> = if files.len() <= PARALLEL_PARSE_FILE_THRESHOLD {
+         files.iter().map(parse_one).collect()

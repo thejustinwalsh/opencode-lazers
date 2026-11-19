@@ -95,6 +95,12 @@ async function structureConcerns(
       root,
       configPath: resolved.configPath,
       signal: input.signal,
+      ...(root === input.workspace
+        ? {
+            cacheSeed: input.repository.projectDirectory,
+            cachePublish: input.repository.projectDirectory,
+          }
+        : { cacheSeed: input.workspace }),
     })
     const roots: Roots = { candidate: input.workspace, base: base.directory }
     const dead = resolved.deadCodeEnabled ? await deadCodeConcerns(analyzer, scope, roots) : []

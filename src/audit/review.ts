@@ -245,6 +245,7 @@ async function runAnalysis(
   resolved: ResolvedFallowConfig,
   changed: string[],
   signal: AbortSignal | undefined,
+  projectDirectory: string,
 ): Promise<AnalysisPass> {
   const addedRanges = await withTimeout(
     () => addedRangesForFiles(workspace, baseCommit, artifact, changed),
@@ -252,11 +253,16 @@ async function runAnalysis(
   )
   const base = await materialiseBaseTree(workspace, baseCommit, changed)
   try {
+    // The candidate starts from the project's cache and leaves its own there; the base tree
+    // starts from the candidate's, because most of its files are the same.
     const scope = (root: string) => ({
       root,
       configPath: resolved.configPath,
       files: changed,
       signal,
+      ...(root === workspace
+        ? { cacheSeed: projectDirectory, cachePublish: projectDirectory }
+        : { cacheSeed: workspace }),
     })
     const [candidateComplexity, candidateDuplication, baseComplexity] = await withTimeout(
       () =>
@@ -316,6 +322,7 @@ export async function fallowReview(input: FallowReviewInput): Promise<FallowRevi
         input.deadCode === false ? { ...resolved, deadCodeEnabled: false } : resolved,
         changed,
         input.signal,
+        input.repository.projectDirectory,
       )
     const complexityAttrs = attributeComplexity(
       toComplexityPoints(baseComplexity),
