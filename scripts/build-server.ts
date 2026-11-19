@@ -14,6 +14,7 @@ const entries = [
   ["src/context/processor.ts", "processor.js"],
   ["src/context/repo-worker.ts", "repo-worker.js"],
   ["src/models/decision-worker.ts", "decision-worker.js"],
+  ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
 ] as const
 
 export async function buildServer() {

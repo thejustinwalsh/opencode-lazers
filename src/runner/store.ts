@@ -1,3 +1,4 @@
+import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
   type AttemptLifecycleState,
@@ -639,6 +640,8 @@ export type DetailPage = {
 }
 
 export class RunnerStore {
+  /** Settles once the plan-scoped transition indexes exist (or the background build gave up). */
+  readonly transitionIndexes: Promise<void>
   constructor(readonly repository: TaskRepository) {
     repository.atomic(registerLifecycleTransitions)
     repository.installSchema(
@@ -693,9 +696,6 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_transitions_lookup
         ON runner_transitions(plan_id,task_id,event,id);
-      CREATE INDEX IF NOT EXISTS runner_transitions_plan_id ON runner_transitions(plan_id,id);
-      CREATE INDEX IF NOT EXISTS runner_transitions_plan_event ON runner_transitions(plan_id,event);
-      CREATE INDEX IF NOT EXISTS runner_transitions_task_latest ON runner_transitions(plan_id,task_id,id);
       CREATE TABLE IF NOT EXISTS runner_leases (
         project_directory TEXT PRIMARY KEY, owner TEXT NOT NULL, fence INTEGER NOT NULL, expires_at INTEGER NOT NULL
       );
@@ -1082,6 +1082,8 @@ export class RunnerStore {
       },
     )
     installPrioritySchema(repository)
+    // Not generation-gated: existing databases lack these and large tables build off-thread.
+    this.transitionIndexes = repository.atomic((db) => ensureTransitionIndexes(db, repository.path))
     // An older still-loaded plugin can recreate its table after the generation was installed.
     if (
       repository.read((db) =>
