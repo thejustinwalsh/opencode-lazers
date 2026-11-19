@@ -46,28 +46,40 @@ test("a cold owner with a large context gets a fresh Architect", () => {
 })
 
 test("unknown context size is treated as large", () => {
-  expect(routeArchitect(architect({ idleAt: 1, tokens: null }), now, options).reason).toBe(
-    "cold-large",
-  )
+  expect(
+    routeArchitect(architect({ idleAt: 1, tokens: null, contextTokens: undefined }), now, options)
+      .reason,
+  ).toBe("cold-large")
 })
 
 test("a cold owner with a small context is reused", () => {
-  expect(routeArchitect(architect({ idleAt: 1, tokens: 8_000 }), now, options)).toEqual({
+  expect(
+    routeArchitect(architect({ idleAt: 1, tokens: 9_000_000, contextTokens: 8_000 }), now, options),
+  ).toEqual({
     action: "reuse",
     sessionID: "ses_owner",
     reason: "small-context",
   })
 })
 
-test("context is measured from reported usage when present", () => {
+test("cumulative session spend is never read as the context size", () => {
   const usage = {
     input: 40_000,
     output: 1,
     reasoning: 0,
-    cacheRead: 0,
+    cacheRead: 2_300_000_000,
     cacheWrite: 0,
     provenance: "t",
   }
+  // A long-lived Architect that now holds a small prompt is reused, not replaced.
+  expect(
+    routeArchitect(
+      architect({ idleAt: 1, tokens: 2_300_000_000, usage, contextTokens: 9_000 }),
+      now,
+      options,
+    ).reason,
+  ).toBe("small-context")
+  // Without a measured prompt size the context is unknown, hence large.
   expect(routeArchitect(architect({ idleAt: 1, tokens: 1, usage }), now, options).reason).toBe(
     "cold-large",
   )

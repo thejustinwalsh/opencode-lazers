@@ -9,7 +9,7 @@ import { AbsolutePath } from "@opencode/schema/schema"
 import type { Plugin } from "@opencode/plugin/effect"
 import { TaskRepository } from "../storage.ts"
 import workerInstructions from "../implementor.md" with { type: "text" }
-import { nativeHost } from "./native.ts"
+import { latestContextTokens, nativeHost } from "./native.ts"
 import type { NativeInboxClient, NativeInboxDependencies } from "./native.ts"
 import type { OutcomeInboxEntry, OutcomeOwnership } from "./inbox.ts"
 import { registerWorker } from "./roles.ts"
@@ -1836,4 +1836,16 @@ test("an active entry contradicted by a completed turn, empty inbox and no shell
     ],
   })
   expect(await shell.host.session("ses_worker")).toMatchObject({ busy: true })
+})
+
+test("an Architect's context size is the newest request's prompt, not its cumulative spend", () => {
+  const assistant = (input: number, read: number, write: number) =>
+    ({
+      type: "assistant",
+      tokens: { input, output: 5, reasoning: 0, cache: { read, write } },
+    }) as never
+  expect(latestContextTokens([assistant(9, 90_000_000, 1), assistant(10, 40_000, 2_000)])).toBe(
+    42_010,
+  )
+  expect(latestContextTokens([{ type: "user" } as never])).toBeUndefined()
 })

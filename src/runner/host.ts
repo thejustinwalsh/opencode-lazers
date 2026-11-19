@@ -86,6 +86,11 @@ export type HostSession = {
     cacheWrite: number
     provenance: string
   }
+  /**
+   * Prompt size of the newest model request (input plus cache). Unlike `usage` and `tokens`,
+   * which are cumulative spend, this is how full the session's context window is now.
+   */
+  contextTokens?: number
   tokens: number | null
   tools: number
   cost: number | null

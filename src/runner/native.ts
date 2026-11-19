@@ -477,6 +477,16 @@ function sessionUsage(latest: NativeSessionInfo) {
   }
 }
 
+/**
+ * Prompt size of the newest assistant request: what the model was actually sent, not the
+ * session's cumulative token spend. Absent when no assistant message reports tokens.
+ */
+export function latestContextTokens(messages: readonly SessionMessage.Info[]): number | undefined {
+  const last = messages.findLast((message) => message.type === "assistant" && message.tokens)
+  if (last?.type !== "assistant" || !last.tokens) return undefined
+  return last.tokens.input + last.tokens.cache.read + last.tokens.cache.write
+}
+
 function assistantToolCount(messages: readonly SessionMessage.Info[]) {
   return messages.reduce(
     (sum, message) =>
@@ -506,6 +516,7 @@ function hostSessionView(input: {
   outcome: NativeSessionInfo["outcome"] | "interrupted"
   messages: readonly SessionMessage.Info[]
   retainedCurrentInput: HostMessage | undefined
+  contextTokens: number | undefined
 }) {
   const { latest, active, contradicted, observationUnstable, pendingInput } = input
   const { pendingPermissions, pendingForms, turn, idleAt, busyAt } = input
@@ -532,6 +543,7 @@ function hostSessionView(input: {
     outcome: input.outcome,
     model: latest.model,
     ...sessionUsage(latest),
+    ...(input.contextTokens === undefined ? {} : { contextTokens: input.contextTokens }),
     tools: assistantToolCount(input.messages),
     // Subscription billing is not a dated equivalent API estimate.
     cost: null,
@@ -834,8 +846,14 @@ export function nativeHost(
           : interrupted
             ? "interrupted"
             : latest.outcome
+      // An Architect's routing needs its prompt size, which the cumulative usage cannot give.
+      const contextTokens =
+        latest.agent === "architect"
+          ? latestContextTokens(detailed ? messages : await readMessages().catch(() => []))
+          : undefined
       return hostSessionView({
         latest,
+        contextTokens,
         active,
         contradicted,
         observationUnstable,
