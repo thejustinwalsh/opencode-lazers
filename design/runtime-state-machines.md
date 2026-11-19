@@ -347,3 +347,42 @@ legacy `expectedVersion` still matches a replay without it. A stray `expectedVer
 `expectedRevision` from an older prompt is dropped before validation (plan command, recovery
 tools, `lz-configure-models`). The Desktop route editor keeps its own `expectedRevision` guard,
 because two open panels can edit one route.
+
+## Accepted plans can be cancelled
+
+`accepted` already reaches `cancelling` in `lifecycleMachines.plan`; two gates hid it.
+`PLAN_COMMANDS.cancel.from` now lists `accepted`, and `commandCancel` no longer carries its
+own `terminalPlanStates` guard, because `planCommandProblem` is the single legality check.
+`integrated` and `cleanup-blocked` stay uncancellable: integration is already recorded.
+Cancelling an accepted plan (`lz-plan-command` `{action:"cancel", planID, reason}` from its
+Architect) settles in `cancelled`, releases dispatch reservations, and the terminal cleanup
+tick removes owned worktrees non-forced; a worktree holding unmerged commits is preserved
+as a `held` `worktree-remove` effect.
+
+## A retry can leave the shared checkout
+
+`PlanInput.workspaceMode` is fixed once an attempt exists (`changeSchedule` refuses it), and a
+shared task is scheduled in the project checkout behind every active dispatch reservation.
+`retry` with `workspaceMode: "isolated"` now revises the plan body the same way
+`selectSharedWorkspace` does for `shared` (a `runner_plan_revisions` row and a
+`WORKSPACE_SELECTED` event with `mode: "isolated"`), so the new attempt gets a native
+`.worktrees` workspace. The earlier attempt's workspace and receipts are untouched.
+
+## Stale attempts stop holding reservations
+
+A dispatch reservation is derived from `activeProjectAttempts()` (attempts in `preparing`,
+`running` or `verifying`), so an attempt nobody settles reserves its checkout and write scope
+for good. The reconcile tick (`settleStaleAttempts`) gives such attempts a machine-decided
+exit that needs no Architect contact:
+
+| Condition (latest attempt of its task, no `intended`/`uncertain` effect)                      | Attempt becomes                        |
+| --------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Node already `accepted`/`incorporated` (retained acceptance that predates attempt settlement) | `accepted`, node artifact adopted      |
+| Plan `blocked`; session absent, or archived and quiet                                         | `failed` (retry/resume stay available) |
+| Plan `cancelled`/`failed`/`exhausted`; session absent, or archived and quiet                  | `cancelled`                            |
+
+A live session (not archived, busy, pending input/permissions/forms, running shells or active
+children) is never settled: it is a retained worker the Architect may resume. Each settlement
+records `ATTEMPT_STALE_SETTLED` with the cause. The two live `verifying` attempts on `running`
+plans were the first case: retained verification had moved the node to `accepted` (event
+`RETAINED_ACCEPT`) through a code path that did not also move the attempt.

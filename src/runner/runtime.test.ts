@@ -3266,6 +3266,85 @@ test("a real verification barrier does not block same-project dispatch, cancella
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
 })
 
+test("an accepted plan that will never be integrated can be cancelled and releases its workers' worktrees", async () => {
+  const f = fixture()
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await driveWithTaskSourceLandings(f)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const workspaces = f.store.attempts(f.receipt.planID).map((attempt) => attempt.workspace)
+  expect(workspaces.length).toBeGreaterThan(0)
+
+  expect(
+    await f.runtime.command(
+      { requestID: "cancel-accepted", planID: f.receipt.planID, action: "cancel" },
+      "owner",
+    ),
+  ).toMatchObject({ status: "cancelling" })
+  await drive(f.runtime, 6)
+
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(f.store.dispatchReservations()).toEqual([])
+  // Non-forced cleanup removes merged worktrees and preserves any holding unmerged commits.
+  const removals = f.store.effects(f.receipt.planID).filter((e) => e.kind === "worktree-remove")
+  expect(removals.length).toBe(workspaces.length)
+  for (const workspace of workspaces) {
+    const removal = removals.find((e) => JSON.parse(e.payload).workspace === workspace)!
+    expect(existsSync(workspace)).toBe(removal.state !== "completed")
+    expect(["completed", "held"]).toContain(removal.state)
+  }
+  expect(removals.some((e) => e.state === "completed")).toBe(true)
+})
+
+test("stale attempts of blocked plans and accepted nodes stop holding dispatch reservations", async () => {
+  let clock = Date.now()
+  const f = fixture({ delayed: true, independent: true, now: () => clock })
+  await runPlan(f)
+  await f.runtime.tick()
+  const [first, second] = f.store.attempts(f.receipt.planID)
+  expect(first).toBeDefined()
+  expect(second).toBeDefined()
+  expect(f.store.dispatchReservations().length).toBeGreaterThan(0)
+
+  // A blocked plan whose worker session is still live keeps its reservation.
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_plans SET state='blocked',reason='held' WHERE id=?")
+      .run(f.receipt.planID),
+  )
+  await f.runtime.tick()
+  clock += 61_000
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).not.toBe("failed")
+
+  // Once the session is gone the attempt settles, with an event, and retry stays available.
+  f.sessions.delete(first!.session_id)
+  clock += 61_000
+  await f.runtime.tick()
+  const settled = f.store.attempts(f.receipt.planID).find((a) => a.id === first!.id)!
+  expect(settled.state).toBe("failed")
+  expect(
+    f.store.latestTransition(f.receipt.planID, first!.task_id, "ATTEMPT_STALE_SETTLED"),
+  ).toMatchObject({
+    attemptID: first!.id,
+    to: "failed",
+    cause: "session-absent",
+  })
+
+  // A node accepted by an older retained acceptance settles its verifying attempt.
+  {
+    f.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET state='verifying' WHERE id=?").run(second!.id)
+      db.query(
+        "UPDATE runner_nodes SET state='accepted',artifact='deadbeef' WHERE plan_id=? AND task_id=?",
+      ).run(f.receipt.planID, second!.task_id)
+    })
+    await f.runtime.tick()
+    expect(f.store.attempts(f.receipt.planID).find((a) => a.id === second!.id)).toMatchObject({
+      state: "accepted",
+    })
+  }
+})
+
 test("runtime stop aborts checks admitted by its draining tick before storage disposal", async () => {
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   const f = fixture({
@@ -4315,6 +4394,36 @@ test("completed shared plan verifies its exact artifact without touching an adva
   })
 })
 
+test("a retry that asks for an isolated workspace leaves the shared checkout", async () => {
+  const f = fixture({ shared: true, fail: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const task = f.tasks[0]!
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(first.session_id)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).workspaceMode).toBe("shared")
+
+  await f.runtime.command(
+    {
+      requestID: "retry-isolated",
+      planID: f.receipt.planID,
+      action: "retry",
+      taskID: task.id,
+      workspaceMode: "isolated",
+      reason: "Do not queue behind other plans in the shared checkout",
+    },
+    "owner",
+  )
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).workspaceMode).toBe("isolated")
+  await f.runtime.tick()
+  const attempts = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === task.id)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[1]!.workspace).not.toBe(attempts[0]!.workspace)
+  expect(attempts[1]!.workspace).toContain(".worktrees")
+})
+
 test("shared resume waits for another plan's worker and cancellation retains final usage", async () => {
   const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)
@@ -4641,7 +4750,7 @@ test("one failed branch blocks combined acceptance without losing sibling verifi
     100, 100,
   ])
   expect(attemptCheck(f, first.task_id, first.id).exitCode).toBe(7)
-  expect(attemptCheck(f, second.task_id, second.id).exitCode).toBe(0)
+  expect(attemptCheck(f, second!.task_id, second!.id).exitCode).toBe(0)
   expect(
     f.store.effects(f.receipt.planID).some((effect) => effect.kind.startsWith("graph-verify:")),
   ).toBe(false)
@@ -12323,7 +12432,7 @@ test("a second renewal of a session that already has a source row reuses that ro
     ).run(plan.owner)
   })
   const second = begin("second-handoff")!
-  expect(second.id).not.toBe(first.id)
+  expect(second!.id).not.toBe(first.id)
   const sources = f.store.atomic((db) =>
     db
       .query<{ renewal_id: string; state: string; scan_cursor: string | null }, [string]>(
@@ -12331,7 +12440,7 @@ test("a second renewal of a session that already has a source row reuses that ro
       )
       .all(plan.owner),
   )
-  expect(sources).toEqual([{ renewal_id: second.id, state: "preparing", scan_cursor: null }])
+  expect(sources).toEqual([{ renewal_id: second!.id, state: "preparing", scan_cursor: null }])
 })
 
 test("a reopened scheduler recovers a durable transfer before archival without changing workers", async () => {
