@@ -591,14 +591,23 @@ export function elapsedLabel(elapsedMs: number) {
   return `${seconds}s`
 }
 
-/** Human duration for inspector rows: 240ms, 4.2s, 18s, 4m 47s, 1h 02m. */
+/**
+ * Human duration for inspector rows: 240ms, 4.2s, 18s, 4m 47s, 48m, 1h 02m, 3h, 1d 20h. A zero
+ * trailing unit is dropped.
+ */
 export function durationText(durationMs: number) {
   if (durationMs < SECOND) return `${Math.round(durationMs)}ms`
   if (durationMs < 10 * SECOND) return `${(durationMs / SECOND).toFixed(1)}s`
   if (durationMs < MINUTE) return `${Math.round(durationMs / SECOND)}s`
   const total = Math.round(durationMs / SECOND)
-  if (durationMs < HOUR) return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`
-  return `${Math.floor(total / 3_600)}h ${String(Math.floor((total % 3_600) / 60)).padStart(2, "0")}m`
+  const pair = (major: number, unit: string, minor: number, minorUnit: string, pad: boolean) =>
+    minor
+      ? `${major}${unit} ${pad ? String(minor).padStart(2, "0") : minor}${minorUnit}`
+      : `${major}${unit}`
+  if (durationMs < HOUR) return pair(Math.floor(total / 60), "m", total % 60, "s", true)
+  const hours = Math.floor(total / 3_600)
+  if (hours < 24) return pair(hours, "h", Math.floor((total % 3_600) / 60), "m", true)
+  return pair(Math.floor(hours / 24), "d", hours % 24, "h", false)
 }
 
 export function isActiveAttemptState(state: string) {

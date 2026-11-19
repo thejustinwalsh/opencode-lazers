@@ -627,9 +627,7 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     expect(nodeReason.textContent).toContain(
       "Showing 100 of 101 blocker task references visible in this session.",
     )
-    expect(nodeReason.querySelectorAll("button:not(.lazers-tasks-callout-toggle)")).toHaveLength(
-      100,
-    )
+    expect(nodeReason.querySelectorAll("button:not(.lazers-callout-toggle)")).toHaveLength(100)
     expect(nodeReason.querySelector("details")?.open).toBe(false)
     expect(
       container.querySelector(".lazers-tasks-detail .lazers-tasks-dependencies-visible")

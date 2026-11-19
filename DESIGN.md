@@ -44,6 +44,11 @@ compact hierarchy of Linear and the current OpenCode theme and fonts.
   their next selection. `size` is the last expanded height: collapsing by any path keeps
   it and every open restores it. Panels persist `open` and `size` and open the pane from
   their own user-selection handlers (no prop on the component).
+- Details pane kit (`src/details/`, spec `design/details-panes/spec.md`). One module builds
+  every pane body: `StatRow`, `Label`, `Progress`, `ActivityLane`, `Coverage`, `Rows`,
+  `Disclosure`, `Callout`, `Identifiers`, plus `durationText`/`compactCount`. Pieces omit
+  themselves when given nothing to show; colors are host tokens or `color-mix` of them.
+  Styles register once from the plugin root (`detailsKitStyles`).
 - Make the primary identity and current state clear. Put payloads, technical
   provenance and secondary history behind disclosures. Long meaningful text wraps;
   short display labels may truncate only with full content accessible.
