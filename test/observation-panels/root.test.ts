@@ -1827,15 +1827,21 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           call.directory === DIRECTORY_A,
       ),
     )
-    expect(
+    // The open-time source refresh answers from stored snapshots, so the decision read for
+    // the live scope starts without waiting for it (and never for another directory).
+    await until(() =>
       calls.some(
         (call) =>
           call.service === "lazers.models.decision.v2" &&
           call.method === "overview" &&
           call.directory === DIRECTORY_A,
       ),
+    )
+    expect(
+      calls.some(
+        (call) => call.service === "lazers.models.decision.v2" && call.directory !== DIRECTORY_A,
+      ),
     ).toBe(false)
-    expect(containerA.textContent).toContain("Loading comparison")
     deferredA1.resolve(sourceEvidence())
     await until(
       () => containerA.querySelector(`.lazers-chart [data-point-id="${CONFIG_ONE}"]`) !== null,
@@ -1851,10 +1857,13 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
         containerA.querySelector(".lazers-details-header h2") !== null ||
         containerA.querySelector(".lazers-models-inspector [role=alert]") !== null,
     )
-    expect(
-      selectedName(containerA) ??
-        containerA.querySelector(".lazers-models-inspector [role=alert]")?.textContent,
-    ).toBe("GPT-6 refreshed · high")
+    // The chart no longer waits for the refresh, so the name settles when the refresh lands.
+    await until(
+      () =>
+        (selectedName(containerA) ??
+          containerA.querySelector(".lazers-models-inspector [role=alert]")?.textContent) ===
+        "GPT-6 refreshed · high",
+    )
     const openRouterModelMarketCard = containerA.querySelector<HTMLElement>(
       ".lazers-models-market-scenario",
     )!
