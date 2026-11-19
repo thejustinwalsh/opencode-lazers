@@ -12,6 +12,11 @@ export type HoldFamily = {
 
 export const HOLD_FAMILIES: readonly HoldFamily[] = [
   {
+    name: "fallow-config-required",
+    match: /^FALLOW_CONFIG_REQUIRED/,
+    actions: ["run", "reconcile", "cancel"],
+  },
+  {
     name: "retained-repair",
     match: /^Retained (repair|worker)/,
     actions: ["retained-repair", "reconcile", "cancel"],
