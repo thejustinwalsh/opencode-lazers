@@ -386,3 +386,61 @@ children) is never settled: it is a retained worker the Architect may resume. Ea
 records `ATTEMPT_STALE_SETTLED` with the cause. The two live `verifying` attempts on `running`
 plans were the first case: retained verification had moved the node to `accepted` (event
 `RETAINED_ACCEPT`) through a code path that did not also move the attempt.
+
+## Recovery bundle
+
+A failed task or a held plan waits for its Architect to choose an unblocking action.
+When Architect contact was paused, or a notice went unanswered, that work sat for
+weeks. The scheduler now hands every stale item to an Architect as one bundle.
+No state or transition is added: an item is a reading of existing plan, node and
+attempt states, and a bundle is an outbox row plus a journal event.
+
+`src/runner/recovery-bundle.ts` collects an item when all hold:
+
+| Rule      | Definition                                                                                                                                                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kind      | plan `blocked` or `failed` (held-plan); node `failed`, `exhausted`, or `blocked` with a failed latest attempt in an open plan (failed-task); plan `accepted` (accepted-unintegrated); `cleanup-blocked`; `cancelling` (stuck-cancelling)     |
+| Stale     | no meaningful transition on the plan for `RECOVERY_STALE_MS` (2h). Observation events (`OUTCOME_`, `ARCHITECT_`, `CLEANUP_`, `EFFECT_`, `SOURCE_`, `WORKER_`, `OWNER_`, ...) do not count; an Architect command does, so acted-on work waits |
+| Not live  | no attempt of the item has a session that is busy or has pending input, permission or form; a `native-input` hold is excluded                                                                                                                |
+| Not ended | `cancelled`, `integrated` and disposed tasks never appear                                                                                                                                                                                    |
+
+Each item carries its `LZ-n` reference, panel state word and explanation
+(`taskStateView`, `taskExplanation`, `taskReasonView`), hold family, the
+unblocking actions the plan state accepts (`HOLD_FAMILIES` filtered by
+`planCommandProblem`), the reusable facts (artifact commit, whether it is an
+ancestor of the landing HEAD, whether its checks passed, the owned worktree's
+unmerged commits and uncommitted edits, whether the worker session still exists)
+and `recommend()`'s advice. Item keys hash plan, task, state and reason, so a
+changed condition is a new item.
+
+Delivery, each tick, only while Architect contact is `enabled` and the scheduler
+holds the lease:
+
+```
+collect() ──> every item covered by the latest bundle? ──yes──> nothing
+     │                      (pending, or delivered < RECOVERY_REPRAISE_MS ago)
+     no
+     v
+receiver(): live Architect among plan owners, notice recipients, continuations,
+            task submitters; none -> ensureArchitectOwner (existing continuation path)
+     v
+runner_outbox row  id = hash(project, generation, item keys)   INSERT OR IGNORE
++ RECOVERY_BUNDLE_RAISED on the anchor plan (same transaction, generation checked)
+     v
+OutcomeDelivery.deliver(): one coalesced notice to that session; the replaced
+bundle's queued notice is cancelled, a pending one is superseded
+```
+
+Exactly once: the generation is read and the row inserted in one transaction under
+the scheduler fence, and the id is deterministic, so a restart or a second
+reconciler finds the generation taken. A bundle whose Architect is gone is
+superseded and retried after `RECOVERY_RETRY_MS`. While paused nothing is
+created; the set is recomputed from state, so it is retained. A delivered bundle
+that stays unanswered is replaced by a new one after `RECOVERY_REPRAISE_MS` (6h).
+
+Authority: plan ownership is advisory. Any live Architect of the project may command
+a plan, and the command adopts it (`OWNER_ADOPTED`), so the bundle needs no
+handover for plans owned by archived or cold sessions.
+
+Observable: the `RECOVERY_BUNDLE_RAISED` event (count, keys, session, replaced
+bundle) and `RecoveryBundles.status()` (items waiting, open bundle state and count).

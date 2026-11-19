@@ -8,6 +8,7 @@ import { sameProject } from "../project-key.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText, messageID } from "./runtime-helpers.ts"
+import { isRecoveryBundleRow } from "./recovery-bundle.ts"
 
 /** Handoffs, queue reviews and holds are decisions a later outcome does not answer. */
 function replaceable(row: OutboxRow) {
@@ -16,7 +17,8 @@ function replaceable(row: OutboxRow) {
     return (
       status !== "architect-handoff" &&
       status !== "queue-review" &&
-      status !== "retained-verification-failed"
+      status !== "retained-verification-failed" &&
+      status !== "recovery-bundle"
     )
   } catch {
     return false
@@ -164,14 +166,16 @@ export class OutcomeDelivery {
       const replacement =
         older.status === "architect-handoff" ||
         older.status === "queue-review" ||
-        older.status === "retained-verification-failed"
+        older.status === "retained-verification-failed" ||
+        older.status === "recovery-bundle"
           ? undefined
           : ordered.slice(index + 1).findLast((candidate) => {
               const next = JSON.parse(candidate.payload)
               if (
                 next.status === "architect-handoff" ||
                 next.status === "queue-review" ||
-                next.status === "retained-verification-failed"
+                next.status === "retained-verification-failed" ||
+                next.status === "recovery-bundle"
               )
                 return false
               // Current outcomes include the whole accepted-artifact review set.
@@ -378,6 +382,8 @@ export class OutcomeDelivery {
     // What a notice about to be replaced last told each plan.
     const earlier = new Map<string, OutboxRow>()
     for (const row of stale.flatMap((entry) => this.summarized(entry.row))) {
+      // A replaced recovery bundle must not be restated: the new one lists everything.
+      if (isRecoveryBundleRow(row)) continue
       const best = earlier.get(row.plan_id)
       if (
         !best ||
@@ -508,7 +514,26 @@ export class OutcomeDelivery {
       await this.runtime.reconcilePlan(planID, fence, "delivery", async () => {
         const plan = this.runtime.store.plan(planID)
         if (!plan) return
-        const current = await this.currentRows(ordered, plan, fence)
+        const all = await this.currentRows(ordered, plan, fence)
+        // A recovery bundle is addressed to the Architect it chose; it never follows the plan's owner.
+        const current: OutboxRow[] = []
+        for (const row of all) {
+          if (!isRecoveryBundleRow(row)) {
+            current.push(row)
+            continue
+          }
+          const session = await this.runtime.host.session(row.session_id)
+          if (this.runtime.validArchitect(session))
+            sessions.set(session.id, [...(sessions.get(session.id) ?? []), row])
+          else
+            this.outcomeState(
+              row,
+              "superseded",
+              { kind: "recovery-bundle-architect-unavailable" },
+              "OUTCOME_SUPERSEDED",
+              fence,
+            )
+        }
         if (!current.length) return
         const target: HostSession | undefined = await this.architect(plan)
         if (!target) {
