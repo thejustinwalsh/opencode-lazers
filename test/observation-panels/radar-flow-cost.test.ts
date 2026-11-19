@@ -10,6 +10,7 @@ type Entry = {
     view: "monitor" | "map" | "flow",
     container: HTMLElement,
   ): { dispose(): void; refresh(): void }
+  mountStream(container: HTMLElement, intervalMs?: number): { dispose(): void; tick(): void }
 }
 const guiRoot = fileURLToPath(new URL("../../src/gui.tsx", import.meta.url))
 const entry = fileURLToPath(new URL("./fixtures/radar-flow-cost-entry.tsx", import.meta.url))
@@ -144,30 +145,69 @@ for (const view of ["flow", "map", "monitor"] as const)
     })
   })
 
-test("flow: no SMIL, one pulse layer, and a live update between frames leaves pulses where they are", async () => {
+test("flow: no SMIL, one pulse layer of compositor animations, and live updates restart none", async () => {
   const host = await loadEntry()
+  // Record what the pulse layer asks the compositor to run; happy-dom's own Animation runs it.
+  const calls: { dot: unknown; frames: number; duration: number; cancelled: boolean }[] = []
+  const proto = (sharedDom as unknown as { HTMLElement: { prototype: Record<string, unknown> } })
+    .HTMLElement.prototype
+  const original = proto.animate as (this: unknown, ...args: unknown[]) => { cancel(): void }
+  proto.animate = function (this: unknown, frames: unknown[], options: { duration: number }) {
+    const call = { dot: this, frames: frames.length, duration: options.duration, cancelled: false }
+    calls.push(call)
+    const animation = original.call(this, frames, options)
+    const cancel = animation.cancel.bind(animation)
+    animation.cancel = () => {
+      call.cancelled = true
+      cancel()
+    }
+    return animation
+  }
   await withDom(async (dom) => {
     const container = dom.document.createElement("div") as unknown as HTMLElement
     dom.document.body.append(container as never)
     const mounted = host.mountRadar("flow", container)
     await sleep(30)
     expect(container.querySelectorAll("animateMotion")).toHaveLength(0)
-    const layer = container.querySelector(".lazers-radar-flow-pulses")!
     expect(container.querySelectorAll(".lazers-radar-flow-pulses")).toHaveLength(1)
-    // Wait for pulses to be on the wires (the first emission is phased within one interval).
-    for (let i = 0; i < 400 && layer.querySelectorAll(".lazers-radar-flow-dot").length === 0; i++)
-      await sleep(10)
-    const dots = () =>
-      [...layer.querySelectorAll(".lazers-radar-flow-dot")]
-        .map((dot) => (dot as unknown as HTMLElement).style.transform)
-        .filter((value) => value !== "translate3d(-20px,-20px,0)")
-    await sleep(300)
-    const before = dots()
-    expect(before.length).toBeGreaterThan(0)
-    // Synchronous updates cannot be separated by a frame: every pulse stays exactly in place.
+    // The pulse layer is outside the SVG: moving dots never touch the canvas.
+    expect(container.querySelector("svg .lazers-radar-flow-pulses")).toBeNull()
+    // Wait for the first emissions (phased within one interval).
+    for (let i = 0; i < 400 && calls.length === 0; i++) await sleep(10)
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) expect(call.frames).toBeGreaterThanOrEqual(2)
+    const before = calls.length
+    // Re-renders and live updates between wakes start and cancel nothing.
     mounted.refresh()
     mounted.refresh()
-    expect(dots()).toEqual(before)
+    expect(calls.length).toBe(before)
+    expect(calls.some((call) => call.cancelled)).toBe(false)
+    mounted.dispose()
+  })
+  proto.animate = original
+})
+
+test("flow: a new call inserts one feed row; the rows already there are not rebuilt", async () => {
+  const host = await loadEntry()
+  await withDom(async (dom) => {
+    const container = dom.document.createElement("div") as unknown as HTMLElement
+    dom.document.body.append(container as never)
+    const mounted = host.mountStream(container, 0)
+    await sleep(30)
+    const rows = () => [...container.querySelectorAll(".lazers-radar-feed-row")]
+    const first = rows()
+    expect(first.length).toBeGreaterThan(5)
+    const update = await mutations(dom, container as never, async () => {
+      mounted.tick()
+      await sleep(20)
+    })
+    console.info("RADAR-COST flow-feed-insert", { rows: first.length, update })
+    const after = rows()
+    // Every old row is still the same node; one new row sits among them.
+    expect(after).toHaveLength(first.length + 1)
+    expect(first.every((row) => after.includes(row))).toBe(true)
+    expect(update.added).toBeLessThanOrEqual(2)
+    expect(update.removed).toBeLessThanOrEqual(2)
     mounted.dispose()
   })
 })

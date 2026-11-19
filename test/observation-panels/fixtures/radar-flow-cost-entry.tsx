@@ -3,6 +3,7 @@ import { render } from "solid-js/web"
 import { RadarMonitorView } from "../../../src/radar/monitor-view.tsx"
 import type { RadarMonitorData } from "../../../src/radar/monitor-state.ts"
 import { createTestUI } from "../../models-panel/fixtures/dom-host.ts"
+export { mountStream } from "./radar-flow-stream-entry.tsx"
 import { mockupFlowLive } from "../../radar/flow-fixture.ts"
 
 /**

@@ -224,18 +224,7 @@ It is the Agent Radar canvas turned for a narrow, tall panel. Destinations are
 grouped as Models, Local machine and Tools & services, and only those with
 activity in the last two minutes are listed. Line weight is volume in that
 window, opacity is recency, and moving dots mark a call running now (static
-under reduced motion). Pulses are drawn by one `requestAnimationFrame` loop
-(`src/radar/pulse-loop.ts`, at most 30 draws a second, as transform-only HTML dots in a layer over
-the SVG so a frame never relayouts or repaints the canvas) over a pure, time-based pool (`pulse-pool.ts`): a
-running wire emits on a steady cadence (2 to 4 on a wire, one speed in px/s on
-every wire), each pulse travels the whole wire from source to destination and is
-removed only on arrival, and a re-render, live update, layout change or the wire
-ceasing to run never restarts, moves or drops one in flight. The loop stops when
-nothing is moving, the tab or canvas is hidden, or reduced motion is on. The
-canvas patches nodes keyed by position, so a live update changes attributes and
-never recreates nodes; the per-second clock moves only relative-time text, and
-layout inputs advance every 5 s. Live reads start at most every 400 ms however
-many events arrive, and an idle view makes none. Line hue follows the destination group and reuses the
+under reduced motion). Each running wire carries 2 to 4 pulses (one speed in px/s on every wire), spaced evenly. A pulse is one small HTML dot in a layer over the SVG with a single repeating Web Animation of `transform` along the wire (`src/radar/pulse-loop.ts`, geometry in `pulse-path.ts`), so it runs on the compositor: no frame callback, timer, style recalc, layout or paint while it moves, and it keeps moving while the main thread is busy. The main thread works only when a wire starts, stops or changes shape. Each pulse travels the whole wire from source to destination; a re-render, live update or layout change never restarts one, a wire that stops lets its pulses finish the crossing, and a changed geometry re-creates a pulse at the same fraction of the new path. Animations pause while the tab or canvas is hidden and are not created under reduced motion, which shows still dots. The canvas patches nodes keyed by position, and the Feed and Models lists are keyed by id, so a live update changes attributes and inserts one new row, and never recreates nodes; the per-second clock moves only relative-time text, and layout inputs advance every 5 s. Live reads start at most every 400 ms however many events arrive, and an idle view makes none. Line hue follows the destination group and reuses the
 Trajectory track hues: models violet, local amber, tools neutral, You warning.
 Selecting a session or destination dims everything unconnected and filters the
 feed. Below the split, `Feed` lists recent calls newest first and `Models`

@@ -1,42 +1,83 @@
 import { expect, test } from "bun:test"
 import { Window } from "happy-dom"
 import { createPulseLoop } from "./pulse-loop.ts"
-import type { PulseHost } from "./pulse-loop.ts"
-import { PULSE_SPEED } from "./pulse-pool.ts"
-import type { WireInput } from "./pulse-pool.ts"
+import type { PulseHost, PulseTiming } from "./pulse-loop.ts"
+import { MAX_TOTAL, crossingMs, pulsesOn } from "./pulse-path.ts"
+import type { WireInput } from "./pulse-path.ts"
 
-/** A host whose clock and frames the test drives; nothing real is scheduled. */
+type Fake = {
+  points: readonly number[]
+  timing: PulseTiming
+  startedAt: number
+  cancelled: boolean
+  paused: boolean
+  held: number
+  done: boolean
+  finish: () => void
+}
+
+/** A host whose clock and animations the test drives; there are no timers or frames to fake. */
 function fakeHost() {
-  const state = {
-    time: 0,
-    hidden: false,
-    reduced: false,
-    next: 1,
-    pending: new Map<number, (t: number) => void>(),
-    requests: 0,
-  }
+  const state = { time: 0, hidden: false, reduced: false, animations: [] as Fake[] }
+  const elapsed = (fake: Fake) => (fake.paused ? fake.held : state.time - fake.startedAt)
+  const endsAt = (fake: Fake) =>
+    fake.startedAt + fake.timing.delayMs + fake.timing.durationMs * fake.timing.iterations
   const host: PulseHost = {
-    requestFrame: (callback) => {
-      state.requests++
-      const handle = state.next++
-      state.pending.set(handle, callback)
-      return handle
-    },
-    cancelFrame: (handle) => void state.pending.delete(handle),
-    now: () => state.time,
     visible: () => !state.hidden,
     reducedMotion: () => state.reduced,
+    animate: (_dot, points, timing, finish) => {
+      const fake: Fake = {
+        points,
+        timing: { ...timing },
+        startedAt: state.time,
+        cancelled: false,
+        paused: false,
+        held: 0,
+        done: false,
+        finish,
+      }
+      state.animations.push(fake)
+      return {
+        cancel: () => (fake.cancelled = true),
+        pause: () => {
+          if (fake.paused) return
+          fake.held = elapsed(fake)
+          fake.paused = true
+        },
+        play: () => {
+          if (!fake.paused) return
+          fake.paused = false
+          fake.startedAt = state.time - fake.held
+        },
+        elapsed: () => elapsed(fake),
+        setIterations: (iterations) => (fake.timing.iterations = iterations),
+      }
+    },
   }
-  /** Runs one frame at `dt` after the last one, if one is scheduled. */
-  const frame = (dt: number) => {
-    state.time += dt
-    const entry = [...state.pending][0]
-    if (!entry) return false
-    state.pending.delete(entry[0])
-    entry[1](state.time)
-    return true
+  /** Moves the clock forward, ending finite animations in time order. */
+  const advance = (ms: number) => {
+    const target = state.time + ms
+    for (;;) {
+      let next: Fake | undefined
+      for (const fake of state.animations)
+        if (
+          !fake.cancelled &&
+          !fake.paused &&
+          !fake.done &&
+          Number.isFinite(endsAt(fake)) &&
+          endsAt(fake) <= target &&
+          (!next || endsAt(fake) < endsAt(next))
+        )
+          next = fake
+      if (!next) break
+      state.time = Math.max(state.time, endsAt(next))
+      next.done = true
+      next.finish()
+    }
+    state.time = target
   }
-  return { state, host, frame }
+  const running = () => state.animations.filter((a) => !a.cancelled && !a.done)
+  return { state, host, advance, running }
 }
 
 const wire = (change: Partial<WireInput> = {}): WireInput => ({
@@ -54,135 +95,153 @@ function layer() {
   const window = new Window()
   const div = window.document.createElement("div")
   window.document.body.append(div)
-  return div as unknown as Element
+  return { element: div as unknown as Element, window }
 }
-const dots = (element: Element) =>
-  [...element.querySelectorAll(".lazers-radar-flow-dot")] as HTMLElement[]
-const x = (dot: HTMLElement) =>
-  Number(/translate3d\(([-\d.]+)px/.exec(dot.style.transform ?? "")?.[1])
 
-test("one frame loop draws pulses that move steadily, and a live update does not move them", () => {
-  const { host, frame, state } = fakeHost()
-  const target = layer()
-  const loop = createPulseLoop(target, host)
+test("a running wire gets evenly staggered, repeating compositor animations along its whole length", () => {
+  const { host, running } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
   loop.update([wire()])
-  expect(state.pending.size).toBe(1)
-  for (let i = 0; i < 90; i++) frame(16)
-  expect(dots(target).filter((dot) => x(dot) > -10).length).toBeGreaterThan(0)
-  const before = loop.pool.fractions("a")
-  expect(before.length).toBeGreaterThan(0)
-  // A re-render, a data update and a layout change land between frames: nothing resets, and a
-  // pulse keeps its fraction of the new, longer wire.
-  loop.update([wire()])
-  loop.update([wire({ dim: true })])
-  loop.update([wire({ x1: 400, mx: 200 })])
-  expect(loop.pool.fractions("a")).toEqual(before)
-  expect(state.pending.size).toBe(1)
-  frame(16)
-  const after = loop.pool.fractions("a")
-  const step = (PULSE_SPEED * 16) / 1000 / 400
-  before.forEach((value, index) => {
-    expect(after[index]! - value).toBeGreaterThan(0)
-    expect(after[index]! - value).toBeLessThan(step * 1.5)
+  const animations = running()
+  const wanted = pulsesOn(300)
+  expect(animations).toHaveLength(wanted)
+  const period = crossingMs(300)
+  animations.forEach((animation, k) => {
+    expect(animation.timing.iterations).toBe(Number.POSITIVE_INFINITY)
+    expect(animation.timing.durationMs).toBeCloseTo(period, 0)
+    expect(animation.timing.delayMs).toBeCloseTo((k * period) / wanted, 0)
+    // Source to destination.
+    expect(animation.points[0]).toBe(0)
+    expect(animation.points.at(-2)).toBeCloseTo(300, 0)
   })
-  expect(loop.stats.frames).toBe(91)
+  expect(loop.moving).toBe(wanted)
+  loop.dispose()
+  expect(running()).toHaveLength(0)
+})
+
+test("updates between and during crossings restart nothing and write nothing but dim", () => {
+  const { host, advance, running, state } = fakeHost()
+  const { element, window } = layer()
+  const loop = createPulseLoop(element, host)
+  loop.update([wire()])
+  advance(7_000)
+  const before = running()
+  const created = state.animations.length
+  const writes: string[] = []
+  const observer = new window.MutationObserver((records) => {
+    for (const record of records) writes.push(`${record.type}:${record.attributeName ?? ""}`)
+  })
+  observer.observe(element as never, { attributes: true, childList: true, subtree: true })
+  loop.update([wire()])
+  advance(3_000)
+  loop.update([wire()])
+  expect(state.animations).toHaveLength(created)
+  expect(running()).toEqual(before)
+  expect(writes).toEqual([])
+  loop.update([wire({ dim: true })])
+  expect(element.querySelector("[data-dim]")?.getAttribute("data-dim")).toBe("true")
+  expect(state.animations).toHaveLength(created)
+  observer.disconnect()
   loop.dispose()
 })
 
-test("the loop stops when nothing is left to move, when hidden and under reduced motion", () => {
-  const { host, frame, state } = fakeHost()
-  const target = layer()
-  const loop = createPulseLoop(target, host)
+test("a wire that stops lets each pulse finish its crossing; none starts, none is dropped", () => {
+  const { host, advance, running, state } = fakeHost()
+  const { element } = layer()
+  const loop = createPulseLoop(element, host)
   loop.update([wire()])
-  for (let i = 0; i < 20; i++) frame(100)
+  const period = crossingMs(300)
+  advance(period * 1.5)
+  const flying = running()
   loop.update([wire({ running: false })])
-  // In-flight pulses finish, then the loop stops asking for frames.
-  let guard = 0
-  while (state.pending.size > 0 && guard++ < 1_000) frame(100)
-  expect(state.pending.size).toBe(0)
-  expect(loop.pool.size).toBe(0)
-  expect(loop.running).toBe(false)
-
-  // Hidden: no frames are requested and none run; coming back resumes without a jump.
+  expect(running()).toEqual(flying)
+  for (const animation of flying) {
+    expect(Number.isFinite(animation.timing.iterations)).toBe(true)
+    expect(animation.cancelled).toBe(false)
+  }
+  advance(period * 2)
+  expect(running()).toHaveLength(0)
+  expect(loop.moving).toBe(0)
+  // Running again before the last one lands brings the same pulses back, not new ones.
   loop.update([wire()])
-  for (let i = 0; i < 40; i++) frame(100)
-  const requests = state.requests
+  advance(period * 1.2)
+  loop.update([wire({ running: false })])
+  const created = state.animations.length
+  loop.update([wire()])
+  expect(state.animations.length).toBe(created)
+  expect(running().every((a) => a.timing.iterations === Number.POSITIVE_INFINITY)).toBe(true)
+  loop.dispose()
+})
+
+test("a pulse that has not started when its wire stops never will; a left wire winds down too", () => {
+  const { host, running } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
+  loop.update([wire()])
+  loop.update([wire({ running: false })])
+  // Only the first, undelayed pulse had started (at time zero it is just beginning).
+  expect(running().length).toBeLessThanOrEqual(1)
+  loop.update([wire()])
+  loop.update([])
+  for (const animation of running()) expect(Number.isFinite(animation.timing.iterations)).toBe(true)
+  loop.dispose()
+})
+
+test("a changed path re-creates each pulse at the same fraction of the new wire", () => {
+  const { host, advance, running } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
+  loop.update([wire()])
+  const period = crossingMs(300)
+  advance(period * 0.4 + 1_000)
+  const first = running()[0]!
+  const phase = ((period * 0.4 + 1_000) / period) % 1
+  loop.update([wire({ x1: 600, mx: 300 })])
+  expect(first.cancelled).toBe(true)
+  const next = running()[0]!
+  const after = crossingMs(600)
+  expect(next.timing.durationMs).toBeCloseTo(after, 0)
+  expect(next.timing.delayMs).toBeCloseTo(-phase * after, 0)
+  expect(running()).toHaveLength(pulsesOn(300))
+  loop.dispose()
+})
+
+test("hidden views pause every animation and resume them where they were; reduced motion makes none", () => {
+  const { host, advance, running, state } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
+  loop.update([wire()])
+  advance(3_000)
+  const moving = running()
   state.hidden = true
   loop.wake()
-  expect(state.pending.size).toBe(0)
-  loop.update([wire()])
-  expect(state.requests).toBe(requests)
-  state.time += 120_000
+  expect(moving.every((a) => a.paused)).toBe(true)
+  const created = state.animations.length
+  // A wire that starts while hidden is paused from the start.
+  loop.update([wire(), wire({ id: "b" })])
+  const late = state.animations.slice(created)
+  expect(late.length).toBeGreaterThan(0)
+  expect(late.every((a) => a.paused)).toBe(true)
+  advance(120_000)
   state.hidden = false
   loop.wake()
-  expect(state.pending.size).toBe(1)
+  expect(running().every((a) => !a.paused)).toBe(true)
   loop.dispose()
-  expect(state.pending.size).toBe(0)
 
-  // Reduced motion: updates never start the loop.
   const still = fakeHost()
   still.state.reduced = true
-  const stillLoop = createPulseLoop(layer(), still.host)
+  const stillLoop = createPulseLoop(layer().element, still.host)
   stillLoop.update([wire()])
-  expect(still.state.requests).toBe(0)
+  expect(still.state.animations).toHaveLength(0)
   stillLoop.dispose()
 })
 
-test("frame cost: ten seconds at 60 fps over eight running wires", () => {
-  const { host, frame } = fakeHost()
-  const target = layer()
-  const loop = createPulseLoop(target, host)
+test("the whole view is capped", () => {
+  const { host, running } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
   loop.update(
-    Array.from({ length: 8 }, (_, index) =>
-      wire({ id: `w${index}`, x1: 200 + index * 40, y1: index * 30 }),
+    Array.from({ length: 40 }, (_, index) =>
+      wire({ id: `w${index}`, x1: 500, y1: index * 20, mx: 250 }),
     ),
   )
-  const costs: number[] = []
-  for (let i = 0; i < 600; i++) {
-    const started = performance.now()
-    frame(1000 / 60)
-    costs.push(performance.now() - started)
-  }
-  costs.sort((a, b) => a - b)
-  const p = (q: number) => costs[Math.floor(costs.length * q)]!
-  console.info("PULSE-FRAME-COST", { frames: 600, p50: p(0.5), p95: p(0.95), max: costs.at(-1) })
-  expect(loop.pool.size).toBeGreaterThan(8)
-  // 16.7 ms is the frame budget; the loop's own work should be a small fraction of it.
-  expect(p(0.95)).toBeLessThan(4)
-  loop.dispose()
-})
-
-test("frames are capped: positions stay time-based while draws and style writes are skipped", () => {
-  const { host, frame } = fakeHost()
-  const capped = { ...host, minFrameMs: 33 }
-  const target = layer()
-  const loop = createPulseLoop(target, capped)
-  loop.update([wire()])
-  for (let i = 0; i < 120; i++) frame(16)
-  // 120 frames of 16 ms is 1920 ms; a draw needs 33 ms, so every third 16 ms frame: 40, not 120.
-  expect(loop.stats.frames).toBeLessThan(62)
-  expect(loop.stats.frames).toBeGreaterThan(30)
-  // Travel is by elapsed time, not by draw count: ~90 px/s over 1.9 s covers about 170 px.
-  const lead = Math.max(...dots(target).map(x))
-  expect(lead).toBeGreaterThan(100)
-  loop.dispose()
-})
-
-test("a frame writes only transforms, and only for dots that moved", () => {
-  const { host, frame } = fakeHost()
-  const target = layer()
-  const loop = createPulseLoop(target, host)
-  loop.update([wire()])
-  for (let i = 0; i < 40; i++) frame(16)
-  const writes: string[] = []
-  const observer = new (
-    target.ownerDocument!.defaultView as unknown as { MutationObserver: typeof MutationObserver }
-  ).MutationObserver((records) => {
-    for (const record of records) writes.push(`${record.type}:${record.attributeName}`)
-  })
-  observer.observe(target, { attributes: true, childList: true, subtree: true })
-  // Zero elapsed time: nothing moved, so nothing is written.
-  frame(0)
-  expect(writes).toEqual([])
+  expect(running().length).toBeLessThanOrEqual(MAX_TOTAL)
+  expect(loop.moving).toBe(running().length)
   loop.dispose()
 })

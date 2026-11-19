@@ -1,28 +1,39 @@
-import { MAX_TOTAL, PulsePool } from "./pulse-pool.ts"
-import type { WireInput } from "./pulse-pool.ts"
+import { MAX_TOTAL, WirePath, crossingMs, geometryKey, pulsesOn } from "./pulse-path.ts"
+import type { WireInput } from "./pulse-path.ts"
+
+export type PulseTiming = { durationMs: number; delayMs: number; iterations: number }
+
+/** One pulse's journey, as the host runs it. */
+export type PulseAnimation = {
+  cancel(): void
+  pause(): void
+  play(): void
+  /** Time on the animation's own clock in ms, the delay included; null when unknown. */
+  elapsed(): number | null
+  /** Ends the animation after this many iterations. */
+  setIterations(iterations: number): void
+}
 
 /** What the loop needs from its environment; tests pass fakes for all of it. */
 export type PulseHost = {
-  requestFrame(callback: (time: number) => void): number
-  cancelFrame(handle: number): void
-  /** Milliseconds on the same clock the frame callback receives. */
-  now(): number
   /** False while the tab is hidden or the canvas is off screen. */
   visible(): boolean
   /** True when the person asked for reduced motion; pulses then stay static. */
   reducedMotion(): boolean
-  /** Least milliseconds between drawn frames; positions are time-based, so skipping costs nothing. */
-  minFrameMs?: number
+  /**
+   * Moves `dot` through `points` (x/y pairs, evenly spaced in time) linearly, `iterations` times
+   * (`Infinity` allowed), each taking `durationMs`, after `delayMs` (negative starts part way
+   * through). Calls `onFinish` when it ends. Undefined when the environment cannot animate.
+   */
+  animate(
+    dot: HTMLElement,
+    points: readonly number[],
+    timing: PulseTiming,
+    onFinish: () => void,
+  ): PulseAnimation | undefined
 }
 
-/** 30 fps: a 90 px/s dot moves 3 px between draws, and the compositor interpolates nothing. */
-export const FRAME_MS = 33
-
 export const browserHost = (): PulseHost => ({
-  requestFrame: (callback) => globalThis.requestAnimationFrame(callback),
-  cancelFrame: (handle) => globalThis.cancelAnimationFrame(handle),
-  now: () => globalThis.performance.now(),
-  minFrameMs: FRAME_MS,
   visible: () => !globalThis.document?.hidden,
   reducedMotion: () => {
     try {
@@ -31,112 +42,274 @@ export const browserHost = (): PulseHost => ({
       return false
     }
   },
+  animate(dot, points, timing, onFinish) {
+    if (typeof dot.animate !== "function") return undefined
+    const frames: Keyframe[] = []
+    for (let i = 0; i + 1 < points.length; i += 2)
+      frames.push({
+        transform: `translate3d(${points[i]!.toFixed(1)}px,${points[i + 1]!.toFixed(1)}px,0)`,
+        easing: "step-end",
+      })
+    const animation = dot.animate(frames, {
+      duration: timing.durationMs,
+      delay: timing.delayMs,
+      iterations: timing.iterations,
+      easing: "linear",
+      fill: "none",
+    })
+    animation.onfinish = onFinish
+    // Cancelling rejects `finished`; nobody awaits it, so it must not surface as unhandled.
+    animation.finished.catch(() => {})
+    return {
+      cancel: () => animation.cancel(),
+      pause: () => animation.pause(),
+      play: () => animation.play(),
+      elapsed: () => (typeof animation.currentTime === "number" ? animation.currentTime : null),
+      setIterations: (iterations) => animation.effect?.updateTiming({ iterations }),
+    }
+  },
 })
 
-type Dot = HTMLElement & { __dim?: boolean; __at?: string }
+type Dot = HTMLElement & { __dim?: boolean }
+type Pulse = {
+  dot: Dot
+  animation: PulseAnimation
+  /** Delay the animation was created with; a negative one started it part way through. */
+  delayMs: number
+  /** Iterations it will run: `Infinity` while its wire runs, a whole number once it stopped. */
+  iterations: number
+  finished: boolean
+}
+type Wire = {
+  id: string
+  key: string
+  path: WirePath
+  running: boolean
+  dim: boolean
+  pulses: Pulse[]
+}
 
 /**
- * The one animation driver of the Flow view. It owns the pulse pool and a recycled set of small
- * HTML dots in `layer`, an absolutely positioned layer over the SVG canvas, outside Solid's render
- * path. Dots move only by `transform: translate3d` on their own compositor layers, so a frame
- * never invalidates layout or repaints the SVG. A re-render, a live update or a layout change
- * reaches the loop only through `update`, which re-syncs wires and never touches a pulse in
- * flight. One `requestAnimationFrame` loop runs, at most every `minFrameMs`, only while there is
- * something to move, the view is visible and motion is allowed.
+ * A pulse holds still between keyframes (step easing) and moves every `STEP_MS`: the compositor
+ * then has no damage to draw on the frames in between, which is what halves its work at 30 fps.
+ * At 90 px/s a step is 3 px.
+ */
+export const STEP_MS = 33
+const MAX_KEYFRAMES = 400
+
+/**
+ * The one animation driver of the Flow view. Each pulse is one small HTML dot with one Web
+ * Animation of `transform` along its wire, repeating for as long as the wire runs; staggered
+ * start delays space a wire's pulses evenly. Transform animations run on the compositor, so a
+ * pulse in flight costs no main-thread work, no style recalc, no layout, no paint, no timer and
+ * no frame callback, and keeps moving while the main thread is busy. The main thread works only
+ * when a wire starts, stops or changes shape. A re-render or live update reaches the loop through
+ * `update`, which never restarts a pulse in flight: a wire that stops lets each pulse finish its
+ * crossing, and a changed geometry re-creates a pulse at the same fraction of the new path.
+ * A hidden view pauses every animation; reduced motion creates none.
  */
 export function createPulseLoop(layer: Element, host: PulseHost = browserHost()) {
-  const pool = new PulsePool()
-  const dots: Dot[] = []
-  let shown = 0
-  let handle: number | undefined
+  const wires = new Map<string, Wire>()
+  const free: Dot[] = []
+  const all: Dot[] = []
+  let live = 0
+  let paused = false
   let disposed = false
-  let drawn = Number.NEGATIVE_INFINITY
-  const stats = { frames: 0, started: 0 }
+  const stats = { started: 0 }
 
-  const place = (dot: Dot, x: number, y: number) => {
-    const value = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0)`
-    if (dot.__at === value) return
-    dot.__at = value
-    dot.style.transform = value
-  }
-  const dotAt = (index: number) => {
-    let dot = dots[index]
+  const dotFor = () => {
+    let dot = free.pop()
     if (!dot) {
       dot = layer.ownerDocument.createElement("div") as Dot
       dot.className = "lazers-radar-flow-dot"
       layer.append(dot)
-      dots[index] = dot
+      all.push(dot)
     }
     return dot
   }
-  const draw = () => {
-    let index = 0
-    pool.forEach((_id, x, y, _fraction, dim) => {
-      if (index >= MAX_TOTAL) return
-      const dot = dotAt(index++)
-      place(dot, x, y)
-      if (dot.__dim !== dim) {
-        dot.__dim = dim
-        dot.setAttribute("data-dim", String(dim))
-      }
+  const release = (wire: Wire, pulse: Pulse) => {
+    const index = wire.pulses.indexOf(pulse)
+    if (index < 0) return
+    wire.pulses.splice(index, 1)
+    free.push(pulse.dot)
+    live--
+    if (wire.pulses.length === 0 && !wire.running) wires.delete(wire.id)
+  }
+  const begin = (
+    wire: Wire,
+    dot: Dot,
+    timing: PulseTiming,
+    iterations = timing.iterations,
+  ): Pulse | undefined => {
+    const count = Math.min(MAX_KEYFRAMES, 2 + Math.ceil(crossingMs(wire.path.length) / STEP_MS))
+    const pulse: Pulse = {
+      dot,
+      delayMs: timing.delayMs,
+      iterations,
+      finished: false,
+      animation: undefined as never,
+    }
+    const animation = host.animate(dot, wire.path.points(count), timing, () => {
+      pulse.finished = true
+      release(wire, pulse)
     })
-    for (let hide = index; hide < shown; hide++) place(dots[hide]!, -20, -20)
-    shown = index
+    if (!animation) return undefined
+    pulse.animation = animation
+    if (paused) animation.pause()
+    dot.__dim = undefined
+    stats.started++
+    return pulse
   }
-  const enabled = () => !disposed && pool.active && host.visible() && !host.reducedMotion()
-  const frame = (time: number) => {
-    handle = undefined
-    if (!enabled()) return
-    if (time - drawn < (host.minFrameMs ?? 0)) return schedule()
-    drawn = time
-    stats.frames++
-    pool.step(time)
-    draw()
-    schedule()
+  const paint = (wire: Wire) => {
+    for (const pulse of wire.pulses)
+      if (pulse.dot.__dim !== wire.dim) {
+        pulse.dot.__dim = wire.dim
+        pulse.dot.setAttribute("data-dim", String(wire.dim))
+      }
   }
-  const schedule = () => {
-    if (handle !== undefined || !enabled()) return
-    handle = host.requestFrame(frame)
+  /** Where a pulse is on its animation's clock: waiting (negative) or crossing at `iteration`. */
+  const local = (pulse: Pulse) => {
+    const elapsed = pulse.animation.elapsed()
+    return elapsed === null ? null : elapsed - pulse.delayMs
   }
-  const stop = () => {
-    if (handle !== undefined) host.cancelFrame(handle)
-    handle = undefined
+  const emit = (wire: Wire) => {
+    const wanted = pulsesOn(wire.path.length)
+    const period = crossingMs(wire.path.length)
+    for (let k = wire.pulses.length; k < wanted && live < MAX_TOTAL; k++) {
+      const pulse = begin(wire, dotFor(), {
+        durationMs: period,
+        delayMs: (k * period) / wanted,
+        iterations: Number.POSITIVE_INFINITY,
+      })
+      if (!pulse) return
+      wire.pulses.push(pulse)
+      live++
+    }
+  }
+  /** Lets each pulse finish its crossing; one that has not yet started never will. */
+  const wind = (wire: Wire) => {
+    const period = crossingMs(wire.path.length)
+    for (const pulse of [...wire.pulses]) {
+      const at = local(pulse)
+      if (at === null || at < 0) {
+        pulse.animation.cancel()
+        release(wire, pulse)
+      } else {
+        pulse.iterations = Math.floor(at / period) + 1
+        pulse.animation.setIterations(pulse.iterations)
+      }
+    }
+  }
+  /** Re-creates a wire's pulses on its new path, each at the fraction it had reached. */
+  const reshape = (wire: Wire, path: WirePath) => {
+    const before = crossingMs(wire.path.length)
+    const after = crossingMs(path.length)
+    const old = wire.pulses.splice(0)
+    wire.path = path
+    for (const pulse of old) {
+      const at = local(pulse)
+      pulse.animation.cancel()
+      const waiting = at !== null && at < 0
+      const crossed = at === null || waiting ? 0 : Math.floor(at / before)
+      const phase = at === null || waiting ? 0 : (at / before - crossed) % 1
+      const iterations = pulse.iterations - crossed
+      const next = begin(
+        wire,
+        pulse.dot,
+        {
+          durationMs: after,
+          delayMs: waiting ? -at! : -phase * after,
+          iterations,
+        },
+        iterations,
+      )
+      if (next) wire.pulses.push(next)
+      else {
+        free.push(pulse.dot)
+        live--
+      }
+    }
   }
   const onVisibility = () => {
-    if (host.visible()) {
-      // Time spent hidden is not travel: restart the clock instead of jumping every pulse home.
-      pool.resume(host.now())
-      drawn = Number.NEGATIVE_INFINITY
-      schedule()
-    } else stop()
+    if (disposed) return
+    const hidden = !host.visible()
+    if (hidden === paused) return
+    paused = hidden
+    for (const wire of wires.values())
+      for (const pulse of wire.pulses) {
+        if (hidden) pulse.animation.pause()
+        else pulse.animation.play()
+      }
   }
   globalThis.document?.addEventListener?.("visibilitychange", onVisibility)
 
   return {
     /** Current layout's wires. Safe on every render: pulses in flight are never reset. */
-    update(wires: readonly WireInput[]) {
-      pool.sync(wires, host.now())
-      if (host.reducedMotion()) return
-      schedule()
+    update(inputs: readonly WireInput[]) {
+      if (disposed) return
+      if (host.visible() === paused) onVisibility()
+      const reduced = host.reducedMotion()
+      const present = new Set<string>()
+      for (const input of inputs) {
+        present.add(input.id)
+        const running = input.running && !reduced
+        let wire = wires.get(input.id)
+        const key = geometryKey(input)
+        if (!wire) {
+          if (!running) continue
+          wire = {
+            id: input.id,
+            key,
+            path: new WirePath(input),
+            running: false,
+            dim: false,
+            pulses: [],
+          }
+          wires.set(input.id, wire)
+        } else if (wire.key !== key) {
+          wire.key = key
+          reshape(wire, new WirePath(input))
+        }
+        wire.dim = input.dim === true
+        if (running && !wire.running) {
+          wire.running = true
+          // Pulses still finishing from a stop carry on instead of restarting.
+          for (const pulse of wire.pulses) {
+            pulse.iterations = Number.POSITIVE_INFINITY
+            pulse.animation.setIterations(pulse.iterations)
+          }
+          emit(wire)
+        } else if (!running && wire.running) {
+          wire.running = false
+          wind(wire)
+        }
+        if (wire.pulses.length === 0 && !wire.running) wires.delete(wire.id)
+        else paint(wire)
+      }
+      for (const wire of [...wires.values()])
+        if (!present.has(wire.id) && wire.running) {
+          wire.running = false
+          wind(wire)
+          if (wire.pulses.length === 0) wires.delete(wire.id)
+        }
     },
     /** Re-check visibility, e.g. from an IntersectionObserver. */
     wake() {
       onVisibility()
     },
-    get running() {
-      return handle !== undefined
-    },
     get stats() {
       return stats
     },
-    get pool() {
-      return pool
+    /** Pulses with an animation alive now. */
+    get moving() {
+      return live
     },
     dispose() {
       disposed = true
-      stop()
+      for (const wire of wires.values()) for (const pulse of wire.pulses) pulse.animation.cancel()
+      wires.clear()
       globalThis.document?.removeEventListener?.("visibilitychange", onVisibility)
-      for (const dot of dots) dot.remove()
+      for (const dot of all) dot.remove()
     },
   }
 }
