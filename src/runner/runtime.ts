@@ -9028,7 +9028,7 @@ export class TaskRuntime {
           ...(retainedRepair ? { moveIfNeeded: false } : {}),
           text: retainedRepair
             ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
-            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
+            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${this.repairFailureBrief(attempt)}${personaGuidance}`,
         })
         this.receipt(
           effect,
@@ -9966,18 +9966,16 @@ export class TaskRuntime {
         return
       }
     }
-    const failure = receipts.find((r) => !checkSucceeded(r))
-    if (failure) {
-      if (
-        failure.timedOut ||
-        failure.exitCode === 126 ||
-        failure.exitCode === 127 ||
-        !checkResourcesSettled(failure)
-      ) {
-        this.hold(plan, checkFailureReason(failure), ["reconcile", "resume", "audit", "cancel"])
+    const failures = receipts.filter((r) => !checkSucceeded(r))
+    if (failures.length) {
+      const held = failures.find(
+        (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
+      )
+      if (held) {
+        this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
         return
       }
-      this.failAttempt(plan, attempt, checkFailureReason(failure))
+      this.failAttempt(plan, attempt, failures.map(checkFailureReason).join("; "))
       return
     }
     try {
@@ -10065,6 +10063,35 @@ export class TaskRuntime {
     return missing
   }
 
+  /** Failing check output from the previous attempt, so a repair attempt sees every defect. */
+  private repairFailureBrief(attempt: AttemptRow): string {
+    if (!JSON.parse(attempt.policy).repairAttempt) return ""
+    const previous = this.store
+      .attempts(attempt.plan_id)
+      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
+      .at(-1)
+    if (!previous) return ""
+    const stats = privacyStats()
+    const tail = (text: string, limit: number) =>
+      safeText(text.trim().slice(-limit), stats, limit + 1_000)
+    const sections = this.store
+      .read((db) =>
+        db
+          .query<{ body: string }, [string]>(
+            "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid",
+          )
+          .all(previous.id),
+      )
+      .map((row) => JSON.parse(row.body) as CheckReceipt)
+      .filter((receipt) => !checkSucceeded(receipt))
+      .map((receipt) => {
+        const stderr = tail(receipt.stderr, 1_000)
+        const stdout = tail(receipt.stdout, 2_000 - stderr.length)
+        return `- ${receipt.id}: \`${safeText(receipt.command, stats, 500)}\` exit ${receipt.exitCode ?? "unknown"}\n  stderr (tail): ${stderr}\n  stdout (tail): ${stdout}`
+      })
+    if (!sections.length) return ""
+    return `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n").slice(0, 8_000)}`
+  }
   private failAttempt(
     plan: PlanRow,
     attempt: AttemptRow,
