@@ -50,6 +50,70 @@ function contractText(value: string, stats: ReturnType<typeof privacyStats>, max
   return `${body}${TRUNCATION_SUFFIX}`
 }
 
+type JsonBudgetAdd = (amount: number) => boolean
+type JsonVisit = (item: unknown) => boolean
+
+function isJsonShortEscape(code: number): boolean {
+  return code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d
+}
+
+function jsonControlCharByteSize(code: number): number {
+  return isJsonShortEscape(code) ? 2 : 6
+}
+
+function isLoneSurrogate(character: string, code: number): boolean {
+  return character.length === 1 && code >= 0xd800 && code <= 0xdfff
+}
+
+function jsonUtf8ByteSize(code: number): number {
+  if (code <= 0x7f) return 1
+  if (code <= 0x7ff) return 2
+  if (code <= 0xffff) return 3
+  return 4
+}
+
+function jsonStringCharByteSize(character: string, code: number): number {
+  if (code === 0x22 || code === 0x5c) return 2
+  if (code < 0x20) return jsonControlCharByteSize(code)
+  if (isLoneSurrogate(character, code)) return 6
+  return jsonUtf8ByteSize(code)
+}
+
+function jsonStringBytes(value: string, add: JsonBudgetAdd): boolean {
+  if (!add(2)) return false
+  for (const character of value) {
+    const size = jsonStringCharByteSize(character, character.codePointAt(0)!)
+    if (!add(size)) return false
+  }
+  return true
+}
+
+function jsonNumberBytes(value: number, add: JsonBudgetAdd): boolean {
+  return add(Number.isFinite(value) ? JSON.stringify(value).length : 4)
+}
+
+function jsonArrayBytes(value: unknown[], add: JsonBudgetAdd, visit: JsonVisit): boolean {
+  if (!add(2)) return false
+  for (let index = 0; index < value.length; index++) {
+    if (index > 0 && !add(1)) return false
+    if (!visit(value[index])) return false
+  }
+  return true
+}
+
+function jsonObjectBytes(value: object, add: JsonBudgetAdd, visit: JsonVisit): boolean {
+  const entries = Object.entries(value)
+  if (!add(2)) return false
+  for (let index = 0; index < entries.length; index++) {
+    if (index > 0 && !add(1)) return false
+    const entry = entries[index]!
+    if (!visit(entry[0])) return false
+    if (!add(1)) return false
+    if (!visit(entry[1])) return false
+  }
+  return true
+}
+
 function jsonBytesAtMost(value: unknown, maximum: number): { bytes: number; overflow: boolean } {
   let bytes = 0
   const add = (amount: number) => {
@@ -58,50 +122,11 @@ function jsonBytesAtMost(value: unknown, maximum: number): { bytes: number; over
   }
   const visit = (item: unknown): boolean => {
     if (item === null) return add(4)
-    if (typeof item === "string") {
-      if (!add(2)) return false
-      for (const character of item) {
-        const code = character.codePointAt(0)!
-        const size =
-          code === 0x22 || code === 0x5c
-            ? 2
-            : code < 0x20
-              ? [8, 9, 10, 12, 13].includes(code)
-                ? 2
-                : 6
-              : character.length === 1 && code >= 0xd800 && code <= 0xdfff
-                ? 6
-                : code <= 0x7f
-                  ? 1
-                  : code <= 0x7ff
-                    ? 2
-                    : code <= 0xffff
-                      ? 3
-                      : 4
-        if (!add(size)) return false
-      }
-      return true
-    }
+    if (typeof item === "string") return jsonStringBytes(item, add)
     if (typeof item === "boolean") return add(item ? 4 : 5)
-    if (typeof item === "number")
-      return add(Number.isFinite(item) ? JSON.stringify(item).length : 4)
-    if (Array.isArray(item)) {
-      if (!add(2)) return false
-      for (let index = 0; index < item.length; index++) {
-        if (index && !add(1)) return false
-        if (!visit(item[index])) return false
-      }
-      return true
-    }
-    if (typeof item === "object") {
-      const entries = Object.entries(item)
-      if (!add(2)) return false
-      for (let index = 0; index < entries.length; index++) {
-        if (index && !add(1)) return false
-        if (!visit(entries[index]![0]) || !add(1) || !visit(entries[index]![1])) return false
-      }
-      return true
-    }
+    if (typeof item === "number") return jsonNumberBytes(item, add)
+    if (Array.isArray(item)) return jsonArrayBytes(item, add, visit)
+    if (typeof item === "object") return jsonObjectBytes(item as object, add, visit)
     return add(4)
   }
   const complete = visit(value)
