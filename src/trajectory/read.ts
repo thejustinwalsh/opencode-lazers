@@ -1007,6 +1007,7 @@ export async function inspectTrajectory(
     state: safeText(snapshot.row.state, stats, 80),
     version: snapshot.row.version,
     reason: snapshot.row.reason === null ? null : safeText(snapshot.row.reason, stats),
+    taskReason: snapshot.node.reason === null ? null : safeText(snapshot.node.reason, stats),
     objective: snapshot.input ? safeText(snapshot.input.objective, stats) : null,
     baseCommit: snapshot.input ? safeText(snapshot.input.baseCommit, stats, 128) : null,
     resultCommit: snapshot.row.artifact ? safeText(snapshot.row.artifact, stats, 128) : null,

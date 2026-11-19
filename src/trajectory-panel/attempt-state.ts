@@ -15,19 +15,38 @@ export function holdReason(events: readonly TrajectoryEvent[]) {
   return blocked.find((event) => event.reason?.trim())?.reason ?? null
 }
 
+type TaskReport = Pick<TrajectoryReport, "task" | "plans" | "attempts">
+
+const latestPlan = (report: TaskReport) =>
+  report.plans.find((item) => item.id === report.attempts.at(-1)?.planID) ?? report.plans.at(-1)
+
+/**
+ * Recorded hold reasons, most specific first: the task node's, the plan's (the sources Tasks and
+ * Radar read), then the latest BLOCKED transition.
+ */
+export function holdReasons(report: TaskReport, events: readonly TrajectoryEvent[]) {
+  const plan = latestPlan(report)
+  return [
+    ...new Set(
+      [plan?.taskReason, plan?.reason, holdReason(events)].filter((reason): reason is string =>
+        Boolean(reason?.trim()),
+      ),
+    ),
+  ]
+}
+
 /**
  * The task row `taskStateView` reads, rebuilt from the report the way Radar rebuilds it from an
  * attempt read: a blocked task, or a blocked plan around a task that is not finished, is held.
  */
 export function reportTaskRow(
-  report: Pick<TrajectoryReport, "task" | "plans" | "attempts">,
+  report: TaskReport,
   events: readonly TrajectoryEvent[],
 ): ExecutionListRow {
   const state = currentTaskState(report)
-  const planID = report.attempts.at(-1)?.planID
-  const plan = report.plans.find((item) => item.id === planID) ?? report.plans.at(-1)
+  const plan = latestPlan(report)
   const held = state === "blocked" || (plan?.state === "blocked" && !terminalNodes.has(state))
-  const reason = held ? holdReason(events) : null
+  const reason = held ? (holdReasons(report, events)[0] ?? null) : null
   return {
     taskID: report.task.id,
     title: "",
@@ -44,7 +63,7 @@ export function reportTaskRow(
 
 /** The state word, tone and glyph every panel shows for this task, and whether it is working. */
 export function reportTaskView(
-  report: Pick<TrajectoryReport, "task" | "plans" | "attempts">,
+  report: TaskReport,
   events: readonly TrajectoryEvent[],
 ): TaskStateView & { working: boolean } {
   const view = taskStateView(reportTaskRow(report, events))
@@ -54,11 +73,29 @@ export function reportTaskView(
 /** The callout sentence Tasks shows for a waiting, paused, failed or attention state. */
 export function taskReason(
   view: Pick<TaskStateView, "tone" | "explained">,
+  report: TaskReport,
   events: readonly TrajectoryEvent[],
   failure?: string | null,
 ) {
-  const hold = holdReason(events)
-  return taskExplanation(view, { hold: hold ? [hold] : [], failure: failure ?? null })
+  return taskExplanation(view, {
+    hold: holdReasons(report, events),
+    failure: latestPlan(report)?.reason ?? failure ?? null,
+  })
+}
+
+/**
+ * The last recorded worker activity of an attempt: what the attempt summary's `lastActivityAt`
+ * reads (the newest progress fact). Runner transitions and session messages are not worker
+ * activity, so a late interruption record does not stretch the attempt.
+ */
+export function lastWorkerActivity(events: readonly TrajectoryEvent[], attemptID: string) {
+  let last: number | null = null
+  for (const event of events) {
+    if (event.attemptID !== attemptID || typeof event.at !== "number") continue
+    if (event.kind !== "commentary" && !event.kind.startsWith("worker-")) continue
+    last = last === null ? event.at : Math.max(last, event.at)
+  }
+  return last
 }
 
 /**

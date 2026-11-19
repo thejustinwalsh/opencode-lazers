@@ -127,17 +127,14 @@ export function attemptSummary(input: {
     })
   }
 
-  if (input.calls > 0) {
-    const span =
-      times.length > 1 ? { durationMs: Math.max(...times) - Math.min(...times) } : undefined
+  // Work is a count, not a second duration: Duration in the stat row is the one time measure.
+  if (input.calls > 0)
     rows.push({
       label: "Work",
       text: `${plural(input.calls, "tool call")}${
         input.files > 0 ? ` across ${plural(input.files, "file")}` : ""
       }`,
-      ...span,
     })
-  }
 
   const failedByTool = new Map<string, number>()
   for (const tool of input.failedCalls) failedByTool.set(tool, (failedByTool.get(tool) ?? 0) + 1)

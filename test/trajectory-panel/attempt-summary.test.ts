@@ -48,7 +48,8 @@ test("summary rows come from the recorded events and omit what is not recorded",
   })
   expect(rows.map((row) => row.label)).toEqual(["Setup", "Work", "Errors", "End"])
   expect(rows[0]).toMatchObject({ text: "Prompt, session and worktree ready", durationMs: 2_000 })
-  expect(rows[1]).toMatchObject({ text: "37 tool calls across 13 files", durationMs: 6_000 })
+  expect(rows[1]).toMatchObject({ text: "37 tool calls across 13 files" })
+  expect(rows[1]!.durationMs).toBeUndefined()
   expect(rows[2]).toMatchObject({
     text: "2 shell failures · 1 provider retry · 3 gaps",
     action: "errors",
