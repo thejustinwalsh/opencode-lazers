@@ -263,7 +263,6 @@ test("Architect classification tool appends, exactly replays, and returns confli
   const input = {
     taskID: submitted.taskID,
     requestID: "tool-classification-1",
-    expectedRevision: 1,
     classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
     reason: "The requested outcome is repository tooling upkeep.",
   }
@@ -279,6 +278,24 @@ test("Architect classification tool appends, exactly replays, and returns confli
     String(await Effect.runPromise(classification.execute(input, context)).then((r) => r.content)),
   )
   expect(replayed).toMatchObject({ status: "replayed", annotation: recorded.annotation })
+  // The tool supplies no revision: a new request appends to the current history (last write
+  // wins) and a legacy expectedRevision is ignored, neither enforced nor an error.
+  const appended = JSON.parse(
+    String(
+      await Effect.runPromise(
+        classification.execute(
+          {
+            ...input,
+            requestID: "tool-classification-2",
+            classification: { taxonomy: "task-kind/v1", primaryKind: "documentation" },
+            expectedRevision: 1,
+          },
+          context,
+        ),
+      ).then((r) => r.content),
+    ),
+  )
+  expect(appended).toMatchObject({ status: "recorded", annotation: { revision: 3 } })
   const conflict = JSON.parse(
     String(
       await Effect.runPromise(
@@ -291,10 +308,14 @@ test("Architect classification tool appends, exactly replays, and returns confli
     tools.get("lz-get-task")!.execute({ taskID: submitted.taskID, format: "structured" }, context),
   )
   expect(detail.output).toMatchObject({
-    classification: { revision: 2, classification: input.classification },
+    classification: {
+      revision: 3,
+      classification: { taxonomy: "task-kind/v1", primaryKind: "documentation" },
+    },
     classificationHistory: [
       { revision: 1, classification: validProposal().classification },
       { revision: 2, classification: input.classification },
+      { revision: 3 },
     ],
   })
 })
@@ -426,7 +447,6 @@ test("Architect correction controls record, replay, revise, retract, and inspect
     taskID: childReceipt.taskID,
     originalTaskID: rootReceipt.taskID,
     requestID: "tool-correction-1",
-    expectedRevision: 0,
     reason: "Both accepted records satisfy the same original goal.",
   }
   const recorded = JSON.parse(
@@ -467,15 +487,6 @@ test("Architect correction controls record, replay, revise, retract, and inspect
       ),
     ).status,
   ).toBe("conflict")
-  expect(
-    JSON.parse(
-      String(
-        await Effect.runPromise(
-          correction.execute({ ...input, requestID: "tool-correction-stale" }, context),
-        ).then((r) => r.content),
-      ),
-    ),
-  ).toMatchObject({ status: "conflict", expectedRevision: 0, currentRevision: 1 })
 
   const group = await Effect.runPromise(inspect.execute({ taskID: childReceipt.taskID }, context))
   const groupOutput = JSON.parse(String(group.content))
@@ -510,7 +521,7 @@ test("Architect correction controls record, replay, revise, retract, and inspect
             ...input,
             originalTaskID: null,
             requestID: "tool-correction-retract",
-            expectedRevision: 1,
+            expectedRevision: 99,
             reason: "Review confirms these are independent after all.",
           },
           context,
@@ -1022,7 +1033,6 @@ test("permission denial precedes every lookup/write for first, replay, conflict 
     taskID: receipt.taskID,
     originalTaskID: null,
     requestID: "permission-correction-replay",
-    expectedRevision: 0,
     reason: "Reviewed as independent before permission is revoked.",
   }
   expect((await call("lz-correct-task", correctionInput)).status).toBe("recorded")

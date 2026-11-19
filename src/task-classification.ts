@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ignoringLegacyFields } from "./legacy-fields.ts"
 
 export const TaskKindV1 = z.enum([
   "bug-repair",
@@ -20,11 +21,18 @@ export type TaskClassification = z.infer<typeof TaskClassification>
 export const TaskClassificationAnnotationInput = z.strictObject({
   taskID: z.uuid(),
   requestID: z.string().min(1).max(200).regex(/\S/, "requestID must contain non-whitespace text"),
-  expectedRevision: z.int().nonnegative(),
+  /** Compare-and-set guard for callers that read a revision; omitted writes against the current one. */
+  expectedRevision: z.int().nonnegative().optional(),
   classification: TaskClassification,
   reason: z.string().trim().min(1).max(2_000),
 })
 export type TaskClassificationAnnotationInput = z.infer<typeof TaskClassificationAnnotationInput>
+
+/** The model tool never supplies a revision; a legacy `expectedRevision` is ignored. */
+export const TaskClassificationToolInput = ignoringLegacyFields(
+  TaskClassificationAnnotationInput.omit({ expectedRevision: true }),
+  ["expectedRevision"],
+)
 
 export const TaskClassificationAnnotationRecord = z.strictObject({
   id: z.int().positive(),

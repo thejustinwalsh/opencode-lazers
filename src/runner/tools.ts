@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { z } from "zod"
+import { tolerantJsonSchema } from "../legacy-fields.ts"
 import { nativeWorkerOptions } from "./catalog.ts"
 import { InspectPlanInput, inspectPlan } from "./inspection.ts"
 import { ArchitectContinuityInput, CommandInput, PlanSubmissionInput } from "./schema.ts"
@@ -55,7 +56,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
       editor.add({
         name: definition.name,
         description: definition.description,
-        input: z.toJSONSchema(definition.schema, { io: "input" }),
+        input: tolerantJsonSchema(definition.schema),
         options: { codemode: true, permission: definition.name },
         execute: (input, call) =>
           ctx.permission
