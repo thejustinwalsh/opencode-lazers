@@ -49,6 +49,10 @@ automatic fixes before verification, then commit those fixes with the code.
 For LAZERS, use `bun run verify` (format, lint --fix, format, typecheck) and the
 task's behavior tests. Correct remaining substantive failures; do not hand
 formatting or fixable lint failures back to another model.
+
+When you finish, the runtime also reviews what you changed for new duplication
+and overly complex functions. Findings come back with file and line for one
+repair pass. Do not add `fallow-ignore` comments unless the Architect told you to.
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
 Architect reviews the delivered behavior and check results; runtime records acceptance.

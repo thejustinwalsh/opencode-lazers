@@ -2,6 +2,8 @@ import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
+/** Reserved for the runtime's own Fallow review receipt; authored checks cannot use it. */
+export const FALLOW_CHECK_ID = "lazers-fallow"
 const identifier = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const texts = z.array(text).max(100)
 // Relative paths/globs only. These describe scope; execution must enforce filesystem boundaries.
@@ -155,6 +157,12 @@ export const TaskProposalSchema = z
       })
     }
     proposal.verification.forEach((item, index) => {
+      if (item.id === FALLOW_CHECK_ID)
+        ctx.addIssue({
+          code: "custom",
+          path: ["verification", index, "id"],
+          message: `Verification ID ${FALLOW_CHECK_ID} is reserved for the runtime's Fallow review`,
+        })
       if (
         item.inactivityTimeoutMs !== undefined &&
         item.hardTimeoutMs !== undefined &&

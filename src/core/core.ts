@@ -190,6 +190,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     architectCacheWindowMs: info.options.architectCacheWindowMs as number | undefined,
     architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as
       number | undefined,
+    fallowReview: info.options.fallowReview === "off" ? "off" : "on",
     // Deprecated alias of architectCacheWindowMs.
     architectIdleWindowMs: info.options.architectIdleWindowMs as number | undefined,
     verificationTimeoutDefaults: verificationDefaults,
