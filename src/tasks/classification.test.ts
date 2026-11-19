@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
-import { TaskRepository } from "../storage.ts"
+import { TaskRepository, acquireSharedConnection } from "../storage.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TaskClassification } from "../task-classification.ts"
 import { openReadOnlyTaskClassifications } from "./classification.ts"
@@ -201,7 +201,10 @@ test("read-only classification reads tolerate a missing annotation table without
     .all()
   legacy.close()
 
-  const reader = openReadOnlyTaskClassifications(path, "/legacy-project")
+  const reader = openReadOnlyTaskClassifications(
+    acquireSharedConnection(path, "readonly"),
+    "/legacy-project",
+  )
   try {
     expect(reader.read(task.id)?.classification).toEqual({
       current: { revision: 0, classification: null, provenance: { kind: "legacy" } },
@@ -224,6 +227,11 @@ test("read-only classification reads tolerate a missing annotation table without
     check.close()
   }
   const missingPath = join(directory, "missing.sqlite")
-  expect(() => openReadOnlyTaskClassifications(missingPath, "/legacy-project")).toThrow()
+  expect(() =>
+    openReadOnlyTaskClassifications(
+      acquireSharedConnection(missingPath, "readonly"),
+      "/legacy-project",
+    ),
+  ).toThrow()
   expect(existsSync(missingPath)).toBe(false)
 })
