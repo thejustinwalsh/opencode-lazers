@@ -5,6 +5,7 @@ import { PlanInput } from "../runner/schema.ts"
 import {
   evaluatePrerequisiteIntegrationAsync,
   evaluateTaskPrerequisiteIntegrationAsync,
+  prerequisitePlanAction,
 } from "../runner/prerequisite-proof.ts"
 import type { IntegrationDecision } from "../runner/prerequisite-proof.ts"
 import type { RunnerStore, SchedulingFactSnapshot, SchedulingNodeFact } from "../runner/store.ts"
@@ -245,6 +246,20 @@ async function planSourceDecision(
       value: { decision: "unknown", reason: "A prerequisite plan is unavailable in this project." },
       cacheable: true,
     }
+  const terminal = rows.find((row) =>
+    ["blocked", "cancelling", "cancelled", "failed", "exhausted"].includes(row.state),
+  )
+  if (terminal) {
+    const detail = safeReason(terminal.reason)
+    const reason = `Prerequisite plan ${terminal.plan_id} is ${terminal.state}${detail ? `: ${detail}` : ""}. ${prerequisitePlanAction(terminal.state)}`
+    return {
+      value: {
+        decision: "waiting",
+        reason: reason.slice(0, 400),
+      },
+      cacheable: true,
+    }
+  }
   if (!head)
     return {
       value: { decision: "unknown", reason: "Integrated source ancestry is unavailable." },

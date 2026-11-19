@@ -6,13 +6,17 @@ The limit includes runtime Implementors and Auditors and native OpenCode subagen
 
 ## Rollout probe
 
-Run the focused persistence and admission tests first:
+Run the focused persistence, registered RPC, and Settings component tests first:
 
 ```sh
-bun test src/runner/delegated-agent-capacity.test.ts
+bun test --max-concurrency 1 \
+  src/runner/delegated-agent-capacity.test.ts \
+  src/runner/delegated-agent-capacity-rpc.test.ts \
+  test/plugin-settings/delegated-agent-capacity.test.ts
 ```
 
-Then use a disposable project in OpenCode Desktop:
+These automated checks use deliberate fixtures and do not replace the live rollout
+probe. Then use a disposable project in OpenCode Desktop:
 
 1. Open **Settings → LAZERS** from a session in the project. Confirm the initial maximum is 3 and the active/waiting counts are shown.
 2. Create more independent, dependency-eligible task work than the limit. Confirm no more than three Implementor/Auditor attempts are active, overflow remains queued, and a queued task's reason identifies delegated-agent capacity in Tasks and `lz-inspect-plan`.

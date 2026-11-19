@@ -7869,7 +7869,8 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       recordedState: "queued",
       execution: {
         state: "blocked",
-        reason: `Waiting for prerequisite integration: ${f.repository.referenceFor(accepted.attempt.task_id)} (accepted)`,
+        reason: expect.stringContaining(`[${parentID}] is accepted`),
+        waitingOnPlans: [expect.objectContaining({ planID: parentID, state: "accepted" })],
       },
     })
     const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")

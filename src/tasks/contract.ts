@@ -1,7 +1,12 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { TaskReferenceSchema, TaskSpecSchema, TaskSourcePlanSchema } from "../task.ts"
-import { TaskState, DispatchPause } from "../runner/schema.ts"
+import {
+  TaskState,
+  DispatchPause,
+  ExecutionPlanWait,
+  MAX_EXECUTION_PLAN_WAIT_REFERENCES,
+} from "../runner/schema.ts"
 import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
@@ -38,6 +43,10 @@ const TaskSummary = z.strictObject({
   status: z.union([z.literal("submitted"), TaskState]),
   /** Raw task-node lifecycle, distinct from a plan-level effective hold. */
   recordedState: TaskState.optional(),
+  /** Plan prerequisites use typed plan identities, not the task IDs in waitingOn. */
+  waitingOnPlans: z.array(ExecutionPlanWait).max(MAX_EXECUTION_PLAN_WAIT_REFERENCES).optional(),
+  waitingOnPlansCount: z.int().nonnegative().optional(),
+  waitingOnPlansComplete: z.boolean().optional(),
   /** Epoch ms the current attempt started; present only while the task is running or verifying. */
   startedAt: z.number().finite().optional(),
   reason: z.string().nullable(),
@@ -69,6 +78,9 @@ const Execution = z.strictObject({
   version: z.int().positive(),
   reason: z.string().nullable(),
   waitingOn: z.array(z.uuid()),
+  waitingOnPlans: z.array(ExecutionPlanWait).max(MAX_EXECUTION_PLAN_WAIT_REFERENCES).optional(),
+  waitingOnPlansCount: z.int().nonnegative().optional(),
+  waitingOnPlansComplete: z.boolean().optional(),
 })
 const TaskActivity = z.strictObject({
   id: z.int().positive(),

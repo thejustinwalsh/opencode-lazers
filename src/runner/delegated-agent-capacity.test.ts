@@ -168,6 +168,33 @@ test("runner slots are atomic and queued candidates refill by priority without p
   expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 0, limit: 1 })
 })
 
+test("scheduling and inspection snapshots do not settle admission rows", async () => {
+  const f = fixture()
+  const candidate = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const requestID = await f.capacity.ensureRunnerQueued({
+    ...candidate,
+    attemptNumber: 1,
+  })
+  const attemptID = insertAdmittedAttempt(f.repository, f.capacity, requestID, candidate)
+  expect(typeof attemptID).toBe("string")
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(attemptID as string),
+  )
+
+  expect((await f.capacity.schedulingSnapshot()).active).toBe(0)
+  expect((await f.capacity.inspectionSnapshot()).active).toBe(0)
+  expect(
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ state: string }, [string]>(
+            "SELECT state FROM delegated_agent_admissions WHERE id=?",
+          )
+          .get(requestID)?.state,
+    ),
+  ).toBe("admitted")
+})
+
 test("native helper waiters share the same three slots and release on observed child completion", async () => {
   const f = fixture()
   await f.capacity.ready()

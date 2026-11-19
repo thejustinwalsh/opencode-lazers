@@ -32,13 +32,16 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         schema: InspectPlanInput,
         run: async (input: unknown, sessionID?: string) => {
           const parsed = InspectPlanInput.parse(input)
-          return "view" in parsed && parsed.view === "source-messages"
-            ? await runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
-            : inspectPlan(
-                runtime.store,
-                parsed,
-                await runtime.delegatedAgentCapacity.inspectionSnapshot(),
-              )
+          if ("view" in parsed) {
+            if (parsed.view === "source-messages")
+              return runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
+            return inspectPlan(runtime.store, parsed)
+          }
+          return inspectPlan(
+            runtime.store,
+            parsed,
+            await runtime.delegatedAgentCapacity.inspectionSnapshot(),
+          )
         },
       },
       {

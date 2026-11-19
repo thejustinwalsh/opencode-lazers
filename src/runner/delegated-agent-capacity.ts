@@ -66,6 +66,8 @@ type AdmissionRow = {
   session_id: string | null
 }
 
+type AdmissionState = AdmissionRow["state"]
+
 type Clock = {
   now(): number
   sleep(ms: number, signal: AbortSignal): Promise<void>
@@ -124,6 +126,14 @@ function nextQueueOrder(db: Database) {
       "SELECT COALESCE(MAX(queue_order),0)+1 AS next FROM delegated_agent_admissions",
     )
     .get()!.next
+}
+
+function queuedAdmissionCount(db: Database, projectKey: string) {
+  return db
+    .query<{ count: number }, [string]>(
+      "SELECT COUNT(*) AS count FROM delegated_agent_admissions WHERE project_key=? AND state='queued'",
+    )
+    .get(projectKey)!.count
 }
 
 function activeCount(db: Database, projectKey: string) {
@@ -199,6 +209,68 @@ function nextQueuedAdmission(db: Database, projectKey: string) {
        LIMIT 1`,
     )
     .get(projectKey)?.id
+}
+
+function canAdmit(db: Database, projectKey: string, requestID: string, limit: number) {
+  return activeCount(db, projectKey) < limit && nextQueuedAdmission(db, projectKey) === requestID
+}
+
+function tryAdmitQueued(
+  db: Database,
+  input: {
+    requestID: string
+    projectKey: string
+    projectDirectory: string
+    kind: AdmissionRow["kind"]
+    processID: number
+    now: number
+    attemptID?: string
+  },
+) {
+  const request = db
+    .query<{ state: AdmissionState }, [string, string, AdmissionRow["kind"]]>(
+      "SELECT state FROM delegated_agent_admissions WHERE id=? AND project_key=? AND kind=?",
+    )
+    .get(input.requestID, input.projectKey, input.kind)
+  if (!request) return "unavailable" as const
+  if (request.state === "admitted") return "already-admitted" as const
+  if (request.state !== "queued") return "waiting" as const
+  const limit = settingsRow(db, input.projectKey, input.projectDirectory).limit
+  if (!canAdmit(db, input.projectKey, input.requestID, limit)) return "waiting" as const
+
+  const setAttempt = input.attemptID ? "attempt_id=?," : ""
+  const values = [
+    ...(input.attemptID ? [input.attemptID] : []),
+    input.processID,
+    input.now,
+    input.requestID,
+    input.projectKey,
+    input.kind,
+  ]
+  const changed = db
+    .query(
+      `UPDATE delegated_agent_admissions
+       SET state='admitted',${setAttempt}process_id=?,updated_at=?
+       WHERE id=? AND project_key=? AND kind=? AND state='queued'`,
+    )
+    .run(...values).changes
+  return changed === 1 ? ("admitted" as const) : ("waiting" as const)
+}
+
+function transitionAdmission(
+  db: Database,
+  input: {
+    id: string
+    kind: AdmissionRow["kind"]
+    from: AdmissionState[]
+    to: AdmissionState
+    now: number
+  },
+) {
+  db.query(
+    `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+     WHERE id=? AND kind=? AND state IN (${input.from.map(() => "?").join(",")})`,
+  ).run(input.to, input.now, input.id, input.kind, ...input.from)
 }
 
 function reasonFor(status: Pick<DelegatedAgentStatus, "active" | "queued" | "limit">) {
@@ -373,11 +445,7 @@ export class DelegatedAgentCapacity {
     return this.repository.atomic((db) => {
       this.settle(db, projectKey)
       const settings = this.currentSettings(db, projectKey)
-      const queued = db
-        .query<{ count: number }, [string]>(
-          "SELECT COUNT(*) AS count FROM delegated_agent_admissions WHERE project_key=? AND state='queued'",
-        )
-        .get(projectKey)!.count
+      const queued = queuedAdmissionCount(db, projectKey)
       const status = { ...settings, active: activeCount(db, projectKey), queued, reason: null }
       return { ...status, reason: reasonFor(status) }
     })
@@ -415,15 +483,9 @@ export class DelegatedAgentCapacity {
 
   async inspectionSnapshot() {
     const projectKey = await this.projectKey()
-    return this.repository.atomic((db) => {
-      this.settle(db, projectKey)
+    return this.repository.read((db) => {
       const settings = this.currentSettings(db, projectKey)
-      const queued = db
-        .query<{ count: number }, [string]>(
-          `SELECT COUNT(*) AS count FROM delegated_agent_admissions
-           WHERE project_key=? AND state='queued'`,
-        )
-        .get(projectKey)!.count
+      const queued = queuedAdmissionCount(db, projectKey)
       const queuedNative = db
         .query<{ count: number }, [string]>(
           `SELECT COUNT(*) AS count FROM delegated_agent_admissions
@@ -548,14 +610,15 @@ export class DelegatedAgentCapacity {
 
   async cancelRunnerRequest(requestID: string) {
     await this.projectKey()
-    this.repository.atomic((db) =>
-      db
-        .query(
-          `UPDATE delegated_agent_admissions SET state='cancelled',updated_at=?
-           WHERE id=? AND kind='runner' AND state='queued'`,
-        )
-        .run(this.clock.now(), requestID),
-    )
+    this.repository.atomic((db) => {
+      transitionAdmission(db, {
+        id: requestID,
+        kind: "runner",
+        from: ["queued"],
+        to: "cancelled",
+        now: this.clock.now(),
+      })
+    })
   }
 
   /** Called inside the same fenced write transaction that inserts the attempt row. */
@@ -563,25 +626,17 @@ export class DelegatedAgentCapacity {
     const projectKey = this.resolvedProjectKey
     if (!projectKey) throw new Error("Delegated-agent project identity is not ready")
     this.settle(db, projectKey)
-    const request = db
-      .query<{ id: string; state: AdmissionRow["state"] }, [string, string]>(
-        `SELECT id,state FROM delegated_agent_admissions
-         WHERE id=? AND project_key=? AND kind='runner'`,
-      )
-      .get(requestID, projectKey)
-    if (!request || request.state !== "queued") return false
-    const settings = this.currentSettings(db, projectKey)
-    if (
-      activeCount(db, projectKey) >= settings.limit ||
-      nextQueuedAdmission(db, projectKey) !== requestID
+    return (
+      tryAdmitQueued(db, {
+        requestID,
+        projectKey,
+        projectDirectory: this.repository.projectDirectory,
+        kind: "runner",
+        processID: this.processID(),
+        now: this.clock.now(),
+        attemptID,
+      }) === "admitted"
     )
-      return false
-    db.query(
-      `UPDATE delegated_agent_admissions
-       SET state='admitted',attempt_id=?,process_id=?,updated_at=?
-       WHERE id=? AND state='queued'`,
-    ).run(attemptID, this.processID(), this.clock.now(), requestID)
-    return true
   }
 
   async ensureNativeQueued(input: NativeRequest) {
@@ -668,26 +723,16 @@ export class DelegatedAgentCapacity {
         signal.throwIfAborted()
         const admitted = this.repository.atomic((db) => {
           this.settle(db, projectKey)
-          const request = db
-            .query<{ state: AdmissionRow["state"] }, [string, string]>(
-              `SELECT state FROM delegated_agent_admissions
-               WHERE id=? AND project_key=? AND kind='native'`,
-            )
-            .get(requestID, projectKey)
-          if (!request) throw new Error("Delegated-agent request is unavailable")
-          if (request.state === "admitted") return true
-          if (request.state !== "queued") return false
-          const settings = this.currentSettings(db, projectKey)
-          if (
-            activeCount(db, projectKey) >= settings.limit ||
-            nextQueuedAdmission(db, projectKey) !== requestID
-          )
-            return false
-          db.query(
-            `UPDATE delegated_agent_admissions SET state='admitted',process_id=?,updated_at=?
-             WHERE id=? AND state='queued'`,
-          ).run(this.processID(), this.clock.now(), requestID)
-          return true
+          const result = tryAdmitQueued(db, {
+            requestID,
+            projectKey,
+            projectDirectory: this.repository.projectDirectory,
+            kind: "native",
+            processID: this.processID(),
+            now: this.clock.now(),
+          })
+          if (result === "unavailable") throw new Error("Delegated-agent request is unavailable")
+          return result === "admitted" || result === "already-admitted"
         })
         if (admitted) return
         await this.clock.sleep(150, signal)
@@ -771,14 +816,15 @@ export class DelegatedAgentCapacity {
 
   async releaseNativeRequest(requestID: string) {
     await this.projectKey()
-    this.repository.atomic((db) =>
-      db
-        .query(
-          `UPDATE delegated_agent_admissions SET state='released',updated_at=?
-           WHERE id=? AND kind='native' AND state IN ('queued','admitted')`,
-        )
-        .run(this.clock.now(), requestID),
-    )
+    this.repository.atomic((db) => {
+      transitionAdmission(db, {
+        id: requestID,
+        kind: "native",
+        from: ["queued", "admitted"],
+        to: "released",
+        now: this.clock.now(),
+      })
+    })
   }
 
   async releaseNativeChild(sessionID: string) {

@@ -13,6 +13,7 @@ import { TaskSchedulingRead } from "./scheduling-read.ts"
 import { taskRowPresentation } from "./row-presentation.ts"
 import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
 import { inspectPlan } from "../runner/inspection.ts"
+import { TaskReads } from "./read.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -212,7 +213,11 @@ test("delegated-agent overflow is visible as a truthful Tasks and inspection wai
   })
   expect(waitingRequest).toBeTruthy()
   const capacityDetail = await capacity.inspectionSnapshot()
-  const inspection = inspectPlan(f.store, { planID: waiting.plan.planID }, capacityDetail)
+  const inspection = inspectPlan(
+    f.store,
+    { planID: waiting.plan.planID, full: false },
+    capacityDetail,
+  )
   expect(inspection).toMatchObject({
     nodes: [
       {
@@ -257,6 +262,128 @@ test("Session associations include same-project afterPlans prerequisites but not
     coveredPlanCount: 2,
     nodeCount: 2,
     coveredNodeCount: 2,
+  })
+})
+
+test("task, scheduling, and inspection reads expose bounded project-scoped plan prerequisite facts", async () => {
+  const f = fixture()
+  const prerequisite = f.create("source-prerequisite", 1)
+  const dependent = f.create("dependent-plan", 2, false, [prerequisite.plan.planID])
+  const tasks = new TaskReads(f.repository)
+
+  const task = tasks.get({ taskID: dependent.task.id })
+  expect(task).toMatchObject({
+    status: "found",
+    execution: {
+      waitingOnPlans: [
+        {
+          planID: prerequisite.plan.planID,
+          title: "Plan source-prerequisite",
+          state: "running",
+          version: 1,
+        },
+      ],
+      waitingOnPlansCount: 1,
+      waitingOnPlansComplete: true,
+    },
+  })
+  if (task.status !== "found") throw new Error("Expected task detail")
+  const execution = task.execution
+  if (!execution) throw new Error("Expected task execution")
+  expect(execution.reason).toContain("Waiting for prerequisite integration")
+  expect(execution.reason).toContain(prerequisite.plan.planID)
+
+  const inspection = inspectPlan(f.store, {
+    planID: dependent.plan.planID,
+    full: false,
+  })
+  expect(inspection).toMatchObject({
+    waitingOnPlans: [
+      {
+        planID: prerequisite.plan.planID,
+        title: "Plan source-prerequisite",
+        state: "running",
+        version: 1,
+      },
+    ],
+    waitingOnPlansCount: 1,
+    waitingOnPlansComplete: true,
+  })
+  expect(inspectPlan(f.store, { planID: dependent.plan.planID, full: true })).toMatchObject({
+    waitingOnPlans: [
+      {
+        planID: prerequisite.plan.planID,
+        title: "Plan source-prerequisite",
+        state: "running",
+        version: 1,
+      },
+    ],
+    waitingOnPlansCount: 1,
+    waitingOnPlansComplete: true,
+  })
+
+  const schedule = await new TaskSchedulingRead(f.store, () => 13).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+  expect(
+    schedule.plans.find((plan) => plan.planID === dependent.plan.planID)?.nodes[0],
+  ).toMatchObject({
+    decision: "waiting",
+    reason: "Waiting for accepted prerequisite plans to be integrated.",
+    waitingOnPlans: [prerequisite.plan.planID],
+  })
+
+  f.repository.atomic((db) => {
+    db.query(
+      "UPDATE runner_plans SET state='cancelled',reason='cancelled by owner' WHERE id=?",
+    ).run(prerequisite.plan.planID)
+    f.repository.changed()
+  })
+  const cancelled = tasks.get({ taskID: dependent.task.id })
+  if (cancelled.status !== "found") throw new Error("Expected task detail")
+  const cancelledExecution = cancelled.execution
+  if (!cancelledExecution) throw new Error("Expected task execution")
+  expect(cancelledExecution.reason).toContain("cancelled")
+  expect(cancelledExecution.reason).toContain("never restarted automatically")
+  expect(cancelledExecution.waitingOnPlans?.[0]).toMatchObject({
+    planID: prerequisite.plan.planID,
+    state: "cancelled",
+    reason: "cancelled by owner",
+  })
+  const cancelledSchedule = await new TaskSchedulingRead(f.store, () => 14).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+  const cancelledScheduleNode = cancelledSchedule.plans.find(
+    (plan) => plan.planID === dependent.plan.planID,
+  )?.nodes[0]
+  expect(cancelledScheduleNode?.reason).toContain("never restarted automatically")
+  expect(cancelledScheduleNode?.waitingOnPlans).toEqual([prerequisite.plan.planID])
+})
+
+test("unknown plan prerequisite facts are explicitly incomplete in Tasks and inspection", () => {
+  const f = fixture()
+  const dependent = f.create("unknown-prerequisite", 1)
+  f.repository.atomic((db) => {
+    db.query(
+      "UPDATE runner_plans SET body=json_set(body,'$.afterPlans','not-an-array') WHERE id=?",
+    ).run(dependent.plan.planID)
+    f.repository.changed()
+  })
+
+  const task = new TaskReads(f.repository).get({ taskID: dependent.task.id })
+  if (task.status !== "found") throw new Error("Expected task detail")
+  expect(task.execution).toMatchObject({
+    waitingOnPlans: [],
+    waitingOnPlansCount: 0,
+    waitingOnPlansComplete: false,
+    reason: "Prerequisite plan facts are incomplete; dependent work remains queued.",
+  })
+  expect(inspectPlan(f.store, { planID: dependent.plan.planID, full: false })).toMatchObject({
+    waitingOnPlans: [],
+    waitingOnPlansCount: 0,
+    waitingOnPlansComplete: false,
   })
 })
 

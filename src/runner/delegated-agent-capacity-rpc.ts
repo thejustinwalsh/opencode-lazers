@@ -28,16 +28,17 @@ async function authorize(
   action: "lz-get-agent-capacity" | "lz-configure-agent-capacity",
   signal: AbortSignal,
 ) {
-  const session = await Effect.runPromise(
-    ctx.session
-      .get({ sessionID: Session.ID.make(sessionID) })
-      .pipe(
-        Effect.catch((error) =>
-          isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
-        ),
-      ),
-    { signal },
-  )
+  const readSession = async () => {
+    try {
+      return await Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) }), {
+        signal,
+      })
+    } catch (error) {
+      if (isSessionNotFound(error)) return null
+      throw error
+    }
+  }
+  const session = await readSession()
   if (
     !session ||
     String(session.id) !== sessionID ||
@@ -55,6 +56,16 @@ async function authorize(
     }),
     { signal },
   )
+  signal.throwIfAborted()
+  const currentSession = await readSession()
+  if (
+    !currentSession ||
+    String(currentSession.id) !== sessionID ||
+    currentSession.projectID !== runtime.projectID ||
+    currentSession.time.archived !== undefined ||
+    currentSession.agent !== session.agent
+  )
+    throw new Error("Delegated-agent settings scope is unavailable")
 }
 
 export function registerDelegatedAgentCapacity(ctx: Plugin.Context, runtime: TaskRuntime) {
