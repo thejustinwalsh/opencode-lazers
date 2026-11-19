@@ -1,8 +1,8 @@
 {
   "upstreamTag": "v3.43.2",
   "upstreamCommit": "b6a3e048dc882bdf11c8269c73167223b9e32774",
-  "patchSetSha256": "cef40e66831ef907565b262b8b5e35cd62822d84b4a07060f15a3dada933e24f",
-  "bindingSha256": "58ee4e2afb66cac3d124f4215cc0cde521066987d94319e92c9fd969f2f6d4ef",
+  "patchSetSha256": "6b1aed2a1a0adfedc3db64d1b1d7a0a6ebbf0f69f4b8968b3c226e77989ce9d2",
+  "bindingSha256": "7f04b9eb5805ac7d2af685bd85287822518be771dda7a1ccbfd0f630b7c863e5",
   "optimization": {
     "rustOptLevel": 3,
     "wasmOpt": "-O3"
@@ -10,8 +10,8 @@
   "modules": {
     "fallow.wasm": {
       "target": "wasm32-wasip1",
-      "wasmSha256": "706087956f88987dee3376fa573938f251c87ae65b95b5a2836e08b263291b2b",
-      "bytes": 23168844,
+      "wasmSha256": "49077959ed2ec4896a4d5ac583a6034e8a5f04913b13611d562bb9671722d9f1",
+      "bytes": 23928806,
       "imports": [
         "lazers_host.git_result",
         "lazers_host.git_run",
@@ -42,8 +42,8 @@
     },
     "fallow-threads.wasm": {
       "target": "wasm32-wasip1-threads",
-      "wasmSha256": "e98d75e7c861ac6d552e45bc65114e2a38766715a5d92897eb852e8c691feece",
-      "bytes": 23217305,
+      "wasmSha256": "1fbd3026a18d85016b4f0d0c6d78d4ea5a257e28eeca69c544ed3d0175048964",
+      "bytes": 23984560,
       "imports": [
         "env.memory",
         "lazers_host.git_result",

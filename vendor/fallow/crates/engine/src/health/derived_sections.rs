@@ -404,10 +404,23 @@ struct HealthDuplicationReportInput<'a> {
     pre_computed_duplication: Option<DuplicationReport>,
 }
 
+/// When set, health leaves duplication out of its score instead of building the duplication
+/// index. An embedding with a hard memory ceiling sets it for a project too large to index; the
+/// score then carries no duplication metric (`duplication_pct` is absent, no penalty applies).
+static SKIP_DUPLICATION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Leave duplication out of the health score for the rest of the process.
+pub fn set_skip_duplication(skip: bool) {
+    SKIP_DUPLICATION.store(skip, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn compute_health_duplication_report(
     input: HealthDuplicationReportInput<'_>,
 ) -> (Option<crate::duplicates::DuplicationReport>, f64) {
     let t = Instant::now();
+    if SKIP_DUPLICATION.load(std::sync::atomic::Ordering::Relaxed) {
+        return (None, 0.0);
+    }
     let dupes_report = if input.opts.score || input.opts.targets {
         if let Some(report) = input.pre_computed_duplication {
             // When every file is a candidate, the report covers the same files

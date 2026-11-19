@@ -33,7 +33,7 @@ pub struct ProgrammaticAnalysisContext {
     pub(crate) allow_remote_extends: bool,
     pub(crate) no_cache: bool,
     pub(crate) threads: usize,
-    pub(crate) pool: rayon::ThreadPool,
+    pub(crate) pool: std::sync::Arc<rayon::ThreadPool>,
     pub(crate) diff: Option<DiffIndex>,
     /// What became of the diff request, for the envelope's `request_outcomes`.
     pub(crate) diff_request: Option<RequestOutcome>,
@@ -77,13 +77,11 @@ pub fn resolve_programmatic_analysis_context(
     let root = resolve_analysis_root(options.root.as_deref())?;
     validate_analysis_config_path(options.config_path.as_deref())?;
     let threads = options.threads.unwrap_or_else(default_threads);
-    let pool = fallow_engine::thread_pool::worker_pool_builder(threads)
-        .build()
-        .map_err(|err| {
-            ProgrammaticError::new(format!("failed to build analysis thread pool: {err}"), 2)
-                .with_code("FALLOW_THREAD_POOL_INIT_FAILED")
-                .with_context("analysis.threads")
-        })?;
+    let pool = analysis_pool(threads).map_err(|err| {
+        ProgrammaticError::new(format!("failed to build analysis thread pool: {err}"), 2)
+            .with_code("FALLOW_THREAD_POOL_INIT_FAILED")
+            .with_context("analysis.threads")
+    })?;
     let (diff, diff_request) = resolve_diff(options, &root)?;
     let changed_since_request = OnceLock::new();
     let changed_since_files = OnceLock::new();
@@ -113,6 +111,36 @@ pub fn resolve_programmatic_analysis_context(
         explain: options.explain,
         cancellation: options.cancellation.clone(),
     })
+}
+
+/// The pool of one analysis call.
+///
+/// A WASI module cannot start threads freely: the calling thread joins the pool for good, so a
+/// second pool of the same process fails, and the host grants a fixed number of helper threads.
+/// An audit resolves several contexts (head, base, config probes), so on WASI they share one
+/// pool per thread count.
+#[cfg(target_os = "wasi")]
+fn analysis_pool(
+    threads: usize,
+) -> Result<std::sync::Arc<rayon::ThreadPool>, rayon::ThreadPoolBuildError> {
+    use std::sync::{Arc, Mutex};
+    static POOLS: Mutex<Vec<(usize, Arc<rayon::ThreadPool>)>> = Mutex::new(Vec::new());
+    let mut pools = POOLS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, pool)) = pools.iter().find(|(count, _)| *count == threads) {
+        return Ok(Arc::clone(pool));
+    }
+    let pool = Arc::new(fallow_engine::thread_pool::worker_pool_builder(threads).build()?);
+    pools.push((threads, Arc::clone(&pool)));
+    Ok(pool)
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn analysis_pool(
+    threads: usize,
+) -> Result<std::sync::Arc<rayon::ThreadPool>, rayon::ThreadPoolBuildError> {
+    fallow_engine::thread_pool::worker_pool_builder(threads)
+        .build()
+        .map(std::sync::Arc::new)
 }
 
 fn validate_analysis_option_shape(options: &AnalysisOptions) -> ProgrammaticResult<()> {
