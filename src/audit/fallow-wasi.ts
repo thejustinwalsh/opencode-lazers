@@ -31,6 +31,15 @@ class WasiExit extends Error {
   }
 }
 
+/**
+ * The size of the allocation that failed when a trap's stderr says the module ran out of linear
+ * memory (a wasm32 module has 4 GiB at most), else undefined.
+ */
+export function memoryExhausted(stderr: string): number | undefined {
+  const match = /memory allocation of (\d+) bytes failed/.exec(stderr)
+  return match ? Number(match[1]) : undefined
+}
+
 export class WasiTrap extends Error {
   constructor(
     message: string,

@@ -3,7 +3,7 @@ import { dirname, join, sep } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { wasmURL } from "../worker-url.ts"
 import { FallowModules, sharedMemoryAvailable, type FallowThreads } from "./fallow-threads.ts"
-import { runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
+import { memoryExhausted, runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
 
 /**
  * Serves Fallow analysis from the WebAssembly module on a worker thread, so the CPU work stays
@@ -175,6 +175,11 @@ async function run(
       ),
     )
   } catch (error) {
+    if (error instanceof WasiTrap && memoryExhausted(error.stderr) !== undefined)
+      throw new WorkerError(
+        "analyzer-memory",
+        `the project is too large for analysis: the analyzer ran out of memory (a ${memoryExhausted(error.stderr)} byte allocation failed; a WebAssembly module has 4 GiB)`,
+      )
     if (error instanceof WasiTrap)
       throw new WorkerError("analyzer-panic", error.stderr.trim().slice(-2000) || error.message)
     throw error
