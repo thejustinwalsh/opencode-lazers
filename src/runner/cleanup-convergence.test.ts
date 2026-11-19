@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -118,7 +119,7 @@ test("completed retained verification cleanup probes on fallback and after runti
         return []
       },
     } as unknown as RunnerHost
-    runtime = new TaskRuntime(store, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
@@ -147,7 +148,7 @@ test("completed retained verification cleanup probes on fallback and after runti
     repository.close()
     repository = new TaskRepository(databasePath, root)
     const reopened = new RunnerStore(repository)
-    runtime = new TaskRuntime(reopened, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(reopened), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
@@ -387,7 +388,7 @@ test("cleanup discovery exceeds the display window while unchanged holds skip ex
         throw new Error("Unexpected worktree removal during probe-count test")
       },
     } as unknown as RunnerHost
-    runtime = new TaskRuntime(store, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
@@ -471,7 +472,7 @@ test("cleanup discovery exceeds the display window while unchanged holds skip ex
       db.query("UPDATE runner_leases SET expires_at=0 WHERE project_directory=?").run(root)
     })
     store = new RunnerStore(repository)
-    runtime = new TaskRuntime(store, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
@@ -721,7 +722,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
         workspacePresent = false
       },
     } as unknown as RunnerHost
-    runtime = new TaskRuntime(store, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })
@@ -805,7 +806,7 @@ test("bounded native fallback detects an external dirty edit without deleting th
     store = new RunnerStore(repository)
     // The replacement runtime acquires the expired lease of the stopped process.
     repository.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-    runtime = new TaskRuntime(store, host, "project", undefined, {
+    runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
       now: () => clock,
       requestTick: () => Promise.resolve(),
     })

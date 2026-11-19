@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
+import { withFallowConfig } from "./fallow-config.ts"
 import { join } from "node:path"
 import { TaskRepository } from "../../src/storage.ts"
 import { RunnerStore } from "../../src/runner/store.ts"
@@ -143,7 +144,7 @@ const host: RunnerHost = {
     save(state)
   },
 }
-const runtime = new TaskRuntime(store, host, "fixture")
+const runtime = new TaskRuntime(withFallowConfig(store), host, "fixture")
 process.env.LAZERS_TEST_RUNNER_PID = String(process.pid)
 if (store.plan(config.planID)!.state === "draft")
   await runtime.command({ requestID: "run", planID: config.planID, action: "run" }, "owner")

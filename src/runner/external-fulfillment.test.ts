@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -109,7 +110,7 @@ function fixture(key = "external-fulfillment") {
       calls.push("interrupt")
     },
   }
-  const runtime = new TaskRuntime(store, host, "project")
+  const runtime = new TaskRuntime(withFallowConfig(store), host, "project")
   cleanup.push(() => runtime.stop())
   return { directory, baseCommit, repository, task, store, plan, runtime, calls }
 }

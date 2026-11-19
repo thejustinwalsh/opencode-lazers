@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -144,7 +145,7 @@ function fixture() {
     notify: async () => {},
     interrupt: async () => {},
   }
-  const runtime = new TaskRuntime(store, host, "project", undefined, {
+  const runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
     autoResumeInterrupted: false,
   })
   runtimes.push(runtime)
@@ -293,7 +294,7 @@ async function reopenFixture(f: ReturnType<typeof fixture>) {
   const repository = new TaskRepository(databasePath, f.root)
   repositories.push(repository)
   const store = new RunnerStore(repository)
-  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+  const runtime = new TaskRuntime(withFallowConfig(store), f.host, "project", undefined, {
     autoResumeInterrupted: false,
   })
   runtimes.push(runtime)
