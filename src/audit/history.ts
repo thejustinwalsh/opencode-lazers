@@ -1,5 +1,6 @@
 import { canonical } from "../identity.ts"
 import { realpathSync } from "node:fs"
+import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { mkdir, writeFile, rename } from "node:fs/promises"
 import { dirname, join } from "node:path"
@@ -44,6 +45,229 @@ function auditFindings(runID: string, analysis: string, report: unknown): AuditF
   return result
 }
 
+type AuditStartInput = {
+  requestID: string
+  workspace: string
+  phase?: AuditRun["phase"]
+  baselineRunID?: string
+  taskID?: string
+  sourcePath?: string
+  threads?: number
+}
+
+type AuditStartAssignment = {
+  task_id: string
+  plan_id: string
+  id: string
+  workspace: string
+}
+
+function canonicalStartInput(input: AuditStartInput): string {
+  return canonical(JSON.parse(JSON.stringify(input)))
+}
+
+function findPreviousAuditRun(
+  db: Database,
+  projectDirectory: string,
+  sessionID: string,
+  requestID: string,
+): AuditRun | undefined {
+  const row = db
+    .query<{ payload: string }, [string, string, string]>(
+      "SELECT payload FROM audit_runs WHERE project_directory=? AND session_id=? AND request_id=?",
+    )
+    .get(projectDirectory, sessionID, requestID)
+  if (!row) return undefined
+  return JSON.parse(row.payload) as AuditRun
+}
+
+function matchPreviousAuditRun(
+  previous: AuditRun | undefined,
+  canonicalInput: string,
+): { created: false; run: AuditRun } | undefined {
+  if (!previous) return undefined
+  if (previous.requestInput !== canonicalInput)
+    throw new Error("Request ID already identifies a different audit request")
+  return { created: false, run: previous }
+}
+
+function findStartAssignment(
+  db: Database,
+  projectDirectory: string,
+  sessionID: string,
+): AuditStartAssignment | null {
+  const runnerExists = db.query("SELECT name FROM sqlite_master WHERE name='runner_attempts'").get()
+  if (!runnerExists) return null
+  const assignment = db
+    .query<AuditStartAssignment, [string, string]>(
+      `SELECT a.task_id,a.plan_id,a.id,a.workspace FROM runner_attempts a
+          JOIN runner_plans p ON p.id=a.plan_id WHERE a.session_id=? AND p.project_directory=?`,
+    )
+    .get(sessionID, projectDirectory)
+  return assignment ?? null
+}
+
+function checkStartWorkspace(assignment: AuditStartAssignment | null, workspace: string): void {
+  if (!assignment) return
+  if (realpathSync(assignment.workspace) !== realpathSync(workspace))
+    throw new Error("Audit workspace differs from its assigned attempt")
+}
+
+function resolveStartTaskID(
+  repository: TaskRepository,
+  assignment: AuditStartAssignment | null,
+  inputTaskID: string | undefined,
+): string | null {
+  if (assignment) return assignment.task_id
+  if (!inputTaskID) return null
+  return repository.resolveTaskID(inputTaskID) ?? null
+}
+
+function checkStartTaskMatch(
+  repository: TaskRepository,
+  inputTaskID: string | undefined,
+  taskID: string | null,
+  assignment: AuditStartAssignment | null,
+): void {
+  if (!inputTaskID) return
+  if (!taskID) throw new Error("Audit task does not match this project or worker assignment")
+  if (assignment && repository.resolveTaskID(inputTaskID) !== taskID)
+    throw new Error("Audit task does not match this project or worker assignment")
+}
+
+function checkStartTaskExists(repository: TaskRepository, taskID: string | null): void {
+  if (!taskID) return
+  if (!repository.get(taskID)) throw new Error("Audit task not found in this project")
+}
+
+function findBaselineAuditRun(
+  db: Database,
+  projectDirectory: string,
+  taskID: string | null,
+  sessionID: string,
+  baselineRunID: string | undefined,
+  loadRun: (runID: string) => AuditRun,
+): AuditRun | undefined {
+  if (baselineRunID) return loadRun(baselineRunID)
+  const scope = taskID ? "task_id=?" : "task_id IS NULL AND session_id=?"
+  const row = db
+    .query<{ payload: string }, [string, string]>(
+      `SELECT payload FROM audit_runs WHERE project_directory=? AND ${scope} AND json_extract(payload,'$.phase')='baseline' ORDER BY started_at,rowid LIMIT 1`,
+    )
+    .get(projectDirectory, taskID ?? sessionID)
+  if (!row) return undefined
+  return JSON.parse(row.payload) as AuditRun
+}
+
+function checkBaselineTask(baseline: AuditRun | undefined, taskID: string | null): void {
+  if (!baseline) return
+  if (baseline.taskID && baseline.taskID !== taskID)
+    throw new Error("Baseline belongs to a different task")
+}
+
+function startPhaseFor(input: AuditStartInput, baseline: AuditRun | undefined): AuditRun["phase"] {
+  if (input.phase) return input.phase
+  if (baseline) return "follow-up"
+  return "baseline"
+}
+
+function startBaselineRunIDFor(
+  input: AuditStartInput,
+  baseline: AuditRun | undefined,
+): string | null {
+  if (input.phase === "baseline") return null
+  return baseline?.runID ?? null
+}
+
+function buildStartRun(
+  projectDirectory: string,
+  input: AuditStartInput,
+  actor: AuditActor,
+  assignment: AuditStartAssignment | null,
+  taskID: string | null,
+  baseline: AuditRun | undefined,
+  canonicalInput: string,
+): AuditRun {
+  return {
+    schemaVersion: 1,
+    runID: crypto.randomUUID(),
+    projectDirectory,
+    workspace: input.workspace,
+    taskID: taskID ?? null,
+    planID: assignment?.plan_id ?? null,
+    attemptID: assignment?.id ?? null,
+    sessionID: actor.sessionID,
+    agent: actor.agent,
+    requestID: input.requestID,
+    phase: startPhaseFor(input, baseline),
+    baselineRunID: startBaselineRunIDFor(input, baseline),
+    startedAt: Date.now(),
+    finishedAt: null,
+    state: "collecting",
+    source: input.sourcePath ? "legacy-file" : "fallow",
+    sourcePath: input.sourcePath ?? null,
+    error: null,
+    requestInput: canonicalInput,
+  }
+}
+
+function insertStartRun(db: Database, run: AuditRun): void {
+  db.query("INSERT INTO audit_runs VALUES(?,?,?,?,?,?,?,?)").run(
+    run.runID,
+    run.projectDirectory,
+    run.taskID,
+    run.attemptID,
+    run.sessionID,
+    run.requestID,
+    run.startedAt,
+    JSON.stringify(run),
+  )
+}
+
+function runStartTransaction(
+  db: Database,
+  repository: TaskRepository,
+  input: AuditStartInput,
+  actor: AuditActor,
+  loadRun: (runID: string) => AuditRun,
+): { created: boolean; run: AuditRun } {
+  const canonicalInput = canonicalStartInput(input)
+  const previous = findPreviousAuditRun(
+    db,
+    repository.projectDirectory,
+    actor.sessionID,
+    input.requestID,
+  )
+  const duplicate = matchPreviousAuditRun(previous, canonicalInput)
+  if (duplicate) return duplicate
+  const assignment = findStartAssignment(db, repository.projectDirectory, actor.sessionID)
+  checkStartWorkspace(assignment, input.workspace)
+  const taskID = resolveStartTaskID(repository, assignment, input.taskID)
+  checkStartTaskMatch(repository, input.taskID, taskID, assignment)
+  checkStartTaskExists(repository, taskID)
+  const baseline = findBaselineAuditRun(
+    db,
+    repository.projectDirectory,
+    taskID,
+    actor.sessionID,
+    input.baselineRunID,
+    loadRun,
+  )
+  checkBaselineTask(baseline, taskID)
+  const run = buildStartRun(
+    repository.projectDirectory,
+    input,
+    actor,
+    assignment,
+    taskID,
+    baseline,
+    canonicalInput,
+  )
+  insertStartRun(db, run)
+  repository.changed()
+  return { created: true, run }
+}
+
 /** The task database is authoritative. JSON files are replaceable exports. */
 export class AuditHistory {
   constructor(readonly repository: TaskRepository) {
@@ -83,102 +307,10 @@ export class AuditHistory {
     if (!row) throw new Error("Audit run not found in this project")
     return JSON.parse(row.payload) as AuditRun
   }
-  start(
-    input: {
-      requestID: string
-      workspace: string
-      phase?: AuditRun["phase"]
-      baselineRunID?: string
-      taskID?: string
-      sourcePath?: string
-      threads?: number
-    },
-    actor: AuditActor,
-  ) {
-    return this.repository.atomic((db) => {
-      const previous = db
-        .query<{ payload: string }, [string, string, string]>(
-          "SELECT payload FROM audit_runs WHERE project_directory=? AND session_id=? AND request_id=?",
-        )
-        .get(this.repository.projectDirectory, actor.sessionID, input.requestID)
-      if (previous) {
-        const run = JSON.parse(previous.payload) as AuditRun
-        if (run.requestInput !== canonical(JSON.parse(JSON.stringify(input))))
-          throw new Error("Request ID already identifies a different audit request")
-        return { created: false, run }
-      }
-      const runnerExists = db
-        .query("SELECT name FROM sqlite_master WHERE name='runner_attempts'")
-        .get()
-      const assignment = runnerExists
-        ? db
-            .query<
-              { task_id: string; plan_id: string; id: string; workspace: string },
-              [string, string]
-            >(
-              `SELECT a.task_id,a.plan_id,a.id,a.workspace FROM runner_attempts a
-         JOIN runner_plans p ON p.id=a.plan_id WHERE a.session_id=? AND p.project_directory=?`,
-            )
-            .get(actor.sessionID, this.repository.projectDirectory)
-        : null
-      if (assignment && realpathSync(assignment.workspace) !== realpathSync(input.workspace))
-        throw new Error("Audit workspace differs from its assigned attempt")
-      const taskID =
-        assignment?.task_id ?? (input.taskID ? this.repository.resolveTaskID(input.taskID) : null)
-      if (
-        input.taskID &&
-        (!taskID || (assignment && this.repository.resolveTaskID(input.taskID) !== taskID))
-      )
-        throw new Error("Audit task does not match this project or worker assignment")
-      if (taskID && !this.repository.get(taskID))
-        throw new Error("Audit task not found in this project")
-      const scope = taskID ? "task_id=?" : "task_id IS NULL AND session_id=?"
-      const baseline = input.baselineRunID
-        ? this.get(input.baselineRunID)
-        : (() => {
-            const row = db
-              .query<{ payload: string }, [string, string]>(
-                `SELECT payload FROM audit_runs WHERE project_directory=? AND ${scope} AND json_extract(payload,'$.phase')='baseline' ORDER BY started_at,rowid LIMIT 1`,
-              )
-              .get(this.repository.projectDirectory, taskID ?? actor.sessionID)
-            return row ? (JSON.parse(row.payload) as AuditRun) : undefined
-          })()
-      if (baseline?.taskID && baseline.taskID !== taskID)
-        throw new Error("Baseline belongs to a different task")
-      const run: AuditRun = {
-        schemaVersion: 1,
-        runID: crypto.randomUUID(),
-        projectDirectory: this.repository.projectDirectory,
-        workspace: input.workspace,
-        taskID: taskID ?? null,
-        planID: assignment?.plan_id ?? null,
-        attemptID: assignment?.id ?? null,
-        sessionID: actor.sessionID,
-        agent: actor.agent,
-        requestID: input.requestID,
-        phase: input.phase ?? (baseline ? "follow-up" : "baseline"),
-        baselineRunID: input.phase === "baseline" ? null : (baseline?.runID ?? null),
-        startedAt: Date.now(),
-        finishedAt: null,
-        state: "collecting",
-        source: input.sourcePath ? "legacy-file" : "fallow",
-        sourcePath: input.sourcePath ?? null,
-        error: null,
-        requestInput: canonical(JSON.parse(JSON.stringify(input))),
-      }
-      db.query("INSERT INTO audit_runs VALUES(?,?,?,?,?,?,?,?)").run(
-        run.runID,
-        run.projectDirectory,
-        run.taskID,
-        run.attemptID,
-        run.sessionID,
-        run.requestID,
-        run.startedAt,
-        JSON.stringify(run),
-      )
-      this.repository.changed()
-      return { created: true, run }
-    })
+  start(input: AuditStartInput, actor: AuditActor) {
+    return this.repository.atomic((db) =>
+      runStartTransaction(db, this.repository, input, actor, this.get.bind(this)),
+    )
   }
   importedMetadata(runID: string, metadata: unknown) {
     const run = this.get(runID)
