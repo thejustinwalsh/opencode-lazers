@@ -20,7 +20,8 @@
     "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
     "build:gui": "vite build && bun scripts/verify-gui-bundle.ts",
     "build:server": "bun scripts/build-server.ts",
-    "build": "bun run build:gui && bun run build:server"
+    "build": "bun run build:gui && bun run build:server",
+    "build:fallow-wasm": "bun scripts/build-fallow-wasm.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "2.3.0",
