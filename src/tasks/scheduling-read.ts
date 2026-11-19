@@ -10,6 +10,7 @@ import type { IntegrationDecision } from "../runner/prerequisite-proof.ts"
 import type { RunnerStore, SchedulingFactSnapshot, SchedulingNodeFact } from "../runner/store.ts"
 import { selectSchedulingCandidates } from "../runner/scheduling-selection.ts"
 import type { SchedulingReservation } from "../runner/scheduling-selection.ts"
+import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import {
   SchedulingInput,
@@ -50,6 +51,14 @@ type CachedSnapshot = {
 }
 
 type SchedulingBranch = { branch: string; head: string } | undefined
+type DelegatedAgentSchedulingStatus = {
+  limit: number
+  active: number
+  queued: number
+  queuedNative: number
+  queuedRunnerTasks: Array<{ planID: string; taskID: string }>
+  queuedRunnerTasksComplete: boolean
+}
 
 class SchedulingGitError extends Error {
   constructor(
@@ -249,6 +258,7 @@ type SnapshotBuildInput = {
   facts: SchedulingFactSnapshot
   scope: SchedulingScope
   observedAt: number
+  delegatedAgents: DelegatedAgentSchedulingStatus
   branch: SchedulingBranch
   provePlan: (
     prerequisites: readonly string[],
@@ -272,6 +282,10 @@ type SelectionState = {
   firstUnknownReason: string | undefined
   selectedTaskIDs: string[]
   previouslySelectedReservations: SchedulingReservation[]
+  delegatedAgentSlotsRemaining: number
+  delegatedAgentCapacityWaiting: boolean
+  delegatedAgentCapacityWaitCount: number
+  delegatedAgentCapacityWaitTasks: Array<{ planID: string; taskID: string }>
 }
 
 /** A higher-priority fact is unknown: later selections can no longer be trusted as the prefix. */
@@ -605,7 +619,6 @@ async function selectPlanCandidates(
     })),
     scopedReservations,
   )
-  if (reservationFactsComplete) state.selectedTaskIDs.push(...selection.selectedTaskIDs)
   const reservationUnknown = applyReservationHolds(
     candidateNodes,
     selection,
@@ -615,14 +628,36 @@ async function selectPlanCandidates(
     sessionTaskIDs,
     state,
   )
-  if (selection.selectedTaskIDs.length && reservationFactsComplete) {
-    for (const taskID of selection.selectedTaskIDs)
+  const admittedTaskIDs = selection.selectedTaskIDs.slice(0, state.delegatedAgentSlotsRemaining)
+  const waitingTaskIDs = selection.selectedTaskIDs.slice(admittedTaskIDs.length)
+  for (const taskID of waitingTaskIDs) {
+    const candidate = candidateNodes.find((node) => node.taskID === taskID)
+    if (candidate) {
+      candidate.decision = "waiting"
+      candidate.reason = `Waiting for delegated-agent capacity (${input.delegatedAgents.active} of ${input.delegatedAgents.limit} slots in use).`
+    }
+    state.delegatedAgentCapacityWaiting = true
+    state.delegatedAgentCapacityWaitCount++
+    state.delegatedAgentCapacityWaitTasks.push({
+      planID: plan.schedule.planID,
+      taskID,
+    })
+  }
+  state.delegatedAgentSlotsRemaining -= admittedTaskIDs.length
+  if (reservationFactsComplete) state.selectedTaskIDs.push(...admittedTaskIDs)
+  if (admittedTaskIDs.length && reservationFactsComplete) {
+    for (const taskID of admittedTaskIDs)
       state.previouslySelectedReservations.push({
         shared: plan.workspaceMode === "shared",
         scopes: store.effectiveWriteScope(taskID),
         taskID,
       })
     plan.schedule.decision = "eligible"
+    if (waitingTaskIDs.length)
+      plan.schedule.reason = `Some eligible tasks are waiting for delegated-agent capacity (${input.delegatedAgents.active} of ${input.delegatedAgents.limit} slots in use).`
+  } else if (waitingTaskIDs.length) {
+    plan.schedule.decision = "waiting"
+    plan.schedule.reason = `Waiting for delegated-agent capacity (${input.delegatedAgents.active} of ${input.delegatedAgents.limit} slots in use).`
   } else if ((!candidateNodes.length || reservationUnknown) && plan.unknown) {
     plan.schedule.decision = "unknown"
     plan.schedule.reason = state.firstUnknownReason ?? "Scheduling facts are unavailable."
@@ -633,9 +668,9 @@ async function selectPlanCandidates(
     plan.schedule.decision = "waiting"
     plan.schedule.reason = "Eligible task scopes are reserved by active work."
   }
-  if (!state.firstCandidateKnown && selection.selectedTaskIDs.length && state.prefixKnown)
+  if (!state.firstCandidateKnown && admittedTaskIDs.length && state.prefixKnown)
     state.firstCandidateKnown = true
-  if (!plan.schedule.nodesComplete && selection.selectedTaskIDs.length === 0) {
+  if (!plan.schedule.nodesComplete && admittedTaskIDs.length === 0) {
     state.prefixKnown = false
     state.selectionComplete = false
     plan.schedule.decision = "unknown"
@@ -685,8 +720,14 @@ function nextSchedulingCandidate(
     facts.planIntegrationsComplete &&
     state.selectionComplete &&
     !projected.some((plan) => plan.unknown)
-  )
+  ) {
+    if (state.delegatedAgentCapacityWaiting)
+      return {
+        status: "waiting",
+        reason: "Waiting for delegated-agent capacity; all configured slots are in use.",
+      }
     return { status: "none" }
+  }
   return {
     status: "unknown",
     reason:
@@ -727,6 +768,13 @@ async function buildSnapshot(input: SnapshotBuildInput): Promise<BuiltProjection
     firstUnknownReason: undefined,
     selectedTaskIDs: [],
     previouslySelectedReservations: [],
+    delegatedAgentSlotsRemaining: Math.max(
+      0,
+      input.delegatedAgents.limit - input.delegatedAgents.active,
+    ),
+    delegatedAgentCapacityWaiting: false,
+    delegatedAgentCapacityWaitCount: 0,
+    delegatedAgentCapacityWaitTasks: [],
   }
   const projected: ProjectedPlan[] = await Promise.all(
     facts.plans.map((plan, planOrder) =>
@@ -783,6 +831,24 @@ async function buildSnapshot(input: SnapshotBuildInput): Promise<BuiltProjection
       reason: reasons.join(" ") || null,
     },
     next,
+    delegatedAgents: {
+      limit: input.delegatedAgents.limit,
+      active: input.delegatedAgents.active,
+      queued: (() => {
+        const selected = new Set(state.selectedTaskIDs)
+        const queued = new Set(
+          input.delegatedAgents.queuedRunnerTasks
+            .filter((candidate) => !selected.has(candidate.taskID))
+            .map((candidate) => `${candidate.planID}:${candidate.taskID}`),
+        )
+        for (const candidate of state.delegatedAgentCapacityWaitTasks)
+          queued.add(`${candidate.planID}:${candidate.taskID}`)
+        const observed = input.delegatedAgents.queuedNative + queued.size
+        return input.delegatedAgents.queuedRunnerTasksComplete
+          ? observed
+          : Math.max(input.delegatedAgents.queued, observed)
+      })(),
+    },
     selectedTaskIDs: state.selectedTaskIDs.slice(0, 5_000),
     selectionComplete: state.selectionComplete,
     plans: allPlans,
@@ -911,6 +977,7 @@ export class TaskSchedulingRead {
     private readonly now: () => number = Date.now,
     private readonly limits: TaskSchedulingReadLimits = {},
     private readonly runGit: SchedulingGitRunner = schedulingGit,
+    private readonly delegatedAgentCapacity = new DelegatedAgentCapacity(store.repository),
   ) {}
 
   get workCounts() {
@@ -1045,6 +1112,7 @@ export class TaskSchedulingRead {
     facts: SchedulingFactSnapshot,
     scope: SchedulingScope,
     branch: SchedulingBranch,
+    delegatedAgents: DelegatedAgentSchedulingStatus,
   ): Promise<BuiltProjection> {
     this.work.projectionBuilds++
     return buildSnapshot({
@@ -1052,6 +1120,7 @@ export class TaskSchedulingRead {
       facts,
       scope,
       observedAt: this.now(),
+      delegatedAgents,
       branch,
       provePlan: (prerequisites, rows, head) => this.planProof(prerequisites, rows, head),
       proveTask: (currentBranch, prerequisites, rows, head) =>
@@ -1063,9 +1132,10 @@ export class TaskSchedulingRead {
     facts: SchedulingFactSnapshot,
     scope: SchedulingScope,
     initialBranch: SchedulingBranch,
+    delegatedAgents: DelegatedAgentSchedulingStatus,
   ) {
     let branch = initialBranch
-    const semanticBasis = schedulingBasis(facts)
+    const semanticBasis = JSON.stringify([schedulingBasis(facts), delegatedAgents])
     for (let attempt = 0; attempt < 2; attempt++) {
       const key = JSON.stringify([scopeKey(scope), semanticBasis, branch])
       const cached = this.projections.get(key)
@@ -1082,7 +1152,7 @@ export class TaskSchedulingRead {
         return result.snapshot
       }
       const proofEvaluations = this.work.proofEvaluations
-      const building = this.buildProjection(facts, scope, branch)
+      const building = this.buildProjection(facts, scope, branch, delegatedAgents)
       this.projectionInFlight.set(key, building)
       try {
         const built = await building
@@ -1151,7 +1221,16 @@ export class TaskSchedulingRead {
         opened.close()
       }
       const branch = await this.captureBranchAndHead()
-      const projection = await this.projectionFor(facts, input.scope, branch)
+      const capacity = await this.delegatedAgentCapacity.schedulingSnapshot()
+      const delegatedAgents = {
+        limit: capacity.limit,
+        active: capacity.active,
+        queued: capacity.queued,
+        queuedNative: capacity.queuedNative,
+        queuedRunnerTasks: capacity.queuedRunnerTasks,
+        queuedRunnerTasksComplete: capacity.queuedRunnerTasksComplete,
+      }
+      const projection = await this.projectionFor(facts, input.scope, branch, delegatedAgents)
       const snapshot = materializeSnapshot(projection, facts, this.now())
       const capturedAt = snapshot.observedAt
       cached = { scopeKey: key, expiresAt: capturedAt + SNAPSHOT_TTL_MS, snapshot }

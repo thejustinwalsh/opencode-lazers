@@ -11,6 +11,7 @@ import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import { registerWorker } from "./runner/roles.ts"
 import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
+import { registerDelegatedAgentCapacity } from "./runner/delegated-agent-capacity-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
@@ -96,7 +97,14 @@ export default Plugin.define({
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, agentRoutes))
+      yield* sectionEffect("setup:DelegatedAgentCapacity", () =>
+        registerDelegatedAgentCapacity(ctx, runtime).pipe(Effect.orDie),
+      )
+      yield* sectionEffect("setup:Worker", () =>
+        registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>
+          core.wake(),
+        ),
+      )
       yield* sectionEffect("setup:ArchitectContact", () =>
         registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
       )

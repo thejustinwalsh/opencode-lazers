@@ -30,11 +30,15 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         description:
           "Compact by default: inspect all project plans or one plan with IDs, authored title/objective, state/version/reason, model, schedule, node states/waiting reasons, attempt/effect/outcome counts and concise check exit status. It omits policies, transcripts and check output. Set full=true only for progressive troubleshooting; selected plan detail includes the latest retained verification call per task, with its checks and cleanup state; the projection redacts commands, output, paths, private reasons and environment contents and does not control runtime work. Full detail bounds history: activity, evidence and delivery hold the newest `limit` rows (default 200, max 1000) oldest-first; `paging.<list>.next` is a cursor to pass back as activityBefore, evidenceBefore or deliveryBefore for the next older page (null when exhausted). Compact counts.transitionsByEvent still covers the whole history. Explicitly set view='journal' with planID to page that plan's retained Architect source journal (limit 1-100, default 50, then pass nextCursor). Journal entries are metadata-only original session/message references; they contain no message bodies, do not prove transcript completeness or native consumption, and inspection does not acknowledge or advance anything. Cursor traversal is invalidated by changes to that selected plan's source journal, not unrelated project activity. Set view='source-messages' with planID, sourceSessionID and up to10 journaled messageIDs to fetch only selected original user/synthetic inputs or assistant results through the authenticated same-project native client; output redacts secrets/URLs and omits metadata, reasoning, tools and attachments. Completeness and native consumption remain unknown.",
         schema: InspectPlanInput,
-        run: (input: unknown, sessionID?: string) => {
+        run: async (input: unknown, sessionID?: string) => {
           const parsed = InspectPlanInput.parse(input)
           return "view" in parsed && parsed.view === "source-messages"
-            ? runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
-            : inspectPlan(runtime.store, parsed)
+            ? await runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
+            : inspectPlan(
+                runtime.store,
+                parsed,
+                await runtime.delegatedAgentCapacity.inspectionSnapshot(),
+              )
         },
       },
       {

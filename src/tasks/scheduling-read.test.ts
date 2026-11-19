@@ -11,6 +11,8 @@ import { buildExecutionList } from "./execution-list.ts"
 import { SchedulingOutput } from "./scheduling-contract.ts"
 import { TaskSchedulingRead } from "./scheduling-read.ts"
 import { taskRowPresentation } from "./row-presentation.ts"
+import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
+import { inspectPlan } from "../runner/inspection.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -153,6 +155,77 @@ test("Session visibility preserves the project-wide winner and exposes it only w
     unrelated.plan.planID,
   ])
   expect(project.next).toMatchObject({ status: "known", candidate: { taskID: local.task.id } })
+})
+
+test("delegated-agent overflow is visible as a truthful Tasks and inspection wait", async () => {
+  const f = fixture()
+  const active = f.create("active-agent", 1)
+  const waiting = f.create("waiting-agent", 0)
+  const capacity = new DelegatedAgentCapacity(f.repository, "github.com/example/scheduling")
+  await capacity.configure({ expectedRevision: 0, limit: 1 })
+  const requestID = await capacity.ensureRunnerQueued({
+    planID: active.plan.planID,
+    taskID: active.task.id,
+    attemptNumber: 1,
+  })
+  const attemptID = crypto.randomUUID()
+  f.repository.atomic((db) => {
+    expect(capacity.admitRunnerInTransaction(db, requestID, attemptID)).toBe(true)
+    db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?").run(
+      active.plan.planID,
+      active.task.id,
+    )
+    db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,1,?,?,?,?,?,'running',?)`,
+    ).run(
+      attemptID,
+      active.plan.planID,
+      active.task.id,
+      "active-worker",
+      "active-message",
+      join(f.directory, ".worktree-active-agent"),
+      git(f.directory, ["rev-parse", "HEAD"]),
+      "{}",
+      Date.now(),
+    )
+  })
+  const waitingRequest = await capacity.ensureRunnerQueued({
+    planID: waiting.plan.planID,
+    taskID: waiting.task.id,
+    attemptNumber: 1,
+  })
+  const page = await new TaskSchedulingRead(f.store, Date.now, {}, undefined, capacity).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+
+  expect(page).toMatchObject({
+    next: { status: "waiting" },
+    delegatedAgents: { limit: 1, active: 1, queued: 1 },
+  })
+  expect(page.plans.find((plan) => plan.planID === waiting.plan.planID)?.nodes[0]).toMatchObject({
+    taskID: waiting.task.id,
+    decision: "waiting",
+    reason: "Waiting for delegated-agent capacity (1 of 1 slots in use).",
+  })
+  expect(waitingRequest).toBeTruthy()
+  const capacityDetail = await capacity.inspectionSnapshot()
+  const inspection = inspectPlan(f.store, { planID: waiting.plan.planID }, capacityDetail)
+  expect(inspection).toMatchObject({
+    nodes: [
+      {
+        taskID: waiting.task.id,
+        reason: "Waiting for delegated-agent capacity (1 of 1 slots in use).",
+      },
+    ],
+    plan: {
+      schedule: {
+        delegatedAgentCapacity: { limit: 1, active: 1, queued: 1 },
+      },
+    },
+  })
 })
 
 test("Session associations include same-project afterPlans prerequisites but not unrelated plans", async () => {

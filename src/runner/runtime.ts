@@ -162,6 +162,7 @@ import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler
 import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
+import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import {
   matchesReviewInputAlias,
   observeReviewInput,
@@ -243,6 +244,7 @@ function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
 // Recheck external/native facts periodically, but don't repeat full safety
 // observations on every ordinary scheduler tick when durable facts are stable.
 export type TaskRuntimeOptions = {
+  delegatedAgentProjectKey?: string | Promise<string>
   /** Deprecated alias of `architectCacheWindowMs`. */
   architectIdleWindowMs?: number
   architectCacheWindowMs?: number
@@ -689,6 +691,7 @@ export class TaskRuntime {
   private readonly sourceEpochs = new Map<string, number>()
   private sourceResyncPending = false
   private readonly schedulingRead: TaskSchedulingRead
+  readonly delegatedAgentCapacity: DelegatedAgentCapacity
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -698,7 +701,17 @@ export class TaskRuntime {
   ) {
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
-    this.schedulingRead = new TaskSchedulingRead(store, this.now)
+    this.delegatedAgentCapacity = new DelegatedAgentCapacity(
+      store.repository,
+      options.delegatedAgentProjectKey,
+    )
+    this.schedulingRead = new TaskSchedulingRead(
+      store,
+      this.now,
+      {},
+      undefined,
+      this.delegatedAgentCapacity,
+    )
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
     this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
@@ -7346,6 +7359,7 @@ export class TaskRuntime {
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
+    if (plan.state !== "running") await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
     if (plan.state === "cancelling") {
       const activities = await this.timed("step:cancelCheckActivities", () =>
         this.cancelCheckActivities(plan!.id),
@@ -7455,6 +7469,7 @@ export class TaskRuntime {
       .filter((e) => ["intended", "uncertain"].includes(e.state))
     const pending = unresolved[0]
     if (pending) {
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
       const attempt = pending.attempt_id
         ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
         : undefined
@@ -7541,6 +7556,7 @@ export class TaskRuntime {
         )
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
       if (
         !this.store.dispatchPause(plan.id) &&
         this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
@@ -7616,10 +7632,30 @@ export class TaskRuntime {
       return node ? [node] : []
     })
     if (selected.length) {
+      const admissionRequests = new Map<string, string>()
+      for (const node of selected) {
+        const attemptNumber =
+          this.store.attempts(plan.id).filter((attempt) => attempt.task_id === node.task_id)
+            .length + 1
+        admissionRequests.set(
+          node.task_id,
+          await this.delegatedAgentCapacity.ensureRunnerQueued({
+            planID: plan.id,
+            taskID: node.task_id,
+            attemptNumber,
+          }),
+        )
+      }
+      await this.delegatedAgentCapacity.cancelRunnerQueue(
+        plan.id,
+        selected.map((node) => node.task_id),
+      )
       await Promise.all(
         selected.map(async (node) => {
           try {
-            await this.timed("step:dispatch", () => this.dispatch(plan!, node, fence))
+            await this.timed("step:dispatch", () =>
+              this.dispatch(plan!, node, fence, admissionRequests.get(node.task_id)!),
+            )
           } catch (error) {
             const current = this.store.plan(plan!.id)
             if (current && current.state !== "blocked")
@@ -7629,6 +7665,7 @@ export class TaskRuntime {
       )
       return
     }
+    await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
     const outstanding = this.store
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
@@ -8669,7 +8706,7 @@ export class TaskRuntime {
     )
   }
 
-  private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
+  private async dispatch(plan: PlanRow, node: NodeRow, fence: number, admissionRequestID: string) {
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
@@ -8771,7 +8808,7 @@ export class TaskRuntime {
       costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
     }
     let attempt!: AttemptRow
-    const admitted = this.store.fenced(this.owner, fence, (db) => {
+    const admitted = this.store.fencedAtomic(this.owner, fence, (db) => {
       const current = this.store.plan(plan.id)
       const currentNode = this.store
         .nodes(plan.id)
@@ -8784,7 +8821,7 @@ export class TaskRuntime {
         current.body !== plan.body ||
         currentNode?.state !== node.state
       )
-        return false
+        return "stale" as const
       if (
         this.store
           .activeAdoptions()
@@ -8796,6 +8833,8 @@ export class TaskRuntime {
           )
       )
         throw new Error("A pending descendant adoption reserves this task's scope")
+      if (!this.delegatedAgentCapacity.admitRunnerInTransaction(db, admissionRequestID, id))
+        return "waiting" as const
       if (node.state === "queued") this.store.move(plan.id, task.id, "READY")
       this.store.move(plan.id, task.id, "DISPATCH")
       db.query(
@@ -8813,9 +8852,13 @@ export class TaskRuntime {
         Date.now(),
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
-      return true
+      return "admitted" as const
     })
-    if (!admitted) return
+    if (admitted !== "admitted") {
+      if (admitted === "stale")
+        await this.delegatedAgentCapacity.cancelRunnerRequest(admissionRequestID)
+      return
+    }
     const admissionPlan = this.store.plan(plan.id)!
     const admissionOwner = admissionPlan.owner
     this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {

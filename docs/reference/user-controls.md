@@ -60,6 +60,10 @@ The section header shows the model's current state. The Omni download uses about
 
 **Remove** beside **Downloaded models** clears the local model cache. The next local request downloads the files again.
 
+### Delegated-agent capacity
+
+**Maximum active agents** is one durable limit for the canonical project, shared by its worktrees. It covers runtime-dispatched Implementors and Auditors and native OpenCode subagents such as research and review helpers; Architect sessions themselves are excluded. The default is **3**. Work beyond the limit stays queued and refills by task priority and dependency eligibility. Changing the limit never interrupts active work. Tasks shows capacity waits, and `lz-inspect-plan` includes the current limit, active and waiting counts, and task-specific wait reasons.
+
 ### Provider usage in the session header
 
 **Show usage ring** shows or hides the session-header ring. Choose **OpenRouter** or **OpenCode Go** as the provider. The page shows only that provider's setting: the **Weekly budget** for OpenRouter, or the **Monthly** or **Rolling 5-hour** allowance for Go.

@@ -5,12 +5,14 @@ import { Model } from "@opencode/schema/model"
 import { Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
+import { Session } from "@opencode/schema/session"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
 import { applyAgentRoute } from "../models/agent-route-apply.ts"
 import type { AgentRouteReader } from "../models/agent-route-apply.ts"
+import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 
 /** The Auditor's model when native OpenCode configuration pins none. */
 export const AUDITOR_DEFAULT_MODEL = {
@@ -43,7 +45,13 @@ export function applyWorkerModel(
     agent.model ??= Schema.decodeUnknownSync(Model.Ref)(AUDITOR_DEFAULT_MODEL)
 }
 
-export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?: AgentRouteReader) {
+export function registerWorker(
+  ctx: Plugin.Context,
+  store: RunnerStore,
+  routes?: AgentRouteReader,
+  capacity?: DelegatedAgentCapacity,
+  wakeScheduler?: () => void,
+) {
   return Effect.gen(function* () {
     yield* ctx.agent.transform((editor) =>
       ["lazers-implementor", "auditor"].forEach((id) =>
@@ -116,6 +124,38 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?:
             return Effect.fail(
               new Tool.Error({ message: "Implementor requires an admitted runtime assignment" }),
             )
+          if (
+            capacity &&
+            /(?:^|[._/])subagent(?:$|[._/])/.test(call.tool) &&
+            typeof call.input === "object" &&
+            call.input !== null &&
+            "agent" in call.input &&
+            typeof call.input.agent === "string" &&
+            call.input.agent.toLowerCase() !== "architect" &&
+            "description" in call.input &&
+            typeof call.input.description === "string"
+          )
+            return Effect.tryPromise({
+              try: async (signal) => {
+                const input = call.input as {
+                  agent: string
+                  description: string
+                  sessionID?: string
+                }
+                const requestID = await capacity.ensureNativeQueued({
+                  parentSessionID: call.sessionID,
+                  toolCallID: call.id,
+                  agent: input.agent,
+                  description: input.description,
+                  ...(input.sessionID ? { existingSessionID: input.sessionID } : {}),
+                })
+                await capacity.waitForNative(requestID, signal)
+              },
+              catch: (error) =>
+                new Tool.Error({
+                  message: error instanceof Error ? error.message : String(error),
+                }),
+            })
           return Effect.void
         }
         if (delegationTool(call.tool))
@@ -128,6 +168,64 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?:
         return Effect.void
       }),
     )
+    if (capacity)
+      yield* timedHooks(ctx.tool, "tool").hook("execute.after", (call) =>
+        Effect.promise(async () => {
+          try {
+            if (
+              !/(?:^|[._/])subagent(?:$|[._/])/.test(call.tool) ||
+              typeof call.input !== "object" ||
+              call.input === null ||
+              !("agent" in call.input) ||
+              typeof call.input.agent !== "string" ||
+              call.input.agent.toLowerCase() === "architect"
+            )
+              return
+            const request = await capacity.nativeRequest(call.sessionID, call.id)
+            if (!request) return
+            const background = "background" in call.input && call.input.background === true
+            if (call.status === "error" || !background) {
+              await capacity.releaseNativeRequest(request.id)
+              wakeScheduler?.()
+            }
+          } catch {
+            // Admission bookkeeping must not change a native tool's result.
+          }
+        }),
+      )
+    if (capacity)
+      yield* timedHooks(ctx.session, "session").hook("experimental.idle", (idle) =>
+        Effect.promise(async () => {
+          try {
+            for (const background of idle.background) {
+              if (background.kind !== "subagent") continue
+              const request = await capacity.nativeRequestForChild(
+                background.sessionID,
+                background.agent,
+                background.description,
+              )
+              if (!request) continue
+              await capacity.bindNativeChild(request.id, background.childSessionID)
+            }
+            await capacity.releaseNativeChild(idle.sessionID)
+            wakeScheduler?.()
+            const session = await Effect.runPromise(
+              ctx.session.get({ sessionID: Session.ID.make(idle.sessionID) }),
+            ).catch(() => null)
+            if (session?.parentID && session.agent && session.title) {
+              await capacity.observeNativeIdle({
+                sessionID: idle.sessionID,
+                parentSessionID: session.parentID,
+                agent: session.agent,
+                description: session.title,
+              })
+              wakeScheduler?.()
+            }
+          } catch {
+            // An idle notification may outlive a removed native helper session.
+          }
+        }),
+      )
     yield* timedHooks(ctx.session, "session").hook("retry", (retry) =>
       Effect.sync(() => {
         const owned = attempt(retry.sessionID)

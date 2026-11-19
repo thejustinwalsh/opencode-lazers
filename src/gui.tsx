@@ -19,6 +19,8 @@ import {
 import type { Decision } from "./webgpu/decisions.ts"
 import { DECISION_CONTEXT_MAX_LENGTH } from "./webgpu/decisions.ts"
 import { panelErrorMessage } from "./panel-error.ts"
+import { DelegatedAgentCapacityRPC } from "./runner/delegated-agent-capacity-contract.ts"
+import type { DelegatedAgentStatus } from "./runner/delegated-agent-capacity.ts"
 import { panelStatusStyles } from "./panel-status.tsx"
 import { detailsPaneStyles } from "./details-pane.css.ts"
 import { detailsKitStyles } from "./details/styles.ts"
@@ -154,6 +156,125 @@ export default Plugin.define({
     const Ui = ctx.ui
     const pageLede =
       "Architect, tasks and panels work without local inference. Everything below is optional."
+    const AgentCapacitySettings = () => {
+      const [status, setStatus] = createSignal<DelegatedAgentStatus>()
+      const [limit, setLimit] = createSignal("")
+      const [saving, setSaving] = createSignal(false)
+      const [ready, setReady] = createSignal(false)
+      const [error, setError] = createSignal("")
+      const sessionID = () => ctx.sessions.current()?.id
+      const signal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
+      const refresh = async (id = sessionID()) => {
+        if (!id) return
+        try {
+          const value = await ctx.client
+            .rpc(DelegatedAgentCapacityRPC)
+            .read({ sessionID: id }, { signal: signal() })
+          if (ctx.signal.aborted) return
+          setStatus(value)
+          setLimit(String(value.limit))
+          setReady(true)
+          setError("")
+        } catch (cause) {
+          if (ctx.signal.aborted) return
+          setError(panelErrorMessage(cause))
+        }
+      }
+      const save = async () => {
+        const current = status()
+        const id = sessionID()
+        const next = Number(limit())
+        if (!current || !id || !Number.isSafeInteger(next) || next < 1) {
+          setError("Enter a positive whole-number limit.")
+          return
+        }
+        setSaving(true)
+        setError("")
+        try {
+          const result = await ctx.client
+            .rpc(DelegatedAgentCapacityRPC)
+            .configure(
+              { sessionID: id, expectedRevision: current.revision, limit: next },
+              { signal: signal() },
+            )
+          if (result.status === "conflict")
+            setError("The limit changed elsewhere. The latest setting has been reloaded.")
+          await refresh(id)
+        } catch (cause) {
+          if (!ctx.signal.aborted) setError(panelErrorMessage(cause))
+        } finally {
+          setSaving(false)
+        }
+      }
+      createEffect(() => {
+        const id = sessionID()
+        if (id) void refresh(id)
+        else {
+          setStatus(undefined)
+          setReady(false)
+        }
+      })
+      onMount(() => {
+        const timer = setInterval(() => void refresh(), 5_000)
+        onCleanup(() => clearInterval(timer))
+      })
+      return (
+        <section class="lazers-agent-capacity" aria-labelledby="lazers-agent-capacity-title">
+          <div class="lazers-settings-head">
+            <h2 id="lazers-agent-capacity-title">Delegated-agent capacity</h2>
+            <span>
+              {status() ? `${status()!.active} active · ${status()!.queued} waiting` : ""}
+            </span>
+          </div>
+          <p>
+            One project-wide limit for Implementors, Auditors, and native subagents. Architect work
+            is excluded. Lowering the limit never interrupts agents already running.
+          </p>
+          <div class="lazers-settings-controls">
+            <label for="lazers-agent-capacity-limit">Maximum active agents</label>
+            <input
+              id="lazers-agent-capacity-limit"
+              class="lazers-settings-number"
+              type="number"
+              min="1"
+              step="1"
+              value={limit()}
+              onInput={(event) => setLimit(event.currentTarget.value)}
+              disabled={!status() || !sessionID() || saving()}
+            />
+            <Ui.Button
+              size="small"
+              disabled={!status() || !sessionID() || saving()}
+              onClick={() => void save()}
+            >
+              {saving() ? "Saving…" : "Save"}
+            </Ui.Button>
+          </div>
+          <Show when={status()?.reason}>
+            <p class="lazers-settings-hint" role="status">
+              {status()?.reason}
+            </p>
+          </Show>
+          <Show when={ready() && status() && !status()!.reason}>
+            <p class="lazers-settings-hint" role="status">
+              {status()!.active > status()!.limit
+                ? `The limit is ${status()!.limit}, but ${status()!.active} agents are already active; they will finish without preemption.`
+                : "No agents are waiting for capacity."}
+            </p>
+          </Show>
+          <Show when={!sessionID() && !error()}>
+            <p class="lazers-settings-hint">
+              Open a session in this project to view and change the limit.
+            </p>
+          </Show>
+          <Show when={error()}>
+            <p class="lazers-settings-hint" role="alert">
+              {error()}
+            </p>
+          </Show>
+        </section>
+      )
+    }
     if (ctx.app.platform !== "desktop") {
       ctx.add(SettingsPage, {
         id: pageID,
@@ -164,6 +285,7 @@ export default Plugin.define({
             title="LAZERS"
             description="Architect, tasks and panels work here. Local inference runs in OpenCode Desktop."
           >
+            <AgentCapacitySettings />
             <BudgetSection />
           </Ui.SettingsLayout>
         ),
@@ -595,6 +717,7 @@ export default Plugin.define({
             </Ui.SettingsRow>
           </Ui.SettingsSection>
           <BudgetSection />
+          <AgentCapacitySettings />
           <details class="lazers-local lazers-local-diagnostics">
             <summary>
               Advanced diagnostics <span>GPU, model identity, renderer capture</span>

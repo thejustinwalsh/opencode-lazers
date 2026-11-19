@@ -3257,6 +3257,18 @@ export class RunnerStore {
       return run(db)
     })
   }
+  /** A scheduler-fenced write transaction for admissions that must pair with a durable row. */
+  fencedAtomic<T>(owner: string, fence: number, run: (db: Database) => T): T {
+    return this.repository.atomic((db) => {
+      const lease = db
+        .query<{ owner: string; fence: number }, [string]>(
+          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+        )
+        .get(this.repository.projectDirectory)
+      if (lease?.owner !== owner || lease.fence !== fence) throw new Error("Stale scheduler fence")
+      return run(db)
+    })
+  }
   /**
    * Project audit. Per-task work (record parse, fingerprint, effective scope) runs
    * once per task inside the read; pair detection runs outside it. Exact duplicates

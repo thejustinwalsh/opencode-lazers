@@ -24,6 +24,11 @@ export const schemaModules = {
     source: "src/tasks/observed-revisions.ts",
     tables: ["task_observed_revisions"],
   },
+  "delegated-agent-capacity": {
+    generation: 1,
+    source: "src/runner/delegated-agent-capacity.ts",
+    tables: ["delegated_agent_settings", "delegated_agent_admissions"],
+  },
   projects: {
     generation: 1,
     source: "src/project-key.ts",
