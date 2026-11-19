@@ -225,7 +225,8 @@ grouped as Models, Local machine and Tools & services, and only those with
 activity in the last two minutes are listed. Line weight is volume in that
 window, opacity is recency, and moving dots mark a call running now (static
 under reduced motion). Pulses are drawn by one `requestAnimationFrame` loop
-(`src/radar/pulse-loop.ts`) over a pure, time-based pool (`pulse-pool.ts`): a
+(`src/radar/pulse-loop.ts`, at most 30 draws a second, as transform-only HTML dots in a layer over
+the SVG so a frame never relayouts or repaints the canvas) over a pure, time-based pool (`pulse-pool.ts`): a
 running wire emits on a steady cadence (2 to 4 on a wire, one speed in px/s on
 every wire), each pulse travels the whole wire from source to destination and is
 removed only on arrival, and a re-render, live update, layout change or the wire

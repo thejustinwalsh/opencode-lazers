@@ -155,11 +155,12 @@ test("flow: no SMIL, one pulse layer, and a live update between frames leaves pu
     const layer = container.querySelector(".lazers-radar-flow-pulses")!
     expect(container.querySelectorAll(".lazers-radar-flow-pulses")).toHaveLength(1)
     // Wait for pulses to be on the wires (the first emission is phased within one interval).
-    for (let i = 0; i < 400 && layer.querySelectorAll("circle").length === 0; i++) await sleep(10)
+    for (let i = 0; i < 400 && layer.querySelectorAll(".lazers-radar-flow-dot").length === 0; i++)
+      await sleep(10)
     const dots = () =>
-      [...layer.querySelectorAll("circle")]
-        .map((dot) => dot.getAttribute("transform"))
-        .filter((value) => value !== "translate(-20 -20)")
+      [...layer.querySelectorAll(".lazers-radar-flow-dot")]
+        .map((dot) => (dot as unknown as HTMLElement).style.transform)
+        .filter((value) => value !== "translate3d(-20px,-20px,0)")
     await sleep(300)
     const before = dots()
     expect(before.length).toBeGreaterThan(0)
