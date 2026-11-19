@@ -116,6 +116,72 @@ function timeValue(value: number | null | undefined) {
 
 type RadarLocation = ReturnType<typeof createRadarLocation>
 
+type RadarLocationCurrent = RadarLocation["current"]
+
+function radarProjectKey(current: RadarLocationCurrent) {
+  return () => {
+    const value = current()
+    return value ? JSON.stringify([value.server, value.project]) : ""
+  }
+}
+
+function saveRadarView(
+  ctx: RadarContext,
+  session: PanelProps["session"],
+  key: string,
+  change: Partial<typeof initial>,
+) {
+  if (!key) return
+  const store = ctx.stores.radarView(session)
+  store.update((draft) => {
+    const value = draft.projects[key] ?? initialProject
+    const scope = change.scope ?? value.scope
+    const nextView = { ...value[scope], ...change, scope }
+    draft.projects[key] =
+      scope === "session"
+        ? { ...value, scope, session: nextView }
+        : { ...value, scope, project: nextView }
+  })
+}
+
+function radarKeyedSource<View extends { scope: string; includeUnmanagedSessions: boolean }>(
+  current: RadarLocationCurrent,
+  isActive: () => boolean,
+  prefs: () => View,
+) {
+  return () => {
+    const value = current()
+    if (!value || !isActive()) return undefined
+    const view = prefs()
+    const key = JSON.stringify([
+      value.server,
+      value.project,
+      value.session,
+      view.scope,
+      view.includeUnmanagedSessions,
+    ])
+    return { value, key, view }
+  }
+}
+
+function radarExpectedKey(
+  current: RadarLocationCurrent,
+  prefs: () => { scope: string; includeUnmanagedSessions: boolean },
+) {
+  return () => {
+    const value = current()
+    return value
+      ? JSON.stringify([
+          value.server,
+          value.project,
+          value.session,
+          prefs().scope,
+          prefs().includeUnmanagedSessions,
+        ])
+      : ""
+  }
+}
+
 /** Resolved once for the whole panel, so switching views does not re-resolve the project. */
 function createRadarLocation(props: PanelProps) {
   const frame = usePanel()
@@ -170,10 +236,7 @@ function RadarDiagnosticsPanel(
   const state = new RadarPanelState(setData)
 
   const { location, current } = props.radarLocation
-  const projectKey = () => {
-    const value = current()
-    return value ? JSON.stringify([value.server, value.project]) : ""
-  }
+  const projectKey = radarProjectKey(current)
   const prefs = () => {
     const key = projectKey()
     if (!key) return initial
@@ -187,39 +250,18 @@ function RadarDiagnosticsPanel(
       detailScrollLeft: view.detailScrollLeft ?? 0,
     }
   }
-  const save = (change: Partial<typeof initial>) => {
-    const key = projectKey()
-    if (!key) return
-    const store = ctx.stores.radarView(props.session)
-    store.update((draft) => {
-      const value = draft.projects[key] ?? initialProject
-      const scope = change.scope ?? value.scope
-      const nextView = { ...value[scope], ...change, scope }
-      draft.projects[key] =
-        scope === "session"
-          ? { ...value, scope, session: nextView }
-          : { ...value, scope, project: nextView }
-    })
-  }
+  const save = (change: Partial<typeof initial>) =>
+    saveRadarView(ctx, props.session, projectKey(), change)
   onCleanup(() => {
     state.close()
   })
 
   createKeyed(
-    () => {
-      const value = current()
-      if (!value || !frame.visible() || !ctx.stores.radarView(props.session).ready())
-        return undefined
-      const view = prefs()
-      const key = JSON.stringify([
-        value.server,
-        value.project,
-        value.session,
-        view.scope,
-        view.includeUnmanagedSessions,
-      ])
-      return { value, key, view }
-    },
+    radarKeyedSource(
+      current,
+      () => frame.visible() && ctx.stores.radarView(props.session).ready(),
+      prefs,
+    ),
     ({ value, key, view }) => {
       const observationScope: ObservationScope = {
         kind: view.scope,
@@ -247,18 +289,7 @@ function RadarDiagnosticsPanel(
     },
   )
 
-  const expectedKey = () => {
-    const value = current()
-    return value
-      ? JSON.stringify([
-          value.server,
-          value.project,
-          value.session,
-          prefs().scope,
-          prefs().includeUnmanagedSessions,
-        ])
-      : ""
-  }
+  const expectedKey = radarExpectedKey(current, prefs)
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const snapshot = () => visible()?.snapshot
   const radar = () => visible()?.radar
@@ -879,47 +910,23 @@ function RadarLiveMonitorPanel(
   const [stateData, setStateData] = createSignal<RadarMonitorData>(emptyRadarMonitorData())
   const state = new RadarMonitorState(setStateData)
   const { location, current } = props.radarLocation
-  const projectKey = () => {
-    const value = current()
-    return value ? JSON.stringify([value.server, value.project]) : ""
-  }
+  const projectKey = radarProjectKey(current)
   const prefs = () => {
     const key = projectKey()
     if (!key) return initial
     const value = ctx.stores.radarView(props.session).value?.projects[key] ?? initialProject
     return { ...initial, ...value[value.scope], scope: value.scope }
   }
-  const save = (change: Partial<typeof initial>) => {
-    const key = projectKey()
-    if (!key) return
-    const store = ctx.stores.radarView(props.session)
-    store.update((draft) => {
-      const value = draft.projects[key] ?? initialProject
-      const scope = change.scope ?? value.scope
-      const nextView = { ...value[scope], ...change, scope }
-      draft.projects[key] =
-        scope === "session"
-          ? { ...value, scope, session: nextView }
-          : { ...value, scope, project: nextView }
-    })
-  }
+  const save = (change: Partial<typeof initial>) =>
+    saveRadarView(ctx, props.session, projectKey(), change)
   onCleanup(() => state.close())
 
   createKeyed(
-    () => {
-      const value = current()
-      if (!value || !frame.visible() || !ctx.stores.radarView(props.session).ready())
-        return undefined
-      const view = prefs()
-      const key = JSON.stringify([
-        value.server,
-        value.project,
-        value.session,
-        view.scope,
-        view.includeUnmanagedSessions,
-      ])
-      return { value, key, view }
-    },
+    radarKeyedSource(
+      current,
+      () => frame.visible() && ctx.stores.radarView(props.session).ready(),
+      prefs,
+    ),
     ({ value, key, view }) => {
       const observationScope: ObservationScope = { kind: view.scope, sessionID: value.session }
       const transport = createRadarMonitorTransport(
@@ -945,18 +952,7 @@ function RadarLiveMonitorPanel(
     },
   )
 
-  const expectedKey = () => {
-    const value = current()
-    return value
-      ? JSON.stringify([
-          value.server,
-          value.project,
-          value.session,
-          prefs().scope,
-          prefs().includeUnmanagedSessions,
-        ])
-      : ""
-  }
+  const expectedKey = radarExpectedKey(current, prefs)
   const visibleData = () => {
     const data = stateData()
     return data.key === expectedKey() ? data : emptyRadarMonitorData(expectedKey())

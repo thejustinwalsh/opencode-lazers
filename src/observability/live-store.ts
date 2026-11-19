@@ -507,6 +507,28 @@ const ObservationScopeSchema = z.discriminatedUnion("kind", [
 ])
 
 /** Read-only bounded SQL projections for the Radar live hot path and selected history. */
+function newLiveStoreMetrics(): LiveStoreMetrics {
+  return {
+    sourceQueries: 0,
+    sourceRowsRead: 0,
+    sourceBytesRead: 0,
+    sourcePayloadBytesRead: 0,
+    assignmentTruncated: false,
+    progressTruncated: false,
+    payloadTruncated: false,
+    journalTruncated: false,
+    journal: "unavailable",
+  }
+}
+
+function readRevisionAndJournal(db: Database, metrics: LiveStoreMetrics, projectDirectory: string) {
+  const revisionAvailable = tableExists(db, metrics, "observation_revisions")
+  const runnerRevision = revisionIfAvailable(db, metrics, revisionAvailable, projectDirectory)
+  const factsAvailable = tableExists(db, metrics, "recovery_progress_facts")
+  journalCoverage(db, metrics, factsAvailable, projectDirectory)
+  return { runnerRevision, factsAvailable }
+}
+
 export class LiveReadStore {
   constructor(
     private readonly path: string,
@@ -600,29 +622,15 @@ export class LiveReadStore {
 
   readCurrent(sessionID: string | null, signal: AbortSignal): LiveSourceSnapshot {
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    const metrics: LiveStoreMetrics = {
-      sourceQueries: 0,
-      sourceRowsRead: 0,
-      sourceBytesRead: 0,
-      sourcePayloadBytesRead: 0,
-      assignmentTruncated: false,
-      progressTruncated: false,
-      payloadTruncated: false,
-      journalTruncated: false,
-      journal: "unavailable",
-    }
+    const metrics = newLiveStoreMetrics()
     try {
       const source = connection.store.read((db) => {
         signal.throwIfAborted()
-        const revisionAvailable = tableExists(db, metrics, "observation_revisions")
-        const runnerRevision = revisionIfAvailable(
+        const { runnerRevision, factsAvailable } = readRevisionAndJournal(
           db,
           metrics,
-          revisionAvailable,
           this.projectDirectory,
         )
-        const factsAvailable = tableExists(db, metrics, "recovery_progress_facts")
-        journalCoverage(db, metrics, factsAvailable, this.projectDirectory)
 
         const assignments = new Map<string, LiveAttemptAssignment>()
         const progress = new Map<string, LiveProgressRow[]>()
@@ -789,29 +797,15 @@ export class LiveReadStore {
       ? readHistoryCursor(this.secret, input.cursor, input, this.projectID)
       : undefined
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    const metrics: LiveStoreMetrics = {
-      sourceQueries: 0,
-      sourceRowsRead: 0,
-      sourceBytesRead: 0,
-      sourcePayloadBytesRead: 0,
-      assignmentTruncated: false,
-      progressTruncated: false,
-      payloadTruncated: false,
-      journalTruncated: false,
-      journal: "unavailable",
-    }
+    const metrics = newLiveStoreMetrics()
     try {
       const source = connection.store.read((db) => {
         signal.throwIfAborted()
-        const revisionAvailable = tableExists(db, metrics, "observation_revisions")
-        const runnerRevision = revisionIfAvailable(
+        const { runnerRevision, factsAvailable } = readRevisionAndJournal(
           db,
           metrics,
-          revisionAvailable,
           this.projectDirectory,
         )
-        const factsAvailable = tableExists(db, metrics, "recovery_progress_facts")
-        journalCoverage(db, metrics, factsAvailable, this.projectDirectory)
 
         countQuery(metrics)
         const assignment = db
