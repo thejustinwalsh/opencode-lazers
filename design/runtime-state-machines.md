@@ -367,3 +367,22 @@ shared task is scheduled in the project checkout behind every active dispatch re
 `selectSharedWorkspace` does for `shared` (a `runner_plan_revisions` row and a
 `WORKSPACE_SELECTED` event with `mode: "isolated"`), so the new attempt gets a native
 `.worktrees` workspace. The earlier attempt's workspace and receipts are untouched.
+
+## Stale attempts stop holding reservations
+
+A dispatch reservation is derived from `activeProjectAttempts()` (attempts in `preparing`,
+`running` or `verifying`), so an attempt nobody settles reserves its checkout and write scope
+for good. The reconcile tick (`settleStaleAttempts`) gives such attempts a machine-decided
+exit that needs no Architect contact:
+
+| Condition (latest attempt of its task, no `intended`/`uncertain` effect)                      | Attempt becomes                        |
+| --------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Node already `accepted`/`incorporated` (retained acceptance that predates attempt settlement) | `accepted`, node artifact adopted      |
+| Plan `blocked`; session absent, or archived and quiet                                         | `failed` (retry/resume stay available) |
+| Plan `cancelled`/`failed`/`exhausted`; session absent, or archived and quiet                  | `cancelled`                            |
+
+A live session (not archived, busy, pending input/permissions/forms, running shells or active
+children) is never settled: it is a retained worker the Architect may resume. Each settlement
+records `ATTEMPT_STALE_SETTLED` with the cause. The two live `verifying` attempts on `running`
+plans were the first case: retained verification had moved the node to `accepted` (event
+`RETAINED_ACCEPT`) through a code path that did not also move the attempt.

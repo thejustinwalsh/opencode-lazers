@@ -6968,6 +6968,7 @@ export class TaskRuntime {
       await sectionAsync("tick:reconcileTerminalRetained", () =>
         this.retainedVerificationExecution.reconcileTerminalRetainedVerifications(fence),
       )
+      await sectionAsync("tick:settleStaleAttempts", () => this.settleStaleAttempts(fence))
       for (const planID of section("tick:closeoutReviewPlanIDs", () =>
         this.store.closeoutReviewPlanIDs(),
       )) {
@@ -9424,6 +9425,94 @@ export class TaskRuntime {
     })
     if (!started) return
     this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+  }
+
+  /**
+   * An attempt row counts as an active dispatch reservation until it is settled, so one that no
+   * longer has a worker would hold its checkout and write scope forever. Two machine-decided
+   * exits, neither depending on Architect contact:
+   * - the task's node is already accepted (a retained acceptance recorded before it also settled
+   *   the attempt): the attempt becomes `accepted`;
+   * - the plan is blocked or ended (a cancelling plan is settled by `cancelWorkers`) and the worker session is gone, or archived and
+   *   quiet: the attempt becomes `failed` (blocked plan, so retry/resume stay available) or
+   *   `cancelled`.
+   * A live session, or an intended or uncertain effect of the attempt, is never settled.
+   */
+  private static readonly staleAttemptWindowMs = 60_000
+  private readonly staleAttemptProbes = new Map<string, { since: number; probed: number }>()
+  private async settleStaleAttempts(fence: number) {
+    for (const attempt of this.store.activeProjectAttempts()) {
+      const plan = this.store.plan(attempt.plan_id)
+      if (!plan) continue
+      const latest = this.store
+        .attempts(plan.id)
+        .filter((item) => item.task_id === attempt.task_id)
+        .at(-1)
+      if (latest?.id !== attempt.id) continue
+      if (
+        this.store
+          .effects(plan.id)
+          .some(
+            (effect) =>
+              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+          )
+      )
+        continue
+      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
+      let target: "accepted" | "failed" | "cancelled" | undefined
+      let cause: string
+      if (node && ["accepted", "incorporated"].includes(node.state)) {
+        if (!["running", "verifying"].includes(attempt.state)) continue
+        target = "accepted"
+        cause = "node-already-accepted"
+      } else if (
+        ["running", "verifying"].includes(attempt.state) &&
+        ["blocked", "cancelled", "failed", "exhausted"].includes(plan.state)
+      ) {
+        // Give the ordinary worker observation time to settle the attempt first, then probe the
+        // host at most once per window so a held plan costs no extra read on every tick.
+        const now = this.now()
+        const seen = this.staleAttemptProbes.get(attempt.id)
+        if (seen === undefined) this.staleAttemptProbes.set(attempt.id, { since: now, probed: now })
+        if (seen === undefined || now - seen.probed < TaskRuntime.staleAttemptWindowMs) continue
+        seen.probed = now
+        const session = attempt.session_id ? await this.host.session(attempt.session_id) : null
+        if (
+          session &&
+          (!session.archived ||
+            session.busy ||
+            session.pendingInput ||
+            (session.pendingPermissions ?? 0) > 0 ||
+            (session.pendingForms ?? 0) > 0 ||
+            session.observationUnstable ||
+            (session.runningShells ?? 0) > 0 ||
+            (session.activeChildren ?? 0) > 0)
+        )
+          continue
+        target = plan.state === "blocked" ? "failed" : "cancelled"
+        cause = session ? "session-archived-and-quiet" : "session-absent"
+      } else continue
+      this.store.fenced(this.owner, fence, (db) => {
+        if (this.store.plan(plan.id)?.version !== plan.version) return
+        const changed = db
+          .query(
+            `UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,?),artifact=COALESCE(artifact,?)
+             WHERE id=? AND state=?`,
+          )
+          .run(target!, node?.artifact ?? null, attempt.id, attempt.state).changes
+        if (changed !== 1) return
+        this.store.record(plan.id, attempt.task_id, "ATTEMPT_STALE_SETTLED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          from: attempt.state,
+          to: target,
+          planState: plan.state,
+          nodeState: node?.state ?? null,
+          cause,
+        })
+      })
+    }
   }
 
   private failMissingWorker(
