@@ -4943,7 +4943,11 @@ test("repair handoffs do not copy legacy skill bodies into a new attempt", async
 })
 
 test("a repair attempt is told about every failing check", async () => {
-  const f = fixture({ fail: true, repair: true, beforeCheck: "echo before-broke >&2; exit 3" })
+  const f = fixture({
+    repair: true,
+    beforeCheck: "echo before-out; echo before-err >&2; exit 3",
+    checkCommand: "echo content-out; echo content-err >&2; exit 7",
+  })
   const planID = f.receipt.planID
   await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
   await f.runtime.tick()
@@ -4959,11 +4963,12 @@ test("a repair attempt is told about every failing check", async () => {
   expect(attempts).toHaveLength(2)
   await f.runtime.tick()
   const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
-  expect(prompt).toContain("- before:")
-  expect(prompt).toContain("exit 3")
-  expect(prompt).toContain("before-broke")
-  expect(prompt).toContain("- content:")
-  expect(prompt).toContain("exit 7")
+  expect(prompt).toContain("- before: `echo before-out; echo before-err >&2; exit 3` exit 3")
+  expect(prompt).toContain("stdout:\n```\nbefore-out\n\n```")
+  expect(prompt).toContain("stderr:\n```\nbefore-err\n\n```")
+  expect(prompt).toContain("- content: `echo content-out; echo content-err >&2; exit 7` exit 7")
+  expect(prompt).toContain("stdout:\n```\ncontent-out\n\n```")
+  expect(prompt).toContain("stderr:\n```\ncontent-err\n\n```")
 })
 
 test("a single failing check keeps its unchanged failure reason", async () => {

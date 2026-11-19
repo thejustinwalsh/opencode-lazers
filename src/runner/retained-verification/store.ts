@@ -1029,7 +1029,10 @@ function operationProjection(
     const outputTruncated =
       receiptMatches &&
       [receipt.stdout, receipt.stderr].some(
-        (value) => typeof value === "string" && value.includes("[output truncated]"),
+        (value) =>
+          typeof value === "string" &&
+          (value.includes("[output truncated]") ||
+            /\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n/.test(value)),
       )
     return {
       phase,

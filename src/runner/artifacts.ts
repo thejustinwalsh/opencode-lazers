@@ -661,17 +661,46 @@ export function verificationEnvironmentIdentity(): string {
 }
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768, onProgress?: () => void) {
   const reader = stream.getReader()
+  const headLimit = Math.min(8192, limit)
+  const tailLimit = limit - headLimit
   let bytes = 0
-  const chunks: Uint8Array[] = []
+  let headBytes = 0
+  let tailBytes = 0
+  const head: Uint8Array[] = []
+  const tail: Uint8Array[] = []
   while (true) {
     const part = await reader.read()
     if (part.done) break
     if (part.value.byteLength > 0) onProgress?.()
-    const remaining = Math.max(0, limit - bytes)
-    if (remaining) chunks.push(part.value.slice(0, remaining))
     bytes += part.value.byteLength
+    let value = part.value
+    const headRoom = headLimit - headBytes
+    if (headRoom > 0) {
+      head.push(value.slice(0, headRoom))
+      headBytes += Math.min(headRoom, value.byteLength)
+      value = value.slice(headRoom)
+    }
+    if (!value.byteLength || !tailLimit) continue
+    tail.push(value.byteLength > tailLimit ? value.slice(-tailLimit) : value)
+    tailBytes += tail.at(-1)!.byteLength
+    while (tailBytes > tailLimit) {
+      const excess = tailBytes - tailLimit
+      const first = tail[0]!
+      if (first.byteLength <= excess) {
+        tail.shift()
+        tailBytes -= first.byteLength
+      } else {
+        tail[0] = first.slice(excess)
+        tailBytes -= excess
+      }
+    }
   }
-  return Buffer.concat(chunks).toString("utf8") + (bytes > limit ? "\n[output truncated]" : "")
+  const omitted = bytes - headBytes - tailBytes
+  return (
+    Buffer.concat(head).toString("utf8") +
+    (omitted > 0 ? `\n[... ${omitted} bytes omitted ...]\n` : "") +
+    Buffer.concat(tail).toString("utf8")
+  )
 }
 
 function processGroupExists(pid: number): boolean {

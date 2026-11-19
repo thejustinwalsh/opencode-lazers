@@ -10071,9 +10071,13 @@ export class TaskRuntime {
       .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
       .at(-1)
     if (!previous) return ""
-    const stats = privacyStats()
-    const tail = (text: string, limit: number) =>
-      safeText(text.trim().slice(-limit), stats, limit + 1_000)
+    const fenced = (label: string, text: string) => {
+      if (!text.trim()) return ""
+      let fence = "```"
+      for (const match of text.matchAll(/`+/g))
+        if (match[0].length >= fence.length) fence = "`".repeat(match[0].length + 1)
+      return `\n${label}:\n${fence}\n${text}\n${fence}`
+    }
     const sections = this.store
       .read((db) =>
         db
@@ -10084,13 +10088,12 @@ export class TaskRuntime {
       )
       .map((row) => JSON.parse(row.body) as CheckReceipt)
       .filter((receipt) => !checkSucceeded(receipt))
-      .map((receipt) => {
-        const stderr = tail(receipt.stderr, 1_000)
-        const stdout = tail(receipt.stdout, 2_000 - stderr.length)
-        return `- ${receipt.id}: \`${safeText(receipt.command, stats, 500)}\` exit ${receipt.exitCode ?? "unknown"}\n  stderr (tail): ${stderr}\n  stdout (tail): ${stdout}`
-      })
+      .map(
+        (receipt) =>
+          `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`,
+      )
     if (!sections.length) return ""
-    return `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n").slice(0, 8_000)}`
+    return `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
   }
   private failAttempt(
     plan: PlanRow,
