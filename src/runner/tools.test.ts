@@ -137,7 +137,8 @@ test("authorized callers read native catalog advice; only orchestration requires
   })
   expect(continuityCalls).toEqual([{ sessionID: "ses_test", input: checkpoint }])
   const planCommandDescription = tools.get("lz-plan-command")!.description
-  expect(planCommandDescription).toContain("expectedVersion and stable requestID")
+  expect(planCommandDescription).toContain("stable requestID")
+  expect(planCommandDescription).not.toContain("expectedVersion")
   expect(planCommandDescription).toContain("without taskID")
   expect(planCommandDescription).toContain("re-runs the combined check")
   expect(planCommandDescription).not.toContain("extend-verification-deadline")

@@ -177,10 +177,7 @@ async function createTerminalFailure(
       message,
     })
   }
-  await f.runtime.command(
-    { requestID: "startup-run", planID: f.planID, expectedVersion: f.plan.version, action: "run" },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "startup-run", planID: f.planID, action: "run" }, "owner")
   await f.runtime.tick()
   const attempt = f.store.attempts(f.planID)[0]!
   const effect = f.store.effects(f.planID).find((candidate) => candidate.kind === "worktree")!
@@ -198,10 +195,7 @@ async function createUnversionedLegacyFailure(f: ReturnType<typeof fixture>) {
     f.calls.worktree++
     throw new Error("Worktree.DirectoryUnavailableError")
   }
-  await f.runtime.command(
-    { requestID: "startup-run", planID: f.planID, expectedVersion: f.plan.version, action: "run" },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "startup-run", planID: f.planID, action: "run" }, "owner")
   await f.runtime.tick()
   const attempt = f.store.attempts(f.planID)[0]!
   const effect = f.store.effects(f.planID).find((candidate) => candidate.kind === "worktree")!
@@ -231,7 +225,6 @@ function settlementCommand(
   return {
     requestID,
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "settle-startup" as const,
     taskID: f.taskID,
     attemptID,
@@ -313,7 +306,6 @@ function explicitResumeCommand(f: ReturnType<typeof fixture>, attemptID: string)
   return {
     requestID: "explicit-startup-resume-after-gap",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "resume" as const,
     taskID: f.taskID,
     attemptID,
@@ -411,7 +403,6 @@ test("recovery-only unavailable-session telemetry survives settlement and reopen
   const integrate = (requestID: string) => ({
     requestID,
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "integrated" as const,
     artifact,
     targetBranch: "main",
@@ -663,7 +654,6 @@ test("typed native failure settles only after fresh absence and resumes the same
   const recoveryCommand = {
     requestID: "explicit-startup-resume",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "resume" as const,
     taskID: f.taskID,
     attemptID: attempt.id,
@@ -680,11 +670,10 @@ test("typed native failure settles only after fresh absence and resumes the same
       {
         ...recoveryCommand,
         requestID: "duplicate-authority",
-        expectedVersion: recoveryCommand.expectedVersion,
       },
       "owner",
     ),
-  ).rejects.toThrow("Stale plan version")
+  ).rejects.toThrow("Only an exhausted or cancelled, stopped attempt can resume")
   expect(f.calls).toEqual({ worktree: 1, create: 0, prompt: 0 })
 
   f.host.worktree = async ({ directory, base }) => {
@@ -814,7 +803,6 @@ test("legacy error-only receipts settle generically from current runtime identit
   const resume = {
     requestID: "legacy-explicit-resume",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "resume" as const,
     taskID: f.taskID,
     attemptID: attempt.id,
@@ -1019,7 +1007,6 @@ test("unknown, timed-out and ENOSPC failures cannot be settled as terminal absen
       {
         requestID: "startup-run",
         planID: f.planID,
-        expectedVersion: f.plan.version,
         action: "run",
       },
       "owner",
@@ -1076,7 +1063,6 @@ test("each conclusively failed linked recovery can be settled before another exp
     const command = {
       requestID,
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "resume" as const,
       taskID: f.taskID,
       attemptID: attempt.id,
@@ -1213,7 +1199,6 @@ test("a new owner may settle historical linked failure and explicitly continue u
     {
       requestID: "owner-recovery-1",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "resume",
       taskID: f.taskID,
       attemptID: attempt.id,
@@ -1236,7 +1221,6 @@ test("a new owner may settle historical linked failure and explicitly continue u
     {
       requestID: "transfer-after-recovery-failure",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "reassign",
       targetSessionID: "next-owner",
       reason: "Continue recovery through the active coordinator.",
@@ -1278,7 +1262,6 @@ test("a new owner may settle historical linked failure and explicitly continue u
     {
       requestID: "next-owner-recovery-2",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "resume",
       taskID: f.taskID,
       attemptID: attempt.id,
@@ -1352,7 +1335,7 @@ test("worker admission waits for an untouched reserved base after native creatio
     return actual
   }
   await f.runtime.command(
-    { requestID: "invalid-startup-base", planID: f.planID, expectedVersion: 1, action: "run" },
+    { requestID: "invalid-startup-base", planID: f.planID, action: "run" },
     "owner",
   )
   await f.runtime.tick()
@@ -1449,7 +1432,6 @@ test("an ownership change during asynchronous absence observation wins over sett
     {
       requestID: "cancel-during-settlement",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
     },
     "owner",
@@ -1500,7 +1482,6 @@ test("a plan change during absence observation voids the pending settlement", as
     {
       requestID: "reassign-during-settlement",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "reassign",
       targetSessionID: "new-owner",
       reason: "Transfer review authority.",
@@ -1524,7 +1505,6 @@ test("an uncertain linked recovery operation stays unresolved and is never repla
     {
       requestID: "authorize-uncertain-recovery",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "resume",
       taskID: f.taskID,
       attemptID: attempt.id,
@@ -1547,7 +1527,6 @@ test("an uncertain linked recovery operation stays unresolved and is never repla
       {
         requestID: "unsafe-replay-recovery",
         planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
         action: "resume",
         taskID: f.taskID,
         attemptID: attempt.id,
@@ -1569,7 +1548,6 @@ test("a late recovery completion after cancellation cannot admit the reserved wo
     {
       requestID: "authorize-late-recovery",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "resume",
       taskID: f.taskID,
       attemptID: attempt.id,
@@ -1595,7 +1573,6 @@ test("a late recovery completion after cancellation cannot admit the reserved wo
     {
       requestID: "cancel-late-recovery",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
     },
     "owner",

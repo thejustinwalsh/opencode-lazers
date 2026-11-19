@@ -175,7 +175,7 @@ checked for open requests and in-flight tools but admitted an active session
 between tool calls. For a live service-wide reload, wait for the native active
 session inventory to clear. OpenCode can decline a call as its location
 permission service closes. Retry the unchanged command after reload completes
-if the plan version is still current.
+if the plan state still allows it.
 
 ## Simplified orchestration: the request is the authorization
 
@@ -329,3 +329,21 @@ notices are superseded. Older operations that carry a combined checkout still
 parse that field so terminal cleanup can remove it; nothing creates one. Amendments
 recorded by earlier deadline extensions still resolve for the exact checks they
 named; nothing records a new one.
+
+## Commands are decided by the recorded state, not a caller version
+
+No model-facing tool takes `expectedVersion` or `expectedRevision`; a model has no way to learn
+a counter except by calling `lz-inspect-plan` first. `src/runner/plan-commands.ts` maps each
+plan command to the plan-machine event it drives and the states it may start from; legality asks
+`lifecycleMachines.plan`. A refused command names the state and what applies, for example
+`Plan is integrated; retry is not available. Available: none.` The check runs before any
+asynchronous effect and again inside the command transaction.
+
+The runtime still compares against the plan version it read itself when it began handling
+the command (`PlanMovedDuringCommand`). If a tick moved the plan between its native or Git
+observation and its transaction, the command is re-read and re-evaluated, at most three times,
+then fails naming the current state. Idempotency stays on `requestID`; a receipt recorded with a
+legacy `expectedVersion` still matches a replay without it. A stray `expectedVersion` or
+`expectedRevision` from an older prompt is dropped before validation (plan command, recovery
+tools, `lz-configure-models`). The Desktop route editor keeps its own `expectedRevision` guard,
+because two open panels can edit one route.

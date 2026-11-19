@@ -489,10 +489,7 @@ async function waitForAdoptionState(f: TestFixture, adoptionID: string, state: s
 }
 
 async function strand(f: TestFixture) {
-  await f.runtime.command(
-    { requestID: "run-plan", planID: f.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "run-plan", planID: f.planID, action: "run" }, "owner")
   const expectedNodeState = f.initialValue === "bad" ? "failed" : "accepted"
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
@@ -576,7 +573,6 @@ function adoptionCommand(
   return {
     requestID: "adopt-reviewed-descendant",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "adopt-descendant",
     taskID: f.task.id,
     attemptID,
@@ -647,7 +643,6 @@ async function integratePlan(f: TestFixture) {
     {
       requestID: "integrate-adopted-plan",
       planID: f.planID,
-      expectedVersion: plan.version,
       action: "integrated",
       artifact: plan.artifact!,
       targetBranch: "main",
@@ -914,7 +909,6 @@ test("accepted task with blocked combined check adopts a descendant without rewr
   const landing = {
     requestID: "record-source-landing",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "integrated",
     taskID: f.task.id,
     artifact: oldArtifact,
@@ -967,7 +961,6 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
     {
       requestID: "record-source-before-intervening-work",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "integrated",
       taskID: f.task.id,
       artifact: oldArtifact,
@@ -1088,7 +1081,6 @@ test("revoking a mistaken supplemental scope restores adoption without changing 
     {
       requestID: "extra-scope",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "amend-scope",
       taskID: f.task.id,
       scopeAdditions: ["parallel-ui.txt"],
@@ -1103,7 +1095,6 @@ test("revoking a mistaken supplemental scope restores adoption without changing 
   const removal = {
     requestID: "remove-mistaken-scope",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "amend-scope",
     taskID: f.task.id,
     scopeRemovals: ["parallel-ui.txt"],
@@ -1112,9 +1103,6 @@ test("revoking a mistaken supplemental scope restores adoption without changing 
   await expect(f.runtime.command(removal, "foreign-owner")).rejects.toThrow(
     "A live Architect session of this project must command the plan",
   )
-  await expect(
-    f.runtime.command({ ...removal, expectedVersion: removal.expectedVersion - 1 }, "owner"),
-  ).rejects.toThrow("Stale plan version")
   await expect(
     f.runtime.command({ ...removal, scopeRemovals: ["result.txt"] }, "owner"),
   ).rejects.toThrow("cannot remove original task scope")
@@ -1146,7 +1134,6 @@ test("supplemental scope cannot be revoked during a writer or an active adoption
     {
       requestID: "extra-scope",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "amend-scope",
       taskID: f.task.id,
       scopeAdditions: ["extra.txt"],
@@ -1157,7 +1144,6 @@ test("supplemental scope cannot be revoked during a writer or an active adoption
   const removal = () => ({
     requestID: "revoke-extra",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "amend-scope",
     taskID: f.task.id,
     scopeRemovals: ["extra.txt"],
@@ -1411,12 +1397,6 @@ test("dirty candidates, wrong bindings, foreign owners, and worker controls fail
   const candidate = landCandidate(f, node.artifact!)
   const good = adoptionCommand(f, attempt.id, node.artifact!, candidate)
   await expect(
-    f.runtime.command(
-      { ...good, expectedVersion: good.expectedVersion - 1, requestID: "stale-version" },
-      "owner",
-    ),
-  ).rejects.toThrow("Stale plan version")
-  await expect(
     f.runtime.command({ ...good, attemptID: crypto.randomUUID() }, "owner"),
   ).rejects.toThrow("exact latest task attempt")
   await expect(f.runtime.command({ ...good, artifact: f.base }, "owner")).rejects.toThrow(
@@ -1593,7 +1573,6 @@ test("cancellation during a fresh check fences acceptance and cleans the settled
     {
       requestID: "cancel-adoption",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
     },
     "owner",
@@ -1632,7 +1611,6 @@ test("cancellation during combined checks prevents acceptance and cleans settled
     {
       requestID: "cancel-during-combined-check",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
     },
     "owner",
@@ -1697,7 +1675,6 @@ test("cancel during worker observation does not create a candidate worktree or p
     {
       requestID: "cancel-during-observation",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
     },
     "owner",

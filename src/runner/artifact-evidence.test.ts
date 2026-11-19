@@ -223,7 +223,7 @@ function fixture(
 }
 
 async function run(runtime: TaskRuntime, planID: string, count = 10) {
-  await runtime.command({ requestID: "run", planID, expectedVersion: 1, action: "run" }, "owner")
+  await runtime.command({ requestID: "run", planID, action: "run" }, "owner")
   for (let index = 0; index < count; index++) await settleVerification(runtime)
 }
 
@@ -252,7 +252,6 @@ test("directory artifact evidence accepts only with matching checks", async () =
     {
       requestID: "reconcile-accepted-task",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "reconcile",
     },
     "owner",

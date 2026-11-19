@@ -278,7 +278,6 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     requestID: "concern-version-1",
     concernID,
     sourceAttemptID: secondAttemptID,
-    expectedVersion: 0,
     ruleID: "no-forward-progress",
     reason: "The latest check did not establish the agreed outcome.",
     evidenceBoundary: { fromSequence: 12, throughSequence: 15 },
@@ -301,7 +300,6 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     requestID: "decision-version-1",
     dispositionID: crypto.randomUUID(),
     concernID,
-    expectedVersion: 1,
     decision: "follow-up",
     reason: "Reassess after the worker attempts the identified next check.",
     evidenceBoundary: { fromSequence: 12, throughSequence: 15 },
@@ -316,20 +314,32 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     architect("decision"),
   )
   expect(decision.record.followUp?.condition).toContain("verification")
+  // A legacy prompt's expectedVersion is ignored; the exact replay still matches.
+  const legacyReplay = await f.invoke<DecisionReceipt>(
+    "lz-disposition-recovery-concern",
+    { ...followUpInput, expectedVersion: 7 },
+    architect("legacy-decision"),
+  )
+  expect(legacyReplay.status).toBe("replayed")
+  // A decision always covers the concern's latest version; an unknown concern is rejected.
   await expect(
     f.invoke(
       "lz-disposition-recovery-concern",
-      { ...followUpInput, expectedVersion: 2, requestID: "stale-decision" },
-      architect("stale-decision"),
+      {
+        ...followUpInput,
+        requestID: "unknown-concern-decision",
+        dispositionID: crypto.randomUUID(),
+        concernID: crypto.randomUUID(),
+      },
+      architect("unknown-concern-decision"),
     ),
-  ).rejects.toThrow("version conflict")
+  ).rejects.toThrow("does not exist")
 
   const secondConcern = await f.invoke<ConcernReceipt>(
     "lz-record-recovery-concern",
     {
       ...firstConcernInput,
       requestID: "concern-version-2",
-      expectedVersion: 1,
       reason: "A new verification event is now available for reassessment.",
       evidenceBoundary: { fromSequence: 16, throughSequence: 18 },
       evidence: [{ kind: "verification", reference: "check:next" }],
@@ -352,7 +362,6 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     requestID: "checkpoint-once",
     attemptID: secondAttemptID,
     concernID,
-    expectedVersion: 2,
     evidenceBoundary: { fromSequence: 16, throughSequence: 18 },
     guidance: "Report what changed, any blockers, and a materially useful next approach.",
   }
@@ -510,7 +519,6 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     dispositionID: crypto.randomUUID(),
     requestID: request.record.requestID,
     reportID: finalized.report.reportID,
-    expectedVersion: 0,
     decision: "correct",
     correction: { status: "known", value: "The remaining work is the narrow failing check." },
     reason: "Clarify the next worker's starting point without changing the task contract.",
@@ -525,16 +533,17 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     architect("handoff-correction"),
   )
   expect(correction.record.version).toBe(1)
-  await expect(
-    f.invoke(
-      "lz-disposition-handoff",
-      {
-        ...correctionInput,
-        dispositionID: crypto.randomUUID(),
-      },
-      architect("stale-handoff-disposition"),
-    ),
-  ).rejects.toThrow("version conflict")
+  // Corrections append in order; the store reads the current version, the caller supplies none.
+  const secondCorrection = await f.invoke<DecisionReceipt>(
+    "lz-disposition-handoff",
+    {
+      ...correctionInput,
+      dispositionID: crypto.randomUUID(),
+      expectedVersion: 99,
+    },
+    architect("handoff-second-correction"),
+  )
+  expect(secondCorrection.record.version).toBe(2)
   const workerRead = await f.invoke<HandoffRead>(
     "lz-read-handoff",
     { requestID: request.record.requestID },
@@ -579,7 +588,7 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
       { requestID: request.record.requestID },
       { sessionID: "ses-owner", agent: "architect", role: "architect" },
     )
-    expect(persistedHandoff?.dispositions[0]?.version).toBe(1)
+    expect(persistedHandoff?.dispositions[0]?.version).toBe(2)
   } finally {
     reopenedRepository.close()
   }
@@ -1279,7 +1288,6 @@ test("ambiguous checkpoint admission is persisted and never resent on replay", a
       requestID: "uncertain-concern",
       concernID,
       sourceAttemptID: secondAttemptID,
-      expectedVersion: 0,
       ruleID: "blocked",
       reason: "The worker needs an evidence-backed check-in.",
       evidenceBoundary: { fromSequence: 0, throughSequence: 3 },
@@ -1291,7 +1299,6 @@ test("ambiguous checkpoint admission is persisted and never resent on replay", a
     requestID: "uncertain-checkpoint",
     attemptID: secondAttemptID,
     concernID,
-    expectedVersion: 1,
     evidenceBoundary: { fromSequence: 0, throughSequence: 3 },
   }
   const uncertain = await f.invoke<CheckpointState>(
@@ -1320,7 +1327,6 @@ test("a replacement racing native session lookup is rechecked before synthetic s
       requestID: "race-concern",
       concernID,
       sourceAttemptID: secondAttemptID,
-      expectedVersion: 0,
       ruleID: "needs-reassessment",
       reason: "The current result needs a same-worker checkpoint.",
       evidenceBoundary: { fromSequence: 2, throughSequence: 4 },
@@ -1334,7 +1340,6 @@ test("a replacement racing native session lookup is rechecked before synthetic s
       requestID: "race-checkpoint",
       attemptID: secondAttemptID,
       concernID,
-      expectedVersion: 1,
       evidenceBoundary: { fromSequence: 2, throughSequence: 4 },
     },
     architect("race-checkpoint"),
@@ -1351,7 +1356,6 @@ test("stale concern versions, foreign workers, and replacement attempts cannot s
     requestID: "owner-bound-concern",
     concernID,
     sourceAttemptID: secondAttemptID,
-    expectedVersion: 0,
     ruleID: "stalled",
     reason: "The task still needs evidence-based reassessment.",
     evidenceBoundary: { fromSequence: 1, throughSequence: 2 },
@@ -1362,14 +1366,13 @@ test("stale concern versions, foreign workers, and replacement attempts cannot s
     requestID: "replacement-checkpoint",
     attemptID: secondAttemptID,
     concernID,
-    expectedVersion: 1,
     evidenceBoundary: { fromSequence: 1, throughSequence: 2 },
   }
   await expect(
     f.invoke(
       "lz-checkpoint-recovery-worker",
-      { ...checkpointInput, expectedVersion: 2 },
-      architect("stale-version"),
+      { ...checkpointInput, concernID: crypto.randomUUID() },
+      architect("unknown-concern"),
     ),
   ).rejects.toThrow("not attached")
   await expect(

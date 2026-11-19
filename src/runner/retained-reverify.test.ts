@@ -529,7 +529,7 @@ async function registeredPlanCommand(runtime: TaskRuntime, sessionID = "owner") 
 async function failedFixture(options: Parameters<typeof fixture>[0] = {}) {
   const f = fixture(options)
   await f.runtime.command(
-    { requestID: "run-retained-fixture", planID: f.planID, expectedVersion: 1, action: "run" },
+    { requestID: "run-retained-fixture", planID: f.planID, action: "run" },
     "owner",
   )
   await waitForFixtureCondition(
@@ -990,7 +990,6 @@ function retainedVerifyCommand(f: Awaited<ReturnType<typeof failedFixture>>, req
   return {
     requestID,
     planID: f.planID,
-    expectedVersion: plan.version,
     action: "verify-retained" as const,
     projectID: "project",
     planRevision: plan.revision,
@@ -1217,7 +1216,6 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
     {
       requestID: "reassign-sealed-source-verification-owner",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "reassign",
       targetSessionID: "owner2",
       reason: "Continue review of the sealed candidate under the current Architect owner",
@@ -1438,7 +1436,6 @@ async function acceptedFailedAttemptFixture() {
   const command = {
     requestID: "repair-retained-accepted-failed-attempt",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "retained-repair" as const,
     taskID: f.task.id,
     attemptID: f.attempt.id,
@@ -1726,7 +1723,6 @@ test(
     const verifyCommand = {
       requestID: "verify-retained-candidate",
       planID: f.planID,
-      expectedVersion: planBefore.version,
       action: "verify-retained" as const,
       projectID: "project",
       planRevision: planBefore.revision,
@@ -1896,7 +1892,6 @@ test("stale, wrong-candidate, wrong-attempt and foreign-owner requests launch no
   const f = await failedFixture()
   const base = {
     planID: f.planID,
-    expectedVersion: f.plan.version,
     action: "verify-retained" as const,
     projectID: "project",
     planRevision: f.plan.revision,
@@ -1947,7 +1942,6 @@ test("a service URL in an authorized check does not trigger a verification admis
     {
       requestID: "run-shared-service-fixture",
       planID: f.planID,
-      expectedVersion: 1,
       action: "run",
     },
     "owner",
@@ -1961,7 +1955,6 @@ test("a service URL in an authorized check does not trigger a verification admis
     {
       requestID: "verify-unisolatable-shared-service",
       planID: f.planID,
-      expectedVersion: plan.version,
       action: "verify-retained",
       projectID: "project",
       planRevision: plan.revision,
@@ -2016,7 +2009,6 @@ test("a configured script executes and records its actual command failure", asyn
     {
       requestID: "verify-indirect-resource-check",
       planID: f.planID,
-      expectedVersion: plan.version,
       action: "verify-retained",
       projectID: "project",
       planRevision: plan.revision,
@@ -2081,7 +2073,6 @@ test("a current task probe definition cannot be bypassed by task-check receipts"
     {
       requestID: "verify-with-required-live-probe",
       planID: f.planID,
-      expectedVersion: f.plan.version,
       action: "verify-retained",
       projectID: "project",
       planRevision: f.plan.revision,
@@ -2134,7 +2125,6 @@ test("failed retained-checkout cleanup does not revoke a product pass", async ()
     {
       requestID: "run-retained-cleanup-fixture",
       planID: cleanupFixture.planID,
-      expectedVersion: 1,
       action: "run",
     },
     "owner",
@@ -2147,7 +2137,6 @@ test("failed retained-checkout cleanup does not revoke a product pass", async ()
     {
       requestID: "verify-retained-cleanup-failure",
       planID: cleanupFixture.planID,
-      expectedVersion: plan.version,
       action: "verify-retained",
       projectID: "project",
       planRevision: plan.revision,
@@ -2214,7 +2203,6 @@ test.each(["cancel"] as const)(
       const command = {
         requestID: "cancel-unknown-settlement",
         planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
         action,
       }
       await control.execute(command)
@@ -2316,7 +2304,6 @@ for (const action of ["cancel"] as const)
       const command = {
         requestID: "cancel-after-receipt-cut",
         planID: f.planID,
-        expectedVersion: store.plan(f.planID)!.version,
         action,
       }
       const worktreesBefore = [...f.worktreeCreations]
@@ -2537,7 +2524,6 @@ test.each(["cancel"] as const)(
     const command = {
       requestID: "verify-retained-cancel-late-result",
       planID: delayed.planID,
-      expectedVersion: plan.version,
       action: "verify-retained" as const,
       projectID: "project",
       planRevision: plan.revision,
@@ -2581,7 +2567,6 @@ test.each(["cancel"] as const)(
     await control.execute({
       requestID: "cancel-retained-during-check",
       planID: delayed.planID,
-      expectedVersion: plan.version,
       action,
       reason: "Stop the isolated check and retain its actual result without acceptance",
     })
@@ -2691,7 +2676,6 @@ test("a slow candidate dependency setup leaves unrelated plan RPCs responsive", 
       {
         requestID: "audit-during-slow-retained-install",
         planID: f.planID,
-        expectedVersion: f.store.plan(f.planID)!.version,
         action: "audit",
       },
       "owner",
@@ -2854,7 +2838,6 @@ test("cancellation observes a real installer process group before removing parti
     {
       requestID: "cancel-retained-dependency-setup",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "cancel",
       reason: "Cancel the isolated dependency setup before any check launches",
     },
@@ -3053,7 +3036,6 @@ test.each([false, true])(
         const cancel = {
           requestID: "cancel-before-reopen-with-live-installer",
           planID: f.planID,
-          expectedVersion: f.store.plan(f.planID)!.version,
           action: "cancel" as const,
           reason: "Cancel before runtime restart with installer termination unknown",
         }

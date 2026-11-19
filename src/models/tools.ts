@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { isAgentSubject } from "./agent-ids.ts"
-import { ModelMappingUpdateSchema } from "./mapping-schema.ts"
+import { ModelMappingToolInput } from "./mapping-schema.ts"
 import {
   ModelMappingWriteOutputSchema,
   ModelSettingsInputSchema,
@@ -66,8 +66,8 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
     editor.add({
       name: "lz-configure-models",
       description:
-        "Architect-only exact route update for a shared, project or existing project-task persona mapping, or a shared or project route for an agent (architect, lazers-implementor, auditor). Supply the current expectedRevision; stale writes return a conflict with the current record and are never retried automatically. Use route null to remove an override and reveal inheritance.",
-      input: ModelMappingUpdateSchema,
+        "Architect-only exact route update for a shared, project or existing project-task persona mapping, or a shared or project route for an agent (architect, lazers-implementor, auditor). Writes against the current mapping (last write wins; earlier revisions stay in history). Use route null to remove an override and reveal inheritance.",
+      input: ModelMappingToolInput,
       output: ModelMappingWriteOutputSchema,
       options: { codemode: true, pinned: true, permission: "lz-configure-models" },
       execute: (input, call) =>
@@ -87,7 +87,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
               return Effect.tryPromise({
                 try: async () => {
                   const output = withRepository((connection) =>
-                    new ModelSettingsService(connection).configure(input),
+                    new ModelSettingsService(connection).configureCurrent(input),
                   )
                   if (ctx.agent && output.status === "updated" && isAgentSubject(input.persona))
                     await Effect.runPromise(ctx.agent.reload())

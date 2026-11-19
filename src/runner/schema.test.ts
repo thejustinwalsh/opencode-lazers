@@ -51,7 +51,6 @@ test("startup settlement command requires exact task, attempt and decision", () 
   const base = {
     requestID: "settle-startup-test",
     planID: crypto.randomUUID(),
-    expectedVersion: 2,
     action: "settle-startup" as const,
     reason: "Native failure and absence were reviewed.",
     taskID: crypto.randomUUID(),
@@ -69,7 +68,6 @@ test("resume exposes only the exact task and attempt bindings for retained-repai
   const command = {
     requestID: "resume-retained-repair-after-fence-failure",
     planID: crypto.randomUUID(),
-    expectedVersion: 7,
     action: "resume" as const,
     taskID: crypto.randomUUID(),
     attemptID: crypto.randomUUID(),
@@ -87,7 +85,6 @@ test("plan-level resume requires a reason and excludes task or candidate control
   const command = {
     requestID: "resume-interrupted-combined-check",
     planID: crypto.randomUUID(),
-    expectedVersion: 7,
     action: "resume" as const,
     reason: "Continue the exact accepted artifacts after the settled interruption.",
   }
@@ -124,7 +121,6 @@ test("CommandInput scopes exact review-input aliases to owner reconciliation", (
   const command = {
     requestID: "review-input-reconcile",
     planID: crypto.randomUUID(),
-    expectedVersion: 3,
     action: "reconcile" as const,
     taskID: crypto.randomUUID(),
     attemptID: crypto.randomUUID(),
@@ -169,7 +165,6 @@ test("retained repair commands bind the exact task attempt artifact and concrete
   const command = {
     requestID: "repair-accepted-candidate",
     planID: crypto.randomUUID(),
-    expectedVersion: 4,
     action: "retained-repair" as const,
     taskID: crypto.randomUUID(),
     attemptID: crypto.randomUUID(),
@@ -187,7 +182,6 @@ test("retained verification requests bind current revisions, not a plan version"
   const command = {
     requestID: "verify-exact-retained-candidate",
     planID: crypto.randomUUID(),
-    expectedVersion: 4,
     action: "verify-retained" as const,
     projectID: "project-id",
     planRevision: 2,
@@ -216,7 +210,6 @@ test("the retained extend, continue and cancel commands and their fields are gon
   const base = {
     requestID: "retired-retained-command",
     planID: crypto.randomUUID(),
-    expectedVersion: 7,
   }
   for (const action of [
     "extend-verification-deadline",

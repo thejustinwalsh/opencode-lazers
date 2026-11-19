@@ -19,6 +19,7 @@ import {
   RecoveryCheckpointInput,
   RecoveryConcernInput,
   RecoveryDispositionInput,
+  ignoreLegacyVersion,
 } from "./handoff/schema.ts"
 import type { HandoffActor } from "./handoff/schema.ts"
 
@@ -105,11 +106,13 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-record-recovery-concern",
       description:
-        "Attach a bounded recovery concern to an exact project-owned attempt. Use expectedVersion 0 for its first version and the latest version when adding evidence. Immutable history and evidence boundaries are retained; this does not deliver a notification or change task authority.",
-      input: z.strictObject({
-        ...RecoveryConcernInput.shape,
-        requestID: z.string().min(1).max(200).optional(),
-      }),
+        "Attach a bounded recovery concern to an exact project-owned attempt. Reusing a concernID appends its next version. Immutable history and evidence boundaries are retained; this does not deliver a notification or change task authority.",
+      input: ignoreLegacyVersion(
+        z.strictObject({
+          ...RecoveryConcernInput.shape,
+          requestID: z.string().min(1).max(200).optional(),
+        }),
+      ),
       output: z.unknown(),
       options: { codemode: true, permission: "lz-record-recovery-concern" },
       execute: (input, call) =>
@@ -135,11 +138,13 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-disposition-recovery-concern",
       description:
-        "Append an Architect acknowledgement or a concrete time/condition follow-up against an exact reviewed concern version and evidence boundary. Acknowledgement covers only that boundary; follow-up is durable data, not an automatic wake or task-state transition.",
-      input: z.strictObject({
-        ...RecoveryDispositionInput.shape,
-        requestID: z.string().min(1).max(200).optional(),
-      }),
+        "Append an Architect acknowledgement or a concrete time/condition follow-up against the concern's latest version and an evidence boundary. Acknowledgement covers only that boundary; follow-up is durable data, not an automatic wake or task-state transition.",
+      input: ignoreLegacyVersion(
+        z.strictObject({
+          ...RecoveryDispositionInput.shape,
+          requestID: z.string().min(1).max(200).optional(),
+        }),
+      ),
       output: z.unknown(),
       options: { codemode: true, permission: "lz-disposition-recovery-concern" },
       execute: (input, call) =>
@@ -166,10 +171,12 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
       name: "lz-checkpoint-recovery-worker",
       description:
         "Prepare and steer one immutable checkpoint to the exact current admitted worker for the selected concern. It asks the worker to continue the same task and workspace; admission is not consumption or response, and uncertain delivery is never resent.",
-      input: z.strictObject({
-        ...RecoveryCheckpointInput.shape,
-        requestID: z.string().min(1).max(200).optional(),
-      }),
+      input: ignoreLegacyVersion(
+        z.strictObject({
+          ...RecoveryCheckpointInput.shape,
+          requestID: z.string().min(1).max(200).optional(),
+        }),
+      ),
       output: z.unknown(),
       options: { codemode: true, permission: "lz-checkpoint-recovery-worker" },
       execute: (input, call) =>
@@ -467,11 +474,8 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
     editor.add({
       name: "lz-disposition-handoff",
       description:
-        "Append an Architect interpretation or correction to a finalized handoff, using expectedVersion from the current report disposition history. Corrections never overwrite earlier reports and do not change task authority.",
-      input: z.strictObject({
-        ...HandoffDispositionInput.shape,
-        expectedVersion: z.int().nonnegative(),
-      }),
+        "Append an Architect interpretation or correction to a finalized handoff, after the latest recorded disposition. Corrections never overwrite earlier reports and do not change task authority.",
+      input: ignoreLegacyVersion(z.strictObject({ ...HandoffDispositionInput.shape })),
       output: z.unknown(),
       options: { codemode: true, permission: "lz-disposition-handoff" },
       execute: (input, call) =>

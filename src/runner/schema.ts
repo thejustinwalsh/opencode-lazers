@@ -185,7 +185,6 @@ export const CommandInput = z
   .strictObject({
     requestID: z.string().trim().min(1).max(200),
     planID: z.uuid(),
-    expectedVersion: z.int().positive(),
     action: z
       .enum([
         "run",

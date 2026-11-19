@@ -714,10 +714,7 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
     const toolWrite = await Effect.runPromise(
       harness.tools
         .get("lz-configure-models")!
-        .execute(
-          { target: { scope: "shared" }, persona: "systems", expectedRevision: 0, route: shared },
-          toolContext(),
-        ),
+        .execute({ target: { scope: "shared" }, persona: "systems", route: shared }, toolContext()),
     )
     expect(toolWrite.output).toMatchObject({
       status: "updated",
@@ -804,15 +801,17 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
       },
     })
 
+    // The Desktop editor keeps its revision guard; only the model tool writes unguarded.
     const conflict = await Effect.runPromise(
-      harness.tools
-        .get("lz-configure-models")!
-        .execute(
-          { target: { scope: "project" }, persona: "systems", expectedRevision: 0, route: project },
-          toolContext(),
-        ),
+      methods.configure({
+        sessionID: "ses-native",
+        target: { scope: "project" },
+        persona: "systems",
+        expectedRevision: 0,
+        route: project,
+      }),
     )
-    expect(conflict.output).toMatchObject({
+    expect(conflict).toMatchObject({
       status: "conflict",
       expectedRevision: 0,
       currentRevision: 1,

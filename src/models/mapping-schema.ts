@@ -29,6 +29,20 @@ export const ModelMappingUpdateSchema = z.strictObject({
 })
 export type ModelMappingUpdate = z.infer<typeof ModelMappingUpdateSchema>
 
+/**
+ * The model never supplies a revision: the tool writes against the current mapping. An
+ * earlier prompt's `expectedRevision` is dropped before validation so in-flight Architect
+ * sessions keep working. The GUI route editor keeps its own guarded `expectedRevision`.
+ */
+export const ModelMappingToolInput = z.preprocess(
+  (input) => {
+    if (input === null || typeof input !== "object" || Array.isArray(input)) return input
+    const { expectedRevision: _legacy, ...rest } = input as Record<string, unknown>
+    return rest
+  },
+  ModelMappingUpdateSchema.omit({ expectedRevision: true }),
+)
+
 export const ModelMappingRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
   target: ModelMappingTargetSchema,
