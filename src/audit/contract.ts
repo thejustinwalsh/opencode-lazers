@@ -90,6 +90,16 @@ const FindingSchema = z.strictObject({
   measured: z.number().optional(),
   limit: z.number().optional(),
   before: z.number().optional(),
+  measures: z
+    .array(
+      z.strictObject({
+        metric: z.enum(["cyclomatic", "cognitive"]),
+        measured: z.number(),
+        limit: z.number(),
+        before: z.number().optional(),
+      }),
+    )
+    .optional(),
   others: z
     .array(
       z.strictObject({ file: text, line: z.int().nonnegative(), endLine: z.int().nonnegative() }),

@@ -7,6 +7,7 @@ import {
   type ComplexityAttribution,
   type ComplexityPoint,
   type DeadCodeKey,
+  type DuplicationAttribution,
   type DuplicationInstance,
   type LineRange,
 } from "./attribution.ts"
@@ -22,6 +23,13 @@ import { addedRangesForFiles, changedAnalysableFiles, materialiseBaseTree } from
 
 const TIMEOUT_MS = 60_000
 
+export type ComplexityMeasure = {
+  metric: "cyclomatic" | "cognitive"
+  measured: number
+  limit: number
+  before?: number
+}
+
 export type Finding = {
   id: string
   check: "duplication" | "complexity" | "dead-code" | "cycle"
@@ -30,9 +38,12 @@ export type Finding = {
   line: number
   endLine?: number
   subject: string
+  /** The over-limit metric (cognitive when it is the one over, else cyclomatic). Complexity only. */
   measured?: number
   limit?: number
   before?: number
+  /** Every metric this complexity finding is over, cognitive first. Absent for other checks. */
+  measures?: ComplexityMeasure[]
   others?: { file: string; line: number; endLine: number }[]
   fix: string
 }
@@ -77,19 +88,35 @@ function toComplexityPoints(report: HealthReport): ComplexityPoint[] {
   }))
 }
 
+/** Every metric over its limit, cognitive first, matching the order the guidance reads them in. */
+function complexityMeasures(
+  attr: ComplexityAttribution,
+  thresholds: { cyclomatic: number; cognitive: number },
+): ComplexityMeasure[] {
+  const measures: ComplexityMeasure[] = []
+  if (attr.cognitive > thresholds.cognitive)
+    measures.push({
+      metric: "cognitive",
+      measured: attr.cognitive,
+      limit: thresholds.cognitive,
+      before: attr.before?.cognitive,
+    })
+  if (attr.cyclomatic > thresholds.cyclomatic)
+    measures.push({
+      metric: "cyclomatic",
+      measured: attr.cyclomatic,
+      limit: thresholds.cyclomatic,
+      before: attr.before?.cyclomatic,
+    })
+  return measures
+}
+
 function complexityFinding(
   attr: ComplexityAttribution,
   thresholds: { cyclomatic: number; cognitive: number },
 ): Finding {
-  const useCognitive = attr.cognitive > thresholds.cognitive
-  const measured = useCognitive ? attr.cognitive : attr.cyclomatic
-  const limit = useCognitive ? thresholds.cognitive : thresholds.cyclomatic
-  const before = attr.before
-    ? useCognitive
-      ? attr.before.cognitive
-      : attr.before.cyclomatic
-    : undefined
-  const metric = useCognitive ? "cognitive" : "cyclomatic"
+  const measures = complexityMeasures(attr, thresholds)
+  const primary = measures[0]!
   return {
     id: `complexity:${attr.path}:${attr.line ?? 0}:${attr.name}`,
     check: "complexity",
@@ -97,10 +124,11 @@ function complexityFinding(
     file: attr.path,
     line: attr.line ?? 0,
     subject: attr.name,
-    measured,
-    limit,
-    before,
-    fix: `Split \`${attr.name}\` into smaller functions; it is ${metric} ${measured} against a limit of ${limit}.`,
+    measured: primary.measured,
+    limit: primary.limit,
+    before: primary.before,
+    measures,
+    fix: "Split it into smaller named functions.",
   }
 }
 
@@ -108,25 +136,20 @@ function duplicationInstanceSummary(instance: DuplicationInstance) {
   return { file: instance.file, line: instance.startLine, endLine: instance.endLine }
 }
 
-function duplicationFinding(instances: readonly DuplicationInstance[], tokens: number): Finding {
-  const [first, ...rest] = instances
-  const lines = first!.endLine - first!.startLine + 1
+function duplicationFinding(attr: DuplicationAttribution): Finding {
+  const { anchor, others } = attr
+  const lines = anchor.endLine - anchor.startLine + 1
   return {
-    id: `duplication:${first!.file}:${first!.startLine}`,
+    id: `duplication:${anchor.file}:${anchor.startLine}`,
     check: "duplication",
     status: "introduced",
-    file: first!.file,
-    line: first!.startLine,
-    endLine: first!.endLine,
-    subject: `${lines} lines, ${tokens} tokens`,
-    measured: tokens,
-    others: rest.slice(0, 3).map(duplicationInstanceSummary),
-    fix: "Keep one implementation and import it in both places instead of duplicating it.",
+    file: anchor.file,
+    line: anchor.startLine,
+    endLine: anchor.endLine,
+    subject: `${lines} lines`,
+    others: others.slice(0, 3).map(duplicationInstanceSummary),
+    fix: "Keep one implementation and import it instead of copying it.",
   }
-}
-
-function duplicationGroupKey(instances: readonly DuplicationInstance[]): string {
-  return instances.map((i) => `${i.file}:${i.startLine}:${i.endLine}`).join("|")
 }
 
 function newDuplicationFindings(
@@ -134,19 +157,13 @@ function newDuplicationFindings(
   addedRanges: ReadonlyMap<string, readonly LineRange[]>,
 ): Finding[] {
   const groups = report.clone_groups.map((group) => ({
-    tokens: group.token_count,
     instances: group.instances.map((i) => ({
       file: i.file,
       startLine: i.start_line,
       endLine: i.end_line,
     })),
   }))
-  const introducedKeys = new Set(
-    attributeDuplication(groups, addedRanges).map((g) => duplicationGroupKey(g.instances)),
-  )
-  return groups
-    .filter((g) => introducedKeys.has(duplicationGroupKey(g.instances)))
-    .map((g) => duplicationFinding(g.instances, g.tokens))
+  return attributeDuplication(groups, addedRanges).map(duplicationFinding)
 }
 
 const DEAD_CODE_FIX: Record<string, string> = {
@@ -339,18 +356,49 @@ const GUIDANCE_CHECK_LABEL: Record<Finding["check"], string> = {
   cycle: "cycle",
 }
 
-function guidanceMeasure(finding: Finding): string {
-  if (finding.measured === undefined) return ""
-  const base = `${finding.measured}, limit ${finding.limit ?? "n/a"}`
-  return finding.before !== undefined ? ` ${base} (was ${finding.before}).` : ` ${base}.`
+function findingLocation(finding: Finding): string {
+  return finding.endLine
+    ? `${finding.file}:${finding.line}-${finding.endLine}`
+    : `${finding.file}:${finding.line}`
+}
+
+function measureText(measure: ComplexityMeasure): string {
+  const base = `${measure.metric} ${measure.measured} (limit ${measure.limit})`
+  return measure.before !== undefined ? `${base}, was ${measure.before}` : base
+}
+
+/** `1. complexity file:line \`name\` cognitive N (limit L), cyclomatic N (limit L).` */
+function complexityGuidanceLine(finding: Finding, index: number): string {
+  const measures = (finding.measures ?? []).map(measureText).join(", ")
+  const header = `${index + 1}. complexity ${findingLocation(finding)} \`${finding.subject}\` ${measures}.`
+  return `${header}\n   ${finding.fix}`
+}
+
+/** `2. duplication file:a-b repeats other:c-d[ and N more locations] (subject).` */
+function duplicationGuidanceLine(finding: Finding, index: number): string {
+  const others = finding.others ?? []
+  const [primary, ...rest] = others
+  const primaryLocation = primary
+    ? `${primary.file}:${primary.line}-${primary.endLine}`
+    : "another location"
+  const tail =
+    rest.length > 0 ? ` and ${rest.length} more location${rest.length > 1 ? "s" : ""}` : ""
+  const header = `${index + 1}. duplication ${findingLocation(finding)} repeats ${primaryLocation}${tail} (${finding.subject}).`
+  return `${header}\n   ${finding.fix}`
+}
+
+/** The fallback shape (dead code, cycles): `N. check file:line \`subject\`[ measured, limit L].` */
+function genericGuidanceLine(finding: Finding, index: number): string {
+  const measure =
+    finding.measured === undefined ? "" : ` ${finding.measured}, limit ${finding.limit ?? "n/a"}.`
+  const header = `${index + 1}. ${GUIDANCE_CHECK_LABEL[finding.check]} ${findingLocation(finding)} \`${finding.subject}\`${measure}`
+  return `${header}\n   ${finding.fix}`
 }
 
 function guidanceLine(finding: Finding, index: number): string {
-  const location = finding.endLine
-    ? `${finding.file}:${finding.line}-${finding.endLine}`
-    : `${finding.file}:${finding.line}`
-  const header = `${index + 1}. ${GUIDANCE_CHECK_LABEL[finding.check]} ${location} \`${finding.subject}\`${guidanceMeasure(finding)}`
-  return `${header}\n   ${finding.fix}`
+  if (finding.check === "complexity") return complexityGuidanceLine(finding, index)
+  if (finding.check === "duplication") return duplicationGuidanceLine(finding, index)
+  return genericGuidanceLine(finding, index)
 }
 
 /** Plain-text guidance from fixed templates: at most ten findings, 1,500 characters, deterministic. */
