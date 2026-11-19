@@ -232,6 +232,7 @@ export class TaskReads {
         artifact: attempt.artifact,
         tokenCount: attempt.token_count,
         toolCount: attempt.tool_count,
+        ...(isTakeoverAttempt(attempt.policy) ? { takeover: true as const } : {}),
         ...(model ? { model } : {}),
         ...(attempt === latestAttempt ? this.attemptSummary(attempt.id) : {}),
       }

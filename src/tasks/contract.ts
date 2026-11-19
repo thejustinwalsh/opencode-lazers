@@ -107,6 +107,8 @@ const TaskAttempt = z.strictObject({
   artifact: z.string().nullable(),
   tokenCount: z.number().nullable(),
   toolCount: z.int().nonnegative(),
+  /** The attempt is the Architect finishing the task; its tokens and tool calls are not recorded. */
+  takeover: z.literal(true).optional(),
   /** The model the attempt was assigned, when its policy recorded one. */
   model: AttemptModel.optional(),
   /** Compact activity read; present on the task's latest attempt only. */

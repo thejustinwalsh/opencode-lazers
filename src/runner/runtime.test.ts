@@ -15536,8 +15536,7 @@ async function takeoverFixture(options: Parameters<typeof fixture>[0] = {}) {
   return { f, worker, steered }
 }
 
-/** The worker answers the notice: commits its work in progress and saves its handoff draft. */
-function workerWritesHandoff(f: ReturnType<typeof fixture>, worker: AttemptRow, requestID: string) {
+function commitWorkInProgress(worker: AttemptRow) {
   git(worker.workspace, ["add", "-A"])
   git(worker.workspace, [
     "-c",
@@ -15548,6 +15547,11 @@ function workerWritesHandoff(f: ReturnType<typeof fixture>, worker: AttemptRow, 
     "-m",
     "WIP before takeover",
   ])
+}
+
+/** A worker that still uses the full reviewed handoff draft is read as the worker's account. */
+function workerWritesHandoff(f: ReturnType<typeof fixture>, worker: AttemptRow, requestID: string) {
+  commitWorkInProgress(worker)
   new HandoffStore(f.repository).saveDraft(
     { requestID, draftID: crypto.randomUUID(), draft: workerHandoffDraft() },
     {
@@ -15562,16 +15566,27 @@ test("takeover: the worker writes its handoff in time, stops, and the Architect'
   const { f, worker, steered } = await takeoverFixture()
   f.host.steerWorker = async (input) => {
     steered.push(input.id)
-    expect(input.text).toContain("lz-verify-handoff")
-    const requestID = /requestID (\S+),/.exec(input.text)![1]!
-    workerWritesHandoff(f, worker, requestID)
+    expect(input.text).toContain("lz-takeover-handoff")
+    commitWorkInProgress(worker)
+    f.runtime.takeoverHandoff(
+      {
+        done: "a first a.txt",
+        remaining: "the right content",
+        workspaceState: "committed",
+        struggledWith: "the content check",
+        tried: "writing a.txt",
+      },
+      worker.session_id,
+    )
   }
   const result = await f.runtime.takeover(
     { attemptID: worker.id, reason: "Not converging", requestID: "take-1" },
     "owner",
   )
   expect(result.status).toBe("taken-over")
-  expect(result.handoff?.author).toBe("worker")
+  expect(result.handoff).toMatchObject({ author: "worker", struggledWith: "the content check" })
+  // Recorded facts accompany the worker's own account.
+  expect(result.facts).toMatchObject({ attempts: 1 })
   expect(steered).toHaveLength(1)
   expect(result.commits?.some((line) => line.includes("WIP before takeover"))).toBe(true)
   expect(f.events).toContain(`stop:${worker.session_id}`)
@@ -15754,4 +15769,65 @@ test("a worker concern reaches the live Architect while the worker runs, waits o
       .activity(f.receipt.planID, worker.task_id)
       .filter((event) => event.event === "WORKER_CONCERN_RAISED"),
   ).toHaveLength(1)
+})
+
+test("takeover: a worker handoff that does not fit the fields is kept verbatim as the worker's", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.host.steerWorker = async () => {
+    f.runtime.takeoverHandoff(
+      { summary: ["fixed half", "tests still red"], done: 3 },
+      worker.session_id,
+    )
+  }
+  const result = await f.runtime.takeover({ attemptID: worker.id, reason: "Odd handoff" }, "owner")
+  expect(result.handoff).toMatchObject({ author: "worker", done: "3" })
+  expect((result.handoff as { raw?: string }).raw).toContain("tests still red")
+  expect(() => f.runtime.takeoverHandoff({ done: "late" }, worker.session_id)).toThrow(
+    "No takeover is waiting",
+  )
+})
+
+test("takeover: a failed verification goes back to the Architect on the same attempt, advertised and bundled, and a resubmission is accepted", async () => {
+  let offset = 0
+  const { f, worker } = await takeoverFixture({ now: () => Date.now() + offset })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const submit = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID: f.receipt.planID,
+        action: "takeover-submit",
+        taskID: worker.task_id,
+        reason: "Architect result",
+      },
+      "owner",
+    )
+  // The worker left "wrong" in a.txt; the first submission fails its check.
+  await submit("submit-wrong")
+  await drive(f.runtime, 8)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Takeover verification failed:")
+  const mine = f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!
+  expect(mine.state).toBe("running")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
+  const notice = f.notifications.findLast((n) => n.text.includes("Takeover verification failed"))
+  expect(notice?.text).toContain("takeover-submit")
+  // Left unanswered, the hold reaches the recovery bundle with its actions.
+  offset += RECOVERY_STALE_MS + 60_000
+  await drive(f.runtime, 3)
+  const bundle = f.notifications.findLast((n) => n.text.includes("LAZERS recovery bundle"))
+  expect(bundle?.text).toContain("takeover-submit")
+  // Fixed and submitted again on the same attempt: accepted.
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submit("submit-fixed")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(f.receipt.planID).find((a) => a.id === mine.id)!.state).toBe("accepted")
+  expect(
+    f.store
+      .activity(f.receipt.planID, worker.task_id)
+      .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
+  ).toHaveLength(2)
 })

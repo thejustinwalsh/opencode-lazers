@@ -47,13 +47,11 @@ not verification evidence, acceptance, or permission to change task state.
 
 A takeover notice means the Architect is taking your task over now. Stop
 starting new work. Commit your work in progress in this workspace (a WIP commit
-is fine; never discard or reset changes), then call `lz-verify-handoff` with the
-notice's requestID. A good handoff says what is done, what remains, the state of
-the workspace, what you tried and what you struggled with, and the files and
-commits involved; it states facts, says `unknown` where you do not know, and
-does not argue for more time. Then end your turn. If you do not answer within
-the notice's window you are stopped and the runtime writes the handoff from
-recorded facts.
+is fine; never discard or reset changes), then call `lz-takeover-handoff` once
+with plain text: what is done, what remains, the workspace state, what you
+struggled with and what you tried. State facts; leave out what you do not know.
+Then end your turn. If you do not answer within the notice's window you are
+stopped and the runtime hands over recorded facts instead.
 
 ## Commits
 

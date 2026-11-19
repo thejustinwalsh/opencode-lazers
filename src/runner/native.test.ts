@@ -1786,6 +1786,43 @@ test("a loaded worker location is still inspected for permissions, forms and she
   ])
 })
 
+test("a step aborted by a location shutdown is not a completed turn while the session is active", async () => {
+  // OpenCode resumes the session after the location reboots; the aborted step is the newest
+  // message only until the resumed step appears.
+  const aborted = [
+    { id: "msg_user", type: "user", text: "Implement it" },
+    {
+      id: "msg_aborted",
+      type: "assistant",
+      time: { completed: 1 },
+      finish: "error",
+      error: { type: "aborted", message: "Step interrupted" },
+      content: [
+        {
+          type: "tool",
+          state: {
+            status: "error",
+            error: {
+              type: "aborted",
+              message: "Interaction cancelled because the location shut down",
+            },
+          },
+        },
+      ],
+    },
+  ]
+  const rebooting = nativeLivenessFixture({
+    busy: DateTime.nowUnsafe(),
+    active: { ses_worker: { type: "running" } },
+    messages: aborted,
+  })
+  for (const options of [undefined, { messages: true }]) {
+    const session = await rebooting.host.session("ses_worker", options)
+    expect(session).toMatchObject({ busy: true })
+    expect(session).not.toHaveProperty("staleActive")
+  }
+})
+
 test("an active entry contradicted by a completed turn, empty inbox and no shells counts as idle", async () => {
   const messages = [
     { id: "msg_user", type: "user", text: "Implement it" },

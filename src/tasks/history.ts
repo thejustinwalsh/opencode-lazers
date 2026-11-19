@@ -37,6 +37,7 @@ const names: Readonly<Record<string, string>> = {
   TAKEOVER_HANDOFF_RECEIVED: "Handoff received",
   TAKEOVER_WORKER_STOPPED: "Worker stopped",
   TAKEOVER_STARTED: "Takeover started",
+  TAKEOVER_VERIFY_FAILED: "Takeover check failed",
   TAKEOVER_SUBMITTED: "Takeover submitted",
 }
 

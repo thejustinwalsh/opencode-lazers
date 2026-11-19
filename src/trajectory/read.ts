@@ -1020,6 +1020,8 @@ async function readAttemptSessions(
   const reads: SessionReads = { sessions: new Map(), errors: new Map(), statuses: new Map() }
   const sessionsByAssignment = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
+    // An Architect takeover has no native worker session to read; nothing is missing.
+    if (isTakeoverAttempt(attempt.policy)) continue
     try {
       const sessionKey = JSON.stringify([attempt.session_id, attempt.id, attempt.workspace])
       let read = sessionsByAssignment.get(sessionKey)
@@ -1240,6 +1242,7 @@ function effortTokenUsage(
   )
   const completeSessionIDs = new Set(completeSessions.map((session) => session.sessionID))
   const unknownUsageAttempts = allAttempts
+    .filter(({ attempt }) => !isTakeoverAttempt(attempt.policy))
     .filter(({ attempt }) => !completeSessionIDs.has(attempt.session_id))
     .map(({ attempt }) => safeText(attempt.id, stats, 128))
   return {
@@ -1260,10 +1263,12 @@ function effortTokenUsage(
     knownSessions: completeSessions.length,
     totalSessions: taskEffortBasis.usage.coverage.totalUniqueSessions,
     unknownAttempts: unknownUsageAttempts,
-    legacyAttemptScalarsNotAdded: attemptViews.map((attempt) => ({
-      attemptID: attempt.id,
-      ...attempt.legacyTokenCount,
-    })),
+    legacyAttemptScalarsNotAdded: attemptViews
+      .filter((attempt) => !attempt.takeover)
+      .map((attempt) => ({
+        attemptID: attempt.id,
+        ...attempt.legacyTokenCount,
+      })),
   }
 }
 
@@ -1396,7 +1401,7 @@ function coverageView(
     compacted: stats.compacted > 0,
     ongoing: busy,
     attemptsWithoutRecordedSessions: attemptViews.filter(
-      (attempt) => attempt.sessionStatus !== "available",
+      (attempt) => attempt.sessionStatus !== "available" && !attempt.takeover,
     ).length,
     workerProgress: {
       facts: progressRows.length,
@@ -1576,14 +1581,16 @@ export async function inspectTrajectory(
   )
   const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)
   const valuationInput: ProjectTaskValuationRequest = {
-    attempts: allAttempts.map((entry) =>
-      valuationAttempt(
-        entry,
-        reads.sessions.get(entry.attempt.id) ?? null,
-        reads.statuses.get(entry.attempt.id) ?? "missing",
-        stats,
+    attempts: allAttempts
+      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
+      .map((entry) =>
+        valuationAttempt(
+          entry,
+          reads.sessions.get(entry.attempt.id) ?? null,
+          reads.statuses.get(entry.attempt.id) ?? "missing",
+          stats,
+        ),
       ),
-    ),
     progressFacts: projectedProgressFacts,
     progressTruncated,
     truncatedContextSessionIDs,

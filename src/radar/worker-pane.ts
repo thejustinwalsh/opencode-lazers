@@ -190,7 +190,10 @@ export function workerStats(input: {
     },
     {
       label: "Calls",
-      ...(attempt ? { value: callsText(attempt.toolCount, attempt.summary.files) } : {}),
+      // An Architect takeover records no tool count of its own: omit rather than show 0.
+      ...(attempt && !attempt.takeover
+        ? { value: callsText(attempt.toolCount, attempt.summary.files) }
+        : {}),
     },
     {
       label: "Model",

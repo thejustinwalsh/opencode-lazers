@@ -240,3 +240,16 @@ test("a raised concern and a takeover show beside the state; absent facts show n
   })
   expect(workerSignals({ ...base, takeover: true })).toEqual({ takeover: true })
 })
+
+test("an Architect takeover attempt omits Calls instead of showing zero", () => {
+  const takeover = attempt(undefined, { toolCount: 0, takeover: true })
+  const labels = workerStats({
+    live,
+    session,
+    attempt: takeover,
+    now: 5_000_000,
+    lastActivityAt: null,
+  }).filter((stat) => stat.value !== undefined)
+  expect(labels.map((stat) => stat.label)).not.toContain("Calls")
+  expect(labels.some((stat) => stat.value === "0")).toBe(false)
+})

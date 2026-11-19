@@ -743,3 +743,37 @@ test("history queries are served by plan-scoped indexes", () => {
     explain("SELECT event,COUNT(*) FROM runner_transitions WHERE plan_id=? GROUP BY event"),
   ).toContain("runner_transitions_plan_event")
 })
+
+test("compact inspection omits tool and retry counts of an Architect takeover attempt", () => {
+  const f = fixture()
+  const receipt = f.store.submit(f.input, "owner")
+  f.store.move(receipt.planID, f.first.id, "READY")
+  f.store.move(receipt.planID, f.first.id, "DISPATCH")
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(receipt.planID)
+    db.query(
+      "INSERT INTO runner_attempts(id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      "attempt-takeover",
+      receipt.planID,
+      f.first.id,
+      1,
+      "lazers-takeover:request",
+      "message-1",
+      f.projectDirectory,
+      "b".repeat(40),
+      JSON.stringify({
+        agent: "architect",
+        takeover: { takeoverID: "t", architectSessionID: "a", fromAttemptID: "w" },
+      }),
+      "running",
+      Date.now(),
+    )
+  })
+  const compact = inspectPlan(f.store, { planID: receipt.planID, full: false }) as CompactPlanDetail
+  const latest = compact.nodes.find((node) => node.taskID === f.first.id)?.latestAttempt
+  expect(latest).toMatchObject({ id: "attempt-takeover", takeover: true })
+  expect(latest).not.toHaveProperty("toolCount")
+  expect(latest).not.toHaveProperty("retryCount")
+  expect(JSON.stringify(compact)).not.toContain("unknown")
+})

@@ -500,9 +500,12 @@ taken-over      (cancelled: plan cancellation)
 The notice is claimed in the row before it is sent and never resent. The scheduler advances
 open takeovers each tick and leaves their worker attempts alone, so a call cut short by a
 reload is finished by the next tick, which notifies the Architect (`takeover-ready`); repeating
-the call with the same `requestID` returns that result. The handoff is the worker's
-`lz-verify-handoff` draft, or one the runtime builds from recorded facts (commits, uncommitted
-paths, failing checks, open concerns) marked `author: "runtime"`.
+the call with the same `requestID` returns that result. The worker answers with `lz-takeover-handoff`: one call,
+plain-text fields (done, remaining, workspaceState, struggledWith, tried, notes), never rejected
+for its shape (anything else is kept verbatim as `raw`) and never reviewed. A full
+`lz-verify-handoff` draft is also read. With no answer the handoff is a note marked
+`author: "runtime"`. Recorded facts (failing checks, open concerns, attempts, tokens) and the
+workspace's commits and uncommitted paths accompany every handoff.
 
 `taken-over` opens a new attempt for the task in the same workspace and base, with
 `policy.takeover = {takeoverID, architectSessionID, fromAttemptID}`, `agent: "architect"` and
@@ -511,5 +514,8 @@ reads as an absent session, so no worker observation, usage or interrupt touches
 token count stays unknown because the Architect session's spend is not separable. The
 scheduler skips it while `running`. `lz-plan-command takeover-submit` moves it and its task to
 `verifying` through the attempt and task machines, and the ordinary `verify()` runs: mechanical
-fix, authored checks, Fallow audit, scope. A failure fails the attempt with no automatic repair
-and holds the plan for the Architect, who can take over again from the failed task.
+fix, authored checks, Fallow audit, scope. A failure returns the same attempt to the Architect: attempt
+`verifying -> preparing -> running`, task `RESUME`, and the plan holds with reason
+"Takeover verification failed: <checks and Fallow findings>" (hold family
+`takeover-verification`, actions `takeover-submit` and `cancel`), which the recovery bundle
+lists if unanswered. Each submission is recorded (`TAKEOVER_SUBMITTED` with its count).
