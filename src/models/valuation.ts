@@ -241,7 +241,7 @@ function routeEvidenceByCall(
     addRoute(target, evidence.route)
   }
 
-  for (const raw of progressFacts) {
+  for (const raw of factsForSession(progressFacts, sessionID)) {
     const fact = object(raw)
     const kind = typeof fact?.kind === "string" ? fact.kind : ""
     const normalizedKind = kind.startsWith("worker-") ? kind.slice("worker-".length) : kind
@@ -399,7 +399,38 @@ function pinBlockers(pin: CurrentPricePin): string[] {
   return blockers
 }
 
+/**
+ * Decision reads hand every cohort the same captured fact array. Parsing it and grouping it by
+ * session is O(facts), so it is done once per array, not once per cohort or per session.
+ */
+const parsedFacts = new WeakMap<readonly unknown[], ProgressFact[]>()
+const factsBySessionIndex = new WeakMap<readonly unknown[], Map<string, unknown[]>>()
+
+function factsForSession(values: readonly unknown[], sessionID: string): readonly unknown[] {
+  let index = factsBySessionIndex.get(values)
+  if (!index) {
+    index = new Map()
+    for (const raw of values) {
+      const key = object(raw)?.sessionID
+      if (typeof key !== "string") continue
+      const group = index.get(key)
+      if (group) group.push(raw)
+      else index.set(key, [raw])
+    }
+    factsBySessionIndex.set(values, index)
+  }
+  return index.get(sessionID) ?? []
+}
+
 function parseProgressFacts(values: readonly unknown[]): ProgressFact[] {
+  const cached = parsedFacts.get(values)
+  if (cached) return cached
+  const parsed = parseProgressFactsUncached(values)
+  parsedFacts.set(values, parsed)
+  return parsed
+}
+
+function parseProgressFactsUncached(values: readonly unknown[]): ProgressFact[] {
   return values.flatMap((raw) => {
     const fact = object(raw)
     if (!fact) return []

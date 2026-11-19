@@ -245,7 +245,18 @@ function cumulativeCategory(
   }
 }
 
+/** The captured fact array is shared by every cohort of one decision read: parse it once. */
+const parsedProgressFacts = new WeakMap<readonly unknown[], ProgressUsageFact[]>()
+
 function parseProgressFacts(values: readonly unknown[]): ProgressUsageFact[] {
+  const cached = parsedProgressFacts.get(values)
+  if (cached) return cached
+  const parsed = parseProgressFactsUncached(values)
+  parsedProgressFacts.set(values, parsed)
+  return parsed
+}
+
+function parseProgressFactsUncached(values: readonly unknown[]): ProgressUsageFact[] {
   return values.flatMap((value) => {
     const fact = object(value)
     if (!fact) return []
