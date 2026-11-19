@@ -69,6 +69,44 @@ What the spike did not establish:
 | A failed combined check holds the plan: "Combined artifact verification failed".                                                                                                    | `TaskRuntime.finish()`, `src/runner/runtime.ts` near `:10300`                        |
 | Worker threads: four, each listed in `scripts/build-server.ts` and spawned through `workerURL`.                                                                                     | `scripts/build-server.ts:13-19`; `src/worker-url.ts`                                 |
 
+## Findings: Fallow on LAZERS itself
+
+Native `@fallow-cli/fallow-node` 3.41.0, four threads, on `main` at
+`185b4017`, 2026-11-19. Dead code, duplication, health and architecture took
+2.6 s in total (0.86 s, 0.15 s, 1.27 s, 0.31 s).
+
+| Measure                           | No config | With `.fallowrc.json` entry points                   |
+| --------------------------------- | --------- | ---------------------------------------------------- |
+| Unused files                      | 19        | 1                                                    |
+| Unused exports                    | 237       | 237                                                  |
+| Unused types                      | 81        | 81                                                   |
+| Unused class members              | 50        | 50 (33 in `src/runner/store.ts`)                     |
+| Import cycles                     | 1         | 1 (`src/storage.ts` ↔ `src/tasks/classification.ts`) |
+| Functions over a complexity limit | 736       | 735 (72 in tests)                                    |
+| Clone groups                      | 185       | 185 (2.6% of lines; 18 test-only)                    |
+| Health score                      | 77.8, B   | not re-read                                          |
+
+Worst functions: an arrow function at `src/runner/runtime.ts:3791` (1,267
+lines, cognitive 381), `radar` at `src/observability/read.ts:714` (1,048
+lines, cognitive 360), `readRadar` at `src/observability/live-read.ts:806`
+(cognitive 304).
+
+What this changes in the plan:
+
+- **A project needs entry points before a dead-code check means anything.**
+  18 of 19 "unused files" were worker scripts, fixtures and CLIs loaded by
+  path (`workerURL`, spawned tests). The config is on branch
+  `chore/fallow-self-cleanup`. The dead-code gate (Phase 4) must not run on a
+  project with no Fallow config; it reports instead.
+- **Introduced-only is not optional.** With 735 inherited complexity findings
+  a gate on all findings would fail every task.
+- **The budget for the changed-file check is realistic.** The whole repository
+  takes 1.3 s for health natively with threads; the gate analyses changed
+  files only.
+- **Clean up first.** A dead-code pass over this repository runs before
+  Phase 0, so parity tests compare against a tree we understand. It is tracked
+  on `chore/fallow-self-cleanup`, by lane, not in this plan.
+
 ## Research: Fallow
 
 Sources: the Fallow docs (`fallow.tools/docs`), the source at tag `v3.41.0`
