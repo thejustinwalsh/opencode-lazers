@@ -251,26 +251,30 @@ const lp = stylex.create({
 const stations = [
   {
     name: "You",
-    verb: "Request and review",
-    detail: "Describe the behavior and its limits. You review the result and decide what ships.",
+    verb: "Define the goal",
+    detail:
+      "Describe the feature or fix. Answer high-leverage questions when Architect surfaces a real tradeoff.",
     you: true,
   },
   {
     name: "Architect",
-    verb: "Plan and decide",
-    detail: "Reads the repository, settles the questions that matter and defines acceptance.",
+    verb: "Scope and plan",
+    detail:
+      "Maps the codebase, locks in acceptance criteria and file boundaries, and submits an executable task graph.",
     you: false,
   },
   {
     name: "Scheduler",
-    verb: "Admit and schedule",
-    detail: "The runtime admits the plan, resolves workers and dispatches eligible tasks.",
+    verb: "Isolate and dispatch",
+    detail:
+      "Spins up OpenCode worktrees, routes each task to the right specialist persona and model, and tracks dependencies.",
     you: false,
   },
   {
     name: "Worker",
-    verb: "Implement and report",
-    detail: "A native OpenCode session does the task, runs its checks and reports evidence.",
+    verb: "Build and verify",
+    detail:
+      "Writes the code inside its permitted scope, runs formatters, linters, and tests, and submits mechanical proof.",
     you: false,
   },
 ] as const
@@ -292,15 +296,16 @@ export function Loop() {
       <BeamCanvas kit={kit} />
       <div {...stylex.props(s.inner)}>
         <div {...stylex.props(lp.top)}>
-          <Heading id="loop-title">Judgment and state live apart</Heading>
+          <Heading id="loop-title">From prompt to merged code</Heading>
           <div {...stylex.props(lp.topCopy)}>
             <p {...stylex.props(s.lead)}>
-              Architect makes the calls that need context. The runtime owns scheduling and every
-              lifecycle transition.
+              Models handle engineering judgment. A deterministic state machine handles everything
+              else.
             </p>
             <p {...stylex.props(s.body)}>
-              Routine transitions do not call a model, so a retry or a queued task never waits on
-              one.
+              Architect plans, reviews, and integrates. The runtime owns dependency queues, isolated
+              worktrees, verification gates, and retries&mdash;so orchestration never drifts or
+              stalls on a chat turn.
             </p>
           </div>
         </div>
@@ -329,9 +334,10 @@ export function Loop() {
           <span {...stylex.props(lp.backShaft, fx.growX)} />
         </div>
         <p {...stylex.props(lp.backText)}>
-          <strong {...stylex.props(s.strong)}>Results travel back the same way.</strong> The runtime
-          runs the required checks and records evidence. Architect reviews and chooses repair, retry
-          or replanning when new evidence needs judgment. Then the work returns to you.
+          <strong {...stylex.props(s.strong)}>Every candidate comes back with proof.</strong> The
+          runtime executes the verification suite and code-health checks before Architect reviews
+          the diff. When checks pass, Architect integrates the change directly into your
+          branch&mdash;or escalates with a concrete question if it hits a human decision.
         </p>
 
         <div {...stylex.props(lp.observers)}>
@@ -339,14 +345,20 @@ export function Loop() {
             <img src={corner} alt="" {...stylex.props(lp.obsMark)} />
             <span>
               <span {...stylex.props(t.display, lp.obsName)}>Radar</span>
-              <span {...stylex.props(lp.obsText)}> watches every lane while it runs.</span>
+              <span {...stylex.props(lp.obsText)}>
+                {" "}
+                streams every active worker and state transition live.
+              </span>
             </span>
           </a>
           <a href="#trajectory" {...stylex.props(lp.observer, t.inkLink)}>
             <img src={stripesMark} alt="" {...stylex.props(lp.obsMark)} />
             <span>
               <span {...stylex.props(t.display, lp.obsName)}>Trajectory</span>
-              <span {...stylex.props(lp.obsText)}> keeps what each attempt did.</span>
+              <span {...stylex.props(lp.obsText)}>
+                {" "}
+                records every attempt, check receipt, and token count.
+              </span>
             </span>
           </a>
         </div>
@@ -523,7 +535,7 @@ export function Parts() {
       <Cat kit={kit} sx={pt.cat} />
       <BeamCanvas kit={kit} />
       <div {...stylex.props(s.inner)}>
-        <Heading id="parts-title">Four parts, one record</Heading>
+        <Heading id="parts-title">Built for real codebases</Heading>
 
         <div {...stylex.props(pt.grid)}>
           <article
@@ -538,14 +550,13 @@ export function Parts() {
                 Architect
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Asks before it guesses.</p>
+            <p {...stylex.props(pt.deck)}>Clarifies before it codes.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleM)} />
             <p {...stylex.props(s.body)}>
-              Select <strong {...stylex.props(s.strong)}>Architect</strong> from OpenCode
-              Desktop&rsquo;s agent list and describe one change with its expected result. It
-              inspects the project and asks a focused question only when a missing choice changes
-              requirements, scope, acceptance or checks. One task covers one coherent change; a plan
-              can split independent work and record its dependencies.
+              Select <strong {...stylex.props(s.strong)}>Architect</strong> in OpenCode Desktop and
+              describe what you want to ship. Before a single file is touched, it indexes your
+              repository, spots ambiguities that change behavior or scope, and decomposes the work
+              into bounded tasks with explicit file write scopes and verification commands.
             </p>
             <blockquote {...stylex.props(pt.quote)}>
               &ldquo;Add a clear empty state to a list. Show &lsquo;No tasks yet.&rsquo; Keep the
@@ -566,17 +577,16 @@ export function Parts() {
                 Scheduler
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Parallel where it is safe. Serial where it must be.</p>
+            <p {...stylex.props(pt.deck)}>Isolated worktrees. Zero lost work.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleC)} />
             <p {...stylex.props(s.body)}>
-              Independent tasks can run in OpenCode-managed worktrees. Conflicting write scopes
-              serialize. Verification timeouts come from your configuration, and task and attempt
-              history survive retries.
+              Tasks execute in OpenCode-managed git worktrees with enforced file boundaries. As
+              dependencies clear, the runtime dispatches specialist workers automatically and
+              preserves every attempt across retries and recovery checkpoints.
             </p>
             <p {...stylex.props(s.body)}>
-              Follow it in <strong {...stylex.props(s.strong)}>Tasks</strong>, or run{" "}
-              <Code>/lz-tasks</Code>. The panel offers Start only when a plan can start under the
-              runtime&rsquo;s rules.
+              Track active runs, queued dependencies, and questions needing your input in{" "}
+              <strong {...stylex.props(s.strong)}>Tasks</strong> or via <Code>/lz-tasks</Code>.
             </p>
             <ul aria-label="Task state filters" {...stylex.props(pt.states)}>
               <li {...stylex.props(pt.state)}>Open</li>
@@ -602,22 +612,27 @@ export function Parts() {
                 Radar
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Every session, live.</p>
+            <p {...stylex.props(pt.deck)}>Watch the whole swarm in real time.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleC)} />
             <p {...stylex.props(s.body)}>
-              Open it from the session panel menu or run <Code>/lz-radar</Code>. Select a session,
-              call or event to inspect it, then jump to its worker, task or trajectory.
+              Open Radar from the session panel menu or run <Code>/lz-radar</Code> to see every
+              active agent session at a glance&mdash;then click any worker, tool call, or event to
+              jump straight to its task or trajectory.
             </p>
             <dl {...stylex.props(pt.spec)}>
-              <dt {...stylex.props(pt.specTerm)}>Shows</dt>
+              <dt {...stylex.props(pt.specTerm)}>Monitor</dt>
               <dd {...stylex.props(pt.specDef)}>
-                Role, task, model and effort; current tool calls with targets and durations; recent
-                model and tool events
+                Active worker roles, assigned models, in-flight tool calls, targets, and elapsed
+                durations
               </dd>
-              <dt {...stylex.props(pt.specTerm)}>Scope</dt>
-              <dd {...stylex.props(pt.specDef)}>This session, Project, Project · all sessions</dd>
-              <dt {...stylex.props(pt.specTerm)}>Diagnostics</dt>
-              <dd {...stylex.props(pt.specDef)}>The Map and Flow state chart</dd>
+              <dt {...stylex.props(pt.specTerm)}>Map</dt>
+              <dd {...stylex.props(pt.specDef)}>
+                Visual topology of how plans, tasks, and worker sessions connect across your project
+              </dd>
+              <dt {...stylex.props(pt.specTerm)}>Flow</dt>
+              <dd {...stylex.props(pt.specDef)}>
+                Live XState lifecycle view showing where every runner sits and what it is waiting on
+              </dd>
             </dl>
           </article>
 
@@ -633,29 +648,33 @@ export function Parts() {
                 Trajectory
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>The record of what was tried.</p>
+            <p {...stylex.props(pt.deck)}>A complete audit trail for every task.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleM)} />
             <p {...stylex.props(s.body)}>
-              Run <Code>/lz-trajectory</Code> and choose a task and scope. Select an attempt or a
-              check to inspect its details. Task links in the other LAZERS panels open the matching
-              trajectory, so a failed check in Tasks is one click from its history.
+              Run <Code>/lz-trajectory</Code> or click any task badge to inspect the full flight
+              record of how a change was built, verified, and integrated&mdash;so a failed check or
+              retry is always one click from its root cause.
             </p>
             <ul aria-label="What a trajectory holds" {...stylex.props(pt.tree)}>
               <li {...stylex.props(pt.treeRow)}>
                 <span {...stylex.props(pt.treeKey)}>Task</span>
-                <span>Objective, dependencies and the plan it belongs to</span>
+                <span>Objective, permitted write scope, acceptance rules, and plan lineage</span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent1)}>
                 <span {...stylex.props(pt.treeKey)}>Attempt</span>
-                <span>Each try, kept across retries</span>
+                <span>Every worker run preserved across retries and recovery checkpoints</span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent2)}>
                 <span {...stylex.props(pt.treeKey)}>Check</span>
-                <span>What ran and what it found</span>
+                <span>
+                  Exact verification commands, pass/fail outputs, and Fallow code-health findings
+                </span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent2)}>
                 <span {...stylex.props(pt.treeKey)}>Usage</span>
-                <span>Recorded tokens; missing usage stays unknown</span>
+                <span>
+                  Measured token breakdown with exact model route and market-rate cost estimate
+                </span>
               </li>
             </ul>
           </article>
@@ -756,13 +775,14 @@ export function Checked() {
             <p {...stylex.props(ck.statement)}>A worker report is not acceptance.</p>
             <div {...stylex.props(ck.copy)}>
               <p {...stylex.props(s.lead)}>
-                Acceptance records whether the task meets its checks and decisions. Architect
-                reviews accepted work and handles integration.
+                An agent claiming &ldquo;all tests pass&rdquo; means nothing until the runtime runs
+                the suite and captures the receipt.
               </p>
               <p {...stylex.props(s.body)}>
-                LAZERS does not merge or publish a change because a worker says it is done. OpenCode
-                permissions still govern every tool call and workspace, and you decide when the
-                result goes out.
+                LAZERS gates every task on executable verification commands and Fallow static
+                analysis for dead code, duplication, and complexity. Only after mechanical checks
+                pass does Architect review the diff and integrate it into your branch&mdash;under
+                your normal OpenCode permissions.
               </p>
             </div>
           </div>
@@ -771,30 +791,33 @@ export function Checked() {
               Models
             </h3>
             <p {...stylex.props(s.body, ck.sideBody)}>
-              Run <code {...stylex.props(s.code, ck.code)}>/lz-models</code> to set the provider,
-              model and optional effort for the UI, Systems and Small task / refactoring personas.
+              Use <code {...stylex.props(s.code, ck.code)}>/lz-models</code> to route different
+              providers, models, and reasoning effort levels to each specialist persona&mdash;so
+              heavy reasoning models plan and audit while fast, focused models handle UI or surgical
+              refactors.
             </p>
-            <ul aria-label="Assignment levels" {...stylex.props(ck.levels)}>
+            <ul aria-label="Specialist personas" {...stylex.props(ck.levels)}>
               <li {...stylex.props(ck.level)}>
-                <span {...stylex.props(ck.levelKey)}>Shared default</span>
-                <span>every project</span>
+                <span {...stylex.props(ck.levelKey)}>Architect &amp; Auditor</span>
+                <span>planning, review, code health</span>
               </li>
               <li {...stylex.props(ck.level)}>
-                <span {...stylex.props(ck.levelKey)}>Project override</span>
-                <span>this project</span>
+                <span {...stylex.props(ck.levelKey)}>UI &amp; Systems</span>
+                <span>frontend and deep backend work</span>
               </li>
               <li {...stylex.props(ck.level)}>
-                <span {...stylex.props(ck.levelKey)}>Task override</span>
-                <span>one task</span>
+                <span {...stylex.props(ck.levelKey)}>Small Refactoring</span>
+                <span>fast, focused code edits</span>
               </li>
             </ul>
             <p {...stylex.props(s.body, ck.sideBody)}>
-              Compare shows task histories, measured usage and configured price evidence. Missing
-              usage or prices stay unknown, and a price lookup never starts inference.
+              The Compare view benchmarks your actual task histories, retry counts, measured token
+              usage, and market-price cost estimates so you can tune your model stack with real
+              repository evidence.
             </p>
             <p {...stylex.props(ck.note)}>
-              Local WebGPU inference is optional and off by default. The task workflow uses your
-              selected OpenCode model.
+              Optional local WebGPU inference is built in for instant desktop Q&amp;A, dictation,
+              and read-aloud without touching your cloud model routes.
             </p>
           </aside>
         </div>
@@ -1126,8 +1149,8 @@ export function Footer() {
           </a>
         </nav>
         <p {...stylex.props(ft.note)}>
-          v0.1.0 was tested with OpenCode Desktop 2.2.6. This test does not promise compatibility
-          with other versions.
+          v0.1.0 &middot; Built for OpenCode Desktop 2.2.6 &middot; Runs inside OpenCode with no
+          separate service.
         </p>
       </div>
     </footer>
