@@ -275,6 +275,39 @@ export async function changeContained(
     "--quiet",
     `${target}^{commit}`,
   ])
+  // Notes can arrive after the target commit, so the notes ref is part of what the proof saw.
+  const notes = await run(directory, ["rev-parse", "--verify", "--quiet", NOTES_REF])
+  const key = JSON.stringify([directory, evidence, targetCommit.stdout, notes.stdout, target])
+  const known = containmentCache.get(key)
+  if (known) return known
+  const result = await computeContainment(directory, evidence, target)
+  // An unresolved target is not a stable fact; everything else is a function of the key.
+  if (targetCommit.code === 0) {
+    if (containmentCache.size >= CONTAINMENT_CACHE_LIMIT)
+      containmentCache.delete(containmentCache.keys().next().value!)
+    containmentCache.set(key, result)
+  }
+  return result
+}
+
+const CONTAINMENT_CACHE_LIMIT = 128
+/** Containment of one change identity in one exact target commit never changes while both exist. */
+const containmentCache = new Map<string, Containment>()
+let containmentComputations = 0
+export const containmentComputationCount = () => containmentComputations
+
+async function computeContainment(
+  directory: string,
+  evidence: ChangeEvidence,
+  target: string,
+): Promise<Containment> {
+  containmentComputations++
+  const targetCommit = await run(directory, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${target}^{commit}`,
+  ])
   if (targetCommit.code !== 0 || !isObjectID(targetCommit.stdout))
     return { status: "absent", reason: `Integration target ${target} does not resolve.` }
   const targetSha = targetCommit.stdout
@@ -336,6 +369,7 @@ export async function changeContained(
       directory,
       ids.map((entry) => entry.commit),
       evidence.patchId,
+      await runFilter(directory, evidence, `${evidence.base}..${targetSha}`),
     )
     if (run) return { status: "contained", via: "patch-id", commit: run }
   }
@@ -385,6 +419,18 @@ export async function changeContained(
   return { status: "absent", reason: `No commit on ${target} carries this change.` }
 }
 
+async function runFilter(
+  directory: string,
+  evidence: ChangeEvidence,
+  range: string,
+): Promise<RunFilter | undefined> {
+  if (!evidence.base || !evidence.commit || !(await commitResolves(directory, evidence.commit)))
+    return undefined
+  const changeFiles = await changedPaths(directory, evidence.base, evidence.commit)
+  if (!changeFiles?.size) return undefined
+  return { changeFiles, commitFiles: await pathsByCommit(directory, range) }
+}
+
 async function rangePatchIDs(directory: string, rangeSpec: string) {
   const log = await run(directory, [
     "log",
@@ -402,15 +448,61 @@ async function rangePatchIDs(directory: string, rangeSpec: string) {
   return parsePatchIDs(patch.stdout).reverse()
 }
 
-/** Find a contiguous run of (oldest-first) commits whose combined diff has the wanted patch-id. */
+/** What a run must touch to be the change, and what each candidate commit touches. */
+type RunFilter = { changeFiles: ReadonlySet<string>; commitFiles: ReadonlyMap<string, Set<string>> }
+
+/** Combined patch-id computations one squash search may spend; each is two git processes. */
+const MAX_RUN_DIFFS = 300
+
+async function pathsByCommit(directory: string, range: string) {
+  const log = await run(directory, [
+    "log",
+    "--name-only",
+    "--no-merges",
+    "--format=%x1e%H",
+    "-n",
+    String(MAX_RANGE_COMMITS),
+    range,
+  ])
+  const files = new Map<string, Set<string>>()
+  if (log.code !== 0) return files
+  for (const record of log.stdout.split("\x1e")) {
+    const [commit = "", ...paths] = record.split("\n").map((line) => line.trim())
+    if (isObjectID(commit)) files.set(commit, new Set(paths.filter(Boolean)))
+  }
+  return files
+}
+
+/** The files the change touches, or undefined when they cannot be read. */
+async function changedPaths(directory: string, base: string, commit: string) {
+  const result = await run(directory, ["diff", "--name-only", `${base}..${commit}`])
+  return result.code === 0 ? new Set(result.stdout.split("\n").filter(Boolean)) : undefined
+}
+
+function coversChange(union: ReadonlySet<string>, changeFiles: ReadonlySet<string>) {
+  for (const file of changeFiles) if (!union.has(file)) return false
+  return true
+}
+
+/**
+ * Find a contiguous run of (oldest-first) commits whose combined diff has the wanted patch-id.
+ * A run that does not touch every file of the change cannot equal it, so only covering runs are
+ * diffed, and the search stops after a fixed number of diffs: it never scales with history length.
+ */
 async function contiguousRun(
   directory: string,
   oldestFirst: string[],
   patchId: string,
+  filter?: RunFilter,
 ): Promise<string | undefined> {
   const starts = oldestFirst.slice(-MAX_RUN_START_COMMITS)
+  let budget = MAX_RUN_DIFFS
   for (let from = 0; from < starts.length; from++) {
+    const union = new Set(filter?.commitFiles.get(starts[from]!) ?? [])
     for (let to = from + 1; to < Math.min(starts.length, from + MAX_RUN_COMMITS); to++) {
+      for (const file of filter?.commitFiles.get(starts[to]!) ?? []) union.add(file)
+      if (filter && !coversChange(union, filter.changeFiles)) continue
+      if (budget-- <= 0) return undefined
       const id = await combinedPatchID(directory, `${starts[from]}^`, starts[to]!)
       if (id === patchId) return starts[to]
     }
