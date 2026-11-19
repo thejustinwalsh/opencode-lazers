@@ -79,6 +79,7 @@ import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
+import { Callout } from "../details/components.tsx"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -1096,43 +1097,16 @@ function TaskPanel(
    */
   const renderReason = (reason: string, className: string, children?: () => JSX.Element) => {
     const view = taskReasonView(reason, selectedInspectorStatus())
-    const [open, setOpen] = createSignal(false)
     return (
-      <div
-        class={`lazers-tasks-callout ${className}`}
-        data-tone={selectedPresentation().tone}
-        role="status"
+      <Callout
+        class={className}
+        iconTone={selectedPresentation().tone}
+        icon={renderGlyph(selectedPresentation().icon)}
+        text={view.text}
+        raw={view.raw}
       >
-        <span class="lazers-tasks-callout-icon" data-tone={selectedPresentation().tone}>
-          {renderGlyph(selectedPresentation().icon)}
-        </span>
-        <div class="lazers-tasks-callout-body">
-          <div class="lazers-tasks-callout-text">
-            {view.text}
-            <Show when={view.raw}>
-              <>
-                {" "}
-                <button
-                  type="button"
-                  class="lazers-tasks-callout-toggle"
-                  aria-expanded={open()}
-                  onClick={() => setOpen(!open())}
-                >
-                  Details
-                </button>
-              </>
-            </Show>
-          </div>
-          <Show when={view.raw}>
-            {(raw) => (
-              <pre class="lazers-tasks-callout-raw" hidden={!open()}>
-                {raw()}
-              </pre>
-            )}
-          </Show>
-          {children?.()}
-        </div>
-      </div>
+        {children?.()}
+      </Callout>
     )
   }
   /** "Priority 1 · Plan name · step 2": one line for what were four fact rows. */

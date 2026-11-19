@@ -750,15 +750,15 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       Math.min(3, proposal.acceptance.length),
     )
     // The reason is a callout: a user sentence first, the runtime's own text behind Details.
-    const callout = inspectorPane.querySelector<HTMLElement>(".lazers-tasks-callout")!
-    expect(callout.querySelector(".lazers-tasks-callout-icon")).not.toBeNull()
-    const calloutText = callout.querySelector(".lazers-tasks-callout-text")!.textContent ?? ""
+    const callout = inspectorPane.querySelector<HTMLElement>(".lazers-callout")!
+    expect(callout.querySelector(".lazers-callout-icon")).not.toBeNull()
+    const calloutText = callout.querySelector(".lazers-callout-text")!.textContent ?? ""
     expect(calloutText).not.toContain("Reconciliation hold")
     expect(calloutText).toMatch(/\.\s*Details$/)
-    const rawReason = callout.querySelector<HTMLElement>(".lazers-tasks-callout-raw")!
+    const rawReason = callout.querySelector<HTMLElement>(".lazers-callout-raw")!
     expect(rawReason.textContent).toContain("Reconciliation hold")
     expect(rawReason.hasAttribute("hidden")).toBe(true)
-    const detailsLink = callout.querySelector<HTMLButtonElement>(".lazers-tasks-callout-toggle")!
+    const detailsLink = callout.querySelector<HTMLButtonElement>(".lazers-callout-toggle")!
     detailsLink.click()
     await until(() => !rawReason.hasAttribute("hidden"))
     expect(detailsLink.getAttribute("aria-expanded")).toBe("true")

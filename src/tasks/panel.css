@@ -244,64 +244,10 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-/* The reason: a raised callout with the state glyph, one user sentence and an inline Details link. */
-.lazers-tasks-callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--surface-raised-base, var(--surface-base));
-  color: var(--text-base);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.lazers-tasks-callout-icon {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 16px;
-  height: 20px;
-  color: var(--icon-base);
-}
-.lazers-tasks-callout-icon :is(svg, [data-component="icon"]) {
-  width: 16px;
-  height: 16px;
-}
-.lazers-tasks-callout-body {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-.lazers-tasks-callout-text {
-  overflow-wrap: anywhere;
-}
-.lazers-tasks-callout-toggle {
-  display: inline;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-weak);
-  cursor: pointer;
-}
-.lazers-tasks-callout-toggle:hover {
-  color: var(--text-strong);
-  text-decoration: underline;
-}
-.lazers-tasks-callout-raw {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text-weak);
-  font: inherit;
-  font-size: 12px;
-}
-.lazers-tasks-callout-raw[hidden] {
-  display: none;
-}
 .lazers-tasks-node-reason {
   color: var(--text-base);
 }
-.lazers-tasks-callout .lazers-tasks-node-references {
+.lazers-callout .lazers-tasks-node-references {
   margin-top: 8px;
 }
 .lazers-tasks-node-references {
@@ -696,26 +642,26 @@
   color: var(--text-weak);
 }
 /* The state word and the callout glyph follow the same tones. */
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="running"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="running"] {
   color: var(--task-tone-running);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="ready"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="ready"] {
   color: var(--text-strong);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="attention"],
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="waiting"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="attention"],
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="waiting"] {
   color: var(--task-tone-warning);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="failed"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="failed"] {
   color: var(--task-tone-critical);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="integrated"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="integrated"] {
   color: var(--task-tone-success);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="accepted"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="accepted"] {
   color: var(--text-base);
 }
-:is(.lazers-tasks-inspector-state, .lazers-tasks-callout-icon)[data-tone="cancelled"] {
+:is(.lazers-tasks-inspector-state, .lazers-callout-icon)[data-tone="cancelled"] {
   color: var(--text-weak);
 }
 .lazers-tasks-ring {
