@@ -7,7 +7,7 @@ import { nativeWorkerOptions } from "./catalog.ts"
 import { InspectPlanInput, inspectPlan } from "./inspection.ts"
 import { ArchitectContinuityInput, CommandInput, PlanSubmissionInput } from "./schema.ts"
 import type { TaskRuntime } from "./runtime.ts"
-import { TakeoverInput } from "./takeover.ts"
+import { TakeoverInput, WorkerHandoffInput } from "./takeover.ts"
 
 export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
   return ctx.tool.transform((editor) => {
@@ -32,6 +32,13 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
           "Take a task over from its worker: tells the worker, waits up to 5 minutes for its handoff, stops it, and returns the handoff, workspace, commits and uncommitted paths.",
         schema: TakeoverInput,
         run: (input: unknown, sessionID: string) => runtime.takeover(input, sessionID),
+      },
+      {
+        name: "lz-takeover-handoff",
+        description:
+          "Worker only, after a takeover notice: hand your task to the Architect in one call. Plain text: done, remaining, workspace state, struggled with, tried. Then end your turn.",
+        schema: WorkerHandoffInput,
+        run: (input: unknown, sessionID: string) => runtime.takeoverHandoff(input, sessionID),
       },
       {
         name: "lz-inspect-plan",

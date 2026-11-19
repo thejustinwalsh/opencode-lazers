@@ -76,13 +76,76 @@ type TakeoverRow = {
   updated_at: number
 }
 
-export type RuntimeHandoff = {
-  author: "runtime"
-  note: string
+/** Recorded facts about the task; they accompany every handoff, the worker's included. */
+export type TakeoverFacts = {
   failingChecks: { id: string; command: string; exitCode: number | null; output: string }[]
   concerns: string[]
   attempts: number
-  tokens: number | null
+  /** Omitted when no attempt measured its tokens. */
+  tokens?: number
+}
+
+/** The worker's own account, from `lz-takeover-handoff`. Every field is optional text. */
+export type WorkerHandoff = {
+  author: "worker"
+  done?: string
+  remaining?: string
+  workspaceState?: string
+  struggledWith?: string
+  tried?: string
+  notes?: string
+  /** What the worker sent when it did not fit the fields; kept verbatim, never dropped. */
+  raw?: string
+}
+
+export type TakeoverHandoff =
+  | WorkerHandoff
+  | { author: "worker"; draftVersion: number; draft: unknown }
+  | { author: "runtime"; note: string }
+
+const HANDOFF_FIELDS = [
+  "done",
+  "remaining",
+  "workspaceState",
+  "struggledWith",
+  "tried",
+  "notes",
+] as const
+const FIELD_LIMIT = 8_000
+
+/** The slim worker handoff as advertised; `recordWorkerHandoff` accepts anything. */
+export const WorkerHandoffInput = z.looseObject({
+  done: z.string().optional().describe("What is done."),
+  remaining: z.string().optional().describe("What is left."),
+  workspaceState: z.string().optional().describe("Commits, uncommitted changes, anything odd."),
+  struggledWith: z.string().optional().describe("What kept failing."),
+  tried: z.string().optional().describe("What you tried and what happened."),
+  notes: z.string().optional(),
+})
+
+/** Never rejects: known fields become text, anything else is kept verbatim as `raw`. */
+export function normalizeWorkerHandoff(input: unknown): WorkerHandoff {
+  const text = (value: unknown) =>
+    (typeof value === "string"
+      ? value
+      : Array.isArray(value)
+        ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join("\n")
+        : JSON.stringify(value)
+    ).slice(0, FIELD_LIMIT)
+  const handoff: WorkerHandoff = { author: "worker" }
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    if (input !== undefined) handoff.raw = text(input)
+    return handoff
+  }
+  const record = input as Record<string, unknown>
+  for (const field of HANDOFF_FIELDS)
+    if (record[field] !== undefined && record[field] !== null && record[field] !== "")
+      handoff[field] = text(record[field])
+  const extra = Object.keys(record).filter(
+    (key) => !(HANDOFF_FIELDS as readonly string[]).includes(key),
+  )
+  if (extra.length) handoff.raw = text(Object.fromEntries(extra.map((key) => [key, record[key]])))
+  return handoff
 }
 
 type Payload = {
@@ -102,7 +165,10 @@ type Payload = {
   uncommitted?: string[]
   wipTree?: string
   wipRef?: string
-  handoff?: { author: "worker"; draftVersion: number; draft: unknown } | RuntimeHandoff
+  handoff?: TakeoverHandoff
+  /** The worker's `lz-takeover-handoff`, saved as soon as it arrives. */
+  workerHandoff?: WorkerHandoff
+  facts?: TakeoverFacts
   architectAttemptID?: string
 }
 
@@ -120,7 +186,8 @@ export type TakeoverResult = {
   uncommitted?: string[]
   wipRef?: string
   workerQuiet?: boolean
-  handoff?: Payload["handoff"]
+  handoff?: TakeoverHandoff
+  facts?: TakeoverFacts
   next: string
 }
 
@@ -429,7 +496,7 @@ export class TakeoverExecution {
 
   private async awaitHandoff(row: TakeoverRow) {
     const payload = this.payload(row)
-    if (this.workerDraft(row)) {
+    if (payload.workerHandoff || this.workerDraft(row)) {
       this.move(row, "stopping", { stopCause: "handoff-written" }, "TAKEOVER_HANDOFF_RECEIVED")
       return
     }
@@ -469,13 +536,21 @@ export class TakeoverExecution {
       if (now() < payload.stopDeadline!) return
     }
     const facts = this.workspaceFacts(row, attempt)
-    const draft = this.workerDraft(row)
-    const handoff: Payload["handoff"] = draft
-      ? { author: "worker", draftVersion: draft.draftVersion, draft: draft.draft }
-      : this.runtimeHandoff(row)
+    // The worker's handoff may have arrived while it was being stopped; read the row again.
+    const latest = this.payload(this.row(row.id)!)
+    const draft = latest.workerHandoff ? undefined : this.workerDraft(row)
+    const handoff: TakeoverHandoff = latest.workerHandoff
+      ? latest.workerHandoff
+      : draft
+        ? { author: "worker", draftVersion: draft.draftVersion, draft: draft.draft }
+        : {
+            author: "runtime",
+            note: "Not written by the worker: it wrote no handoff before it stopped. Built from recorded facts; read the commits, the uncommitted paths and the trajectory before continuing.",
+          }
     const settled = this.settle(this.row(row.id)!, attempt, {
       ...facts,
       handoff,
+      facts: this.taskFacts(row),
       workerQuiet: !busy,
     })
     if (settled && fromScheduler) this.deps.notify(row.plan_id, this.result(this.row(row.id)!))
@@ -522,13 +597,55 @@ export class TakeoverExecution {
     }
   }
 
-  /** Written from recorded facts when the worker wrote none; it says so. */
-  private runtimeHandoff(row: TakeoverRow): RuntimeHandoff {
+  /**
+   * The worker's slim handoff, from `lz-takeover-handoff`. The caller is the worker session of an
+   * open takeover; the payload is never rejected for its shape, only kept.
+   */
+  recordWorkerHandoff(input: unknown, sessionID: string) {
+    const { store } = this.deps
+    const row = store.read((db) =>
+      db
+        .query<TakeoverRow, [string, string]>(
+          `SELECT t.* FROM runner_takeovers t JOIN runner_attempts a ON a.id=t.attempt_id
+            WHERE t.project_directory=? AND a.session_id=?
+              AND t.state IN ('notifying','awaiting-handoff','stopping')
+            ORDER BY t.created_at DESC LIMIT 1`,
+        )
+        .get(this.directory, sessionID),
+    )
+    if (!row)
+      throw new Error("No takeover is waiting for a handoff from this session; continue your task")
+    const handoff = normalizeWorkerHandoff(input)
+    const saved = store.atomic((db) => {
+      const current = db
+        .query<{ payload: string; state: string }, [string]>(
+          "SELECT payload,state FROM runner_takeovers WHERE id=?",
+        )
+        .get(row.id)
+      if (!current || !OPEN_TAKEOVER_STATES.includes(current.state as TakeoverState)) return false
+      const payload = JSON.parse(current.payload) as Payload
+      if (payload.workerHandoff) return true
+      db.query("UPDATE runner_takeovers SET payload=?,updated_at=? WHERE id=?").run(
+        JSON.stringify({ ...payload, workerHandoff: handoff }),
+        this.deps.now(),
+        row.id,
+      )
+      return true
+    })
+    if (!saved) throw new Error("The takeover already finished; your handoff was not needed")
+    return {
+      status: "received",
+      next: "Thank you. Stop now and end your turn; the Architect continues in this workspace.",
+    }
+  }
+
+  /** Recorded facts about the task, given with every handoff. */
+  private taskFacts(row: TakeoverRow): TakeoverFacts {
     const { store } = this.deps
     const attempts = store.attempts(row.plan_id).filter((a) => a.task_id === row.task_id)
     const ids = attempts.map((a) => a.id)
     const failingChecks = store.read((db) => {
-      const latest = new Map<string, RuntimeHandoff["failingChecks"][number]>()
+      const latest = new Map<string, TakeoverFacts["failingChecks"][number]>()
       for (const id of ids)
         for (const { body } of db
           .query<{ body: string }, [string]>(
@@ -558,12 +675,10 @@ export class TakeoverExecution {
       .map((concern) => concern.reason)
     const counted = attempts.filter((a) => a.token_count !== null)
     return {
-      author: "runtime",
-      note: "Not written by the worker: it did not write a handoff in time. Built from recorded facts; read the commits, the uncommitted paths and the trajectory before continuing.",
       failingChecks,
       concerns,
       attempts: attempts.length,
-      tokens: counted.length ? counted.reduce((sum, a) => sum + a.token_count!, 0) : null,
+      ...(counted.length ? { tokens: counted.reduce((sum, a) => sum + a.token_count!, 0) } : {}),
     }
   }
 
@@ -696,6 +811,7 @@ export class TakeoverExecution {
       ...(payload.wipRef ? { wipRef: payload.wipRef } : {}),
       ...(payload.workerQuiet === undefined ? {} : { workerQuiet: payload.workerQuiet }),
       ...(payload.handoff ? { handoff: payload.handoff } : {}),
+      ...(payload.facts ? { facts: payload.facts } : {}),
       next: `Read the handoff, then finish the task yourself in ${payload.workspace}: edit and commit there (uncommitted work is kept; ${payload.wipRef ?? "no snapshot was needed"}). Then lz-plan-command {action:"takeover-submit", planID:"${row.plan_id}", taskID:"${row.task_id}", reason}; the runtime verifies it like a worker result.${payload.workerQuiet === false ? " The worker did not go quiet after interruption; check it before writing." : ""}`,
     }
   }
@@ -713,8 +829,8 @@ function takeoverNotice(payload: Payload, attempt: AttemptRow, minutes: number):
     `The Architect is taking task ${attempt.task_id} over from you now. Reason: ${payload.reason}`,
     "Stop starting new work. Within the next step or two:",
     "1. Commit your work in progress in this workspace (a WIP commit is fine; never discard changes).",
-    `2. Call lz-verify-handoff with requestID ${payload.handoffRequestID}, a new draftID and a draft: what is done, what remains, the workspace state, what you tried and what you struggled with, the files and commits involved.`,
-    "3. End your turn. Do not finalize or wait for review.",
+    "2. Call lz-takeover-handoff once: done, remaining, workspaceState, struggledWith, tried (plain text; anything missing is fine).",
+    "3. End your turn.",
     `After ${minutes} minutes you are stopped and the runtime writes the handoff from recorded facts.`,
   ].join("\n")
 }

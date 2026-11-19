@@ -500,9 +500,12 @@ taken-over      (cancelled: plan cancellation)
 The notice is claimed in the row before it is sent and never resent. The scheduler advances
 open takeovers each tick and leaves their worker attempts alone, so a call cut short by a
 reload is finished by the next tick, which notifies the Architect (`takeover-ready`); repeating
-the call with the same `requestID` returns that result. The handoff is the worker's
-`lz-verify-handoff` draft, or one the runtime builds from recorded facts (commits, uncommitted
-paths, failing checks, open concerns) marked `author: "runtime"`.
+the call with the same `requestID` returns that result. The worker answers with `lz-takeover-handoff`: one call,
+plain-text fields (done, remaining, workspaceState, struggledWith, tried, notes), never rejected
+for its shape (anything else is kept verbatim as `raw`) and never reviewed. A full
+`lz-verify-handoff` draft is also read. With no answer the handoff is a note marked
+`author: "runtime"`. Recorded facts (failing checks, open concerns, attempts, tokens) and the
+workspace's commits and uncommitted paths accompany every handoff.
 
 `taken-over` opens a new attempt for the task in the same workspace and base, with
 `policy.takeover = {takeoverID, architectSessionID, fromAttemptID}`, `agent: "architect"` and

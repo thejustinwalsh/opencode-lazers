@@ -4871,6 +4871,11 @@ export class TaskRuntime {
     return this.takeovers.run(input as never, caller, signal)
   }
 
+  /** `lz-takeover-handoff`: the worker's slim handoff for an open takeover; never rejected for shape. */
+  takeoverHandoff(input: unknown, sessionID: string) {
+    return this.takeovers.recordWorkerHandoff(input, sessionID)
+  }
+
   private commandCancel(db: Database, ctx: CommandContext, plan: PlanRow) {
     const { command, caller } = ctx
     this.store.cancelAdoptions(plan.id, "Cancellation requested")
