@@ -61,7 +61,7 @@ export const detailsKitStyles = `
 
   /* Activity lane */
   .lazers-kit-lane {
-    position: relative; display: flex; align-items: stretch; height: 26px; overflow: hidden;
+    position: relative; display: flex; align-items: stretch; height: 26px;
     background: var(--surface-raised-base, var(--surface-base));
     border-top: 1px solid var(--border-weak-base); border-bottom: 1px solid var(--border-weak-base);
   }
@@ -73,24 +73,33 @@ export const detailsKitStyles = `
   .lazers-kit-tick[data-failed="true"] { height: 16px; margin-top: -8px; background: var(--icon-critical-base); }
   .lazers-kit-tick[data-selected="true"] {
     width: 8px; height: 18px; margin: -9px 0 0 -5px; box-sizing: border-box; border-radius: 3px;
-    border: 1px solid var(--text-strong); background: transparent;
+    border: 1px solid var(--text-strong);
+    background: linear-gradient(var(--lazers-kit-tools), var(--lazers-kit-tools)) center / 2px calc(100% - 4px) no-repeat;
   }
-  .lazers-kit-tick[data-selected="true"]::after {
-    content: ""; position: absolute; top: 2px; bottom: 2px; left: 50%; width: 2px; margin-left: -1px;
-    border-radius: 1px; background: var(--lazers-kit-tools);
+  .lazers-kit-tick[data-selected="true"][data-failed="true"] {
+    background: linear-gradient(var(--icon-critical-base), var(--icon-critical-base)) center / 2px calc(100% - 4px) no-repeat;
   }
-  .lazers-kit-tick[data-selected="true"][data-failed="true"]::after { background: var(--icon-critical-base); }
   .lazers-kit-lane-idle {
-    flex: none; display: flex; align-items: center; justify-content: center; min-width: 0; overflow: hidden;
+    flex: none; box-sizing: border-box; position: relative;
     border-left: 1px solid var(--border-weak-base); border-right: 1px solid var(--border-weak-base);
-    background: color-mix(in oklch, var(--text-strong) 4%, var(--background-base));
-    font-family: var(--lazers-kit-mono); font-size: 11px; font-style: italic; color: var(--text-weak);
-    white-space: nowrap;
+    background: repeating-linear-gradient(135deg, color-mix(in oklch, var(--text-strong) 10%, transparent) 0 2px, transparent 2px 5px);
   }
-  .lazers-kit-lane-captions {
-    display: flex; justify-content: space-between; gap: 8px;
-    font-family: var(--lazers-kit-mono); font-size: 11px; color: var(--text-weak);
+  /* Hover detail: one CSS tip per mark, quiet stretch or the bare track; no node per tick. */
+  .lazers-kit-lane:focus-visible { outline: 2px solid var(--border-selected); outline-offset: 2px; }
+  .lazers-kit-tick::before { content: ""; position: absolute; inset: -6px -4px; }
+  .lazers-kit-lane [data-tip]::after, .lazers-kit-lane[data-tip]::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; z-index: 2;
+    transform: translateX(-50%); display: none; padding: 3px 7px; border-radius: 6px;
+    background: var(--surface-raised-stronger-non-alpha, var(--surface-raised-base, var(--background-base)));
+    border: 1px solid var(--border-weak-base); box-shadow: 0 2px 8px color-mix(in oklch, black 25%, transparent);
+    color: var(--text-strong); font-family: var(--lazers-kit-mono); font-size: 11px; font-style: normal;
+    line-height: 1.4; white-space: nowrap; pointer-events: none;
   }
+  .lazers-kit-tick[data-edge="start"]::after { left: 0; transform: none; }
+  .lazers-kit-tick[data-edge="end"]::after { left: auto; right: 0; transform: none; }
+  .lazers-kit-lane-idle[data-tip]::after { left: 0; transform: none; }
+  .lazers-kit-lane [data-tip]:hover::after, .lazers-kit-lane [data-active="true"]::after { display: block; }
+  .lazers-kit-lane[data-tip]:hover:not(:has([data-tip]:hover))::after { display: block; left: 50%; }
 
   /* Coverage */
   .lazers-kit-coverage-bar {

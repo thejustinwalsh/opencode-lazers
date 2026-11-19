@@ -66,5 +66,11 @@ export function attemptLane(attempt: StatAttempt | undefined, now: number) {
     ...(tick.failed ? { failed: true } : {}),
   }))
   const span = Math.max(end !== undefined ? end - attempt.startedAt : 0, ticks.at(-1)!.at)
-  return { ticks, durationMs: span, live: LIVE.has(attempt.state), end }
+  return {
+    ticks,
+    durationMs: span,
+    live: LIVE.has(attempt.state),
+    end,
+    originAt: attempt.startedAt,
+  }
 }

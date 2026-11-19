@@ -59,7 +59,6 @@ import {
   sessionGroups,
   sessionModel,
   sessionRole,
-  sessionState,
   sessionTask,
   sessionTaskTitle,
   sessionTone,
@@ -603,10 +602,6 @@ export function RadarMonitorView(props: Props) {
       : []
   }
   const lane = () => workerLane(paneAttempt(), now())
-  const startedClock = () => {
-    const at = paneSession()?.assignment?.startedAt
-    return at === undefined ? undefined : clockMinutes(at)
-  }
   /** Older runner-progress calls that precede every call the live read already lists. */
   const olderCalls = () => {
     const oldest = Math.min(...sessionCalls().map((line) => line.startedAt ?? Infinity))
@@ -1155,8 +1150,7 @@ export function RadarMonitorView(props: Props) {
                         label="Tool calls of the latest attempt"
                         ticks={shown().ticks}
                         durationMs={shown().durationMs}
-                        start={startedClock()}
-                        end={shown().live ? "now" : undefined}
+                        originAt={shown().originAt}
                       />
                     </Section>
                   )}

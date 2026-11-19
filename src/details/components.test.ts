@@ -98,10 +98,43 @@ test("progress renders passed, current and later; the final step may be green", 
 })
 
 test("the lane draws a bounded number of ticks for thousands, and marks the failure", () => {
-  const ticks = all("#lane .lazers-kit-tick")
+  const ticks = [...all("#lane .lazers-kit-lane")[0]!.querySelectorAll(".lazers-kit-tick")]
   expect(ticks.length).toBeLessThanOrEqual(100)
   expect(ticks.filter((t) => t.getAttribute("data-failed") === "true")).toHaveLength(1)
-  expect(q("#lane .lazers-kit-lane-captions")?.textContent).toBe("12:58now")
+  // No text and no captions inside the lane; detail comes from hover and the accessible name.
+  expect(q("#lane .lazers-kit-lane-captions")).toBeNull()
+  const lanes = all("#lane .lazers-kit-lane")
+  for (const lane of lanes) expect(lane.textContent).toBe("")
+  expect(lanes[0]!.getAttribute("aria-label")).toMatch(/^Activity: 5000 calls from 12:58/)
+})
+
+test("lane hover detail: one mark, a cluster, a quiet stretch, and the aria summary", () => {
+  const lane = all("#lane .lazers-kit-lane")[1]!
+  const clock = (ms: number) =>
+    new Date(new Date(2026, 0, 1, 12, 58).getTime() + ms).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    })
+  const tips = [...lane.querySelectorAll("[data-tip]")].map((node) => node.getAttribute("data-tip"))
+  expect(tips).toContain(`Read · ${clock(0)} · 1.5s`)
+  expect(tips).toContain(`Search · ${clock(60_000)} · failed`)
+  expect(tips).toContain(`2 calls · ${clock(120_000)} – ${clock(121_000)}`)
+  expect(tips.some((tip) => tip?.startsWith("19h") && tip.includes(" idle · "))).toBe(true)
+  // The quiet stretch is a bare break: fixed width, no text.
+  const idle = lane.querySelector(".lazers-kit-lane-idle") as unknown as HTMLElement
+  expect(idle.style.width).toBe("20px")
+  expect(idle.textContent).toBe("")
+  expect(lane.getAttribute("aria-label")).toMatch(
+    /^Quiet: 5 calls from .+, last activity .+, idle 19h/,
+  )
+  // The track exposes its start and end.
+  expect(lane.getAttribute("data-tip")).toContain(clock(0))
+  // Keyboard: the lane takes focus and Arrow keys step through marks and stretches.
+  expect(lane.getAttribute("tabindex")).toBe("0")
+  lane.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }) as never,
+  )
+  expect(lane.querySelectorAll('[data-active="true"]')).toHaveLength(1)
 })
 
 test("coverage, rows, disclosures and identifiers are omitted when empty", () => {

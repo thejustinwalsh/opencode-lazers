@@ -6,6 +6,10 @@ export type LaneTick = {
   failed?: boolean
   /** Opaque id returned on the mark that holds this tick. */
   id?: string
+  /** What the tick is (`Read`, `Check`), for its hover. */
+  label?: string
+  /** How long the call took, for its hover. */
+  durationMs?: number
 }
 
 export type LaneMark = {
@@ -15,6 +19,12 @@ export type LaneMark = {
   /** Ticks merged into this mark (more than one when they share a bucket). */
   count: number
   selected: boolean
+  /** Span of the ticks in this mark, in ms since the lane origin. */
+  fromMs: number
+  toMs: number
+  /** Set only when the mark holds exactly one tick that has them. */
+  label?: string
+  durationMs?: number
 }
 
 export type LaneSegment =
@@ -144,8 +154,19 @@ function marksFor(
       failed: false,
       count: 0,
       selected: false,
+      fromMs: tick.at,
+      toMs: tick.at,
     }
     mark.count += 1
+    mark.fromMs = Math.min(mark.fromMs, tick.at)
+    mark.toMs = Math.max(mark.toMs, tick.at)
+    if (mark.count === 1) {
+      if (tick.label) mark.label = tick.label
+      if (tick.durationMs !== undefined) mark.durationMs = tick.durationMs
+    } else {
+      delete mark.label
+      delete mark.durationMs
+    }
     mark.failed ||= tick.failed === true
     mark.selected ||= selectedId !== undefined && tick.id === selectedId
     buckets.set(bucket, mark)

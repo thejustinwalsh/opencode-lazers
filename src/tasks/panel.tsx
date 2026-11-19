@@ -192,11 +192,6 @@ function checkTiming(check: TaskProposal["verification"][number]) {
     .join(" · ")
 }
 
-const clock = (at: number | undefined) =>
-  at === undefined
-    ? undefined
-    : new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-
 /** The goal repeats only when it says more than the derived title. */
 function objectiveExtendsTitle(objective: string) {
   return taskTitle(objective) !== objective.trim().replace(/\s+/g, " ")
@@ -2060,8 +2055,7 @@ function TaskPanel(
                       label="Tool calls of the latest attempt"
                       ticks={shown().ticks}
                       durationMs={shown().durationMs}
-                      start={clock(latestAttempt()!.startedAt)}
-                      end={shown().live ? "now" : clock(shown().end)}
+                      originAt={shown().originAt}
                     />
                   </Section>
                 )}
