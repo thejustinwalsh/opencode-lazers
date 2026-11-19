@@ -477,6 +477,52 @@ Surfacing, with no new panel elements:
 | Trajectory, checks lane | Nothing when the analyzer was unavailable; one `FALLOW_UNAVAILABLE` record per attempt                  | `store.record()`                                                |
 | Radar                   | Not verified in this plan. Phase 3 confirms which existing records Radar reads before any claim is made |                                                                 |
 
+### Where the Fallow config lives
+
+Complexity and duplication work with no config (Fallow defaults). Dead code
+does not: it needs entry points. On this repository 18 of 19 "unused files"
+were workers and fixtures loaded by path.
+
+| Option                                  | Travels with a worktree | CLI, CI, editor agree | Who can loosen the gate                      | Cost                                          |
+| --------------------------------------- | ----------------------- | --------------------- | -------------------------------------------- | --------------------------------------------- |
+| A. Fallow config file in the repo       | Yes                     | Yes                   | Anyone who lands a commit, visible in review | One task per project to create it             |
+| B. LAZERS project store, by project key | Yes, passed by runtime  | No                    | Whoever calls a settings tool; no diff       | New storage, new tool, second source of truth |
+| C. Carried on the plan or tasks         | Yes                     | No                    | The Architect, per plan                      | Re-authored every plan; plans drift           |
+
+Recommended: A, with two rules.
+
+1. The runtime reads the config at the attempt's base commit, never from the
+   candidate. A task cannot loosen its own gate; a config change applies to
+   tasks that start after it integrates.
+2. Plans and tasks carry no Fallow settings. The receipt records the config
+   path and content hash.
+
+The analyzer takes config as text from the host, so B can be added later
+without changing it.
+
+How the Architect learns a project has none, as a runtime fact and not a
+prompt rule:
+
+```
+first check in a project, no config at the base commit
+  complexity + duplication   gate as normal, Fallow defaults
+  dead code                  off, omitted from results (not shown as zero)
+  Architect notice           once per project:
+                             "No Fallow config. Dead-code checks are off.
+                              lz-fallow-config returns a draft."
+```
+
+`lz-fallow-config` (read-only, Architect and Auditor): returns the resolved
+config, its path and hash, and, when there is none, a draft built from
+Fallow's `recommend` output plus entry points the runtime can see. The
+Architect submits an ordinary task to commit it.
+
+Location versus project: Fallow searches upward to the workspace root and
+takes the first config (`fallow.tools/docs/configuration/overview`). Analysing
+from the worktree root gives every OpenCode location in a project the same
+file. The upward search through the library path is unverified; Phase 1 tests
+it.
+
 ### State-machine fit
 
 No new state. No new machine event. `lifecycleMachines` is unchanged.
@@ -629,6 +675,13 @@ Phase 1 may need a step up for the engine patches; say so when it happens.
    them private to this repository?
 10. **Pin.** Start at `v3.41.0` for parity with the spike, then move to the
     latest tag after Phase 1?
+
+11. **Config source.** Repo file read at the base commit (recommended), a
+    LAZERS project store, or settings carried on the plan?
+12. **Config edits.** Should a task that changes the Fallow config be flagged
+    to the Architect in its outcome, or is ordinary review enough?
+13. **No config.** Dead code off until a config exists (recommended), or hold
+    the plan gate until the Architect creates one?
 
 ## Follow-ups noticed, not part of this plan
 
