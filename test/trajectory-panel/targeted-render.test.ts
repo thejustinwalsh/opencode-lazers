@@ -314,8 +314,6 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     )
     expect(snapshotCalls).toBe(0)
     expect(historyCalls).toBeGreaterThan(0)
-    const costCell = container.querySelector(".lazers-trajectory-cost")
-    const costRow = costCell?.getAttribute("title") ?? ""
     expect(latestHistoryReport).toMatchObject({
       effort: {
         recordedCost: { apiEquivalentTotalUsd: 0.03197324 },
@@ -324,39 +322,90 @@ test("a task target renders its scoped report timeline without a broad snapshot"
         },
       },
     })
-    expect(costRow).toContain("Current-market observed-usage estimate")
-    expect(costRow).toContain("$0.01598662 estimate")
-    expect(costRow).not.toContain("$0.03197324")
-    // The cell shows a short value over a muted label; the exact figure sits in its tooltip.
-    expect(costCell?.querySelector("b")?.textContent).toBe("$0.016")
-    expect(costCell?.querySelector("span")?.textContent).toBe("market cost")
-    // The summary names the price source and date; generation and freshness sit behind the disclosure.
-    expect(container.querySelector(".lazers-trajectory-coverage")?.textContent).toMatch(
-      /^OpenRouter prices · \w+ \d+$/,
+    // The recorded failed check is selected: the pane shows that check and nothing of the attempt.
+    const callPane = container.querySelector('.lazers-trajectory-pane-body[data-pane="call"]')
+    expect(callPane).not.toBeNull()
+    expect(callPane!.querySelector(".lazers-trajectory-crumb button")?.textContent).toMatch(
+      /Attempt \d/,
     )
-    expect(container.querySelector(".lazers-trajectory-valuation")?.textContent).toContain(
-      "OpenRouter · generation 5 · average · current freshness",
+    expect(callPane!.textContent).not.toMatch(/Rates|Events|Cost|Coverage|Summary/)
+    expect(container.querySelector('[data-pane="attempt"]')).toBeNull()
+    // Selecting the attempt shows its report, once.
+    container.querySelectorAll<HTMLElement>('.lazers-trajectory-attempt[role="option"]')[1]!.click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
+    const pane = container.querySelector('.lazers-trajectory-pane-body[data-pane="attempt"]')
+    expect(pane).not.toBeNull()
+    const stat = (label: string) =>
+      [...pane!.querySelectorAll(".lazers-kit-stat")]
+        .find((item) => item.querySelector("dt")?.textContent === label)
+        ?.querySelector("dd")
+    // One figure at two decimals, no "market cost" caption, no second price figure.
+    expect(stat("Cost")?.textContent).toMatch(/^\$0\.02/)
+    expect(pane!.textContent).not.toContain("market cost")
+    expect(pane!.textContent).not.toContain("$0.016")
+    expect(pane!.textContent).not.toContain("0.03197324")
+    expect(stat("Tokens")?.textContent).toMatch(/ in · .* out$/)
+    // The summary names the price source and date; the rates are a table behind Rates.
+    expect(pane!.textContent).toMatch(/OpenRouter prices · \w+ \d+/)
+    const disclosure = (label: string) =>
+      [...pane!.querySelectorAll<HTMLElement>(".lazers-kit-disclosure")].find((item) =>
+        item.querySelector(".lazers-kit-disclosure-toggle")?.textContent?.startsWith(label),
+      )
+    const toggle = (label: string) =>
+      disclosure(label)!.querySelector<HTMLButtonElement>(".lazers-kit-disclosure-toggle")!
+    expect(
+      [...pane!.querySelectorAll(".lazers-kit-disclosure-toggle")].map((item) =>
+        item.textContent
+          ?.replace(/\s+/g, " ")
+          .trim()
+          .replace(/\s*·\s*\d+$/, ""),
+      ),
+    ).toEqual(expect.arrayContaining(["Rates", "Events", "Identifiers"]))
+    toggle("Rates").click()
+    await until(() => disclosure("Rates")!.querySelector(".lazers-kit-rows") !== null)
+    expect(disclosure("Rates")!.textContent).toContain("$0.10")
+    expect(
+      disclosure("Rates")!.querySelectorAll(".lazers-trajectory-note").length,
+    ).toBeLessThanOrEqual(4)
+    // Identifiers hold ids and hashes; nowhere else.
+    expect(pane!.textContent).not.toMatch(/snapshot|current-price-index|uncachedInput/)
+    toggle("Identifiers").click()
+    await until(() => disclosure("Identifiers")!.querySelector(".lazers-kit-ids") !== null)
+    expect(disclosure("Identifiers")!.textContent).toContain("Price index")
+    // Event names are translated; the raw name stays in the row's payload.
+    toggle("Events").click()
+    await until(() => pane!.querySelectorAll(".lazers-trajectory-event").length > 0)
+    expect(pane!.querySelector(".lazers-trajectory-activity-list")!.textContent).not.toMatch(
+      /[A-Z]+_[A-Z_]+|worker-[a-z-]+|runner-[a-z]+/,
     )
     expect(container.textContent).not.toMatch(/Unix ms|unknown|not recorded|unavailable/i)
-    // One row for pricing and estimate details, summarised by source and date.
-    const valuation = container.querySelectorAll(".lazers-trajectory-valuation")
-    expect(valuation).toHaveLength(1)
-    expect(valuation[0]!.querySelector("summary")?.textContent).toMatch(
-      /^Estimate basis and prices\s*OpenRouter · \w+ \d+$/,
-    )
-    expect(valuation[0]!.textContent).toContain("Retained calls · 19")
     expect(container.textContent).not.toContain("Pricing coverage and provenance")
+    // A call shows only itself: its command, numbers, its place in the attempt and a way back.
+    const toolMark = container.querySelector<HTMLElement>('[data-track="tools"] [role="option"]')
+    expect(toolMark).not.toBeNull()
+    toolMark!.click()
+    await until(() => container.querySelector('[data-pane="call"]') !== null)
+    const call = container.querySelector('[data-pane="call"]')!
+    expect(container.querySelector('[data-pane="attempt"]')).toBeNull()
+    expect(call.textContent).not.toMatch(/Rates|Events|Coverage|Summary|Cost|Calls/)
+    expect(call.querySelector(".lazers-trajectory-crumb button")?.textContent).toMatch(/Attempt \d/)
+    expect(call.querySelector(".lazers-kit-tick[data-selected='true']")).not.toBeNull()
+    expect(container.querySelector(".lazers-trajectory-position")?.textContent).toMatch(
+      /^\d+ \/ \d+$/,
+    )
+    expect(container.querySelector(".lazers-details-header")?.textContent).toMatch(
+      /Succeeded|Failed|Running/,
+    )
+    // Disclosures with nothing in them are not rendered.
+    for (const toggle of call.querySelectorAll(".lazers-kit-disclosure-toggle"))
+      expect(toggle.textContent).not.toMatch(/·\s*0$/)
+    expect(container.textContent).not.toMatch(/Unix ms|unknown|not recorded|unavailable/i)
+    call.querySelector<HTMLButtonElement>(".lazers-trajectory-crumb button")!.click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
     // The timeline opens fitted: no horizontal scroll until the person zooms in.
     expect(container.querySelector(".lazers-trajectory-scroll")?.getAttribute("data-zoomed")).toBe(
       "false",
     )
-    expect(container.querySelector(".lazers-trajectory-cost span")?.textContent).toBe("market cost")
-    expect(container.textContent).toContain(
-      "Estimate basis · deduplicated-retained-token-usage-at-published-current-rates",
-    )
-    expect(container.textContent).toContain("Strict-index API equivalent · $0.03197324 · OpenCode")
-    expect(container.textContent).toContain("0.0000001")
-    expect(container.textContent).toContain("Recovery gaps · 2")
     expect(container.textContent).not.toContain("$0 subtotal")
     expect(container.textContent).not.toContain("Cost unavailable")
     expect(container.querySelector(".lazers-trajectory-axis")).not.toBeNull()

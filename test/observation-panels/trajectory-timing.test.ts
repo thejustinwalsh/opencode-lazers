@@ -630,31 +630,59 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(selected(markerStarting("Plan check quality"))).toBe(true)
     expect(selected(markerStarting("Attempt 1 check quality"))).toBe(false)
     const command = () => container.querySelector(".lazers-trajectory-command")?.textContent
-    const duration = () =>
-      container.querySelector(".lazers-details-header .lazers-trajectory-duration")?.textContent
-    const facts = () => container.querySelector(".lazers-trajectory-facts")?.textContent ?? ""
-    const timingSource = () =>
-      [...container.querySelectorAll<HTMLDetailsElement>(".lazers-trajectory-payload")].find(
-        (details) => details.querySelector("summary")?.textContent?.startsWith("Timing source"),
-      )
+    const stat = (label: string) =>
+      [...container.querySelectorAll('[data-pane="call"] .lazers-kit-stat')]
+        .find((item) => item.querySelector("dt")?.textContent === label)
+        ?.querySelector("dd")?.textContent
+    const duration = () => stat("Duration")
+    const facts = () =>
+      container.querySelector('[data-pane="call"] .lazers-kit-stats')?.textContent ?? ""
+    // Timing sources name database columns, so they live under Identifiers and nowhere else.
+    const timingSource = () => {
+      const toggle = [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-pane="call"] .lazers-kit-disclosure-toggle',
+        ),
+      ].find((item) => item.textContent?.startsWith("Identifiers"))
+      if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click()
+      return container.querySelector('[data-pane="call"] .lazers-kit-ids')
+    }
     expect(command()).toBe("bun test quality")
     // The reference arrives with the report; the view store supplied none.
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
     expect(duration()).toBe("240ms")
-    // The outcome, kind and duration are the pane's sticky header, not part of the scrolling body.
-    expect(container.querySelector(".lazers-details-header")?.textContent).toContain(
-      "check · exit 0",
-    )
+    // The outcome and name are the pane's sticky header; the exit code is the Result label.
+    expect(container.querySelector(".lazers-details-header")?.textContent).toContain("Plan check")
+    expect(stat("Result")).toBe("exit 0")
+    expect(container.querySelector(".lazers-details-actions")?.textContent).toMatch(/\d+ \/ \d+/)
     expect(
       container
         .querySelector(".lazers-trajectory-inspector")!
         .contains(container.querySelector(".lazers-details-header")),
     ).toBe(false)
-    expect(container.querySelector(".lazers-trajectory-payload")?.hasAttribute("open")).toBe(false)
     expect(facts()).toContain("Started")
-    expect(facts()).toContain("Ended")
-    expect(timingSource()?.textContent).toContain("Recorded verification receipt")
+    expect(facts()).toContain("Duration")
+    expect(timingSource()?.textContent).toContain("erification receipt")
+    // A check shows only itself: none of the attempt's report sits beneath it.
+    expect(container.querySelector('[data-pane="attempt"]')).toBeNull()
     noRawFacts()
+    // Previous and next walk the checks; a new selection starts at the top of the pane.
+    const body = container.querySelector<HTMLElement>(".lazers-trajectory-inspector")!
+    const position = () => container.querySelector(".lazers-trajectory-position")?.textContent
+    const stepButton = (direction: "Previous" | "Next") =>
+      container.querySelector<HTMLButtonElement>(
+        `.lazers-details-actions [aria-label="${direction} check"]`,
+      )!
+    const first = position()
+    const forward = stepButton("Next").disabled ? "Previous" : "Next"
+    body.scrollTop = 40
+    expect(body.scrollTop).toBe(40)
+    stepButton(forward).click()
+    await until(() => position() !== first)
+    expect(body.scrollTop).toBe(0)
+    stepButton(forward === "Next" ? "Previous" : "Next").click()
+    await until(() => position() === first)
+    expect(command()).toBe("bun test quality")
 
     markerStarting("Attempt 1 check quality")!.click()
     await until(() => selected(markerStarting("Attempt 1 check quality")))
@@ -668,9 +696,9 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).not.toContain(
       taskID.slice(0, 8),
     )
-    expect(container.querySelector(".lazers-trajectory-kind")?.textContent).toBe("Check · exit 0")
+    expect(container.querySelector(".lazers-trajectory-kind")?.textContent).toBe("Check")
     expect(container.querySelector(".lazers-trajectory-outcome")?.textContent).toContain("Passed")
-    expect(facts()).toContain("into the attempt")
+    expect(stat("Started")).toMatch(/ · \+/)
     // The worker session opens from the reference menu, which offers it for this selection.
     container.querySelector<HTMLButtonElement>(".lazers-trajectory-task-menu button")!.click()
     const sessionItem = [
@@ -722,17 +750,22 @@ test("registered Trajectory panel renders proportional check intervals and preci
     checkRow("reversed")!.click()
     await until(() => selected(checkRow("reversed")))
     expect(duration()).toBeUndefined()
-    // The data defect is reported once, behind the Timing source disclosure.
+    // The data defect is reported once, with the timing source under Identifiers.
     expect(timingSource()?.textContent).toContain("precedes the start time")
 
-    markerStarting("Attempt 1 check quality")!.click()
-    await until(
-      () => markerStarting("Attempt 1 check quality")?.getAttribute("aria-selected") === "true",
-    )
-    const historyDetails = container.querySelector<HTMLDetailsElement>(
-      ".lazers-trajectory-activity",
-    )!
-    historyDetails.open = true
+    const attemptOption = () =>
+      container.querySelector<HTMLElement>('.lazers-trajectory-attempt[role="option"]')!
+    const eventsToggle = () =>
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-pane="attempt"] .lazers-kit-disclosure-toggle',
+        ),
+      ].find((item) => item.textContent?.startsWith("Events"))!
+    // The Events list belongs to the attempt's pane; opening it keeps it open across selections.
+    attemptOption().click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
+    expect(container.querySelector('[data-pane="call"]')).toBeNull()
+    eventsToggle().click()
     const capturedEvents = () => [
       ...container.querySelectorAll<HTMLButtonElement>(
         ".lazers-trajectory-activity-list .lazers-trajectory-event",
@@ -761,6 +794,10 @@ test("registered Trajectory panel renders proportional check intervals and preci
     )?.textContent
     expect(initialCaptureMetadata).toContain("Captured")
 
+    // A selected check keeps its place and shows the live duration; the attempt report is gone.
+    markerStarting("Attempt 1 check quality")!.click()
+    await until(() => selected(markerStarting("Attempt 1 check quality")))
+    expect(container.querySelector('[data-pane="attempt"]')).toBeNull()
     const beforeStatusCalls = statusCalls
     attemptEnd += 50
     publishedSequence = 2
@@ -785,27 +822,38 @@ test("registered Trajectory panel renders proportional check intervals and preci
     expect(command()).toBe("bun test quality")
     // The reference arrives with the report; the view store supplied none.
     expect(container.querySelector(".lazers-trajectory-line1")?.textContent).toContain("LZ-7")
+    attemptOption().click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
     expect(capturedEvents()[0]?.querySelector("time")?.textContent).toBe(initialHistoryTime)
     expect(container.querySelector(".lazers-trajectory-capture-note")?.textContent).toBe(
       initialCaptureMetadata,
     )
 
+    // A row opens that event alone, named in words; its raw name is in the payload.
     capturedEvents()[0]!.click()
     const eventHeading = () =>
       [...container.querySelectorAll<HTMLElement>(".lazers-details-header")].find(
-        (heading) =>
-          heading.querySelector(".lazers-trajectory-kind")?.textContent === "VERIFY · accepted",
+        (heading) => heading.querySelector(".lazers-trajectory-kind")?.textContent === "Checking",
       )
     await until(() => eventHeading() !== undefined)
-    expect(capturedEvents()[0]?.getAttribute("aria-pressed")).toBe("true")
-    let payload = container.querySelector<HTMLDetailsElement>(".lazers-trajectory-payload")!
-    payload.open = true
-    expect(payload.querySelector("pre")?.textContent).toContain(
-      "captured worker transition payload",
-    )
+    expect(container.querySelector('[data-pane="attempt"]')).toBeNull()
+    expect(container.textContent).not.toMatch(/VERIFY|runner-transition/)
+    const payloadToggle = () =>
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          '[data-pane="call"] .lazers-kit-disclosure-toggle',
+        ),
+      ].find((item) => item.textContent?.startsWith("Payload"))!
+    payloadToggle().click()
+    expect(
+      container.querySelector('[data-pane="call"] .lazers-trajectory-pre')?.textContent,
+    ).toContain("captured worker transition payload")
     expect(container.querySelector(".lazers-trajectory-inspector")?.textContent).not.toContain(
       "live status is not captured history",
     )
+    // The link back to the attempt returns to its report.
+    container.querySelector<HTMLButtonElement>(".lazers-trajectory-crumb button")!.click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
 
     expect(capturedEvents()).toHaveLength(1)
     releasePageTwo()
@@ -820,9 +868,11 @@ test("registered Trajectory panel renders proportional check intervals and preci
       initialCaptureMetadata,
     )
 
-    const selectedEventTime = eventHeading()?.querySelector(
-      ".lazers-trajectory-duration",
-    )?.textContent
+    capturedEvents()[0]!.click()
+    await until(() => eventHeading() !== undefined)
+    const selectedEventTime = stat("Started")
+    container.querySelector<HTMLButtonElement>(".lazers-trajectory-crumb button")!.click()
+    await until(() => container.querySelector('[data-pane="attempt"]') !== null)
     const recapture = container.querySelector<HTMLButtonElement>(
       ".lazers-trajectory-capture-note button",
     )!
@@ -835,15 +885,13 @@ test("registered Trajectory panel renders proportional check intervals and preci
     )
     expect(historyCalls).toEqual([undefined, "captured-page-two", undefined, "captured-page-two"])
     expect(capturedEvents()).toHaveLength(2)
-    expect(eventHeading()).toBeDefined()
-    expect(eventHeading()?.querySelector(".lazers-trajectory-duration")?.textContent).toBe(
-      selectedEventTime,
-    )
-    payload = container.querySelector<HTMLDetailsElement>(".lazers-trajectory-payload")!
-    payload.open = true
-    expect(payload.querySelector("pre")?.textContent).toContain(
-      "captured worker transition payload",
-    )
+    capturedEvents()[0]!.click()
+    await until(() => eventHeading() !== undefined)
+    expect(stat("Started")).toBe(selectedEventTime)
+    payloadToggle().click()
+    expect(
+      container.querySelector('[data-pane="call"] .lazers-trajectory-pre')?.textContent,
+    ).toContain("captured worker transition payload")
   } finally {
     mounts.forEach((mount) => mount.dispose())
     disposeSetup?.()

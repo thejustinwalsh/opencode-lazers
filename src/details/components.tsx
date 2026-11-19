@@ -10,9 +10,16 @@ const present = (value: unknown) =>
 
 /** Up to four label/value columns between two hairlines. A column with no value is not rendered. */
 export function StatRow(props: {
-  stats: ReadonlyArray<{ label: string; value?: string | number | null }>
+  stats: ReadonlyArray<{
+    label: string
+    value?: string | number | null
+    /** A Label after the value, for a state that changes how the number reads (`partial`). */
+    note?: { text: string; tone: LabelTone; title?: string }
+  }>
 }): JSX.Element {
-  const shown = createMemo(() => props.stats.filter((stat) => present(stat.value)).slice(0, 4))
+  const shown = createMemo(() =>
+    props.stats.filter((stat) => present(stat.value) || stat.note).slice(0, 4),
+  )
   return (
     <Show when={shown().length > 0}>
       <dl class="lazers-kit-stats" style={{ "--lazers-kit-columns": shown().length }}>
@@ -20,7 +27,19 @@ export function StatRow(props: {
           {(stat) => (
             <div class="lazers-kit-stat">
               <dt>{stat.label}</dt>
-              <dd title={String(stat.value)}>{stat.value}</dd>
+              <dd title={present(stat.value) ? String(stat.value) : undefined}>
+                {stat.value}
+                <Show when={stat.note}>
+                  {(note) => (
+                    <>
+                      {present(stat.value) ? " " : ""}
+                      <Label tone={note().tone} title={note().title}>
+                        {note().text}
+                      </Label>
+                    </>
+                  )}
+                </Show>
+              </dd>
             </div>
           )}
         </For>
@@ -221,9 +240,17 @@ export function Disclosure(props: {
   count?: number
   when?: boolean
   defaultOpen?: boolean
+  /** Controls the open state from outside, e.g. a link that opens this row. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   children?: JSX.Element
 }): JSX.Element {
-  const [open, setOpen] = createSignal(props.defaultOpen ?? false)
+  const [inner, setInner] = createSignal(props.defaultOpen ?? false)
+  const open = () => props.open ?? inner()
+  const setOpen = (next: boolean) => {
+    setInner(next)
+    props.onOpenChange?.(next)
+  }
   const visible = () => props.when !== false && props.count !== 0
   return (
     <Show when={visible()}>

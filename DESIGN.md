@@ -239,11 +239,25 @@ uses a success color. Use red for recorded failures on any track. Collapse
 instantaneous events to a mark at their recorded time. Give each mark a
 keyboard-accessible selection and show its
 details below the split. Keep payloads and secondary activity collapsed.
-The inspector gives state, kind and duration, the command, then Started, Ended
-and Result in clock time with the offset into the attempt. Output and Timing
-source are disclosures. No raw epoch values. Attempt usage shows market cost,
-tokens in (cached) and tokens out with the price source and date; omit the cost
-when no price applies. Never expose private reasoning.
+The details pane follows `design/details-panes/spec.md` and shows one thing. With
+nothing selected it shows the latest attempt. Attempt selected: the bar (state glyph and
+word, "Attempt n of m", the task reference, Open task); a Callout giving the recorded
+reason it ended when the outcome is not plain success (omitted when none was
+recorded); a stat row (Duration, Calls with files, Tokens in and out, Cost); Summary
+rows Setup, Work, Errors and End derived from the recorded events (Errors only when
+there are any, with a Show link to the filtered Events); a Coverage bar with the price
+source and date. Cost is one figure at two decimals with a `partial` label when some
+usage has no price, and no cost at all when no source prices it. Disclosures, closed:
+Rates (a per-million table and at most three short caveat lines), Events (filterable
+by group, with display names; the raw name stays in Payload), Gaps and Identifiers
+(session, attempt, price index, snapshot ids and database column names appear
+nowhere else). A call, check or event selected: the pane shows only that item. Its
+bar has the result, the name, `12 / 38` and previous and next buttons; below it a link
+back to the attempt, the command in a code block, Started with the offset into the
+attempt, Duration and Result as a label, the Position lane with the selected call
+outlined, then Output, Files, Payload and Identifiers, each only when it has content.
+The attempt report is never repeated beneath a call. A new selection starts at the
+top of the pane. No raw epoch values. Never expose private reasoning.
 Compress long idle spans on the shared timeline axis so recorded activity stays
 close together. Mark each compressed interval and preserve actual timestamps
 and durations in the inspector. Keep recording gaps distinct from known idle
@@ -251,7 +265,7 @@ time and keep all tracks aligned through zoom and scrolling: hatch only real
 recording gaps, and draw compressed idle as a narrow labelled break ("1m32s
 idle"). Events stream in the background; show "118 of 184 events" with a thin
 progress line until the cursor is exhausted. There is no manual load control.
-Counts that disagree between sources belong in a Data gaps disclosure.
+Counts that disagree between sources belong in the pane's Gaps disclosure.
 
 ## Models
 
