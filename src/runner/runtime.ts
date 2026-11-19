@@ -262,6 +262,11 @@ export type TaskRuntimeOptions = {
   /** Cancellation waits this long after interrupting a busy worker, then settles without its idleness. Default 30 seconds. */
   cancelIdleWaitMs?: number
   architectReuseMaxContextTokens?: number
+  /**
+   * Total tokens of a task past which the recovery detector raises a takeover concern, with
+   * stronger wording as the spend doubles. Off when undefined. It never stops the worker.
+   */
+  workerSpendCeilingTokens?: number
   /** Review each candidate for introduced duplication and complexity. Default "on". */
   fallowReview?: "on" | "off"
   /** The review itself; defaults to the Fallow analyzer. Tests inject a stub. */
@@ -751,6 +756,9 @@ export class TaskRuntime {
       store: this.store,
       handoff: new HandoffStore(this.store.repository),
       now: this.now,
+      ...(options.workerSpendCeilingTokens === undefined
+        ? {}
+        : { spendCeilingTokens: options.workerSpendCeilingTokens }),
     })
     this.recoveryBundles = new RecoveryBundles({
       store: this.store,
