@@ -3158,9 +3158,7 @@ test("a committed shared-checkout correction gets fresh mechanical preparation",
   expect(activities).toHaveLength(1)
   await activities[0]!.settled
   await f.runtime.tick()
-  expect(
-    f.store.effects(planID).filter((effect) => effect.kind.startsWith("verify:")),
-  ).toHaveLength(2)
+  expect(f.store.effects(planID).filter(authoredVerifyEffect)).toHaveLength(2)
   await drive(f.runtime, 12)
   expect(f.store.plan(planID)?.reason).toContain("Required evidence missing")
   expect(f.store.attempts(planID).map((attempt) => attempt.id)).toEqual([attemptID])
@@ -4997,6 +4995,10 @@ test("a repair attempt is told about every failing check", async () => {
   expect(prompt).toContain("stdout:\n```\ncontent-out\n\n```")
   expect(prompt).toContain("stderr:\n```\ncontent-err\n\n```")
 })
+
+/** A shell-check effect: the runtime's own Fallow review is journaled beside these. */
+const authoredVerifyEffect = (effect: { kind: string }) =>
+  effect.kind.startsWith("verify:") && effect.kind !== "verify:lazers-fallow"
 
 function fallowFinding(file: string, line: number): Finding {
   return {
@@ -13383,7 +13385,7 @@ test("project timing configuration overrides legacy task and combined timeout me
 
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   const receipts = f.store.effects(f.receipt.planID).flatMap((effect) => {
-    if (!effect.kind.startsWith("verify:") && !effect.kind.startsWith("graph-verify:")) return []
+    if (!authoredVerifyEffect(effect) && !effect.kind.startsWith("graph-verify:")) return []
     if (!effect.receipt) return []
     const envelope = JSON.parse(effect.receipt) as { check?: CheckReceipt }
     return envelope.check ? [{ kind: effect.kind, check: envelope.check }] : []
