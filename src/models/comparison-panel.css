@@ -1227,3 +1227,32 @@ span.lazers-models-assignment-route {
   font-size: 12px;
   line-height: 1.45;
 }
+
+/* Assignments disclosures (native details) */
+.lazers-models-assignment-manual-route,
+.lazers-models-assignment-layers,
+.lazers-models-assignment-write-details {
+  min-width: 0;
+  color: var(--text-weak);
+}
+
+.lazers-models-assignment-manual-route,
+.lazers-models-assignment-layers {
+  border-top: 1px solid var(--border-weak-base);
+}
+
+.lazers-models-assignment-write-details summary {
+  min-height: 32px;
+  color: var(--text-base);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lazers-models-assignment-manual-route p,
+.lazers-models-assignment-layers p,
+.lazers-models-assignment-write-details p {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
