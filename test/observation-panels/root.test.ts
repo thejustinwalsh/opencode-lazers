@@ -1758,7 +1758,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )?.value as string | undefined
     if (!modelCss) throw new Error("Models panel CSS was not registered")
     expect(modelCss).toContain("container-name: models-panel")
-    expect(modelCss).toContain("@container models-panel (min-width: 720px)")
+    expect(modelCss).toContain("@container models-panel (max-width: 719px)")
     expect(modelCss).toContain("@container models-panel (max-width: 500px)")
     expect(modelCss).toContain("grid-template-rows: minmax(0, 1fr)")
     expect(modelCss).not.toContain("--models-top-size")
