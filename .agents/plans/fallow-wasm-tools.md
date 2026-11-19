@@ -14,9 +14,9 @@ Three changes fix that:
 
 1. Build Fallow's analysis to WebAssembly from vendored source and run it in a
    worker thread of the service. No native addon, no analyzer process.
-2. Run duplication and complexity as a runtime verification check when a worker
-   finishes. A failure returns specific fix guidance through the existing
-   repair path.
+2. Run duplication and complexity as a runtime review when a worker finishes.
+   Findings go back to the same worker as specific fix guidance, for up to
+   three rounds.
 3. Give agents a small set of bounded tools for exploration, where a
    deterministic check cannot decide.
 
@@ -43,7 +43,7 @@ What the spike did not establish:
   build: `crates/engine/src/duplication_detector/` (`detect/suffix_array.rs`,
   `token_visitor.rs`, `token_types.rs`) and `crates/engine/src/duplicates.rs`
   at `v3.41.0`. Complexity is in `crates/extract/src/complexity.rs`, which
-  does build. So the complexity half of the gate is proven feasible; the
+  does build. So the complexity half of the review is proven feasible; the
   duplication half is the first risk to retire (Phase 1).
 - **Bundle size, cold start, memory, how the module loads from `dist/`.** Not
   recorded anywhere.
@@ -96,12 +96,12 @@ What this changes in the plan:
 - **A project needs entry points before a dead-code check means anything.**
   18 of 19 "unused files" were worker scripts, fixtures and CLIs loaded by
   path (`workerURL`, spawned tests). The config is on branch
-  `chore/fallow-self-cleanup`. The dead-code gate (Phase 4) must not run on a
+  `chore/fallow-self-cleanup`. The dead-code review (Phase 4) must not run on a
   project with no Fallow config; it reports instead.
 - **Introduced-only is not optional.** With 735 inherited complexity findings
-  a gate on all findings would fail every task.
+  a review of all findings would bury every task in feedback.
 - **The budget for the changed-file check is realistic.** The whole repository
-  takes 1.3 s for health natively with threads; the gate analyses changed
+  takes 1.3 s for health natively with threads; the review analyses changed
   files only.
 - **Clean up first.** A dead-code pass over this repository runs before
   Phase 0, so parity tests compare against a tree we understand. It is tracked
@@ -219,16 +219,16 @@ tags between 2026-10-27 and 2026-11-16; latest `v3.43.2`.
 
 ### Fallow's workflow against the LAZERS thesis
 
-| Fallow plugin                                                   | LAZERS                                                                               | Decision                                                             |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| Gate at `git commit`, by intercepting the model's shell command | The runtime commits the artifact itself in `verify()`; workers do not own the commit | Gate in `verify()`, on the artifact. No shell interception           |
-| Gate on introduced findings only                                | A worker is held to its task and write scope                                         | Adopt: introduced fails, worsened warns, inherited is ignored        |
-| Fail open on a tool error, visibly                              | Holds are for real, observable loss                                                  | Adopt: an analyzer error never fails a worker and never holds a plan |
-| 44 model-callable tools                                         | Prefer runtime checks; workers keep native tools                                     | Five tools. The rest stays out                                       |
-| Model told to run `audit` before commit                         | A rule the model can skip is not a check                                             | Runtime runs it. The prompt only says it will happen                 |
-| Judgments must cite an emitted id                               | Auditor records dispositions by `findingID` (`lz-record-audit-finding`)              | Already matches. Keep                                                |
-| `fix --yes` edits files                                         | The write path is the worker's, inside write scope                                   | Not exposed                                                          |
-| Compact per-file text after an edit                             | Context packets guide reads                                                          | Not now. Revisit after the gate has data                             |
+| Fallow plugin                                                   | LAZERS                                                                               | Decision                                                                                     |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Gate at `git commit`, by intercepting the model's shell command | The runtime commits the artifact itself in `verify()`; workers do not own the commit | Review in `verify()`, on the artifact. No shell interception                                 |
+| Gate on introduced findings only                                | A worker is held to its task and write scope                                         | Adopt the attribution: introduced gets feedback, worsened is a concern, inherited is ignored |
+| Fail open on a tool error, visibly                              | Holds are for real, observable loss                                                  | Adopt: an analyzer error never fails a worker and never holds a plan                         |
+| 44 model-callable tools                                         | Prefer runtime checks; workers keep native tools                                     | Five tools. The rest stays out                                                               |
+| Model told to run `audit` before commit                         | A rule the model can skip is not a check                                             | Runtime runs it. The prompt only says it will happen                                         |
+| Judgments must cite an emitted id                               | Auditor records dispositions by `findingID` (`lz-record-audit-finding`)              | Already matches. Keep                                                                        |
+| `fix --yes` edits files                                         | The write path is the worker's, inside write scope                                   | Not exposed                                                                                  |
+| Compact per-file text after an edit                             | Context packets guide reads                                                          | Not now. Revisit after the gate has data                                                     |
 
 ## Design
 
@@ -354,14 +354,14 @@ maximum 25, `offset`, `nextOffset`); no source fragments; no raw report.
 
 | Tool                  | Fallow source                       | Input                                                                                             | Output                                                                                                                             | For                             |
 | --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `lz-fallow-check`     | The gate function itself            | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ verdict: "pass" \| "fail", introduced: Finding[], warnings: Finding[], thresholds }`                                            | Implementor, Auditor, Architect |
+| `lz-fallow-check`     | The review function itself          | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ status, round, maxRounds, introduced: Finding[], concerns: Finding[], thresholds, next }`                                       | Implementor, Auditor, Architect |
 | `lz-fallow-dupes`     | `dupes` / `detectDuplication`       | `{ paths?, mode?, minTokens?, minLines?, limit, offset }`                                         | `{ groups: [{ id, lines, tokens, instances: [{ file, startLine, endLine }], moreInstances }], total, duplicationPct, nextOffset }` | Auditor, Architect              |
 | `lz-fallow-health`    | `health` / `computeComplexity`      | `{ paths?, sort: "cognitive" \| "cyclomatic" \| "lines", limit, offset }`                         | `{ functions: [{ file, line, name, cyclomatic, cognitive, lines, exceeded }], total, thresholds, nextOffset }`                     | Auditor, Architect              |
 | `lz-fallow-dead-code` | `dead-code` / `detectDeadCode`      | `{ paths?, kinds?: ("file" \| "export" \| "type" \| "dependency" \| "member")[], limit, offset }` | `{ findings: [{ id, kind, file, line, name }], total, nextOffset }`                                                                | Auditor, Architect              |
 | `lz-fallow-report`    | All five sections, durable (exists) | `{ taskID?, phase? }` (drop `threads`: one thread in WASM)                                        | Unchanged `AuditScanOutput`                                                                                                        | Auditor, Architect              |
 
 ```ts
-// Finding, as returned by lz-fallow-check and written into the gate receipt
+// Finding, as returned by lz-fallow-check and written into the review receipt
 type Finding = {
   id: string // stable within the run; cite it in lz-record-audit-finding
   check: "duplication" | "complexity" | "dead-code" | "cycle"
@@ -395,56 +395,90 @@ Not exposed, and why:
 | Hotspots, ownership, churn                                                                  | Need Git history inside the engine. Omitted, not shown as unknown                                         |
 | `similar-code`                                                                              | Needs a local model companion (`design/auditor.md`)                                                       |
 | `mutation`                                                                                  | Separate track, already planned in `design/auditor-tooling.md` step 3                                     |
-| `security`, `flags` as tools, `watch`, `init`, `agent`, `hooks`, cloud, coverage, telemetry | Outside the simplification and gate use cases                                                             |
+| `security`, `flags` as tools, `watch`, `init`, `agent`, `hooks`, cloud, coverage, telemetry | Outside the simplification and review use cases                                                           |
 
 ### Who runs what, and when
 
-Thresholds come from the project's Fallow config, else Fallow's defaults
+Owner direction (2026-11-19): Fallow is feedback, not rejection. Run it, give
+the agent the findings, let it try again, and follow the rule the D1 task
+review already uses: up to three rounds, then accept a result that is resolved
+or no worse.
+
+That rule exists as `ReviewProgression` in `src/review/progression.ts`
+(`REVIEW_ROUNDS = 3`, `REVIEW_THRESHOLD = 0.7`), used by `lz-verify-task`
+(`src/webgpu/task-review.ts`). Fallow reuses the class; it does not copy it.
+
+| `ReviewProgression` concept | D1 task review                            | Fallow review                                                                              |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Subject                     | A task proposal                           | A worker attempt's candidate                                                               |
+| Checks                      | D1 questions                              | `complexity`, `duplication` (task); plus `dead-code`, `cycles` (plan)                      |
+| Score, 0 to 1               | Direction-normalized P(good)              | `1 / (1 + introduced findings)` for that check (Question 3)                                |
+| `resolved`                  | Score at or above 0.7                     | No introduced findings                                                                     |
+| `non_regressed`             | Focused check scored no lower than before | Focused check has no more introduced findings than the previous round                      |
+| `limit`                     | Three rounds used                         | Same                                                                                       |
+| Fingerprint                 | Hash of the proposal                      | Candidate tree OID plus config hash. Same fingerprint replays the result and uses no round |
+| Record                      | Per review ID                             | Per attempt, in the runner store                                                           |
+
+```
+candidate ──▶ Fallow (changed files, introduced only) ──▶ ReviewProgression.evaluate
+                                                             │
+        completed ───────────────── accept ◀─────────────────┤
+        feedback ── findings to the same worker ── it edits ─┘  (round 1..3)
+        completed_with_concerns ─── accept, concerns to the Architect
+        unavailable ─────────────── accept, recorded once
+```
+
+A Fallow review never rejects a task. Authored verification checks keep
+today's behaviour (fail, one repair attempt, then a hold).
+
+Thresholds come from the effective Fallow config, else Fallow's defaults
 (cyclomatic 20, cognitive 15, 50 tokens and 5 lines in `mild` mode).
 
-| Lifecycle point                     | Fallow check                                                                                            | Trigger                                      | Fails when                                                                                                                              | On failure                                                                                                                               | What the agent is told                                                                                    |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Plan submitted                      | None                                                                                                    |                                              |                                                                                                                                         |                                                                                                                                          | Nothing. Admission stays base-commit and route preflight                                                  |
-| Worker dispatched                   | None                                                                                                    |                                              |                                                                                                                                         |                                                                                                                                          | `src/implementor.md` gains three lines: the check runs when you finish, its limits, and `lz-fallow-check` |
-| Worker mid-task                     | Complexity and duplication on its changed files                                                         | Agent tool `lz-fallow-check`, optional       | Never; it reports                                                                                                                       |                                                                                                                                          | The same findings the gate would produce                                                                  |
-| Auditor attempt starts              | Full five-section baseline report, linked to the attempt                                                | Runtime                                      | Never                                                                                                                                   | Unavailable is recorded; the Auditor proceeds from source                                                                                | The baseline run ID is in the task; read it with `lz-get-audit`                                           |
-| Worker finishes → task verification | Complexity and duplication, changed files only, base `attempt.base_commit`                              | Runtime, effect `verify:lazers-fallow`       | A function in a changed file crosses a limit it was under at base (or is new and over); or a clone group has an instance on added lines | First time: `REPAIR`, one new attempt. Second time: `FAIL` and the existing hold (`audit`, `reconcile`, `cancel`)                        | Guidance text below                                                                                       |
-| Same point, warn level              | Complexity that was already over and grew; new unused exports; added `fallow-ignore` comments           | Runtime, same run                            | Never                                                                                                                                   |                                                                                                                                          | Nothing to the worker. Listed in the `task-accepted` outcome for the Architect                            |
-| Auditor finishes                    | Same gate, plus the follow-up report linked to the baseline                                             | Runtime                                      | Same rule                                                                                                                               | Same path                                                                                                                                | Same guidance. Finding-count delta goes to the Architect and gates nothing                                |
-| Architect review                    | None automatic; the verdict and warnings are already in the outcome                                     | Agent tools for scoping a cleanup            |                                                                                                                                         |                                                                                                                                          |                                                                                                           |
-| Pre-integration, combined check     | Complexity and duplication across all tasks; dead code and import cycles introduced since the plan base | Runtime, effect `graph-verify:lazers-fallow` | Introduced findings on the combined artifact. Catches two tasks that each added the same helper                                         | Existing path: the plan holds with "Combined artifact verification failed" plus the findings; Architect submits a cleanup task or waives | Architect gets the findings in the hold reason and outcome                                                |
-| After integration                   | Full report on the default branch, stored as the project baseline                                       | Runtime, on the integration event (no timer) | Never                                                                                                                                   |                                                                                                                                          | Architect is notified only when a section crosses a project limit                                         |
+| Lifecycle point                 | Fallow check                                                                                                                  | Trigger                                      | Outcome                                                                    | What the agent is told                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Plan submitted                  | None                                                                                                                          |                                              |                                                                            | Nothing. Admission stays base-commit and route preflight                                                                         |
+| Worker dispatched               | None                                                                                                                          |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
+| Worker mid-task                 | Complexity and duplication on its changed files                                                                               | Agent tool `lz-fallow-check`, optional       | Same record and rounds as the runtime's review; an unchanged tree replays  | Findings and a `next` instruction                                                                                                |
+| Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                      | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
+| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after authored checks pass                             | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
+| Task accepted                   | Concerns left after the rounds; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
+| Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                 | Runtime                                      | Same rounds                                                                | Same guidance. Finding-count delta goes to the Architect                                                                         |
+| Architect review                | None automatic                                                                                                                | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
+| Pre-integration, combined check | Complexity and duplication across all tasks; dead code and import cycles introduced since the plan base                       | Runtime, effect `graph-verify:lazers-fallow` | No rounds and no hold: no single worker owns the combined result           | Findings in the plan outcome. Catches two tasks that each added the same helper; the Architect submits a cleanup task or accepts |
+| After integration               | Full report on the default branch, stored as the project baseline                                                             | Runtime, on the integration event            | Never blocks                                                               | Architect is notified only when a section crosses a project limit                                                                |
 
-Why dead code gates at the plan and not the task: a task may add an export
-that a later task in the same plan consumes. At task level it is a warning.
+Decided (2026-11-19): complexity that was already over a limit and grew is a
+concern, not feedback that costs a round. A deliberate finding is waived with
+a Fallow suppression comment that carries a reason, written on the
+Architect's instruction, and reported to the Architect as an added
+suppression.
+
+Why dead code is reviewed at the plan and not the task: a task may add an
+export that a later task in the same plan consumes.
 
 Guidance text, composed by the runtime from fixed templates, at most ten
 findings and 1,500 characters:
 
 ```
-Verification lazers-fallow found 2 findings introduced by this task. Older findings are not counted.
+Fallow review, round 1 of 3: 2 findings introduced by this task. Older findings are not counted.
 1. complexity src/runner/plan-step.ts:120 `planStep` cognitive 31, limit 15 (was 12).
    Move the branch at lines 140-190 into a named function.
 2. duplication src/tasks/read.ts:210-248 repeats src/tasks/detail.ts:77-115 (38 lines).
    Keep one implementation and import it in both files.
-Fix these inside your write scope. Run lz-fallow-check to confirm. Do not add fallow-ignore comments.
+Fix these inside your write scope, then finish again. Do not add fallow-ignore comments.
 ```
 
-The first line is the task's reason line. The hold reason keeps the
-`Verification <id> …` prefix so `hold-actions.ts` maps it to the existing
-verification family.
+Like `lz-verify-task`, the tool result carries `status` and
+`next: { action, instruction }`, and the worker is told not to narrate round
+counts or scores (`src/webgpu/review-tool.ts:8`).
 
 Where an agent tool is worth having:
 
 - **Auditor**, exploring: which clone families and complex functions sit in
-  the assigned boundary, and what the dead-code candidates are. Judgement
-  about what is deliberate cannot be a threshold.
-- **Architect**, scoping: sizing a cleanup task and choosing its write scope
-  before submitting it.
-- **Any worker**, self-checking with `lz-fallow-check`: the default allows one
-  repair attempt, so finding the problem before finishing saves that attempt.
-
-Where it is not: deciding whether a task passes. That is the runtime's.
+  the assigned boundary, and what the dead-code candidates are.
+- **Architect**, scoping: sizing a cleanup task and choosing its write scope.
+- **Any worker**, with `lz-fallow-check`: seeing the findings before it
+  finishes.
 
 ### Attribution and baselines
 
@@ -462,11 +496,11 @@ reimplemented in the host because the library exposes no `audit`.
 
 Per-project configuration:
 
-| Setting                       | Where                                                                                                                                 | Default             |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| Limits, ignore patterns, mode | The project's own Fallow config, so the CLI, CI and LAZERS agree                                                                      | Fallow defaults     |
-| Gate mode                     | Plugin option `fallowGate: "gate" \| "warn" \| "off"`, read in `src/core/core.ts` beside the Architect routing options                | `gate` (Question 4) |
-| Per-finding waiver            | A Fallow suppression comment with a reason, written on the Architect's instruction; reported to the Architect as an added suppression |                     |
+| Setting                       | Where                                                                                                                                 | Default         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| Limits, ignore patterns, mode | The project's own Fallow config, so the CLI, CI and LAZERS agree                                                                      | Fallow defaults |
+| Review on or off              | Plugin option `fallowReview: "on" \| "off"`, read in `src/core/core.ts` beside the Architect routing options                          | `on`            |
+| Per-finding waiver            | A Fallow suppression comment with a reason, written on the Architect's instruction; reported to the Architect as an added suppression |                 |
 
 Surfacing, with no new panel elements:
 
@@ -512,7 +546,7 @@ neither                                    → Fallow defaults, dead code off
 - **Append-only revisions.** Each change stores the full config, its hash, the
   session and agent, and a timestamp. This replaces the review a commit would
   have had.
-- **A task cannot loosen its own gate.** The repo file is read at the
+- **A task cannot loosen its own review.** The repo file is read at the
   attempt's base commit. Workers (Implementor, Auditor) cannot set the LAZERS
   config; the permission is denied in `src/runner/roles.ts` beside the
   delegation tools.
@@ -533,7 +567,7 @@ not a prompt rule:
 
 ```
 first check in a project, no entry points in the effective config
-  complexity + duplication   gate as normal, Fallow defaults
+  complexity + duplication   review as normal, Fallow defaults
   dead code                  off, omitted from results (not shown as zero)
   Architect notice           once per project:
                              "No Fallow entry points. Dead-code checks are off.
@@ -558,28 +592,38 @@ at the base commit. Phase 1 tests both.
 
 No new state. No new machine event. `lifecycleMachines` is unchanged.
 
-| Need                      | Existing mechanism                                                                                                                                                          |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Journal and run the check | An effect in `effectMachine` with kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. `isRerunnable` already covers both prefixes (`runtime.ts:413`)               |
-| Pass                      | Receipt with `exitCode: 0`; `checkSucceeded()` unchanged                                                                                                                    |
-| Fail, first time          | `failAttempt()` → task `verifying --REPAIR--> ready`                                                                                                                        |
-| Fail, after the repair    | `failAttempt()` → `verifying --FAIL--> failed`, hold advertising `audit`, `reconcile`, `cancel`. Exits: `RETRY`, `RESUME`, `ADOPT_ACCEPT`, `RETAINED_ACCEPT` (`machine.ts`) |
-| Analyzer error or timeout | The effect completes with a receipt marked `skipped`, verification continues, `FALLOW_UNAVAILABLE` is recorded once. No hold, no failed attempt                             |
-| Service restart mid-check | No receipt → superseded and re-run, as for any `verify:` effect                                                                                                             |
-| Combined check fails      | Existing plan hold; exits are the existing `reconcile`, `resume`, `cancel`                                                                                                  |
+| Need                                      | Existing mechanism                                                                                                                                  |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Journal and run the review                | An effect in `effectMachine`, kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. Both prefixes are already re-runnable (`runtime.ts:413`) |
+| `feedback`                                | Task `verifying --RESUME--> running` (`src/runner/machine.ts`); the same attempt and session receive the guidance. No `REPAIR`, no new attempt      |
+| `completed`, with or without concerns     | The existing `ACCEPT` path in `verify()`                                                                                                            |
+| `unavailable` (analyzer error or timeout) | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                 |
+| Rounds                                    | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                    |
+| Worker never returns after feedback       | The existing idle and auto-resume handling for a running attempt; nothing new                                                                       |
+| Service restart mid-review                | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                           |
 
-The receipt is a `CheckReceipt` with `command: "lazers:fallow-check"`,
-`exitCode` 0 or 1, and the guidance in `stdout`. `lazers-fallow` becomes a
-reserved check ID; `PlanInput` validation rejects an authored check with that
-ID (`src/runner/schema.ts:153`).
+Every path ends in `accepted` within three rounds, so the review adds no
+state that can stall.
+
+The receipt is a `CheckReceipt` with `command: "lazers:fallow-check"`. It is
+recorded for the Trajectory but is not in the set `failAttempt()` reads, so a
+Fallow result can never fail an attempt. `lazers-fallow` becomes a reserved
+check ID; `PlanInput` validation rejects an authored check with that ID
+(`src/runner/schema.ts:153`).
+
+How the runtime continues the same worker from `verifying` is to be confirmed
+in Phase 3 against the existing resume paths (`ATTEMPT_RESUMED`,
+`WORKER_AUTO_RESUMED`).
 
 ### Contract change
 
 `docs/reference/contributor-contracts.md:53`, `design/auditor.md` and the
 `lz-fallow-report` description say Fallow never gates. The new rule:
 
-> Fallow scores never gate. Findings a change introduces, above the project's
-> limits, fail verification. Older findings never do.
+> Fallow findings are feedback. A worker gets up to three rounds to resolve
+> what its task introduced. The runtime then accepts a result that is resolved
+> or no worse and reports what remains to the Architect. Scores and older
+> findings never block.
 
 ## Phases
 
@@ -630,25 +674,29 @@ the service event loop stays responsive during a full report (measured with
 the existing stall probe); each tool's output for this repository is under
 8 KB at default `limit`.
 
-### Phase 3: the task gate
+### Phase 3: the task review
 
 1. Attribution in the host (complexity base-side, added-line overlap).
-2. `verify:lazers-fallow` in `TaskRuntime.verify()`, receipt, guidance text,
-   `FALLOW_UNAVAILABLE`, reserved check ID, `fallowGate` option.
-3. Three lines in `src/implementor.md`; contract wording in the three places
+2. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
+   record, the fingerprint.
+3. `verify:lazers-fallow` in `TaskRuntime.verify()`, receipt, guidance text,
+   continuation of the same attempt on `feedback`, `FALLOW_UNAVAILABLE`,
+   reserved check ID, plugin option `fallowReview: "on" | "off"`.
+4. Three lines in `src/implementor.md`; contract wording in the three places
    named above.
 
-Accept when, in `runtime.test.ts`: a task that adds a clone fails
-verification, moves `REPAIR`, and the repair attempt's dispatch input
-contains the guidance; a task that edits a file with an old over-limit
-function, without touching it, passes; an analyzer error accepts the task and
-records `FALLOW_UNAVAILABLE` once; a restart mid-check re-runs it;
+Accept when, in `runtime.test.ts`: a task that adds a clone gets the guidance
+in the same attempt and is accepted clean after it removes the clone; a task
+that never fixes it is accepted after three rounds with the concern in the
+`task-accepted` outcome; an unchanged tree replays without using a round; a
+task that edits a file with an old over-limit function, without touching it,
+gets no feedback; an analyzer error accepts the task and records
+`FALLOW_UNAVAILABLE` once; a restart mid-review re-runs it;
 `lifecycle-machines.test.ts`, `lifecycle-dead-ends.test.ts` and
 `hold-actions.test.ts` pass unchanged. And in the Desktop walkthrough: the
-Tasks reason line and the Trajectory checks lane show the check; what Radar
-shows is recorded here.
+Trajectory checks lane shows each round; what Radar shows is recorded here.
 
-### Phase 4: Auditor and the plan gate
+### Phase 4: Auditor and the plan review
 
 1. Runtime runs the baseline report when an Auditor attempt starts and the
    follow-up at verification; `src/auditor.md` stops telling the model to
@@ -658,8 +706,8 @@ shows is recorded here.
 3. Warnings in the `task-accepted` outcome.
 4. Look for a library entry for `trace`; add `lz-fallow-trace` only if found.
 
-Accept when: two tasks that each add the same helper pass alone and hold the
-plan at the combined check with both locations named; an Auditor attempt has
+Accept when: two tasks that each add the same helper pass alone, and the plan
+outcome names both locations without holding the plan; an Auditor attempt has
 a baseline and a linked follow-up without the model calling
 `lz-fallow-report`.
 
@@ -676,12 +724,18 @@ Accept when: the notice fires once per crossing, not per integration.
 | ----- | --------------------------------- | ------------------ | ------ |
 | 0, 1  | Rust: vendoring, patches, binding | `fallow-wasm`      | Sonnet |
 | 2     | Worker, client, tools, packaging  | `audit-tools`      | Sonnet |
-| 3, 4  | Runtime gate                      | `runner-gate`      | Sonnet |
+| 3, 4  | Runtime review                    | `runner-review`    | Sonnet |
 | all   | Tests, `bun run verify`, builds   | `runner` per phase | Haiku  |
 
 Phase 1 may need a step up for the engine patches; say so when it happens.
 
 ## Open questions for the owner
+
+Decided on 2026-11-19 and folded into the design: a repo Fallow config is
+honoured first, else the LAZERS project config; the Architect may set the
+LAZERS config; the contract changes; grown-but-already-over complexity is a
+concern only; a suppression comment with a reason is the waiver; Fallow is a
+three-round review that never rejects.
 
 1. **Vendoring form.** Scripted allowlist import with a patch queue
    (recommended, smaller, matches `contributions/runntime`), or a full
@@ -689,26 +743,24 @@ Phase 1 may need a step up for the engine patches; say so when it happens.
 2. **Built artifact.** Commit `fallow.wasm` under `src/audit/wasm/` so
    `bun run build:server` needs no Rust (recommended, with CI rebuilding and
    comparing the hash), or build it on every server build?
-3. **Contract.** Confirm the new wording: scores never gate; introduced
-   findings above limits fail verification.
-4. **Default mode.** `gate` for every project from the first release, or
-   `warn` until Phase 3 has run on real tasks for a while?
-5. **Worsened complexity.** Warn, as Fallow does by default, or fail?
-6. **Waiver.** Is a suppression comment with a reason, written on the
-   Architect's instruction, an acceptable waiver, or should a waiver live in
-   the plan?
-7. **Dead code at task level.** Warning only, as planned, or gate with an
+3. **Score.** `1 / (1 + introduced findings)` per check resolves only at zero
+   and counts every finding equally. Should overage weigh in (a function at
+   cognitive 60 scoring lower than one at 16)?
+4. **Clean first.** "Fix our repo before dogfooding": what is done? Proposed:
+   zero dead-code findings or each one dispositioned, the import cycle
+   removed, no clone group over 20 lines outside tests, and the three
+   functions over cognitive 300 split.
+5. **Dead code at task level.** Concern only, as planned, or feedback with an
    exemption for exports another task in the plan consumes?
-8. **After-integration report.** Run on the integration event, as planned.
-   Is a time-based sweep wanted as well? `design/auditor.md` currently rules
-   out a recurring timer.
-9. **Upstreaming.** Offer the WASM patches to `fallow-rs/fallow`, or keep
+6. **After-integration report.** Run on the integration event, as planned. Is
+   a time-based sweep wanted as well? `design/auditor.md` currently rules out
+   a recurring timer.
+7. **Upstreaming.** Offer the WASM patches to `fallow-rs/fallow`, or keep
    them private to this repository?
-10. **Pin.** Start at `v3.41.0` for parity with the spike, then move to the
-    latest tag after Phase 1?
-
-11. **No config.** Dead code off until a config exists (recommended), or hold
-    the plan gate until the Architect creates one?
+8. **Pin.** Start at `v3.41.0` for parity with the spike, then move to the
+   latest tag after Phase 1?
+9. **No config.** Dead code off until a config exists (recommended), or
+   report it with a caveat?
 
 ## Follow-ups noticed, not part of this plan
 
