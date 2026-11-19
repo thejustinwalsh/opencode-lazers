@@ -207,6 +207,8 @@ export const ScopeReport = z.strictObject({
       path: PathText,
       class: z.enum(["expected-new", "allowed-new"]),
       purpose: z.string().optional(),
+      /** Other tasks whose edit or create scope also covers this new file. */
+      scopedBy: z.array(z.string()).optional(),
     }),
   ),
   missingExpected: z.array(z.strictObject({ path: PathText, purpose: z.string() })),
@@ -282,6 +284,9 @@ export function buildScopeReport(input: {
       path: change.path,
       class: change.class as "expected-new" | "allowed-new",
       ...(purpose(change.path) ? { purpose: purpose(change.path)! } : {}),
+      ...(scopedBy(change.path, input.owners).length
+        ? { scopedBy: scopedBy(change.path, input.owners) }
+        : {}),
     }))
   const addedPaths = input.classified.filter((c) => c.status === "added").map((c) => c.path)
   const missingExpected = input.model.create
@@ -294,7 +299,7 @@ export function buildScopeReport(input: {
       status: change.status,
       ...(change.added !== undefined ? { added: change.added } : {}),
       ...(change.removed !== undefined ? { removed: change.removed } : {}),
-      scopedBy: change.status === "added" ? [] : scopedBy(change.path, input.owners),
+      scopedBy: scopedBy(change.path, input.owners),
     }))
   const reason = input.amendmentReasons.join(" | ")
   const accepted = input.classified
@@ -329,11 +334,18 @@ export function warningLine(item: ScopeReport["warnings"][number]): string {
     : `${item.path} is ${item.lines} lines and grew by ${item.added}`
 }
 
+/** The worker's final message, quoted and bounded; the Architect judges from its own words. */
+function workerReason(message: string | undefined): string {
+  const text = message?.replace(/\s+/g, " ").trim()
+  if (!text) return "no reason given"
+  return `"${text.length > 400 ? `${text.slice(0, 400)}…` : text}" (final message)`
+}
+
 /** The one-line hold reason for a divergence nobody decided. */
-export function divergenceReason(report: ScopeReport): string {
+export function divergenceReason(report: ScopeReport, workerMessage?: string): string {
   const shown = report.divergences.slice(0, REASON_PATH_LIMIT).map(divergenceLine)
   const more = report.divergences.length - shown.length
-  return `Scope divergence needs a decision: ${report.divergences.length} change(s) outside the task's scope: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. Accept with amend-scope and a reason, send it back, or cancel.`
+  return `Scope divergence needs a decision: ${report.divergences.length} change(s) outside the task's scope: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. Worker's reason: ${workerReason(workerMessage)}. Accept with amend-scope and a reason, send it back with retained-repair, or cancel.`
 }
 
 /** What the one repair tells the worker about scope and size. Empty when nothing applies. */
@@ -365,7 +377,7 @@ export function scopeNotice(report: ScopeReport | undefined): string {
         .slice(0, PATH_LIMIT)
         .map(
           (item) =>
-            `- ${item.path} (${item.class === "expected-new" ? `expected${item.purpose ? `: ${item.purpose}` : ""}` : "beside scoped files"})`,
+            `- ${item.path} (${item.class === "expected-new" ? `expected${item.purpose ? `: ${item.purpose}` : ""}` : "beside scoped files"}${item.scopedBy?.length ? `; also in the scope of task ${item.scopedBy.join(", ")} (overlap risk)` : ""})`,
         )
         .join("\n")}`,
     )

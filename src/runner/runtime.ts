@@ -3799,7 +3799,7 @@ export class TaskRuntime {
         ? await this.prepareRetainedVerification(old, command, caller, ownerSession)
         : undefined
     const retainedRepair =
-      command.action === "retained-repair"
+      command.action === "retained-repair" && !this.divergenceHold(old, command.taskID)
         ? await this.prepareRetainedRepair(old, command, caller, ownerSession)
         : undefined
     const reviewInput = await this.prepareReviewInputReconciliation(
@@ -4179,7 +4179,10 @@ export class TaskRuntime {
 
   private dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
     const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
-    if (command.action === "retained-repair") return this.commandRetainedRepair(db, ctx, plan)
+    if (command.action === "retained-repair")
+      return this.divergenceHold(plan, command.taskID)
+        ? this.commandSendBackDivergence(db, ctx, plan)
+        : this.commandRetainedRepair(db, ctx, plan)
     if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
     if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
     if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
@@ -4451,12 +4454,120 @@ export class TaskRuntime {
       instructionUpdates.push(id)
     }
     db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+    const continued = this.continueAfterDivergenceDecision(db, plan, node.task_id, caller)
     return {
       status: "scope-amended",
-      version: plan.version + 1,
+      version: plan.version + 1 + (continued ? 1 : 0),
       writeScope,
       instructionUpdates,
+      ...(continued ? { continued: true } : {}),
     }
+  }
+
+  /** The undecided divergence this plan is held on for the task, if any. */
+  private divergenceHold(plan: PlanRow, taskID: string | undefined) {
+    if (!taskID || plan.state !== "blocked") return undefined
+    const wait = this.store.latestTransition<{ kind?: string; reason: string; attemptID: string }>(
+      plan.id,
+      taskID,
+      "SCOPE_DECISION_REQUIRED",
+    )
+    return wait?.kind === "divergence" && wait.reason === plan.reason ? wait : undefined
+  }
+
+  /**
+   * The Architect sends a held, verified divergence back (`retained-repair`): the attempt moves to
+   * the task's one repair, whose prompt carries the out-of-scope paths and the Architect's reason.
+   * With no repair left it is refused; amend-scope or cancel remain the exits.
+   */
+  private commandSendBackDivergence(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, ownerSession } = ctx
+    const wait = this.divergenceHold(plan, command.taskID)
+    if (!wait || !ownerSession || !this.validArchitect(ownerSession) || caller !== plan.owner)
+      throw new Error("Sending back a divergence requires the current Architect owner")
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((item) => item.task_id === command.taskID)
+      .at(-1)
+    if (
+      !attempt ||
+      attempt.id !== wait.attemptID ||
+      attempt.id !== command.attemptID ||
+      attempt.state !== "verifying" ||
+      attempt.artifact !== command.artifact ||
+      !command.reason?.trim()
+    )
+      throw new Error("Send-back must name the held attempt, its exact artifact and a reason")
+    if (!this.repairAvailable(attempt))
+      throw new Error(
+        "The task's one repair is spent; accept the divergence with amend-scope or cancel",
+      )
+    const reason = `Scope divergence sent back by the Architect: ${command.reason}`
+    db.query(
+      "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
+    ).run(attempt.id)
+    // REPAIR must stay the task's newest transition: it marks the next attempt as the repair.
+    this.store.record(plan.id, attempt.task_id, "SCOPE_SENT_BACK", {
+      attemptID: attempt.id,
+      reason: command.reason,
+      caller,
+    })
+    this.store.move(plan.id, attempt.task_id, "REPAIR", reason)
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    return { status: "scope-sent-back", attemptID: attempt.id, version: plan.version + 1 }
+  }
+
+  /**
+   * An amendment that covers every path of an undecided divergence is the decision: the held,
+   * already-verified candidate continues to acceptance without a separate reconcile. Anything else
+   * outstanding (protected hold, uncovered paths, pending effects) still waits for reconcile.
+   */
+  private continueAfterDivergenceDecision(
+    db: Database,
+    plan: PlanRow,
+    taskID: string,
+    caller: string,
+  ): boolean {
+    const current = this.store.plan(plan.id)!
+    const wait = this.store.latestTransition<{
+      kind?: string
+      reason: string
+      divergences?: { path: string; status: "added" | "modified" | "deleted" }[]
+    }>(plan.id, taskID, "SCOPE_DECISION_REQUIRED")
+    if (
+      current.state !== "blocked" ||
+      wait?.kind !== "divergence" ||
+      wait.reason !== current.reason ||
+      !wait.divergences?.length
+    )
+      return false
+    const model = this.store.effectiveScope(taskID)
+    const open = classifyChanges(wait.divergences, model).some(
+      (change) => change.class === "divergence" || change.class === "protected",
+    )
+    if (open) return false
+    if (
+      this.store
+        .effects(plan.id)
+        .some(
+          (e) =>
+            ["intended", "uncertain"].includes(e.state) &&
+            !isRerunnableEffect(e.kind) &&
+            e.kind !== "scope-instruction",
+        )
+    )
+      return false
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+      caller,
+      verificationEpoch: this.store.plan(plan.id)!.version,
+      cause: "scope-divergence-decision",
+    })
+    return true
   }
 
   private commandAdoptDescendant(ctx: CommandContext, plan: PlanRow) {
@@ -11056,7 +11167,8 @@ export class TaskRuntime {
     const reasons = failures.map(checkFailureReason)
     const repairs = failures.length > 0 || this.repairAvailable(attempt)
     if (reviewed && needsRepair(reviewed) && repairs) reasons.push(fallowReasonText(reviewed))
-    if (scope.divergences.length && repairs)
+    // A divergence never spends the repair by itself: it rides only when checks or the audit already send the work back.
+    if (scope.divergences.length && reasons.length)
       reasons.push(
         `Scope divergence: ${scope.divergences.length} change(s) outside the task's scope`,
       )
@@ -11137,14 +11249,28 @@ export class TaskRuntime {
     }))
   }
 
+  /** The worker's own final message, quoted as its stated reason; undefined when it gave none. */
+  private async workerFinalMessage(attempt: AttemptRow): Promise<string | undefined> {
+    try {
+      const worker = await this.host.session(attempt.session_id, { messages: true })
+      const last = worker?.messages.findLast(
+        (message) =>
+          message.id !== attempt.message_id && message.type !== "synthetic" && message.text.trim(),
+      )
+      return last?.text
+    } catch {
+      return undefined
+    }
+  }
+
   /** The Architect decides: amend-scope to accept it with a reason, retained-repair, or cancel. */
-  private holdScopeDivergence(
+  private async holdScopeDivergence(
     plan: PlanRow,
     attempt: AttemptRow,
     report: ScopeReport,
     fence: number,
   ) {
-    const reason = divergenceReason(report)
+    const reason = divergenceReason(report, await this.workerFinalMessage(attempt))
     this.store.fenced(this.owner, fence, () => {
       this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
         attemptID: attempt.id,
@@ -11501,7 +11627,20 @@ export class TaskRuntime {
       attempt.task_id,
       "SCOPE_REPORTED",
     )
-    const scope = reported?.attemptID === previous.id ? scopeRepairText(reported) : ""
+    const sentBack = this.store.latestTransition<{ attemptID: string; reason: string }>(
+      attempt.plan_id,
+      attempt.task_id,
+      "SCOPE_SENT_BACK",
+    )
+    const scope =
+      reported?.attemptID === previous.id
+        ? [
+            scopeRepairText(reported),
+            sentBack?.attemptID === previous.id ? `Architect: ${sentBack.reason}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : ""
     const checks = sections.length
       ? `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
       : ""

@@ -191,7 +191,7 @@ export function recommend(facts: RecoveryFacts): z.infer<typeof RecoveryRecommen
   if (family === "scope-divergence")
     return pick(
       "amend-scope",
-      "The change diverged from the task's scope and checks passed; accept it with amend-scope and a reason, send it back with retained-repair, or cancel",
+      "The change diverged from the task's scope and checks passed; the worker's reason is in the hold reason. Accept it with amend-scope and a reason, send it back with retained-repair, or cancel",
     )
   if (family === "scope-violation")
     return pick("amend-scope", "The change reached outside the write scope; decide the scope")

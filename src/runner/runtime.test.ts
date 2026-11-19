@@ -1130,8 +1130,7 @@ test("an edit to an existing file outside the scope does not block: the Architec
     },
     "owner",
   )
-  await drive(f.runtime, 2)
-  await f.runtime.command({ requestID: "review-candidate", planID, action: "reconcile" }, "owner")
+  // The amendment is the decision: the verified candidate continues with no separate reconcile.
   await drive(f.runtime, 5)
   expect(f.store.plan(planID)!.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
@@ -1181,27 +1180,119 @@ test("a divergence rides in the one combined repair with the failing check and i
   expect(taskEvents(f, planID, task.id, "SCOPE_DECISION_REQUIRED")).toHaveLength(0)
 })
 
-test("a divergence the worker keeps after the one repair waits for the Architect", async () => {
+test("a divergence alone holds for the Architect with the repair unspent and the worker's reason quoted", async () => {
   const f = fixture({
     repair: true,
     writes: [{ path: "seed.txt", content: "kept on purpose\n" }],
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
   const planID = f.receipt.planID
+  const task = f.tasks[0]!
   await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
   await f.runtime.tick()
-  await settleVerification(f.runtime)
-  // The first attempt passed its checks; the divergence alone spent the one repair.
-  const attempts = f.store.attempts(planID)
-  expect(attempts).toHaveLength(2)
-  await f.runtime.tick()
-  f.completeWorker(attempts[1]!.session_id)
+  const session = f.store.attempts(planID)[0]!.session_id
+  f.sessions.get(session)!.messages.push({
+    id: "final",
+    text: "Done. seed.txt changed because the seed must match a.txt.",
+  })
   await settleVerification(f.runtime)
   await drive(f.runtime, 3)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(taskEvents(f, planID, task.id, "REPAIR")).toHaveLength(0)
   const plan = f.store.plan(planID)!
   expect(plan.state).toBe("blocked")
   expect(plan.reason).toStartWith("Scope divergence needs a decision")
-  expect(f.store.attempts(planID)).toHaveLength(2)
+  expect(plan.reason).toContain("seed must match a.txt")
+  expect(plan.reason).toContain("(final message)")
+})
+
+test("a held divergence says no reason given when the worker gave none", async () => {
+  const f = fixture({
+    repair: true,
+    writes: [{ path: "seed.txt", content: "x\n" }],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await drive(f.runtime, 4)
+  expect(f.store.plan(f.receipt.planID)!.reason).toContain("Worker's reason: no reason given")
+})
+
+test("retained-repair sends a held divergence back through the one repair; it then clears or returns to the Architect", async () => {
+  for (const keeps of [false, true]) {
+    const f = fixture({
+      repair: true,
+      writes: [
+        { path: "seed.txt", content: "changed\n", attempt: 1 },
+        { path: "seed.txt", content: keeps ? "changed again\n" : "baseline\n", attempt: 2 },
+      ],
+      taskFiles: [{ name: "a", path: "a.txt" }],
+    })
+    const planID = f.receipt.planID
+    const task = f.tasks[0]!
+    await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+    await drive(f.runtime, 4)
+    const held = f.store.attempts(planID)[0]!
+    expect(f.store.plan(planID)!.state).toBe("blocked")
+    await f.runtime.command(
+      {
+        requestID: "send-back",
+        planID,
+        action: "retained-repair",
+        taskID: task.id,
+        attemptID: held.id,
+        artifact: held.artifact!,
+        reason: "Keep the seed file untouched.",
+      },
+      "owner",
+    )
+    expect(taskEvents(f, planID, task.id, "SCOPE_SENT_BACK")).toHaveLength(1)
+    await f.runtime.tick()
+    const attempts = f.store.attempts(planID)
+    expect(attempts).toHaveLength(2)
+    const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
+    expect(prompt).toContain(
+      "These changes are outside the task's scope: move/remove them or say why they are needed.",
+    )
+    expect(prompt).toContain("seed.txt (existing file, modified")
+    expect(prompt).toContain("Architect: Keep the seed file untouched.")
+    f.completeWorker(attempts[1]!.session_id)
+    await settleVerification(f.runtime)
+    await drive(f.runtime, 4)
+    const plan = f.store.plan(planID)!
+    if (!keeps) expect(plan.state).toBe("accepted")
+    else {
+      // Back with the Architect: accept or cancel remain; a second send-back is refused.
+      expect(plan.state).toBe("blocked")
+      expect(plan.reason).toStartWith("Scope divergence needs a decision")
+      await expect(
+        f.runtime.command(
+          {
+            requestID: "send-back-again",
+            planID,
+            action: "retained-repair",
+            taskID: task.id,
+            attemptID: attempts[1]!.id,
+            artifact: f.store.attempts(planID)[1]!.artifact!,
+            reason: "Again.",
+          },
+          "owner",
+        ),
+      ).rejects.toThrow("one repair is spent")
+      await f.runtime.command(
+        {
+          requestID: "accept",
+          planID,
+          action: "amend-scope",
+          taskID: task.id,
+          scopeAdditions: ["seed.txt"],
+          reason: "Needed after all.",
+        },
+        "owner",
+      )
+      await drive(f.runtime, 5)
+      expect(f.store.plan(planID)!.state).toBe("accepted")
+    }
+  }
 })
 
 test("reservations include created paths, so two tasks creating in one folder run serially", async () => {

@@ -230,3 +230,33 @@ test("the size signal warns on crossing the limit and on substantial growth of a
   expect(sizeWarning({ ...base, path: "src/a.test.ts", lines: 3000, baseLines: 1 })).toBeUndefined()
   expect(sizeWarning({ ...base, path: "README.md", lines: 3000, baseLines: 1 })).toBeUndefined()
 })
+
+test("a new file inside another task's scope is reported as overlap in the notice", () => {
+  const scope = model({ edit: ["src/runner/runtime.ts"] })
+  const report = buildScopeReport({
+    attemptID: "attempt",
+    model: scope,
+    classified: classifyChanges([added("src/runner/queue.ts")], scope),
+    owners: [{ taskID: "other", patterns: ["src/runner/queue.ts"] }],
+    amendmentReasons: [],
+    warnings: [],
+  })
+  expect(report.created[0]!.scopedBy).toEqual(["other"])
+  expect(scopeNotice(report)).toContain("also in the scope of task other (overlap risk)")
+})
+
+test("the hold reason quotes the worker's final message, or says no reason was given", () => {
+  const scope = model()
+  const report = buildScopeReport({
+    attemptID: "a",
+    model: scope,
+    classified: classifyChanges([modified("README.md")], scope),
+    owners: [],
+    amendmentReasons: [],
+    warnings: [],
+  })
+  expect(divergenceReason(report)).toContain("Worker's reason: no reason given")
+  expect(divergenceReason(report, "  needed\nfor docs ")).toContain(
+    '"needed for docs" (final message)',
+  )
+})
