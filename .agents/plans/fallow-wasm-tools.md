@@ -1150,20 +1150,42 @@ The largest new helper is 23 (`readAttemptSessions`; `nativeStepFact` and
 The duplication check on each changed file reports no new clone group; `runtime.ts` went
 from 18 groups to 12 and `retained-verification-execution.ts` from 4 to 2.
 
-Still over cognitive 60 after the pass, by owner:
+### Second batch
 
-| Function            | File                                        | Cognitive | Status                                     |
-| ------------------- | ------------------------------------------- | --------- | ------------------------------------------ |
-| `buildSnapshot`     | `src/tasks/scheduling-read.ts:247`          | 121       | skipped: GUI pane thread owns `src/tasks/` |
-| `readCapture`       | `src/models/observation-ledger-read.ts:506` | 119       | skipped: `src/models/`                     |
-| `refresh`           | `src/tasks/panel-state.ts:448`              | 119       | skipped: `src/tasks/`                      |
-| `calculateScenario` | `src/models/market-range.ts:1009`           | 110       | skipped: `src/models/`                     |
-| `refresh`           | `src/radar/state.ts:113`                    | 106       | skipped: `src/radar/`                      |
-| `buildSnapshotData` | `src/models/decision-read.ts:951`           | 102       | skipped: `src/models/`                     |
-| `advanceAttempt`    | `src/runner/runtime.ts:9753`                | 97        | under the 100 line; not touched            |
-| `cancelWorkers`     | `src/runner/runtime.ts:7660`                | 90        | under the 100 line; not touched            |
-| `session`           | `src/runner/native.ts:473`                  | 85        | under the 100 line; not touched            |
-| `cleanupWorktrees`  | `src/runner/worktree-cleanup.ts:536`        | 85        | under the 100 line; not touched            |
+The six functions the first batch skipped for ownership, plus the next runner tier. Same method.
 
-Next candidates in `src/runner/`: `advanceAttempt` (cyclomatic 101), `cancelWorkers`, the 82-point
-arrow at `runtime.ts:6112`, `step` at `runtime.ts:7337`.
+| Function            | File (before)                               | Cognitive before | After                        |
+| ------------------- | ------------------------------------------- | ---------------- | ---------------------------- |
+| `buildSnapshot`     | `src/tasks/scheduling-read.ts:247`          | 121              | below 30                     |
+| `readCapture`       | `src/models/observation-ledger-read.ts:506` | 119              | below 25                     |
+| `refresh`           | `src/tasks/panel-state.ts:448`              | 119              | below 30 (`TaskPanelState`)  |
+| `calculateScenario` | `src/models/market-range.ts:1009`           | 110              | 32                           |
+| `refresh`           | `src/radar/state.ts:113`                    | 106              | below 30 (`refreshPass` 43)  |
+| `buildSnapshotData` | `src/models/decision-read.ts:951`           | 102              | below 30 (`buildCohorts` 48) |
+| `advanceAttempt`    | `src/runner/runtime.ts:9753`                | 97               | below 45                     |
+| `cancelWorkers`     | `src/runner/runtime.ts:7660`                | 90               | below 40                     |
+| `session`           | `src/runner/native.ts:473`                  | 85               | 46                           |
+| `cleanupWorktrees`  | `src/runner/worktree-cleanup.ts:536`        | 85               | below 30                     |
+
+Every target is at or below 50. Behaviour is unchanged: the same awaits in the same order, the same
+transactions and effect-journal writes, and the load-time properties of the models readers
+(memoized parsing, JS-side projection, one bounded read per table) are untouched. The duplication
+check reports no new clone group in any changed file; four copies of the
+`git worktree list --porcelain` parsing now share `registeredWorktreePaths` in
+`src/runner/artifacts.ts`. `src/runner/check-settlement.test.ts` pins the receipt, tick and
+forget-activity order of `settleMatchedCheck` for both check kinds.
+
+Still over cognitive 60 after both batches, none of them at 100:
+
+| Function              | File                                                       | Cognitive |
+| --------------------- | ---------------------------------------------------------- | --------- |
+| `refresh`             | `src/radar/monitor-state.ts:232`                           | 84        |
+| `<arrow>`             | `src/runner/runtime.ts:6121`                               | 82        |
+| `visit`               | `src/observability/live-read.ts:59`                        | 80        |
+| `execute`             | `src/verification/opencode/native-interaction-main.ts:674` | 80        |
+| `step`                | `src/runner/runtime.ts:7346`                               | 76        |
+| `createFlowModel`     | `src/radar/flow-model.ts:163`                              | 75        |
+| `routeEvidenceByCall` | `src/models/valuation.ts:208`                              | 73        |
+| `callView`            | `src/trajectory-panel/panel.tsx:1167`                      | 72        |
+| `withOwnedResources`  | `src/verification/resources/lifecycle.ts:55`               | 71        |
+| `outputFromCapture`   | `src/models/observation-ledger-read.ts:2110`               | 70        |
