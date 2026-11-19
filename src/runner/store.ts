@@ -3131,6 +3131,30 @@ export class RunnerStore {
       return true
     })
   }
+  /**
+   * Record an Architect source scan failure once per (source, cause). The plan-level
+   * `recordOnce` compares only the newest row of the anchor plan, so several sources
+   * sharing one anchor plan alternate and every process start re-recorded all of them.
+   */
+  recordSourceScanFailure(
+    planID: string,
+    payload: { renewalID: string; sourceSessionID: string; error: string },
+  ): boolean {
+    return this.atomic(() => {
+      const previous = this.read((db) =>
+        db
+          .query<{ payload: string }, [string, string]>(
+            `SELECT payload FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
+               AND json_extract(payload,'$.sourceSessionID')=? ORDER BY id DESC LIMIT 1`,
+          )
+          .get(planID, payload.sourceSessionID),
+      )
+      if (previous && canonical(JSON.parse(previous.payload)) === canonical(payload)) return false
+      this.record(planID, null, "ARCHITECT_SOURCE_SCAN_FAILED", payload)
+      return true
+    })
+  }
   latestTransition<T>(planID: string, taskID: string | null, event: string): T | undefined {
     if (!this.plan(planID)) throw new Error("Plan not found")
     const row = this.read((db) =>

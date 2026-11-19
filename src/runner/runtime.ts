@@ -37,6 +37,7 @@ import {
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, extname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import {
   effectiveVerificationCheck,
   verificationDeadline as resolveVerificationDeadline,
@@ -5965,16 +5966,19 @@ export class TaskRuntime {
         await this.inspectArchitectSourcePage(renewal, fence)
         this.sourceScanFailures.delete(source.session_id)
       } catch (error) {
+        // No live location is the plugin booting or reloading, not a property of the
+        // source: retry on the next tick and record nothing.
+        if (error instanceof NoCapabilityProviderError) continue
         const cause = errorText(error)
         if (this.sourceScanFailures.get(source.session_id) === cause) continue
         this.sourceScanFailures.set(source.session_id, cause)
-        // A persistent failure is one durable fact, not one row per tick: record only
-        // when the cause differs from the newest recorded scan failure for this plan.
+        // A persistent failure is one durable fact, not one row per tick or per process
+        // start: record only when the cause differs from this source's newest failure.
         this.store.fenced(this.owner, fence, () =>
-          this.store.recordOnce(renewal.anchor_plan_id, null, "ARCHITECT_SOURCE_SCAN_FAILED", {
+          this.store.recordSourceScanFailure(renewal.anchor_plan_id, {
             renewalID: renewal.id,
             sourceSessionID: source.session_id,
-            error: errorText(error),
+            error: cause,
           }),
         )
       }
