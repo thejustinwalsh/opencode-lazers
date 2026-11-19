@@ -9503,6 +9503,60 @@ export class TaskRuntime {
     )
   }
 
+  /**
+   * A resume reserves a fresh input, but the interruption it answers may have been a stale
+   * observation: the worker is still inside its previous turn. Prompting it again would queue a
+   * second input behind a live turn and the retained-repair fence rightly refuses a busy worker,
+   * leaving the attempt in `preparing` while the worker works. When the session is busy on exactly
+   * the input the attempt had before the resume, the attempt takes that input back and runs.
+   */
+  private async adoptRunningWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
+    const resumed = this.store
+      .activity(plan.id, attempt.task_id)
+      .filter((event) => event.event === "ATTEMPT_RESUMED")
+      .map((event) =>
+        this.parseTransitionPayload<{
+          attemptID?: unknown
+          messageID?: unknown
+          previousMessageID?: unknown
+        }>(event),
+      )
+      .filter((payload) => payload?.attemptID === attempt.id)
+      .at(-1)
+    const previousMessageID = resumed?.previousMessageID
+    if (resumed?.messageID !== attempt.message_id || typeof previousMessageID !== "string")
+      return false
+    const observed = await this.host.session(attempt.session_id, { messages: true })
+    if (
+      !observed ||
+      observed.archived ||
+      !observed.busy ||
+      observed.directory !== attempt.workspace ||
+      observed.turn?.state !== "pending" ||
+      observed.turn.inputID !== previousMessageID ||
+      observed.messages.some((message) => message.id === attempt.message_id)
+    )
+      return false
+    const adopted = this.store.fenced(this.owner, fence, (db) => {
+      if (this.store.plan(plan.id)?.state !== "running") return false
+      const changed =
+        db
+          .query(
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),message_id=? WHERE id=? AND state='preparing' AND message_id=?",
+          )
+          .run(previousMessageID, attempt.id, attempt.message_id).changes === 1
+      if (changed)
+        this.store.record(plan.id, attempt.task_id, "WORKER_RESUME_ADOPTED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          inputID: previousMessageID,
+          reservedMessageID: attempt.message_id,
+        })
+      return changed
+    })
+    return adopted
+  }
+
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
     const admissionPlan = this.store.plan(plan.id)
     if (!admissionPlan || admissionPlan.state !== "running") return
@@ -9517,6 +9571,7 @@ export class TaskRuntime {
       this.hold(plan, "Retained repair is missing a valid owner/control authorization fence")
       return
     }
+    if (retainedRepair && (await this.adoptRunningWorker(plan, attempt, fence))) return
     const existing = this.store.effects(plan.id)
     if (
       retainedRepair &&
