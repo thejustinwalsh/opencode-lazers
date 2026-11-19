@@ -299,6 +299,17 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         historyRequests.push(input.sessionID)
         return reads.liveHistory(input, options.signal)
       },
+      liveAttempt: (
+        input: { scope: { kind: "session" | "project"; sessionID: string }; sessionID: string },
+        options: { signal: AbortSignal },
+      ) => Promise.resolve(reads.liveAttempt(input, options.signal)),
+      liveGroup: (
+        input: {
+          scope: { kind: "session" | "project"; sessionID: string }
+          group: "needs-you" | "failed" | "queued"
+        },
+        options: { signal: AbortSignal },
+      ) => Promise.resolve(reads.liveGroup(input, options.signal)),
       snapshot: async () => {
         legacyCalls.snapshot++
         throw new Error("Observation scope is too large; narrow it")
@@ -507,9 +518,17 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => container.querySelector(".lazers-radar-monitor-inspector") !== null)
     const inspectorText = () =>
       container.querySelector(".lazers-radar-monitor-inspector")?.textContent ?? ""
-    container
-      .querySelector<HTMLButtonElement>('.lazers-radar-inspector-tabs [role="tab"]:nth-child(3)')!
-      .click()
+    const disclosure = (label: string) =>
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          ".lazers-radar-disclosures .lazers-kit-disclosure-toggle",
+        ),
+      ].find((toggle) => toggle.textContent?.startsWith(label))
+    const openDisclosure = async (label: string) => {
+      await until(() => disclosure(label) !== undefined)
+      if (disclosure(label)!.getAttribute("aria-expanded") !== "true") disclosure(label)!.click()
+    }
+    await openDisclosure("Messages")
     await until(() =>
       [...container.querySelectorAll(".lazers-radar-message")].some((row) =>
         row.textContent?.includes("Architect Model request"),
@@ -567,23 +586,39 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     await until(() => lines().some((line) => line.textContent?.includes("src/worker.ts")))
     // The pane state is stored per scope: this scope starts collapsed.
     openPane()
-    await until(() => container.querySelector(".lazers-radar-inspector-tabs") !== null)
-    container
-      .querySelector<HTMLButtonElement>('.lazers-radar-inspector-tabs [role="tab"]:nth-child(1)')!
-      .click()
+    await until(() => disclosure("Identifiers") !== undefined)
+    // Identifiers is the one place for raw ids; the tab strip is gone and empty parts are omitted.
+    expect(container.querySelector(".lazers-radar-inspector-tabs")).toBeNull()
+    expect(inspectorText()).not.toContain("ses-failed")
+    await openDisclosure("Identifiers")
     expect(inspectorText()).toContain("ses-failed")
-    expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).toContain(
-      "Inspect a worker attempt without disclosing private data",
-    )
-    expect(container.querySelector(".lazers-radar-inspector-title")?.textContent).not.toContain(
-      "Task ",
-    )
-    expect(container.querySelector(".lazers-radar-facts-line")?.textContent).toContain("attempt")
+    expect(container.querySelector(".lazers-radar-inspector-title")).toBeNull()
     expect(
-      [...container.querySelectorAll(".lazers-radar-inspector-tabs button")].map((tab) =>
-        tab.textContent?.replace(/\d+$/, "").trim(),
+      [
+        ...container.querySelectorAll(".lazers-radar-disclosures .lazers-kit-disclosure-toggle"),
+      ].map((toggle) => toggle.textContent ?? ""),
+    ).not.toContainEqual(expect.stringMatching(/· 0$/))
+    expect(
+      [...container.querySelectorAll(".lazers-radar-monitor-inspector .lazers-kit-stat dt")].map(
+        (label) => label.textContent,
       ),
-    ).toEqual(["Calls", "Files", "Messages"])
+    ).toContain("Started")
+    expect(container.querySelector(".lazers-radar-last-call")?.textContent).toContain("Last call")
+    // The attempt read supplies the call count; the state word is the task's own word.
+    await until(() =>
+      [...container.querySelectorAll(".lazers-radar-monitor-inspector .lazers-kit-stat dt")].some(
+        (label) => label.textContent === "Calls",
+      ),
+    )
+    expect(container.querySelector(".lazers-radar-inspector-word")?.textContent).toMatch(
+      /^[A-Z][a-z]+$/,
+    )
+    expect(
+      [...container.querySelectorAll(".lazers-radar-monitor-inspector [role=columnheader]")]
+        .slice(0, 4)
+        .map((header) => header.textContent),
+    ).toEqual(["Tool", "Target", "Duration", "Time"])
+    expect(inspectorText()).not.toMatch(/Grep|read\b/)
     expect(historyRequests).toContain("ses-failed")
     const inspectorHead = container.querySelector(".lazers-details-bar")!
     expect(inspectorHead.querySelector(".lazers-radar-inspector-glyph")).not.toBeNull()

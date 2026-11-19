@@ -185,7 +185,20 @@ connection (Live, Reconnecting or Offline; never green), scope and a menu.
 Switching views moves nothing in the header. Under it, one summary line answers
 the first question: running, needs you, failed, queued, capacity. The inspector
 opens only when a session is selected; until then the list has the full height.
-It shows state, task link, one facts line, then Calls, Files and Messages.
+For a worker the bar holds glyph, one state word, role, task reference, Open
+task and Trajectory. A worker tied to a task takes the task's word from
+`taskStateView`, so a held or interrupted task reads Waiting here as in Tasks; a
+session with no task keeps its own recorded state. The body is the last call (with an
+`idle` label when quiet), a stat row (Started with the date when not today,
+Runtime, Calls with files, Model), the same Activity lane Tasks draws, and four
+Recent calls (Tool, Target, Duration, Time; tool names as Read, Search, Edit,
+Shell, and a target is never blank). Runtime is working time: a held or
+interrupted attempt stops at its last activity. Calls, Files, Messages and
+Identifiers are disclosures; a zero count is not rendered. A Map group node
+(Needs you, Failed, Queue) lists its tasks as rows that open the task; Runtime and
+Checks list their workers; nothing selected says what to select. Flow's state and
+transition selections show a bar, one stat row, an optional reason and
+Identifiers, with the snapshot notes as one callout.
 When nothing is running, say so and link to Tasks.
 Idle sessions are hidden by default; the summary line says how many and shows them on request.
 

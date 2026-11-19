@@ -1306,3 +1306,62 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* Details pane: the state word takes its kit hue; rows, last call and disclosures follow the kit. */
+.lazers-radar-inspector-state[data-lazers-tone="warning"],
+.lazers-radar-inspector-state[data-lazers-tone="critical"],
+.lazers-radar-inspector-state[data-lazers-tone="success"],
+.lazers-radar-inspector-state[data-lazers-tone="interactive"] {
+  color: var(--lazers-kit-hue);
+}
+.lazers-radar-monitor-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lazers-radar-monitor-inspector > * {
+  margin: 0;
+  min-width: 0;
+}
+.lazers-radar-last-call {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12.5px;
+}
+.lazers-radar-last-call-label {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.lazers-radar-last-call code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-base);
+}
+.lazers-radar-row-target,
+.lazers-radar-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-radar-row-target[data-failed="true"] {
+  color: var(--text-critical-base);
+}
+.lazers-radar-row-state {
+  color: var(--text-weak);
+}
+.lazers-radar-disclosures {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-radar-monitor-inspector .lazers-kit-row {
+  font-size: 12.5px;
+}
+.lazers-radar-callout {
+  margin: 8px 0;
+}
