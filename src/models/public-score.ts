@@ -1,4 +1,5 @@
 import type { ModelCandidate } from "./comparison-state.ts"
+import { routeIdentityKey } from "./model-groups.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 
 /**
@@ -70,11 +71,23 @@ const epochBasis = (id: string, name: string): ScoreBasis => ({
   benchmarkID: id,
 })
 
-export function scoreOptions(candidates: readonly ModelCandidate[]): ScoreOption[] {
-  const choice = chooseScoreBasis(candidates)
+/** A public-catalog model's scored rows: what the first page lists beyond the loaded routes. */
+export type ScoredListing = {
+  providerID: string
+  modelID: string
+  benchmarks: ReadonlyArray<{ benchmarkID: string; benchmark: string }>
+}
+
+export function scoreOptions(
+  candidates: readonly ModelCandidate[],
+  external: readonly ScoredListing[] = [],
+): ScoreOption[] {
+  const choice = chooseScoreBasis(candidates, null, external)
   const names = new Map<string, string>()
   for (const candidate of candidates)
     for (const row of candidate.publicBenchmarks ?? []) names.set(row.benchmarkID, row.benchmark)
+  for (const listing of external)
+    for (const row of listing.benchmarks) names.set(row.benchmarkID, row.benchmark)
   const options: ScoreOption[] = Object.entries(choice.epochRoutes).map(([id, routes]) => ({
     key: id,
     basis: epochBasis(id, names.get(id) ?? id),
@@ -88,11 +101,18 @@ export function chooseScoreBasis(
   candidates: readonly ModelCandidate[],
   /** A basis the user picked (`aa` or an Epoch benchmark id); used when it has any coverage. */
   picked?: string | null,
+  /** Scored public-catalog models: counted with the loaded routes, once per model. */
+  external: readonly ScoredListing[] = [],
 ): ScoreChoice {
   const aa = new Set<string>()
   const epoch = new Map<string, Set<string>>()
+  for (const listing of external) {
+    const key = routeIdentityKey(listing)
+    for (const row of listing.benchmarks)
+      epoch.set(row.benchmarkID, (epoch.get(row.benchmarkID) ?? new Set()).add(key))
+  }
   for (const candidate of candidates) {
-    const key = routeKey(candidate.identity)
+    const key = routeIdentityKey(candidate.identity)
     if (
       candidate.benchmarkCorrespondence.status === "exact" &&
       candidate.externalBenchmark?.codingIndex != null
@@ -106,9 +126,10 @@ export function chooseScoreBasis(
     if (picked === "aa" && aa.size > 0) return { basis: AA_BASIS, aaRoutes: aa.size, epochRoutes }
     if (epochRoutes[picked]) {
       const name =
-        candidates
-          .flatMap((c) => c.publicBenchmarks ?? [])
-          .find((row) => row.benchmarkID === picked)?.benchmark ?? picked
+        [
+          ...candidates.flatMap((c) => c.publicBenchmarks ?? []),
+          ...external.flatMap((l) => l.benchmarks),
+        ].find((row) => row.benchmarkID === picked)?.benchmark ?? picked
       return { basis: epochBasis(picked, name), aaRoutes: aa.size, epochRoutes }
     }
   }
@@ -128,8 +149,10 @@ export function chooseScoreBasis(
       : ranked[0]
   if (best && best[1] > aa.size) {
     const name =
-      candidates.flatMap((c) => c.publicBenchmarks ?? []).find((row) => row.benchmarkID === best[0])
-        ?.benchmark ?? best[0]
+      [
+        ...candidates.flatMap((c) => c.publicBenchmarks ?? []),
+        ...external.flatMap((l) => l.benchmarks),
+      ].find((row) => row.benchmarkID === best[0])?.benchmark ?? best[0]
     return {
       basis: {
         source: "epoch",
