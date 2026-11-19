@@ -90,6 +90,16 @@ const VariantCoverageSchema = z.strictObject({
   omittedVariants: z.number().int().nonnegative().max(200_000).nullable(),
 })
 
+/** What one price source quotes for a model, USD per million tokens. */
+export const PriceQuoteSchema = z.strictObject({
+  source: z.enum(["openrouter", "opencode", "models-dev"]),
+  input: z.number().finite().nonnegative(),
+  output: z.number().finite().nonnegative(),
+  cacheRead: z.number().finite().nonnegative().nullable(),
+  cacheWrite: z.number().finite().nonnegative().nullable(),
+  appliesBelowTokens: z.number().finite().nonnegative().nullable().optional(),
+})
+
 export const ModelComparisonCandidateSchema = z.strictObject({
   candidateID: z.string().min(1).max(2048),
   identity: z.strictObject({
@@ -120,6 +130,11 @@ export const ModelComparisonCandidateSchema = z.strictObject({
   publicModel: ModelsDevModelRecordSchema.nullable().optional(),
   /** Epoch coding-benchmark rows matched to this model by explicit normalisation. */
   publicBenchmarks: z.array(EpochBenchmarkRecordSchema).max(100).optional(),
+  /**
+   * What OpenRouter and models.dev quote for this model by name identity, however they spell it
+   * or whichever provider they list it under: the price walk takes the first configured source.
+   */
+  publicQuotes: z.array(PriceQuoteSchema).max(3).optional(),
 })
 
 export const PublicCoverageSchema = z.strictObject({
@@ -151,7 +166,9 @@ export type PublicCoverage = z.infer<typeof PublicCoverageSchema>
  * listed and priced, never offered as a route.
  */
 export const PublicCatalogItemSchema = z.strictObject({
-  source: z.enum(["models-dev", "openrouter"]),
+  source: z.enum(["models-dev", "openrouter", "opencode"]),
+  /** A model one of this install's routes runs, listed so it plots before its page loads. */
+  routed: z.boolean().optional(),
   providerID: z.string().min(1).max(512),
   modelID: z.string().min(1).max(512),
   name: z.string().max(512).nullable(),
@@ -170,18 +187,7 @@ export const PublicCatalogItemSchema = z.strictObject({
    * What each price source quotes for this model, joined by name identity whichever source
    * listed it. The reader walks the configured order and takes the first.
    */
-  quotes: z
-    .array(
-      z.strictObject({
-        source: z.enum(["openrouter", "opencode", "models-dev"]),
-        input: z.number().finite().nonnegative(),
-        output: z.number().finite().nonnegative(),
-        cacheRead: z.number().finite().nonnegative().nullable(),
-        cacheWrite: z.number().finite().nonnegative().nullable(),
-      }),
-    )
-    .max(3)
-    .optional(),
+  quotes: z.array(PriceQuoteSchema).max(3).optional(),
   benchmarks: z.array(EpochBenchmarkRecordSchema).max(24),
 })
 export type PublicCatalogItem = z.infer<typeof PublicCatalogItemSchema>

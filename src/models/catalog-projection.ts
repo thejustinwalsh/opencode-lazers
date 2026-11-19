@@ -1,4 +1,6 @@
-import { BENCHMARK_PRICE_MIX, benchmarkPrice, routeKey } from "./benchmark-baseline.ts"
+import { routeKey } from "./benchmark-baseline.ts"
+import { mergeRoutesByIdentity, representativeOf, routeIdentityKey } from "./model-groups.ts"
+import { priceCandidate, priceExternal } from "./price-resolution.ts"
 import type { PublicCatalogItem } from "./comparison-schema.ts"
 import type { BenchmarkPrice, BenchmarkRoute, BenchmarkSourceDates } from "./benchmark-baseline.ts"
 import { paretoFrontier } from "./chart-layout.ts"
@@ -202,6 +204,10 @@ export type CatalogSummary = {
   /** The public score that ranks the set, and how many loaded models it reaches. */
   scoreBasis: ScoreBasis
   scored: number
+  /** Scored models no configured source prices: left out of a cost plot, counted and named. */
+  unpriced: Array<{ name: string; reason: string }>
+  /** Scored models a deliberate rule leaves out (for example "not tool-capable"), and why. */
+  hidden: Array<{ name: string; reason: string }>
 }
 
 /** Text and tools: a model is excluded only when its source says it lacks one of them. */
@@ -250,47 +256,7 @@ export function buildCatalog(input: CatalogInput): {
   entries: CatalogEntry[]
   summary: CatalogSummary
 } {
-  const routeGroups = new Map<string, ModelCandidate[]>()
-  for (const candidate of input.candidates) {
-    const key = routeKey(candidate.identity)
-    routeGroups.set(key, [...(routeGroups.get(key) ?? []), candidate])
-  }
-  // One model is one entry, whoever offers it and under whatever alias: a dated snapshot and
-  // its `latest` alias (`claude-opus-4-5-20251101`, `claude-opus-4-5`), and the same model through
-  // several providers (`anthropic`, `github-copilot`). The vendor's own provider speaks for it,
-  // then the undated alias, then the newest; the others are listed as the providers offering it.
-  const sameModel = new Map<string, Array<{ key: string; id: string; provider: string }>>()
-  for (const [key, group] of routeGroups) {
-    const { providerID, modelID } = group[0]!.identity
-    const identity = parseModelName(modelID, {
-      vendor: vendorSlug(providerID) ? providerID : null,
-    })
-    sameModel.set(identity.key, [
-      ...(sameModel.get(identity.key) ?? []),
-      { key, id: modelID, provider: providerID },
-    ])
-  }
-  const aliasOf = new Map<string, string>()
-  const groups = new Map<string, ModelCandidate[]>()
-  const providersOf = new Map<string, string[]>()
-  for (const members of sameModel.values()) {
-    const chosen = members.toSorted((a, b) => {
-      const firstParty = (member: { provider: string }) =>
-        vendorSlug(member.provider) === member.provider ? 0 : 1
-      const left = parseModelName(a.id).date
-      const right = parseModelName(b.id).date
-      return (
-        firstParty(a) - firstParty(b) ||
-        Number(left !== null) - Number(right !== null) ||
-        (right ?? "").localeCompare(left ?? "") ||
-        a.id.length - b.id.length ||
-        a.key.localeCompare(b.key)
-      )
-    })[0]!
-    groups.set(chosen.key, routeGroups.get(chosen.key)!)
-    providersOf.set(chosen.key, [...new Set(members.map((member) => member.provider))].sort())
-    for (const member of members) aliasOf.set(member.key, chosen.key)
-  }
+  const { groups, aliasOf, providersOf, siblings } = mergeRoutesByIdentity(input.candidates)
   type Base = {
     key: string
     route: BenchmarkRoute
@@ -300,10 +266,12 @@ export function buildCatalog(input: CatalogInput): {
     order: number
   }
   const bases = new Map<string, Base>()
-  const choice = chooseScoreBasis(input.candidates, input.preferredBasis)
+  const choice = chooseScoreBasis(input.candidates, input.preferredBasis, input.external)
   for (const [key, group] of groups) {
-    const representative = group.find((entry) => entry.identity.variant === null) ?? group[0]!
-    const exactScore = scoreOn(representative, choice.basis)?.value ?? null
+    const representative = representativeOf(group)
+    // The chosen provider speaks for the model; a sibling route's quote or score stands in when
+    // the chosen one has none (the model is priced and scored, whichever route carries it).
+    const reps = [representative, ...(siblings.get(key) ?? []).map(representativeOf)]
     bases.set(key, {
       key,
       route: {
@@ -311,27 +279,39 @@ export function buildCatalog(input: CatalogInput): {
         modelID: representative.identity.modelID,
       },
       representative,
-      price: benchmarkPrice(representative, input.priceSources, input.sourceDates),
-      score: exactScore,
+      price:
+        reps
+          .map((rep) => priceCandidate(rep, input.priceSources, input.sourceDates))
+          .find((price) => price !== null) ?? null,
+      score:
+        reps
+          .map((rep) => scoreOn(rep, choice.basis)?.value ?? null)
+          .find((value) => value !== null) ?? null,
       order: listingOrder(representative, input.priceSources),
     })
   }
   const priced = [...bases.values()].filter(
     (base) => base.price && textAndTools(base.representative!),
   )
-  // Primary: the top models by public coding index; when scores cover fewer than that (a
-  // install without benchmark access has none), the first priced models in the configured
-  // source's own listing order, up to CATALOG_SOURCE_TOP.
+  // Scored models left out, and why: a deliberate rule, or no price in any configured source.
+  const hidden: Array<{ name: string; reason: string }> = []
+  const unpriced: Array<{ name: string; reason: string }> = []
+  for (const base of bases.values()) {
+    if (base.score === null) continue
+    const name = input.label(base.route, base.representative)
+    if (!base.price) unpriced.push({ name, reason: "no price in any configured source" })
+    else if (!textAndTools(base.representative!)) hidden.push({ name, reason: "not tool-capable" })
+  }
+  // A public score is itself a reason to list a model: every scored model some source prices is
+  // in the set, whatever the top-N cap leaves for the unscored.
   const scored = priced
     .filter((base) => base.score !== null)
     .toSorted((a, b) => b.score! - a.score!)
   const primary = new Set<string>()
   let ordering = "public score"
   let orderSource: ModelPriceSource | null = null
-  if (scored.length >= CATALOG_TOP)
-    for (const base of scored.slice(0, CATALOG_TOP)) primary.add(base.key)
-  else {
-    for (const base of scored) primary.add(base.key)
+  for (const base of scored) primary.add(base.key)
+  if (scored.length < CATALOG_TOP) {
     // The first source that actually lists a priced model gives the order.
     orderSource =
       input.priceSources.find((source) =>
@@ -410,40 +390,25 @@ export function buildCatalog(input: CatalogInput): {
     string,
     { item: PublicCatalogItem; price: BenchmarkPrice; score: number | null }
   >()
+  // A model a loaded route already carries is that route's entry, not a second one.
+  const loadedModels = new Set([...bases.values()].map((base) => routeIdentityKey(base.route)))
   for (const item of input.external ?? []) {
-    // Price by the ordered setting, whichever source listed the model: the first configured
-    // source that quotes this identity. The listing source's own price is the fallback quote.
-    const own = item.prices ? [{ source: item.source, ...item.prices }] : []
-    const quotes = [...(item.quotes ?? []), ...own]
-    let quote: (typeof quotes)[number] | undefined
-    for (const source of input.priceSources) {
-      quote = quotes.find((candidate) => candidate.source === source)
-      if (quote) break
-    }
-    if (!quote) continue
-    const source = quote.source as ModelPriceSource
     const key = routeKey({ providerID: item.providerID, modelID: item.modelID })
-    if (bases.has(key) || externals.has(key)) continue
-    const { input: inShare, output: outShare } = BENCHMARK_PRICE_MIX
-    const price: BenchmarkPrice = {
-      source,
-      input: quote.input,
-      output: quote.output,
-      cacheRead: quote.cacheRead,
-      cacheWrite: quote.cacheWrite,
-      blended: (quote.input * inShare + quote.output * outShare) / (inShare + outShare),
-      appliesBelowTokens: null,
-      retrievedAt:
-        (source === "models-dev"
-          ? input.sourceDates.modelsDev
-          : source === "openrouter"
-            ? input.sourceDates.openrouter
-            : input.sourceDates.opencode) ?? null,
-    }
-    const rows =
+    if (bases.has(key) || externals.has(key) || loadedModels.has(routeIdentityKey(item))) continue
+    const rowsOnBasis =
       choice.basis.source === "epoch"
         ? item.benchmarks.filter((row) => row.benchmarkID === choice.basis.benchmarkID)
         : []
+    const price = priceExternal(item, input.priceSources, input.sourceDates)
+    if (!price) {
+      if (rowsOnBasis.length)
+        unpriced.push({
+          name: item.name ?? item.modelID,
+          reason: "no price in any configured source",
+        })
+      continue
+    }
+    const rows = rowsOnBasis
     const best = rows.reduce<number | null>(
       (top, row) => (top === null || row.score > top ? row.score : top),
       null,
@@ -504,6 +469,8 @@ export function buildCatalog(input: CatalogInput): {
       orderSource,
       scoreBasis: choice.basis,
       scored: scored.length,
+      unpriced,
+      hidden,
     },
   }
 }

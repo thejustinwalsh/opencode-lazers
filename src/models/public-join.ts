@@ -5,6 +5,7 @@ import {
   vendorSlug,
 } from "./name-identity.ts"
 import type { MatchTier, ModelIndex } from "./name-identity.ts"
+import { speakingRoute } from "./model-groups.ts"
 import type {
   EpochBenchmarkRecordSchema,
   ModelsDevModelRecordSchema,
@@ -16,7 +17,18 @@ type ModelsDevRecord = typeof ModelsDevModelRecordSchema._output
 type EpochRecord = typeof EpochBenchmarkRecordSchema._output
 type OpenRouterRecord = typeof OpenRouterModelEvidenceRecordSchema._output
 
-export type Route = { providerID: string; modelID: string; name?: string | null }
+export type Route = {
+  providerID: string
+  modelID: string
+  name?: string | null
+  /** What the route's own (OpenCode) catalog quotes, USD per million tokens. */
+  nativePrice?: {
+    input: number
+    output: number
+    cacheRead: number | null
+    cacheWrite: number | null
+  } | null
+}
 
 export type EpochCoverage = {
   /** Per benchmark: its rows in the archive and how many belong to a model we route. */
@@ -30,6 +42,8 @@ const first = <T>(items: readonly T[]) => items[0]
 /** Newest models taken per BYOK provider, and from the other vendors and OpenRouter. */
 export const EXTERNAL_PER_BYOK = 12
 export const EXTERNAL_TRENDING = 30
+/** The schema's cap on public-catalog items. */
+export const EXTERNAL_MAX = 200
 
 /**
  * The public sources joined to the routes this install can run, through the name identity
@@ -282,6 +296,33 @@ export function createPublicJoin(input: {
       })
       listed++
     }
+    // A public score is itself a reason to list a model: every model some source prices and the
+    // hub scores is here, whatever the listing caps above left out.
+    for (const record of usable) {
+      if (items.length >= EXTERNAL_MAX) break
+      if (rowsFor(record.id, record.name).length === 0) continue
+      if (!claim(record.id, vendorSlug(record.providerID), record.name)) continue
+      items.push(fromDev(record))
+    }
+    for (const record of input.openrouter ?? []) {
+      if (items.length >= EXTERNAL_MAX) break
+      const slash = record.id.indexOf("/")
+      const owner = slash > 0 ? record.id.slice(0, slash) : ""
+      const modelID = slash > 0 ? record.id.slice(slash + 1) : record.id
+      if (record.id.includes(":") || rowsFor(modelID, record.name).length === 0) continue
+      const price = basePrice(record)
+      if (!price || !claim(modelID, vendorSlug(owner), record.name)) continue
+      items.push({
+        source: "openrouter",
+        providerID: owner || "openrouter",
+        modelID,
+        name: record.name,
+        releaseDate: null,
+        contextTokens: record.contextLength,
+        prices: price,
+        benchmarks: rowsFor(modelID, record.name),
+      })
+    }
     return items.map((item) => ({ ...item, quotes: quotesFor(item) }))
   }
 
@@ -290,18 +331,21 @@ export function createPublicJoin(input: {
   let openrouterIndex: ModelIndex<OpenRouterRecord> | undefined
   const openrouterListings = () =>
     (openrouterIndex ??= createModelIndex(
-      (input.openrouter ?? []).map((record) => {
-        const slash = record.id.indexOf("/")
-        const owner = slash > 0 ? record.id.slice(0, slash) : ""
-        return {
-          id: slash > 0 ? record.id.slice(slash + 1) : record.id,
-          names: [record.id, record.canonicalSlug, record.name].filter((name): name is string =>
-            Boolean(name),
-          ),
-          vendor: vendorSlug(owner) ? owner : null,
-          value: record,
-        }
-      }),
+      // `:free`, `:batch` and the like are routing variants, never the model's own listing.
+      (input.openrouter ?? [])
+        .filter((record) => !record.id.includes(":"))
+        .map((record) => {
+          const slash = record.id.indexOf("/")
+          const owner = slash > 0 ? record.id.slice(0, slash) : ""
+          return {
+            id: slash > 0 ? record.id.slice(slash + 1) : record.id,
+            names: [record.id, record.canonicalSlug, record.name].filter((name): name is string =>
+              Boolean(name),
+            ),
+            vendor: vendorSlug(owner) ? owner : null,
+            value: record,
+          }
+        }),
     ))
   const basePrice = (record: OpenRouterRecord) => {
     const base = record.prices?.tiers.find(
@@ -346,7 +390,11 @@ export function createPublicJoin(input: {
       const owner = hit.value.id.split("/")[0] ?? ""
       return vendorSlug(owner) !== null && vendorSlug(owner) === (vendor ?? result.identity.vendor)
     })
-    const pool = owned.length ? owned : hits.length === 1 ? hits : []
+    // Several listings of one owner (a dated snapshot, a `:batch` copy) are one model's
+    // listing; listings by different owners are a vendor's and a reseller's, and only the
+    // vendor's is taken (a reseller's alone when it is the only listing).
+    const owners = new Set(hits.map((hit) => hit.value.id.split("/")[0] ?? ""))
+    const pool = owned.length ? owned : owners.size === 1 ? hits : []
     // An undated or newest listing speaks for the identity; `:batch`-style variants are noise.
     const record = pool
       .map((hit) => hit.value)
@@ -359,12 +407,29 @@ export function createPublicJoin(input: {
       )[0]
     return record ? basePrice(record) : null
   }
-  const quotesFor = (item: PublicCatalogItem): NonNullable<PublicCatalogItem["quotes"]> => {
+  const routeQuoteCache = new Map<string, NonNullable<PublicCatalogItem["quotes"]>>()
+  /**
+   * What OpenRouter and models.dev quote for a model, joined by name identity. Both are looked
+   * up by identity (never by which source listed the model), so a source with no listing is
+   * absent from the result and the walk falls to the next.
+   */
+  const quotesForRoute = (
+    route: Route,
+    own?: {
+      input: number | null
+      output: number | null
+      cacheRead?: number | null
+      cacheWrite?: number | null
+    } | null,
+  ): NonNullable<PublicCatalogItem["quotes"]> => {
+    const key = `${route.providerID}\u0000${route.modelID}\u0000${own ? "own" : ""}`
+    const cached = routeQuoteCache.get(key)
+    if (cached) return cached
     const quotes: NonNullable<PublicCatalogItem["quotes"]> = []
-    const route = { providerID: item.providerID, modelID: item.modelID, name: item.name }
+    if (route.nativePrice) quotes.push({ source: "opencode", ...route.nativePrice })
     const openrouter = openrouterPrice(route)
     if (openrouter) quotes.push({ source: "openrouter", ...openrouter })
-    const dev = item.source === "models-dev" ? item.prices : modelsDev(route)?.record.prices
+    const dev = own ?? modelsDev(route)?.record.prices
     if (dev && dev.input != null && dev.output != null)
       quotes.push({
         source: "models-dev",
@@ -373,10 +438,61 @@ export function createPublicJoin(input: {
         cacheRead: dev.cacheRead ?? null,
         cacheWrite: dev.cacheWrite ?? null,
       })
+    routeQuoteCache.set(key, quotes)
     return quotes
   }
+  const quotesFor = (item: PublicCatalogItem) =>
+    quotesForRoute(
+      { providerID: item.providerID, modelID: item.modelID, name: item.name },
+      item.source === "models-dev" ? item.prices : null,
+    )
 
-  return { modelsDev, epoch, coverage, external }
+  /**
+   * The routed models that have a public score, one per model identity: listed on the first page
+   * so every scored, priced model plots at once, without waiting for the page that carries its
+   * route. The chosen route is the one that speaks for the model.
+   */
+  const scoredRoutes = (): PublicCatalogItem[] => {
+    const byIdentity = new Map<
+      string,
+      Array<{ key: string; id: string; provider: string; route: Route }>
+    >()
+    for (const route of input.routes) {
+      if (epoch(route).length === 0) continue
+      const vendor = vendorSlug(route.providerID) ? route.providerID : null
+      const identity = parseModelName(route.modelID, { vendor })
+      byIdentity.set(identity.key, [
+        ...(byIdentity.get(identity.key) ?? []),
+        {
+          key: `${route.providerID}\u0000${route.modelID}`,
+          id: route.modelID,
+          provider: route.providerID,
+          route,
+        },
+      ])
+    }
+    const items: PublicCatalogItem[] = []
+    for (const members of byIdentity.values()) {
+      const { route } = speakingRoute(members)[0]!
+      const quotes = quotesForRoute(route)
+      const dev = modelsDev(route)?.record
+      items.push({
+        source: route.nativePrice ? "opencode" : dev ? "models-dev" : "openrouter",
+        routed: true,
+        providerID: route.providerID,
+        modelID: route.modelID,
+        name: route.name ?? null,
+        releaseDate: dev?.releaseDate ?? null,
+        contextTokens: dev?.contextTokens ?? null,
+        prices: null,
+        quotes,
+        benchmarks: epoch(route).slice(0, 24),
+      })
+    }
+    return items.slice(0, EXTERNAL_MAX)
+  }
+
+  return { modelsDev, epoch, coverage, external, quotesForRoute, scoredRoutes }
 }
 
 export type PublicJoin = ReturnType<typeof createPublicJoin>

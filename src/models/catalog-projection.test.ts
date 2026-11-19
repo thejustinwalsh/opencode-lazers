@@ -215,12 +215,14 @@ test("the set is a union by model: observed, routed and catalog, tagged and de-d
   expect(byModel.get("home-grown")!.tags).toEqual(["observed"])
   expect(byModel.get("home-grown")!.projection).toBeNull()
   expect(byModel.get("home-grown")!.price).toBeNull()
-  // The catalog contributes the top N by public score.
+  // A public score is a reason to list a model: every scored, priced model is in, however many.
   const catalogTagged = entries.filter((item) => item.tags.includes("catalog"))
   // (Luna joins them as part of the OpenAI lineup.)
-  expect(catalogTagged.filter((item) => item.route.providerID === "acme")).toHaveLength(CATALOG_TOP)
+  expect(catalogTagged.filter((item) => item.route.providerID === "acme")).toHaveLength(
+    CATALOG_TOP + 5,
+  )
   expect(byModel.get("model-0")!.tags).toEqual(["catalog"])
-  expect(byModel.has(`model-${CATALOG_TOP}`)).toBe(false)
+  expect(byModel.has(`model-${CATALOG_TOP}`)).toBe(true)
   // Projection comes from the configured source's list price and the profile.
   expect(byModel.get("model-0")!.projection!.usd).toBeCloseTo(1 + 0.3 * 4)
   expect(byModel.get("model-0")!.price).toMatchObject({
@@ -258,7 +260,8 @@ test("BYOK always includes the Anthropic and OpenAI lineups, by native provider 
     ],
   })
   const providers = entries.filter((item) => item.route.providerID === "anthropic")
-  expect(providers).toHaveLength(BYOK_PER_PROVIDER)
+  // Every scored model is in; the BYOK cap only limits the unscored remainder of a lineup.
+  expect(providers).toHaveLength(BYOK_PER_PROVIDER + 3)
   // The best-scored of a lineup are kept.
   expect(
     providers.some((item) => item.route.modelID === `anthropic-${BYOK_PER_PROVIDER + 2}`),
