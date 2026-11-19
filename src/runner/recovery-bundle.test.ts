@@ -543,13 +543,14 @@ test("the bundle text states what to do and lists each item with its advice", as
   )
 })
 
+/** A running task with `rounds` verification rounds; from three on, one failed after 60M tokens. */
 function runningTask(f: ReturnType<typeof fixture>, rounds: number) {
   const { planID, taskID } = f.plan({ state: "running", node: "running" })
   const attemptID = crypto.randomUUID()
   f.store.atomic((db) => {
     db.query(
-      `INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
-       VALUES(?,?,?,?,1,?,?,?,?,NULL,'{}','running',?)`,
+      `INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count)
+       VALUES(?,?,?,?,1,?,?,?,?,NULL,'{}','running',?,?)`,
     ).run(
       attemptID,
       planID,
@@ -560,11 +561,16 @@ function runningTask(f: ReturnType<typeof fixture>, rounds: number) {
       f.root,
       f.base,
       Date.now(),
+      rounds >= 3 ? 60_000_000 : 11_000_000,
     )
     for (let round = 0; round < rounds; round++)
       db.query(
         "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
       ).run(planID, taskID, f.clock.at - round)
+    if (rounds >= 3)
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'REPAIR',?,?)",
+      ).run(planID, taskID, JSON.stringify({ from: "verifying", to: "ready" }), f.clock.at)
   })
   f.sessions.set(`worker-${attemptID}`, {
     ...architect(`worker-${attemptID}`),
@@ -625,17 +631,17 @@ test("an acknowledgement suppresses reviewed evidence; only materially new evide
     )
   expect(decide("ack-1", { decision: "acknowledge" }).status).toBe("recorded")
   expect(await collect(f)).toEqual([])
-  // Three more rounds is not double the evidence the Architect reviewed ... six is.
-  const addRounds = (count: number) =>
+  // 30M more tokens is not double the 60M the Architect reviewed ... 60M more is.
+  const addTokens = (count: number) =>
     f.store.atomic((db) => {
-      for (let round = 0; round < count; round++)
-        db.query(
-          "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
-        ).run(grind.planID, grind.taskID, f.clock.at)
+      db.query("UPDATE runner_attempts SET token_count=token_count+? WHERE id=?").run(
+        count,
+        grind.attemptID,
+      )
     })
-  addRounds(2)
+  addTokens(30_000_000)
   expect(detector(f).evaluate("scheduler", fence)).toEqual([])
-  addRounds(1)
+  addTokens(30_000_000)
   expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
   expect((await collect(f))[0]!.concern!.version).toBe(2)
   // A deferred follow-up is honoured: nothing before it is due, a new version when it is.
@@ -658,6 +664,102 @@ test("an acknowledgement suppresses reviewed evidence; only materially new evide
   f.clock.at += 2 * HOUR
   expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
   expect((await collect(f))[0]!.concern!.version).toBe(3)
+})
+
+test("the detector is idempotent across ticks and a reload, and an unanswered concern escalates once the measure doubles", async () => {
+  const f = fixture()
+  const grind = runningTask(f, 3)
+  const { fence } = f.reconciler("scheduler")
+  expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
+  // Same instance, a new instance on the same database (a reload), and a new process clock.
+  const again = detector(f)
+  expect(again.evaluate("scheduler", fence)).toEqual([])
+  expect(again.evaluate("scheduler", fence)).toEqual([])
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  const first = (await collect(f))[0]!
+  expect(first.concern).toMatchObject({ version: 1 })
+  expect(first.recommendation.action).toBe("steer")
+
+  // Unanswered and the spend has not doubled: still one notice.
+  const addTokens = (count: number) =>
+    f.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET token_count=token_count+? WHERE id=?").run(
+        count,
+        grind.attemptID,
+      )
+    })
+  addTokens(30_000_000)
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+
+  // Doubled and still unanswered: a new version in stronger words, so the bundle key changes.
+  addTokens(30_000_000)
+  const escalated = detector(f).evaluate("scheduler", fence)
+  expect(escalated).toMatchObject([{ ruleID: "verify-rounds-repeated", version: 2 }])
+  const second = (await collect(f))[0]!
+  expect(second.concern?.line).toStartWith("Escalated, still unanswered: now ")
+  expect(second.concern?.line).toContain("after 120M tokens")
+  expect(second.key).not.toBe(first.key)
+  expect(second.recommendation.action).toBe("takeover")
+  // The escalation itself is recorded once, by this instance or a reloaded one.
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+})
+
+test("a new attempt of the same task does not raise a task-wide concern again", async () => {
+  const f = fixture()
+  const grind = runningTask(f, 3)
+  const { fence } = f.reconciler("scheduler")
+  expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(grind.attemptID)
+    db.query(
+      `INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count)
+       VALUES(?,?,?,?,2,?,?,?,?,NULL,'{}','running',?,0)`,
+    ).run(
+      crypto.randomUUID(),
+      grind.planID,
+      f.root,
+      grind.taskID,
+      "worker-two",
+      "m-two",
+      f.root,
+      f.base,
+      Date.now(),
+    )
+  })
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  expect(await collect(f)).toHaveLength(1)
+})
+
+test("the detector never evaluates a takeover attempt: that is the Architect working", async () => {
+  const f = fixture()
+  const grind = runningTask(f, 3)
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+      JSON.stringify({ takeover: { planID: grind.planID, reason: "finish it" } }),
+      grind.attemptID,
+    )
+  })
+  const { fence } = f.reconciler("scheduler")
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  expect(await collect(f)).toEqual([])
+})
+
+test("the spend ceiling records a takeover concern past the ceiling and leaves the worker alone", async () => {
+  const f = fixture()
+  const calm = runningTask(f, 1)
+  const { fence } = f.reconciler("scheduler")
+  const ceiling = new RecoveryDetector({
+    store: f.store,
+    handoff: new HandoffStore(f.repository),
+    now: () => f.clock.at,
+    spendCeilingTokens: 10_000_000,
+  })
+  expect(ceiling.evaluate("scheduler", fence).map((c) => c.ruleID)).toEqual(["spend-ceiling"])
+  const item = (await collect(f))[0]!
+  expect(item.recommendation.action).toBe("takeover")
+  expect(f.store.plan(calm.planID)!.state).toBe("running")
+  expect(f.store.nodes(calm.planID).map((n) => n.state)).toEqual(["running"])
 })
 
 test("an edit outside the write scope is recorded as a concern with its paths, never a hold", async () => {
@@ -684,11 +786,16 @@ test("an edit outside the write scope is recorded as a concern with its paths, n
         )
     tool(1, "patch", "out1.txt")
     tool(2, "patch", "docs/outside.md")
+    tool(3, "patch", "docs/also-outside.md")
+    tool(4, "patch", "docs/third.md")
   })
   const { fence } = f.reconciler("scheduler")
   const recorded = detector(f).evaluate("scheduler", fence)
   expect(recorded.map((c) => c.ruleID)).toEqual(["out-of-scope-write"])
   const item = (await collect(f))[0]!
-  expect(item.concern?.line).toBe("edited outside the write scope: docs/outside.md")
+  expect(item.concern?.line).toBe(
+    "edited outside the write scope: docs/also-outside.md, docs/outside.md, docs/third.md",
+  )
+  expect(item.recommendation.action).toBe("steer")
   expect(f.store.plan(planID)!.state).toBe("running")
 })

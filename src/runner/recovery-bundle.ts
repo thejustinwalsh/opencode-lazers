@@ -6,7 +6,7 @@ import { taskReasonView, taskTitle } from "../tasks/presentation.ts"
 import { gitAsync } from "./artifacts.ts"
 import { holdFamily, holdActions, unblockingActions } from "./hold-actions.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
-import { planCommandProblem } from "./plan-commands.ts"
+import { availablePlanCommands, planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
@@ -471,9 +471,15 @@ export class RecoveryBundles {
         reason: node.reason ?? null,
         holdFamily: null,
         ageMs: 0,
-        actions: this.legalActions(plan, concern.taskID, null, ["cancel", "amend-scope"]),
+        actions: [
+          ...this.legalActions(plan, concern.taskID, null, ["cancel", "amend-scope"]),
+          // Finishing the task after a takeover, once the plan accepts that command.
+          ...((availablePlanCommands(plan.state) as string[]).includes("takeover-submit")
+            ? ["takeover-submit"]
+            : []),
+        ],
         reuse,
-        recommendation: concernAdvice(concern.ruleID),
+        recommendation: concernAdvice(concern),
         concern: {
           concernID: concern.concernID,
           version: concern.version,
@@ -880,7 +886,7 @@ export function recoveryBundleText(serialized: string): string {
     "Work through all of it in this one pass. Verify each with lz-inspect-plan, then resolve it with lz-plan-command or lz-dispose-task. Reuse what exists before starting fresh: resume a live worker, verify-retained a committed result whose checks passed, retained-repair unfinished work; submit a new task only when the old approach is wrong, and then cancel and dispose what it supersedes. The recommendation is advice from recorded facts; you decide. Resolved items leave the next bundle.",
     ...(bundle.items.some((item) => item.kind === "worker-concern")
       ? [
-          "Items of kind worker-concern are still running: a deterministic rule matched their recorded trajectory. Read the evidence with lz-inspect-recovery, then decide with lz-disposition-recovery-concern: acknowledge (let it continue) or follow up later with a due time, or check in with the worker (lz-checkpoint-recovery-worker). If it keeps struggling after steering, request a handoff (lz-request-handoff) or cancel and split the task. An out-of-scope write is reviewed before acceptance; amend-scope only if the write was right.",
+          'Items of kind worker-concern are still running: a deterministic rule matched their recorded trajectory, and an Escalated reason means you have not answered and the measure doubled. Read the evidence with lz-inspect-recovery, then choose one: (1) continue or follow up later: lz-disposition-recovery-concern acknowledge, or follow-up with a due time; (2) steer: lz-checkpoint-recovery-worker with what to change; (3) take over and finish it yourself: lz-request-handoff {attemptID, reason} tells the worker you are taking over, waits for its handoff, stops it and returns the handoff, then you finish the task in the same workspace and submit it with lz-plan-command {action: "takeover-submit", planID, taskID, reason}; (4) split or re-plan: submit the new tasks, then cancel this one; (5) cancel: lz-plan-command cancel. The Recommended action on each item is the rule\'s advice from the recorded facts. An out-of-scope write is reviewed before acceptance; amend-scope only if the write was right.',
         ]
       : []),
     ...(bundle.replaces ? ["This bundle replaces the earlier one; ignore the earlier list."] : []),
@@ -895,23 +901,16 @@ export function recoveryBundleText(serialized: string): string {
   ].join("\n")
 }
 
-/** Advice from the rule that fired; the Architect decides. */
-function concernAdvice(ruleID: string): z.infer<typeof RecoveryRecommendation> {
-  if (ruleID === "out-of-scope-write")
-    return {
-      action: null,
+/** Advice from the rule that fired, as it recorded it; the Architect decides. */
+function concernAdvice(concern: {
+  advice: { action: string; because: string } | null
+}): z.infer<typeof RecoveryRecommendation> {
+  // A concern recorded before rules carried advice has none; steering is the safe default.
+  return (
+    concern.advice ?? {
+      action: "steer",
       because:
-        "The worker diverged from the planned scope. Inspect the paths before acceptance; check in with the worker, and amend-scope only if the write was right",
+        "Check in with the worker (lz-checkpoint-recovery-worker), acknowledge to let it continue, or follow up later; if it keeps struggling after steering, request a handoff",
     }
-  if (ruleID === "interruptions-repeated")
-    return {
-      action: null,
-      because:
-        "Only interruptions repeated; the work itself may be fine. Acknowledge and let it continue",
-    }
-  return {
-    action: null,
-    because:
-      "Check in with the worker (lz-checkpoint-recovery-worker), acknowledge to let it continue, or follow up later; if it keeps struggling after steering, request a handoff",
-  }
+  )
 }

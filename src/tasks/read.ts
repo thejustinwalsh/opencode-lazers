@@ -7,7 +7,7 @@ import type { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
-import { canStruggle, readStrugglingFacts } from "../runner/struggling.ts"
+import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
@@ -355,7 +355,7 @@ export class TaskReads {
     return this.repository.read((db): { concern: TaskConcern } | Record<string, never> => {
       const open = openConcerns(db, this.repository.projectDirectory, { taskID })
       if (!open.length) return {}
-      const facts = readStrugglingFacts(db, planID, taskID, Date.now())
+      const facts = readTrajectoryFacts(db, planID, taskID, Date.now())
       return {
         concern: {
           line: open.map((item) => item.reason).join("; "),

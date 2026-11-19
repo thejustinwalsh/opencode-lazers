@@ -762,6 +762,9 @@ test("a running task that trips a detector rule shows its open concern with tota
       db.query(
         "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
       ).run(plan.planID, grind.id, round + 1)
+    db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'REPAIR',?,4)",
+    ).run(plan.planID, grind.id, JSON.stringify({ from: "verifying", to: "ready" }))
   })
 
   // Nothing is shown until the detector records a concern.
@@ -774,7 +777,7 @@ test("a running task that trips a detector rule shows its open concern with tota
   const tasks = reads.query({ state: "all" }).tasks
   expect(tasks.find((task) => task.taskID === calm.id)?.concern).toBeUndefined()
   const found = tasks.find((task) => task.taskID === grind.id)?.concern
-  expect(found?.reasons.toSorted()).toEqual(["token-spend-high", "verify-rounds-repeated"])
-  expect(found?.line).toContain("3 verification rounds")
+  expect(found?.reasons).toEqual(["verify-rounds-repeated"])
+  expect(found?.line).toContain("after 90M tokens")
   expect(found?.totals).toMatchObject({ attempts: 2, verifyRounds: 3, toolCalls: 200 })
 })
