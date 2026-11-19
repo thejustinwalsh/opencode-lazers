@@ -17,7 +17,9 @@ export function StatRow(props: {
     note?: { text: string; tone: LabelTone; title?: string }
   }>
 }): JSX.Element {
-  const shown = createMemo(() => props.stats.filter((stat) => present(stat.value) || stat.note).slice(0, 4))
+  const shown = createMemo(() =>
+    props.stats.filter((stat) => present(stat.value) || stat.note).slice(0, 4),
+  )
   return (
     <Show when={shown().length > 0}>
       <dl class="lazers-kit-stats" style={{ "--lazers-kit-columns": shown().length }}>
