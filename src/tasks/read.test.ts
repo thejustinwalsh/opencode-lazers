@@ -704,3 +704,67 @@ test("paused dispatch is durable, filterable and distinct from active worker lif
   expect(reopened.query({ state: "paused" }).count).toBe(0)
   expect(reopened.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
 })
+
+test("a running task that keeps consuming effort is reported struggling with totals across attempts", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const calm = insert(repository, "Calm task")
+  const grind = insert(repository, "Grinding task")
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "struggling-plan",
+      objective: grind.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [
+        { taskID: calm.id, revision: 1 },
+        { taskID: grind.id, revision: 1 },
+      ],
+      dependencies: [],
+      integrationOrder: [calm.id, grind.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "architect",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(plan.planID)
+    db.query("UPDATE runner_nodes SET state='running',reason=NULL WHERE plan_id=?").run(plan.planID)
+    const addAttempt = (taskID: string, number: number, tokens: number, state: string) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts
+          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          plan.planID,
+          taskID,
+          number,
+          `session-${taskID}-${number}`,
+          `message-${taskID}-${number}`,
+          "/worktree",
+          "a".repeat(40),
+          null,
+          "{}",
+          state,
+          Date.now() - 60_000,
+          tokens,
+          100,
+        )
+    addAttempt(calm.id, 1, 1_000_000, "running")
+    addAttempt(grind.id, 1, 40_000_000, "failed")
+    addAttempt(grind.id, 2, 50_000_000, "failed")
+    for (let round = 0; round < 3; round++)
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+      ).run(plan.planID, grind.id, round + 1)
+  })
+
+  const tasks = reads.query({ state: "all" }).tasks
+  expect(tasks.find((task) => task.taskID === calm.id)?.struggling).toBeUndefined()
+  const found = tasks.find((task) => task.taskID === grind.id)?.struggling
+  expect(found?.line).toBe("3 verification rounds, 90M tokens")
+  expect(found?.totals).toMatchObject({ attempts: 2, verifyRounds: 3, toolCalls: 200 })
+})

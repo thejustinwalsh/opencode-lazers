@@ -27,6 +27,23 @@ export const GetInput = z.strictObject({
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
+/** A task that keeps consuming effort without landing; see `assessStruggling`. */
+export const TaskStruggling = z.strictObject({
+  /** "3 verification rounds, 4h 10m in attempts, 92M tokens". */
+  line: z.string(),
+  reasons: z.array(z.string()),
+  /** Totals across every attempt, so a person can judge the cost. */
+  totals: z.strictObject({
+    attempts: z.int().nonnegative(),
+    verifyRounds: z.int().nonnegative(),
+    attemptMs: z.number().nonnegative(),
+    tokens: z.number().nonnegative(),
+    toolCalls: z.int().nonnegative(),
+    costUSD: z.number().nonnegative().nullable(),
+  }),
+})
+export type TaskStruggling = z.infer<typeof TaskStruggling>
+
 const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
@@ -40,6 +57,8 @@ const TaskSummary = z.strictObject({
   recordedState: TaskState.optional(),
   /** Epoch ms the current attempt started; present only while the task is running or verifying. */
   startedAt: z.number().finite().optional(),
+  /** Present only while the task is unsettled and its recorded facts trip a struggling rule. */
+  struggling: TaskStruggling.optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,

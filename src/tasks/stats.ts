@@ -1,4 +1,6 @@
 import { callsText, durationText } from "../details/format.ts"
+import { tokenLabel } from "../runner/struggling.ts"
+import type { TaskStruggling } from "./contract.ts"
 import type { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 
 export type StatAttempt = {
@@ -38,6 +40,8 @@ export function taskStats(input: {
   attempt?: StatAttempt
   /** The task's state word is Running/Verifying; false for a held, waiting or interrupted task. */
   working?: boolean
+  /** Totals across every attempt; given only for a struggling task, where one attempt misleads. */
+  struggling?: TaskStruggling["totals"]
 }): Array<{ label: string; value?: string }> {
   const { attempt } = input
   const end = attempt ? attemptEnd(attempt, input.now, input.working ?? true) : undefined
@@ -54,6 +58,18 @@ export function taskStats(input: {
       ...(attempt ? { value: callsText(attempt.toolCount, attempt.summary?.files) } : {}),
     },
     { label: "Model", ...(modelText(attempt?.model) ? { value: modelText(attempt?.model)! } : {}) },
+    ...(input.struggling ? strugglingStats(input.struggling) : []),
+  ]
+}
+
+/** The cost of a struggling task across all its attempts, so a person can judge it. */
+function strugglingStats(totals: TaskStruggling["totals"]) {
+  return [
+    { label: "Total time", value: durationText(totals.attemptMs) },
+    { label: "Total calls", value: callsText(totals.toolCalls) },
+    { label: "Tokens", value: tokenLabel(totals.tokens) },
+    ...(totals.costUSD === null ? [] : [{ label: "Cost", value: `$${totals.costUSD.toFixed(2)}` }]),
+    { label: "Rounds", value: String(totals.verifyRounds) },
   ]
 }
 

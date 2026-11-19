@@ -83,6 +83,7 @@ import {
   ActivityLane,
   Callout,
   Disclosure,
+  Label,
   Identifiers,
   Progress,
   Section,
@@ -896,6 +897,7 @@ function TaskPanel(
           : []),
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
+        ...(taskRow().struggling ? [`struggling: ${taskRow().struggling!.line}`] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -921,7 +923,11 @@ function TaskPanel(
           chooseTask(taskRow().taskID)
         }}
       >
-        <div class="lazers-tasks-row" data-tone={presentation().tone}>
+        <div
+          class="lazers-tasks-row"
+          data-tone={presentation().tone}
+          data-struggling={taskRow().struggling ? "true" : undefined}
+        >
           <Show
             when={expandable()}
             fallback={<span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />}
@@ -958,6 +964,13 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
+            <Show when={taskRow().struggling}>
+              {(struggling) => (
+                <Label tone="warning" title={`Struggling: ${struggling().line}`}>
+                  Struggling
+                </Label>
+              )}
+            </Show>
             <Show when={runningStart(taskRow())}>
               {(start) => (
                 <span
@@ -973,7 +986,12 @@ function TaskPanel(
                 class="lazers-tasks-state"
                 data-state={taskRow().status}
                 data-waiting={waiting()}
-                data-tone={presentation().tone}
+                data-tone={
+                  taskRow().struggling &&
+                  ["running", "ready", "scheduled"].includes(presentation().tone)
+                    ? "attention"
+                    : presentation().tone
+                }
                 role="img"
                 aria-label={presentation().label}
               >
@@ -1593,6 +1611,7 @@ function TaskPanel(
           now: minute(),
           attempt: latestAttempt(),
           working: selectedPresentation().tone === "running",
+          ...(selectedRow()?.struggling ? { struggling: selectedRow()!.struggling!.totals } : {}),
         })
       : []
   }

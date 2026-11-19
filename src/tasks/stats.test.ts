@@ -61,3 +61,23 @@ test("a held attempt still recorded as running stops its runtime at the last act
   // The lane still spans to now, so the quiet stretch collapses to an idle span before "now".
   expect(attemptLane(attempt, 44 * HOUR)!.durationMs).toBe(44 * HOUR - attempt.startedAt)
 })
+
+test("a struggling task adds its totals across attempts to the stat row", () => {
+  const totals = {
+    attempts: 2,
+    verifyRounds: 3,
+    attemptMs: 4 * HOUR + 10 * 60_000,
+    tokens: 92_000_000,
+    toolCalls: 1009,
+    costUSD: null,
+  }
+  const stats = values(taskStats({ createdAt: 0, now: HOUR, struggling: totals }))
+  expect(stats).toMatchObject({
+    "Total time": "4h 10m",
+    "Total calls": "1009",
+    Tokens: "92M",
+    Rounds: "3",
+  })
+  expect("Cost" in stats).toBe(false)
+  expect("Total time" in values(taskStats({ createdAt: 0, now: HOUR }))).toBe(false)
+})
