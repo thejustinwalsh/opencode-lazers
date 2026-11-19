@@ -75,7 +75,7 @@ function changeBus() {
 
 function until(predicate: () => boolean) {
   return (async () => {
-    for (let attempt = 0; attempt < 300 && !predicate(); attempt++)
+    for (let attempt = 0; attempt < 1_500 && !predicate(); attempt++)
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(predicate()).toBe(true)
   })()

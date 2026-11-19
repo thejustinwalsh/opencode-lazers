@@ -12,6 +12,10 @@ export type PlacedEdge = FlowEdge & {
   dots: Array<{ x: number; y: number }>
   x0: number
   x1: number
+  /** Wire endpoints and control column, for the pulse animation. */
+  y0: number
+  y1: number
+  mx: number
 }
 export type FlowLayout = {
   width: number
@@ -86,7 +90,7 @@ export function layoutFlow(model: FlowModel, width: number): FlowLayout {
       x: cubic(t, x0, mx, mx, x1),
       y: cubic(t, from.y, from.y, to.y, to.y),
     }))
-    return [{ ...edge, d, dots, x0, x1 }]
+    return [{ ...edge, d, dots, x0, x1, y0: from.y, y1: to.y, mx }]
   })
 
   const links = sessions.flatMap((session) => {

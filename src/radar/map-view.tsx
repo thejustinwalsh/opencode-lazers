@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Index, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { fitText, layoutMap } from "./map-layout.ts"
 import { relatedNodes } from "./map-model.ts"
 import type { RadarMap } from "./map-model.ts"
@@ -45,78 +45,78 @@ export function RadarMapView(props: {
         role="group"
         aria-label="Radar map"
       >
-        <For each={edges()}>
+        <Index each={edges()}>
           {(edge) => (
             <path
               class="lazers-radar-edge"
-              data-tone={edge.tone}
-              data-dim={dim(edge.to) || dim(edge.from)}
-              d={edge.d}
+              data-tone={edge().tone}
+              data-dim={dim(edge().to) || dim(edge().from)}
+              d={edge().d}
               fill="none"
             />
           )}
-        </For>
-        <For each={layout().nodes}>
+        </Index>
+        <Index each={layout().nodes}>
           {(node) => (
             <g
               class="lazers-radar-node"
-              data-tone={node.tone}
-              data-kind={node.kind}
-              data-selected={props.selectedID === node.id}
-              data-dim={dim(node.id)}
+              data-tone={node().tone}
+              data-kind={node().kind}
+              data-selected={props.selectedID === node().id}
+              data-dim={dim(node().id)}
               role="button"
               tabIndex={0}
-              aria-pressed={props.selectedID === node.id}
-              aria-label={[node.title, node.sub].filter(Boolean).join(", ")}
-              onClick={() => props.onSelect(node.id)}
+              aria-pressed={props.selectedID === node().id}
+              aria-label={[node().title, node().sub].filter(Boolean).join(", ")}
+              onClick={() => props.onSelect(node().id)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault()
-                  props.onSelect(node.id)
+                  props.onSelect(node().id)
                 }
               }}
             >
-              <Show when={node.running}>
+              <Show when={node().running}>
                 <rect
                   class="lazers-radar-node-pulse"
-                  x={node.x}
-                  y={node.y}
-                  width={node.width}
-                  height={node.height}
+                  x={node().x}
+                  y={node().y}
+                  width={node().width}
+                  height={node().height}
                   rx={9}
                 />
               </Show>
               <rect
                 class="lazers-radar-node-box"
-                x={node.x}
-                y={node.y}
-                width={node.width}
-                height={node.height}
+                x={node().x}
+                y={node().y}
+                width={node().width}
+                height={node().height}
                 rx={9}
               />
               <text
                 class="lazers-radar-node-title"
-                x={node.x + node.width / 2}
-                y={node.y + layout().scale * (node.sub ? 16 : 22)}
+                x={node().x + node().width / 2}
+                y={node().y + layout().scale * (node().sub ? 16 : 22)}
                 style={{ "font-size": `${12 * layout().scale}px` }}
                 text-anchor="middle"
               >
-                {fitText(node.title, node.width, 12 * layout().scale)}
+                {fitText(node().title, node().width, 12 * layout().scale)}
               </text>
-              <Show when={node.sub}>
+              <Show when={node().sub}>
                 <text
                   class="lazers-radar-node-sub"
-                  x={node.x + node.width / 2}
-                  y={node.y + 29 * layout().scale}
+                  x={node().x + node().width / 2}
+                  y={node().y + 29 * layout().scale}
                   style={{ "font-size": `${10 * layout().scale}px` }}
                   text-anchor="middle"
                 >
-                  {fitText(node.sub!, node.width, 10 * layout().scale)}
+                  {fitText(node().sub!, node().width, 10 * layout().scale)}
                 </text>
               </Show>
             </g>
           )}
-        </For>
+        </Index>
       </svg>
     </div>
   )

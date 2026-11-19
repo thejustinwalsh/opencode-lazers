@@ -224,7 +224,17 @@ It is the Agent Radar canvas turned for a narrow, tall panel. Destinations are
 grouped as Models, Local machine and Tools & services, and only those with
 activity in the last two minutes are listed. Line weight is volume in that
 window, opacity is recency, and moving dots mark a call running now (static
-under reduced motion). Line hue follows the destination group and reuses the
+under reduced motion). Pulses are drawn by one `requestAnimationFrame` loop
+(`src/radar/pulse-loop.ts`) over a pure, time-based pool (`pulse-pool.ts`): a
+running wire emits on a steady cadence (2 to 4 on a wire, one speed in px/s on
+every wire), each pulse travels the whole wire from source to destination and is
+removed only on arrival, and a re-render, live update, layout change or the wire
+ceasing to run never restarts, moves or drops one in flight. The loop stops when
+nothing is moving, the tab or canvas is hidden, or reduced motion is on. The
+canvas patches nodes keyed by position, so a live update changes attributes and
+never recreates nodes; the per-second clock moves only relative-time text, and
+layout inputs advance every 5 s. Live reads start at most every 400 ms however
+many events arrive, and an idle view makes none. Line hue follows the destination group and reuses the
 Trajectory track hues: models violet, local amber, tools neutral, You warning.
 Selecting a session or destination dims everything unconnected and filters the
 feed. Below the split, `Feed` lists recent calls newest first and `Models`
