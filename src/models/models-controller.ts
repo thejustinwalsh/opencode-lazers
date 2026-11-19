@@ -52,6 +52,7 @@ import { panelClock } from "../panel-status.ts"
 import {
   agentRoutedModels,
   marketSummarySource,
+  mayPageCatalog,
   modelPersonaLabels,
   modelTaskKindLabels,
   modelsInitialPreference as initial,
@@ -843,7 +844,18 @@ export function createModelsController(props: ModelsProps) {
   createEffect(() => {
     const panel = visible()
     const cursor = panel?.comparison?.nextCursor
-    if (!panel?.decisionOverview || !cursor || panel.comparisonLoading) return
+    if (
+      !panel ||
+      !cursor ||
+      !mayPageCatalog({
+        nextCursor: cursor,
+        comparisonLoading: panel.comparisonLoading,
+        decisionLoaded: Boolean(panel.decisionOverview),
+        benchmark: compareMode() === "benchmark",
+        firstPageLoaded: Boolean(panel.comparison),
+      })
+    )
+      return
     // Each (page, loaded count) is followed once, so a page that does not advance cannot loop.
     const key = `${cursor}:${panel.candidates.length}`
     if (key === pagedFor) return

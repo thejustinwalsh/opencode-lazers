@@ -1649,9 +1649,19 @@ function inspection(
   })
 }
 
+export type ModelDecisionWarmOutcome = "current" | "refreshed"
+
 export function createModelDecisionReader(
   dependencies: ModelDecisionReaderDependencies,
-): ModelDecisionReader & { close(): void } {
+): ModelDecisionReader & {
+  /**
+   * Keep the cached snapshot for these inputs current: rebuild it when the project's observation
+   * revision moved past it, do nothing (no price read) when it has not. Callers use it to take
+   * the rebuild off the path of the next open.
+   */
+  warm(input: ModelDecisionReadInput, signal?: AbortSignal): Promise<ModelDecisionWarmOutcome>
+  close(): void
+} {
   const secret = randomBytes(32)
   const snapshots = new Map<string, SnapshotEntry>()
   const latestByFilter = new Map<string, string>()
@@ -1798,7 +1808,22 @@ export function createModelDecisionReader(
     return snapshot
   }
 
-  const reader: ModelDecisionReader & { close(): void } = {
+  const reader: ReturnType<typeof createModelDecisionReader> = {
+    async warm(input, signal) {
+      const parsed = ModelDecisionReadInputSchema.parse(input)
+      if (parsed.scope.projectDirectory !== dependencies.projectDirectory)
+        throw new Error("Model decision scope is unavailable")
+      const key = fingerprint({ scope: parsed.scope, filters: parsed.filters })
+      const cached = snapshots.get(latestByFilter.get(key) ?? "")?.snapshot
+      if (
+        cached &&
+        cached.sourceRevision !== null &&
+        readCurrentDecisionRevision(dependencies) === cached.sourceRevision
+      )
+        return "current"
+      await freshForInput(parsed, signal)
+      return "refreshed"
+    },
     async overview(input, options) {
       const parsed = ModelDecisionReadInputSchema.parse(input)
       if (parsed.scope.projectDirectory !== dependencies.projectDirectory)

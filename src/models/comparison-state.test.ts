@@ -579,7 +579,7 @@ test("decision controller rejects mismatched snapshot, scope, and filters withou
   }
 })
 
-test("decision capture refreshes sources first, pins both first pages, and retries an expired or same-scope race once", async () => {
+test("decision capture does not wait for the open-time source refresh, pins both first pages, and retries an expired or same-scope race once", async () => {
   const filters = decisionRead.filters
   for (const firstAttempt of ["expired", "same-scope-race"] as const) {
     const first = coherentDecisionPage("/repo", filters, `snapshot:${firstAttempt}:first`)
@@ -633,9 +633,9 @@ test("decision capture refreshes sources first, pins both first pages, and retri
       filters,
     )
     try {
-      await until(() => events.includes("sources"))
-      expect(events).toEqual(["sources"])
-      expect(overviewReads).toBe(0)
+      // The source refresh is still pending: the snapshot does not sit behind it.
+      await until(() => state.data.decisionStatus === "ready" || overviewReads > 0)
+      expect(events[0]).toBe("sources")
       pendingSourceRefresh.resolve(evidence())
       await until(
         () =>
@@ -654,7 +654,6 @@ test("decision capture refreshes sources first, pins both first pages, and retri
       expect(publishedSnapshots).toEqual([second.overview.context.snapshotID])
       expect(state.data.decisionRows).toEqual(second.rows.rows)
       expect(state.data.decisionConfigurations).toEqual(second.configurations.configurations)
-      expect(events.indexOf("sources")).toBeLessThan(events.indexOf("overview"))
     } finally {
       state.close()
     }
@@ -2188,6 +2187,78 @@ test("switching to filters seen before shows that result at once", async () => {
     expect(state.data.decisionFilters.persona).toBe("systems")
     expect(state.data.decisionOverview).toBe(remembered.decisionOverview)
     expect(state.data.decisionStatus).toBe("ready")
+  } finally {
+    state.close()
+  }
+})
+
+test("the decision snapshot reaches the chart while the open-time source refresh never answers", async () => {
+  const filters = decisionRead.filters
+  const page = coherentDecisionPage("/repo", filters, "snapshot:no-wait")
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "no-source-wait",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      refreshSources: () => new Promise<ModelEvidenceOutput>(() => {}),
+      decisionOverview: async () => page.overview,
+      decisionRows: async () => page.rows,
+      decisionConfigurations: async () => page.configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => state.data.decisionStatus === "ready" && !state.data.decisionRowsLoading)
+    expect(state.data.sourceRefresh).toBe("refreshing")
+    expect(state.data.decisionOverview).toBeDefined()
+  } finally {
+    state.close()
+  }
+})
+
+test("a refresh the person asked for is still waited on before the snapshot is read", async () => {
+  const filters = decisionRead.filters
+  const page = coherentDecisionPage("/repo", filters, "snapshot:forced")
+  const forced = deferred<ModelEvidenceOutput>()
+  const events: string[] = []
+  let sourceReads = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "forced-source-wait",
+    "project-a",
+    "/repo",
+    transport({
+      queryTasks: async () => tasks([]),
+      refreshSources: async (_signal, force) => {
+        sourceReads++
+        if (!force) return evidence()
+        events.push("forced-sources")
+        return forced.promise
+      },
+      decisionOverview: async () => {
+        events.push("overview")
+        return page.overview
+      },
+      decisionRows: async () => page.rows,
+      decisionConfigurations: async () => page.configurations,
+    }),
+    { selectedTaskID: null, selectedCandidateID: null },
+    filters,
+  )
+  try {
+    await until(() => state.data.decisionStatus === "ready")
+    events.length = 0
+    const refreshing = state.refresh()
+    await until(() => events.includes("forced-sources"))
+    await tick()
+    expect(events).toEqual(["forced-sources"])
+    forced.resolve(evidence())
+    await refreshing
+    expect(events).toEqual(["forced-sources", "overview"])
+    expect(sourceReads).toBeGreaterThan(1)
   } finally {
     state.close()
   }

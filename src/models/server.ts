@@ -40,6 +40,8 @@ import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-va
 import type { TaskValuationProvider } from "./task-valuation.ts"
 import { createThreadedDecisionReader } from "./decision-worker-client.ts"
 import {
+  MODELS_DECISION_CONTRACT_VERSION,
+  ModelDecisionReadInputSchema,
   ModelsDecision,
   ModelDecisionConfigurationsOutputSchema,
   ModelDecisionConfigurationsRPCInputSchema,
@@ -264,6 +266,9 @@ export function createModelsTaskValuationProvider(
   return readPriceIndex
 }
 
+/** How long after registration the default decision snapshot is built in the background. */
+const DECISION_PREWARM_DELAY_MS = 5_000
+
 /** Desktop RPC and Code Mode tools share the same project-scoped SQLite mappings. */
 export function registerModelsServer(
   ctx: ModelsContext,
@@ -271,6 +276,7 @@ export function registerModelsServer(
   fetcher?: ModelEvidenceFetcher,
   evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
     new ModelEvidenceReadStore(databasePath, directory),
+  options: { prewarmDecision?: boolean } = {},
 ) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
@@ -357,6 +363,22 @@ export function registerModelsServer(
         }
       },
     })
+    if (options.prewarmDecision) {
+      // Build the default snapshot once the service has settled, so the first open after a
+      // start or reload reads a cached one. The worker keeps it current from then on.
+      const prewarm = setTimeout(() => {
+        void decisionReader
+          .overview(
+            ModelDecisionReadInputSchema.parse({
+              schemaVersion: MODELS_DECISION_CONTRACT_VERSION,
+              scope: { projectDirectory },
+              filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+            }),
+          )
+          .catch(() => undefined)
+      }, DECISION_PREWARM_DELAY_MS)
+      prewarm.unref()
+    }
     yield* timedRpc(ctx.rpc).register(Models, {
       settings: (input) =>
         Effect.tryPromise({

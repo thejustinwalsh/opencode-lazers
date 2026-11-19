@@ -17,6 +17,8 @@ export type ThreadedDecisionReaderOptions = {
     signal?: AbortSignal,
   ): Promise<ModelDecisionPriceState>
   workerURL?: URL
+  /** How often the worker re-checks a recently read snapshot; tests shorten it. */
+  warmIntervalMs?: number
 }
 
 type Pending = {
@@ -51,7 +53,13 @@ export function createThreadedDecisionReader(
     const created = new Worker(
       options.workerURL ?? workerURL("./decision-worker", import.meta.url),
       {
-        workerData: { path: options.path, projectDirectory: options.projectDirectory },
+        workerData: {
+          path: options.path,
+          projectDirectory: options.projectDirectory,
+          ...(options.warmIntervalMs === undefined
+            ? {}
+            : { warmIntervalMs: options.warmIntervalMs }),
+        },
       },
     )
     created.unref()

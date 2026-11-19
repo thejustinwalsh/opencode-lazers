@@ -241,3 +241,77 @@ test("aborting a worker read rejects promptly and leaves the reader usable", asy
     fixture.close()
   }
 })
+
+function bumpRevision(path: string) {
+  const db = new Database(path, { strict: true })
+  try {
+    db.exec("UPDATE observation_revisions SET revision=revision+1")
+  } finally {
+    db.close()
+  }
+}
+
+test("a recently read snapshot is rebuilt in the background when the revision moves", async () => {
+  const fixture = makeLedgerFixture()
+  let priceReads = 0
+  const threaded = createThreadedDecisionReader({
+    path: fixture.path,
+    projectDirectory: fixture.projectDirectory,
+    warmIntervalMs: 50,
+    readPriceState: (routes, signal) => {
+      priceReads++
+      return readPriceState(routes, signal)
+    },
+  })
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    const first = await threaded.overview(input)
+
+    // Nothing changed: the keep-warm loop must not rebuild or even read prices.
+    const quiet = priceReads
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(priceReads).toBe(quiet)
+
+    bumpRevision(fixture.path)
+    const before = priceReads
+    // No read is made: the rebuild is the worker's own.
+    const deadline = Date.now() + 10_000
+    while (priceReads === before && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(priceReads).toBeGreaterThan(before)
+
+    // The person's read now finds the rebuilt snapshot: one price read to validate it, no rebuild.
+    const settled = priceReads
+    const next = await threaded.overview(input)
+    expect(next.context.snapshotID).not.toBe(first.context.snapshotID)
+    expect(priceReads).toBe(settled + 1)
+  } finally {
+    threaded.close()
+    fixture.close()
+  }
+}, 30_000)
+
+test("the reader warms only when the revision moved past the cached snapshot", async () => {
+  const fixture = makeLedgerFixture()
+  let priceReads = 0
+  const reader = createModelDecisionReader({
+    projectDirectory: fixture.projectDirectory,
+    openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
+    readPriceState: (routes, signal) => {
+      priceReads++
+      return readPriceState(routes, signal)
+    },
+  })
+  try {
+    const input = inputFor(fixture.projectDirectory)
+    expect(await reader.warm(input)).toBe("refreshed")
+    const built = priceReads
+    expect(await reader.warm(input)).toBe("current")
+    expect(priceReads).toBe(built)
+    bumpRevision(fixture.path)
+    expect(await reader.warm(input)).toBe("refreshed")
+  } finally {
+    reader.close()
+    fixture.close()
+  }
+})

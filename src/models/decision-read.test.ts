@@ -1652,6 +1652,67 @@ test("F-S10-3 decision pagination advances across a full malformed page without 
   }
 })
 
+test("decision progress projects stored payloads the way the SQL projection did", () => {
+  const fixture = makeLedgerFixture()
+  const writer = new Database(fixture.path, { strict: true })
+  let reader: ReturnType<typeof openReadOnlyObservationLedger> | undefined
+  try {
+    insertRetainedFacts(fixture, fixture.attempts.failed.id, [
+      {
+        at: 60_001,
+        kind: "step" as const,
+        messageID: "projected-object",
+        payload: {
+          measurementBasis: "additive-step-measurement",
+          usage: completeUsage(7),
+          route: { providerID: "openai", modelID: "fixture-model", variant: "high" },
+          observations: [
+            { source: "native-event", eventType: "message.updated", at: 5, messageID: "m" },
+            { source: "tool", eventType: "ignored.source" },
+            { source: "recovery", eventType: 4 },
+          ],
+          timing: { endpoints: { completedAt: { at: 99, sourceType: "native" } } },
+          privatePrompt: "never projected",
+        },
+      },
+      {
+        at: 60_002,
+        kind: "step" as const,
+        messageID: "projected-array",
+        payload: { measurementBasis: "additive-step-measurement", usage: completeUsage(1) },
+      },
+    ])
+    // Valid JSON that is not an object reads as a fact with nothing in it, not as malformed.
+    writer
+      .query("UPDATE runner_progress SET payload='[1,2]' WHERE message_id='projected-array'")
+      .run()
+    reader = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory)
+    const capture = reader.readDecision()
+    assert.equal(capture.status, "captured")
+    if (capture.status !== "captured") return
+    const object = capture.progressFacts.find((fact) => fact.messageID === "projected-object")!
+    expect(object.measurementBasis).toBe("additive-step-measurement")
+    expect(object.route).toEqual({
+      providerID: "openai",
+      modelID: "fixture-model",
+      variant: "high",
+    })
+    // Only native-event and recovery observations with a text event type survive.
+    expect(object.observations).toHaveLength(1)
+    expect(object.timing).toEqual({ endpoints: { completedAt: { at: 99, sourceType: "native" } } })
+    expect(JSON.stringify(object)).not.toContain("never projected")
+    const empty = capture.progressFacts.find((fact) => fact.messageID === "projected-array")!
+    expect(empty.usage).toBeNull()
+    expect(empty.measurementBasis).toBeNull()
+    expect(empty.observations).toEqual([])
+    expect(capture.notes.join("\n")).not.toContain("malformed JSON")
+  } finally {
+    reader?.close()
+    writer.close()
+    fixture.close()
+  }
+})
+
 test("an ordered-source quote refresh reprices market efficiency without changing retained work or charges", async () => {
   const fixture = makeLedgerFixture()
   const route = { providerID: "openai", modelID: "fixture-model", variant: "high" }
