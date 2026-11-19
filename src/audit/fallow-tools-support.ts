@@ -4,8 +4,8 @@ import type {
   HealthFinding,
   HealthReport,
 } from "@fallow-cli/fallow-node"
-import { readdir, readFile } from "node:fs/promises"
-import { join, relative } from "node:path"
+import { readdir, readFile, stat } from "node:fs/promises"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { classMembersRuleEnabled } from "./config.ts"
 
 export type Paging = { limit: number; offset: number }
@@ -115,7 +115,7 @@ export function draftFallowConfig(entryPoints: readonly string[]): object {
   return { entry: [...entryPoints].sort(), rules: { "unused-class-members": "off" } }
 }
 
-const ENTRY_POINT_SKIP_DIRECTORIES = new Set([
+const SKIP_DIRECTORIES = new Set([
   "node_modules",
   ".git",
   "dist",
@@ -123,21 +123,76 @@ const ENTRY_POINT_SKIP_DIRECTORIES = new Set([
   ".worktrees",
   ".claude",
 ])
+const ANALYSABLE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/
 const WORKER_PATTERN = /new\s+Worker\(|workerURL/
 
+/** Every analysable file at or under `directory`, as paths relative to `root`. */
 async function walk(directory: string, root: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
   const files: string[] = []
   for (const entry of entries) {
     if (entry.name.startsWith(".") && entry.name !== ".fallowrc.json") continue
     if (entry.isDirectory()) {
-      if (ENTRY_POINT_SKIP_DIRECTORIES.has(entry.name)) continue
+      if (SKIP_DIRECTORIES.has(entry.name)) continue
       files.push(...(await walk(join(directory, entry.name), root)))
-    } else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)) {
+    } else if (ANALYSABLE_FILE.test(entry.name)) {
       files.push(relative(root, join(directory, entry.name)))
     }
   }
   return files
+}
+
+export type ResolvedToolPaths = {
+  /** Files to pass to the analyzer; `undefined` means no restriction (analyse the whole root). */
+  files: string[] | undefined
+  /** True once every requested path resolved to zero analysable files. */
+  empty: boolean
+}
+
+/** A requested file/directory path resolved to the workspace, or throws `path-outside-workspace`. */
+async function resolveWorkspacePath(workspace: string, requested: string): Promise<string> {
+  const trimmed = requested.replace(/\/+$/, "") || "."
+  const resolved = resolve(workspace, trimmed)
+  const relativePath = relative(workspace, resolved)
+  if (relativePath.startsWith("..") || isAbsolute(relativePath))
+    throw new Error(`path-outside-workspace: ${requested}`)
+  return resolved
+}
+
+/** The analysable files a single requested path expands to: itself if a file, its tree if a directory. */
+async function expandToolPath(workspace: string, requested: string): Promise<string[]> {
+  const resolved = await resolveWorkspacePath(workspace, requested)
+  const info = await stat(resolved).catch(() => undefined)
+  if (!info) return []
+  if (info.isDirectory()) return walk(resolved, workspace)
+  return ANALYSABLE_FILE.test(resolved) ? [relative(workspace, resolved)] : []
+}
+
+/**
+ * Turns a tool's `paths` input (files or directories, trailing slash or not, `.` for the whole
+ * workspace) into the explicit file list the analyzer needs. A path outside the workspace throws
+ * `path-outside-workspace`; a path that matches nothing (missing, or an empty directory) simply
+ * contributes no files rather than erroring.
+ */
+export async function resolveToolPaths(
+  workspace: string,
+  paths: readonly string[] | undefined,
+): Promise<ResolvedToolPaths> {
+  if (!paths || paths.length === 0) return { files: undefined, empty: false }
+  const expanded = new Set<string>()
+  for (const requested of paths)
+    for (const file of await expandToolPath(workspace, requested)) expanded.add(file)
+  return { files: [...expanded].sort(), empty: expanded.size === 0 }
+}
+
+/** Keeps only findings whose `file` is in the resolved set; no restriction passes everything through. */
+export function filterByResolvedPaths<T extends { file: string }>(
+  findings: readonly T[],
+  resolved: ResolvedToolPaths,
+): T[] {
+  if (!resolved.files) return [...findings]
+  const allowed = new Set(resolved.files)
+  return findings.filter((f) => allowed.has(f.file))
 }
 
 /**
