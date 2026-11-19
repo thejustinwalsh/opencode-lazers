@@ -27,7 +27,9 @@ import { UNCERTAIN_EFFECT_RECEIPT_SCHEMA } from "./startup-recovery.ts"
 import { TaskRuntime as ProductionTaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import type { FallowReview } from "./fallow-check.ts"
 import type { AuditorReport } from "./auditor-report.ts"
-import type { FallowReviewResult, Finding } from "../audit/review.ts"
+import type { FallowReviewResult } from "../audit/review.ts"
+import type { FallowFinding, FallowPackage } from "../audit/contract.ts"
+import { setFallowConfig } from "../audit/config.ts"
 import { RunnerStore, type AttemptRow } from "./store.ts"
 import { retireOutboxLifecycle } from "./retire-gates.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
@@ -52,13 +54,16 @@ import {
 import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 
-const cleanFallowResult: FallowReviewResult = {
-  status: "clean",
-  introduced: [],
-  concerns: [],
+const cleanPackage: FallowPackage = {
+  verdict: "pass",
+  base: "base",
+  config: { source: "lazers", classesNotChecked: [] },
   thresholds: { cyclomatic: 20, cognitive: 15 },
-  configSource: "defaults",
+  findings: [],
+  summary: { errors: 0, warnings: 0, inherited: 0 },
+  timings: { elapsedMs: 1 },
 }
+const cleanFallowResult: FallowReviewResult = { status: "clean", package: cleanPackage }
 
 /** Tests do not load the native analyzer: every runtime reviews clean unless a test injects one. */
 class TaskRuntime extends ProductionTaskRuntime {
@@ -114,6 +119,8 @@ function fixture(
     verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     useProjectVerificationDefaults?: boolean
     fallowReview?: "on" | "off"
+    /** "none" leaves the project without a Fallow config (the default stores one). */
+    fallowConfig?: "none"
     fallowReviewRun?: FallowReview
     fallowPlanReviewRun?: FallowReview
     auditorReportRun?: AuditorReport
@@ -431,6 +438,13 @@ function fixture(
     },
     waitForSession: async () => {},
   }
+  if (options.fallowConfig !== "none")
+    setFallowConfig(
+      store.repository,
+      { entry: [] },
+      { sessionID: "fixture", agent: "architect" },
+      "fixture project config",
+    )
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     architectIdleWindowMs: options.architectIdleWindowMs,
     autoResumeInterrupted: options.autoResume ?? false,
@@ -5114,18 +5128,39 @@ test("a repair attempt is told about every failing check", async () => {
 
 /** A shell-check effect: the runtime's own Fallow review is journaled beside these. */
 const authoredVerifyEffect = (effect: { kind: string }) =>
-  effect.kind.startsWith("verify:") && effect.kind !== "verify:lazers-fallow"
+  effect.kind.startsWith("verify:") && effect.kind !== "verify:fallow-audit"
 
-function fallowFinding(file: string, line: number): Finding {
+function fallowFinding(
+  file: string,
+  line: number,
+  extra: Partial<FallowFinding> = {},
+): FallowFinding {
   return {
-    id: `${file}:${line}`,
-    check: "duplication",
-    status: "introduced",
+    id: `duplication:code-duplication:${file}`,
+    rule: "code-duplication",
+    class: "duplication",
+    severity: "warn",
+    attribution: "introduced",
     file,
     line,
     endLine: line + 8,
-    subject: "cloned block",
-    fix: "Reuse the existing helper.",
+    message: "cloned block",
+    suggestion: "Reuse the existing helper.",
+    ...extra,
+  }
+}
+
+function reviewOf(...findings: FallowFinding[]): FallowReviewResult {
+  const live = findings.filter((f) => f.attribution !== "inherited")
+  const errors = live.filter((f) => f.severity === "error").length
+  return {
+    status: live.length ? "findings" : "clean",
+    package: {
+      ...cleanPackage,
+      verdict: errors ? "fail" : live.length ? "warn" : "pass",
+      findings,
+      summary: { errors, warnings: live.length - errors, inherited: findings.length - live.length },
+    },
   }
 }
 
@@ -5141,11 +5176,7 @@ function scriptedReview(...results: FallowReviewResult[]) {
   return { run, calls, bases }
 }
 
-const introducedResult = (...findings: Finding[]): FallowReviewResult => ({
-  ...cleanFallowResult,
-  status: "findings",
-  introduced: findings,
-})
+const introducedResult = reviewOf
 
 function taskAcceptedOutcomes(f: ReturnType<typeof fixture>) {
   return (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
@@ -5170,12 +5201,14 @@ test("fallow findings alone send one repair carrying the guidance, then accept w
     .activity(planID, f.tasks[0]!.id)
     .filter((event) => event.event === "REPAIR")
   expect(repairs).toHaveLength(1)
-  expect(JSON.stringify(repairs[0])).toContain("Verification lazers-fallow found 1 introduced")
+  expect(JSON.stringify(repairs[0])).toContain(
+    "Verification fallow-audit warn: 0 errors, 1 warnings",
+  )
   const attempts = f.store.attempts(planID)
   expect(attempts).toHaveLength(2)
   await f.runtime.tick()
   const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
-  expect(prompt).toContain("- lazers-fallow: `lazers:fallow-review` exit 1")
+  expect(prompt).toContain("- fallow-audit: `lazers:fallow-audit` exit 1")
   expect(prompt).toContain("src/a.ts:12-20")
   await drive(f.runtime)
   // The repair attempt's review still has findings and no repair remains: accepted, never failed or held.
@@ -5186,7 +5219,14 @@ test("fallow findings alone send one repair carrying the guidance, then accept w
   ).toHaveLength(1)
   const outcomes = taskAcceptedOutcomes(f)
   expect(outcomes).toHaveLength(1)
-  expect(outcomes[0]!.fallow).toMatchObject({ introduced: [{ file: "src/a.ts", line: 12 }] })
+  // The repair left the warning in place and said nothing: the outcome records that, typed.
+  expect(outcomes[0]!.fallow).toMatchObject({
+    package: { findings: [{ file: "src/a.ts", line: 12, severity: "warn" }] },
+    dispositions: [
+      { findingID: "duplication:code-duplication:src/a.ts", disposition: "remaining" },
+    ],
+  })
+  expect(outcomeText(JSON.stringify(outcomes[0]))).toContain("no reason stated")
   expect(outcomes[0]!.evidence).toEqual(["content"])
   expect(review.calls).toHaveLength(2)
   // The repair attempt starts from the first attempt's artifact, but the review still measures
@@ -5220,7 +5260,7 @@ test("fallow findings and a failing check give exactly one repair carrying both"
     .filter((event) => event.event === "REPAIR")
   expect(repairs).toHaveLength(1)
   expect(JSON.stringify(repairs[0])).toContain(
-    "Verification content exited with code 7; Verification lazers-fallow found 1 introduced findings",
+    "Verification content exited with code 7; Verification fallow-audit warn: 0 errors, 1 warnings",
   )
   const attempts = f.store.attempts(planID)
   expect(attempts).toHaveLength(2)
@@ -5270,15 +5310,21 @@ test("fallowReview off records no review effect", async () => {
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   expect(review.calls).toHaveLength(0)
   expect(
-    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "verify:lazers-fallow"),
+    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "verify:fallow-audit"),
   ).toHaveLength(0)
 })
 
-test("lazers-fallow is a reserved verification ID", () => {
+test("fallow-audit, and its old name lazers-fallow, are reserved verification IDs", () => {
   const f = fixture({ taskFiles: singleTask })
-  const reserved = { id: "lazers-fallow", command: "true" }
-  const plan = { ...f.input, requestID: "reserved-plan", verification: [reserved] }
-  expect(() => f.runtime.submitPlan(plan, "owner")).toThrow("reserved")
+  for (const id of ["fallow-audit", "lazers-fallow"]) {
+    const plan = {
+      ...f.input,
+      requestID: `reserved-${id}`,
+      verification: [{ id, command: "true" }],
+    }
+    expect(() => f.runtime.submitPlan(plan, "owner")).toThrow("reserved")
+  }
+  const reserved = { id: "fallow-audit", command: "true" }
   const task = f.tasks[0]!
   const proposal = structuredClone(task.proposal)
   proposal.verification = [reserved]
@@ -5286,9 +5332,10 @@ test("lazers-fallow is a reserved verification ID", () => {
   expect(TaskProposalSchema.safeParse(proposal).error?.message).toContain("reserved")
 })
 
-test("concerns alone accept without a repair and reach the Architect", async () => {
-  const concern = { ...fallowFinding("src/c.ts", 5), check: "complexity" as const }
-  const review = scriptedReview({ ...cleanFallowResult, status: "findings", concerns: [concern] })
+test("inherited findings alone are context: no repair, nothing for the Architect", async () => {
+  const review = scriptedReview(
+    reviewOf(fallowFinding("src/c.ts", 5, { attribution: "inherited" })),
+  )
   const f = fixture({ repair: true, taskFiles: singleTask, fallowReviewRun: review.run })
   const planID = f.receipt.planID
   await runPlan(f)
@@ -5296,10 +5343,50 @@ test("concerns alone accept without a repair and reach the Architect", async () 
   await drive(f.runtime)
   expect(f.store.plan(planID)?.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
-  const outcomes = taskAcceptedOutcomes(f)
-  expect(outcomes[0]!.fallow).toMatchObject({ introduced: [], concerns: [{ file: "src/c.ts" }] })
-  const text = outcomeText(JSON.stringify(outcomes[0]))
-  expect(text).toContain("Fallow concerns (1):\n- complexity src/c.ts:5 cloned block")
+  expect("fallow" in taskAcceptedOutcomes(f)[0]!).toBe(false)
+})
+
+test("after the one repair, each finding of the first audit is fixed, remaining or suppressed", async () => {
+  const warning = fallowFinding("src/a.ts", 12, { id: "w", rule: "code-duplication" })
+  const error = fallowFinding("src/b.ts", 3, {
+    id: "e",
+    rule: "complexity",
+    class: "complexity",
+    severity: "error",
+  })
+  const waived = fallowFinding("src/c.ts", 1, {
+    id: "d",
+    rule: "added-suppression",
+    class: "diff-risk",
+    symbol: "suppressed:legacy parser, tracked in #12",
+  })
+  // The repair fixed the error, kept the warning, and waived src/c.ts with a reason.
+  const review = scriptedReview(
+    reviewOf(
+      warning,
+      error,
+      fallowFinding("src/c.ts", 1, { id: "d2", class: "complexity", rule: "complexity" }),
+    ),
+    reviewOf(warning, waived),
+  )
+  const f = fixture({ repair: true, taskFiles: singleTask, fallowReviewRun: review.run })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  const fallow = taskAcceptedOutcomes(f)[0]!.fallow as {
+    dispositions: { findingID: string; disposition: string; reason?: string }[]
+  }
+  const byID = Object.fromEntries(fallow.dispositions.map((d) => [d.findingID, d]))
+  expect(byID.w).toMatchObject({ disposition: "remaining" })
+  expect(byID.e).toMatchObject({ disposition: "fixed" })
+  expect(byID.d2).toMatchObject({
+    disposition: "suppressed",
+    reason: "legacy parser, tracked in #12",
+  })
 })
 
 function planAcceptedOutcomes(f: ReturnType<typeof fixture>) {
@@ -5319,16 +5406,19 @@ function planLevelRecords(f: ReturnType<typeof fixture>, event: string) {
 }
 
 const planFallowEffects = (f: ReturnType<typeof fixture>) =>
-  f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "graph-verify:lazers-fallow")
+  f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "graph-verify:fallow-audit")
 
 test("plan-level findings never hold the plan and reach the accepted outcome with their task", async () => {
-  const concern = { ...fallowFinding("a.txt", 3), check: "cycle" as const }
-  const review = scriptedReview({
-    ...cleanFallowResult,
-    status: "findings",
-    introduced: [fallowFinding("a.txt", 1)],
-    concerns: [concern],
-  })
+  const review = scriptedReview(
+    reviewOf(
+      fallowFinding("a.txt", 1),
+      fallowFinding("a.txt", 3, {
+        id: "cycle",
+        class: "architecture",
+        rule: "circular-dependency",
+      }),
+    ),
+  )
   const f = fixture({ taskFiles: singleTask, fallowPlanReviewRun: review.run })
   const planID = f.receipt.planID
   await runPlan(f)
@@ -5341,16 +5431,20 @@ test("plan-level findings never hold the plan and reach the accepted outcome wit
   const [outcome] = planAcceptedOutcomes(f)
   const taskID = f.tasks[0]!.id
   expect(outcome!.fallow).toMatchObject({
-    introduced: [{ file: "a.txt", line: 1, taskID }],
-    concerns: [{ check: "cycle", taskID }],
+    package: {
+      findings: [
+        { file: "a.txt", line: 1, taskID },
+        { rule: "circular-dependency", taskID },
+      ],
+    },
   })
   // The review's receipt is not evidence: only the authored checks are.
   expect((outcome!.evidence as { id: string }[]).map((check) => check.id)).toEqual(["combined"])
   const record = planLevelRecords(f, "PLAN_ACCEPTED")
-  expect(JSON.parse(record[0]!.payload).fallow.introduced).toHaveLength(1)
+  expect(JSON.parse(record[0]!.payload).fallow.package.findings).toHaveLength(2)
   const text = outcomeText(JSON.stringify(outcome))
-  expect(text).toContain("Fallow findings on the combined plan (2):")
-  expect(text).toContain(`- duplication a.txt:1 cloned block (task ${taskID})`)
+  expect(text).toContain("Fallow audit of the combined plan, verdict warn (2 findings):")
+  expect(text).toContain(`code-duplication a.txt:1-9 cloned block (task ${taskID})`)
   expect(f.store.effects(planID).every((effect) => effect.state === "completed")).toBe(true)
 })
 
@@ -13799,7 +13893,7 @@ test("project timing configuration overrides legacy task and combined timeout me
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   const receipts = f.store.effects(f.receipt.planID).flatMap((effect) => {
     const authoredCombined =
-      effect.kind.startsWith("graph-verify:") && effect.kind !== "graph-verify:lazers-fallow"
+      effect.kind.startsWith("graph-verify:") && effect.kind !== "graph-verify:fallow-audit"
     if (!authoredVerifyEffect(effect) && !authoredCombined) return []
     if (!effect.receipt) return []
     const envelope = JSON.parse(effect.receipt) as { check?: CheckReceipt }
@@ -14791,4 +14885,91 @@ test("a plan that keeps moving mid-command fails after a bounded re-evaluation w
     f.runtime.command({ requestID: "moving-pause", planID, action: "pause", reason: "x" }, "owner"),
   ).rejects.toThrow("changed repeatedly while pause was applied")
   expect(reads).toBeLessThanOrEqual(6)
+})
+
+test("with the review on, a project with no Fallow config refuses plan submission with a typed result and queues nothing", async () => {
+  const f = fixture({ taskFiles: singleTask, fallowConfig: "none" })
+  const before = f.store.read((db) => db.query("SELECT count(*) AS n FROM runner_plans").get()) as {
+    n: number
+  }
+  const refused = await f.runtime.submitPlan({ ...f.input, requestID: "gated" }, "owner")
+  expect(refused).toMatchObject({
+    status: "refused",
+    code: "FALLOW_CONFIG_REQUIRED",
+    nothingQueued: true,
+    next: [
+      "lz-fallow-config (mode suggest)",
+      "lz-fallow-config (mode dry-run)",
+      "lz-fallow-config-set",
+    ],
+  })
+  const after = f.store.read((db) => db.query("SELECT count(*) AS n FROM runner_plans").get()) as {
+    n: number
+  }
+  expect(after.n).toBe(before.n)
+  setFallowConfig(
+    f.store.repository,
+    { entry: [] },
+    { sessionID: "architect", agent: "architect" },
+    "entry points reviewed",
+  )
+  expect(await f.runtime.fallowGate()).toBeUndefined()
+})
+
+test("with the review off there is no config gate", async () => {
+  const f = fixture({ taskFiles: singleTask, fallowConfig: "none", fallowReview: "off" })
+  expect(await f.runtime.fallowGate()).toBeUndefined()
+})
+
+test("a plan queued before the project had a config holds with the actionable result, then resumes once one exists", async () => {
+  const f = fixture({ taskFiles: singleTask, fallowConfig: "none" })
+  const planID = f.receipt.planID
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.plan(planID)?.reason).toStartWith("FALLOW_CONFIG_REQUIRED")
+  expect(f.store.plan(planID)?.reason).toContain("lz-fallow-config-set")
+  setFallowConfig(
+    f.store.repository,
+    { entry: [] },
+    { sessionID: "architect", agent: "architect" },
+    "entry points reviewed",
+  )
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+})
+
+test("a review recorded under the old effect kind verify:lazers-fallow is still recognised, not re-run", async () => {
+  const review = scriptedReview(reviewOf(fallowFinding("src/a.ts", 12)))
+  const f = fixture({ repair: true, taskFiles: singleTask, fallowReviewRun: review.run })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  expect(review.calls).toHaveLength(1)
+  // History written before the rename keeps its old kind; no migration rewrites it.
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_effects SET kind='verify:lazers-fallow' WHERE kind='verify:fallow-audit'",
+      )
+      .run(),
+  )
+  const effect = f.store
+    .effects(planID)
+    .find((e) => e.kind === "verify:lazers-fallow" && e.state === "completed")!
+  expect(effect).toBeDefined()
+  const payload = JSON.parse(effect.payload) as { artifact: string; identity: string }
+  const attempt = f.store.attempts(planID).find((a) => a.id === effect.attempt_id)!
+  const known = await f.runtime["fallowReviewResult"](
+    f.store.plan(planID)!,
+    attempt,
+    { commit: payload.artifact, identity: payload.identity },
+    undefined,
+    0,
+  )
+  expect(known).not.toBe("pending")
+  expect(review.calls).toHaveLength(1)
+  expect(f.store.effects(planID).filter((e) => e.kind === "verify:fallow-audit")).toHaveLength(0)
 })

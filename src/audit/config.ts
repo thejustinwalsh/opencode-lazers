@@ -96,19 +96,22 @@ async function materialise(name: string, content: string): Promise<string> {
 }
 
 export type ResolvedFallowConfig = {
-  source: "repo" | "lazers" | "defaults"
+  source: "repo" | "lazers"
   path?: string
   sha256?: string
   config: object | null
-  deadCodeEnabled: boolean
   /** Materialised temp file to pass as `configPath`, outside the repository. Caller must clean it up. */
   configPath?: string
 }
 
-/** Dead code needs entry points (Fallow's `entry` config field); with none it stays off. */
-function deadCodeEnabledFor(config: object | null): boolean {
-  const entry = (config as { entry?: unknown } | null)?.entry
-  return Array.isArray(entry) && entry.length > 0
+/** Every project needs a Fallow config; none resolves to this typed error, never a silent default. */
+export class FallowConfigMissingError extends Error {
+  readonly code = "FALLOW_CONFIG_MISSING"
+  constructor(readonly projectDirectory: string) {
+    super(
+      `FALLOW_CONFIG_MISSING: ${projectDirectory} has no Fallow config. Use lz-fallow-config (modes suggest and dry-run) and lz-fallow-config-set.`,
+    )
+  }
 }
 
 /**
@@ -135,7 +138,6 @@ export async function resolveFallowConfig(input: {
       path: repoFile.path,
       sha256: fingerprint(repoFile.content),
       config,
-      deadCodeEnabled: deadCodeEnabledFor(config),
       configPath,
     }
   }
@@ -149,11 +151,20 @@ export async function resolveFallowConfig(input: {
       source: "lazers",
       sha256: stored.sha256,
       config: stored.config,
-      deadCodeEnabled: deadCodeEnabledFor(stored.config),
       configPath,
     }
   }
-  return { source: "defaults", config: null, deadCodeEnabled: false }
+  throw new FallowConfigMissingError(input.repository.projectDirectory)
+}
+
+/** Whether a repo config file at `ref` or a stored LAZERS config exists, without materialising it. */
+export async function hasFallowConfig(input: {
+  directory: string
+  ref: string
+  repository: TaskRepository
+}): Promise<boolean> {
+  if (await readRepoConfigAtBase(input.directory, input.ref)) return true
+  return getLatestFallowConfig(input.repository) !== undefined
 }
 
 export async function cleanupResolvedFallowConfig(resolved: ResolvedFallowConfig): Promise<void> {
@@ -167,8 +178,7 @@ export async function resolveCurrentFallowConfig(input: {
   repository: TaskRepository
 }): Promise<ResolvedFallowConfig> {
   const head = await runGit(input.directory, "rev-parse", "HEAD")
-  if (head === undefined) return { source: "defaults", config: null, deadCodeEnabled: false }
-  return resolveFallowConfig({ ...input, baseCommit: head.trim() })
+  return resolveFallowConfig({ ...input, baseCommit: head?.trim() ?? "HEAD" })
 }
 
 const DEFAULT_THRESHOLDS = { cyclomatic: 20, cognitive: 15 }
@@ -198,6 +208,8 @@ export type FallowConfigRevision = {
   sessionID: string
   agent: string
   createdAt: number
+  /** Why the config was set, in the author's words. */
+  reason?: string
 }
 
 function installFallowConfigSchema(repository: TaskRepository): void {
@@ -206,12 +218,17 @@ function installFallowConfigSchema(repository: TaskRepository): void {
       CREATE TABLE IF NOT EXISTS lazers_fallow_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT, project_directory TEXT NOT NULL,
         sha256 TEXT NOT NULL, payload TEXT NOT NULL, session_id TEXT NOT NULL,
-        agent TEXT NOT NULL, created_at INTEGER NOT NULL
+        agent TEXT NOT NULL, created_at INTEGER NOT NULL, reason TEXT
       );
       CREATE INDEX IF NOT EXISTS lazers_fallow_config_project
         ON lazers_fallow_config(project_directory, created_at);
     `),
   )
+  repository.atomic((db) => {
+    const columns = db.query<{ name: string }, []>("PRAGMA table_info(lazers_fallow_config)").all()
+    if (!columns.some((c) => c.name === "reason"))
+      db.exec("ALTER TABLE lazers_fallow_config ADD COLUMN reason TEXT")
+  })
 }
 
 export function getLatestFallowConfig(
@@ -221,10 +238,17 @@ export function getLatestFallowConfig(
   const row = repository.read((db) =>
     db
       .query<
-        { sha256: string; payload: string; session_id: string; agent: string; created_at: number },
+        {
+          sha256: string
+          payload: string
+          session_id: string
+          agent: string
+          created_at: number
+          reason: string | null
+        },
         [string]
       >(
-        `SELECT sha256,payload,session_id,agent,created_at FROM lazers_fallow_config
+        `SELECT sha256,payload,session_id,agent,created_at,reason FROM lazers_fallow_config
          WHERE project_directory=? ORDER BY created_at DESC,id DESC LIMIT 1`,
       )
       .get(repository.projectDirectory),
@@ -236,6 +260,7 @@ export function getLatestFallowConfig(
     sessionID: row.session_id,
     agent: row.agent,
     createdAt: row.created_at,
+    ...(row.reason ? { reason: row.reason } : {}),
   }
 }
 
@@ -251,10 +276,11 @@ export function listFallowConfigRevisions(repository: TaskRepository): FallowCon
             session_id: string
             agent: string
             created_at: number
+            reason: string | null
           },
           [string]
         >(
-          `SELECT sha256,payload,session_id,agent,created_at FROM lazers_fallow_config
+          `SELECT sha256,payload,session_id,agent,created_at,reason FROM lazers_fallow_config
            WHERE project_directory=? ORDER BY created_at DESC,id DESC`,
         )
         .all(repository.projectDirectory),
@@ -265,6 +291,7 @@ export function listFallowConfigRevisions(repository: TaskRepository): FallowCon
       sessionID: row.session_id,
       agent: row.agent,
       createdAt: row.created_at,
+      ...(row.reason ? { reason: row.reason } : {}),
     }))
 }
 
@@ -272,6 +299,7 @@ export function setFallowConfig(
   repository: TaskRepository,
   config: unknown,
   actor: { sessionID: string; agent: string },
+  reason: string,
 ): FallowConfigRevision {
   if (config === null || typeof config !== "object" || Array.isArray(config))
     throw new Error("config-invalid: expected a JSON object")
@@ -283,12 +311,13 @@ export function setFallowConfig(
     sessionID: actor.sessionID,
     agent: actor.agent,
     createdAt: Date.now(),
+    reason,
   }
   repository.atomic((db) =>
     db
       .query(
-        `INSERT INTO lazers_fallow_config(project_directory,sha256,payload,session_id,agent,created_at)
-         VALUES(?,?,?,?,?,?)`,
+        `INSERT INTO lazers_fallow_config(project_directory,sha256,payload,session_id,agent,created_at,reason)
+         VALUES(?,?,?,?,?,?,?)`,
       )
       .run(
         repository.projectDirectory,
@@ -297,6 +326,7 @@ export function setFallowConfig(
         actor.sessionID,
         actor.agent,
         revision.createdAt,
+        reason,
       ),
   )
   return revision

@@ -6,6 +6,7 @@ import { TaskRepository } from "../storage.ts"
 import {
   cleanupResolvedFallowConfig,
   getLatestFallowConfig,
+  hasFallowConfig,
   listFallowConfigRevisions,
   resolveFallowConfig,
   setFallowConfig,
@@ -66,7 +67,7 @@ function repository(directory: string) {
 test("repo config file at the base commit wins over a stored LAZERS config", async () => {
   const { dir, base } = await repoWithConfig({ health: { maxCyclomatic: 5 } })
   const r = repository(dir)
-  setFallowConfig(r, { health: { maxCyclomatic: 99 } }, { sessionID: "s", agent: "a" })
+  setFallowConfig(r, { health: { maxCyclomatic: 99 } }, { sessionID: "s", agent: "a" }, "test")
   const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
   expect(resolved.source).toBe("repo")
   expect(resolved.config).toEqual({ health: { maxCyclomatic: 5 } })
@@ -85,21 +86,38 @@ test("a repo config changed in the working tree but not committed at base is ign
 test("stored LAZERS config is used when the repo has no config file", async () => {
   const { dir, base } = await repoWithConfig(undefined)
   const r = repository(dir)
-  setFallowConfig(r, { health: { maxCyclomatic: 42 } }, { sessionID: "s", agent: "a" })
+  setFallowConfig(r, { health: { maxCyclomatic: 42 } }, { sessionID: "s", agent: "a" }, "test")
   const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
   expect(resolved.source).toBe("lazers")
   expect(resolved.config).toEqual({ health: { maxCyclomatic: 42 } })
   await cleanupResolvedFallowConfig(resolved)
 })
 
-test("neither source present falls back to defaults with dead code off", async () => {
+test("neither source present is a typed error, never a silent default", async () => {
   const { dir, base } = await repoWithConfig(undefined)
   const r = repository(dir)
-  const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
-  expect(resolved.source).toBe("defaults")
-  expect(resolved.config).toBeNull()
-  expect(resolved.deadCodeEnabled).toBe(false)
-  expect(resolved.configPath).toBeUndefined()
+  await expect(
+    resolveFallowConfig({ directory: dir, baseCommit: base, repository: r }),
+  ).rejects.toMatchObject({ code: "FALLOW_CONFIG_MISSING" })
+  expect(await hasFallowConfig({ directory: dir, ref: base, repository: r })).toBe(false)
+  setFallowConfig(r, { entry: [] }, { sessionID: "s", agent: "a" }, "now there is one")
+  expect(await hasFallowConfig({ directory: dir, ref: base, repository: r })).toBe(true)
+})
+
+test("a stored config keeps who set it and why", () => {
+  const dir = temp("lz-fallow-config-reason-")
+  const r = repository(dir)
+  setFallowConfig(
+    r,
+    { a: 1 },
+    { sessionID: "s1", agent: "architect" },
+    "entry points cover the CLI",
+  )
+  expect(getLatestFallowConfig(r)).toMatchObject({
+    agent: "architect",
+    sessionID: "s1",
+    reason: "entry points cover the CLI",
+  })
 })
 
 test("a config whose extends is a remote URL is rejected", async () => {
@@ -113,8 +131,8 @@ test("a config whose extends is a remote URL is rejected", async () => {
 test("the LAZERS config store is append-only and keeps every revision", () => {
   const dir = temp("lz-fallow-config-store-")
   const r = repository(dir)
-  setFallowConfig(r, { a: 1 }, { sessionID: "s1", agent: "a1" })
-  setFallowConfig(r, { a: 2 }, { sessionID: "s2", agent: "a2" })
+  setFallowConfig(r, { a: 1 }, { sessionID: "s1", agent: "a1" }, "first")
+  setFallowConfig(r, { a: 2 }, { sessionID: "s2", agent: "a2" }, "second")
   expect(getLatestFallowConfig(r)?.config).toEqual({ a: 2 })
   expect(listFallowConfigRevisions(r)).toHaveLength(2)
 })
@@ -122,5 +140,7 @@ test("the LAZERS config store is append-only and keeps every revision", () => {
 test("setFallowConfig rejects a non-object config", () => {
   const dir = temp("lz-fallow-config-invalid-")
   const r = repository(dir)
-  expect(() => setFallowConfig(r, [1, 2], { sessionID: "s", agent: "a" })).toThrow("config-invalid")
+  expect(() => setFallowConfig(r, [1, 2], { sessionID: "s", agent: "a" }, "test")).toThrow(
+    "config-invalid",
+  )
 })

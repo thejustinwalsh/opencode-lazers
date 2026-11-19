@@ -1,38 +1,82 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { runGit } from "./config.ts"
 
-/** Extensions Fallow analyses; everything else is ignored when scoping the review. */
-export const ANALYSABLE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]
+/**
+ * What the audit reads. A change that touches none of these cannot change a finding, so the
+ * review skips the run (the engine's docs-only fast path, taken before any analysis starts).
+ */
+const SOURCE_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".mts",
+  ".cts",
+  ".vue",
+  ".svelte",
+  ".astro",
+  ".mdx",
+  ".css",
+  ".scss",
+  ".sass",
+  ".less",
+]
+const CONFIG_FILES = [
+  "package.json",
+  "pnpm-workspace.yaml",
+  "tsconfig.json",
+  ".fallowrc.json",
+  ".fallowrc.jsonc",
+  "fallow.toml",
+  ".fallow.toml",
+]
 
-function isAnalysable(path: string): boolean {
-  return ANALYSABLE_EXTENSIONS.some((ext) => path.endsWith(ext))
+function isAuditRelevant(path: string): boolean {
+  const name = path.slice(path.lastIndexOf("/") + 1)
+  return SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext)) || CONFIG_FILES.includes(name)
 }
 
-/** Files that differ between `base` and `artifact`, restricted to analysable extensions. */
-export async function changedAnalysableFiles(
-  directory: string,
-  base: string,
-  artifact: string,
-): Promise<string[]> {
-  const text = await runGit(directory, "diff", "--name-only", base, artifact)
-  if (text === undefined) throw new Error("git diff --name-only failed")
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && isAnalysable(line))
+/**
+ * Pathspecs of the files a base tree needs: everything the analysis reads, and nothing else (a
+ * checkout is mostly assets, documents and vendored crates the analysis never opens).
+ */
+const BASE_TREE_PATHSPECS = [
+  ...SOURCE_EXTENSIONS.map((ext) => `*${ext}`),
+  "*.json",
+  "*.jsonc",
+  "*.yaml",
+  "*.yml",
+  "*.toml",
+  ".gitignore",
+]
+
+/**
+ * Files that differ between `base` and the workspace (its working tree: committed, staged,
+ * unstaged and untracked, which is what the audit itself compares), restricted to the ones a
+ * finding can depend on.
+ */
+export async function changedAuditFiles(directory: string, base: string): Promise<string[]> {
+  const tracked = await runGit(directory, "diff", "--name-only", "-z", base)
+  const untracked = await runGit(directory, "ls-files", "--others", "--exclude-standard", "-z")
+  if (tracked === undefined || untracked === undefined)
+    throw new Error("git diff --name-only failed")
+  return [...new Set([...tracked.split("\0"), ...untracked.split("\0")])].filter(
+    (line) => line.length > 0 && isAuditRelevant(line),
+  )
 }
 
-/** Added line ranges per changed file, from an extensionless-unified diff between the two trees. */
+/** Added line ranges per changed file: a diff of the working tree against `base`, no context lines. */
 export async function addedRangesForFiles(
   directory: string,
   base: string,
-  artifact: string,
   files: readonly string[],
 ): Promise<Map<string, { startLine: number; endLine: number }[]>> {
   if (files.length === 0) return new Map()
-  const text = await runGit(directory, "diff", "-U0", base, artifact, "--", ...files)
+  const text = await runGit(directory, "diff", "-U0", base, "--", ...files)
   if (text === undefined) throw new Error("git diff -U0 failed")
   const { addedLineRangesFromDiff } = await import("./attribution.ts")
   return addedLineRangesFromDiff(text)
@@ -60,27 +104,6 @@ export async function resolvePreviewBaseCommit(directory: string): Promise<strin
 
 export type MaterialisedBaseTree = { directory: string; cleanup: () => Promise<void> }
 
-/**
- * Writes each file's content at `base` into a fresh temp directory outside the repository,
- * preserving relative paths. A file absent at base (new in the candidate) is simply omitted.
- */
-export async function materialiseBaseTree(
-  repoDirectory: string,
-  base: string,
-  files: readonly string[],
-): Promise<MaterialisedBaseTree> {
-  const directory = await mkdtemp(join(tmpdir(), "lz-fallow-base-"))
-  await writeFile(join(directory, "package.json"), JSON.stringify({ name: "fallow-base" }))
-  for (const file of files) {
-    const content = await runGit(repoDirectory, "show", `${base}:${file}`)
-    if (content === undefined) continue
-    const destination = join(directory, file)
-    await mkdir(dirname(destination), { recursive: true })
-    await writeFile(destination, content)
-  }
-  return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) }
-}
-
 async function exitCode(command: string[]): Promise<number> {
   const proc = Bun.spawn(command, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
   return proc.exited
@@ -93,6 +116,7 @@ async function exitCode(command: string[]): Promise<number> {
 export async function materialiseBaseArchive(
   repoDirectory: string,
   base: string,
+  pathspecs: readonly string[] = BASE_TREE_PATHSPECS,
 ): Promise<MaterialisedBaseTree> {
   const directory = await mkdtemp(join(tmpdir(), "lz-fallow-base-tree-"))
   const cleanup = () => rm(directory, { recursive: true, force: true })
@@ -100,7 +124,10 @@ export async function materialiseBaseArchive(
   const tree = join(directory, "tree")
   try {
     await mkdir(tree)
-    if ((await exitCode(["git", "-C", repoDirectory, "archive", "-o", archive, base])) !== 0)
+    // A pathspec that matches nothing fails the archive; the whole tree is the safe retry.
+    const archived = (specs: readonly string[]) =>
+      exitCode(["git", "-C", repoDirectory, "archive", "-o", archive, base, ...specs])
+    if ((await archived(["--", ...pathspecs])) !== 0 && (await archived([])) !== 0)
       throw new Error("git archive failed")
     if ((await exitCode(["tar", "-xf", archive, "-C", tree])) !== 0) throw new Error("tar failed")
     await rm(archive, { force: true })

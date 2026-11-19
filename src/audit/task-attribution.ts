@@ -1,5 +1,6 @@
 import { runGit } from "./config.ts"
-import type { FallowReviewResult, Finding } from "./review.ts"
+import type { FallowFinding } from "./contract.ts"
+import type { FallowReviewResult } from "./review.ts"
 
 /** One task's own change inside a plan: what it was measured from and what it delivered. */
 export type PlanTaskDiff = { taskID: string; base: string; artifact: string }
@@ -21,17 +22,14 @@ export async function attributeFindingsToTasks(
 ): Promise<FallowReviewResult> {
   const touched = new Map<string, Set<string>>()
   for (const task of tasks) touched.set(task.taskID, await touchedFiles(workspace, task))
-  const tag = (finding: Finding): Finding => {
-    const files = [finding.file, ...(finding.others ?? []).map((other) => other.file)]
+  const tag = (finding: FallowFinding): FallowFinding => {
+    const files = [finding.file, ...(finding.relatedLocations ?? []).map((other) => other.file)]
     const ids = tasks
       .map((task) => task.taskID)
       .filter((id) => files.some((file) => touched.get(id)?.has(file)))
     if (ids.length === 0) return finding
     return ids.length === 1 ? { ...finding, taskID: ids[0] } : { ...finding, taskIDs: ids }
   }
-  return {
-    ...result,
-    introduced: result.introduced.map(tag),
-    concerns: result.concerns.map(tag),
-  }
+  if (!result.package) return result
+  return { ...result, package: { ...result.package, findings: result.package.findings.map(tag) } }
 }

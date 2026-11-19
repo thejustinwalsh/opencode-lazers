@@ -18,6 +18,14 @@ export type AnalyzerScope = {
   files?: readonly string[]
 }
 
+/** One changed-code audit: `root` (the candidate, with its uncommitted edits) against `base`. */
+export type AuditScope = Omit<AnalyzerScope, "files"> & {
+  /** The commit the change is measured against. */
+  base: string
+  /** A directory holding the tree of `base`; the module reads it and never writes it. */
+  baseRoot: string
+}
+
 /** The Fallow surface the review and tools need. `wasmFallowAnalyzer` implements it. */
 export interface FallowAnalyzer {
   complexity(scope: AnalyzerScope): Promise<HealthReport>
@@ -25,4 +33,8 @@ export interface FallowAnalyzer {
   deadCode(scope: AnalyzerScope): Promise<DeadCodeReport>
   /** Import cycles; the report's `circular_dependencies` lists them. */
   cycles(scope: AnalyzerScope): Promise<DeadCodeReport>
+  /** The engine's own `fallow audit`: attribution, verdict and diff-risk rules are Fallow's. */
+  audit(scope: AuditScope): Promise<unknown>
+  /** Detected plugins, entry points and workspaces (`fallow list`), for config suggestions. */
+  projectInfo(scope: AnalyzerScope): Promise<Record<string, unknown>>
 }

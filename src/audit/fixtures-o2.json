@@ -1,0 +1,475 @@
+{
+  "kind": "audit",
+  "schema_version": 14,
+  "version": "3.43.2",
+  "command": "audit",
+  "verdict": "fail",
+  "changed_files_count": 5,
+  "base_ref": "f226959366e4826e8900cfed8c6d4f6fe694944b",
+  "head_sha": "32aff3e",
+  "elapsed_ms": 412,
+  "summary": {
+    "dead_code_issues": 5,
+    "dead_code_has_errors": true,
+    "complexity_findings": 2,
+    "max_cyclomatic": 10,
+    "duplication_clone_groups": 1
+  },
+  "attribution": {
+    "gate": "new-only",
+    "worsened": "warn",
+    "dead_code_introduced": 3,
+    "dead_code_inherited": 2,
+    "complexity_introduced": 2,
+    "complexity_inherited": 0,
+    "complexity_worsened": 0,
+    "duplication_introduced": 1,
+    "duplication_inherited": 0,
+    "styling_introduced": 0,
+    "styling_inherited": 0,
+    "duplication_demoted": 0,
+    "diff_risk_introduced": 0
+  },
+  "dead_code": {
+    "schema_version": 11,
+    "version": "3.43.2",
+    "elapsed_ms": 56,
+    "total_issues": 5,
+    "entry_points": {
+      "total": 1,
+      "sources": {
+        "default_index": 1
+      }
+    },
+    "summary": {
+      "total_issues": 5,
+      "unused_files": 3,
+      "unused_exports": 0,
+      "unused_types": 0,
+      "private_type_leaks": 0,
+      "deprecated_exports_in_use": 0,
+      "unused_dependencies": 2,
+      "unused_enum_members": 0,
+      "unused_class_members": 0,
+      "unused_namespace_members": 0,
+      "unused_store_members": 0,
+      "unprovided_injects": 0,
+      "unrendered_components": 0,
+      "unused_component_props": 0,
+      "absent_component_props": 0,
+      "unused_component_emits": 0,
+      "unused_component_inputs": 0,
+      "unused_component_outputs": 0,
+      "unused_svelte_events": 0,
+      "unused_effect_layers": 0,
+      "unused_tagged_errors": 0,
+      "unproduced_catch_tags": 0,
+      "unused_server_actions": 0,
+      "unused_load_data_keys": 0,
+      "unresolved_imports": 0,
+      "unlisted_dependencies": 0,
+      "unlisted_binaries": 0,
+      "duplicate_exports": 0,
+      "duplicate_export_aliases": 0,
+      "type_only_dependencies": 0,
+      "test_only_dependencies": 0,
+      "dev_dependencies_in_production": 0,
+      "circular_dependencies": 0,
+      "re_export_cycles": 0,
+      "package_cycles": 0,
+      "boundary_violations": 0,
+      "boundary_coverage_violations": 0,
+      "boundary_call_violations": 0,
+      "policy_violations": 0,
+      "stale_suppressions": 0,
+      "unused_catalog_entries": 0,
+      "empty_catalog_groups": 0,
+      "unresolved_catalog_references": 0,
+      "unused_dependency_overrides": 0,
+      "misconfigured_dependency_overrides": 0,
+      "invalid_client_exports": 0,
+      "mixed_client_server_barrels": 0,
+      "misplaced_directives": 0,
+      "route_collisions": 0,
+      "dynamic_segment_name_conflicts": 0
+    },
+    "unused_files": [
+      {
+        "path": "src/dupe2.ts",
+        "finding_id": "dc1:unused-file:01e9190793c6dc87",
+        "actions": [
+          {
+            "type": "delete-file",
+            "auto_fixable": false,
+            "description": "Delete this file",
+            "note": "File deletion may remove runtime functionality not visible to static analysis"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress with a file-level comment at the top of the file",
+            "comment": "// fallow-ignore-file unused-file"
+          }
+        ],
+        "introduced": true,
+        "effective_severity": "error"
+      },
+      {
+        "path": "src/style.css",
+        "finding_id": "dc1:unused-file:daabd78418d38ffe",
+        "actions": [
+          {
+            "type": "delete-file",
+            "auto_fixable": false,
+            "description": "Delete this file",
+            "note": "File deletion may remove runtime functionality not visible to static analysis"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress with a file-level comment at the top of the file",
+            "comment": "// fallow-ignore-file unused-file"
+          }
+        ],
+        "introduced": false,
+        "effective_severity": "error"
+      },
+      {
+        "path": "test/big.test.ts",
+        "finding_id": "dc1:unused-file:42438439d74753bd",
+        "actions": [
+          {
+            "type": "delete-file",
+            "auto_fixable": false,
+            "description": "Delete this file",
+            "note": "File deletion may remove runtime functionality not visible to static analysis"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress with a file-level comment at the top of the file",
+            "comment": "// fallow-ignore-file unused-file"
+          }
+        ],
+        "introduced": true,
+        "effective_severity": "error"
+      }
+    ],
+    "unused_exports": [],
+    "unused_types": [],
+    "private_type_leaks": [],
+    "deprecated_exports_in_use": [],
+    "unused_dependencies": [
+      {
+        "package_name": "left-pad",
+        "location": "dependencies",
+        "path": "package.json",
+        "line": 1,
+        "finding_id": "dc1:unused-dependency:555cb7b0d3c45f44",
+        "actions": [
+          {
+            "type": "remove-dependency",
+            "auto_fixable": true,
+            "description": "Remove from dependencies in package.json"
+          },
+          {
+            "type": "add-to-config",
+            "auto_fixable": false,
+            "description": "Add \"left-pad\" to ignoreDependencies in fallow config",
+            "config_key": "ignoreDependencies",
+            "value": "left-pad",
+            "value_schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json#/properties/ignoreDependencies/items"
+          }
+        ],
+        "introduced": false,
+        "effective_severity": "error"
+      },
+      {
+        "package_name": "never-used",
+        "location": "dependencies",
+        "path": "package.json",
+        "line": 1,
+        "finding_id": "dc1:unused-dependency:9f37150c8aa8b27b",
+        "actions": [
+          {
+            "type": "remove-dependency",
+            "auto_fixable": true,
+            "description": "Remove from dependencies in package.json"
+          },
+          {
+            "type": "add-to-config",
+            "auto_fixable": false,
+            "description": "Add \"never-used\" to ignoreDependencies in fallow config",
+            "config_key": "ignoreDependencies",
+            "value": "never-used",
+            "value_schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json#/properties/ignoreDependencies/items"
+          }
+        ],
+        "introduced": true,
+        "effective_severity": "error"
+      }
+    ],
+    "unused_dev_dependencies": [],
+    "unused_optional_dependencies": [],
+    "unused_enum_members": [],
+    "unused_class_members": [],
+    "unresolved_imports": [],
+    "unlisted_dependencies": [],
+    "unlisted_binaries": [],
+    "duplicate_exports": [],
+    "type_only_dependencies": [],
+    "test_only_dependencies": [],
+    "dev_dependencies_in_production": [],
+    "circular_dependencies": [],
+    "re_export_cycles": [],
+    "package_cycles": [],
+    "boundary_violations": [],
+    "boundary_coverage_violations": [],
+    "boundary_call_violations": [],
+    "policy_violations": [],
+    "stale_suppressions": [],
+    "unused_catalog_entries": [],
+    "empty_catalog_groups": [],
+    "unresolved_catalog_references": [],
+    "unused_dependency_overrides": [],
+    "misconfigured_dependency_overrides": [],
+    "invalid_client_exports": [],
+    "mixed_client_server_barrels": [],
+    "misplaced_directives": [],
+    "route_collisions": [],
+    "dynamic_segment_name_conflicts": []
+  },
+  "duplication": {
+    "clone_groups": [
+      {
+        "instances": [
+          {
+            "file": "src/dupe.ts",
+            "start_line": 2,
+            "end_line": 6,
+            "start_col": 2,
+            "end_col": 66,
+            "fragment": "const out: number[] = []\n  for (let i = 0; i < 10; i++) { out.push(i * 2); out.push(i * 3); out.push(i * 4) }\n  const total = out.reduce((s, x) => s + x, 0)\n  console.log(\"total\", total, out.length, out[0], out[1], out[2], out[3])\n  return total + out.length + out[0]! + out[1]! + out[2]! + out[3]"
+          },
+          {
+            "file": "src/dupe2.ts",
+            "start_line": 2,
+            "end_line": 6,
+            "start_col": 2,
+            "end_col": 66,
+            "fragment": "const out: number[] = []\n  for (let i = 0; i < 10; i++) { out.push(i * 2); out.push(i * 3); out.push(i * 4) }\n  const total = out.reduce((s, x) => s + x, 0)\n  console.log(\"total\", total, out.length, out[0], out[1], out[2], out[3])\n  return total + out.length + out[0]! + out[1]! + out[2]! + out[3]"
+          }
+        ],
+        "token_count": 136,
+        "line_count": 5,
+        "fingerprint": "dup:1f76f094",
+        "spread": 0,
+        "actions": [
+          {
+            "type": "extract-shared",
+            "auto_fixable": false,
+            "description": "Extract duplicated code (5 lines, 2 instances) into a shared function"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the duplicated code",
+            "comment": "// fallow-ignore-next-line code-duplication"
+          }
+        ],
+        "introduced": true
+      }
+    ],
+    "clone_families": [
+      {
+        "files": ["src/dupe.ts", "src/dupe2.ts"],
+        "groups": [
+          {
+            "instances": [
+              {
+                "file": "src/dupe.ts",
+                "start_line": 2,
+                "end_line": 6,
+                "start_col": 2,
+                "end_col": 66,
+                "fragment": "const out: number[] = []\n  for (let i = 0; i < 10; i++) { out.push(i * 2); out.push(i * 3); out.push(i * 4) }\n  const total = out.reduce((s, x) => s + x, 0)\n  console.log(\"total\", total, out.length, out[0], out[1], out[2], out[3])\n  return total + out.length + out[0]! + out[1]! + out[2]! + out[3]"
+              },
+              {
+                "file": "src/dupe2.ts",
+                "start_line": 2,
+                "end_line": 6,
+                "start_col": 2,
+                "end_col": 66,
+                "fragment": "const out: number[] = []\n  for (let i = 0; i < 10; i++) { out.push(i * 2); out.push(i * 3); out.push(i * 4) }\n  const total = out.reduce((s, x) => s + x, 0)\n  console.log(\"total\", total, out.length, out[0], out[1], out[2], out[3])\n  return total + out.length + out[0]! + out[1]! + out[2]! + out[3]"
+              }
+            ],
+            "token_count": 136,
+            "line_count": 5,
+            "fingerprint": "dup:1f76f094",
+            "spread": 0,
+            "actions": [
+              {
+                "type": "extract-shared",
+                "auto_fixable": false,
+                "description": "Extract duplicated code (5 lines, 2 instances) into a shared function"
+              },
+              {
+                "type": "suppress-line",
+                "auto_fixable": false,
+                "description": "Suppress with an inline comment above the duplicated code",
+                "comment": "// fallow-ignore-next-line code-duplication"
+              }
+            ]
+          }
+        ],
+        "total_duplicated_lines": 5,
+        "total_duplicated_tokens": 136,
+        "suggestions": [
+          {
+            "kind": "ExtractFunction",
+            "description": "Extract shared function (5 lines) from dupe.ts, dupe2.ts",
+            "estimated_savings": 5
+          }
+        ],
+        "actions": [
+          {
+            "type": "extract-shared",
+            "auto_fixable": false,
+            "description": "Extract 1 duplicated code block (5 lines) into a shared module",
+            "note": "These clone groups share the same files, indicating a structural relationship; refactor together"
+          },
+          {
+            "type": "apply-suggestion",
+            "auto_fixable": false,
+            "description": "Extract shared function (5 lines) from dupe.ts, dupe2.ts"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the duplicated code",
+            "comment": "// fallow-ignore-next-line code-duplication"
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "total_files": 3,
+      "files_with_clones": 2,
+      "total_lines": 18,
+      "duplicated_lines": 10,
+      "total_tokens": 373,
+      "duplicated_tokens": 136,
+      "clone_groups": 1,
+      "clone_families": 1,
+      "clone_instances": 2,
+      "duplication_percentage": 55.55555555555556
+    }
+  },
+  "complexity": {
+    "findings": [
+      {
+        "path": "src/grow.ts",
+        "name": "grow",
+        "line": 1,
+        "col": 7,
+        "cyclomatic": 10,
+        "cognitive": 45,
+        "line_count": 4,
+        "param_count": 1,
+        "exceeded": "cognitive_crap",
+        "severity": "critical",
+        "effective_severity": "error",
+        "crap": 110.0,
+        "coverage_tier": "none",
+        "coverage_source": "estimated",
+        "actions": [
+          {
+            "type": "add-tests",
+            "auto_fixable": false,
+            "description": "Add test coverage for `grow` to lower its CRAP score (coverage reduces risk even without refactoring)",
+            "note": "CRAP = CC^2 * (1 - cov/100)^3 + CC; higher coverage is the fastest way to bring CRAP under threshold"
+          },
+          {
+            "type": "refactor-function",
+            "auto_fixable": false,
+            "description": "Refactor `grow` to reduce complexity (extract helper functions, simplify branching)",
+            "note": "Split into smaller functions with single responsibilities. Splitting relocates branching, so it lowers this function's score without lowering the total"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the function declaration",
+            "comment": "// fallow-ignore-next-line complexity",
+            "placement": "above-function-declaration"
+          }
+        ],
+        "introduced": true,
+        "attribution": "introduced",
+        "worsened_metrics": [
+          {
+            "metric": "cyclomatic",
+            "base": 8,
+            "head": 10
+          },
+          {
+            "metric": "cognitive",
+            "base": 28,
+            "head": 45
+          },
+          {
+            "metric": "crap",
+            "base": 72,
+            "head": 110
+          }
+        ]
+      },
+      {
+        "path": "test/big.test.ts",
+        "name": "big",
+        "line": 1,
+        "col": 7,
+        "cyclomatic": 9,
+        "cognitive": 36,
+        "line_count": 4,
+        "param_count": 1,
+        "exceeded": "cognitive_crap",
+        "severity": "high",
+        "effective_severity": "warn",
+        "crap": 90.0,
+        "coverage_tier": "none",
+        "coverage_source": "estimated",
+        "actions": [
+          {
+            "type": "add-tests",
+            "auto_fixable": false,
+            "description": "Add test coverage for `big` to lower its CRAP score (coverage reduces risk even without refactoring)",
+            "note": "CRAP = CC^2 * (1 - cov/100)^3 + CC; higher coverage is the fastest way to bring CRAP under threshold"
+          },
+          {
+            "type": "refactor-function",
+            "auto_fixable": false,
+            "description": "Refactor `big` to reduce complexity (extract helper functions, simplify branching)",
+            "note": "Split into smaller functions with single responsibilities. Splitting relocates branching, so it lowers this function's score without lowering the total"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the function declaration",
+            "comment": "// fallow-ignore-next-line complexity",
+            "placement": "above-function-declaration"
+          }
+        ],
+        "introduced": true,
+        "attribution": "introduced",
+        "gate_exemption": "test-file"
+      }
+    ]
+  },
+  "next_steps": [
+    {
+      "id": "complexity-breakdown",
+      "command": "fallow health --complexity-breakdown",
+      "reason": "see per-decision-point contributions for a hotspot"
+    }
+  ]
+}
