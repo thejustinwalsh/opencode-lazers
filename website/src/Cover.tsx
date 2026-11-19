@@ -391,35 +391,35 @@ const parts = [
   {
     id: "architect",
     name: "Architect",
-    text: "Plans the work, defines acceptance, reviews what comes back.",
+    text: "Scopes the plan, settles open questions, and integrates verified work.",
     mark: sparkle,
     rule: c.ruleM,
   },
   {
     id: "scheduler",
     name: "Scheduler",
-    text: "Admits plans and dispatches native OpenCode workers.",
+    text: "Dispatches specialist workers in isolated git worktrees.",
     mark: flag,
     rule: c.ruleC,
   },
   {
     id: "radar",
     name: "Radar",
-    text: "Live view of sessions, tool calls and model events.",
+    text: "Streams every active worker, tool call, and state transition live.",
     mark: corner,
     rule: c.ruleC,
   },
   {
     id: "trajectory",
     name: "Trajectory",
-    text: "Attempts, checks and recorded usage for every task.",
+    text: "Preserves every attempt, check output, diff, and token count.",
     mark: stripesMark,
     rule: c.ruleM,
   },
 ] as const
 
 const LEDE =
-  "LAZERS adds an Architect agent, a task runtime and Desktop panels to OpenCode. Describe a change; Architect inspects the project, asks only the questions that change scope or checks, and defines acceptance before anything runs. The runtime dispatches native OpenCode workers, runs the required checks and hands results back for your review."
+  "LAZERS turns OpenCode from a single chat thread into a managed engineering loop. Describe what you want to ship: Architect maps the repo, settles open questions, and defines acceptance checks up front. The runtime dispatches specialist workers in isolated worktrees, runs the verification suite, and integrates the finished code."
 
 export function Cover() {
   const kit = useBeamKit("cover", 3, 16)
