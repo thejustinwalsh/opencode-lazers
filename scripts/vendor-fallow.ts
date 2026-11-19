@@ -153,7 +153,9 @@ export async function vendorFallow(requestedTag?: string) {
         out,
       )
     } catch (error) {
-      throw new Error(`Patch ${name} no longer applies to ${tag}: ${(error as Error).message}`)
+      throw new Error(`Patch ${name} no longer applies to ${tag}: ${(error as Error).message}`, {
+        cause: error,
+      })
     }
     console.log(`applied ${name}`)
   }
