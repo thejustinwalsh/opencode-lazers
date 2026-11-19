@@ -37,7 +37,7 @@ export function registerModelsPanel(
     menu: "session.panel",
     title: "Models",
     icon: "models",
-    order: 50,
+    order: 70,
     run: open,
   })
 }

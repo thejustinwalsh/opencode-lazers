@@ -39,7 +39,7 @@ export function registerRadarPanel(
     menu: "session.panel",
     title: "Radar",
     icon: "eye",
-    order: 70,
+    order: 60,
     run: open,
   })
 }

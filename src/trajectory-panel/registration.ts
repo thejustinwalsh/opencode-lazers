@@ -36,7 +36,7 @@ export function registerTrajectoryPanel(
     menu: "session.panel",
     title: "Trajectory",
     icon: "branch",
-    order: 60,
+    order: 50,
     run: open,
   })
 }

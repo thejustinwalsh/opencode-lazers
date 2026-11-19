@@ -45,6 +45,8 @@ test("every LAZERS side-panel menu item lists after OpenCode's own and has an ic
     expect(item.order as number).toBeGreaterThan(NATIVE_LAST)
     expect(typeof item.icon).toBe("string")
   }
-  const orders = items.map((item) => item.order as number)
-  expect(new Set([40, ...orders]).size).toBe(4)
+  // Tasks is 40. Models is settings-like, so it closes the list.
+  const byOrder = items.toSorted((a, b) => (a.order as number) - (b.order as number))
+  expect(byOrder.map((item) => item.title)).toEqual(["Trajectory", "Radar", "Models"])
+  expect(byOrder[0]!.order as number).toBeGreaterThan(40)
 })
