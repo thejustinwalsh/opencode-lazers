@@ -563,9 +563,7 @@ test("a live task that keeps failing verification is raised as struggling even t
   // The same measures do not raise a second bundle; a bundle is raised once for them.
   const first = await f.reconciler("scheduler").bundles.reconcile(1)
   expect(first?.items).toHaveLength(1)
-  expect(recoveryBundleText(JSON.stringify(first))).toContain(
-    "Struggling (still live): 3 verification rounds",
-  )
+  expect(recoveryBundleText(JSON.stringify(first))).toContain("Still live - 3 verification rounds")
   expect(await f.reconciler("scheduler").bundles.reconcile(1)).toBeUndefined()
 })
 
@@ -585,4 +583,41 @@ test("the first time a task becomes struggling is journaled once", async () => {
   expect(
     f.store.latestTransition<{ reasons: string[] }>(grind.planID, grind.taskID, "TASK_STRUGGLING"),
   ).toMatchObject({ reasons: ["verify-rounds"], line: "3 verification rounds" })
+})
+
+test("an edit outside the write scope is raised while the worker still runs", async () => {
+  const f = fixture()
+  const { planID, taskID } = f.plan({ state: "running", node: "running" })
+  f.store.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
+       VALUES('a1',?,?,?,1,'worker-1','m1',?,?,NULL,'{}','running',?)`,
+    ).run(planID, f.root, taskID, f.root, f.base, Date.now())
+    const tool = (seq: number, operation: string, path: string) =>
+      db
+        .query(
+          `INSERT INTO runner_progress(project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,sources_json,kind,event_ids_json,call_id,dedupe_key,payload)
+           VALUES(?,?,?,?,?,?,?,'t','[]','tool','[]',?,?,?)`,
+        )
+        .run(
+          f.root,
+          "project",
+          planID,
+          taskID,
+          "a1",
+          "worker-1",
+          seq,
+          `call-${seq}`,
+          `k${seq}`,
+          JSON.stringify({ status: "completed", fileTargets: { operation, paths: [path] } }),
+        )
+    tool(1, "patch", "out1.txt")
+    tool(2, "read", "src/anything.ts")
+    tool(3, "patch", "docs/outside.md")
+  })
+  f.sessions.set("worker-1", { ...architect("worker-1"), agent: "worker", busy: true })
+  const items = await collect(f)
+  expect(items.map((item) => item.kind)).toEqual(["scope-drift"])
+  expect(items[0]!.recommendation.action).toBe("amend-scope")
+  expect(items[0]!.struggling?.line).toBe("edited outside the write scope: docs/outside.md")
 })

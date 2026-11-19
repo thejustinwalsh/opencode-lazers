@@ -8,6 +8,7 @@ import { holdFamily, holdActions, unblockingActions } from "./hold-actions.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
+import { readScopeDrift } from "./scope-drift.ts"
 import {
   assessStruggling,
   canStruggle,
@@ -71,6 +72,8 @@ export const RecoveryKind = z.enum([
   "stuck-cancelling",
   /** Live work that keeps consuming effort without landing; the Architect decides its course. */
   "struggling",
+  /** A running attempt has already edited outside its write scope. */
+  "scope-drift",
 ])
 export type RecoveryKind = z.infer<typeof RecoveryKind>
 
@@ -428,8 +431,12 @@ export class RecoveryBundles {
     )
   }
 
-  /** Unsettled tasks of one plan whose recorded effort trips a struggling rule. Read-only. */
-  private async struggling(
+  /**
+   * Live items of one plan that need a decision before the work ends: a task whose recorded
+   * effort trips a struggling rule, and a running attempt that already edited outside its write
+   * scope. Read-only.
+   */
+  private async liveItems(
     plan: PlanRow,
     head: () => Promise<string | null>,
   ): Promise<RecoveryItem[]> {
@@ -437,20 +444,29 @@ export class RecoveryBundles {
     const found: RecoveryItem[] = []
     for (const node of store.nodes(plan.id)) {
       if (!canStruggle(node.state) || store.repository.taskDisposition(node.task_id)) continue
-      const facts = store.read((db) =>
-        readStrugglingFacts(db, plan.id, node.task_id, this.deps.now()),
-      )
-      const assessment = assessStruggling(facts)
-      if (!assessment.struggling) continue
       const task = store.repository.get(node.task_id)
       if (!task) continue
       const attempt = store
         .attempts(plan.id)
         .filter((a) => a.task_id === node.task_id)
         .at(-1)
+      const facts = store.read((db) =>
+        readStrugglingFacts(db, plan.id, node.task_id, this.deps.now()),
+      )
+      const assessment = assessStruggling(facts)
+      const drift =
+        attempt && ["preparing", "running"].includes(attempt.state)
+          ? store.read((db) =>
+              readScopeDrift(
+                db,
+                this.deps.directory,
+                attempt.id,
+                store.effectiveWriteScope(node.task_id),
+              ),
+            )
+          : []
+      if (!assessment.struggling && !drift.length) continue
       const reuse = await this.reuse(plan, node, attempt, head)
-      const advice = recommendStruggling(assessment, facts)
-      const actions = this.legalActions(plan, node.task_id, null, ["cancel", "amend-scope"])
       const title = taskTitle(task.proposal.objective)
       const reference = store.repository.referenceFor(node.task_id) ?? null
       const shown = presentation({
@@ -460,15 +476,7 @@ export class RecoveryBundles {
         reason: node.reason ?? null,
         ...(reference ? { reference } : {}),
       })
-      found.push({
-        // Stable while the same measures trip; a new measure is a new decision.
-        key: fingerprint({
-          planID: plan.id,
-          taskID: node.task_id,
-          kind: "struggling",
-          reasons: assessment.reasons,
-        }),
-        kind: "struggling",
+      const base = {
         planID: plan.id,
         taskID: node.task_id,
         reference,
@@ -479,19 +487,54 @@ export class RecoveryBundles {
         reason: node.reason ?? null,
         holdFamily: null,
         ageMs: 0,
-        actions,
         reuse,
-        recommendation: {
-          action:
-            advice.action === "continue"
-              ? null
-              : advice.action === "re-scope"
-                ? "amend-scope"
-                : "cancel",
-          because: `${advice.action} - ${advice.because}`,
-        },
-        struggling: { line: assessment.line, reasons: assessment.reasons },
-      })
+      }
+      if (assessment.struggling) {
+        const advice = recommendStruggling(assessment, facts)
+        found.push({
+          ...base,
+          // Stable while the same measures trip; a new measure is a new decision.
+          key: fingerprint({
+            planID: plan.id,
+            taskID: node.task_id,
+            kind: "struggling",
+            reasons: assessment.reasons,
+          }),
+          kind: "struggling",
+          actions: this.legalActions(plan, node.task_id, null, ["cancel", "amend-scope"]),
+          recommendation: {
+            action:
+              advice.action === "continue"
+                ? null
+                : advice.action === "re-scope"
+                  ? "amend-scope"
+                  : "cancel",
+            because: `${advice.action} - ${advice.because}`,
+          },
+          struggling: { line: assessment.line, reasons: assessment.reasons },
+        })
+      }
+      if (drift.length)
+        found.push({
+          ...base,
+          key: fingerprint({
+            planID: plan.id,
+            taskID: node.task_id,
+            kind: "scope-drift",
+            attemptID: attempt!.id,
+            paths: drift,
+          }),
+          kind: "scope-drift",
+          actions: this.legalActions(plan, node.task_id, null, ["amend-scope", "cancel"]),
+          recommendation: {
+            action: "amend-scope",
+            because: `The worker already edited ${drift.length} file(s) outside the write scope while it still runs: ${drift.slice(0, 6).join(", ")}. Amend the scope now to accept them, or tell the worker to revert; verification would only find this after the attempt ends`,
+          },
+          struggling: {
+            line: `edited outside the write scope: ${drift.slice(0, 6).join(", ")}`,
+            reasons: ["scope-drift"],
+          },
+        })
     }
     return found
   }
@@ -539,7 +582,7 @@ export class RecoveryBundles {
       if (!stuck && !OPEN_PLAN_STATES.has(plan.state)) continue
       const idle = this.idleSince(plan.id)
       // Live work that is struggling needs a decision whether or not it is idle.
-      if (plan.state === "running") items.push(...(await this.struggling(plan, head)))
+      if (plan.state === "running") items.push(...(await this.liveItems(plan, head)))
       if (idle < RECOVERY_STALE_MS) continue
       const nodes = store.nodes(plan.id)
       const attempts = store.attempts(plan.id)
@@ -907,7 +950,7 @@ export function recoveryBundleText(serialized: string): string {
     ].join("; ")
     return [
       `${index + 1}. ${ref} ${JSON.stringify(item.title)} - ${item.stateLabel} (${item.kind}${item.holdFamily ? `, ${item.holdFamily}` : ""}), idle ${ago(item.ageMs)}; plan ${item.planID}${item.taskID ? ` task ${item.taskID}` : ""}`,
-      ...(item.struggling ? [`   Struggling (still live): ${item.struggling.line}`] : []),
+      ...(item.struggling ? [`   Still live - ${item.struggling.line}`] : []),
       ...(item.explanation ? [`   Why: ${item.explanation}`] : []),
       ...(item.reason ? [`   Recorded: ${item.reason}`] : []),
       `   Reuse: ${reuse}`,
@@ -917,9 +960,9 @@ export function recoveryBundleText(serialized: string): string {
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
     "Work through all of it in this one pass. Verify each with lz-inspect-plan, then resolve it with lz-plan-command or lz-dispose-task. Reuse what exists before starting fresh: resume a live worker, verify-retained a committed result whose checks passed, retained-repair unfinished work; submit a new task only when the old approach is wrong, and then cancel and dispose what it supersedes. The recommendation is advice from recorded facts; you decide. Resolved items leave the next bundle.",
-    ...(bundle.items.some((item) => item.kind === "struggling")
+    ...(bundle.items.some((item) => item.kind === "struggling" || item.kind === "scope-drift")
       ? [
-          "Items of kind struggling are still running: they keep consuming effort without landing. Decide for each: continue, re-scope (amend-scope), split into smaller tasks, or cancel.",
+          "Items of kind struggling or scope-drift are still running. Struggling work keeps consuming effort without landing: continue, re-scope (amend-scope), split into smaller tasks, or cancel. Scope drift is a write outside the task scope that verification would only catch later: amend the scope or have the worker revert it.",
         ]
       : []),
     ...(bundle.replaces ? ["This bundle replaces the earlier one; ignore the earlier list."] : []),
