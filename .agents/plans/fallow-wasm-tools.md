@@ -1398,7 +1398,7 @@ the open question "No config: dead code off until a config exists, or report it 
 | Result                  | One typed package (`FallowPackage`) from the engine report through receipt, repair prompt, Architect notice and `lz-fallow-audit`; the engine JSON is validated strictly, so a re-pinned engine that adds a field, enum value or finding list fails a test                                                       |
 | Warnings                | Go to the worker in the one repair (consider-fixing, with a one-line reason if left). Inherited findings are context. After the repair the audit runs again and each finding is fixed, remaining or suppressed (reason read only from a Fallow suppression comment), shown to the Architect                      |
 | Duplication severity    | The engine's: an introduced clone group warns (the audit fails only on a duplication threshold). The earlier LAZERS rule that introduced duplication fails the review is dropped                                                                                                                                 |
-| Dead code at task level | Introduced dead code, dependency and cycle findings are audit findings per task, like the official audit. Risk: a task may add an export that a later task in the plan consumes, so a per-task dead-code error can ask a worker to delete it; the Architect order and the one-repair limit bound it              |
+| Dead code at task level | Introduced dead code, dependency and cycle findings are audit findings per task, like the official audit. Code added ahead of its consumer carries `// fallow-ignore-next-line unused-export -- consumed by <task reference>`; see "Suppression flow" below                                                      |
 | Config authoring        | `lz-fallow-config` modes `suggest` (engine `fallow list` data plus package.json, scans) and `dry-run` (whole repository, unsaved candidate), `lz-fallow-config-set` (reason required, who/when stored, append-only). Guidance in `src/architect.md`                                                              |
 
 Still open:
@@ -1439,6 +1439,31 @@ cold, 6.7 s warm, 999 MB. It analyses the whole project twice (head and base) wi
 CSS analysis the audit includes. Whole-repository dead code, duplication and health in one
 run: 4.5 s against 7.8 s as three runs (linear memory peak 156 MB against 154 MB: the
 runs were never concurrent, so the saving is time, not peak).
+
+## Suppression flow (2026-11-19)
+
+Replaces the per-task dead-code caveat. How the vendored engine (v3.43.2) treats suppression:
+
+- Syntax: `// fallow-ignore-next-line <kind>[, <kind>] [-- reason]` and `// fallow-ignore-file [<kind>] [-- reason]`
+  (also `/* */`, JSDoc and `<!-- -->`), `extract/src/suppress.rs:165-215`. No kind means every kind. The reason is the
+  text after a whitespace-delimited `--`, trimmed; empty is no reason (`split_suppression_reason`,
+  `extract/src/suppress.rs:66-95`). A reason is optional by default; the rule `require-suppression-reason`
+  (default off, `config/src/config/rules.rs:577`) reports comments without one in the stale-suppression list
+  (`core/src/suppress.rs:280-306`).
+- `added-suppression` (diff-risk, default warn) reports a new comment with its parsed `suppression`
+  (`kinds`, `reason` or null), `api/src/diff_risk/mod.rs`; the audit's verdict is `warn`, not `fail`.
+- Stale suppressions: dead-code finding list `stale_suppressions`, rule `stale-suppression`, default warn
+  (`config/src/config/rules.rs:576`, populated in `core/src/analyze/mod.rs:1037`). The audit reports one only for a
+  file the change touched, so the consumer's own audit (it never touches the file holding the comment) stays silent.
+  Verified by experiment: base to adder gives two `added-suppression` and no stale; adder to consumer gives pass.
+- Implemented here (`src/audit/suppression-flow.ts`): (1) the consumer's per-task audit runs the whole-repository
+  dead-code analysis at head and base and reports each stale suppression the change made stale (a
+  `stale-suppression` finding in its package); (2) the plan audit adds `unconsumed-suppression` for each
+  added-suppression of an unused-code kind that is still present and not stale; (3) `attributeFindingsToTasks`
+  credits a stale suppression to the task whose diff uses the suppressed name, and an unconsumed one to the task that
+  touched the file. The package renders every added suppression with its reason or `NO REASON GIVEN`, and
+  the repair text names the exact comment to write.
+- Cost: one extra dead-code pass per side (cached) in a repository that has any `fallow-ignore-` comment; none otherwise.
 
 ## Follow-ups noticed, not part of this plan
 

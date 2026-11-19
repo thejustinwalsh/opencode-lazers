@@ -15,10 +15,7 @@ export function dispositionsAfterRepair(
 ): FallowDisposition[] {
   const remaining = new Set(live(after).map((f) => f.id))
   const waivers = after.findings.filter(
-    (f) =>
-      f.class === "diff-risk" &&
-      f.rule === "added-suppression" &&
-      f.symbol?.startsWith("suppressed:"),
+    (f) => f.class === "diff-risk" && f.rule === "added-suppression" && f.suppression !== undefined,
   )
   return live(first).map((finding) => {
     if (remaining.has(finding.id))
@@ -33,7 +30,7 @@ export function dispositionsAfterRepair(
           findingID: finding.id,
           severity: finding.severity,
           disposition: "suppressed" as const,
-          reason: waiver.symbol!.slice("suppressed:".length).trim() || undefined,
+          reason: waiver.suppression?.reason,
         }
       : { findingID: finding.id, severity: finding.severity, disposition: "fixed" as const }
   })

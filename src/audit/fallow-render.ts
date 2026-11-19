@@ -21,7 +21,10 @@ export function findingLine(finding: FallowFinding): string {
   const symbol = finding.symbol && finding.class !== "diff-risk" ? ` \`${finding.symbol}\`` : ""
   const exemption = finding.gateExemption ? ` [${finding.gateExemption}: never fails]` : ""
   const estimated = finding.estimatedCrap ? " [CRAP estimated]" : ""
-  return `${finding.rule} ${location(finding)}${symbol} ${finding.message}${exemption}${estimated}`
+  const waived = finding.suppression
+    ? ` [suppresses ${finding.suppression.kinds.join(", ") || "everything"}; ${finding.suppression.reason ? `reason: ${finding.suppression.reason}` : "NO REASON GIVEN"}]`
+    : ""
+  return `${finding.rule} ${location(finding)}${symbol} ${finding.message}${exemption}${estimated}${waived}`
 }
 
 function numbered(findings: readonly FallowFinding[], start: number, room: number) {
@@ -40,7 +43,19 @@ function waiver(findings: readonly FallowFinding[]): string {
   const comments = [...new Set(findings.flatMap((f) => (f.suppress ? [f.suppress.comment] : [])))]
   if (comments.length === 0) return ""
   const shown = comments.slice(0, WAIVER_KINDS).map((comment) => `\`${comment} -- <reason>\``)
-  return `To waive a finding on purpose, only when the Architect says so: ${shown.join(" or ")}.`
+  const ahead = [
+    ...new Set(
+      findings.flatMap((f) => (f.class === "dead-code" && f.suppress ? [f.suppress.comment] : [])),
+    ),
+  ]
+  // Code added deliberately ahead of the task that will use it carries the comment, naming that task.
+  const aheadText = ahead.length
+    ? ` Code you add deliberately ahead of the task that will use it takes the comment with the consumer named: ${ahead
+        .slice(0, WAIVER_KINDS)
+        .map((comment) => `\`${comment} -- consumed by <task reference>\``)
+        .join(" or ")}; the Architect reads every such reason.`
+    : ""
+  return `To waive any other finding on purpose, only when the Architect says so: ${shown.join(" or ")}.${aheadText}`
 }
 
 export function summaryLine(pkg: FallowPackage): string {
@@ -65,7 +80,7 @@ export function renderRepair(pkg: FallowPackage): string {
   const warnings = warningsOf(pkg)
   const context = contextOf(pkg)
   const closing = [
-    "Fix these inside your write scope. Do not add fallow-ignore comments.",
+    "Fix these inside your write scope. Do not add fallow-ignore comments to hide a finding.",
     waiver([...errors, ...warnings]),
   ]
     .filter(Boolean)

@@ -134,6 +134,8 @@ export const FallowFinding = z.strictObject({
   /** CRAP derived from static test reachability, not measured coverage; never gates. */
   estimatedCrap: z.literal(true).optional(),
   relatedLocations: z.array(Location).optional(),
+  /** A `fallow-ignore` comment this finding is about: what it suppresses and the reason it gives. */
+  suppression: z.strictObject({ kinds: z.array(text), reason: text.optional() }).optional(),
   suggestion: text.optional(),
   suppress: z.strictObject({ comment: text, requiresReason: z.literal(true) }).optional(),
   /** Plan review only: the task(s) whose own change touched this finding's file(s). */
