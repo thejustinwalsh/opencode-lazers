@@ -17,9 +17,13 @@ export function modelText(model: AttemptModel | undefined) {
   return model.variant ? `${model.id} · ${model.variant}` : model.id
 }
 
-/** Epoch ms the latest attempt's activity ends: now while it is live, else its last progress. */
-export function attemptEnd(attempt: StatAttempt, now: number) {
-  if (LIVE.has(attempt.state)) return now
+/**
+ * Epoch ms the latest attempt's working time ends: now only while the worker is genuinely working,
+ * else its last recorded progress. An attempt still recorded as running under a hold or after an
+ * interruption (`working` false) stopped at its last activity, not now.
+ */
+export function attemptEnd(attempt: StatAttempt, now: number, working = true) {
+  if (LIVE.has(attempt.state) && working) return now
   const last = attempt.summary?.lastActivityAt
   return last !== undefined && last >= attempt.startedAt ? last : undefined
 }
@@ -32,9 +36,11 @@ export function taskStats(input: {
   createdAt: number
   now: number
   attempt?: StatAttempt
+  /** The task's state word is Running/Verifying; false for a held, waiting or interrupted task. */
+  working?: boolean
 }): Array<{ label: string; value?: string }> {
   const { attempt } = input
-  const end = attempt ? attemptEnd(attempt, input.now) : undefined
+  const end = attempt ? attemptEnd(attempt, input.now, input.working ?? true) : undefined
   return [
     { label: "Age", value: durationText(Math.max(0, input.now - input.createdAt)) },
     {
@@ -54,7 +60,7 @@ export function taskStats(input: {
 /** The lane's ticks relative to the attempt start, and its span; none when nothing can be drawn. */
 export function attemptLane(attempt: StatAttempt | undefined, now: number) {
   if (!attempt?.summary?.ticks.length) return undefined
-  const end = attemptEnd(attempt, now)
+  const end = attemptEnd(attempt, now) // the lane spans to now while the attempt row is live
   const ticks = attempt.summary.ticks.map((tick) => ({
     at: Math.max(0, tick.at - attempt.startedAt),
     ...(tick.failed ? { failed: true } : {}),

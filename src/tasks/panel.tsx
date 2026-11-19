@@ -1597,6 +1597,7 @@ function TaskPanel(
           createdAt: Date.parse(task.createdAt),
           now: minute(),
           attempt: latestAttempt(),
+          working: selectedPresentation().tone === "running",
         })
       : []
   }
