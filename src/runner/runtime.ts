@@ -21,7 +21,7 @@ import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { RecoveryBundles } from "./recovery-bundle.ts"
-import { sameNativeModel } from "./model-route.ts"
+import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
@@ -1679,10 +1679,9 @@ export class TaskRuntime {
     )
       return false
     try {
-      const route = ModelPolicy.parse(JSON.parse(attempt.policy).model)
+      const route = this.retainedAttemptModel(plan, attempt)
       const repairRoute = ModelPolicy.parse(repair.route)
-      const planRoute = plan.model ? ModelPolicy.parse(JSON.parse(plan.model)) : undefined
-      if (!this.sameModel(route, repairRoute) || !this.sameModel(route, planRoute)) return false
+      if (!route || !sameModelSnapshot(route, repairRoute)) return false
       const effects = this.store.effects(plan.id)
       if (
         effects.some(
@@ -2000,6 +1999,51 @@ export class TaskRuntime {
     return sameNativeModel(left, right)
   }
 
+  private retainedAttemptPlanModelMatches(plan: PlanRow, model: ModelPolicy) {
+    try {
+      const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+      return Boolean(planModel?.success && sameModelSnapshot(model, planModel.data))
+    } catch {
+      return false
+    }
+  }
+
+  private retainedAttemptDecisionModel(
+    plan: PlanRow,
+    model: ModelPolicy,
+    routeDecision: unknown,
+  ): ModelPolicy | undefined {
+    const decision = DispatchRouteDecisionSchema.safeParse(routeDecision)
+    if (
+      !decision.success ||
+      decision.data.status !== "resolved" ||
+      !sameModelSnapshot(model, decision.data.route)
+    )
+      return undefined
+    if (
+      decision.data.source === "explicit-plan-selection" &&
+      !this.retainedAttemptPlanModelMatches(plan, model)
+    )
+      return undefined
+    return model
+  }
+
+  private retainedAttemptModel(plan: PlanRow, attempt: AttemptRow): ModelPolicy | undefined {
+    try {
+      const policy = JSON.parse(attempt.policy) as {
+        model?: unknown
+        routeDecision?: unknown
+      }
+      const model = ModelPolicy.safeParse(policy.model)
+      if (!model.success) return undefined
+      if (policy.routeDecision === undefined)
+        return this.retainedAttemptPlanModelMatches(plan, model.data) ? model.data : undefined
+      return this.retainedAttemptDecisionModel(plan, model.data, policy.routeDecision)
+    } catch {
+      return undefined
+    }
+  }
+
   private retainedRepairObservation(worker: HostSession) {
     return JSON.stringify({
       id: worker.id,
@@ -2150,8 +2194,7 @@ export class TaskRuntime {
         return undefined
       }
     })()
-    const attemptRoute = ModelPolicy.safeParse(policy?.model)
-    const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    const attemptRoute = this.retainedAttemptModel(plan, attempt)
     const artifact = repair?.artifact
     if (
       !repairTransition ||
@@ -2166,12 +2209,10 @@ export class TaskRuntime {
       artifact !== attempt.artifact ||
       node.artifact !== null ||
       !isCommitID(artifact) ||
-      !attemptRoute.success ||
-      !planRoute?.success ||
+      !attemptRoute ||
       !repairRoute.success ||
       policy?.workspaceMode !== "isolated" ||
-      !this.sameModel(attemptRoute.data, planRoute.data) ||
-      !this.sameModel(attemptRoute.data, repairRoute.data) ||
+      !sameModelSnapshot(attemptRoute, repairRoute.data) ||
       this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED")
     )
       throw new Error("Retained repair recovery authority, artifact, route or task lineage changed")
@@ -2370,7 +2411,7 @@ export class TaskRuntime {
     const firstWorker = await this.host.session(attempt.session_id, { messages: true })
     const currentOwner = await freshOwner()
     const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const route = attemptRoute.data
+    const route = attemptRoute
     const problem = this.retainedRepairWorkerProblem(
       plan,
       attempt,
@@ -2391,7 +2432,7 @@ export class TaskRuntime {
 
     const historicalAttempt = { ...attempt, state: "running" as const, message_id: repairMessageID }
     const continuationProblem = checkTerminalWorkerContinuation({
-      plan: { state: "blocked", owner: plan.owner, model: plan.model, artifact: null },
+      plan: { state: "blocked", owner: plan.owner, model: JSON.stringify(route), artifact: null },
       node: { task_id: node.task_id, state: "running" },
       attempt: historicalAttempt,
       latestAttemptID: attempt.id,
@@ -2451,6 +2492,7 @@ export class TaskRuntime {
     const currentNode = this.store
       .nodes(plan.id)
       .find((candidate) => candidate.task_id === attempt.task_id)
+    const currentRepair = currentAttempt ? this.retainedRepairForAttempt(currentAttempt) : undefined
     const history = this.transitionHistory(plan.id)
     const matching = (id: number, event: string, taskID: string | null) =>
       history.find(
@@ -2468,6 +2510,7 @@ export class TaskRuntime {
       currentAttempt.workspace === attempt.workspace &&
       currentAttempt.base_commit === attempt.base_commit &&
       currentAttempt.policy === attempt.policy &&
+      currentRepair?.operationID === recovery.operationID &&
       currentAttempt.token_count === recovery.usage.tokenCount &&
       currentAttempt.tool_count === recovery.usage.toolCount &&
       currentAttempt.cost === recovery.usage.cost &&
@@ -2584,20 +2627,17 @@ export class TaskRuntime {
     )
       throw new Error("Retained repair artifact must exactly match the accepted task and attempt")
 
-    let policy: { workspaceMode?: unknown; model?: unknown }
+    let policy: { workspaceMode?: unknown }
     try {
       policy = JSON.parse(attempt.policy) as typeof policy
     } catch {
       throw new Error("Retained attempt policy is unavailable")
     }
-    const attemptModel = ModelPolicy.safeParse(policy.model)
-    const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    const attemptModel = this.retainedAttemptModel(plan, attempt)
     if (
       attempt.workspace === this.directory ||
       policy.workspaceMode !== "isolated" ||
-      !attemptModel.success ||
-      !planModel?.success ||
-      !this.sameModel(attemptModel.data, planModel.data)
+      !attemptModel
     )
       throw new Error(
         "Retained repair requires the original isolated workspace and execution route",
@@ -2672,7 +2712,7 @@ export class TaskRuntime {
       attempt,
       observed,
       nativeInputID,
-      attemptModel.data,
+      attemptModel,
     )
     if (backgroundProblem || problem) throw new Error(backgroundProblem ?? problem)
     const currentOwner = await this.host.session(plan.owner)
@@ -2684,7 +2724,7 @@ export class TaskRuntime {
       attempt,
       confirmed,
       nativeInputID,
-      attemptModel.data,
+      attemptModel,
     )
     const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
       confirmed,
@@ -2714,7 +2754,7 @@ export class TaskRuntime {
       owner: caller,
       sessionID: attempt.session_id,
       workspace: attempt.workspace,
-      model: attemptModel.data,
+      model: attemptModel,
       workerObservation: this.retainedRepairObservation(confirmed),
     }
   }
@@ -2836,9 +2876,7 @@ export class TaskRuntime {
           decision.success &&
           decision.data.status === "resolved" &&
           route.success &&
-          decision.data.route.providerID === route.data.providerID &&
-          decision.data.route.id === route.data.id &&
-          decision.data.route.variant === route.data.variant
+          sameModelSnapshot(decision.data.route, route.data)
         )
           continuationPlan = { ...plan, model: JSON.stringify(route.data) }
       } catch {
@@ -4185,16 +4223,12 @@ export class TaskRuntime {
       throw new Error("Retained task, attempt, artifact, or assignment changed before admission")
     const policy = JSON.parse(attempt.policy) as {
       workspaceMode?: unknown
-      model?: unknown
     }
-    const route = ModelPolicy.safeParse(policy.model)
-    const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    const route = this.retainedAttemptModel(plan, attempt)
     if (
       policy.workspaceMode !== "isolated" ||
-      !route.success ||
-      !planRoute?.success ||
-      !this.sameModel(route.data, retainedRepair.model) ||
-      !this.sameModel(planRoute.data, retainedRepair.model)
+      !route ||
+      !sameModelSnapshot(route, retainedRepair.model)
     )
       throw new Error("Retained task execution route changed before admission")
     if (
@@ -9116,29 +9150,14 @@ export class TaskRuntime {
       repair.attemptID !== attempt.id ||
       repair.sessionID !== attempt.session_id ||
       repair.workspace !== attempt.workspace ||
-      !ModelPolicy.safeParse(repair.route).success
+      repair.route === undefined
     )
       return undefined
     const plan = this.store.plan(attempt.plan_id)
     if (!plan || plan.owner !== repair.owner) return undefined
     const repairRoute = ModelPolicy.safeParse(repair.route)
-    let attemptRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
-    let planRoute: ReturnType<typeof ModelPolicy.safeParse> | undefined
-    try {
-      attemptRoute = ModelPolicy.safeParse(
-        (JSON.parse(attempt.policy) as { model?: unknown }).model,
-      )
-      planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-    } catch {
-      return undefined
-    }
-    if (
-      !repairRoute.success ||
-      !attemptRoute?.success ||
-      !planRoute?.success ||
-      !this.sameModel(repairRoute.data, attemptRoute.data) ||
-      !this.sameModel(repairRoute.data, planRoute.data)
-    )
+    const attemptRoute = this.retainedAttemptModel(plan, attempt)
+    if (!repairRoute.success || !attemptRoute || !sameModelSnapshot(repairRoute.data, attemptRoute))
       return undefined
     const admissionInputID =
       typeof repair.nativeInputID === "string" ? repair.nativeInputID : repair.previousMessageID
