@@ -115,7 +115,22 @@ function completedAssistantTail(messages: readonly SessionMessage.Info[]) {
       (part) =>
         part.type === "tool" &&
         (part.state.status === "running" || part.state.status === "streaming"),
-    )
+    ) &&
+    !abortedByLocationShutdown(last)
+  )
+}
+
+/**
+ * A location reboot aborts the step in flight ("Interaction cancelled because the location shut
+ * down", finish "error") and OpenCode resumes the session with a new step moments later. For
+ * that window the aborted step is the newest message, but the turn did not end.
+ */
+function abortedByLocationShutdown(message: Extract<SessionMessage.Info, { type: "assistant" }>) {
+  return message.content.some(
+    (part) =>
+      part.type === "tool" &&
+      part.state.status === "error" &&
+      /location shut down/i.test(String(part.state.error?.message ?? "")),
   )
 }
 
