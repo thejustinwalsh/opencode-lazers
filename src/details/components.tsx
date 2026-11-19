@@ -10,7 +10,12 @@ const present = (value: unknown) =>
 
 /** Up to four label/value columns between two hairlines. A column with no value is not rendered. */
 export function StatRow(props: {
-  stats: ReadonlyArray<{ label: string; value?: string | number | null }>
+  stats: ReadonlyArray<{
+    label: string
+    value?: string | number | null
+    /** A Label after the value, for a state that changes how the number reads (`partial`). */
+    note?: { text: string; tone: LabelTone; title?: string }
+  }>
 }): JSX.Element {
   const shown = createMemo(() => props.stats.filter((stat) => present(stat.value)).slice(0, 4))
   return (
@@ -20,7 +25,19 @@ export function StatRow(props: {
           {(stat) => (
             <div class="lazers-kit-stat">
               <dt>{stat.label}</dt>
-              <dd title={String(stat.value)}>{stat.value}</dd>
+              <dd title={String(stat.value)}>
+                {stat.value}
+                <Show when={stat.note}>
+                  {(note) => (
+                    <>
+                      {" "}
+                      <Label tone={note().tone} title={note().title}>
+                        {note().text}
+                      </Label>
+                    </>
+                  )}
+                </Show>
+              </dd>
             </div>
           )}
         </For>
