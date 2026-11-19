@@ -34,7 +34,11 @@ export function createTransitionIndexes(db: Database) {
     db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`)
 }
 
-const inFlight = new Map<string, Promise<void>>()
+// OpenCode loads this module once per location with a cleared require cache, so a
+// module-level map would be per copy. Share the guard process-wide instead.
+const inFlightKey = Symbol.for("lazers.transition-indexes.v1")
+type GlobalWithGuard = typeof globalThis & { [inFlightKey]?: Map<string, Promise<void>> }
+const inFlight = ((globalThis as GlobalWithGuard)[inFlightKey] ??= new Map<string, Promise<void>>())
 
 /**
  * Ensure the indexes exist. Small tables are indexed inline; large ones are built by a
@@ -45,7 +49,7 @@ const inFlight = new Map<string, Promise<void>>()
 export function ensureTransitionIndexes(
   db: Database,
   path: string,
-  options: { inlineRowLimit?: number; workerURL?: URL } = {},
+  options: { inlineRowLimit?: number; workerURL?: URL; onSpawn?: () => void } = {},
 ): Promise<void> {
   if (!missingTransitionIndexes(db).length) return Promise.resolve()
   // AUTOINCREMENT ids make MAX(id) an O(1) upper bound on the row count.
@@ -58,6 +62,7 @@ export function ensureTransitionIndexes(
   const running = inFlight.get(path)
   if (running) return running
   const build = new Promise<void>((resolve) => {
+    options.onSpawn?.()
     const worker = new Worker(
       options.workerURL ?? workerURL("./transition-indexes-worker", import.meta.url),
       { workerData: { path } },

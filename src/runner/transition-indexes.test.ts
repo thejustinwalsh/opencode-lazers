@@ -67,3 +67,26 @@ test("large tables are indexed by a worker without blocking the opener", async (
   await pending
   expect(missing(repository)).toEqual([])
 })
+
+test("separate module copies share one in-flight build per database", async () => {
+  const repository = database()
+  await new RunnerStore(repository).transitionIndexes
+  dropIndexes(repository)
+  // A query string yields a distinct module instance, like a per-location cleared require cache.
+  const load = (copy: string): Promise<typeof import("./transition-indexes.ts")> =>
+    import(`./transition-indexes.ts?copy=${copy}`)
+  const copies = [await load("a"), await load("b")]
+  expect(copies[0]!.ensureTransitionIndexes).not.toBe(ensureTransitionIndexes)
+  let spawned = 0
+  const builds = copies.map((copy) =>
+    repository.atomic((db) =>
+      copy.ensureTransitionIndexes(db, repository.path, {
+        inlineRowLimit: 0,
+        onSpawn: () => spawned++,
+      }),
+    ),
+  )
+  await Promise.all(builds)
+  expect(spawned).toBe(1)
+  expect(missing(repository)).toEqual([])
+})
