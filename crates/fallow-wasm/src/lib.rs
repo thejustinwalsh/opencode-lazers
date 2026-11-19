@@ -1,7 +1,9 @@
 //! Fallow analysis as a WebAssembly module with explicit host inputs.
 //!
 //! The module has no filesystem, network, process or Git access. The host
-//! passes paths and contents in and receives JSON back.
+//! passes paths, file contents, the changed-file set and config text in, and
+//! receives JSON back. Every call returns an envelope: `{"ok":true,...}` or
+//! `{"error":{"code":"...","message":"..."}}`.
 
 use fallow_types::discover::FileId;
 use serde::Serialize;
@@ -9,6 +11,9 @@ use std::path::Path;
 use wasm_bindgen::prelude::*;
 
 mod entropy;
+mod project;
+
+pub use project::Project;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,8 +41,9 @@ fn module(path: &str, content: &str) -> fallow_types::extract::ModuleInfo {
     fallow_extract::parse_from_content(FileId(0), Path::new(path), content)
 }
 
-fn to_json<T: Serialize>(value: &T) -> String {
-    serde_json::to_string(value).unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
+pub(crate) fn to_json<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|error| format!("{{\"error\":{{\"code\":\"serialize\",\"message\":\"{error}\"}}}}"))
 }
 
 /// Parse one file and return a JSON summary of its imports and exports.
@@ -78,4 +84,23 @@ pub fn complexity(path: &str, content: &str) -> String {
         })
         .collect();
     to_json(&rows)
+}
+
+thread_local! {
+    static LAST_PANIC: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Record a panic message before the abort so the host can read it after the
+/// resulting `RuntimeError: unreachable`. No host import is involved.
+#[wasm_bindgen(start)]
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        LAST_PANIC.with(|slot| *slot.borrow_mut() = info.to_string());
+    }));
+}
+
+/// The message of the last panic, or an empty string.
+#[wasm_bindgen(js_name = lastPanic)]
+pub fn last_panic() -> String {
+    LAST_PANIC.with(|slot| slot.borrow().clone())
 }

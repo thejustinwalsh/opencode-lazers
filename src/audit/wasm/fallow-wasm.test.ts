@@ -70,10 +70,17 @@ describe("fallow.wasm", () => {
 
   test("module declares no filesystem, network or process import", () => {
     const imports = WebAssembly.Module.imports(new WebAssembly.Module(wasmBytes))
-    // The only import is wasm-bindgen's externref table initialiser, provided by the glue.
-    // No WASI, `env`, clock, random, filesystem, socket or process function is declared.
-    expect(imports).toEqual([
-      { module: "./fallow_bg.js", name: "__wbindgen_init_externref_table", kind: "function" },
+    // Declared today: wasm-bindgen's string reader (`__wbindgen_string_get`, for the string
+    // arrays a host passes in), its `throw` helper, and the externref table initialiser. All three
+    // are provided by the generated glue and touch no host capability. A WASI, `env`, clock,
+    // random, filesystem, socket or process function would not match.
+    expect(
+      imports.every((entry) => entry.module === "./fallow_bg.js" && entry.kind === "function"),
+    ).toBe(true)
+    expect(imports.map((entry) => entry.name.replace(/_[0-9a-f]{16}$/, "")).sort()).toEqual([
+      "__wbg___wbindgen_string_get",
+      "__wbg___wbindgen_throw",
+      "__wbindgen_init_externref_table",
     ])
   })
 })

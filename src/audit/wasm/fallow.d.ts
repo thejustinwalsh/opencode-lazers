@@ -1,10 +1,51 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export class Project {
+  free(): void
+  [Symbol.dispose](): void
+  /**
+   * Functions over the configured complexity thresholds in `paths` (all files
+   * when empty), worst first.
+   */
+  complexity(paths: string[]): string
+  /**
+   * Clone groups. With `changed` non-empty, only groups that touch a changed
+   * path are reported; every file stays in the matching corpus.
+   */
+  duplication(changed: string[], options_json: string): string
+  /**
+   * Number of analysable files after extension and ignore filtering.
+   */
+  fileCount(): number
+  /**
+   * `paths` are relative to `root` and parallel to `contents`. `config_name`
+   * selects the dialect by extension (`.json`, `.jsonc`, otherwise TOML).
+   */
+  constructor(
+    root: string,
+    paths: string[],
+    contents: string[],
+    config_name: string,
+    config_text: string,
+  )
+}
+
 /**
  * Per-function cyclomatic and cognitive complexity for one file, as JSON.
  */
 export function complexity(path: string, content: string): string
+
+/**
+ * Record a panic message before the abort so the host can read it after the
+ * resulting `RuntimeError: unreachable`. No host import is involved.
+ */
+export function install_panic_hook(): void
+
+/**
+ * The message of the last panic, or an empty string.
+ */
+export function lastPanic(): string
 
 /**
  * Parse one file and return a JSON summary of its imports and exports.
@@ -16,12 +57,38 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
   readonly memory: WebAssembly.Memory
   readonly __getrandom_v03_custom: (a: number, b: number) => number
+  readonly __wbg_project_free: (a: number, b: number) => void
   readonly complexity: (a: number, b: number, c: number, d: number) => [number, number]
+  readonly install_panic_hook: () => void
+  readonly lastPanic: () => [number, number]
   readonly parse: (a: number, b: number, c: number, d: number) => [number, number]
-  readonly __wbindgen_externrefs: WebAssembly.Table
+  readonly project_complexity: (a: number, b: number, c: number) => [number, number]
+  readonly project_duplication: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+  ) => [number, number]
+  readonly project_fileCount: (a: number) => number
+  readonly project_new: (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+    i: number,
+    j: number,
+  ) => number
   readonly __wbindgen_malloc: (a: number, b: number) => number
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number
   readonly __wbindgen_free: (a: number, b: number, c: number) => void
+  readonly __wbindgen_externrefs: WebAssembly.Table
+  readonly __externref_table_alloc: () => number
+  readonly __externref_drop_slice: (a: number, b: number) => void
   readonly __wbindgen_start: () => void
 }
 
