@@ -48,6 +48,12 @@ export type HostSession = {
   archived: boolean
   /** Current native foreground execution; absence is not a background-quiescence claim. */
   busy: boolean
+  /**
+   * `session.active()` listed this session but every other signal contradicts it
+   * (completed newest turn, empty inbox, no approvals, shells or children). `busy`
+   * is already false; the cause is for a one-time diagnostic.
+   */
+  staleActive?: { cause: string }
   /** A native inbox entry still awaits this worker. */
   pendingInput?: boolean
   /** Native permission/form requests remain open at this worker's assigned location. */

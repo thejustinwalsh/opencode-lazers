@@ -78,6 +78,8 @@ function fixture(
     architectPromptHook?: boolean
     wakeScheduler?: () => void
     now?: () => number
+    workerNoProgressWindowMs?: number
+    cancelIdleWaitMs?: number
     checkCommand?: string | ((name: string, path: string, root: string) => string)
     beforeCheck?: string
     combinedCheckCommand?: string
@@ -407,6 +409,12 @@ function fixture(
       ? {}
       : { verificationTimeoutDefaults: options.verificationTimeoutDefaults }),
     now: options.now,
+    ...(options.workerNoProgressWindowMs === undefined
+      ? {}
+      : { workerNoProgressWindowMs: options.workerNoProgressWindowMs }),
+    ...(options.cancelIdleWaitMs === undefined
+      ? {}
+      : { cancelIdleWaitMs: options.cancelIdleWaitMs }),
     requestTick: () =>
       verificationActivitiesForDatabase(repository.path).length
         ? Promise.resolve()
@@ -14073,4 +14081,94 @@ test("a persistent Architect source scan failure records once per distinct cause
   for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
   expect(failures().length).toBe(baseline + 2)
   expect(failures().at(-1)?.error).toBe("a different cause")
+})
+
+async function cancelRunningPlan(f: ReturnType<typeof fixture>, requestID: string) {
+  await f.runtime.command(
+    {
+      requestID,
+      planID: f.receipt.planID,
+      expectedVersion: f.store.plan(f.receipt.planID)!.version,
+      action: "cancel",
+    },
+    "owner",
+  )
+}
+
+test("a contradicted active entry counts as idle: cancel finishes and the diagnostic is recorded once", async () => {
+  const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  // The host lists the session active, but interrupt has nothing to stop and the
+  // last turn is complete: the native adapter reports it idle with a stale marker.
+  f.completeWorker(attempt.session_id, "interrupted")
+  f.sessions.get(attempt.session_id)!.staleActive = { cause: "completed-turn" }
+  await cancelRunningPlan(f, "cancel-stale-active")
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(countTransitions(f, f.receipt.planID, "HOST_ACTIVE_STALE")).toBe(1)
+})
+
+test("a turn with no progress past the window is interrupted exactly once", async () => {
+  let clock = 1_000_000
+  const f = fixture({
+    shared: true,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    now: () => clock,
+    workerNoProgressWindowMs: 60_000,
+  })
+  await runPlan(f)
+  const interrupts: string[] = []
+  f.host.interrupt = async (id) => {
+    interrupts.push(id)
+  }
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
+  await f.runtime.tick()
+  clock += 59_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([])
+  clock += 2_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+  clock += 600_000
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+  expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
+})
+
+test("cancelling a never-idle worker finishes within its bounded wait and preserves the worktree", async () => {
+  let clock = 1_000_000
+  const f = fixture({
+    shared: false,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    now: () => clock,
+    workerNoProgressWindowMs: 0,
+    cancelIdleWaitMs: 30_000,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  let interrupts = 0
+  f.host.interrupt = async () => {
+    interrupts++
+  }
+  await cancelRunningPlan(f, "cancel-never-idle")
+  await f.runtime.tick()
+  clock += 10_000
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+  clock += 21_000
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(interrupts).toBeGreaterThanOrEqual(2)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("cancelled")
+  expect(existsSync(attempt.workspace)).toBe(true)
+  expect(countTransitions(f, f.receipt.planID, "WORKER_CANCEL_WITHOUT_IDLE")).toBe(1)
 })
