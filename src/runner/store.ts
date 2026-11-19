@@ -717,6 +717,13 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_adoptions_active
         ON runner_adoptions(plan_id,state,created_at);
+      CREATE TABLE IF NOT EXISTS runner_takeovers (
+        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+        task_id TEXT NOT NULL, attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+        architect_session_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_takeovers_open ON runner_takeovers(plan_id,state);
       CREATE TABLE IF NOT EXISTS runner_adoption_checks (
         adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), phase TEXT NOT NULL,
         check_id TEXT NOT NULL, check_json TEXT NOT NULL, workspace TEXT NOT NULL,

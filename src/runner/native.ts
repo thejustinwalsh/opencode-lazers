@@ -1188,6 +1188,31 @@ export function nativeHost(
         }),
       )
     },
+    async steerWorker(input) {
+      const sessionID = Session.ID.make(input.sessionID)
+      const session = await Effect.runPromise(ctx.session.get({ sessionID }))
+      if (
+        session.id !== input.sessionID ||
+        !isWorkerAgent(session.agent) ||
+        session.projectID !== ctx.location.project.id ||
+        session.location.directory !== input.directory ||
+        session.metadata?.lazersAttemptID !== input.attemptID ||
+        session.time.archived !== undefined
+      )
+        throw new Error("Takeover notice target is not the owned worker attempt")
+      const client = await connectedClient()
+      await runNative(client, () =>
+        client.session.synthetic({
+          sessionID,
+          id: SessionMessage.ID.make(input.id),
+          text: input.text,
+          metadata: { lazersTakeoverNotice: input.id, lazersAttemptID: input.attemptID },
+          resume: false,
+          delivery: "steer",
+          description: "LAZERS takeover notice",
+        }),
+      )
+    },
     async updateInstruction(input) {
       const sessionID = Session.ID.make(input.sessionID)
       const session = await Effect.runPromise(ctx.session.get({ sessionID }))

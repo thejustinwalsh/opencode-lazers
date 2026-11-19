@@ -187,4 +187,15 @@ export interface RunnerHost {
     metadata?: OutcomeOwnership
   }): Promise<void>
   interrupt(id: string): Promise<void>
+  /**
+   * Steer one message into a running worker's current turn (consumed at its next step). Only the
+   * attempt's own worker session; never resumes an idle worker.
+   */
+  steerWorker?(input: {
+    sessionID: string
+    attemptID: string
+    directory: string
+    id: string
+    text: string
+  }): Promise<void>
 }

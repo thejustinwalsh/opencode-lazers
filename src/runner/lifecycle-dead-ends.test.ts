@@ -101,6 +101,13 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     architect: [],
     terminal: [],
   },
+  // The notice is sent or the worker is already stopped, the handoff is saved or its window
+  // passes, the worker goes quiet; a plan cancellation cancels an open takeover.
+  takeover: {
+    observable: ["notifying", "awaiting-handoff", "stopping", "taken-over"],
+    architect: ["cancelled"],
+    terminal: ["taken-over", "cancelled"],
+  },
 }
 
 type StateConfig = { on?: Record<string, unknown>; type?: string }

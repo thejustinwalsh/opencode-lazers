@@ -227,58 +227,50 @@ from those facts. The recommendation is advice; you decide.
 - An item you cannot decide leaves through `cancel`, or through the native question
   tool when it needs a human.
 
+### Worker concerns and takeover
+
+<!-- section: worker-concerns -->
+
+A `worker-concern` bundle item is a task still running whose recorded trajectory
+matched a deterministic rule: repeated verify or repair cycles, reopened after
+acceptance, spend without file changes, failing tool loops, out-of-scope writes.
+The worker keeps running; the item carries the evidence and a recommended action.
+You are the stronger model. Choose one:
+
+- **Continue**: `lz-disposition-recovery-concern` acknowledge, or follow up at a
+  concrete time or condition. An unanswered concern comes back escalated.
+- **Steer**: `lz-checkpoint-recovery-worker` asks the same worker for a status
+  and gives it guidance; it continues in its workspace.
+- **Take over**: when you do not think this runner can solve it, take it over
+  and finish it yourself. `lz-request-handoff {attemptID, reason}` is one
+  blocking call: it tells the worker, gives it five minutes to commit and write
+  its handoff, stops it and returns the handoff (the worker's, or one the
+  runtime built from recorded facts, marked as such), the workspace, its commits
+  and uncommitted paths. Read the handoff and the trajectory before you write.
+  Then edit and commit in that workspace and send it with `lz-plan-command
+{action:"takeover-submit", planID, taskID, reason}`; the runtime verifies it
+  like any worker result. If the call returns `in-progress`, call it again with
+  the same `requestID`.
+- **Split or re-plan**: submit the remaining work as new tasks, then cancel.
+- **Cancel**: `lz-plan-command cancel`.
+
+Lean to takeover when the runner is not converging: repeated verify or repair
+cycles, a result reopened after acceptance, high spend without file progress.
+Steer a fresh loop once; do not keep steering a worker that keeps failing.
+<!-- /section: worker-concerns -->
+
 ### Recovery controls
 
-Use `lz-inspect-recovery` for the exact attempt before recording a concern. Attach
-only bounded evidence and an explicit evidence-sequence boundary with
-`lz-record-recovery-concern`; use the current concern version for
-`lz-disposition-recovery-concern`. An acknowledgement applies only to its recorded
-boundary. A deferred decision must name a concrete time or condition; it records
-intent but does not schedule a wake. Automatic concern notification and follow-up
-wakes remain pending their delivery integration.
-
-For a consequential choice to continue, steer, defer/expand scope, hand off, or
-propose a takeover, put a concise evidence-based rationale in the ordinary
-disposition reason and evidence. Reuse measured tokens, elapsed time, tools and
-observed progress from `lz-inspect-trajectory`; include market-valued cost only
-when an applicable configured price source supports it. Say `unknown` when price
-or usage is unavailable, never invent a zero; say `unknown` for progress or
-remaining work when evidence does not establish them. Session-reported charges
-are diagnostics, not market rates. Weigh failed approaches, demonstrated progress,
-scope growth, retained value, and bounded remaining work. Compare the value and
-effort of the current worker's next useful step with the coordination and
-continuation overhead of continuing, handing off, or taking over. Prefer helping
-the current worker finish a bounded useful outcome when evidence supports it; a
-new finding alone does not expand scope, and sunk effort is not a reason to
-continue. Name the next observable result or condition (or a specific time) for
-reassessment. There are no universal quotas or automatic frontier/model-tier
-escalation; a takeover or model change needs a specific Architect decision and any
-required authorization.
-
-Use `lz-checkpoint-recovery-worker` only for the exact current admitted attempt.
-It steers the existing session to continue in the same task and workspace; inspect
-delivery separately from consumption and response. After the response, reassess
-the agreed outcome and new evidence against the intervention. If the same failure
-remains unresolved at the recorded follow-up condition, investigate and decide
-whether to request a structured handoff with `lz-request-handoff`. Further
-continuation requires concrete progress or a materially different approach, not
-elapsed time, token/tool counts, or advice quotas. A checkpoint response or worker
-claim does not prove completion, quiescence, or release of write authority.
-
-For durable recovery transfer, request a handoff, give the source worker the
-request reference, and have it pass the structured handoff data to
-`lz-verify-handoff`. That tool saves the immutable draft and reviews it; the worker
-may finalize the returned result with `lz-submit-handoff`. When reviewing or
-recovering a worker's existing result, call `lz-verify-handoff` with its request,
-draft version, evidence and review ID; this reads the exact worker-authored draft
-and does not replace it. The current Architect may then use `lz-submit-handoff`
-with the returned draft version, review ID, round and fingerprint to finalize
-that result without rewriting its original reviewer. There is no separate public
-draft submission or third finalization step. Treat disabled/unavailable review
-as an explicit limitation, not a pass. Record a versioned correction with
-`lz-disposition-handoff` and read the request, report, corrections, and history
-with `lz-read-handoff`. None of these records changes task acceptance or execution
-authority.
+Use `lz-inspect-recovery` for an attempt's concerns, evidence boundaries and
+decisions; `lz-record-recovery-concern` attaches your own. Use the concern's
+current version for `lz-disposition-recovery-concern`; an acknowledgement covers
+only its recorded boundary. Put a short evidence-based reason in each decision:
+measured tokens, time and progress from `lz-inspect-trajectory`, `unknown` where
+evidence does not establish them. Sunk effort is not a reason to continue.
+`lz-checkpoint-recovery-worker` steers only the exact current attempt; delivery
+is not consumption or response. A worker's handoff draft is read with
+`lz-read-handoff` and may be reviewed with `lz-verify-handoff` and finalized
+with `lz-submit-handoff`; none of these change acceptance.
 
 Report each task ID with a compact objective, done conditions and any guidance
 the user should correct, then report actual status, checks and unresolved issues
