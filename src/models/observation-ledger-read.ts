@@ -426,41 +426,13 @@ function fingerprintAndSize(value: Record<string, unknown>) {
 }
 
 // F-S10-3: sequence pagination must seek the rowid, not re-sort the project's
-// dedupe index on every page. Keep invalid JSON in the pass so counting it does
-// not require another full payload scan.
+// dedupe index on every page. The payload is projected in JS, not in SQL: building the same
+// objects with json_object/json_each cost about a second on the live 111k-row table and was
+// parsed again here; a plain JSON.parse of the stored text takes a fraction of that.
 const DECISION_PROGRESS_SQL = `
   SELECT r.seq,r.project_id,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
          r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.dedupe_key,
-         CASE WHEN json_valid(r.payload) THEN json_object(
-           'measurementBasis',json_extract(r.payload,'$.measurementBasis'),
-           'usage',CASE WHEN json_type(r.payload,'$.usage')='object'
-             THEN json(json_extract(r.payload,'$.usage')) ELSE NULL END,
-           'route',CASE WHEN json_type(r.payload,'$.route')='object'
-             THEN json(json_extract(r.payload,'$.route')) ELSE NULL END,
-            'routeEvidence',CASE WHEN json_type(r.payload,'$.routeEvidence')='object'
-              THEN json(json_extract(r.payload,'$.routeEvidence')) ELSE NULL END,
-            'observations',json(COALESCE((
-              SELECT json_group_array(json_object(
-               'source',json_extract(o.value,'$.source'),
-               'eventType',json_extract(o.value,'$.eventType'),
-               'at',json_extract(o.value,'$.at'),
-               'messageID',json_extract(o.value,'$.messageID'),
-               'eventID',json_extract(o.value,'$.eventID'),
-               'route',CASE WHEN json_type(o.value,'$.route')='object'
-                 THEN json(json_extract(o.value,'$.route')) ELSE NULL END,
-                'routeEvidence',CASE WHEN json_type(o.value,'$.routeEvidence')='object'
-                  THEN json(json_extract(o.value,'$.routeEvidence')) ELSE NULL END
-              ))
-              FROM json_each(r.payload,'$.observations') o
-              WHERE json_extract(o.value,'$.source') IN ('native-event','recovery')
-                AND json_type(o.value,'$.eventType')='text'
-             ),'[]')),
-           'timing',CASE
-             WHEN json_type(r.payload,'$.timing.endpoints.completedAt')='object'
-             THEN json_object('endpoints',json_object('completedAt',
-               json(json_extract(r.payload,'$.timing.endpoints.completedAt'))))
-             ELSE NULL END
-         ) ELSE NULL END AS payload
+         r.payload
   FROM runner_progress r NOT INDEXED
   JOIN runner_plans p ON p.id=r.plan_id
   JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
@@ -483,7 +455,6 @@ function readDecisionProgress(
   const digest = createHash("sha256")
   const notes: string[] = []
   const stats = privacyStats()
-  let unreadablePayloads = 0
   let unreadableSourceLineage = 0
   let unreadableEventLineage = 0
   let afterSequence = 0
@@ -491,21 +462,21 @@ function readDecisionProgress(
     signal?.throwIfAborted()
     const limit = DECISION_PROGRESS_BATCH_SIZE
     const batch = db
-      .query<
-        Omit<RawProgress, "payload"> & { payload: string | null },
-        [string, string, number, number]
-      >(DECISION_PROGRESS_SQL)
+      .query<RawProgress, [string, string, number, number]>(DECISION_PROGRESS_SQL)
       .all(projectDirectory, projectDirectory, afterSequence, limit)
     for (const row of batch) {
       afterSequence = row.seq
-      if (row.payload === null) {
+      let payload: JsonObject
+      try {
+        // Valid JSON that is not an object projects as an object with nothing in it.
+        payload = object(JSON.parse(row.payload)) ?? {}
+      } catch {
         invalidCount++
         continue
       }
-      if (!parseObject(row.payload)) unreadablePayloads++
       if (!parseArray(row.sources_json)) unreadableSourceLineage++
       if (!parseArray(row.event_ids_json)) unreadableEventLineage++
-      const fact = decisionProgressFact({ ...row, payload: row.payload }, stats)
+      const fact = decisionProgressFact(row, payload, stats)
       if (!fact) continue
       facts.push(fact)
       // Length-prefix each projected row so the digest is independent of page
@@ -516,8 +487,6 @@ function readDecisionProgress(
     }
     if (batch.length < limit) break
   }
-  if (unreadablePayloads)
-    notes.push(`${unreadablePayloads} retained decision progress facts have unreadable payloads.`)
   if (unreadableSourceLineage)
     notes.push(`${unreadableSourceLineage} retained decision facts have unreadable source lineage.`)
   if (unreadableEventLineage)
@@ -1852,9 +1821,11 @@ function taskAccountingAttempt(
   }
 }
 
-function decisionProgressFact(row: RawProgress, stats: ReturnType<typeof privacyStats>) {
-  const payload = parseObject(row.payload)
-  if (!payload) return null
+function decisionProgressFact(
+  row: RawProgress,
+  payload: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
   const usageValue = object(payload.usage)
   const usage = usageValue
     ? {
