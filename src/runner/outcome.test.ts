@@ -40,11 +40,16 @@ test("unresolved blockers request human input when a decision is needed", () => 
 })
 
 test("an accepted plan lists its Fallow findings with the tasks to send them back to", () => {
-  const finding = (file: string, ids: object) => ({
-    check: "duplication",
+  const finding = (file: string, ids: object, extra: object = {}) => ({
+    id: `duplication:code-duplication:${file}`,
+    rule: "code-duplication",
+    class: "duplication",
+    severity: "warn",
+    attribution: "introduced",
     file,
     line: 4,
-    subject: "40 lines",
+    message: "40 lines repeat x.ts:1-40",
+    ...extra,
     ...ids,
   })
   const text = outcomeText(
@@ -53,14 +58,25 @@ test("an accepted plan lists its Fallow findings with the tasks to send them bac
       artifact: "commit",
       evidence: [],
       fallow: {
-        introduced: [finding("a.ts", { taskIDs: ["t1", "t2"] }), finding("b.ts", { taskID: "t3" })],
-        concerns: [{ check: "cycle", file: "c.ts", line: 1, subject: "2 files" }],
+        package: {
+          verdict: "warn",
+          base: "base",
+          config: { source: "repo", classesNotChecked: [] },
+          thresholds: { cyclomatic: 20, cognitive: 15 },
+          findings: [
+            finding("a.ts", { taskIDs: ["t1", "t2"] }),
+            finding("b.ts", { taskID: "t3" }),
+            finding("c.ts", {}, { rule: "circular-dependency", class: "architecture" }),
+          ],
+          summary: { errors: 0, warnings: 3, inherited: 0 },
+          timings: { elapsedMs: 5 },
+        },
       },
     }),
   )
-  expect(text).toContain("Fallow findings on the combined plan (3):")
-  expect(text).toContain("- duplication a.ts:4 40 lines (tasks t1, t2)")
-  expect(text).toContain("- duplication b.ts:4 40 lines (task t3)")
-  expect(text).toContain("- cycle c.ts:1 2 files\n")
+  expect(text).toContain("Fallow audit of the combined plan, verdict warn (3 findings):")
+  expect(text).toContain("- warn code-duplication a.ts:4 40 lines repeat x.ts:1-40 (tasks t1, t2)")
+  expect(text).toContain("- warn code-duplication b.ts:4 40 lines repeat x.ts:1-40 (task t3)")
+  expect(text).toContain("- warn circular-dependency c.ts:4")
   expect(outcomeText('{"status":"accepted","artifact":"x"}')).not.toContain("Fallow")
 })

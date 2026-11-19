@@ -33,6 +33,7 @@ mod coverage_v8;
 mod css_analytics;
 mod cyclomatic_policy;
 mod derived_sections;
+pub use derived_sections::set_skip_duplication;
 pub(crate) mod diagnostics;
 mod execute;
 mod file_lines;

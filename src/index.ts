@@ -79,7 +79,9 @@ export default Plugin.define({
         registerNativeInteraction(ctx).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:TaskTools", () =>
-        registerTaskTools(ctx, repository, projectIndex, core.verificationDefaults),
+        registerTaskTools(ctx, repository, projectIndex, core.verificationDefaults, () =>
+          core.runtime.fallowGate(),
+        ),
       )
       yield* sectionEffect("setup:ModelTools", () => registerModelTools(ctx, repository))
       yield* sectionEffect("setup:ModelsServer", () =>
@@ -89,7 +91,11 @@ export default Plugin.define({
       )
       const agentRoutes = agentRouteReader(repository)
       yield* sectionEffect("setup:Architect", () => registerArchitect(ctx, agentRoutes))
-      yield* sectionEffect("setup:AuditTools", () => registerAuditTools(ctx, repository))
+      yield* sectionEffect("setup:AuditTools", () =>
+        registerAuditTools(ctx, repository, (sessionID) =>
+          core.runtime.attemptBaseForSession(sessionID),
+        ),
+      )
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
         Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
       )

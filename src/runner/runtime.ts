@@ -49,7 +49,7 @@ import type {
   VerificationTimeoutTarget,
   VerificationTimeoutDefaults,
 } from "./verification-timeout.ts"
-import type { TaskProposal } from "../task.ts"
+import { LEGACY_FALLOW_CHECK_ID, type TaskProposal } from "../task.ts"
 import {
   artifactExists,
   ArtifactScopeViolation,
@@ -81,11 +81,17 @@ import {
   defaultFallowReview,
   fallowCheckReceipt,
   fallowOutcome,
+  isFallowEffectKind,
   fallowReasonText,
   unavailableFallowResult,
   type FallowReview,
 } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
+import { fallowConfigGate, hasStoredFallowConfig } from "../audit/fallow-gate.ts"
+import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
+import { needsRepair } from "../audit/audit-findings.ts"
+import type { FallowDisposition } from "../audit/contract.ts"
+import { dispositionsAfterRepair } from "../audit/fallow-dispositions.ts"
 import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attribution.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
@@ -451,8 +457,11 @@ type PlanFallowContext = {
 }
 
 /** The `task-accepted` outcome's Fallow field: only when something remains to report. */
-function fallowAcceptance(review: FallowReviewResult | undefined) {
-  const fallow = fallowOutcome(review)
+function fallowAcceptance(
+  review: FallowReviewResult | undefined,
+  dispositions?: FallowDisposition[],
+) {
+  const fallow = fallowOutcome(review, dispositions)
   return fallow ? { fallow } : {}
 }
 
@@ -5442,7 +5451,31 @@ export class TaskRuntime {
    * Architect `run`. Base-commit and model-route preflight stay in admission.
    * A plan is saved as a draft only when the Architect explicitly asks.
    */
+  /** The base the audit of the attempt running in `sessionID` measures from; none for other sessions. */
+  attemptBaseForSession(sessionID: string): string | undefined {
+    const row = this.store.read((db) =>
+      db
+        .query<{ plan_id: string; id: string }, [string]>(
+          "SELECT plan_id,id FROM runner_attempts WHERE session_id=?",
+        )
+        .get(sessionID),
+    )
+    const attempt = row && this.store.attempts(row.plan_id).find((a) => a.id === row.id)
+    return attempt ? this.taskChainBase(attempt) : undefined
+  }
+
+  /** The refusal to queue work while the review is on and the project has no Fallow config. */
+  fallowGate() {
+    return fallowConfigGate({
+      enabled: this.fallowReviewEnabled,
+      directory: this.directory,
+      repository: this.store.repository,
+    })
+  }
+
   async submitPlan(input: unknown, owner: string) {
+    const refused = await this.fallowGate()
+    if (refused) return refused
     const receipt = this.store.submit(input, owner, this.verificationTimeoutDefaults)
     const plan = this.store.plan(receipt.planID)
     if (!plan || plan.state !== "draft" || explicitDraft(plan)) return receipt
@@ -5487,6 +5520,8 @@ export class TaskRuntime {
         return { status: "existing", planID: plan.id, state: this.store.execution(task.id)!.state }
       }
     } else {
+      const refused = await this.fallowGate()
+      if (refused) throw new FallowConfigRequiredError(refused)
       if (task.status !== "submitted") throw new Error("Task cannot be started")
       if (task.provenance.startingRevision.kind !== "git")
         throw new Error("Task has no committed starting revision")
@@ -7072,6 +7107,35 @@ export class TaskRuntime {
     })
   }
 
+  /**
+   * Plans held at dispatch because the project had no Fallow config resume on their own once one
+   * exists (the same running transition the Architect's `run` makes), so a queued task never
+   * dead-ends on a rule that arrived after it.
+   */
+  private async releaseFallowConfigHolds(fence: number) {
+    const held = this.store.atomic((db) =>
+      db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM runner_plans WHERE project_directory=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
+        )
+        .all(this.directory),
+    )
+    if (held.length === 0 || (await this.fallowGate())) return
+    for (const { id } of held)
+      this.store.fenced(this.owner, fence, (db) => {
+        const changed = db
+          .query(
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
+          )
+          .run(id).changes
+        if (changed === 1)
+          this.store.record(id, null, "RECONCILE_REQUESTED", {
+            caller: "fallow-config",
+            verificationEpoch: this.store.plan(id)!.version,
+          })
+      })
+  }
+
   private async runTick() {
     this.slowRecorded.clear()
     this.running = true
@@ -7193,6 +7257,7 @@ export class TaskRuntime {
           true,
         )
       }
+      await sectionAsync("tick:fallowConfigHolds", () => this.releaseFallowConfigHolds(fence))
       const waits: Parameters<TaskRuntime["requestQueueReview"]>[0] = []
       let closeoutDelivered = false
       for (const candidate of section("tick:runnablePlans", () =>
@@ -8741,6 +8806,17 @@ export class TaskRuntime {
   }
 
   private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
+    // Work queued before the project had a config (or before this rule) must not dead-end: the
+    // plan's Architect gets the same actionable refusal through the hold path, and the tick
+    // releases the hold once a config exists.
+    const refused =
+      !this.fallowReviewEnabled || hasStoredFallowConfig(this.store.repository)
+        ? undefined
+        : await this.fallowGate()
+    if (refused) {
+      this.hold(plan, `FALLOW_CONFIG_REQUIRED: ${refused.missing} ${refused.guidance}`)
+      return
+    }
     const task = this.store.repository.get(node.task_id)!
     const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
     const first = attempts[0]
@@ -10834,7 +10910,7 @@ export class TaskRuntime {
           attemptID: attempt.id,
           artifact: artifact.commit,
           evidence: receipts.map((r) => r.id),
-          ...fallowAcceptance(review),
+          ...fallowAcceptance(review, this.fallowDispositions(attempt, review)),
         },
         true,
       )
@@ -10845,6 +10921,31 @@ export class TaskRuntime {
     } catch {
       // Progress facts never grant or revoke acceptance.
     }
+  }
+
+  /**
+   * After the one repair: what became of each finding the first audit reported, read from the
+   * audit that just ran. Absent on a first attempt, or when either audit was unavailable.
+   */
+  private fallowDispositions(
+    attempt: AttemptRow,
+    review: FallowReviewResult | undefined,
+  ): FallowDisposition[] | undefined {
+    if (!review?.package || !JSON.parse(attempt.policy).repairAttempt) return undefined
+    const previous = this.store
+      .attempts(attempt.plan_id)
+      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
+      .at(-1)
+    if (!previous) return undefined
+    const first = this.store.read((db) =>
+      db
+        .query<{ body: string }, [string, string, string]>(
+          "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' AND json_extract(body,'$.id') IN (?,?) ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(previous.id, FALLOW_CHECK_ID, LEGACY_FALLOW_CHECK_ID),
+    )
+    const before = first ? (JSON.parse(first.body) as CheckReceipt).fallow?.package : undefined
+    return before ? dispositionsAfterRepair(before, review.package) : undefined
   }
 
   private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
@@ -10923,12 +11024,12 @@ export class TaskRuntime {
     if (review?.status === "unavailable")
       this.store.recordOnce(plan.id, attempt.task_id, "FALLOW_UNAVAILABLE", {
         attemptID: attempt.id,
-        reason: review.reason ?? "Fallow review unavailable",
+        reason: review.reason ?? "Fallow audit unavailable",
       })
-    const introduced = review?.introduced.length ?? 0
+    const reviewed = review?.package
     const reasons = failures.map(checkFailureReason)
-    if (introduced > 0 && (failures.length > 0 || this.repairAvailable(attempt)))
-      reasons.push(fallowReasonText(introduced))
+    if (reviewed && needsRepair(reviewed) && (failures.length > 0 || this.repairAvailable(attempt)))
+      reasons.push(fallowReasonText(reviewed))
     if (!reasons.length) return false
     this.failAttempt(plan, attempt, reasons.join("; "))
     return true
@@ -10953,7 +11054,11 @@ export class TaskRuntime {
       .effects(plan.id)
       .toReversed()
       .find((e) => {
-        if (e.attempt_id !== attempt.id || e.kind !== FALLOW_EFFECT_KIND || effectSuperseded(e))
+        if (
+          e.attempt_id !== attempt.id ||
+          !isFallowEffectKind(e.kind, FALLOW_EFFECT_KIND) ||
+          effectSuperseded(e)
+        )
           return false
         const payload = JSON.parse(e.payload) as Record<string, unknown>
         return (
@@ -10969,7 +11074,7 @@ export class TaskRuntime {
       const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
       if (activity?.state === "running" || activity?.state === "completed") return "pending"
       // The review never holds a task: a lost run is an unavailable review.
-      return unavailableFallowResult("Fallow review did not complete")
+      return unavailableFallowResult("Fallow audit did not complete")
     }
     const receiptPath = join(
       this.dataDirectory,
@@ -11072,7 +11177,8 @@ export class TaskRuntime {
       .effects(plan.id)
       .toReversed()
       .find((e) => {
-        if (e.kind !== FALLOW_PLAN_EFFECT_KIND || effectSuperseded(e)) return false
+        if (!isFallowEffectKind(e.kind, FALLOW_PLAN_EFFECT_KIND) || effectSuperseded(e))
+          return false
         const payload = JSON.parse(e.payload) as Record<string, unknown>
         return (
           payload.artifact === ctx.artifact &&
@@ -11088,7 +11194,7 @@ export class TaskRuntime {
       if (activity?.state === "running" || activity?.state === "completed") return "pending"
       return this.recordPlanFallowOutcome(
         plan,
-        unavailableFallowResult("Fallow plan review did not complete"),
+        unavailableFallowResult("Fallow plan audit did not complete"),
       )
     }
     const receiptPath = join(
@@ -11135,7 +11241,7 @@ export class TaskRuntime {
   ): FallowReviewResult | undefined {
     if (review?.status === "unavailable")
       this.store.recordOnce(plan.id, null, "FALLOW_UNAVAILABLE", {
-        reason: review.reason ?? "Fallow review unavailable",
+        reason: review.reason ?? "Fallow audit unavailable",
       })
     return review
   }

@@ -369,14 +369,14 @@ maximum 25, `offset`, `nextOffset`); no source fragments; no raw report.
 
 | Tool                  | Fallow source                       | Input                                                                                             | Output                                                                                                                             | For                             |
 | --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `lz-fallow-check`     | The review function itself          | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ clean: boolean, introduced: Finding[], concerns: Finding[], thresholds }`                                                       | Implementor, Auditor, Architect |
+| `lz-fallow-audit`     | The review function itself          | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ clean: boolean, introduced: Finding[], concerns: Finding[], thresholds }`                                                       | Implementor, Auditor, Architect |
 | `lz-fallow-dupes`     | `dupes` / `detectDuplication`       | `{ paths?, mode?, minTokens?, minLines?, limit, offset }`                                         | `{ groups: [{ id, lines, tokens, instances: [{ file, startLine, endLine }], moreInstances }], total, duplicationPct, nextOffset }` | Auditor, Architect              |
 | `lz-fallow-health`    | `health` / `computeComplexity`      | `{ paths?, sort: "cognitive" \| "cyclomatic" \| "lines", limit, offset }`                         | `{ functions: [{ file, line, name, cyclomatic, cognitive, lines, exceeded }], total, thresholds, nextOffset }`                     | Auditor, Architect              |
 | `lz-fallow-dead-code` | `dead-code` / `detectDeadCode`      | `{ paths?, kinds?: ("file" \| "export" \| "type" \| "dependency" \| "member")[], limit, offset }` | `{ findings: [{ id, kind, file, line, name }], total, nextOffset }`                                                                | Auditor, Architect              |
 | `lz-fallow-report`    | All five sections, durable (exists) | `{ taskID?, phase? }` (drop `threads`: one thread in WASM)                                        | Unchanged `AuditScanOutput`                                                                                                        | Auditor, Architect              |
 
 ```ts
-// Finding, as returned by lz-fallow-check and written into the review receipt
+// Finding, as returned by lz-fallow-audit and written into the review receipt
 type Finding = {
   id: string // stable within the run; cite it in lz-record-audit-finding
   check: "duplication" | "complexity" | "dead-code" | "cycle"
@@ -405,7 +405,7 @@ Not exposed, and why:
 | Fallow capability                                                                           | Reason                                                                                                    |
 | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `fix`                                                                                       | Writes files outside the worker's own edit path. The binding does not expose it either                    |
-| `audit` as a tool                                                                           | `lz-fallow-check` is the audit, with LAZERS attribution                                                   |
+| `audit` as a tool                                                                           | `lz-fallow-audit` is the audit, with LAZERS attribution                                                   |
 | `trace`, `inspect`, `guard`                                                                 | Not in the library surface; lives in the CLI. Add `lz-fallow-trace` only if Phase 4 finds a library entry |
 | Hotspots, ownership, churn                                                                  | Need Git history inside the engine. Omitted, not shown as unknown                                         |
 | `similar-code`                                                                              | Needs a local model companion (`design/auditor.md`)                                                       |
@@ -479,8 +479,8 @@ Thresholds come from the effective Fallow config, else Fallow's defaults
 | Lifecycle point                 | Fallow check                                                                                                                          | Trigger                                      | Outcome                                                                    | What the agent is told                                                                                                           |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Plan submitted                  | None                                                                                                                                  |                                              |                                                                            | Nothing. Admission stays base-commit and route preflight                                                                         |
-| Worker dispatched               | None                                                                                                                                  |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
-| Worker mid-task                 | Complexity and duplication on its changed files                                                                                       | Agent tool `lz-fallow-check`, optional       | Read-only preview of what the runtime's review will report                 | Findings and a `next` instruction                                                                                                |
+| Worker dispatched               | None                                                                                                                                  |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-audit`                           |
+| Worker mid-task                 | Complexity and duplication on its changed files                                                                                       | Agent tool `lz-fallow-audit`, optional       | Read-only preview of what the runtime's review will report                 | Findings and a `next` instruction                                                                                                |
 | Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                              | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
 | Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, alongside the authored checks           | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
 | Task accepted                   | Concerns left after the repair attempt; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
@@ -517,7 +517,7 @@ Where an agent tool is worth having:
 - **Auditor**, exploring: which clone families and complex functions sit in
   the assigned boundary, and what the dead-code candidates are.
 - **Architect**, scoping: sizing a cleanup task and choosing its write scope.
-- **Any worker**, with `lz-fallow-check`: seeing the findings before it
+- **Any worker**, with `lz-fallow-audit`: seeing the findings before it
   finishes.
 
 ### Attribution and baselines
@@ -789,7 +789,7 @@ files), so it is about as slow as a full run; a token cache across calls would r
    `scripts/build-server.ts` and `scripts/release-package.ts`.
 2. `lz-fallow-report` runs on WASM. Remove `@fallow-cli/fallow-node` and its
    companions from `package.json`.
-3. Add `lz-fallow-check`, `lz-fallow-dupes`, `lz-fallow-health`,
+3. Add `lz-fallow-audit`, `lz-fallow-dupes`, `lz-fallow-health`,
    `lz-fallow-dead-code` with permissions per role in `src/runner/roles.ts`.
 
 Accept when: existing `src/audit/*.test.ts` pass on WASM; a release archive
@@ -1386,14 +1386,59 @@ Decided on 2026-11-19 and folded into the design:
 | Pin                     | Latest tag, `v3.43.2`                                                                                                                                                                |
 | Clean first             | Before dogfooding: zero dead-code findings or each dispositioned, the import cycle removed, no clone group over 20 lines outside tests, the three functions over cognitive 300 split |
 
+Decided later on 2026-11-19 (owner), replacing the earlier "dead code off without a config" rule and
+the open question "No config: dead code off until a config exists, or report it with a caveat?":
+
+| Topic                   | Decision                                                                                                                                                                                                                                                                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No config               | There is no "defaults" mode. Every project needs a Fallow config (repo file first and alone, else the LAZERS project config). Without one, nothing is silently skipped: submission is refused                                                                                                                    |
+| Gate                    | With `fallowReview: "on"`, `lz-submit-task` and `lz-submit-plan` return the typed `FALLOW_CONFIG_REQUIRED` result (project, what is missing, next tools, `nothingQueued: true`) before anything is stored; `startTask` throws the same code. `fallowReview: "off"` has no gate. A validation result, not a state |
+| Work already queued     | The first dispatch holds the plan with reason `FALLOW_CONFIG_REQUIRED: ...` (existing hold path to the Architect, family `fallow-config-required`, actions run/reconcile/cancel); the tick releases the hold through the same `running` transition once a config exists                                          |
+| What the review is      | `fallow audit` itself, in the WebAssembly module (the engine's own attribution, tiers, test-file exemption, diff-risk rules, dependency scoping). The runtime runs it as `verify:fallow-audit` after the mechanical fix and the authored checks                                                                  |
+| Result                  | One typed package (`FallowPackage`) from the engine report through receipt, repair prompt, Architect notice and `lz-fallow-audit`; the engine JSON is validated strictly, so a re-pinned engine that adds a field, enum value or finding list fails a test                                                       |
+| Warnings                | Go to the worker in the one repair (consider-fixing, with a one-line reason if left). Inherited findings are context. After the repair the audit runs again and each finding is fixed, remaining or suppressed (reason read only from a Fallow suppression comment), shown to the Architect                      |
+| Duplication severity    | The engine's: an introduced clone group warns (the audit fails only on a duplication threshold). The earlier LAZERS rule that introduced duplication fails the review is dropped                                                                                                                                 |
+| Dead code at task level | Introduced dead code, dependency and cycle findings are audit findings per task, like the official audit. Risk: a task may add an export that a later task in the plan consumes, so a per-task dead-code error can ask a worker to delete it; the Architect order and the one-repair limit bound it              |
+| Config authoring        | `lz-fallow-config` modes `suggest` (engine `fallow list` data plus package.json, scans) and `dry-run` (whole repository, unsaved candidate), `lz-fallow-config-set` (reason required, who/when stored, append-only). Guidance in `src/architect.md`                                                              |
+
 Still open:
 
-1. **No config.** Dead code off until a config exists (planned), or report it
-   with a caveat?
-2. **Plan-level findings.** When the combined check finds a clone that two
+1. **Plan-level findings.** When the combined check finds a clone that two
    tasks each added, the plan outcome names the task that added each
    instance. Should the runtime send it back to that task's worker itself, or
    leave that to the Architect (planned)?
+
+## The review is `fallow audit` (2026-11-19)
+
+The engine's own audit runs in WebAssembly. Vendored patch 0012 gives `AuditOptions` a
+`base_root` (a tree of the base commit the host materialises with `git archive`, read-only
+second preopen) instead of `git worktree add`; implements `BaseFileReader` on WASI with
+`git cat-file blob` host calls (without it the diff-risk rules and the docs-only fast path
+silently did nothing); shares one rayon pool per process on WASI (a second
+`use_current_thread` pool fails, and an audit resolves several contexts); adds a
+`skip_duplication` switch for health. Everything else (changed files by three-dot diff plus
+working tree, attribution, tiers, test-file exemption, estimated CRAP, dependency scoping,
+hunk-scoped duplication demotion, diff-risk rules) is the engine's, unmodified.
+
+| Official audit rule                            | Where it runs                                        | Test (`src/audit/review.test.ts` unless noted)  |
+| ---------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------- |
+| Changed files only, base compare               | engine `changed_files` + `AuditBackend::run_base`    | introduced, inherited, uncommitted working tree |
+| Introduced / worsened / inherited              | engine `classify_complexity_attribution_against_all` | inherited unchanged; worsened in tier           |
+| Tier change makes a finding introduced         | engine                                               | tier crossing 28 to 45                          |
+| Test-file complexity never fails               | engine `gate_exemption: test-file`                   | test-file exemption                             |
+| Estimated-CRAP-only warns                      | engine `effective_severity`                          | `engine-audit.test.ts` fixture                  |
+| Diff-risk rules                                | engine `diff_risk`                                   | skipped test, new suppression                   |
+| Dependencies only when package.json is touched | engine `scope_dependency_findings`                   | dependency scoping                              |
+| Duplication only from added hunks              | engine `demote_preexisting_dupe_introductions`       | hunk-scoped duplication                         |
+| Verdict pass/warn/fail                         | engine                                               | package verdict                                 |
+| Unknown field or enum value in the report      | LAZERS: strict zod schema                            | `engine-audit.test.ts`                          |
+
+Measured on this repository (Apple silicon, Bun 1.4.4), review of a 49-file change, fresh
+worktree, process peak RSS: previous review 3.4 s cold, 1.6 s warm, 684 MB; the audit 9.7 s
+cold, 6.7 s warm, 999 MB. It analyses the whole project twice (head and base) with the
+CSS analysis the audit includes. Whole-repository dead code, duplication and health in one
+run: 4.5 s against 7.8 s as three runs (linear memory peak 156 MB against 154 MB: the
+runs were never concurrent, so the saving is time, not peak).
 
 ## Follow-ups noticed, not part of this plan
 

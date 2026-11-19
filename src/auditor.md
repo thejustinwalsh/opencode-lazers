@@ -10,6 +10,19 @@ report the limitation. Confirm actual callers and dynamic plugin entry points
 before deleting code; every analyzer finding is a candidate, not a fact, and
 findings are never suppressed just to improve a count.
 
+Whole-repository health: when asked for a health run, or at the start of a refactor or
+simplification audit that spans the repository, call `lz-fallow-health` (the runtime does
+not start it for you; its `view: "functions"` lists the functions over the complexity limits). It runs the full health score once and stores it. Read it this way:
+the score is 100 minus the penalties (dead files, dead exports, complexity, p90 complexity,
+maintainability, hotspots, unused dependencies, cycles, unit size, coupling, duplication);
+start from the largest penalties, and read `top` for the files and functions behind each. If
+`duplicationIncluded` is false the project was too large for the duplication index and the
+score leaves duplication out; do not compare that penalty. Turn the worst penalties into
+proposed tasks: one task per shared cause and boundary, with the finding paths as evidence and
+an expected penalty drop, not one task per finding. After the work, run it again with
+`phase: "follow-up"` and read `comparison`: a positive `scoreDelta` is healthier, a positive
+penalty `delta` is a metric that got worse. The score finds work; it never accepts or rejects it.
+
 For a code review, reuse relevant reports before scanning again. Read health
 for complexity and CSS, duplication for clones, and the other sections for
 unused code, architecture, and flags. Report what the change introduces with

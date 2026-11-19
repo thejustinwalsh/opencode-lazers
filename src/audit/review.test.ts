@@ -1,236 +1,219 @@
 import { afterEach, expect, test } from "bun:test"
-import { access, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { TaskRepository } from "../storage.ts"
-import { fallowGuidance, fallowReview, type FallowReviewResult } from "./review.ts"
 import type { FallowAnalyzer } from "./analyzer.ts"
+import type { FallowFinding } from "./contract.ts"
+import { renderRepair } from "./fallow-render.ts"
+import { fallowReview } from "./review.ts"
+import { fixture, git, nested, type Fixture } from "./review-fixtures.ts"
+import { setFallowThreads } from "./wasm-analyzer.ts"
 
-const cleanups: (() => void)[] = []
+const open: Fixture[] = []
 afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup()
+  for (const f of open.splice(0)) f.cleanup()
 })
-
-function temp(prefix: string) {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
-  cleanups.push(() => rmSync(directory, { recursive: true, force: true }))
-  return directory
+async function setup(input: Parameters<typeof fixture>[0]) {
+  const f = await fixture(input)
+  open.push(f)
+  return f
 }
+const review = (f: Fixture) =>
+  fallowReview({ workspace: f.dir, baseCommit: f.base, artifact: f.head, repository: f.repository })
+const live = (pkg: { findings: FallowFinding[] }) =>
+  pkg.findings.filter((x) => x.attribution !== "inherited")
+const INDEX = `import { deep } from "./nested"\nconsole.log(deep(1))\n`
 
-async function run(cwd: string, ...args: string[]) {
-  const proc = Bun.spawn(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" })
-  const out = await new Response(proc.stdout).text()
-  expect(await proc.exited).toBe(0)
-  return out.trim()
-}
-
-async function commit(dir: string, message: string) {
-  await run(dir, "add", "-A")
-  await run(
-    dir,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "-c",
-    "commit.gpgsign=false",
-    "commit",
-    "-q",
-    "-m",
-    message,
-  )
-  return run(dir, "rev-parse", "HEAD")
-}
-
-function repository(directory: string) {
-  mkdirSync(join(directory, "data"), { recursive: true })
-  const r = new TaskRepository(join(directory, "data", "tasks.sqlite"), directory)
-  cleanups.push(() => r.close())
-  return r
-}
-
-function deeplyNested(name: string): string {
-  const depth = 9
-  let body = "return 1\n"
-  for (let i = depth; i >= 1; i--) body = `if (a > ${i}) {\n${body}}\n`
-  return `export function ${name}(a: number): number {\n${body}return 0\n}\n`
-}
-
-async function baseRepo() {
-  const dir = temp("lz-fallow-review-")
-  await run(dir, "init", "-q", "-b", "main")
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture" }))
-  return dir
-}
-
-test("a commit that adds a ~40-line duplicated block is anchored in the new file, naming the original", async () => {
-  const dir = await baseRepo()
-  const lines = Array.from({ length: 40 }, (_, i) => `console.log("line ${i}")`).join("\n")
-  writeFileSync(join(dir, "original.ts"), `export function a() {\n${lines}\n}\n`)
-  const base = await commit(dir, "base")
-  writeFileSync(join(dir, "copy.ts"), `export function b() {\n${lines}\n}\n`)
-  const artifact = await commit(dir, "copy the block into a new file")
-  const result = await fallowReview({
-    workspace: dir,
-    baseCommit: base,
-    artifact,
-    repository: repository(dir),
+test("an introduced function over the limits is an error; the repair text says fix these", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "src/index.ts": INDEX, "src/nested.ts": nested("deep", 9) },
   })
-  expect(result.status).toBe("findings")
-  const dup = result.introduced.find((f) => f.check === "duplication")
-  expect(dup).toBeDefined()
-  // Anchored in the file the task changed, not the pre-existing instance.
-  expect(dup!.file).toBe("copy.ts")
-  expect(dup!.others).toHaveLength(1)
-  expect(dup!.others![0]!.file).toBe("original.ts")
-  expect(dup!.measured).toBeUndefined()
-  expect(dup!.limit).toBeUndefined()
-  expect(dup!.subject).toMatch(/^\d+ lines$/)
-}, 30_000)
-
-test("a commit that adds a deeply nested function is introduced complexity", async () => {
-  const dir = await baseRepo()
-  const base = await commit(dir, "base")
-  writeFileSync(join(dir, "nested.ts"), deeplyNested("deep"))
-  const artifact = await commit(dir, "nest it")
-  const result = await fallowReview({
-    workspace: dir,
-    baseCommit: base,
-    artifact,
-    repository: repository(dir),
+  const result = await review(f)
+  const pkg = result.package!
+  expect(pkg.verdict).toBe("fail")
+  const finding = live(pkg).find((x) => x.class === "complexity")!
+  expect(finding).toMatchObject({
+    severity: "error",
+    attribution: "introduced",
+    file: "src/nested.ts",
+    symbol: "deep",
   })
-  expect(result.status).toBe("findings")
-  const complexity = result.introduced.find((f) => f.check === "complexity" && f.subject === "deep")
-  expect(complexity).toBeDefined()
-  expect(complexity!.status).toBe("introduced")
-  expect(complexity!.measures!.length).toBeGreaterThan(0)
-  expect(complexity!.measures![0]!.metric).toBe("cognitive")
-}, 30_000)
+  expect(finding.measures?.[0]).toMatchObject({ metric: "cognitive", value: 45, threshold: 15 })
+  expect(renderRepair(pkg)).toContain("Errors, fix these:")
+}, 60_000)
 
-test("editing a file without touching its old over-limit function reports nothing", async () => {
-  const dir = await baseRepo()
-  writeFileSync(
-    join(dir, "mixed.ts"),
-    `${deeplyNested("deep")}\nexport function trivial() {\n  return "old"\n}\n`,
-  )
-  const base = await commit(dir, "base")
-  writeFileSync(
-    join(dir, "mixed.ts"),
-    `${deeplyNested("deep")}\nexport function trivial() {\n  return "new"\n}\n`,
-  )
-  const artifact = await commit(dir, "edit trivial only")
-  const result = await fallowReview({
-    workspace: dir,
-    baseCommit: base,
-    artifact,
-    repository: repository(dir),
+test("an over-limit function the change did not touch is inherited context, not a finding", async () => {
+  const f = await setup({
+    base: {
+      "src/index.ts": INDEX,
+      "src/nested.ts": `${nested("deep", 9)}\nexport function trivial() {\n  return "old"\n}\n`,
+    },
+    head: {
+      "src/nested.ts": `${nested("deep", 9)}\nexport function trivial() {\n  return "new"\n}\n`,
+    },
   })
+  const result = await review(f)
   expect(result.status).toBe("clean")
-  expect(result.introduced).toEqual([])
-  expect(result.concerns).toEqual([])
-}, 30_000)
+  expect(result.package!.summary).toMatchObject({ errors: 0, warnings: 0 })
+  expect(result.package!.summary.inherited).toBeGreaterThan(0)
+  expect(result.package!.findings.every((x) => x.attribution === "inherited")).toBe(true)
+}, 60_000)
 
-test("a broken analyzer yields unavailable, never a throw", async () => {
-  const dir = await baseRepo()
-  const base = await commit(dir, "base")
-  writeFileSync(join(dir, "a.ts"), "export const a = 1\n")
-  const artifact = await commit(dir, "add a")
-  const broken: FallowAnalyzer = {
-    complexity: () => Promise.reject(new Error("boom")),
-    duplication: () => Promise.reject(new Error("boom")),
-    deadCode: () => Promise.reject(new Error("boom")),
-    cycles: () => Promise.reject(new Error("boom")),
-  }
-  const result: FallowReviewResult = await fallowReview({
-    workspace: dir,
-    baseCommit: base,
-    artifact,
-    repository: repository(dir),
-    analyzer: broken,
+test("growth inside the same severity tier is a worsened warning; crossing a tier is introduced", async () => {
+  const f = await setup({
+    base: { "src/index.ts": `${INDEX}`, "src/nested.ts": nested("deep", 6) },
+    head: { "src/nested.ts": nested("deep", 6, 2) },
   })
-  expect(result.status).toBe("unavailable")
-  expect(result.reason).toContain("boom")
-}, 30_000)
+  const worsened = live((await review(f)).package!).find((x) => x.symbol === "deep")!
+  expect(worsened).toMatchObject({ attribution: "worsened", severity: "warn" })
+  expect(worsened.worsenedMetrics?.some((m) => m.metric === "cognitive")).toBe(true)
 
-test("the repository has no .fallow directory after a review", async () => {
-  const dir = await baseRepo()
-  const base = await commit(dir, "base")
-  writeFileSync(join(dir, "a.ts"), "export const a = 1\n")
-  const artifact = await commit(dir, "add a")
-  await fallowReview({ workspace: dir, baseCommit: base, artifact, repository: repository(dir) })
-  await expect(
-    new Promise((resolve, reject) =>
-      access(join(dir, ".fallow"), (err) => (err ? reject(err) : resolve(undefined))),
-    ),
-  ).rejects.toBeTruthy()
-}, 30_000)
-
-test("no changed analysable files is clean", async () => {
-  const dir = await baseRepo()
-  const base = await commit(dir, "base")
-  writeFileSync(join(dir, "README.md"), "docs only")
-  const artifact = await commit(dir, "docs")
-  const result = await fallowReview({
-    workspace: dir,
-    baseCommit: base,
-    artifact,
-    repository: repository(dir),
+  const tier = await setup({
+    base: { "src/index.ts": INDEX, "src/nested.ts": nested("deep", 6) },
+    head: { "src/nested.ts": nested("deep", 7) },
   })
-  expect(result).toEqual({
-    status: "clean",
-    introduced: [],
-    concerns: [],
-    thresholds: { cyclomatic: 20, cognitive: 15 },
-    configSource: "defaults",
+  expect(live((await review(tier)).package!).find((x) => x.symbol === "deep")).toMatchObject({
+    attribution: "introduced",
+    severity: "error",
   })
-})
+}, 60_000)
 
-test("fallowGuidance is deterministic, bounded, and matches the fixed template", () => {
-  const result: FallowReviewResult = {
-    status: "findings",
-    introduced: [
-      {
-        id: "complexity:src/audit/probe-clone.ts:43:probeClassify",
-        check: "complexity",
-        status: "introduced",
-        file: "src/audit/probe-clone.ts",
-        line: 43,
-        subject: "probeClassify",
-        measured: 201,
-        limit: 15,
-        measures: [
-          { metric: "cognitive", measured: 201, limit: 15 },
-          { metric: "cyclomatic", measured: 58, limit: 20 },
-        ],
-        fix: "Split it into smaller named functions.",
-      },
-      {
-        id: "duplication:src/audit/probe-clone.ts:1",
-        check: "duplication",
-        status: "introduced",
-        file: "src/audit/probe-clone.ts",
-        line: 1,
-        endLine: 42,
-        subject: "42 lines",
-        others: [{ file: "src/audit/attribution.ts", line: 73, endLine: 114 }],
-        fix: "Keep one implementation and import it instead of copying it.",
-      },
-    ],
-    concerns: [],
-    thresholds: { cyclomatic: 20, cognitive: 15 },
-    configSource: "defaults",
-  }
-  const guidance = fallowGuidance(result)
-  expect(guidance).toBe(
-    [
-      "Fallow review: 2 findings introduced by this task. Older findings are not counted.",
-      "1. complexity src/audit/probe-clone.ts:43 `probeClassify` cognitive 201 (limit 15), cyclomatic 58 (limit 20).",
-      "   Split it into smaller named functions.",
-      "2. duplication src/audit/probe-clone.ts:1-42 repeats src/audit/attribution.ts:73-114 (42 lines).",
-      "   Keep one implementation and import it instead of copying it.",
-      "Fix these inside your write scope. Do not add fallow-ignore comments.",
-    ].join("\n"),
+test("complexity in a test file never fails: warn, exempt", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "test/big.test.ts": nested("big", 9) },
+  })
+  const finding = live((await review(f)).package!).find(
+    (x) => x.class === "complexity" && x.file === "test/big.test.ts",
+  )!
+  expect(finding).toMatchObject({ severity: "warn", gateExemption: "test-file" })
+}, 60_000)
+
+test("a skipped test and a new suppression comment are diff-risk warnings", async () => {
+  const f = await setup({
+    base: {
+      "src/index.ts": "console.log(1)\n",
+      "src/a.test.ts": `test("a", () => { expect(1).toBe(1) })\n`,
+    },
+    head: {
+      "src/a.test.ts": `test.skip("a", () => { expect(1).toBe(1) })\n// eslint-disable-next-line no-console\ntest("b", () => {})\n`,
+    },
+  })
+  const risk = live((await review(f)).package!).filter((x) => x.class === "diff-risk")
+  expect(risk.map((x) => x.rule).sort()).toEqual(["added-suppression", "weakened-tests:skip-only"])
+  expect(risk.every((x) => x.severity === "warn" && x.suppress?.requiresReason)).toBe(true)
+}, 60_000)
+
+test("dependency findings appear only when the change touches the package.json that declares them", async () => {
+  const declared = JSON.stringify({ name: "fixture", dependencies: { "never-used": "1.0.0" } })
+  const touched = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "package.json": declared },
+  })
+  expect(
+    live((await review(touched)).package!).find((x) => x.class === "dependency"),
+  ).toMatchObject({ rule: "unused-dependency", attribution: "introduced", severity: "error" })
+
+  const untouched = await setup({
+    base: { "src/index.ts": "console.log(1)\n", "package.json": declared },
+    head: { "src/index.ts": "console.log(2)\n" },
+  })
+  expect(live((await review(untouched)).package!).filter((x) => x.class === "dependency")).toEqual(
+    [],
   )
-  expect(fallowGuidance(result)).toBe(guidance)
-  expect(guidance.length).toBeLessThanOrEqual(1500)
-})
+}, 60_000)
+
+const CLONE = (name: string) => `export function ${name}() {
+  const out: number[] = []
+  for (let i = 0; i < 10; i++) { out.push(i * 2); out.push(i * 3); out.push(i * 4) }
+  const total = out.reduce((s, x) => s + x, 0)
+  console.log("total", total, out.length, out[0], out[1], out[2], out[3])
+  return total + out.length + out[0]! + out[1]! + out[2]! + out[3]!
+}
+`
+
+test("duplication counts only when a hunk of the change wrote it", async () => {
+  const added = await setup({
+    base: { "src/index.ts": INDEX.replace("nested", "a"), "src/a.ts": CLONE("a") },
+    head: { "src/b.ts": CLONE("b") },
+  })
+  const clone = live((await review(added)).package!).find((x) => x.class === "duplication")!
+  expect(clone).toMatchObject({ file: "src/b.ts", severity: "warn", attribution: "introduced" })
+  expect(clone.relatedLocations?.[0]?.file).toBe("src/a.ts")
+
+  const preexisting = await setup({
+    base: {
+      "src/index.ts": "console.log(1)\n",
+      "src/a.ts": `${CLONE("a")}export const x = 1\n`,
+      "src/b.ts": CLONE("b"),
+    },
+    head: { "src/a.ts": `${CLONE("a")}export const x = 2\n` },
+  })
+  expect(
+    live((await review(preexisting)).package!).filter((x) => x.class === "duplication"),
+  ).toEqual([])
+}, 60_000)
+
+test("uncommitted edits in the working tree are audited, as lz-fallow-audit needs", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "src/index.ts": INDEX, "src/nested.ts": nested("deep", 9) },
+    uncommitted: true,
+  })
+  expect(live((await review(f)).package!).some((x) => x.symbol === "deep")).toBe(true)
+}, 60_000)
+
+test("a project with no Fallow config is unavailable with a typed reason", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "src/index.ts": "console.log(2)\n" },
+    config: null,
+  })
+  const result = await review(f)
+  expect(result.status).toBe("unavailable")
+  expect(result.reason).toContain("FALLOW_CONFIG_MISSING")
+}, 60_000)
+
+test("a broken analyzer, or a report that does not fit the schema, is unavailable, never a throw", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "src/index.ts": "console.log(2)\n" },
+  })
+  const stub = (audit: () => Promise<unknown>) =>
+    ({
+      audit,
+      complexity: () => Promise.reject(new Error("unused")),
+      duplication: () => Promise.reject(new Error("unused")),
+      deadCode: () => Promise.reject(new Error("unused")),
+      cycles: () => Promise.reject(new Error("unused")),
+      projectInfo: () => Promise.reject(new Error("unused")),
+    }) as FallowAnalyzer
+  const run = (analyzer: FallowAnalyzer) =>
+    fallowReview({
+      workspace: f.dir,
+      baseCommit: f.base,
+      artifact: f.head,
+      repository: f.repository,
+      analyzer,
+    })
+  expect((await run(stub(() => Promise.reject(new Error("boom"))))).reason).toContain("boom")
+  expect((await run(stub(async () => ({ kind: "audit", surprise: true })))).reason).toContain(
+    "analyzer-schema",
+  )
+}, 60_000)
+
+test("the result is identical with threads on and off, and the review leaves the tree clean", async () => {
+  const f = await setup({
+    base: { "src/index.ts": "console.log(1)\n" },
+    head: { "src/index.ts": INDEX, "src/nested.ts": nested("deep", 9) },
+  })
+  setFallowThreads("on")
+  const on = await review(f)
+  setFallowThreads("off")
+  const off = await review(f)
+  setFallowThreads("on")
+  const strip = (r: typeof on) => ({ ...r.package!, timings: undefined })
+  expect(strip(off)).toEqual(strip(on))
+  expect(await git(f.dir, "status", "--porcelain")).toBe("")
+  expect(existsSync(join(f.dir, ".fallow"))).toBe(true)
+}, 120_000)

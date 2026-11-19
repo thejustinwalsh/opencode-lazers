@@ -800,6 +800,11 @@ pub struct AuditOptions {
     pub runtime_coverage: Option<PathBuf>,
     /// Minimum recorded invocations for a code path to count as hot.
     pub min_invocations_hot: u64,
+    /// A tree of the base commit that the caller already holds. The audit
+    /// analyses it as the base snapshot instead of creating a temporary Git
+    /// worktree, which an embedding without processes cannot do. The caller
+    /// owns the directory and removes it.
+    pub base_root: Option<PathBuf>,
 }
 
 /// Options for bare combined analysis through the programmatic API.

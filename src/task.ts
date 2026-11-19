@@ -2,8 +2,11 @@ import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
-/** Reserved for the runtime's own Fallow review receipt; authored checks cannot use it. */
-export const FALLOW_CHECK_ID = "lazers-fallow"
+/** Reserved for the runtime's own `fallow audit` receipt; authored checks cannot use it. */
+export const FALLOW_CHECK_ID = "fallow-audit"
+/** The name before the rename. Still reserved, and still recognised on history recorded under it. */
+export const LEGACY_FALLOW_CHECK_ID = "lazers-fallow"
+export const FALLOW_CHECK_IDS: readonly string[] = [FALLOW_CHECK_ID, LEGACY_FALLOW_CHECK_ID]
 const identifier = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const texts = z.array(text).max(100)
 // Relative paths/globs only. These describe scope; execution must enforce filesystem boundaries.
@@ -157,11 +160,11 @@ export const TaskProposalSchema = z
       })
     }
     proposal.verification.forEach((item, index) => {
-      if (item.id === FALLOW_CHECK_ID)
+      if (FALLOW_CHECK_IDS.includes(item.id))
         ctx.addIssue({
           code: "custom",
           path: ["verification", index, "id"],
-          message: `Verification ID ${FALLOW_CHECK_ID} is reserved for the runtime's Fallow review`,
+          message: `Verification ID ${item.id} is reserved for the runtime's Fallow audit`,
         })
       if (
         item.inactivityTimeoutMs !== undefined &&

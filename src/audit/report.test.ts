@@ -1,3 +1,4 @@
+import { setFallowConfig } from "./config.ts"
 import { expect, test } from "bun:test"
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
@@ -9,6 +10,7 @@ import { fallowReport } from "./report.ts"
 test("bundled native Fallow saves all static reports and leaves source untouched", async () => {
   const root = await mkdtemp(join(tmpdir(), "lz-fallow-"))
   const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
+  setFallowConfig(repository, {}, { sessionID: "t", agent: "architect" }, "fixture")
   const history = new AuditHistory(repository)
   try {
     const source = "export const used = 1; export const unused = 2;\n"

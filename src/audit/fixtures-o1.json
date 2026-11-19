@@ -1,0 +1,356 @@
+{
+  "kind": "audit",
+  "schema_version": 14,
+  "version": "3.43.2",
+  "command": "audit",
+  "verdict": "fail",
+  "changed_files_count": 4,
+  "base_ref": "a95f07890e1de8959fc13f25603b1e122edf5bf9",
+  "head_sha": "90ca10b",
+  "elapsed_ms": 348,
+  "summary": {
+    "dead_code_issues": 4,
+    "dead_code_has_errors": true,
+    "complexity_findings": 1,
+    "max_cyclomatic": 10,
+    "duplication_clone_groups": 0
+  },
+  "attribution": {
+    "gate": "new-only",
+    "worsened": "warn",
+    "dead_code_introduced": 2,
+    "dead_code_inherited": 2,
+    "complexity_introduced": 1,
+    "complexity_inherited": 0,
+    "complexity_worsened": 0,
+    "duplication_introduced": 0,
+    "duplication_inherited": 0,
+    "styling_introduced": 0,
+    "styling_inherited": 0,
+    "duplication_demoted": 0,
+    "diff_risk_introduced": 2
+  },
+  "dead_code": {
+    "schema_version": 11,
+    "version": "3.43.2",
+    "elapsed_ms": 52,
+    "total_issues": 4,
+    "entry_points": {
+      "total": 1,
+      "sources": {
+        "default_index": 1
+      }
+    },
+    "summary": {
+      "total_issues": 4,
+      "unused_files": 1,
+      "unused_exports": 2,
+      "unused_types": 0,
+      "private_type_leaks": 0,
+      "deprecated_exports_in_use": 0,
+      "unused_dependencies": 0,
+      "unused_enum_members": 0,
+      "unused_class_members": 0,
+      "unused_namespace_members": 0,
+      "unused_store_members": 0,
+      "unprovided_injects": 0,
+      "unrendered_components": 0,
+      "unused_component_props": 0,
+      "absent_component_props": 0,
+      "unused_component_emits": 0,
+      "unused_component_inputs": 0,
+      "unused_component_outputs": 0,
+      "unused_svelte_events": 0,
+      "unused_effect_layers": 0,
+      "unused_tagged_errors": 0,
+      "unproduced_catch_tags": 0,
+      "unused_server_actions": 0,
+      "unused_load_data_keys": 0,
+      "unresolved_imports": 0,
+      "unlisted_dependencies": 1,
+      "unlisted_binaries": 0,
+      "duplicate_exports": 0,
+      "duplicate_export_aliases": 0,
+      "type_only_dependencies": 0,
+      "test_only_dependencies": 0,
+      "dev_dependencies_in_production": 0,
+      "circular_dependencies": 0,
+      "re_export_cycles": 0,
+      "package_cycles": 0,
+      "boundary_violations": 0,
+      "boundary_coverage_violations": 0,
+      "boundary_call_violations": 0,
+      "policy_violations": 0,
+      "stale_suppressions": 0,
+      "unused_catalog_entries": 0,
+      "empty_catalog_groups": 0,
+      "unresolved_catalog_references": 0,
+      "unused_dependency_overrides": 0,
+      "misconfigured_dependency_overrides": 0,
+      "invalid_client_exports": 0,
+      "mixed_client_server_barrels": 0,
+      "misplaced_directives": 0,
+      "route_collisions": 0,
+      "dynamic_segment_name_conflicts": 0
+    },
+    "unused_files": [
+      {
+        "path": "src/old.test.ts",
+        "finding_id": "dc1:unused-file:637e8939aaeea986",
+        "actions": [
+          {
+            "type": "delete-file",
+            "auto_fixable": false,
+            "description": "Delete this file",
+            "note": "File deletion may remove runtime functionality not visible to static analysis"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress with a file-level comment at the top of the file",
+            "comment": "// fallow-ignore-file unused-file"
+          }
+        ],
+        "introduced": false,
+        "effective_severity": "error"
+      }
+    ],
+    "unused_exports": [
+      {
+        "path": "src/lib.ts",
+        "export_name": "oldUnused",
+        "is_type_only": false,
+        "line": 2,
+        "col": 16,
+        "span_start": 65,
+        "is_re_export": false,
+        "finding_id": "dc1:unused-export:8e5618abd72ebcce",
+        "actions": [
+          {
+            "type": "remove-export",
+            "auto_fixable": true,
+            "description": "Remove the unused export from the public API"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the line",
+            "comment": "// fallow-ignore-next-line unused-export"
+          }
+        ],
+        "introduced": false,
+        "effective_severity": "error"
+      },
+      {
+        "path": "src/lib.ts",
+        "export_name": "newUnused",
+        "is_type_only": false,
+        "line": 3,
+        "col": 16,
+        "span_start": 106,
+        "is_re_export": false,
+        "finding_id": "dc1:unused-export:755f678010ea392b",
+        "actions": [
+          {
+            "type": "remove-export",
+            "auto_fixable": true,
+            "description": "Remove the unused export from the public API"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the line",
+            "comment": "// fallow-ignore-next-line unused-export"
+          }
+        ],
+        "introduced": true,
+        "effective_severity": "error"
+      }
+    ],
+    "unused_types": [],
+    "private_type_leaks": [],
+    "deprecated_exports_in_use": [],
+    "unused_dependencies": [],
+    "unused_dev_dependencies": [],
+    "unused_optional_dependencies": [],
+    "unused_enum_members": [],
+    "unused_class_members": [],
+    "unresolved_imports": [],
+    "unlisted_dependencies": [
+      {
+        "package_name": "lodash",
+        "imported_from": [
+          {
+            "path": "src/index.ts",
+            "line": 3,
+            "col": 7
+          }
+        ],
+        "finding_id": "dc1:unlisted-dependency:cb4ff5698430e9f5",
+        "actions": [
+          {
+            "type": "install-dependency",
+            "auto_fixable": false,
+            "description": "Add this package to dependencies in package.json",
+            "note": "Verify this package should be a direct dependency before adding"
+          },
+          {
+            "type": "add-to-config",
+            "auto_fixable": false,
+            "description": "Add \"lodash\" to ignoreDependencies in fallow config",
+            "config_key": "ignoreDependencies",
+            "value": "lodash",
+            "value_schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json#/properties/ignoreDependencies/items"
+          }
+        ],
+        "introduced": true,
+        "effective_severity": "error"
+      }
+    ],
+    "unlisted_binaries": [],
+    "duplicate_exports": [],
+    "type_only_dependencies": [],
+    "test_only_dependencies": [],
+    "dev_dependencies_in_production": [],
+    "circular_dependencies": [],
+    "re_export_cycles": [],
+    "package_cycles": [],
+    "boundary_violations": [],
+    "boundary_coverage_violations": [],
+    "boundary_call_violations": [],
+    "policy_violations": [],
+    "stale_suppressions": [],
+    "unused_catalog_entries": [],
+    "empty_catalog_groups": [],
+    "unresolved_catalog_references": [],
+    "unused_dependency_overrides": [],
+    "misconfigured_dependency_overrides": [],
+    "invalid_client_exports": [],
+    "mixed_client_server_barrels": [],
+    "misplaced_directives": [],
+    "route_collisions": [],
+    "dynamic_segment_name_conflicts": []
+  },
+  "duplication": {
+    "clone_groups": [],
+    "clone_families": [],
+    "stats": {
+      "total_files": 1,
+      "files_with_clones": 0,
+      "total_lines": 4,
+      "duplicated_lines": 0,
+      "total_tokens": 89,
+      "duplicated_tokens": 0,
+      "clone_groups": 0,
+      "clone_families": 0,
+      "clone_instances": 0,
+      "duplication_percentage": 0.0
+    }
+  },
+  "complexity": {
+    "findings": [
+      {
+        "path": "src/nested.ts",
+        "name": "deep",
+        "line": 1,
+        "col": 7,
+        "cyclomatic": 10,
+        "cognitive": 45,
+        "line_count": 4,
+        "param_count": 1,
+        "exceeded": "cognitive_crap",
+        "severity": "critical",
+        "effective_severity": "error",
+        "crap": 110.0,
+        "coverage_tier": "none",
+        "coverage_source": "estimated",
+        "actions": [
+          {
+            "type": "add-tests",
+            "auto_fixable": false,
+            "description": "Add test coverage for `deep` to lower its CRAP score (coverage reduces risk even without refactoring)",
+            "note": "CRAP = CC^2 * (1 - cov/100)^3 + CC; higher coverage is the fastest way to bring CRAP under threshold"
+          },
+          {
+            "type": "refactor-function",
+            "auto_fixable": false,
+            "description": "Refactor `deep` to reduce complexity (extract helper functions, simplify branching)",
+            "note": "Split into smaller functions with single responsibilities. Splitting relocates branching, so it lowers this function's score without lowering the total"
+          },
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress with an inline comment above the function declaration",
+            "comment": "// fallow-ignore-next-line complexity",
+            "placement": "above-function-declaration"
+          }
+        ],
+        "introduced": true,
+        "attribution": "introduced"
+      }
+    ]
+  },
+  "diff_risk": {
+    "findings": [
+      {
+        "rule": "weakened-tests",
+        "kind": "skip-only",
+        "path": "src/old.test.ts",
+        "line": 2,
+        "message": "The change adds `test.skip`, so other tests or this test do not run",
+        "evidence": "test.skip",
+        "severity": "warn",
+        "introduced": true,
+        "actions": [
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress this `weakened-tests` finding with a comment above the line",
+            "comment": "// fallow-ignore-next-line weakened-tests"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress `weakened-tests` for the whole file",
+            "comment": "// fallow-ignore-file weakened-tests"
+          }
+        ]
+      },
+      {
+        "rule": "added-suppression",
+        "path": "src/old.test.ts",
+        "line": 3,
+        "message": "The change adds a `eslint-disable` suppression comment",
+        "evidence": "eslint-disable",
+        "severity": "warn",
+        "introduced": true,
+        "actions": [
+          {
+            "type": "suppress-line",
+            "auto_fixable": false,
+            "description": "Suppress this `added-suppression` finding with a comment above the line",
+            "comment": "// fallow-ignore-next-line added-suppression"
+          },
+          {
+            "type": "suppress-file",
+            "auto_fixable": false,
+            "description": "Suppress `added-suppression` for the whole file",
+            "comment": "// fallow-ignore-file added-suppression"
+          }
+        ]
+      }
+    ]
+  },
+  "next_steps": [
+    {
+      "id": "trace-unused-export",
+      "command": "fallow dead-code --trace src/lib.ts:newUnused",
+      "reason": "verify an export is truly unused before deleting"
+    },
+    {
+      "id": "complexity-breakdown",
+      "command": "fallow health --complexity-breakdown",
+      "reason": "see per-decision-point contributions for a hotspot"
+    }
+  ]
+}

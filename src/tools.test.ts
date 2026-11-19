@@ -69,6 +69,7 @@ afterEach(() => {
 async function setup(
   deny = false,
   timeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number },
+  fallowGate?: () => Promise<unknown>,
 ) {
   const directory = mkdtempSync(join(tmpdir(), "lazers-tool-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), process.cwd())
@@ -113,6 +114,7 @@ async function setup(
         repository,
         undefined,
         timeoutDefaults,
+        fallowGate,
       ),
     ),
   )
@@ -1130,4 +1132,33 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
   } finally {
     other.close()
   }
+})
+
+test("lz-submit-task is refused with the typed FALLOW_CONFIG_REQUIRED result while the project has no Fallow config", async () => {
+  let configured = false
+  const gate = async () =>
+    configured
+      ? undefined
+      : {
+          status: "refused",
+          code: "FALLOW_CONFIG_REQUIRED",
+          project: "/repo",
+          nothingQueued: true,
+          next: ["lz-fallow-config (mode suggest)"],
+        }
+  const { tools } = await setup(false, undefined, gate)
+  const submit = tools.get("lz-submit-task")!
+  const refused = JSON.parse(
+    String((await Effect.runPromise(submit.execute(keyedProposal(), context))).content),
+  )
+  expect(refused).toMatchObject({
+    status: "refused",
+    code: "FALLOW_CONFIG_REQUIRED",
+    nothingQueued: true,
+  })
+  configured = true
+  const accepted = JSON.parse(
+    String((await Effect.runPromise(submit.execute(keyedProposal(), context))).content),
+  )
+  expect(accepted.status).toBe("submitted")
 })
