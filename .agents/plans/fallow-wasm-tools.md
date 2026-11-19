@@ -1118,8 +1118,6 @@ touch the changed files; the focus path was removed from patch 0005.
   interrupted without error"): local inference failed. Not investigated.
 - The repair worker asked which of the task and the review wins even when the
   task said to keep the flagged code and finish without asking.
-- `verify()` is cognitive 80 and `runCommandOnce` 104; eight more functions
-  are over cognitive 100.
 - Reproducible build of `fallow.wasm` from a second checkout is unconfirmed.
 - `src/submission.test.ts` has two failing tests that predate this work.
 - The plan-review implementer removed a clone from its own new file after a
@@ -1127,3 +1125,45 @@ touch the changed files; the focus path was removed from patch 0005.
   that clone shape made the two analyzers disagree is not explained.
 - The plan-level review found nothing live; cross-task clones, dead code and
   cycles are covered by tests only.
+
+## Complexity pass, 2026-11-19
+
+Measured with the WebAssembly analyzer (`defaultFallowAnalyzer.complexity`, every function at
+cognitive 60 or more, no `.fallow/` written). Branch `refactor/complexity-pass`; every change
+is behaviour-preserving: helpers cut along the existing phases, with each transaction
+boundary, effect-journal write, await order and XState transition unchanged.
+
+| Function                                 | File (before)                                        | Cognitive before | After    |
+| ---------------------------------------- | ---------------------------------------------------- | ---------------- | -------- |
+| `messageEvents`                          | `src/trajectory/read.ts:283`                         | 185              | below 20 |
+| `recordNativeEvent`                      | `src/progress/recorder.ts:1864`                      | 177              | below 20 |
+| `reconcileEffect`                        | `src/runner/runtime.ts:11106`                        | 134              | below 20 |
+| `runRetainedVerificationChecks`          | `src/runner/retained-verification-execution.ts:608`  | 107              | below 20 |
+| `inspectTrajectory`                      | `src/trajectory/read.ts:866`                         | 107              | below 20 |
+| `runCommandOnce`                         | `src/runner/runtime.ts:3565`                         | 104              | 20       |
+| `reconcileMessageIn`                     | `src/progress/recorder.ts:2393`                      | 103              | below 20 |
+| `reconcileTerminalRetainedVerifications` | `src/runner/retained-verification-execution.ts:1736` | 98               | below 20 |
+| `verify`                                 | `src/runner/runtime.ts:10119`                        | 80               | below 20 |
+
+The largest new helper is 23 (`readAttemptSessions`; `nativeStepFact` and
+`reconcileAssistantStepIn` are 22). `runCommandOnce` is the one orchestrator left at 20.
+The duplication check on each changed file reports no new clone group; `runtime.ts` went
+from 18 groups to 12 and `retained-verification-execution.ts` from 4 to 2.
+
+Still over cognitive 60 after the pass, by owner:
+
+| Function            | File                                        | Cognitive | Status                                     |
+| ------------------- | ------------------------------------------- | --------- | ------------------------------------------ |
+| `buildSnapshot`     | `src/tasks/scheduling-read.ts:247`          | 121       | skipped: GUI pane thread owns `src/tasks/` |
+| `readCapture`       | `src/models/observation-ledger-read.ts:506` | 119       | skipped: `src/models/`                     |
+| `refresh`           | `src/tasks/panel-state.ts:448`              | 119       | skipped: `src/tasks/`                      |
+| `calculateScenario` | `src/models/market-range.ts:1009`           | 110       | skipped: `src/models/`                     |
+| `refresh`           | `src/radar/state.ts:113`                    | 106       | skipped: `src/radar/`                      |
+| `buildSnapshotData` | `src/models/decision-read.ts:951`           | 102       | skipped: `src/models/`                     |
+| `advanceAttempt`    | `src/runner/runtime.ts:9753`                | 97        | under the 100 line; not touched            |
+| `cancelWorkers`     | `src/runner/runtime.ts:7660`                | 90        | under the 100 line; not touched            |
+| `session`           | `src/runner/native.ts:473`                  | 85        | under the 100 line; not touched            |
+| `cleanupWorktrees`  | `src/runner/worktree-cleanup.ts:536`        | 85        | under the 100 line; not touched            |
+
+Next candidates in `src/runner/`: `advanceAttempt` (cyclomatic 101), `cancelWorkers`, the 82-point
+arrow at `runtime.ts:6112`, `step` at `runtime.ts:7337`.

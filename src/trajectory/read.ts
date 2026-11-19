@@ -2,7 +2,14 @@ import { sameProject } from "../project-key.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
-import type { AttemptRow, EffectRow, NodeRow, PlanRow, RunnerStore } from "../runner/store.ts"
+import type {
+  AttemptRow,
+  EffectRow,
+  NodeRow,
+  PlanRow,
+  ProgressRow,
+  RunnerStore,
+} from "../runner/store.ts"
 import { PlanInput } from "../runner/schema.ts"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { InspectTrajectoryInput } from "./schema.ts"
@@ -231,15 +238,7 @@ function safeSpec(task: TaskSpec, stats: PrivacyStats) {
       revision: item.revision === null ? null : safeText(item.revision, stats),
     })),
     writeScope: proposal.writeScope.map((value) => safeText(value, stats)),
-    acceptance: proposal.acceptance.map((item) => ({
-      id: safeText(item.id, stats, 120),
-      assertion: safeText(item.assertion, stats),
-      evidence: item.evidence.map((evidence) =>
-        evidence.kind === "verification"
-          ? { kind: "verification", verificationID: safeText(evidence.verificationID, stats) }
-          : { kind: "artifact", reference: safeText(evidence.reference, stats) },
-      ),
-    })),
+    acceptance: safeAcceptance(proposal.acceptance, stats),
     requirements: {
       capabilities: proposal.requirements.capabilities.map((value) => safeText(value, stats)),
       skills: proposal.requirements.skills.map((value) => safeText(value, stats)),
@@ -280,6 +279,301 @@ function safeToolContent(value: unknown, stats: PrivacyStats) {
   return safeText(output.join("\n"), stats)
 }
 
+type MessageContext = {
+  stats: PrivacyStats
+  base: (id: string, at: number | null, kind: string) => Record<string, unknown>
+  add: (event: Record<string, unknown>) => void
+}
+
+type MessageSlice = {
+  message: Record<string, unknown>
+  messageID: string
+  createdAt: number | null
+}
+
+const TOOL_STATUSES = ["streaming", "running", "completed", "error"]
+
+function userMessageEvents(ctx: MessageContext, { message, messageID, createdAt }: MessageSlice) {
+  if (typeof message.text === "string")
+    ctx.add({
+      ...ctx.base(`${messageID}:text`, createdAt, message.type as string),
+      text: safeText(message.text, ctx.stats),
+    })
+  if (Array.isArray(message.files)) ctx.stats.omittedAttachments += message.files.length
+}
+
+function assistantStepStatus(message: Record<string, unknown>, createdAt: number | null) {
+  const messageTime = object(message.time)
+  if (message.error) return "failed"
+  if (dateMillis(messageTime?.completed) !== null) return "ended"
+  if (dateMillis(messageTime?.streamed) !== null) return "streamed"
+  return createdAt !== null ? "started" : "unknown"
+}
+
+function assistantStepEvent(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const messageTime = object(message.time)
+  const stepStatus = assistantStepStatus(message, createdAt)
+  ctx.add({
+    ...ctx.base(`${messageID}:assistant-step`, createdAt, "assistant-step"),
+    model,
+    status: stepStatus,
+    timing: contextTiming({
+      startedAt: {
+        value: messageTime?.created,
+        sourceType: "session-message.assistant.time.created",
+        meaning: "Retained assistant message start time",
+      },
+      streamedAt: {
+        value: messageTime?.streamed,
+        sourceType: "session-message.assistant.time.streamed",
+        meaning: "Provider response-body end before tool settlement",
+      },
+      completedAt: {
+        value: messageTime?.completed,
+        sourceType: "session-message.assistant.time.completed",
+        meaning: "Assistant completion after tool settlement",
+      },
+    }),
+  })
+}
+
+function assistantToolEvent(
+  ctx: MessageContext,
+  part: Record<string, unknown>,
+  partIndex: number,
+  { messageID }: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const { stats } = ctx
+  const toolState = object(part.state)
+  const status = typeof toolState?.status === "string" ? toolState.status : "unsupported"
+  if (!toolState || !TOOL_STATUSES.includes(status)) stats.omittedUnsupportedParts++
+  const input = toolState?.input
+  const inputView = typeof input === "string" ? safeText(input, stats) : safeValue(input, stats)
+  const toolTime = object(part.time)
+  const ranAt = dateMillis(toolTime?.ran)
+  const completedAt = dateMillis(toolTime?.completed)
+  const executed = typeof part.executed === "boolean" ? part.executed : null
+  const content =
+    status === "completed" || status === "error" ? safeToolContent(toolState?.content, stats) : ""
+  const error = status === "error" ? safeErrorView(toolState?.error, stats) : null
+  ctx.add({
+    ...ctx.base(
+      `${messageID}:tool:${typeof part.id === "string" ? part.id : partIndex}`,
+      ranAt,
+      "tool",
+    ),
+    model,
+    tool: typeof part.name === "string" ? safeText(part.name, stats, 160) : "[unknown tool]",
+    status: TOOL_STATUSES.includes(status) ? status : "unsupported",
+    callStatus: ranAt !== null || executed !== null ? "called" : null,
+    input: inputView,
+    result: content,
+    ...(error ? { error } : {}),
+    completedAt,
+    execution: {
+      status: executed === null ? "unknown" : executed ? "executed" : "not-executed",
+      source: executed === null ? null : "native-context",
+      sourceType: executed === null ? null : "session-message.assistant.tool.executed",
+      meaning: "Retained explicit executed flag; called/ran time alone is not execution proof",
+    },
+    timing: contextTiming({
+      inputAt: {
+        value: toolTime?.created,
+        sourceType: "session-message.assistant.tool.time.created",
+        meaning: "Retained assistant tool input creation boundary",
+      },
+      calledAt: {
+        value: toolTime?.ran,
+        sourceType: "session-message.assistant.tool.time.ran",
+        meaning: "Retained assistant tool call boundary; not proof that the tool executed",
+      },
+      completedAt: {
+        value: toolTime?.completed,
+        sourceType: "session-message.assistant.tool.time.completed",
+        meaning: "Retained assistant tool result terminal boundary",
+      },
+    }),
+  })
+}
+
+function assistantPartEvent(
+  ctx: MessageContext,
+  rawPart: unknown,
+  partIndex: number,
+  slice: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const { stats } = ctx
+  const part = object(rawPart)
+  if (!part || typeof part.type !== "string") {
+    stats.omittedUnsupportedParts++
+    return
+  }
+  if (part.type === "reasoning") {
+    stats.omittedReasoning++
+    return
+  }
+  if (part.type === "text") {
+    if (typeof part.text !== "string") {
+      stats.omittedUnsupportedParts++
+      return
+    }
+    ctx.add({
+      ...ctx.base(`${slice.messageID}:text:${partIndex}`, slice.createdAt, "assistant-text"),
+      model,
+      text: safeText(part.text, stats),
+    })
+    return
+  }
+  if (part.type !== "tool") {
+    stats.omittedUnsupportedParts++
+    return
+  }
+  assistantToolEvent(ctx, part, partIndex, slice, model)
+}
+
+function assistantTrailingEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+) {
+  if (message.retry) {
+    const retry = object(message.retry)
+    if (retry) {
+      ctx.add({
+        ...ctx.base(`${messageID}:provider-retry`, dateMillis(retry.at), "provider-retry"),
+        attempt: asNumber(retry.attempt),
+        error: safeErrorView(retry.error, ctx.stats),
+        timing: contextTiming({
+          scheduledAt: {
+            value: retry.at,
+            sourceType: "session-message.assistant.retry.at",
+            meaning: "Retained provider retry scheduled time",
+          },
+        }),
+      })
+    }
+  }
+  if (message.error) {
+    ctx.add({
+      ...ctx.base(`${messageID}:error`, createdAt, "assistant-error"),
+      error: safeErrorView(message.error, ctx.stats),
+    })
+  }
+}
+
+function assistantMessageEvents(ctx: MessageContext, slice: MessageSlice) {
+  const model = modelView(slice.message.model, ctx.stats)
+  const parts = Array.isArray(slice.message.content) ? slice.message.content : []
+  assistantStepEvent(ctx, slice, model)
+  for (const [partIndex, rawPart] of parts.entries())
+    assistantPartEvent(ctx, rawPart, partIndex, slice, model)
+  assistantTrailingEvents(ctx, slice)
+}
+
+function shellMessageEvents(ctx: MessageContext, { message, messageID, createdAt }: MessageSlice) {
+  const { stats } = ctx
+  const output = object(message.output)
+  const shellTime = object(message.time)
+  ctx.add({
+    ...ctx.base(messageID, createdAt, "shell"),
+    command: typeof message.command === "string" ? safeText(message.command, stats) : "",
+    status: typeof message.status === "string" ? safeText(message.status, stats, 80) : "unknown",
+    exit: asNumber(message.exit),
+    output: typeof output?.output === "string" ? safeText(output.output, stats) : "",
+    outputTruncated: output?.truncated === true,
+    completedAt: dateMillis(shellTime?.completed),
+    timing: contextTiming({
+      createdAt: {
+        value: shellTime?.created,
+        sourceType: "session-message.shell.time.created",
+        meaning: "Retained shell message creation; not process start",
+      },
+      startedAt: {
+        value: undefined,
+        sourceType: "session-message.shell.process.started",
+        meaning: "Process start is not available in the retained shell message",
+      },
+      completedAt: {
+        value: shellTime?.completed,
+        sourceType: "session-message.shell.time.completed",
+        meaning: "Retained shell completion time",
+      },
+    }),
+  })
+  if (output?.truncated === true) stats.truncated++
+}
+
+function compactionMessageEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+) {
+  ctx.stats.compacted++
+  const status = message.status
+  const failed = status === "failed"
+  ctx.add({
+    ...ctx.base(messageID, createdAt, "compaction"),
+    status: ["running", "completed", "failed"].includes(String(status)) ? status : "unknown",
+    reason: message.reason === "auto" || message.reason === "manual" ? message.reason : "unknown",
+    ...(failed ? { error: safeErrorView(message.error, ctx.stats) } : {}),
+    summary: "[omitted: compaction summary and replay data are private]",
+  })
+}
+
+function switchMessageEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+): boolean {
+  const { stats } = ctx
+  if (message.type === "idle") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "session-idle"),
+      outcome: ["succeeded", "failed", "interrupted"].includes(String(message.outcome))
+        ? message.outcome
+        : "unknown",
+      error: safeErrorView(message.error, stats),
+    })
+    return true
+  }
+  if (message.type === "model-switched") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "model-switched"),
+      model: modelView(message.model, stats),
+      previous: modelView(message.previous, stats),
+    })
+    return true
+  }
+  if (message.type === "agent-switched") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "agent-switched"),
+      agent: typeof message.agent === "string" ? safeText(message.agent, stats, 120) : null,
+      previous:
+        typeof message.previous === "string" ? safeText(message.previous, stats, 120) : null,
+    })
+    return true
+  }
+  if (message.type === "location-switched") {
+    ctx.add({ ...ctx.base(messageID, createdAt, "location-switched"), location: "[path omitted]" })
+    return true
+  }
+  return false
+}
+
+function messageSliceEvents(ctx: MessageContext, slice: MessageSlice) {
+  const type = slice.message.type
+  if (type === "user" || type === "synthetic") return userMessageEvents(ctx, slice)
+  if (type === "assistant") return assistantMessageEvents(ctx, slice)
+  if (type === "shell") return shellMessageEvents(ctx, slice)
+  if (type === "compaction") return compactionMessageEvents(ctx, slice)
+  if (switchMessageEvents(ctx, slice)) return
+  if (type === "system" || type === "skill") ctx.stats.omittedSystem++
+  else ctx.stats.omittedUnsupportedParts++
+}
+
 function messageEvents(
   rawMessages: ReadonlyArray<SessionMessage.Info>,
   attempt: AttemptRow,
@@ -287,14 +581,17 @@ function messageEvents(
   stats: PrivacyStats,
 ) {
   const events: Record<string, unknown>[] = []
-  const base = (id: string, at: number | null, kind: string) => ({
-    id: safeText(id, stats, 256),
-    at,
-    attemptID: safeText(attempt.id, stats, 128),
-    sessionID: safeText(session.id, stats, 128),
-    kind,
-  })
-  const add = (event: Record<string, unknown>) => events.push(event)
+  const ctx: MessageContext = {
+    stats,
+    base: (id, at, kind) => ({
+      id: safeText(id, stats, 256),
+      at,
+      attemptID: safeText(attempt.id, stats, 128),
+      sessionID: safeText(session.id, stats, 128),
+      kind,
+    }),
+    add: (event) => events.push(event),
+  }
 
   const messages = rawMessages.slice(0, MAX_CONTEXT_MESSAGES)
   if (rawMessages.length > messages.length) stats.truncated++
@@ -304,244 +601,11 @@ function messageEvents(
       stats.omittedUnsupportedParts++
       continue
     }
-    const messageID = typeof message.id === "string" ? message.id : `unknown-${index}`
-    const createdAt = dateMillis(object(message.time)?.created)
-    if (message.type === "user" || message.type === "synthetic") {
-      if (typeof message.text === "string")
-        add({
-          ...base(`${messageID}:text`, createdAt, message.type),
-          text: safeText(message.text, stats),
-        })
-      if (Array.isArray(message.files)) stats.omittedAttachments += message.files.length
-      continue
-    }
-    if (message.type === "assistant") {
-      const model = modelView(message.model, stats)
-      const parts = Array.isArray(message.content) ? message.content : []
-      const messageTime = object(message.time)
-      const streamedAt = dateMillis(messageTime?.streamed)
-      const completedAt = dateMillis(messageTime?.completed)
-      const stepStatus = message.error
-        ? "failed"
-        : completedAt !== null
-          ? "ended"
-          : streamedAt !== null
-            ? "streamed"
-            : createdAt !== null
-              ? "started"
-              : "unknown"
-      add({
-        ...base(`${messageID}:assistant-step`, createdAt, "assistant-step"),
-        model,
-        status: stepStatus,
-        timing: contextTiming({
-          startedAt: {
-            value: messageTime?.created,
-            sourceType: "session-message.assistant.time.created",
-            meaning: "Retained assistant message start time",
-          },
-          streamedAt: {
-            value: messageTime?.streamed,
-            sourceType: "session-message.assistant.time.streamed",
-            meaning: "Provider response-body end before tool settlement",
-          },
-          completedAt: {
-            value: messageTime?.completed,
-            sourceType: "session-message.assistant.time.completed",
-            meaning: "Assistant completion after tool settlement",
-          },
-        }),
-      })
-      for (const [partIndex, rawPart] of parts.entries()) {
-        const part = object(rawPart)
-        if (!part || typeof part.type !== "string") {
-          stats.omittedUnsupportedParts++
-          continue
-        }
-        if (part.type === "reasoning") {
-          stats.omittedReasoning++
-          continue
-        }
-        if (part.type === "text") {
-          if (typeof part.text === "string")
-            add({
-              ...base(`${messageID}:text:${partIndex}`, createdAt, "assistant-text"),
-              model,
-              text: safeText(part.text, stats),
-            })
-          else stats.omittedUnsupportedParts++
-          continue
-        }
-        if (part.type !== "tool") {
-          stats.omittedUnsupportedParts++
-          continue
-        }
-        const toolState = object(part.state)
-        const status = typeof toolState?.status === "string" ? toolState.status : "unsupported"
-        if (!toolState || !["streaming", "running", "completed", "error"].includes(status))
-          stats.omittedUnsupportedParts++
-        const input = toolState?.input
-        const inputView =
-          typeof input === "string" ? safeText(input, stats) : safeValue(input, stats)
-        const toolTime = object(part.time)
-        const ranAt = dateMillis(toolTime?.ran)
-        const completedAt = dateMillis(toolTime?.completed)
-        const executed = typeof part.executed === "boolean" ? part.executed : null
-        const content =
-          status === "completed" || status === "error"
-            ? safeToolContent(toolState?.content, stats)
-            : ""
-        const error = status === "error" ? safeErrorView(toolState?.error, stats) : null
-        add({
-          ...base(
-            `${messageID}:tool:${typeof part.id === "string" ? part.id : partIndex}`,
-            ranAt,
-            "tool",
-          ),
-          model,
-          tool: typeof part.name === "string" ? safeText(part.name, stats, 160) : "[unknown tool]",
-          status: ["streaming", "running", "completed", "error"].includes(status)
-            ? status
-            : "unsupported",
-          callStatus: ranAt !== null || executed !== null ? "called" : null,
-          input: inputView,
-          result: content,
-          ...(error ? { error } : {}),
-          completedAt,
-          execution: {
-            status: executed === null ? "unknown" : executed ? "executed" : "not-executed",
-            source: executed === null ? null : "native-context",
-            sourceType: executed === null ? null : "session-message.assistant.tool.executed",
-            meaning:
-              "Retained explicit executed flag; called/ran time alone is not execution proof",
-          },
-          timing: contextTiming({
-            inputAt: {
-              value: toolTime?.created,
-              sourceType: "session-message.assistant.tool.time.created",
-              meaning: "Retained assistant tool input creation boundary",
-            },
-            calledAt: {
-              value: toolTime?.ran,
-              sourceType: "session-message.assistant.tool.time.ran",
-              meaning: "Retained assistant tool call boundary; not proof that the tool executed",
-            },
-            completedAt: {
-              value: toolTime?.completed,
-              sourceType: "session-message.assistant.tool.time.completed",
-              meaning: "Retained assistant tool result terminal boundary",
-            },
-          }),
-        })
-      }
-      if (message.retry) {
-        const retry = object(message.retry)
-        if (retry) {
-          add({
-            ...base(`${messageID}:provider-retry`, dateMillis(retry.at), "provider-retry"),
-            attempt: asNumber(retry.attempt),
-            error: safeErrorView(retry.error, stats),
-            timing: contextTiming({
-              scheduledAt: {
-                value: retry.at,
-                sourceType: "session-message.assistant.retry.at",
-                meaning: "Retained provider retry scheduled time",
-              },
-            }),
-          })
-        }
-      }
-      if (message.error) {
-        add({
-          ...base(`${messageID}:error`, createdAt, "assistant-error"),
-          error: safeErrorView(message.error, stats),
-        })
-      }
-      continue
-    }
-    if (message.type === "shell") {
-      const output = object(message.output)
-      const shellTime = object(message.time)
-      add({
-        ...base(messageID, createdAt, "shell"),
-        command: typeof message.command === "string" ? safeText(message.command, stats) : "",
-        status:
-          typeof message.status === "string" ? safeText(message.status, stats, 80) : "unknown",
-        exit: asNumber(message.exit),
-        output: typeof output?.output === "string" ? safeText(output.output, stats) : "",
-        outputTruncated: output?.truncated === true,
-        completedAt: dateMillis(shellTime?.completed),
-        timing: contextTiming({
-          createdAt: {
-            value: shellTime?.created,
-            sourceType: "session-message.shell.time.created",
-            meaning: "Retained shell message creation; not process start",
-          },
-          startedAt: {
-            value: undefined,
-            sourceType: "session-message.shell.process.started",
-            meaning: "Process start is not available in the retained shell message",
-          },
-          completedAt: {
-            value: shellTime?.completed,
-            sourceType: "session-message.shell.time.completed",
-            meaning: "Retained shell completion time",
-          },
-        }),
-      })
-      if (output?.truncated === true) stats.truncated++
-      continue
-    }
-    if (message.type === "compaction") {
-      stats.compacted++
-      const status = message.status
-      const failed = status === "failed"
-      add({
-        ...base(messageID, createdAt, "compaction"),
-        status: ["running", "completed", "failed"].includes(String(status)) ? status : "unknown",
-        reason:
-          message.reason === "auto" || message.reason === "manual" ? message.reason : "unknown",
-        ...(failed ? { error: safeErrorView(message.error, stats) } : {}),
-        summary: "[omitted: compaction summary and replay data are private]",
-      })
-      continue
-    }
-    if (message.type === "idle") {
-      add({
-        ...base(messageID, createdAt, "session-idle"),
-        outcome: ["succeeded", "failed", "interrupted"].includes(String(message.outcome))
-          ? message.outcome
-          : "unknown",
-        error: safeErrorView(message.error, stats),
-      })
-      continue
-    }
-    if (message.type === "model-switched") {
-      add({
-        ...base(messageID, createdAt, "model-switched"),
-        model: modelView(message.model, stats),
-        previous: modelView(message.previous, stats),
-      })
-      continue
-    }
-    if (message.type === "agent-switched") {
-      add({
-        ...base(messageID, createdAt, "agent-switched"),
-        agent: typeof message.agent === "string" ? safeText(message.agent, stats, 120) : null,
-        previous:
-          typeof message.previous === "string" ? safeText(message.previous, stats, 120) : null,
-      })
-      continue
-    }
-    if (message.type === "location-switched") {
-      add({ ...base(messageID, createdAt, "location-switched"), location: "[path omitted]" })
-      continue
-    }
-    if (message.type === "system" || message.type === "skill") {
-      stats.omittedSystem++
-      continue
-    }
-    stats.omittedUnsupportedParts++
+    messageSliceEvents(ctx, {
+      message,
+      messageID: typeof message.id === "string" ? message.id : `unknown-${index}`,
+      createdAt: dateMillis(object(message.time)?.created),
+    })
   }
   return events
 }
@@ -859,87 +923,88 @@ function attemptView(
   }
 }
 
-/**
- * Build one project-owned, read-only report. The runner's `detail()` method is
- * deliberately avoided because it calls `audit()` and inserts an audit row.
- */
-export async function inspectTrajectory(
+type InspectOptions = {
+  allEvents?: boolean
+  includeMessages?: boolean
+  taskValuationProvider?: TaskValuationProvider
+  signal?: AbortSignal
+}
+type AttemptEntry = { attempt: AttemptRow; snapshot: PlanSnapshot }
+type SessionStatus = "available" | "missing" | "unavailable"
+type SessionReads = {
+  sessions: Map<string, TrajectorySession | null>
+  errors: Map<string, string>
+  statuses: Map<string, SessionStatus>
+}
+
+function ownedByProject(task: TaskSpec, store: RunnerStore, projectID: string) {
+  return (
+    sameProject(task.provenance.projectID, projectID) &&
+    task.provenance.projectDirectory === store.repository.projectDirectory
+  )
+}
+
+function hasAttempt(plans: PlanSnapshot[], attemptID: string) {
+  return plans.some((snapshot) => snapshot.attempts.some((attempt) => attempt.id === attemptID))
+}
+
+/** The project-owned task that holds the attempt, scanning every plan of the project. */
+function taskOfAttempt(store: RunnerStore, projectID: string, attemptID: string) {
+  const projectPlans = store.atomic((db) =>
+    db
+      .query<PlanRow, [string]>(
+        "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY rowid",
+      )
+      .all(store.repository.projectDirectory),
+  )
+  let task: TaskSpec | undefined
+  for (const row of projectPlans) {
+    for (const attempt of store.attempts(row.id)) {
+      if (attempt.id !== attemptID) continue
+      const found = store.repository.get(attempt.task_id)
+      if (found && ownedByProject(found, store, projectID)) task = found
+    }
+  }
+  return task
+}
+
+function resolveTrajectoryTarget(
   store: RunnerStore,
-  host: TrajectoryHost,
   projectID: string,
   input: InspectTrajectoryInput,
-  cursorSecret: Uint8Array,
-  options: {
-    allEvents?: boolean
-    includeMessages?: boolean
-    taskValuationProvider?: TaskValuationProvider
-    signal?: AbortSignal
-  } = {},
 ) {
-  const stats = privacyStats()
   let task: TaskSpec | undefined
   if (input.taskID) task = store.repository.get(input.taskID)
-  if (
-    task &&
-    (!sameProject(task.provenance.projectID, projectID) ||
-      task.provenance.projectDirectory !== store.repository.projectDirectory)
-  )
+  if (task && !ownedByProject(task, store, projectID))
     throw new Error("Task is not owned by this project")
 
   let rawPlans = task ? snapshots(store, task) : []
-  if (input.attemptID) {
-    const matching = rawPlans
-      .flatMap((snapshot) => snapshot.attempts.map((attempt) => ({ snapshot, attempt })))
-      .find(({ attempt }) => attempt.id === input.attemptID)
-    if (!matching) {
-      const projectPlans = store.atomic((db) =>
-        db
-          .query<PlanRow, [string]>(
-            "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY rowid",
-          )
-          .all(store.repository.projectDirectory),
-      )
-      for (const row of projectPlans) {
-        for (const attempt of store.attempts(row.id)) {
-          if (attempt.id !== input.attemptID) continue
-          const found = store.repository.get(attempt.task_id)
-          if (
-            found &&
-            sameProject(found.provenance.projectID, projectID) &&
-            found.provenance.projectDirectory === store.repository.projectDirectory
-          )
-            task = found
-        }
-      }
-      if (!task) throw new Error("No project-owned attempt found")
-      rawPlans = snapshots(store, task)
-    }
+  if (input.attemptID && !hasAttempt(rawPlans, input.attemptID)) {
+    task = taskOfAttempt(store, projectID, input.attemptID) ?? task
+    if (!task) throw new Error("No project-owned attempt found")
+    rawPlans = snapshots(store, task)
   }
   if (!task)
     throw new Error(
       input.taskID ? "Task is not owned by this project" : "No project-owned attempt found",
     )
-  if (
-    input.attemptID &&
-    !rawPlans.some((snapshot) =>
-      snapshot.attempts.some((attempt) => attempt.id === input.attemptID),
-    )
-  )
+  if (input.attemptID && !hasAttempt(rawPlans, input.attemptID))
     throw new Error("No project-owned attempt found")
+  return { task, rawPlans }
+}
 
+async function readAttemptSessions(
+  host: TrajectoryHost,
+  projectID: string,
+  allAttempts: AttemptEntry[],
+  options: InspectOptions,
+  stats: PrivacyStats,
+): Promise<SessionReads> {
   const statusReader = options.includeMessages === false ? host.status : undefined
   if (options.includeMessages === false && !statusReader)
     throw new Error("Metadata-only trajectory status is unavailable")
 
-  const allAttempts = rawPlans.flatMap((snapshot) =>
-    snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
-  )
-  const progressRows = store.progressFacts(allAttempts.map(({ attempt }) => attempt.id))
-  const progressTruncated = progressRows.length > 10_000
-  const visibleProgressRows = progressTruncated ? progressRows.slice(-10_000) : progressRows
-  const sessions = new Map<string, TrajectorySession | null>()
-  const sessionErrors = new Map<string, string>()
-  const statuses = new Map<string, "available" | "missing" | "unavailable">()
+  const reads: SessionReads = { sessions: new Map(), errors: new Map(), statuses: new Map() }
   const sessionsByAssignment = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
     try {
@@ -956,19 +1021,28 @@ export async function inspectTrajectory(
       const session = await read
       if (session && (session.id !== attempt.session_id || session.projectID !== projectID))
         throw new TrajectoryIdentityError()
-      sessions.set(attempt.id, session)
-      statuses.set(attempt.id, session ? "available" : "missing")
+      reads.sessions.set(attempt.id, session)
+      reads.statuses.set(attempt.id, session ? "available" : "missing")
       if (session?.messageStatus === "unavailable" && session.messageError)
-        sessionErrors.set(attempt.id, session.messageError)
+        reads.errors.set(attempt.id, session.messageError)
     } catch (error) {
       if (error instanceof TrajectoryIdentityError) throw error
-      sessions.set(attempt.id, null)
-      statuses.set(attempt.id, "unavailable")
-      sessionErrors.set(attempt.id, safeError(error, stats))
+      reads.sessions.set(attempt.id, null)
+      reads.statuses.set(attempt.id, "unavailable")
+      reads.errors.set(attempt.id, safeError(error, stats))
     }
   }
+  return reads
+}
 
-  const projectedProgressFacts = visibleProgressRows.map(projectProgressFact)
+function collectTrajectoryEvents(
+  rawPlans: PlanSnapshot[],
+  allAttempts: AttemptEntry[],
+  reads: SessionReads,
+  projectedProgressFacts: Record<string, unknown>[],
+  options: InspectOptions,
+  stats: PrivacyStats,
+) {
   const rawEvents: Record<string, unknown>[] = []
   const allChecks: CheckView[] = []
   const checksByPlan = new Map<string, CheckView[]>()
@@ -981,11 +1055,11 @@ export async function inspectTrajectory(
     allChecks.push(...planChecks)
     checksByPlan.set(snapshot.row.id, planChecks)
     for (const attempt of snapshot.attempts) {
-      const session = sessions.get(attempt.id) ?? null
+      const session = reads.sessions.get(attempt.id) ?? null
       if (
         options.includeMessages !== false &&
         session?.messages &&
-        statuses.get(attempt.id) === "available"
+        reads.statuses.get(attempt.id) === "available"
       )
         rawEvents.push(...messageEvents(session.messages, attempt, session, stats))
     }
@@ -996,12 +1070,33 @@ export async function inspectTrajectory(
     const right = typeof b.at === "number" ? b.at : Number.MAX_SAFE_INTEGER
     return left - right || String(a.id).localeCompare(String(b.id))
   })
+  return { rawEvents, allChecks, checksByPlan }
+}
 
-  const targetScope = input.taskID ? `task:${input.taskID}` : `attempt:${input.attemptID}`
-  const visibleEvents = input.attemptID
-    ? rawEvents.filter((event) => event.attemptID === input.attemptID || event.attemptID === null)
-    : rawEvents
-  const focusedTaskPlans = rawPlans.map((snapshot) => ({
+function safeAcceptance(items: TaskSpec["proposal"]["acceptance"], stats: PrivacyStats) {
+  return items.map((item) => ({
+    id: safeText(item.id, stats, 120),
+    assertion: safeText(item.assertion, stats),
+    evidence: item.evidence.map((evidence) =>
+      evidence.kind === "verification"
+        ? { kind: "verification", verificationID: safeText(evidence.verificationID, stats) }
+        : { kind: "artifact", reference: safeText(evidence.reference, stats) },
+    ),
+  }))
+}
+
+function isAcceptedNode(snapshot: PlanSnapshot) {
+  return snapshot.node.state === "accepted" || snapshot.node.state === "incorporated"
+}
+
+function focusedPlanViews(
+  store: RunnerStore,
+  task: TaskSpec,
+  rawPlans: PlanSnapshot[],
+  checksByPlan: Map<string, CheckView[]>,
+  stats: PrivacyStats,
+) {
+  return rawPlans.map((snapshot) => ({
     id: safeText(snapshot.row.id, stats, 128),
     revision: snapshot.row.revision,
     state: safeText(snapshot.row.state, stats, 80),
@@ -1015,100 +1110,110 @@ export async function inspectTrajectory(
       modelView(parseObject(snapshot.row.model), stats) ??
       modelView(snapshot.input?.workerModel, stats),
     taskState: safeText(snapshot.node.state, stats, 80),
-    accepted: snapshot.node.state === "accepted" || snapshot.node.state === "incorporated",
+    accepted: isAcceptedNode(snapshot),
     taskResultCommit: snapshot.node.artifact ? safeText(snapshot.node.artifact, stats, 128) : null,
     waitingOn: store.execution(task.id)?.waitingOn.map((id) => safeText(id, stats, 128)) ?? [],
-    acceptance: (snapshot.input?.acceptance ?? []).map((item) => ({
-      id: safeText(item.id, stats, 120),
-      assertion: safeText(item.assertion, stats),
-      evidence: item.evidence.map((evidence) =>
-        evidence.kind === "verification"
-          ? { kind: "verification", verificationID: safeText(evidence.verificationID, stats) }
-          : { kind: "artifact", reference: safeText(evidence.reference, stats) },
-      ),
-    })),
+    acceptance: safeAcceptance(snapshot.input?.acceptance ?? [], stats),
     checks: checksByPlan.get(snapshot.row.id) ?? [],
   }))
+}
 
-  const attemptViews = allAttempts.map(({ attempt, snapshot }) =>
-    attemptView(
-      attempt,
-      snapshot,
-      sessions.get(attempt.id) ?? null,
-      statuses.get(attempt.id) ?? "missing",
-      sessionErrors.get(attempt.id) ?? null,
-      stats,
-      allChecks,
-    ),
-  )
-  const truncatedContextSessionIDs = [
+function truncatedContextSessions(
+  allAttempts: AttemptEntry[],
+  reads: SessionReads,
+  stats: PrivacyStats,
+) {
+  return [
     ...new Set(
       allAttempts.flatMap(({ attempt }) => {
-        const session = sessions.get(attempt.id)
+        const session = reads.sessions.get(attempt.id)
         return session?.messages && session.messages.length > MAX_CONTEXT_MESSAGES
           ? [safeText(attempt.session_id, stats, 128)]
           : []
       }),
     ),
   ]
-  const valuationInput: ProjectTaskValuationRequest = {
-    attempts: allAttempts.map(({ attempt, snapshot }) => {
-      const session = sessions.get(attempt.id) ?? null
-      const policy = parseObject(attempt.policy)
-      const attemptRoute = modelView(policy?.model, stats)
-      const planRoute = modelView(snapshot.input?.workerModel, stats)
-      const planPersona = snapshot.input?.nodes.find(
-        (node) => node.taskID === attempt.task_id,
-      )?.persona
-      return {
-        id: safeText(attempt.id, stats, 128),
-        sessionID: safeText(attempt.session_id, stats, 128),
-        state: safeText(attempt.state, stats, 80),
-        legacyTokenCount: numberOrNull(attempt.token_count),
-        recordedCostUSD: numberOrNull(attempt.cost),
-        planRoute: accountingRoute(planRoute),
-        planRouteStatus: snapshot.input
-          ? snapshot.input.workerModel
-            ? ("explicit" as const)
-            : ("inherited" as const)
-          : ("unavailable" as const),
-        frozenRoute: accountingRoute(
-          attemptRoute ?? modelView(parseObject(snapshot.row.model), stats),
-        ),
-        frozenRouteSource: attemptRoute
-          ? "runner_attempt.policy.model"
-          : snapshot.row.model
-            ? "runner_plans.model fallback; attempt policy model unavailable"
-            : null,
-        personaRequested: planPersona ?? null,
-        personaFrozen: frozenPersona(policy),
-        sessionStatus: statuses.get(attempt.id) ?? "missing",
-        contextStatus:
-          session?.messageStatus === "available"
-            ? "available"
-            : session?.messageStatus === "not-read"
-              ? "not-read"
-              : "unavailable",
-        currentRoute: accountingRoute(session ? modelView(session.model, stats) : null),
-        currentRouteObservedAt: session ? dateMillis(session.time.updated) : null,
-        sessionUsage: session?.tokens
-          ? {
-              input: session.tokens.input,
-              output: session.tokens.output,
-              reasoning: session.tokens.reasoning,
-              cacheRead: session.tokens.cache.read,
-              cacheWrite: session.tokens.cache.write,
-            }
-          : null,
-        sessionUsageObservedAt: session ? dateMillis(session.time.updated) : null,
-        stepRoutes: sessionStepRoutes(session, stats),
-      }
-    }),
-    progressFacts: projectedProgressFacts,
-    progressTruncated,
-    truncatedContextSessionIDs,
+}
+
+function valuationAttempt(
+  { attempt, snapshot }: AttemptEntry,
+  session: TrajectorySession | null,
+  sessionStatus: SessionStatus,
+  stats: PrivacyStats,
+): ProjectTaskValuationRequest["attempts"][number] {
+  const policy = parseObject(attempt.policy)
+  const attemptRoute = modelView(policy?.model, stats)
+  const planRoute = modelView(snapshot.input?.workerModel, stats)
+  const planPersona = snapshot.input?.nodes.find((node) => node.taskID === attempt.task_id)?.persona
+  return {
+    id: safeText(attempt.id, stats, 128),
+    sessionID: safeText(attempt.session_id, stats, 128),
+    state: safeText(attempt.state, stats, 80),
+    legacyTokenCount: numberOrNull(attempt.token_count),
+    recordedCostUSD: numberOrNull(attempt.cost),
+    planRoute: accountingRoute(planRoute),
+    planRouteStatus: snapshot.input
+      ? snapshot.input.workerModel
+        ? ("explicit" as const)
+        : ("inherited" as const)
+      : ("unavailable" as const),
+    frozenRoute: accountingRoute(attemptRoute ?? modelView(parseObject(snapshot.row.model), stats)),
+    frozenRouteSource: attemptRoute
+      ? "runner_attempt.policy.model"
+      : snapshot.row.model
+        ? "runner_plans.model fallback; attempt policy model unavailable"
+        : null,
+    personaRequested: planPersona ?? null,
+    personaFrozen: frozenPersona(policy),
+    sessionStatus,
+    contextStatus:
+      session?.messageStatus === "available"
+        ? "available"
+        : session?.messageStatus === "not-read"
+          ? "not-read"
+          : "unavailable",
+    currentRoute: accountingRoute(session ? modelView(session.model, stats) : null),
+    currentRouteObservedAt: session ? dateMillis(session.time.updated) : null,
+    sessionUsage: session?.tokens
+      ? {
+          input: session.tokens.input,
+          output: session.tokens.output,
+          reasoning: session.tokens.reasoning,
+          cacheRead: session.tokens.cache.read,
+          cacheWrite: session.tokens.cache.write,
+        }
+      : null,
+    sessionUsageObservedAt: session ? dateMillis(session.time.updated) : null,
+    stepRoutes: sessionStepRoutes(session, stats),
   }
-  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
+}
+
+async function marketEquivalentCostOf(
+  valuationInput: ProjectTaskValuationRequest,
+  options: InspectOptions,
+): Promise<TrajectoryMarketEquivalentCost | undefined> {
+  if (!options.taskValuationProvider) return undefined
+  const signal = options.signal ?? new AbortController().signal
+  signal.throwIfAborted()
+  let marketEquivalentCost: TrajectoryMarketEquivalentCost
+  try {
+    marketEquivalentCost = await options.taskValuationProvider(valuationInput, signal)
+  } catch {
+    signal.throwIfAborted()
+    marketEquivalentCost = unavailableTaskValuation(valuationInput)
+  }
+  signal.throwIfAborted()
+  return marketEquivalentCost
+}
+
+type TaskEffortBasis = ReturnType<typeof projectTaskEffortBasis>
+
+function effortTokenUsage(
+  allAttempts: AttemptEntry[],
+  taskEffortBasis: TaskEffortBasis,
+  attemptViews: ReturnType<typeof attemptView>[],
+  stats: PrivacyStats,
+) {
   const categories = taskEffortBasis.usage.categories
   const totals = {
     uncachedInput: categories.uncachedInput.value,
@@ -1124,6 +1229,32 @@ export async function inspectTrajectory(
   const unknownUsageAttempts = allAttempts
     .filter(({ attempt }) => !completeSessionIDs.has(attempt.session_id))
     .map(({ attempt }) => safeText(attempt.id, stats, 128))
+  return {
+    measuredSubtotal: totals,
+    total: Object.values(categories).every((category) => category.status === "observed")
+      ? totals
+      : null,
+    unit: "tokens",
+    components: {
+      uncachedInput: "OpenCode input; cache is reported separately",
+      cacheRead: "OpenCode cache-read tokens",
+      cacheWrite: "OpenCode cache-write tokens",
+      output: "OpenCode output; reasoning is reported separately",
+      reasoning: "OpenCode reasoning tokens",
+    },
+    source:
+      "One selected contribution per unique worker session: native cumulative snapshot, otherwise retained cumulative snapshot, otherwise additive-step subtotal",
+    knownSessions: completeSessions.length,
+    totalSessions: taskEffortBasis.usage.coverage.totalUniqueSessions,
+    unknownAttempts: unknownUsageAttempts,
+    legacyAttemptScalarsNotAdded: attemptViews.map((attempt) => ({
+      attemptID: attempt.id,
+      ...attempt.legacyTokenCount,
+    })),
+  }
+}
+
+function effortTiming(rawPlans: PlanSnapshot[], allAttempts: AttemptEntry[]) {
   const acceptedTransitions = rawPlans
     .flatMap((snapshot) => snapshot.transitions)
     .filter((event) => event.event === "ACCEPT")
@@ -1133,75 +1264,32 @@ export async function inspectTrajectory(
   const firstAttemptAt = allAttempts.length
     ? Math.min(...allAttempts.map(({ attempt }) => attempt.started_at))
     : null
-  const taskAccepted = rawPlans.some(
-    (snapshot) => snapshot.node.state === "accepted" || snapshot.node.state === "incorporated",
-  )
   const wallClockSpanMs =
     firstAttemptAt !== null && acceptedAt !== null && acceptedAt >= firstAttemptAt
       ? acceptedAt - firstAttemptAt
       : null
-  const focusedAttempts = input.attemptID
-    ? attemptViews.filter((attempt) => attempt.id === input.attemptID)
-    : attemptViews
-  const observedModels = new Map<string, NonNullable<ReturnType<typeof modelView>>>()
-  for (const attempt of attemptViews) {
-    for (const model of [
-      attempt.admittedModel,
-      attempt.observedCurrentModel,
-      ...attempt.observedMessageModels,
-    ])
-      if (model) observedModels.set(modelKey(model), model)
-  }
+  return { acceptedAt, firstAttemptAt, wallClockSpanMs }
+}
+
+function effortView(
+  rawPlans: PlanSnapshot[],
+  allAttempts: AttemptEntry[],
+  reads: SessionReads,
+  attemptViews: ReturnType<typeof attemptView>[],
+  taskEffortBasis: TaskEffortBasis,
+  marketEquivalentCost: TrajectoryMarketEquivalentCost | undefined,
+  stats: PrivacyStats,
+) {
+  const tokenUsage = effortTokenUsage(allAttempts, taskEffortBasis, attemptViews, stats)
+  const { acceptedAt, firstAttemptAt, wallClockSpanMs } = effortTiming(rawPlans, allAttempts)
+  const taskAccepted = rawPlans.some(isAcceptedNode)
   const busy = allAttempts.some(({ attempt }) => {
-    const session = sessions.get(attempt.id)
+    const session = reads.sessions.get(attempt.id)
     return ACTIVE_ATTEMPTS.has(attempt.state) || session?.busy === true
   })
-  const messagesUnavailable = allAttempts.filter(
-    ({ attempt }) =>
-      statuses.get(attempt.id) === "unavailable" ||
-      sessions.get(attempt.id)?.messageStatus === "unavailable",
-  ).length
-  const messageSessions = allAttempts.filter(
-    ({ attempt }) => sessions.get(attempt.id)?.messages,
-  ).length
-  let marketEquivalentCost: TrajectoryMarketEquivalentCost | undefined
-  if (options.taskValuationProvider) {
-    const signal = options.signal ?? new AbortController().signal
-    signal.throwIfAborted()
-    try {
-      marketEquivalentCost = await options.taskValuationProvider(valuationInput, signal)
-    } catch {
-      signal.throwIfAborted()
-      marketEquivalentCost = unavailableTaskValuation(valuationInput)
-    }
-    signal.throwIfAborted()
-  }
-  const summary = {
-    schemaVersion: 1,
-    task: {
-      id: safeText(task.id, stats, 128),
-      // The same resolver the Tasks read uses; omitted for a task that has none.
-      ...(store.repository.referenceFor(task.id)
-        ? { reference: safeText(store.repository.referenceFor(task.id)!, stats, 300) }
-        : {}),
-      revision: task.revision,
-      status: safeText(task.status, stats, 80),
-      // The task's current recorded lifecycle state (its node in the latest plan), which is what
-      // Tasks shows. `status` above is the proposal's own and stays "submitted" after acceptance.
-      ...(rawPlans.at(-1)
-        ? { recordedState: safeText(rawPlans.at(-1)!.node.state, stats, 80) }
-        : {}),
-      createdAt: safeText(task.createdAt, stats, 128),
-      projectID: safeText(task.provenance.projectID, stats, 128),
-      sourceCommit:
-        task.provenance.startingRevision.kind === "git"
-          ? safeText(task.provenance.startingRevision.commit, stats, 128)
-          : null,
-      specification: safeSpec(task, stats),
-    },
-    plans: focusedTaskPlans,
-    focusedAttemptID: input.attemptID ? safeText(input.attemptID, stats, 128) : null,
-    attempts: focusedAttempts,
+  const recorded = taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD
+  return {
+    busy,
     effort: {
       accepted: taskAccepted,
       ongoing: busy,
@@ -1210,29 +1298,7 @@ export async function inspectTrajectory(
       wallClockSpanMs,
       wallClockBasis:
         "earliest runner attempt start to the task ACCEPT transition; not model-active time",
-      tokenUsage: {
-        measuredSubtotal: totals,
-        total: Object.values(categories).every((category) => category.status === "observed")
-          ? totals
-          : null,
-        unit: "tokens",
-        components: {
-          uncachedInput: "OpenCode input; cache is reported separately",
-          cacheRead: "OpenCode cache-read tokens",
-          cacheWrite: "OpenCode cache-write tokens",
-          output: "OpenCode output; reasoning is reported separately",
-          reasoning: "OpenCode reasoning tokens",
-        },
-        source:
-          "One selected contribution per unique worker session: native cumulative snapshot, otherwise retained cumulative snapshot, otherwise additive-step subtotal",
-        knownSessions: completeSessions.length,
-        totalSessions: taskEffortBasis.usage.coverage.totalUniqueSessions,
-        unknownAttempts: unknownUsageAttempts,
-        legacyAttemptScalarsNotAdded: attemptViews.map((attempt) => ({
-          attemptID: attempt.id,
-          ...attempt.legacyTokenCount,
-        })),
-      },
+      tokenUsage,
       taskEffortBasis,
       toolCalls: {
         count: allAttempts.reduce((total, { attempt }) => total + attempt.tool_count, 0),
@@ -1244,62 +1310,125 @@ export async function inspectTrajectory(
         source: "Sum of runner_attempt.retry_count once per attempt",
       },
       recordedCost: {
-        workerAttemptSubtotalUsd: taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.valueUSD,
-        status: taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.status,
+        workerAttemptSubtotalUsd: recorded.valueUSD,
+        status: recorded.status,
         workerScope: "LAZERS attempt rows only",
         provenance:
           "Legacy runner scalar; source model, price date, and billing basis are not persisted",
-        unknownContributions:
-          taskEffortBasis.cost.recordedWorkerAttemptSubtotalUSD.missingAttemptIDs.map((id) =>
-            safeText(id, stats, 128),
-          ),
+        unknownContributions: recorded.missingAttemptIDs.map((id) => safeText(id, stats, 128)),
         apiEquivalentTotalUsd: marketEquivalentCost?.valueUSD ?? null,
         apiEquivalentSubtotalUsd: marketEquivalentCost?.subtotalUSD ?? null,
         apiEquivalentStatus: marketEquivalentCost?.status ?? "unknown",
       },
       ...(marketEquivalentCost ? { marketEquivalentCost } : {}),
     },
-    coverage: {
-      sessionRead:
-        options.includeMessages === false
-          ? "OpenCode session.get only; native session.context was not read"
-          : "OpenCode session.get followed by session.context",
-      transcript:
-        "Only messages returned by session.context; plugin context does not expose client.message.list",
-      availableSessionContexts: messageSessions,
-      unavailableSessionContexts: messagesUnavailable,
-      fullSessionHistory: "not guaranteed; use explicit warnings and do not infer omitted history",
-      compacted: stats.compacted > 0,
-      ongoing: busy,
-      attemptsWithoutRecordedSessions: attemptViews.filter(
-        (attempt) => attempt.sessionStatus !== "available",
-      ).length,
-      workerProgress: {
-        facts: visibleProgressRows.length,
-        truncated: progressTruncated,
-        commentary: visibleProgressRows.filter((row) => row.kind === "commentary").length,
-        automaticFacts: visibleProgressRows.filter((row) => row.kind !== "commentary").length,
-        recoveryGaps: visibleProgressRows.filter((row) => row.kind === "gap").length,
-        additiveStepMeasurements: visibleProgressRows.filter((row) => row.kind === "step").length,
-        cumulativeUsageSnapshots: visibleProgressRows.filter((row) => row.kind === "usage-snapshot")
-          .length,
-      },
-    },
-    privacy: {
-      redactedValues: stats.redacted,
-      truncatedValues: stats.truncated,
-      omittedUnknownParts: stats.omittedUnsupportedParts,
-      omittedAttachments: stats.omittedAttachments,
-      omittedReasoning: stats.omittedReasoning,
-      omittedSystemOrSkillMessages: stats.omittedSystem,
-      warnings: [
-        "Credential detection covers common formats and sensitive key names; arbitrary prose secrets may evade pattern detection.",
-        "System instructions, reasoning, metadata, provider-native/replay data, attachment/file bodies, and raw response bodies are not exported.",
-        "Compaction summaries are omitted; the returned session.context may not contain the full history.",
-      ],
+  }
+}
+
+function taskView(
+  store: RunnerStore,
+  task: TaskSpec,
+  rawPlans: PlanSnapshot[],
+  stats: PrivacyStats,
+) {
+  return {
+    id: safeText(task.id, stats, 128),
+    // The same resolver the Tasks read uses; omitted for a task that has none.
+    ...(store.repository.referenceFor(task.id)
+      ? { reference: safeText(store.repository.referenceFor(task.id)!, stats, 300) }
+      : {}),
+    revision: task.revision,
+    status: safeText(task.status, stats, 80),
+    // The task's current recorded lifecycle state (its node in the latest plan), which is what
+    // Tasks shows. `status` above is the proposal's own and stays "submitted" after acceptance.
+    ...(rawPlans.at(-1) ? { recordedState: safeText(rawPlans.at(-1)!.node.state, stats, 80) } : {}),
+    createdAt: safeText(task.createdAt, stats, 128),
+    projectID: safeText(task.provenance.projectID, stats, 128),
+    sourceCommit:
+      task.provenance.startingRevision.kind === "git"
+        ? safeText(task.provenance.startingRevision.commit, stats, 128)
+        : null,
+    specification: safeSpec(task, stats),
+  }
+}
+
+function coverageView(
+  allAttempts: AttemptEntry[],
+  reads: SessionReads,
+  attemptViews: ReturnType<typeof attemptView>[],
+  progressRows: ProgressRow[],
+  progressTruncated: boolean,
+  busy: boolean,
+  options: InspectOptions,
+  stats: PrivacyStats,
+) {
+  const messagesUnavailable = allAttempts.filter(
+    ({ attempt }) =>
+      reads.statuses.get(attempt.id) === "unavailable" ||
+      reads.sessions.get(attempt.id)?.messageStatus === "unavailable",
+  ).length
+  const messageSessions = allAttempts.filter(
+    ({ attempt }) => reads.sessions.get(attempt.id)?.messages,
+  ).length
+  return {
+    sessionRead:
+      options.includeMessages === false
+        ? "OpenCode session.get only; native session.context was not read"
+        : "OpenCode session.get followed by session.context",
+    transcript:
+      "Only messages returned by session.context; plugin context does not expose client.message.list",
+    availableSessionContexts: messageSessions,
+    unavailableSessionContexts: messagesUnavailable,
+    fullSessionHistory: "not guaranteed; use explicit warnings and do not infer omitted history",
+    compacted: stats.compacted > 0,
+    ongoing: busy,
+    attemptsWithoutRecordedSessions: attemptViews.filter(
+      (attempt) => attempt.sessionStatus !== "available",
+    ).length,
+    workerProgress: {
+      facts: progressRows.length,
+      truncated: progressTruncated,
+      commentary: progressRows.filter((row) => row.kind === "commentary").length,
+      automaticFacts: progressRows.filter((row) => row.kind !== "commentary").length,
+      recoveryGaps: progressRows.filter((row) => row.kind === "gap").length,
+      additiveStepMeasurements: progressRows.filter((row) => row.kind === "step").length,
+      cumulativeUsageSnapshots: progressRows.filter((row) => row.kind === "usage-snapshot").length,
     },
   }
+}
 
+function privacyView(stats: PrivacyStats) {
+  return {
+    redactedValues: stats.redacted,
+    truncatedValues: stats.truncated,
+    omittedUnknownParts: stats.omittedUnsupportedParts,
+    omittedAttachments: stats.omittedAttachments,
+    omittedReasoning: stats.omittedReasoning,
+    omittedSystemOrSkillMessages: stats.omittedSystem,
+    warnings: [
+      "Credential detection covers common formats and sensitive key names; arbitrary prose secrets may evade pattern detection.",
+      "System instructions, reasoning, metadata, provider-native/replay data, attachment/file bodies, and raw response bodies are not exported.",
+      "Compaction summaries are omitted; the returned session.context may not contain the full history.",
+    ],
+  }
+}
+
+/** Slices the visible events into the requested page and signs the continuation cursor. */
+function paginateEvents(
+  input: InspectTrajectoryInput,
+  options: InspectOptions,
+  cursorSecret: Uint8Array,
+  source: {
+    targetScope: string
+    task: TaskSpec
+    rawPlans: PlanSnapshot[]
+    reads: SessionReads
+    rawEvents: Record<string, unknown>[]
+    visibleEvents: Record<string, unknown>[]
+    summary: Record<string, unknown>
+  },
+) {
+  const { targetScope, task, rawPlans, reads, rawEvents, visibleEvents, summary } = source
   let offset = 0
   const cursorSummary = structuredClone(summary)
   const cursorMarket = object(object(cursorSummary.effort)?.marketEquivalentCost)
@@ -1319,8 +1448,8 @@ export async function inspectTrajectory(
               targetScope,
               task,
               plans: rawPlans,
-              sessions: [...sessions.entries()],
-              sessionErrors: [...sessionErrors.entries()],
+              sessions: [...reads.sessions.entries()],
+              sessionErrors: [...reads.errors.entries()],
               events: rawEvents,
             },
             cursorSecret,
@@ -1355,17 +1484,125 @@ export async function inspectTrajectory(
         })
       : null
   return {
-    ...summary,
-    trajectory: {
-      order: "timestamp-ascending then stable event ID",
-      page: Math.floor(offset / input.limit) + 1,
-      limit: input.limit,
-      totalEvents: visibleEvents.length,
-      events: page,
-      nextCursor,
-      hasMore: nextCursor !== null,
-    },
+    order: "timestamp-ascending then stable event ID",
+    page: Math.floor(offset / input.limit) + 1,
+    limit: input.limit,
+    totalEvents: visibleEvents.length,
+    events: page,
+    nextCursor,
+    hasMore: nextCursor !== null,
   }
+}
+
+/**
+ * Build one project-owned, read-only report. The runner's `detail()` method is
+ * deliberately avoided because it calls `audit()` and inserts an audit row.
+ */
+export async function inspectTrajectory(
+  store: RunnerStore,
+  host: TrajectoryHost,
+  projectID: string,
+  input: InspectTrajectoryInput,
+  cursorSecret: Uint8Array,
+  options: InspectOptions = {},
+) {
+  const stats = privacyStats()
+  const { task, rawPlans } = resolveTrajectoryTarget(store, projectID, input)
+
+  const allAttempts = rawPlans.flatMap((snapshot) =>
+    snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
+  )
+  if (options.includeMessages === false && !host.status)
+    throw new Error("Metadata-only trajectory status is unavailable")
+  const progressRows = store.progressFacts(allAttempts.map(({ attempt }) => attempt.id))
+  const progressTruncated = progressRows.length > 10_000
+  const visibleProgressRows = progressTruncated ? progressRows.slice(-10_000) : progressRows
+  const reads = await readAttemptSessions(host, projectID, allAttempts, options, stats)
+
+  const projectedProgressFacts = visibleProgressRows.map(projectProgressFact)
+  const { rawEvents, allChecks, checksByPlan } = collectTrajectoryEvents(
+    rawPlans,
+    allAttempts,
+    reads,
+    projectedProgressFacts,
+    options,
+    stats,
+  )
+
+  const targetScope = input.taskID ? `task:${input.taskID}` : `attempt:${input.attemptID}`
+  const visibleEvents = input.attemptID
+    ? rawEvents.filter((event) => event.attemptID === input.attemptID || event.attemptID === null)
+    : rawEvents
+  const focusedTaskPlans = focusedPlanViews(store, task, rawPlans, checksByPlan, stats)
+
+  const attemptViews = allAttempts.map(({ attempt, snapshot }) =>
+    attemptView(
+      attempt,
+      snapshot,
+      reads.sessions.get(attempt.id) ?? null,
+      reads.statuses.get(attempt.id) ?? "missing",
+      reads.errors.get(attempt.id) ?? null,
+      stats,
+      allChecks,
+    ),
+  )
+  const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)
+  const valuationInput: ProjectTaskValuationRequest = {
+    attempts: allAttempts.map((entry) =>
+      valuationAttempt(
+        entry,
+        reads.sessions.get(entry.attempt.id) ?? null,
+        reads.statuses.get(entry.attempt.id) ?? "missing",
+        stats,
+      ),
+    ),
+    progressFacts: projectedProgressFacts,
+    progressTruncated,
+    truncatedContextSessionIDs,
+  }
+  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
+  const focusedAttempts = input.attemptID
+    ? attemptViews.filter((attempt) => attempt.id === input.attemptID)
+    : attemptViews
+  const marketEquivalentCost = await marketEquivalentCostOf(valuationInput, options)
+  const { effort, busy } = effortView(
+    rawPlans,
+    allAttempts,
+    reads,
+    attemptViews,
+    taskEffortBasis,
+    marketEquivalentCost,
+    stats,
+  )
+  const summary = {
+    schemaVersion: 1,
+    task: taskView(store, task, rawPlans, stats),
+    plans: focusedTaskPlans,
+    focusedAttemptID: input.attemptID ? safeText(input.attemptID, stats, 128) : null,
+    attempts: focusedAttempts,
+    effort,
+    coverage: coverageView(
+      allAttempts,
+      reads,
+      attemptViews,
+      visibleProgressRows,
+      progressTruncated,
+      busy,
+      options,
+      stats,
+    ),
+    privacy: privacyView(stats),
+  }
+  const trajectory = paginateEvents(input, options, cursorSecret, {
+    targetScope,
+    task,
+    rawPlans,
+    reads,
+    rawEvents,
+    visibleEvents,
+    summary,
+  })
+  return { ...summary, trajectory }
 }
 
 /** Captures the complete sanitized event projection once for the panel page cache. */

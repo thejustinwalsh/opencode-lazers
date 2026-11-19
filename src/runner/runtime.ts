@@ -532,6 +532,112 @@ type CommandContext = {
   obs: GitObservations
 }
 
+const WORKTREE_EFFECT_KINDS = [
+  "worktree",
+  "worktree-recovery",
+  "graph-worktree",
+  "adoption-task-worktree",
+  "adoption-combined-worktree",
+]
+
+/** The blocked-plan reason startup recovery wrote for an uncertain worktree effect, if any. */
+function startupWorktreeRecoveryReason(
+  effect: EffectRow,
+  nativeFailure: ReturnType<typeof nativeWorktreeFailureFromReceipt>,
+): string | undefined {
+  if (
+    !["worktree", "worktree-recovery"].includes(effect.kind) ||
+    effect.state !== "uncertain" ||
+    !effect.receipt ||
+    nativeFailure
+  )
+    return undefined
+  try {
+    const receipt = JSON.parse(effect.receipt) as { error?: unknown }
+    return typeof receipt.error === "string"
+      ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Native worktrees at the effect's base commit (clean ones only, for adoption worktrees). */
+async function worktreeReconcileCandidates(
+  effect: EffectRow,
+  payload: { workspace: string; base: string },
+  nativeWorktrees: readonly string[],
+) {
+  const possibleCandidates: string[] = []
+  for (const directory of nativeWorktrees.filter((directory) =>
+    effect.kind === "worktree-recovery"
+      ? directory === payload.workspace
+      : isStartupWorktreeCandidate(payload.workspace, directory),
+  ))
+    if (
+      existsSync(directory) &&
+      (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
+    )
+      possibleCandidates.push(directory)
+  const candidates: string[] = []
+  for (const directory of possibleCandidates) {
+    if (
+      effect.kind.startsWith("adoption-") &&
+      (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
+    )
+      continue
+    candidates.push(directory)
+  }
+  return candidates
+}
+
+/** The check receipt a runner subprocess left at the effect's receipt path, when there is one. */
+function readCheckReceipt(payload: { receiptPath: string }): CheckReceipt | undefined {
+  return existsSync(payload.receiptPath)
+    ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt)
+    : undefined
+}
+
+function unsettledCheckError(label: "Mechanical" | "Verification", check: CheckReceipt) {
+  return new Error(
+    `${label} command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
+  )
+}
+
+/** Whether a command's outcome leaves work the scheduler should pick up now. */
+function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
+  const outcome = result as { status?: unknown; instructionUpdates?: unknown } | null | undefined
+  const status = outcome?.status
+  switch (command.action) {
+    case "run":
+      return status === "running"
+    case "integrated":
+      return status === "cleanup-requested"
+    case "reconcile":
+      return status === "reconciling"
+    case "cancel":
+      return status === "cancelling"
+    case "resume":
+      return (
+        status === "resuming" ||
+        status === "verification-resumed" ||
+        status === "combined-verification-resumed"
+      )
+    case "retry":
+      return status === "retrying"
+    case "amend-scope":
+      return (
+        status === "scope-amended" &&
+        Array.isArray(outcome?.instructionUpdates) &&
+        outcome.instructionUpdates.length > 0
+      )
+    case "retained-repair":
+      return status === "retained-repair-requested"
+    default:
+      return false
+  }
+}
+
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly worktreeCleanup: WorktreeCleanup
@@ -3570,129 +3676,21 @@ export class TaskRuntime {
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
     if (prior !== undefined) return prior
     // Resolve host facts before the transaction, then recheck against the version read here.
-    let old = this.store.plan(command.planID)
-    if (!old) throw new Error("Plan not found")
-    // The recorded state decides legality; reject before any asynchronous owner recovery effect.
-    const unavailable = planCommandProblem(old.state, command)
-    if (unavailable) throw new Error(unavailable)
-    // The owner is advisory. Any live Architect of this project may command the
-    // plan and is adopted as its owner; reading (audit) needs no Architect.
-    if (command.action !== "audit" && !admission) {
-      if (!this.validArchitect(await this.host.session(caller)))
-        throw new Error("A live Architect session of this project must command the plan")
-      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
-        old = this.store.plan(command.planID)!
-    }
+    const old = await this.admitCommandPlan(command, caller, admission)
     const baseVersion = old.version
     let continuedOwner: string | undefined
     const configuredWorker =
       command.action === "run" && !JSON.parse(old.body).workerModel
         ? await this.host.workerModel?.(workerAgent(JSON.parse(old.body).workerAgent))
         : undefined
-    const target = command.action === "reassign" ? command.targetSessionID : old.owner
-    let ownerSession: HostSession | null | undefined
-    if (
-      [
-        "run",
-        "pause",
-        "unpause",
-        "reassign",
-        "reconcile",
-        "resume",
-        "retry",
-        "adopt-descendant",
-        "settle-startup",
-        "retained-repair",
-        "verify-retained",
-      ].includes(command.action)
-    ) {
-      if (!target) throw new Error("Target session required")
-      ownerSession = await this.host.session(target)
-    }
+    let ownerSession = await this.commandOwnerSession(command, old)
     // Integration and baseline proofs run before the transaction (they read Git
     // asynchronously) and are consumed, never recomputed, inside it.
     const preflight = await this.preflightProofs(command, old)
-    let terminalContinuation:
-      | {
-          attemptID: string
-          messageID: string
-          inputID: string
-          worker: HostSession
-        }
-      | undefined
-    let terminalRepairContinuation: { operationID: string; owner: string } | undefined
-    let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
-    if (command.action === "resume" && command.taskID) {
-      const attempt = this.store
-        .attempts(old.id)
-        .filter((candidate) => candidate.task_id === command.taskID)
-        .at(-1)
-      const latestStop = attempt
-        ? this.store.latestTransition<Record<string, unknown>>(
-            old.id,
-            attempt.task_id,
-            "WORKER_STOPPED",
-          )
+    const resumption =
+      command.action === "resume" && command.taskID
+        ? await this.prepareResumeContinuation(old, command, caller, ownerSession, command.taskID)
         : undefined
-      const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-      const interruptedVerification = Boolean(
-        attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0,
-      )
-      if (
-        !interruptedVerification &&
-        (attempt?.state === "running" || attempt?.state === "verifying" || terminalNativeFailure)
-      ) {
-        if (!command.attemptID || command.attemptID !== attempt.id)
-          throw new Error("Terminal worker continuation requires the exact latest attemptID")
-        const worker = await this.host.session(attempt.session_id, { messages: true })
-        const problem = this.terminalWorkerContinuationProblem(
-          old,
-          command,
-          caller,
-          ownerSession,
-          worker,
-        )
-        if (problem) throw new Error(problem)
-        terminalContinuation = {
-          attemptID: attempt.id,
-          messageID: attempt.message_id,
-          inputID: worker!.turn!.inputID!,
-          worker: worker!,
-        }
-        const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-          old.id,
-          attempt.task_id,
-        )
-        if (latestRepair?.attemptID === attempt.id) {
-          const repair = this.retainedRepairForAttempt(attempt)
-          if (!repair || repair.messageID !== attempt.message_id)
-            throw new Error(
-              "Retained repair continuation is missing its current owner/control authorization",
-            )
-          terminalRepairContinuation = {
-            operationID: repair.operationID,
-            owner: repair.owner,
-          }
-        }
-      }
-      if (
-        !terminalContinuation &&
-        attempt?.state === "cancelled" &&
-        this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)
-          ?.state === "cancelled" &&
-        old.state === "blocked" &&
-        old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
-        this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
-          ?.attemptID === attempt.id
-      )
-        retainedRepairRecovery = await this.prepareRetainedRepairRecovery(
-          old,
-          command,
-          caller,
-          ownerSession,
-          attempt,
-        )
-    }
     if (command.action === "resume" && !command.taskID)
       this.assertCombinedVerificationResume(old, command, ownerSession)
     if (command.action === "run" && !this.validArchitect(ownerSession)) {
@@ -3717,152 +3715,22 @@ export class TaskRuntime {
       caller,
       ownerSession,
     )
-    let startupSettlement:
-      | {
-          attempt: AttemptRow
-          effect: EffectRow
-          failure: StartupWorktreeFailureEvidence
-          evidence: StartupAbsenceEvidence
-        }
-      | undefined
-    if (command.action === "settle-startup") {
-      if (
-        !command.taskID ||
-        !command.attemptID ||
-        !command.reason ||
-        !ownerSession ||
-        !this.validArchitect(ownerSession)
-      )
-        throw new Error(
-          "Startup settlement requires the current Architect owner and exact task attempt",
-        )
-      const candidate = this.startupSettlementCandidate(old, command.taskID, command.attemptID)
-      const evidence = await this.observeStartupAbsence(
-        old,
-        candidate.attempt,
-        candidate.effect,
-        candidate.failure,
-        command.requestID,
-      )
-      this.assertStartupSettlementCurrent(
-        old,
-        candidate.attempt,
-        candidate.effect,
-        candidate.failure,
-      )
-      startupSettlement = { ...candidate, evidence }
-    }
+    const startupSettlement =
+      command.action === "settle-startup"
+        ? await this.prepareStartupSettlement(old, command, ownerSession)
+        : undefined
 
-    if (retainedVerificationSeed) {
-      const [currentOwner, currentPlan] = await Promise.all([
-        this.host.session(caller),
-        Promise.resolve(this.store.plan(old.id)),
-      ])
-      if (
-        !this.validArchitect(currentOwner) ||
-        !currentPlan ||
-        currentPlan.revision !== retainedVerificationSeed.planRevision
-      )
-        throw new Error("Retained verification owner or plan revision changed before reservation")
-      const observeOwner = async () => {
-        ownerSession = await this.host.session(caller)
-        if (!this.validArchitect(ownerSession))
-          throw new Error("Retained verification owner changed during final native admission")
-      }
-      if (retainedVerificationSeed.repair) {
-        const latest = this.store
-          .attempts(old.id)
-          .find((a) => a.id === retainedVerificationSeed.attemptID)
-        if (!latest) throw new Error("Retained repair attempt disappeared before reservation")
-        await this.observeRetainedRepairCandidate(
-          currentPlan,
-          latest,
-          retainedVerificationSeed.repair,
-          observeOwner,
-        )
-      } else await observeOwner()
-    }
-
-    if (retainedRepair) {
-      const attempt = this.store
-        .attempts(old.id)
-        .find((candidate) => candidate.id === retainedRepair.attemptID)
-      if (!attempt)
-        throw new Error("Retained repair attempt changed before final native revalidation")
-      if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-      const observedOwner = await this.host.session(old.owner)
-      if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
-        throw new Error("Retained repair owner changed before final admission")
-      const observedWorker = await this.host.session(attempt.session_id, { messages: true })
-      const observedProblem = this.retainedRepairWorkerProblem(
+    if (retainedVerificationSeed)
+      ownerSession = await this.revalidateRetainedVerification(
         old,
-        attempt,
-        observedWorker,
-        retainedRepair.nativeInputID,
-        retainedRepair.model,
+        caller,
+        retainedVerificationSeed,
+        ownerSession,
       )
-      const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        observedWorker,
-        retainedRepair.nativeInputID,
-      )
-      if (
-        observedProblem ||
-        observedBackgroundProblem ||
-        !observedWorker ||
-        this.retainedRepairObservation(observedWorker) !== retainedRepair.workerObservation
-      )
-        throw new Error(observedProblem ?? "Retained worker changed before final admission")
-      const confirmedOwner = await this.host.session(old.owner)
-      if (!this.validArchitect(confirmedOwner) || confirmedOwner.id !== caller)
-        throw new Error("Retained repair owner changed during final admission")
-      const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-      const confirmedProblem = this.retainedRepairWorkerProblem(
-        old,
-        attempt,
-        confirmedWorker,
-        retainedRepair.nativeInputID,
-        retainedRepair.model,
-      )
-      const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-        confirmedWorker,
-        retainedRepair.nativeInputID,
-      )
-      if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-      if (
-        confirmedProblem ||
-        confirmedBackgroundProblem ||
-        !confirmedWorker ||
-        this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
-        !this.preparationAllowed(attempt)
-      )
-        throw new Error(
-          confirmedProblem ??
-            confirmedBackgroundProblem ??
-            "Retained repair authorization changed during final admission",
-        )
-    }
-    if (retainedRepairRecovery) {
-      const currentOwner = await this.host.session(caller)
-      const recoveryAttempt = this.store
-        .attempts(old.id)
-        .find((candidate) => candidate.id === retainedRepairRecovery!.attemptID)
-      const currentWorker = await this.host.session(retainedRepairRecovery.worker.id, {
-        messages: true,
-      })
-      if (
-        !recoveryAttempt ||
-        !this.validArchitect(currentOwner) ||
-        currentOwner.id !== retainedRepairRecovery.owner ||
-        !currentWorker ||
-        this.retainedRepairObservation(currentWorker) !==
-          retainedRepairRecovery.workerObservation ||
-        currentWorker.messages.some(
-          (message) => message.id === retainedRepairRecovery.failedMessageID,
-        ) ||
-        !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, retainedRepairRecovery)
-      )
-        throw new Error("Retained repair recovery changed during final native revalidation")
-    }
+    if (retainedRepair)
+      await this.revalidateRetainedRepair(old, caller, baseVersion, retainedRepair)
+    if (resumption?.retainedRepairRecovery)
+      await this.revalidateRetainedRepairRecovery(old, caller, resumption.retainedRepairRecovery)
     // Native cleanup observations are sampled outside the command transaction,
     // then published only if the recorded plan version is still current.
     const cleanupDiagnostics =
@@ -3876,9 +3744,9 @@ export class TaskRuntime {
       configuredWorker,
       ownerSession,
       preflight,
-      terminalContinuation,
-      terminalRepairContinuation,
-      retainedRepairRecovery,
+      terminalContinuation: resumption?.terminalContinuation,
+      terminalRepairContinuation: resumption?.terminalRepairContinuation,
+      retainedRepairRecovery: resumption?.retainedRepairRecovery,
       adoptionSeed,
       retainedVerificationSeed,
       retainedRepair,
@@ -3889,89 +3757,12 @@ export class TaskRuntime {
     }
     const result = await obs.run(
       () =>
-        this.store.command(command.requestID, { command, caller }, (db) => {
-          const plan = this.store.plan(command.planID)!
-          if (plan.version !== baseVersion) throw new PlanMovedDuringCommand()
-          const unavailableNow = planCommandProblem(plan.state, command)
-          if (unavailableNow) throw new Error(unavailableNow)
-          // Commit owner adoption with the original request receipt. If native
-          // creation succeeds but this command fails, exact replay can recover it
-          // without granting an old owner authority over a reassigned plan.
-          if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
-          const activeAdoptions = this.store.activeAdoptions(plan.id)
-          if (
-            activeAdoptions.length &&
-            !["adopt-descendant", "cancel", "audit"].includes(command.action)
-          )
-            throw new Error(
-              "A descendant adoption is pending; only its adoption or cancellation is allowed",
-            )
-          if (command.action === "retained-repair") return this.commandRetainedRepair(db, ctx, plan)
-          if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
-          if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
-          if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
-          if (command.action === "integrated")
-            return recordIntegration(
-              this.store,
-              db,
-              plan,
-              command,
-              obs.git(this.directory, ["branch", "--show-current"]),
-              preflight.integration,
-            )
-          if (command.action === "pause" || command.action === "unpause")
-            return changeDispatchPause(
-              this.store,
-              plan,
-              command,
-              caller,
-              ownerSession,
-              this.validArchitect(ownerSession),
-            )
-          if (command.action === "schedule")
-            return changeSchedule(
-              this.store,
-              plan,
-              command,
-              caller,
-              this.directory,
-              preflight.bases,
-            )
-          if (command.action === "audit")
-            return {
-              status: "audited",
-              ...this.store.audit(),
-              version: plan.version,
-              ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
-            }
-          if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
-          if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
-          if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
-          if (command.action === "resume" || command.action === "retry")
-            return this.commandResumeOrRetry(db, ctx, plan)
-          if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
-          return this.commandRun(db, ctx, plan)
-        }),
+        this.store.command(command.requestID, { command, caller }, (db) =>
+          this.applyCommandIn(db, ctx),
+        ),
       () => this.assertSchedulerActive(),
     )
-    if (
-      (command.action === "run" && result?.status === "running") ||
-      (command.action === "integrated" && result?.status === "cleanup-requested") ||
-      (command.action === "reconcile" && result?.status === "reconciling") ||
-      (command.action === "cancel" && result?.status === "cancelling") ||
-      (command.action === "resume" &&
-        (result?.status === "resuming" ||
-          result?.status === "verification-resumed" ||
-          result?.status === "combined-verification-resumed")) ||
-      (command.action === "retry" && result?.status === "retrying") ||
-      (command.action === "amend-scope" &&
-        result?.status === "scope-amended" &&
-        "instructionUpdates" in result &&
-        Array.isArray(result.instructionUpdates) &&
-        result.instructionUpdates.length > 0) ||
-      (command.action === "retained-repair" && result?.status === "retained-repair-requested")
-    )
-      this.wakeScheduler?.()
+    if (commandWakesScheduler(command, result)) this.wakeScheduler?.()
     if (
       command.action === "verify-retained" ||
       command.action === "pause" ||
@@ -3979,6 +3770,360 @@ export class TaskRuntime {
     )
       await this.requestTick()
     return result
+  }
+
+  /** The plan a command may act on, with its owner adopted by the commanding Architect. */
+  private async admitCommandPlan(command: PlanCommand, caller: string, admission: boolean) {
+    let old = this.store.plan(command.planID)
+    if (!old) throw new Error("Plan not found")
+    // The recorded state decides legality; reject before any asynchronous owner recovery effect.
+    const unavailable = planCommandProblem(old.state, command)
+    if (unavailable) throw new Error(unavailable)
+    // The owner is advisory. Any live Architect of this project may command the
+    // plan and is adopted as its owner; reading (audit) needs no Architect.
+    if (command.action !== "audit" && !admission) {
+      if (!this.validArchitect(await this.host.session(caller)))
+        throw new Error("A live Architect session of this project must command the plan")
+      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
+        old = this.store.plan(command.planID)!
+    }
+    return old
+  }
+
+  private async commandOwnerSession(
+    command: PlanCommand,
+    old: PlanRow,
+  ): Promise<HostSession | null | undefined> {
+    const target = command.action === "reassign" ? command.targetSessionID : old.owner
+    if (
+      ![
+        "run",
+        "pause",
+        "unpause",
+        "reassign",
+        "reconcile",
+        "resume",
+        "retry",
+        "adopt-descendant",
+        "settle-startup",
+        "retained-repair",
+        "verify-retained",
+      ].includes(command.action)
+    )
+      return undefined
+    if (!target) throw new Error("Target session required")
+    return this.host.session(target)
+  }
+
+  /** Resume of a task: the worker continuation or retained-repair recovery its latest attempt allows. */
+  private async prepareResumeContinuation(
+    old: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+    taskID: string,
+  ): Promise<
+    Pick<
+      CommandContext,
+      "terminalContinuation" | "terminalRepairContinuation" | "retainedRepairRecovery"
+    >
+  > {
+    const attempt = this.store
+      .attempts(old.id)
+      .filter((candidate) => candidate.task_id === taskID)
+      .at(-1)
+    const latestStop = attempt
+      ? this.store.latestTransition<Record<string, unknown>>(
+          old.id,
+          attempt.task_id,
+          "WORKER_STOPPED",
+        )
+      : undefined
+    const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
+    const interruptedVerification = Boolean(
+      attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0,
+    )
+    let continuation: Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation"> =
+      {
+        terminalContinuation: undefined,
+        terminalRepairContinuation: undefined,
+      }
+    if (
+      attempt &&
+      !interruptedVerification &&
+      (attempt.state === "running" || attempt.state === "verifying" || terminalNativeFailure)
+    )
+      continuation = await this.prepareTerminalContinuation(
+        old,
+        command,
+        caller,
+        ownerSession,
+        attempt,
+      )
+    let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+    if (
+      !continuation.terminalContinuation &&
+      attempt?.state === "cancelled" &&
+      this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)?.state ===
+        "cancelled" &&
+      old.state === "blocked" &&
+      old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
+      this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
+        ?.attemptID === attempt.id
+    )
+      retainedRepairRecovery = await this.prepareRetainedRepairRecovery(
+        old,
+        command,
+        caller,
+        ownerSession,
+        attempt,
+      )
+    return { ...continuation, retainedRepairRecovery }
+  }
+
+  private async prepareTerminalContinuation(
+    old: PlanRow,
+    command: PlanCommand,
+    caller: string,
+    ownerSession: HostSession | null | undefined,
+    attempt: AttemptRow,
+  ): Promise<Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation">> {
+    if (!command.attemptID || command.attemptID !== attempt.id)
+      throw new Error("Terminal worker continuation requires the exact latest attemptID")
+    const worker = await this.host.session(attempt.session_id, { messages: true })
+    const problem = this.terminalWorkerContinuationProblem(
+      old,
+      command,
+      caller,
+      ownerSession,
+      worker,
+    )
+    if (problem) throw new Error(problem)
+    const terminalContinuation = {
+      attemptID: attempt.id,
+      messageID: attempt.message_id,
+      inputID: worker!.turn!.inputID!,
+      worker: worker!,
+    }
+    let terminalRepairContinuation: { operationID: string; owner: string } | undefined
+    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+      old.id,
+      attempt.task_id,
+    )
+    if (latestRepair?.attemptID === attempt.id) {
+      const repair = this.retainedRepairForAttempt(attempt)
+      if (!repair || repair.messageID !== attempt.message_id)
+        throw new Error(
+          "Retained repair continuation is missing its current owner/control authorization",
+        )
+      terminalRepairContinuation = { operationID: repair.operationID, owner: repair.owner }
+    }
+    return { terminalContinuation, terminalRepairContinuation }
+  }
+
+  private async prepareStartupSettlement(
+    old: PlanRow,
+    command: PlanCommand,
+    ownerSession: HostSession | null | undefined,
+  ) {
+    if (
+      !command.taskID ||
+      !command.attemptID ||
+      !command.reason ||
+      !ownerSession ||
+      !this.validArchitect(ownerSession)
+    )
+      throw new Error(
+        "Startup settlement requires the current Architect owner and exact task attempt",
+      )
+    const candidate = this.startupSettlementCandidate(old, command.taskID, command.attemptID)
+    const evidence = await this.observeStartupAbsence(
+      old,
+      candidate.attempt,
+      candidate.effect,
+      candidate.failure,
+      command.requestID,
+    )
+    this.assertStartupSettlementCurrent(old, candidate.attempt, candidate.effect, candidate.failure)
+    return { ...candidate, evidence }
+  }
+
+  /** Re-reads the owner (and repair candidate) at the last moment before a retained verification reserves. */
+  private async revalidateRetainedVerification(
+    old: PlanRow,
+    caller: string,
+    seed: RetainedVerificationSeed,
+    ownerSession: HostSession | null | undefined,
+  ) {
+    const [currentOwner, currentPlan] = await Promise.all([
+      this.host.session(caller),
+      Promise.resolve(this.store.plan(old.id)),
+    ])
+    if (
+      !this.validArchitect(currentOwner) ||
+      !currentPlan ||
+      currentPlan.revision !== seed.planRevision
+    )
+      throw new Error("Retained verification owner or plan revision changed before reservation")
+    let observed = ownerSession
+    const observeOwner = async () => {
+      observed = await this.host.session(caller)
+      if (!this.validArchitect(observed))
+        throw new Error("Retained verification owner changed during final native admission")
+    }
+    if (seed.repair) {
+      const latest = this.store.attempts(old.id).find((a) => a.id === seed.attemptID)
+      if (!latest) throw new Error("Retained repair attempt disappeared before reservation")
+      await this.observeRetainedRepairCandidate(currentPlan, latest, seed.repair, observeOwner)
+    } else await observeOwner()
+    return observed
+  }
+
+  private async revalidateRetainedRepair(
+    old: PlanRow,
+    caller: string,
+    baseVersion: number,
+    retainedRepair: RetainedRepairSeed,
+  ) {
+    const attempt = this.store
+      .attempts(old.id)
+      .find((candidate) => candidate.id === retainedRepair.attemptID)
+    if (!attempt)
+      throw new Error("Retained repair attempt changed before final native revalidation")
+    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
+    const observedOwner = await this.host.session(old.owner)
+    if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
+      throw new Error("Retained repair owner changed before final admission")
+    const observedWorker = await this.host.session(attempt.session_id, { messages: true })
+    const observedProblem = this.retainedRepairWorkerProblem(
+      old,
+      attempt,
+      observedWorker,
+      retainedRepair.nativeInputID,
+      retainedRepair.model,
+    )
+    const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
+      observedWorker,
+      retainedRepair.nativeInputID,
+    )
+    if (
+      observedProblem ||
+      observedBackgroundProblem ||
+      !observedWorker ||
+      this.retainedRepairObservation(observedWorker) !== retainedRepair.workerObservation
+    )
+      throw new Error(observedProblem ?? "Retained worker changed before final admission")
+    const confirmedOwner = await this.host.session(old.owner)
+    if (!this.validArchitect(confirmedOwner) || confirmedOwner.id !== caller)
+      throw new Error("Retained repair owner changed during final admission")
+    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
+    const confirmedProblem = this.retainedRepairWorkerProblem(
+      old,
+      attempt,
+      confirmedWorker,
+      retainedRepair.nativeInputID,
+      retainedRepair.model,
+    )
+    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
+      confirmedWorker,
+      retainedRepair.nativeInputID,
+    )
+    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
+    if (
+      confirmedProblem ||
+      confirmedBackgroundProblem ||
+      !confirmedWorker ||
+      this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
+      !this.preparationAllowed(attempt)
+    )
+      throw new Error(
+        confirmedProblem ??
+          confirmedBackgroundProblem ??
+          "Retained repair authorization changed during final admission",
+      )
+  }
+
+  private async revalidateRetainedRepairRecovery(
+    old: PlanRow,
+    caller: string,
+    recovery: RetainedRepairRecoverySeed,
+  ) {
+    const currentOwner = await this.host.session(caller)
+    const recoveryAttempt = this.store
+      .attempts(old.id)
+      .find((candidate) => candidate.id === recovery.attemptID)
+    const currentWorker = await this.host.session(recovery.worker.id, { messages: true })
+    if (
+      !recoveryAttempt ||
+      !this.validArchitect(currentOwner) ||
+      currentOwner.id !== recovery.owner ||
+      !currentWorker ||
+      this.retainedRepairObservation(currentWorker) !== recovery.workerObservation ||
+      currentWorker.messages.some((message) => message.id === recovery.failedMessageID) ||
+      !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, recovery)
+    )
+      throw new Error("Retained repair recovery changed during final native revalidation")
+  }
+
+  /** The command's one transaction: re-check the plan version, then apply the action. */
+  private applyCommandIn(db: Database, ctx: CommandContext) {
+    const { command, continuedOwner, baseVersion } = ctx
+    const plan = this.store.plan(command.planID)!
+    if (plan.version !== baseVersion) throw new PlanMovedDuringCommand()
+    const unavailableNow = planCommandProblem(plan.state, command)
+    if (unavailableNow) throw new Error(unavailableNow)
+    // Commit owner adoption with the original request receipt. If native
+    // creation succeeds but this command fails, exact replay can recover it
+    // without granting an old owner authority over a reassigned plan.
+    if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
+    const activeAdoptions = this.store.activeAdoptions(plan.id)
+    if (activeAdoptions.length && !["adopt-descendant", "cancel", "audit"].includes(command.action))
+      throw new Error(
+        "A descendant adoption is pending; only its adoption or cancellation is allowed",
+      )
+    return this.dispatchCommandIn(db, ctx, plan)
+  }
+
+  private dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
+    if (command.action === "retained-repair") return this.commandRetainedRepair(db, ctx, plan)
+    if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
+    if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
+    if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
+    if (command.action === "integrated")
+      return recordIntegration(
+        this.store,
+        db,
+        plan,
+        command,
+        obs.git(this.directory, ["branch", "--show-current"]),
+        preflight.integration,
+      )
+    if (command.action === "pause" || command.action === "unpause")
+      return changeDispatchPause(
+        this.store,
+        plan,
+        command,
+        caller,
+        ownerSession,
+        this.validArchitect(ownerSession),
+      )
+    if (command.action === "schedule")
+      return changeSchedule(this.store, plan, command, caller, this.directory, preflight.bases)
+    if (command.action === "audit")
+      return {
+        status: "audited",
+        ...this.store.audit(),
+        version: plan.version,
+        ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
+      }
+    if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
+    if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
+    if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
+    if (command.action === "resume" || command.action === "retry")
+      return this.commandResumeOrRetry(db, ctx, plan)
+    if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
+    return this.commandRun(db, ctx, plan)
   }
 
   private commandRetainedRepair(db: Database, ctx: CommandContext, plan: PlanRow) {
@@ -10116,9 +10261,13 @@ export class TaskRuntime {
     return "pending"
   }
 
-  private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
-    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const verificationCurrent = () => {
+  /** True while the attempt is still the one this verification pass was started for. */
+  private verificationCurrentGuard(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    repairID: string | undefined,
+  ) {
+    return () => {
       const currentPlan = this.store.plan(plan.id)
       const currentAttempt = this.store
         .attempts(plan.id)
@@ -10135,60 +10284,95 @@ export class TaskRuntime {
         this.retainedRepairGeneration(plan.id, attempt.task_id) === repairID,
       )
     }
-    if (!verificationCurrent()) return
-    const currentPlanBeforeVerification = this.store.plan(plan.id)
-    if (
-      currentPlanBeforeVerification?.state === "blocked" &&
+  }
+
+  private taskVerificationTarget(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    check: TaskProposal["verification"][number],
+    artifact: string,
+  ) {
+    return this.verificationTarget(
+      plan,
+      "task",
+      check,
+      artifact,
+      attempt.task_id,
+      this.store.repository.get(attempt.task_id)?.revision ?? null,
+      attempt.id,
+    )
+  }
+
+  /** A blocked plan whose verification deadline waits on the task's continuation does not verify yet. */
+  private verificationAwaitsTaskContinuation(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    proposal: TaskProposal,
+  ) {
+    const current = this.store.plan(plan.id)
+    return Boolean(
+      current?.state === "blocked" &&
       attempt.artifact &&
       proposal.verification.some((check) => {
-        const target = this.verificationTarget(
-          currentPlanBeforeVerification,
-          "task",
-          check,
-          attempt.artifact!,
-          attempt.task_id,
-          this.store.repository.get(attempt.task_id)?.revision ?? null,
-          attempt.id,
-        )
+        const target = this.taskVerificationTarget(current, attempt, check, attempt.artifact!)
         return this.deadlineAwaitingTaskContinuation(
-          currentPlanBeforeVerification,
+          current,
           target,
           this.verificationDeadline(target),
         )
-      })
+      }),
     )
-      return
-    const preparation = await this.prepareVerificationCandidate(plan, attempt, proposal, fence)
-    if (preparation === "pending" || preparation === "held") return
-    let artifact: Awaited<ReturnType<typeof commitArtifact>>
+  }
+
+  /** Whether a verify effect already ran this exact candidate, so a retained fix may be kept. */
+  private candidateAlreadyChecked(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    proposal: TaskProposal,
+    head: string,
+    repairID: string | undefined,
+  ) {
+    return this.store.effects(plan.id).some((effect) => {
+      if (
+        effect.attempt_id !== attempt.id ||
+        effect.state !== "completed" ||
+        !effect.kind.startsWith("verify:")
+      )
+        return false
+      const payload = JSON.parse(effect.payload)
+      const recordedCheck =
+        isRecord(payload) && payload.authoredCheck !== undefined
+          ? payload.authoredCheck
+          : isRecord(payload)
+            ? payload.check
+            : undefined
+      return (
+        payload.artifact === head &&
+        payload.workspace === attempt.workspace &&
+        proposal.verification.some((check) =>
+          sameVerificationCheckIdentity(check, recordedCheck),
+        ) &&
+        (payload.repairID ?? undefined) === repairID
+      )
+    })
+  }
+
+  /** Commits the attempt's workspace as the candidate artifact; undefined when verification must stop. */
+  private async commitVerificationCandidate(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    proposal: TaskProposal,
+    preparation: "ready" | "prepared",
+    repairID: string | undefined,
+    fence: number,
+    verificationCurrent: () => boolean,
+  ): Promise<Awaited<ReturnType<typeof commitArtifact>> | undefined> {
     try {
       const head = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-      const checkedCandidate = this.store.effects(plan.id).some((effect) => {
-        if (
-          effect.attempt_id !== attempt.id ||
-          effect.state !== "completed" ||
-          !effect.kind.startsWith("verify:")
-        )
-          return false
-        const payload = JSON.parse(effect.payload)
-        const recordedCheck =
-          isRecord(payload) && payload.authoredCheck !== undefined
-            ? payload.authoredCheck
-            : isRecord(payload)
-              ? payload.check
-              : undefined
-        return (
-          payload.artifact === head &&
-          payload.workspace === attempt.workspace &&
-          proposal.verification.some((check) =>
-            sameVerificationCheckIdentity(check, recordedCheck),
-          ) &&
-          (payload.repairID ?? undefined) === repairID
-        )
-      })
+      const checkedCandidate = this.candidateAlreadyChecked(plan, attempt, proposal, head, repairID)
       const retainFixes =
         (preparation === "prepared" || checkedCandidate) && this.preparationAllowed(attempt)
-      artifact = await commitArtifact(
+      const artifact = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
         this.store.effectiveWriteScope(attempt.task_id),
@@ -10197,14 +10381,15 @@ export class TaskRuntime {
           ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
           : undefined,
       )
-      if (!verificationCurrent()) return
+      if (!verificationCurrent()) return undefined
       // Publish the private snapshot before starting checks. Recreating
       // commit-tree on each tick changes its identity
       // and can strand an otherwise valid receipt (or supersede worker edits).
       if ((attempt.workspace !== this.directory || retainFixes) && artifact.commit !== head)
         await gitAsync(attempt.workspace, ["update-ref", "HEAD", artifact.commit, head])
+      return artifact
     } catch (error) {
-      if (!verificationCurrent()) return
+      if (!verificationCurrent()) return undefined
       try {
         this.progress.recordAttemptOutcome(
           attempt.id,
@@ -10225,25 +10410,181 @@ export class TaskRuntime {
           })
           this.hold(plan, error.message, ["amend-scope", "audit", "reconcile", "cancel"])
         })
-        return
+        return undefined
       }
       this.failAttempt(plan, attempt, errorText(error))
-      return
+      return undefined
     }
+  }
+
+  /** Records the candidate artifact on the attempt and its task node. */
+  private recordAttemptArtifact(plan: PlanRow, attempt: AttemptRow, commit: string, fence: number) {
     this.store.fenced(this.owner, fence, (db) => {
-      db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(artifact.commit, attempt.id)
+      db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(commit, attempt.id)
       db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
-        artifact.commit,
+        commit,
         plan.id,
         attempt.task_id,
       )
     })
-    await this.stampIdentity(true)
+  }
+
+  /** The newest non-superseded verify effect that covers this exact candidate and check. */
+  private knownVerifyEffect(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    check: TaskProposal["verification"][number],
+    artifact: { commit: string; identity: string },
+    effectiveCheck: TaskProposal["verification"][number],
+    repairID: string | undefined,
+    verificationEpoch: number,
+  ) {
+    return this.store
+      .effects(plan.id)
+      .toReversed()
+      .find((e) => {
+        if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
+        if (effectSuperseded(e)) return false
+        const payload = JSON.parse(e.payload) as {
+          artifact?: unknown
+          identity?: unknown
+          workspace?: unknown
+          repairID?: unknown
+          verificationEpoch?: number
+          check?: unknown
+          authoredCheck?: unknown
+        }
+        // A resume replaces interrupted checks. Preserve completed checks
+        // for the same candidate, attempt, command, and repair generation.
+        const passed =
+          e.state === "completed" && e.receipt
+            ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
+            : undefined
+        return (
+          payload.artifact === artifact.commit &&
+          payload.identity === artifact.identity &&
+          payload.workspace === attempt.workspace &&
+          (payload.repairID ?? undefined) === repairID &&
+          ((payload.verificationEpoch ?? 0) === verificationEpoch ||
+            (passed && checkSucceeded(passed))) &&
+          sameVerificationCheckIdentity(payload.check, effectiveCheck)
+        )
+      })
+  }
+
+  /** An unfinished earlier effect for the check: wait while it runs, otherwise hold as uncertain. */
+  private holdUncertainVerifyEffect(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    check: TaskProposal["verification"][number],
+    artifact: { commit: string; identity: string },
+    known: EffectRow,
+  ) {
+    const activityIdentity = { effectID: known.id, payload: known.payload }
+    const activity = this.checkActivity(known.id, activityIdentity)
+    if (activity?.state === "running" || activity?.state === "completed") return
+    const actual = actualCheckResultFromEffect(known)
+    const matches = Boolean(
+      actual &&
+      actual.id === check.id &&
+      actual.command === check.command &&
+      actual.cwd === attempt.workspace &&
+      actual.artifact === artifact.commit &&
+      actual.inputIdentity === artifact.identity,
+    )
+    const reason =
+      matches && actual && !checkResourcesSettled(actual)
+        ? `Verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
+        : `Verification ${check.id} has an uncertain receipt and was not replayed`
+    this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
+  }
+
+  /** Journals the verify effect and starts its check; the receipt arrives on a later tick. */
+  private startVerifyEffect(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    check: TaskProposal["verification"][number],
+    effectiveCheck: TaskProposal["verification"][number],
+    deadline: VerificationDeadline,
+    artifact: { commit: string; identity: string },
+    known: EffectRow | undefined,
+    repairID: string | undefined,
+    verificationEpoch: number,
+    fence: number,
+  ) {
+    const receiptPath = join(
+      this.dataDirectory,
+      "receipts",
+      attempt.id,
+      `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
+    )
+    const effect = this.effect(
+      plan.id,
+      attempt.task_id,
+      attempt.id,
+      `verify:${check.id}`,
+      {
+        check: effectiveCheck,
+        authoredCheck: check,
+        verificationDeadline: verificationReceiptDeadline(deadline),
+        workspace: attempt.workspace,
+        artifact: artifact.commit,
+        identity: artifact.identity,
+        receiptPath,
+        ...(known ? { previousCheckID: known.id } : {}),
+        ...(verificationEpoch ? { verificationEpoch } : {}),
+        ...(repairID ? { repairID } : {}),
+      },
+      fence,
+    )
     try {
-      this.progress.recordArtifact(attempt.id, artifact.commit)
-    } catch {
-      // Artifact acceptance and its runner receipt remain independent of commentary.
+      const activityIdentity = { effectID: effect.id, payload: effect.payload }
+      this.startCheckActivity({
+        id: effect.id,
+        identity: activityIdentity,
+        metadata: {
+          kind: "effect",
+          projectDirectory: this.directory,
+          planID: plan.id,
+          effectID: effect.id,
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          receiptPath,
+        },
+        run: (signal) =>
+          this.runVerificationCheck(
+            attempt.workspace,
+            artifact.commit,
+            check,
+            deadline,
+            receiptPath,
+            {
+              signal,
+            },
+          ),
+      })
+    } catch (error) {
+      try {
+        this.progress.recordVerificationError(attempt.id, effect.id, check.id, error)
+      } catch {
+        // The runner effect remains authoritative if annotation storage fails.
+      }
+      this.uncertain(effect, error, fence)
     }
+  }
+
+  /**
+   * Walks the authored checks in order. Returns every check's receipt once they all completed;
+   * undefined when a check was started, is still running, or the plan was held or stopped.
+   */
+  private async collectCheckReceipts(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    proposal: TaskProposal,
+    artifact: { commit: string; identity: string },
+    repairID: string | undefined,
+    fence: number,
+  ): Promise<CheckReceipt[] | undefined> {
     const verificationEpoch =
       this.store.latestTransition<{ verificationEpoch: number }>(
         plan.id,
@@ -10252,201 +10593,100 @@ export class TaskRuntime {
       )?.verificationEpoch ?? 0
     const receipts: CheckReceipt[] = []
     for (const check of proposal.verification) {
-      if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return
+      if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return undefined
       const deadline = this.verificationDeadline(
-        this.verificationTarget(
-          plan,
-          "task",
-          check,
-          artifact.commit,
-          attempt.task_id,
-          this.store.repository.get(attempt.task_id)?.revision ?? null,
-          attempt.id,
-        ),
+        this.taskVerificationTarget(plan, attempt, check, artifact.commit),
       )
       const effectiveCheck = effectiveVerificationCheck(check, deadline)
-      const known = this.store
-        .effects(plan.id)
-        .toReversed()
-        .find((e) => {
-          if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
-          if (effectSuperseded(e)) return false
-          const payload = JSON.parse(e.payload) as {
-            artifact?: unknown
-            identity?: unknown
-            workspace?: unknown
-            repairID?: unknown
-            verificationEpoch?: number
-            check?: unknown
-            authoredCheck?: unknown
-          }
-          // A resume replaces interrupted checks. Preserve completed checks
-          // for the same candidate, attempt, command, and repair generation.
-          const passed =
-            e.state === "completed" && e.receipt
-              ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
-              : undefined
-          return (
-            payload.artifact === artifact.commit &&
-            payload.identity === artifact.identity &&
-            payload.workspace === attempt.workspace &&
-            (payload.repairID ?? undefined) === repairID &&
-            ((payload.verificationEpoch ?? 0) === verificationEpoch ||
-              (passed && checkSucceeded(passed))) &&
-            sameVerificationCheckIdentity(payload.check, effectiveCheck)
-          )
-        })
+      const known = this.knownVerifyEffect(
+        plan,
+        attempt,
+        check,
+        artifact,
+        effectiveCheck,
+        repairID,
+        verificationEpoch,
+      )
       if (
         !known &&
         this.store.plan(plan.id)?.state === "blocked" &&
         this.deadlineAwaitingTaskContinuation(
           plan,
-          this.verificationTarget(
-            plan,
-            "task",
-            check,
-            artifact.commit,
-            attempt.task_id,
-            this.store.repository.get(attempt.task_id)?.revision ?? null,
-            attempt.id,
-          ),
+          this.taskVerificationTarget(plan, attempt, check, artifact.commit),
           deadline,
         )
       )
-        return
+        return undefined
       if (known && known.state !== "completed") {
-        const activityIdentity = { effectID: known.id, payload: known.payload }
-        const activity = this.checkActivity(known.id, activityIdentity)
-        if (activity?.state === "running" || activity?.state === "completed") return
-        const actual = actualCheckResultFromEffect(known)
-        const matches = Boolean(
-          actual &&
-          actual.id === check.id &&
-          actual.command === check.command &&
-          actual.cwd === attempt.workspace &&
-          actual.artifact === artifact.commit &&
-          actual.inputIdentity === artifact.identity,
-        )
-        const reason =
-          matches && actual && !checkResourcesSettled(actual)
-            ? `Verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
-            : `Verification ${check.id} has an uncertain receipt and was not replayed`
-        this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
-        return
+        this.holdUncertainVerifyEffect(plan, attempt, check, artifact, known)
+        return undefined
       }
       if (known?.state === "completed") {
         receipts.push(JSON.parse(known.receipt!).check)
         continue
       }
-      const receiptPath = join(
-        this.dataDirectory,
-        "receipts",
-        attempt.id,
-        `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
-      )
-      const effect = this.effect(
-        plan.id,
-        attempt.task_id,
-        attempt.id,
-        `verify:${check.id}`,
-        {
-          check: effectiveCheck,
-          authoredCheck: check,
-          verificationDeadline: verificationReceiptDeadline(deadline),
-          workspace: attempt.workspace,
-          artifact: artifact.commit,
-          identity: artifact.identity,
-          receiptPath,
-          ...(known ? { previousCheckID: known.id } : {}),
-          ...(verificationEpoch ? { verificationEpoch } : {}),
-          ...(repairID ? { repairID } : {}),
-        },
+      this.startVerifyEffect(
+        plan,
+        attempt,
+        check,
+        effectiveCheck,
+        deadline,
+        artifact,
+        known,
+        repairID,
+        verificationEpoch,
         fence,
       )
-      try {
-        const activityIdentity = { effectID: effect.id, payload: effect.payload }
-        this.startCheckActivity({
-          id: effect.id,
-          identity: activityIdentity,
-          metadata: {
-            kind: "effect",
-            projectDirectory: this.directory,
-            planID: plan.id,
-            effectID: effect.id,
-            taskID: attempt.task_id,
-            attemptID: attempt.id,
-            receiptPath,
-          },
-          run: (signal) =>
-            this.runVerificationCheck(
-              attempt.workspace,
-              artifact.commit,
-              check,
-              deadline,
-              receiptPath,
-              { signal },
-            ),
-        })
-        return
-      } catch (error) {
-        try {
-          this.progress.recordVerificationError(attempt.id, effect.id, check.id, error)
-        } catch {
-          // The runner effect remains authoritative if annotation storage fails.
-        }
-        this.uncertain(effect, error, fence)
-        return
-      }
+      return undefined
     }
-    const failures = receipts.filter((r) => !checkSucceeded(r))
-    const held = failures.find(
-      (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
-    )
-    if (held) {
-      this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
-      return
-    }
-    const review = await this.fallowReviewResult(plan, attempt, artifact, repairID, fence)
-    if (review === "pending") return
-    if (this.decideVerification(plan, attempt, failures, review)) return
+    return receipts
+  }
+
+  /**
+   * Folds automatic fixes the checks made into the delivered artifact. Returns the artifact to
+   * accept, or undefined when verification must stop (held, superseded, or re-run on the new commit).
+   */
+  private async captureAutomaticFixes(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    artifact: Awaited<ReturnType<typeof commitArtifact>>,
+    fence: number,
+    verificationCurrent: () => boolean,
+  ): Promise<Awaited<ReturnType<typeof commitArtifact>> | undefined> {
     try {
       // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
-      if (!(await artifactUnchanged(attempt.workspace, artifact.commit))) {
-        const previousHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-        artifact = await commitArtifact(
-          attempt.workspace,
-          attempt.base_commit,
-          this.store.effectiveWriteScope(attempt.task_id),
-          true,
-          attempt.workspace !== this.directory
-            ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
-            : undefined,
-        )
-        if (!verificationCurrent()) return
-        if (artifact.commit !== previousHead)
-          await gitAsync(attempt.workspace, ["update-ref", "HEAD", artifact.commit, previousHead])
-        this.store.fenced(this.owner, fence, (db) => {
-          db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(
-            artifact.commit,
-            attempt.id,
-          )
-          db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
-            artifact.commit,
-            plan.id,
-            attempt.task_id,
-          )
-        })
-        if (artifact.commit !== previousHead) return
-      }
+      if (await artifactUnchanged(attempt.workspace, artifact.commit)) return artifact
+      const previousHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
+      const updated = await commitArtifact(
+        attempt.workspace,
+        attempt.base_commit,
+        this.store.effectiveWriteScope(attempt.task_id),
+        true,
+        attempt.workspace !== this.directory
+          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
+          : undefined,
+      )
+      if (!verificationCurrent()) return undefined
+      if (updated.commit !== previousHead)
+        await gitAsync(attempt.workspace, ["update-ref", "HEAD", updated.commit, previousHead])
+      this.recordAttemptArtifact(plan, attempt, updated.commit, fence)
+      return updated.commit !== previousHead ? undefined : updated
     } catch (error) {
       this.hold(plan, errorText(error))
-      return
+      return undefined
     }
-    const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
-    if (missing.length) {
-      this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
-      return
-    }
+  }
+
+  private acceptVerifiedAttempt(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    artifact: Awaited<ReturnType<typeof commitArtifact>>,
+    receipts: CheckReceipt[],
+    review: FallowReviewResult | undefined,
+    repairID: string | undefined,
+    fence: number,
+    verificationCurrent: () => boolean,
+  ) {
     this.store.fenced(this.owner, fence, (db) => {
       if (!verificationCurrent()) return
       db.query(
@@ -10476,6 +10716,69 @@ export class TaskRuntime {
     } catch {
       // Progress facts never grant or revoke acceptance.
     }
+  }
+
+  private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
+    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
+    const verificationCurrent = this.verificationCurrentGuard(plan, attempt, repairID)
+    if (!verificationCurrent()) return
+    if (this.verificationAwaitsTaskContinuation(plan, attempt, proposal)) return
+    const preparation = await this.prepareVerificationCandidate(plan, attempt, proposal, fence)
+    if (preparation === "pending" || preparation === "held") return
+    let artifact = await this.commitVerificationCandidate(
+      plan,
+      attempt,
+      proposal,
+      preparation,
+      repairID,
+      fence,
+      verificationCurrent,
+    )
+    if (!artifact) return
+    this.recordAttemptArtifact(plan, attempt, artifact.commit, fence)
+    await this.stampIdentity(true)
+    try {
+      this.progress.recordArtifact(attempt.id, artifact.commit)
+    } catch {
+      // Artifact acceptance and its runner receipt remain independent of commentary.
+    }
+    const receipts = await this.collectCheckReceipts(
+      plan,
+      attempt,
+      proposal,
+      artifact,
+      repairID,
+      fence,
+    )
+    if (!receipts) return
+    const failures = receipts.filter((r) => !checkSucceeded(r))
+    const held = failures.find(
+      (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
+    )
+    if (held) {
+      this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
+      return
+    }
+    const review = await this.fallowReviewResult(plan, attempt, artifact, repairID, fence)
+    if (review === "pending") return
+    if (this.decideVerification(plan, attempt, failures, review)) return
+    artifact = await this.captureAutomaticFixes(plan, attempt, artifact, fence, verificationCurrent)
+    if (!artifact) return
+    const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
+    if (missing.length) {
+      this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
+      return
+    }
+    this.acceptVerifiedAttempt(
+      plan,
+      attempt,
+      artifact,
+      receipts,
+      review,
+      repairID,
+      fence,
+      verificationCurrent,
+    )
   }
   /**
    * One decision for the authored checks and the Fallow review. Returns true when the attempt was
@@ -11106,375 +11409,7 @@ export class TaskRuntime {
   private async reconcileEffect(effect: EffectRow, fence: number) {
     const payload = JSON.parse(effect.payload)
     try {
-      if (effect.kind === "scope-instruction") {
-        const update = payload as WorkerInstruction
-        const attempt = this.store
-          .attempts(effect.plan_id)
-          .find((item) => item.id === effect.attempt_id)
-        const plan = this.store.plan(effect.plan_id)!
-        if (
-          !attempt ||
-          attempt.task_id !== effect.task_id ||
-          update.attemptID !== attempt.id ||
-          update.sessionID !== attempt.session_id ||
-          update.directory !== attempt.workspace ||
-          update.projectID !== this.projectID
-        )
-          throw new Error("Scope instruction no longer matches its owned attempt")
-        if (
-          plan.state === "cancelling" ||
-          terminal.has(plan.state) ||
-          !["preparing", "running", "verifying"].includes(attempt.state)
-        ) {
-          this.receipt(
-            effect,
-            {
-              skipped: true,
-              reason: "Attempt no longer executing",
-              sessionID: update.sessionID,
-              key: update.key,
-            },
-            fence,
-          )
-          return
-        }
-        await this.host.updateInstruction(update)
-        this.receipt(
-          effect,
-          {
-            sessionID: update.sessionID,
-            key: update.key,
-            nativeEntryConfirmed: true,
-            modelConsumption: "unknown",
-          },
-          fence,
-        )
-        return
-      } else if (effect.kind === "session") {
-        const session = await this.host.session(payload.sessionID)
-        if (session) {
-          this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)
-          return
-        }
-      } else if (effect.kind === "prompt") {
-        const session = await this.host.session(payload.sessionID, { messages: true })
-        if (session?.messages.some((m) => m.id === payload.messageID)) {
-          this.receipt(
-            effect,
-            {
-              messageID: payload.messageID,
-              reconciled: true,
-            },
-            fence,
-          )
-          return
-        }
-        // These adapter guards throw before ctx.session.prompt. Record the
-        // conclusive non-dispatch so reconciliation can retry the same worker.
-        if (
-          !session?.messages.some((m) => m.id === payload.messageID) &&
-          [
-            "Worker session is not in its assigned worktree",
-            "Worker prompt target is not the exact assigned session and route",
-          ].includes(JSON.parse(effect.receipt ?? "{}").error)
-        ) {
-          this.store.fenced(this.owner, fence, (db) => {
-            db.query(
-              "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
-            ).run(
-              JSON.stringify({
-                notSent: true,
-                reason: "Native prompt guard prevented dispatch",
-              }),
-              effect.id,
-            )
-            db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
-              messageID(),
-              effect.attempt_id!,
-            )
-            this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
-              effectID: effect.id,
-              continuation: "new durable message after native prompt guard",
-            })
-          })
-          return
-        }
-      } else if (
-        [
-          "worktree",
-          "worktree-recovery",
-          "graph-worktree",
-          "adoption-task-worktree",
-          "adoption-combined-worktree",
-        ].includes(effect.kind)
-      ) {
-        const nativeFailure =
-          effect.kind === "worktree" || effect.kind === "worktree-recovery"
-            ? nativeWorktreeFailureFromReceipt(effect.receipt)
-            : undefined
-        const startupRecoveryReason = (() => {
-          if (
-            !["worktree", "worktree-recovery"].includes(effect.kind) ||
-            effect.state !== "uncertain" ||
-            !effect.receipt ||
-            nativeFailure
-          )
-            return undefined
-          try {
-            const receipt = JSON.parse(effect.receipt) as { error?: unknown }
-            return typeof receipt.error === "string"
-              ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
-              : undefined
-          } catch {
-            return undefined
-          }
-        })()
-        const nativeWorktrees = await this.host.worktrees()
-        // A typed native failure is affirmative terminal evidence, not a lost
-        // success response. It can never be promoted to a ready workspace.
-        if (nativeFailure) return
-        const possibleCandidates: string[] = []
-        for (const directory of nativeWorktrees.filter((directory) =>
-          effect.kind === "worktree-recovery"
-            ? directory === payload.workspace
-            : isStartupWorktreeCandidate(payload.workspace, directory),
-        ))
-          if (
-            existsSync(directory) &&
-            (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
-          )
-            possibleCandidates.push(directory)
-        const candidates: string[] = []
-        for (const directory of possibleCandidates) {
-          if (
-            effect.kind.startsWith("adoption-") &&
-            (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
-          )
-            continue
-          candidates.push(directory)
-        }
-        if (candidates.length === 1) {
-          const workspace = candidates[0]!
-          if (effect.attempt_id)
-            this.store.fenced(this.owner, fence, (db) =>
-              db
-                .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
-                .run(workspace, effect.attempt_id!),
-            )
-          this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
-          if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
-            this.store.setAdoptionWorkspace(
-              payload.adoptionID,
-              effect.kind === "adoption-task-worktree" ? "task" : "combined",
-              workspace,
-              { owner: this.owner, value: fence },
-            )
-          if (startupRecoveryReason && effect.attempt_id) {
-            const plan = this.store.plan(effect.plan_id)
-            const attempt = plan
-              ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
-              : undefined
-            const authorization =
-              effect.kind === "worktree-recovery" && plan && attempt
-                ? this.startupRecoveryAuthorization(plan, attempt)
-                : undefined
-            let recoveryBinding = true
-            if (effect.kind === "worktree-recovery") {
-              try {
-                const operation = JSON.parse(effect.payload) as {
-                  recoveryID?: unknown
-                  sourceEffectID?: unknown
-                }
-                recoveryBinding = Boolean(
-                  authorization &&
-                  plan &&
-                  plan.version >= authorization.planVersion &&
-                  operation.recoveryID === authorization.recoveryID &&
-                  operation.sourceEffectID === authorization.sourceEffectID,
-                )
-              } catch {
-                recoveryBinding = false
-              }
-            }
-            if (
-              plan?.state === "blocked" &&
-              plan.reason === startupRecoveryReason &&
-              attempt?.state === "preparing" &&
-              recoveryBinding
-            ) {
-              this.store.fenced(this.owner, fence, (db) => {
-                const changed =
-                  db
-                    .query(
-                      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
-                    )
-                    .run(plan.id, startupRecoveryReason).changes === 1
-                if (!changed) return
-                if (effect.kind === "worktree-recovery" && authorization)
-                  this.store.record(
-                    plan.id,
-                    attempt!.task_id,
-                    "STARTUP_RECOVERY_OPERATION_RESUMED",
-                    {
-                      effectID: effect.id,
-                      sourceEffectID: authorization.sourceEffectID,
-                      recoveryID: authorization.recoveryID,
-                      attemptID: effect.attempt_id,
-                      workspace,
-                      planVersion: plan.version + 2,
-                    },
-                  )
-                else
-                  this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
-                    effectID: effect.id,
-                    attemptID: effect.attempt_id,
-                    workspace,
-                  })
-              })
-            }
-          }
-          return
-        }
-      } else if (effect.kind === "mechanical-fix") {
-        const activityIdentity = { effectID: effect.id, payload: effect.payload }
-        const activity = this.checkActivity(effect.id, activityIdentity)
-        if (activity?.state === "running") return
-        if (existsSync(payload.receiptPath)) {
-          const check = JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt
-          const preparation = check.preparation
-          const scope = this.store.effectiveWriteScope(effect.task_id!)
-          if (
-            check.id === payload.check.id &&
-            check.command === payload.command &&
-            check.cwd === payload.workspace &&
-            check.artifact === payload.baseCommit &&
-            check.inputIdentity === payload.inputFingerprint &&
-            check.environmentIdentity === payload.environmentIdentity &&
-            preparation !== undefined &&
-            preparation.inputFingerprint === payload.inputFingerprint &&
-            JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
-            JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
-            JSON.stringify(scope) === JSON.stringify(payload.scope) &&
-            preparation.resultingFingerprint ===
-              (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
-            !scopeViolations(preparation.paths, scope).length
-          ) {
-            if (check.aborted) {
-              this.uncertain(effect, "Verification was interrupted before completion", fence, {
-                check,
-              })
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            if (!checkResourcesSettled(check)) {
-              this.uncertain(
-                effect,
-                new Error(
-                  `Mechanical command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-                ),
-                fence,
-                { check },
-              )
-              return
-            }
-            this.receipt(effect, { check, reconciled: true }, fence)
-            forgetVerificationActivity(
-              verificationActivityKey(this.store.repository.path, effect.id),
-              fingerprint(activityIdentity),
-            )
-            this.tickRequested = true
-            return
-          }
-        }
-        if (activity?.state === "failed") {
-          this.uncertain(effect, activity.error, fence)
-          forgetVerificationActivity(
-            verificationActivityKey(this.store.repository.path, effect.id),
-            fingerprint(activityIdentity),
-          )
-          return
-        }
-      } else if (effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:")) {
-        const activityIdentity = { effectID: effect.id, payload: effect.payload }
-        const activity = this.checkActivity(effect.id, activityIdentity)
-        if (activity?.state === "running") return
-        if (existsSync(payload.receiptPath)) {
-          const check = JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt
-          if (
-            check.id === payload.check.id &&
-            check.artifact === payload.artifact &&
-            check.cwd === payload.workspace &&
-            check.command === payload.check.command &&
-            check.inputIdentity === payload.identity
-          ) {
-            if (check.aborted) {
-              this.uncertain(effect, "Verification was interrupted before completion", fence, {
-                check,
-              })
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id) {
-              try {
-                this.progress.recordVerification(effect.attempt_id, effect.id, check)
-              } catch {
-                // The runner receipt remains authoritative if progress annotation fails.
-              }
-              this.store.atomic((db) =>
-                db
-                  .query(
-                    "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
-                  )
-                  .run(
-                    effect.id,
-                    effect.plan_id,
-                    effect.task_id,
-                    effect.attempt_id,
-                    check.artifact,
-                    JSON.stringify(check),
-                    Date.now(),
-                  ),
-              )
-            }
-            if (!checkResourcesSettled(check)) {
-              this.uncertain(
-                effect,
-                new Error(
-                  `Verification command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-                ),
-                fence,
-                { check },
-              )
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            this.receipt(effect, { check, reconciled: true }, fence)
-            this.tickRequested = true
-            forgetVerificationActivity(
-              verificationActivityKey(this.store.repository.path, effect.id),
-              fingerprint(activityIdentity),
-            )
-            return
-          }
-        }
-        if (activity?.state === "failed") {
-          this.uncertain(effect, activity.error, fence)
-          forgetVerificationActivity(
-            verificationActivityKey(this.store.repository.path, effect.id),
-            fingerprint(activityIdentity),
-          )
-          return
-        }
-      }
+      if (await this.reconcileEffectByKind(effect, payload, fence)) return
       if (isRerunnableEffect(effect.kind)) {
         this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
         this.tickRequested = true
@@ -11489,5 +11424,360 @@ export class TaskRuntime {
     } catch (error) {
       if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
     }
+  }
+
+  /** True when the effect's kind settled it; false leaves the generic no-receipt handling to run. */
+  private async reconcileEffectByKind(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    if (effect.kind === "scope-instruction")
+      return this.reconcileScopeInstruction(effect, payload as WorkerInstruction, fence)
+    if (effect.kind === "session") return this.reconcileSessionEffect(effect, payload, fence)
+    if (effect.kind === "prompt") return this.reconcilePromptEffect(effect, payload, fence)
+    if (WORKTREE_EFFECT_KINDS.includes(effect.kind))
+      return this.reconcileWorktreeEffect(effect, payload, fence)
+    if (
+      effect.kind === "mechanical-fix" ||
+      effect.kind.startsWith("verify:") ||
+      effect.kind.startsWith("graph-verify:")
+    )
+      return this.reconcileCheckEffect(effect, payload, fence)
+    return false
+  }
+
+  private async reconcileScopeInstruction(
+    effect: EffectRow,
+    update: WorkerInstruction,
+    fence: number,
+  ): Promise<boolean> {
+    const attempt = this.store
+      .attempts(effect.plan_id)
+      .find((item) => item.id === effect.attempt_id)
+    const plan = this.store.plan(effect.plan_id)!
+    if (
+      !attempt ||
+      attempt.task_id !== effect.task_id ||
+      update.attemptID !== attempt.id ||
+      update.sessionID !== attempt.session_id ||
+      update.directory !== attempt.workspace ||
+      update.projectID !== this.projectID
+    )
+      throw new Error("Scope instruction no longer matches its owned attempt")
+    if (
+      plan.state === "cancelling" ||
+      terminal.has(plan.state) ||
+      !["preparing", "running", "verifying"].includes(attempt.state)
+    ) {
+      this.receipt(
+        effect,
+        {
+          skipped: true,
+          reason: "Attempt no longer executing",
+          sessionID: update.sessionID,
+          key: update.key,
+        },
+        fence,
+      )
+      return true
+    }
+    await this.host.updateInstruction(update)
+    this.receipt(
+      effect,
+      {
+        sessionID: update.sessionID,
+        key: update.key,
+        nativeEntryConfirmed: true,
+        modelConsumption: "unknown",
+      },
+      fence,
+    )
+    return true
+  }
+
+  private async reconcileSessionEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const session = await this.host.session(payload.sessionID)
+    if (!session) return false
+    this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)
+    return true
+  }
+
+  private async reconcilePromptEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const session = await this.host.session(payload.sessionID, { messages: true })
+    if (session?.messages.some((m) => m.id === payload.messageID)) {
+      this.receipt(
+        effect,
+        {
+          messageID: payload.messageID,
+          reconciled: true,
+        },
+        fence,
+      )
+      return true
+    }
+    // These adapter guards throw before ctx.session.prompt. Record the
+    // conclusive non-dispatch so reconciliation can retry the same worker.
+    if (
+      !session?.messages.some((m) => m.id === payload.messageID) &&
+      [
+        "Worker session is not in its assigned worktree",
+        "Worker prompt target is not the exact assigned session and route",
+      ].includes(JSON.parse(effect.receipt ?? "{}").error)
+    ) {
+      this.store.fenced(this.owner, fence, (db) => {
+        db.query(
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
+        ).run(
+          JSON.stringify({
+            notSent: true,
+            reason: "Native prompt guard prevented dispatch",
+          }),
+          effect.id,
+        )
+        db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
+          messageID(),
+          effect.attempt_id!,
+        )
+        this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
+          effectID: effect.id,
+          continuation: "new durable message after native prompt guard",
+        })
+      })
+      return true
+    }
+    return false
+  }
+
+  private async reconcileWorktreeEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const nativeFailure =
+      effect.kind === "worktree" || effect.kind === "worktree-recovery"
+        ? nativeWorktreeFailureFromReceipt(effect.receipt)
+        : undefined
+    const startupRecoveryReason = startupWorktreeRecoveryReason(effect, nativeFailure)
+    const nativeWorktrees = await this.host.worktrees()
+    // A typed native failure is affirmative terminal evidence, not a lost
+    // success response. It can never be promoted to a ready workspace.
+    if (nativeFailure) return true
+    const candidates = await worktreeReconcileCandidates(effect, payload, nativeWorktrees)
+    if (candidates.length !== 1) return false
+    const workspace = candidates[0]!
+    if (effect.attempt_id)
+      this.store.fenced(this.owner, fence, (db) =>
+        db
+          .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
+          .run(workspace, effect.attempt_id!),
+      )
+    this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
+    if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
+      this.store.setAdoptionWorkspace(
+        payload.adoptionID,
+        effect.kind === "adoption-task-worktree" ? "task" : "combined",
+        workspace,
+        { owner: this.owner, value: fence },
+      )
+    if (startupRecoveryReason && effect.attempt_id)
+      this.resumeStartupRecovery(effect, fence, workspace, startupRecoveryReason)
+    return true
+  }
+
+  /** Unblocks the plan that startup recovery parked on this worktree effect, once it is ready. */
+  private resumeStartupRecovery(
+    effect: EffectRow,
+    fence: number,
+    workspace: string,
+    startupRecoveryReason: string,
+  ) {
+    const plan = this.store.plan(effect.plan_id)
+    const attempt = plan
+      ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
+      : undefined
+    const authorization =
+      effect.kind === "worktree-recovery" && plan && attempt
+        ? this.startupRecoveryAuthorization(plan, attempt)
+        : undefined
+    let recoveryBinding = true
+    if (effect.kind === "worktree-recovery") {
+      try {
+        const operation = JSON.parse(effect.payload) as {
+          recoveryID?: unknown
+          sourceEffectID?: unknown
+        }
+        recoveryBinding = Boolean(
+          authorization &&
+          plan &&
+          plan.version >= authorization.planVersion &&
+          operation.recoveryID === authorization.recoveryID &&
+          operation.sourceEffectID === authorization.sourceEffectID,
+        )
+      } catch {
+        recoveryBinding = false
+      }
+    }
+    if (!(
+      plan?.state === "blocked" &&
+      plan.reason === startupRecoveryReason &&
+      attempt?.state === "preparing" &&
+      recoveryBinding
+    ))
+      return
+    this.store.fenced(this.owner, fence, (db) => {
+      const changed =
+        db
+          .query(
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+          )
+          .run(plan.id, startupRecoveryReason).changes === 1
+      if (!changed) return
+      if (effect.kind === "worktree-recovery" && authorization)
+        this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_OPERATION_RESUMED", {
+          effectID: effect.id,
+          sourceEffectID: authorization.sourceEffectID,
+          recoveryID: authorization.recoveryID,
+          attemptID: effect.attempt_id,
+          workspace,
+          planVersion: plan.version + 2,
+        })
+      else
+        this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
+          effectID: effect.id,
+          attemptID: effect.attempt_id,
+          workspace,
+        })
+    })
+  }
+
+  /** Drops the in-memory activity record of a check the reconciler has now settled. */
+  private forgetCheckActivity(effect: EffectRow, activityIdentity: unknown) {
+    forgetVerificationActivity(
+      verificationActivityKey(this.store.repository.path, effect.id),
+      fingerprint(activityIdentity),
+    )
+  }
+
+  /** Settles a check effect from its in-memory activity and the receipt the subprocess left. */
+  private async reconcileCheckEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const activityIdentity = { effectID: effect.id, payload: effect.payload }
+    const activity = this.checkActivity(effect.id, activityIdentity)
+    if (activity?.state === "running") return true
+    const check = readCheckReceipt(payload)
+    if (check && (await this.checkReceiptMatchesEffect(effect, payload, check)))
+      return this.settleMatchedCheck(effect, check, fence, activityIdentity)
+    return this.settleFailedCheckActivity(effect, activity, fence, activityIdentity)
+  }
+
+  private async checkReceiptMatchesEffect(
+    effect: EffectRow,
+    payload: any,
+    check: CheckReceipt,
+  ): Promise<boolean> {
+    if (effect.kind !== "mechanical-fix")
+      return (
+        check.id === payload.check.id &&
+        check.artifact === payload.artifact &&
+        check.cwd === payload.workspace &&
+        check.command === payload.check.command &&
+        check.inputIdentity === payload.identity
+      )
+    const preparation = check.preparation
+    const scope = this.store.effectiveWriteScope(effect.task_id!)
+    return (
+      check.id === payload.check.id &&
+      check.command === payload.command &&
+      check.cwd === payload.workspace &&
+      check.artifact === payload.baseCommit &&
+      check.inputIdentity === payload.inputFingerprint &&
+      check.environmentIdentity === payload.environmentIdentity &&
+      preparation !== undefined &&
+      preparation.inputFingerprint === payload.inputFingerprint &&
+      JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
+      JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
+      JSON.stringify(scope) === JSON.stringify(payload.scope) &&
+      preparation.resultingFingerprint ===
+        (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
+      !scopeViolations(preparation.paths, scope).length
+    )
+  }
+
+  private settleMatchedCheck(
+    effect: EffectRow,
+    check: CheckReceipt,
+    fence: number,
+    activityIdentity: unknown,
+  ): boolean {
+    const mechanical = effect.kind === "mechanical-fix"
+    if (check.aborted) {
+      this.uncertain(effect, "Verification was interrupted before completion", fence, { check })
+      this.forgetCheckActivity(effect, activityIdentity)
+      return true
+    }
+    if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id)
+      this.recordVerificationEvidence(effect, check)
+    if (!checkResourcesSettled(check)) {
+      this.uncertain(
+        effect,
+        unsettledCheckError(mechanical ? "Mechanical" : "Verification", check),
+        fence,
+        { check },
+      )
+      if (!mechanical) this.forgetCheckActivity(effect, activityIdentity)
+      return true
+    }
+    this.receipt(effect, { check, reconciled: true }, fence)
+    this.tickRequested = true
+    this.forgetCheckActivity(effect, activityIdentity)
+    return true
+  }
+
+  private recordVerificationEvidence(effect: EffectRow, check: CheckReceipt) {
+    try {
+      this.progress.recordVerification(effect.attempt_id!, effect.id, check)
+    } catch {
+      // The runner receipt remains authoritative if progress annotation fails.
+    }
+    this.store.atomic((db) =>
+      db
+        .query(
+          "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
+        )
+        .run(
+          effect.id,
+          effect.plan_id,
+          effect.task_id,
+          effect.attempt_id,
+          check.artifact,
+          JSON.stringify(check),
+          Date.now(),
+        ),
+    )
+  }
+
+  /** A check whose activity failed without a matching receipt is uncertain; anything else falls through. */
+  private settleFailedCheckActivity(
+    effect: EffectRow,
+    activity: VerificationActivity<CheckReceipt> | undefined,
+    fence: number,
+    activityIdentity: unknown,
+  ): boolean {
+    if (activity?.state !== "failed") return false
+    this.uncertain(effect, activity.error, fence)
+    this.forgetCheckActivity(effect, activityIdentity)
+    return true
   }
 }

@@ -70,6 +70,42 @@ function isCurrentRetainedVerification(
   return current !== undefined && ["pending", "task-checks"].includes(current.state)
 }
 
+type RetainedCheckRow = ReturnType<typeof retainedVerificationChecks>[number]
+type RetainedCheckContext = Awaited<ReturnType<typeof createRetainedCheckContext>>
+
+/** What every step of one retained check shares. */
+type RetainedCheckRun = {
+  initial: RetainedVerification
+  phase: "task"
+  check: TaskProposal["verification"][number]
+  workspace: string
+  artifact: string
+  fence: number
+  parentSignal: AbortSignal | undefined
+  effectiveCheck: TaskProposal["verification"][number]
+  deadline: ReturnType<TaskRuntime["verificationDeadline"]>
+  procedurePlan: Extract<ReturnType<typeof retainedProcedurePlan>, { status: "supported" }>["plan"]
+  activityID: string
+}
+
+/** The receipt a previous run saved in the record or on disk; unreadable counts as absent. */
+function readSavedRetainedReceipt(existing: RetainedCheckRow): unknown {
+  try {
+    if (existing.receipt) return JSON.parse(existing.receipt) as unknown
+    if (existsSync(existing.receiptPath))
+      return JSON.parse(readFileSync(existing.receiptPath, "utf8")) as unknown
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
+type WorktreeInventory = { native: string[]; gitWorktrees: string[] }
+
+function isTerminalRetainedState(state: string) {
+  return ["accepted", "failed", "cancelled"].includes(state)
+}
+
 export class RetainedVerificationExecution {
   constructor(
     private readonly runtime: {
@@ -616,565 +652,638 @@ export class RetainedVerificationExecution {
   ): Promise<CheckReceipt[] | undefined> {
     const results: CheckReceipt[] = []
     for (const check of checks) {
-      if (parentSignal?.aborted || !this.retainedVerificationLive(initial.id)) return undefined
-      const plan = this.runtime.store.plan(initial.planID)
-      if (!plan || plan.revision !== initial.planRevision)
-        throw new Error("Retained verification plan revision changed")
-      const target: VerificationTimeoutTarget = this.runtime.verificationTarget(
-        plan,
+      const receipt = await this.runRetainedVerificationCheck(
+        initial,
         phase,
         check,
+        workspace,
         artifact,
-        initial.taskID,
-        initial.taskRevision,
-        initial.attemptID,
+        fence,
+        parentSignal,
       )
-      const deadline = this.runtime.verificationDeadline(target)
-      const effectiveCheck = effectiveVerificationCheck(check, deadline)
-      const procedure = retainedProcedurePlan(check.command)
-      if (procedure.status !== "supported") {
-        await this.failRetainedVerification(
-          initial,
-          `Verification ${check.id} ${procedure.reason}; required resources are not bound to the retained context`,
-          fence,
-        )
-        return undefined
-      }
-      const existing = this.runtime.store.atomic((db) =>
-        retainedVerificationChecks(db, initial.id, phase).find((row) => row.checkID === check.id),
+      if (!receipt) return undefined
+      results.push(receipt)
+    }
+    return results
+  }
+
+  /**
+   * One check: its settled receipt when an earlier run already produced it, or undefined when the
+   * operation must stop here (failed, cancelled, or the check was just started and will report later).
+   */
+  private async runRetainedVerificationCheck(
+    initial: RetainedVerification,
+    phase: "task",
+    check: TaskProposal["verification"][number],
+    workspace: string,
+    artifact: string,
+    fence: number,
+    parentSignal: AbortSignal | undefined,
+  ): Promise<CheckReceipt | undefined> {
+    if (parentSignal?.aborted || !this.retainedVerificationLive(initial.id)) return undefined
+    const plan = this.runtime.store.plan(initial.planID)
+    if (!plan || plan.revision !== initial.planRevision)
+      throw new Error("Retained verification plan revision changed")
+    const target: VerificationTimeoutTarget = this.runtime.verificationTarget(
+      plan,
+      phase,
+      check,
+      artifact,
+      initial.taskID,
+      initial.taskRevision,
+      initial.attemptID,
+    )
+    const deadline = this.runtime.verificationDeadline(target)
+    const effectiveCheck = effectiveVerificationCheck(check, deadline)
+    const procedure = retainedProcedurePlan(check.command)
+    if (procedure.status !== "supported") {
+      await this.failRetainedVerification(
+        initial,
+        `Verification ${check.id} ${procedure.reason}; required resources are not bound to the retained context`,
+        fence,
       )
-      const activityID = `retained:${initial.id}:${phase}:${check.id}`
-      if (existing) {
-        const activityIdentity = {
-          operationID: initial.id,
-          phase,
-          checkID: check.id,
-          inputFingerprint: existing.inputFingerprint,
-          workspace: existing.workspace,
-          artifact: existing.artifact,
-          contextPath: existing.contextPath,
-        }
-        let savedReceipt: unknown
-        try {
-          if (existing.receipt) savedReceipt = JSON.parse(existing.receipt) as unknown
-          else if (existsSync(existing.receiptPath))
-            savedReceipt = JSON.parse(readFileSync(existing.receiptPath, "utf8")) as unknown
-        } catch {
-          savedReceipt = undefined
-        }
-        if (
-          existing.artifact !== artifact ||
-          existing.workspace !== workspace ||
-          !sameVerificationCheckIdentity(JSON.parse(existing.checkJSON), effectiveCheck)
-        ) {
-          await this.failRetainedVerification(
-            initial,
-            `Retained check ${phase}:${check.id} no longer matches its recorded command or workspace`,
-            fence,
-          )
-          return undefined
-        }
-        if (existing.state === "completed" && existing.receipt) {
-          const receipt = this.retainedVerificationCheckReceipt(
-            JSON.parse(existing.receipt),
-            initial,
+      return undefined
+    }
+    const run: RetainedCheckRun = {
+      initial,
+      phase,
+      check,
+      workspace,
+      artifact,
+      fence,
+      parentSignal,
+      effectiveCheck,
+      deadline,
+      procedurePlan: procedure.plan,
+      activityID: `retained:${initial.id}:${phase}:${check.id}`,
+    }
+    const existing = this.runtime.store.atomic((db) =>
+      retainedVerificationChecks(db, initial.id, phase).find((row) => row.checkID === check.id),
+    )
+    if (existing) return this.settleExistingRetainedCheck(run, existing)
+
+    if (await this.reconcileInterruptedRetainedCheckSetup(initial, phase, check, workspace, fence))
+      return undefined
+    await this.startRetainedCheck(run)
+    return undefined
+  }
+
+  private forgetRetainedCheckActivity(run: RetainedCheckRun, activityIdentity: unknown) {
+    forgetVerificationActivity(
+      verificationActivityKey(this.runtime.store.repository.path, run.activityID),
+      fingerprint(activityIdentity),
+    )
+  }
+
+  /** A check that finished with live subprocess resources cannot be trusted: stop the operation. */
+  private async failUnsettledRetainedCheck(run: RetainedCheckRun, receipt: CheckReceipt) {
+    const { initial, phase, check } = run
+    this.runtime.store.atomic((db) =>
+      settleRetainedVerificationResources(
+        db,
+        initial.id,
+        phase,
+        check.id,
+        "uncertain",
+        this.runtime.now(),
+      ),
+    )
+    await this.failRetainedVerification(
+      initial,
+      `Retained verification ${phase}:${check.id} completed with exit ${receipt.exitCode ?? "unknown"} and timedOut=${receipt.timedOut}, but subprocess cleanup is uncertain: ${receipt.processCleanup?.detail ?? "termination was not confirmed"}`,
+      run.fence,
+    )
+  }
+
+  /** Decides a check that already has a durable record: reuse its receipt, recover it, or stop. */
+  private async settleExistingRetainedCheck(
+    run: RetainedCheckRun,
+    existing: RetainedCheckRow,
+  ): Promise<CheckReceipt | undefined> {
+    const { initial, phase, check, workspace, artifact, effectiveCheck } = run
+    const activityIdentity = {
+      operationID: initial.id,
+      phase,
+      checkID: check.id,
+      inputFingerprint: existing.inputFingerprint,
+      workspace: existing.workspace,
+      artifact: existing.artifact,
+      contextPath: existing.contextPath,
+    }
+    const savedReceipt = readSavedRetainedReceipt(existing)
+    if (
+      existing.artifact !== artifact ||
+      existing.workspace !== workspace ||
+      !sameVerificationCheckIdentity(JSON.parse(existing.checkJSON), effectiveCheck)
+    ) {
+      await this.failRetainedVerification(
+        initial,
+        `Retained check ${phase}:${check.id} no longer matches its recorded command or workspace`,
+        run.fence,
+      )
+      return undefined
+    }
+    if (existing.state === "completed" && existing.receipt)
+      return this.reuseCompletedRetainedCheck(run, existing, activityIdentity)
+    if (existing.state === "intended" && existsSync(existing.receiptPath)) {
+      const recovered = await this.recoverIntendedRetainedCheck(run, existing, savedReceipt)
+      if (recovered)
+        return this.adoptRecoveredRetainedCheck(run, existing, recovered, activityIdentity)
+    }
+    return this.haltUnresolvedRetainedCheck(run, activityIdentity)
+  }
+
+  private async reuseCompletedRetainedCheck(
+    run: RetainedCheckRun,
+    existing: RetainedCheckRow,
+    activityIdentity: unknown,
+  ): Promise<CheckReceipt | undefined> {
+    const { initial, phase, check, workspace, artifact, effectiveCheck } = run
+    const receipt = this.retainedVerificationCheckReceipt(
+      JSON.parse(existing.receipt!),
+      initial,
+      phase,
+      effectiveCheck,
+      workspace,
+      artifact,
+      existing.environmentIdentity,
+    )
+    if (!receipt) {
+      await this.failRetainedVerification(
+        initial,
+        `Retained verification receipt ${phase}:${check.id} is not operation-bound`,
+        run.fence,
+      )
+      return undefined
+    }
+    this.forgetRetainedCheckActivity(run, activityIdentity)
+    this.runtime.retainedVerificationAborts.delete(initial.id)
+    if (!checkResourcesSettled(receipt)) {
+      await this.failUnsettledRetainedCheck(run, receipt)
+      return undefined
+    }
+    if (existing.cleanupState !== "complete")
+      await this.cleanupRetainedCheckResources(
+        initial,
+        phase,
+        check.id,
+        existing.contextPath,
+        receipt.isolation,
+        run.fence,
+      )
+    return receipt
+  }
+
+  /** The isolated receipt an interrupted run left on disk, when its isolation witness still verifies. */
+  private async recoverIntendedRetainedCheck(
+    run: RetainedCheckRun,
+    existing: RetainedCheckRow,
+    onDisk: unknown,
+  ): Promise<CheckReceipt | undefined> {
+    const { initial, phase, check, workspace, artifact, effectiveCheck } = run
+    try {
+      if (
+        await observeRetainedCheckIsolationWitness(
+          existing.contextPath,
+          isRecord(onDisk) ? onDisk.isolation : undefined,
+          {
+            operationID: initial.id,
             phase,
-            effectiveCheck,
-            workspace,
-            artifact,
-            existing.environmentIdentity,
+            checkID: check.id,
+            originalWorkspace: initial.originalWorkspace,
+            candidateWorkspace: workspace,
+            taskDatabase: this.runtime.store.repository.path,
+            projectDirectory: this.runtime.directory,
+            candidateArtifact: artifact,
+            projectIdentity: retainedProjectIdentity(this.runtime.directory, workspace, artifact),
+            procedurePlan: run.procedurePlan,
+          },
+        )
+      )
+        return this.retainedVerificationCheckReceipt(
+          onDisk,
+          initial,
+          phase,
+          effectiveCheck,
+          workspace,
+          artifact,
+          existing.environmentIdentity,
+        )
+    } catch {
+      return undefined
+    }
+    return undefined
+  }
+
+  private async adoptRecoveredRetainedCheck(
+    run: RetainedCheckRun,
+    existing: RetainedCheckRow,
+    recovered: CheckReceipt,
+    activityIdentity: unknown,
+  ): Promise<CheckReceipt | undefined> {
+    const { initial, phase, check } = run
+    const saved = this.runtime.store.atomic((db) => {
+      const current = retainedVerification(db, initial.id)
+      if (!isCurrentRetainedVerification(current)) return false
+      return this.completeRetainedCheck(current, phase, check.id, recovered)
+    })
+    if (!saved) return undefined
+    this.forgetRetainedCheckActivity(run, activityIdentity)
+    this.runtime.retainedVerificationAborts.delete(initial.id)
+    if (!checkResourcesSettled(recovered)) {
+      await this.failUnsettledRetainedCheck(run, recovered)
+      return undefined
+    }
+    await this.cleanupRetainedCheckResources(
+      initial,
+      phase,
+      check.id,
+      existing.contextPath,
+      recovered.isolation,
+      run.fence,
+    )
+    return recovered
+  }
+
+  /** A recorded intent with no conclusive receipt: still running means wait, otherwise it is uncertain. */
+  private async haltUnresolvedRetainedCheck(
+    run: RetainedCheckRun,
+    activityIdentity: unknown,
+  ): Promise<undefined> {
+    const { initial, phase, check } = run
+    const activity = this.runtime.checkActivity(run.activityID, activityIdentity)
+    if (activity?.state === "running") return undefined
+    this.runtime.store.atomic((db) =>
+      markRetainedVerificationCheckUncertain(
+        db,
+        initial.id,
+        phase,
+        check.id,
+        "A retained check intent has no conclusive isolated receipt; it will not be replayed",
+      ),
+    )
+    await this.failRetainedVerification(
+      initial,
+      activity?.state === "failed"
+        ? `Retained verification check ${phase}:${check.id} is uncertain: ${errorText(activity.error)}`
+        : `Retained verification check ${phase}:${check.id} is uncertain and was not replayed`,
+      run.fence,
+    )
+    this.forgetRetainedCheckActivity(run, activityIdentity)
+    return undefined
+  }
+
+  /** The canonical paths of every retained-verification resource still owned in this project. */
+  private priorRetainedResourcePaths(): string[] {
+    return this.runtime.store.atomic((db) => {
+      const active = db
+        .query<{ canonical_path: string }, [string]>(
+          `SELECT canonical_path FROM runner_retained_verification_resources
+             WHERE project_directory=? AND state IN ('creating','active','uncertain')`,
+        )
+        .all(this.runtime.directory)
+      const legacy = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='owned_resources'",
+        )
+        .get()
+      if (legacy) {
+        const outstanding = db
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM owned_resources WHERE project_directory=? AND json_extract(payload,'$.state') NOT IN ('removed')",
           )
-          if (receipt) {
-            results.push(receipt)
-            forgetVerificationActivity(
-              verificationActivityKey(this.runtime.store.repository.path, activityID),
-              fingerprint(activityIdentity),
-            )
-            this.runtime.retainedVerificationAborts.delete(initial.id)
-            if (!checkResourcesSettled(receipt)) {
-              this.runtime.store.atomic((db) =>
-                settleRetainedVerificationResources(
-                  db,
-                  initial.id,
-                  phase,
-                  check.id,
-                  "uncertain",
-                  this.runtime.now(),
-                ),
-              )
-              await this.failRetainedVerification(
-                initial,
-                `Retained verification ${phase}:${check.id} completed with exit ${receipt.exitCode ?? "unknown"} and timedOut=${receipt.timedOut}, but subprocess cleanup is uncertain: ${receipt.processCleanup?.detail ?? "termination was not confirmed"}`,
-                fence,
-              )
-              return undefined
-            }
-            if (existing.cleanupState !== "complete")
-              await this.cleanupRetainedCheckResources(
-                initial,
-                phase,
-                check.id,
-                existing.contextPath,
-                receipt.isolation,
-                fence,
-              )
-            continue
-          }
-          await this.failRetainedVerification(
-            initial,
-            `Retained verification receipt ${phase}:${check.id} is not operation-bound`,
-            fence,
+          .get(this.runtime.directory)?.count
+        if (outstanding)
+          throw new Error(
+            "An existing owned external resource has no canonical path witness; retained verification cannot prove non-overlap",
           )
-          return undefined
-        }
-        if (existing.state === "intended" && existsSync(existing.receiptPath)) {
-          let recovered: CheckReceipt | undefined
-          try {
-            const onDisk = savedReceipt
-            if (
-              await observeRetainedCheckIsolationWitness(
-                existing.contextPath,
-                isRecord(onDisk) ? onDisk.isolation : undefined,
-                {
-                  operationID: initial.id,
-                  phase,
-                  checkID: check.id,
-                  originalWorkspace: initial.originalWorkspace,
-                  candidateWorkspace: workspace,
-                  taskDatabase: this.runtime.store.repository.path,
-                  projectDirectory: this.runtime.directory,
-                  candidateArtifact: artifact,
-                  projectIdentity: retainedProjectIdentity(
-                    this.runtime.directory,
-                    workspace,
-                    artifact,
-                  ),
-                  procedurePlan: procedure.plan,
-                },
-              )
-            )
-              recovered = this.retainedVerificationCheckReceipt(
-                onDisk,
-                initial,
-                phase,
-                effectiveCheck,
-                workspace,
-                artifact,
-                existing.environmentIdentity,
-              )
-          } catch {
-            recovered = undefined
-          }
-          if (recovered) {
-            const saved = this.runtime.store.atomic((db) => {
-              const current = retainedVerification(db, initial.id)
-              if (!isCurrentRetainedVerification(current)) return false
-              return this.completeRetainedCheck(current, phase, check.id, recovered)
-            })
-            if (!saved) return undefined
-            results.push(recovered)
-            forgetVerificationActivity(
-              verificationActivityKey(this.runtime.store.repository.path, activityID),
-              fingerprint(activityIdentity),
-            )
-            this.runtime.retainedVerificationAborts.delete(initial.id)
-            if (!checkResourcesSettled(recovered)) {
-              this.runtime.store.atomic((db) =>
-                settleRetainedVerificationResources(
-                  db,
-                  initial.id,
-                  phase,
-                  check.id,
-                  "uncertain",
-                  this.runtime.now(),
-                ),
-              )
-              await this.failRetainedVerification(
-                initial,
-                `Retained verification ${phase}:${check.id} completed with exit ${recovered.exitCode ?? "unknown"} and timedOut=${recovered.timedOut}, but subprocess cleanup is uncertain: ${recovered.processCleanup?.detail ?? "termination was not confirmed"}`,
-                fence,
-              )
-              return undefined
-            }
-            await this.cleanupRetainedCheckResources(
+      }
+      return active.map((row) => row.canonical_path)
+    })
+  }
+
+  /** Sets up the isolated context, records the intent, and hands the check to the activity runner. */
+  private async startRetainedCheck(run: RetainedCheckRun): Promise<void> {
+    const { initial, phase, check, artifact, effectiveCheck, deadline } = run
+    const prior = this.priorRetainedResourcePaths()
+    const controller = new AbortController()
+    const runSignal = run.parentSignal
+      ? AbortSignal.any([controller.signal, run.parentSignal])
+      : controller.signal
+    this.runtime.retainedVerificationAborts.set(initial.id, controller)
+    const context = await this.setupRetainedCheckContext(run, runSignal, prior)
+    if (!context) return
+    const receiptPath = join(
+      this.runtime.dataDirectory,
+      "receipts",
+      "retained-verification",
+      initial.id,
+      `${phase}-${check.id}.json`,
+    )
+    const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
+      operationID: initial.id,
+      phase,
+      check: effectiveCheck,
+      authoredCheck: check,
+      verificationDeadline: verificationReceiptDeadline(deadline),
+      workspace: run.workspace,
+      artifact: this.runtime.store.treeRef(artifact),
+      contextIdentity: context.identity,
+      environmentIdentity: context.environmentIdentity,
+    })}`
+    const checkRow = await this.beginRetainedCheckRow(run, context, receiptPath, inputFingerprint)
+    if (!checkRow) return
+    if (!this.retainedVerificationLive(initial.id)) {
+      await this.cleanupRetainedCheckResources(
+        initial,
+        phase,
+        check.id,
+        context.directory,
+        retainedCheckIsolationWitness(context),
+        run.fence,
+      )
+      this.runtime.retainedVerificationAborts.delete(initial.id)
+      return
+    }
+    await this.dispatchRetainedCheckActivity(run, context, checkRow, runSignal, receiptPath)
+  }
+
+  private reserveRetainedSetupResource(
+    run: RetainedCheckRun,
+    name: string,
+    realPath: string,
+    device: number,
+    inode: number,
+  ) {
+    this.runtime.store.atomic((db) =>
+      registerRetainedVerificationResources(db, this.runtime.directory, {
+        operationID: run.initial.id,
+        phase: run.phase,
+        checkID: run.check.id,
+        resources: [{ name, realPath, device, inode }],
+        state: "creating",
+        now: this.runtime.now(),
+      }),
+    )
+  }
+
+  private confirmRetainedSetupResource(
+    run: RetainedCheckRun,
+    resourceName: string,
+    resource: { realPath: string; device: number; inode: number },
+    changedMessage: string,
+  ) {
+    const updated = this.runtime.store.atomic((db) =>
+      updateRetainedVerificationResourceIdentity(db, {
+        operationID: run.initial.id,
+        phase: run.phase,
+        checkID: run.check.id,
+        resourceName,
+        realPath: resource.realPath,
+        device: resource.device,
+        inode: resource.inode,
+        now: this.runtime.now(),
+      }),
+    )
+    if (!updated) throw new Error(changedMessage)
+  }
+
+  /** The isolated check context, or undefined once a setup failure has been cleaned up and reported. */
+  private async setupRetainedCheckContext(
+    run: RetainedCheckRun,
+    runSignal: AbortSignal,
+    priorResourcePaths: string[],
+  ): Promise<RetainedCheckContext | undefined> {
+    const { initial, phase, check, workspace, artifact } = run
+    const rootDirectory = join(this.runtime.dataDirectory, "retained-verification-resources")
+    const setup: {
+      resource?: RetainedCheckSetupResource
+      dependencyLink?: RetainedCheckSetupLink
+      temporaryDirectoryLink?: RetainedCheckSetupLink
+    } = {}
+    try {
+      mkdirSync(rootDirectory, { recursive: true, mode: 0o700 })
+      const context = await createRetainedCheckContext({
+        rootDirectory,
+        operationID: initial.id,
+        phase,
+        checkID: check.id,
+        originalWorkspace: initial.originalWorkspace,
+        candidateWorkspace: workspace,
+        taskDatabase: this.runtime.store.repository.path,
+        projectDirectory: this.runtime.directory,
+        candidateArtifact: artifact,
+        priorResourcePaths,
+        procedurePlan: run.procedurePlan,
+        signal: runSignal,
+        dependencyInstaller: this.runtime.retainedDependencyInstaller,
+        onSetupPathReserved: (path) => {
+          setup.resource = { path, realPath: path, device: -1, inode: -1 }
+          this.reserveRetainedSetupResource(run, "setup-root", path, -1, -1)
+        },
+        onSetupPathCreated: (resource) => {
+          setup.resource = resource
+          this.confirmRetainedSetupResource(
+            run,
+            "setup-root",
+            resource,
+            "Retained verification setup-root ownership reservation changed",
+          )
+        },
+        onResourcesCreated: (resources) =>
+          this.runtime.store.atomic((db) =>
+            registerRetainedVerificationResources(db, this.runtime.directory, {
+              operationID: initial.id,
+              phase,
+              checkID: check.id,
+              resources,
+              state: "creating",
+              now: this.runtime.now(),
+            }),
+          ),
+        onDependencyLinkReserved: (link) => {
+          setup.dependencyLink = link
+          this.reserveRetainedSetupResource(run, "dependency-link", link.path, -1, -1)
+        },
+        onDependencyLink: (link) => {
+          setup.dependencyLink = link
+          this.confirmRetainedSetupResource(
+            run,
+            "dependency-link",
+            { ...link, realPath: link.path },
+            "Retained verification dependency-link ownership reservation changed",
+          )
+        },
+        onTemporaryDirectoryLinkReserved: (link) => {
+          setup.temporaryDirectoryLink = link
+          this.reserveRetainedSetupResource(run, "tmp-alias", link.path, -1, -1)
+        },
+        onTemporaryDirectoryLink: (link) => {
+          setup.temporaryDirectoryLink = link
+          this.confirmRetainedSetupResource(
+            run,
+            "tmp-alias",
+            { ...link, realPath: link.path },
+            "Retained verification temporary-link ownership reservation changed",
+          )
+        },
+      })
+      if (!(await observeRetainedCheckContext(context)))
+        throw new Error("Fresh verification resources do not have a readable ownership witness")
+      this.runtime.store.atomic((db) =>
+        activateRetainedVerificationResources(db, initial.id, phase, check.id, this.runtime.now()),
+      )
+      return context
+    } catch (error) {
+      const cleaned =
+        error instanceof RetainedSetupProcessTreeUncertainError
+          ? this.markRetainedCheckSetupUncertain(initial, phase, check.id, errorText(error))
+          : await this.cleanupRetainedCheckSetup(
               initial,
               phase,
               check.id,
-              existing.contextPath,
-              recovered.isolation,
-              fence,
+              rootDirectory,
+              workspace,
+              setup.resource,
+              setup.dependencyLink,
+              setup.temporaryDirectoryLink,
             )
-            continue
-          }
-        }
-        const activity = this.runtime.checkActivity(activityID, activityIdentity)
-        if (activity?.state === "running") return undefined
-        this.runtime.store.atomic((db) =>
-          markRetainedVerificationCheckUncertain(
-            db,
-            initial.id,
-            phase,
-            check.id,
-            "A retained check intent has no conclusive isolated receipt; it will not be replayed",
-          ),
-        )
-        await this.failRetainedVerification(
-          initial,
-          activity?.state === "failed"
-            ? `Retained verification check ${phase}:${check.id} is uncertain: ${errorText(activity.error)}`
-            : `Retained verification check ${phase}:${check.id} is uncertain and was not replayed`,
-          fence,
-        )
-        forgetVerificationActivity(
-          verificationActivityKey(this.runtime.store.repository.path, activityID),
-          fingerprint(activityIdentity),
-        )
-        return undefined
-      }
-
-      if (
-        await this.reconcileInterruptedRetainedCheckSetup(initial, phase, check, workspace, fence)
+      this.runtime.retainedVerificationAborts.delete(initial.id)
+      if (runSignal.aborted || !this.retainedVerificationLive(initial.id)) return undefined
+      await this.failRetainedVerification(
+        initial,
+        cleaned
+          ? errorText(error)
+          : `${errorText(error)}; partial setup cleanup could not be proven and remains uncertain`,
+        run.fence,
       )
-        return undefined
+      return undefined
+    }
+  }
 
-      const prior = this.runtime.store.atomic((db) => {
-        const active = db
-          .query<{ canonical_path: string }, [string]>(
-            `SELECT canonical_path FROM runner_retained_verification_resources
-             WHERE project_directory=? AND state IN ('creating','active','uncertain')`,
-          )
-          .all(this.runtime.directory)
-        const legacy = db
-          .query<{ name: string }, []>(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='owned_resources'",
-          )
-          .get()
-        if (legacy) {
-          const outstanding = db
-            .query<{ count: number }, [string]>(
-              "SELECT COUNT(*) AS count FROM owned_resources WHERE project_directory=? AND json_extract(payload,'$.state') NOT IN ('removed')",
-            )
-            .get(this.runtime.directory)?.count
-          if (outstanding)
-            throw new Error(
-              "An existing owned external resource has no canonical path witness; retained verification cannot prove non-overlap",
-            )
-        }
-        return active.map((row) => row.canonical_path)
+  /** Durably records the check's intent; on failure releases the fresh context and reports. */
+  private async beginRetainedCheckRow(
+    run: RetainedCheckRun,
+    context: RetainedCheckContext,
+    receiptPath: string,
+    inputFingerprint: string,
+  ): Promise<ReturnType<typeof beginRetainedVerificationCheck> | undefined> {
+    const { initial, phase, check } = run
+    try {
+      await this.runtime.beforeRetainedCheckBegin?.({
+        operationID: initial.id,
+        phase,
+        checkID: check.id,
       })
-      const controller = new AbortController()
-      const runSignal = parentSignal
-        ? AbortSignal.any([controller.signal, parentSignal])
-        : controller.signal
-      this.runtime.retainedVerificationAborts.set(initial.id, controller)
-      const rootDirectory = join(this.runtime.dataDirectory, "retained-verification-resources")
-      let setupResource: RetainedCheckSetupResource | undefined
-      let setupDependencyLink: RetainedCheckSetupLink | undefined
-      let setupTemporaryDirectoryLink: RetainedCheckSetupLink | undefined
-      let context: Awaited<ReturnType<typeof createRetainedCheckContext>>
-      try {
-        mkdirSync(rootDirectory, { recursive: true, mode: 0o700 })
-        context = await createRetainedCheckContext({
-          rootDirectory,
+      return this.runtime.store.atomic((db) =>
+        beginRetainedVerificationCheck(db, {
           operationID: initial.id,
           phase,
           checkID: check.id,
-          originalWorkspace: initial.originalWorkspace,
-          candidateWorkspace: workspace,
-          taskDatabase: this.runtime.store.repository.path,
-          projectDirectory: this.runtime.directory,
-          candidateArtifact: artifact,
-          priorResourcePaths: prior,
-          procedurePlan: procedure.plan,
-          signal: runSignal,
-          dependencyInstaller: this.runtime.retainedDependencyInstaller,
-          onSetupPathReserved: (path) => {
-            setupResource = { path, realPath: path, device: -1, inode: -1 }
-            this.runtime.store.atomic((db) =>
-              registerRetainedVerificationResources(db, this.runtime.directory, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resources: [{ name: "setup-root", realPath: path, device: -1, inode: -1 }],
-                state: "creating",
-                now: this.runtime.now(),
-              }),
-            )
-          },
-          onSetupPathCreated: (resource) => {
-            setupResource = resource
-            const updated = this.runtime.store.atomic((db) =>
-              updateRetainedVerificationResourceIdentity(db, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resourceName: "setup-root",
-                realPath: resource.realPath,
-                device: resource.device,
-                inode: resource.inode,
-                now: this.runtime.now(),
-              }),
-            )
-            if (!updated)
-              throw new Error("Retained verification setup-root ownership reservation changed")
-          },
-          onResourcesCreated: (resources) =>
-            this.runtime.store.atomic((db) =>
-              registerRetainedVerificationResources(db, this.runtime.directory, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resources,
-                state: "creating",
-                now: this.runtime.now(),
-              }),
-            ),
-          onDependencyLinkReserved: (link) => {
-            setupDependencyLink = link
-            this.runtime.store.atomic((db) =>
-              registerRetainedVerificationResources(db, this.runtime.directory, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resources: [
-                  { name: "dependency-link", realPath: link.path, device: -1, inode: -1 },
-                ],
-                state: "creating",
-                now: this.runtime.now(),
-              }),
-            )
-          },
-          onDependencyLink: (link) => {
-            setupDependencyLink = link
-            const updated = this.runtime.store.atomic((db) =>
-              updateRetainedVerificationResourceIdentity(db, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resourceName: "dependency-link",
-                realPath: link.path,
-                device: link.device,
-                inode: link.inode,
-                now: this.runtime.now(),
-              }),
-            )
-            if (!updated)
-              throw new Error("Retained verification dependency-link ownership reservation changed")
-          },
-          onTemporaryDirectoryLinkReserved: (link) => {
-            setupTemporaryDirectoryLink = link
-            this.runtime.store.atomic((db) =>
-              registerRetainedVerificationResources(db, this.runtime.directory, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resources: [
-                  {
-                    name: "tmp-alias",
-                    realPath: link.path,
-                    device: -1,
-                    inode: -1,
-                  },
-                ],
-                state: "creating",
-                now: this.runtime.now(),
-              }),
-            )
-          },
-          onTemporaryDirectoryLink: (link) => {
-            setupTemporaryDirectoryLink = link
-            const updated = this.runtime.store.atomic((db) =>
-              updateRetainedVerificationResourceIdentity(db, {
-                operationID: initial.id,
-                phase,
-                checkID: check.id,
-                resourceName: "tmp-alias",
-                realPath: link.path,
-                device: link.device,
-                inode: link.inode,
-                now: this.runtime.now(),
-              }),
-            )
-            if (!updated)
-              throw new Error("Retained verification temporary-link ownership reservation changed")
-          },
-        })
-        if (!(await observeRetainedCheckContext(context)))
-          throw new Error("Fresh verification resources do not have a readable ownership witness")
+          check: run.effectiveCheck,
+          workspace: run.workspace,
+          artifact: run.artifact,
+          inputFingerprint,
+          environmentIdentity: context.environmentIdentity,
+          receiptPath,
+          contextPath: context.directory,
+          createdAt: this.runtime.now(),
+        }),
+      )
+    } catch (error) {
+      try {
+        await removeRetainedCheckContext(context)
         this.runtime.store.atomic((db) =>
-          activateRetainedVerificationResources(
+          settleRetainedVerificationResources(
             db,
             initial.id,
             phase,
             check.id,
+            "removed",
             this.runtime.now(),
           ),
         )
-      } catch (error) {
-        const cleaned =
-          error instanceof RetainedSetupProcessTreeUncertainError
-            ? this.markRetainedCheckSetupUncertain(initial, phase, check.id, errorText(error))
-            : await this.cleanupRetainedCheckSetup(
-                initial,
-                phase,
-                check.id,
-                rootDirectory,
-                workspace,
-                setupResource,
-                setupDependencyLink,
-                setupTemporaryDirectoryLink,
-              )
-        this.runtime.retainedVerificationAborts.delete(initial.id)
-        if (runSignal.aborted || !this.retainedVerificationLive(initial.id)) return undefined
-        await this.failRetainedVerification(
-          initial,
-          cleaned
-            ? errorText(error)
-            : `${errorText(error)}; partial setup cleanup could not be proven and remains uncertain`,
-          fence,
+      } catch {
+        this.runtime.store.atomic((db) =>
+          settleRetainedVerificationResources(
+            db,
+            initial.id,
+            phase,
+            check.id,
+            "uncertain",
+            this.runtime.now(),
+          ),
         )
-        return undefined
       }
-      const receiptPath = join(
-        this.runtime.dataDirectory,
-        "receipts",
-        "retained-verification",
-        initial.id,
-        `${phase}-${check.id}.json`,
-      )
-      const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
+      this.runtime.retainedVerificationAborts.delete(initial.id)
+      await this.failRetainedVerification(initial, errorText(error), run.fence)
+      return undefined
+    }
+  }
+
+  private async dispatchRetainedCheckActivity(
+    run: RetainedCheckRun,
+    context: RetainedCheckContext,
+    checkRow: ReturnType<typeof beginRetainedVerificationCheck>,
+    runSignal: AbortSignal,
+    receiptPath: string,
+  ) {
+    const { initial, phase, check, workspace, artifact, deadline } = run
+    try {
+      const activityIdentity = {
         operationID: initial.id,
         phase,
-        check: effectiveCheck,
-        authoredCheck: check,
-        verificationDeadline: verificationReceiptDeadline(deadline),
-        workspace,
-        artifact: this.runtime.store.treeRef(artifact),
-        contextIdentity: context.identity,
-        environmentIdentity: context.environmentIdentity,
-      })}`
-      let checkRow: ReturnType<typeof beginRetainedVerificationCheck>
-      try {
-        await this.runtime.beforeRetainedCheckBegin?.({
+        checkID: check.id,
+        inputFingerprint: checkRow.inputFingerprint,
+        workspace: checkRow.workspace,
+        artifact: checkRow.artifact,
+        contextPath: checkRow.contextPath,
+      }
+      this.runtime.startCheckActivity({
+        id: run.activityID,
+        identity: activityIdentity,
+        signal: runSignal,
+        metadata: {
+          kind: "retained",
+          projectDirectory: this.runtime.directory,
+          planID: initial.planID,
+          taskID: initial.taskID,
+          attemptID: initial.attemptID,
           operationID: initial.id,
           phase,
           checkID: check.id,
-        })
-        checkRow = this.runtime.store.atomic((db) =>
-          beginRetainedVerificationCheck(db, {
-            operationID: initial.id,
-            phase,
-            checkID: check.id,
-            check: effectiveCheck,
-            workspace,
-            artifact,
-            inputFingerprint,
+          workspace,
+          artifact,
+          contextPath: context.directory,
+          isolation: retainedCheckIsolationWitness(context),
+        },
+        run: (signal) =>
+          this.runtime.runVerificationCheck(workspace, artifact, check, deadline, receiptPath, {
+            environment: context.environment,
             environmentIdentity: context.environmentIdentity,
-            receiptPath,
-            contextPath: context.directory,
-            createdAt: this.runtime.now(),
-          }),
-        )
-      } catch (error) {
-        try {
-          await removeRetainedCheckContext(context)
-          this.runtime.store.atomic((db) =>
-            settleRetainedVerificationResources(
-              db,
-              initial.id,
-              phase,
-              check.id,
-              "removed",
-              this.runtime.now(),
-            ),
-          )
-        } catch {
-          this.runtime.store.atomic((db) =>
-            settleRetainedVerificationResources(
-              db,
-              initial.id,
-              phase,
-              check.id,
-              "uncertain",
-              this.runtime.now(),
-            ),
-          )
-        }
-        this.runtime.retainedVerificationAborts.delete(initial.id)
-        await this.failRetainedVerification(initial, errorText(error), fence)
-        return undefined
-      }
-      if (!this.retainedVerificationLive(initial.id)) {
-        await this.cleanupRetainedCheckResources(
-          initial,
-          phase,
-          check.id,
-          context.directory,
-          retainedCheckIsolationWitness(context),
-          fence,
-        )
-        this.runtime.retainedVerificationAborts.delete(initial.id)
-        return undefined
-      }
-      try {
-        const activityIdentity = {
-          operationID: initial.id,
-          phase,
-          checkID: check.id,
-          inputFingerprint: checkRow.inputFingerprint,
-          workspace: checkRow.workspace,
-          artifact: checkRow.artifact,
-          contextPath: checkRow.contextPath,
-        }
-        this.runtime.startCheckActivity({
-          id: activityID,
-          identity: activityIdentity,
-          signal: runSignal,
-          metadata: {
-            kind: "retained",
-            projectDirectory: this.runtime.directory,
-            planID: initial.planID,
-            taskID: initial.taskID,
-            attemptID: initial.attemptID,
-            operationID: initial.id,
-            phase,
-            checkID: check.id,
-            workspace,
-            artifact,
-            contextPath: context.directory,
+            ownedUntrackedPaths: context.dependencyLink ? ["node_modules"] : [],
             isolation: retainedCheckIsolationWitness(context),
-          },
-          run: (signal) =>
-            this.runtime.runVerificationCheck(workspace, artifact, check, deadline, receiptPath, {
-              environment: context.environment,
-              environmentIdentity: context.environmentIdentity,
-              ownedUntrackedPaths: context.dependencyLink ? ["node_modules"] : [],
-              isolation: retainedCheckIsolationWitness(context),
-              signal,
-            }),
-        })
-        return undefined
-      } catch (error) {
-        this.runtime.store.atomic((db) =>
-          markRetainedVerificationCheckUncertain(db, initial.id, phase, check.id, errorText(error)),
-        )
-        await this.cleanupRetainedCheckResources(
-          initial,
-          phase,
-          check.id,
-          context.directory,
-          retainedCheckIsolationWitness(context),
-          fence,
-        )
-        await this.failRetainedVerification(
-          initial,
-          `Retained verification check ${phase}:${check.id} is uncertain: ${errorText(error)}`,
-          fence,
-        )
-        return undefined
-      }
+            signal,
+          }),
+      })
+    } catch (error) {
+      this.runtime.store.atomic((db) =>
+        markRetainedVerificationCheckUncertain(db, initial.id, phase, check.id, errorText(error)),
+      )
+      await this.cleanupRetainedCheckResources(
+        initial,
+        phase,
+        check.id,
+        context.directory,
+        retainedCheckIsolationWitness(context),
+        run.fence,
+      )
+      await this.failRetainedVerification(
+        initial,
+        `Retained verification check ${phase}:${check.id} is uncertain: ${errorText(error)}`,
+        run.fence,
+      )
     }
-    return results
   }
 
   async cleanupRetainedCheckResources(
@@ -1593,10 +1702,7 @@ export class RetainedVerificationExecution {
       const owned = matches[0]
       if (!owned) {
         const existing = candidates.filter((candidate) => existsSync(candidate))
-        const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => resolve(line.slice("worktree ".length)))
+        const gitWorktrees = await this.registeredGitWorktrees()
         const registered = candidates.filter((candidate) =>
           gitWorktrees.includes(resolve(candidate)),
         )
@@ -1736,7 +1842,7 @@ export class RetainedVerificationExecution {
   async reconcileTerminalRetainedVerifications(fence: number): Promise<void> {
     const terminalOperations = this.runtime.store
       .atomic((db) => retainedVerificationsForProject(db, this.runtime.directory))
-      .filter((operation) => ["accepted", "failed", "cancelled"].includes(operation.state))
+      .filter((operation) => isTerminalRetainedState(operation.state))
     const terminalIDs = new Set(terminalOperations.map((operation) => operation.id))
     for (const operationID of this.runtime.terminalRetainedVerificationCleanupChecks.keys())
       if (!terminalIDs.has(operationID))
@@ -1751,204 +1857,246 @@ export class RetainedVerificationExecution {
     })
     if (!operations.length) return
 
-    let native: string[]
-    let gitWorktrees: string[]
+    let inventory: WorktreeInventory
     try {
-      native = await this.runtime.host.worktrees()
-      gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("worktree "))
-        .map((line) => resolve(line.slice("worktree ".length)))
+      inventory = await this.readWorktreeInventory()
     } catch {
-      for (const operation of operations) {
-        const current = this.runtime.store.atomic((db) => retainedVerification(db, operation.id))
-        if (
-          current &&
-          current.updatedAt === operation.updatedAt &&
-          this.terminalRetainedVerificationCleanupRecordedComplete(current)
-        )
-          this.runtime.terminalRetainedVerificationCleanupChecks.set(operation.id, {
-            updatedAt: current.updatedAt,
-            checkedAt,
-          })
-      }
+      this.deferTerminalCleanupChecks(operations, checkedAt)
       return
     }
+    for (const original of operations)
+      await this.reconcileTerminalOperation(original, inventory, fence)
+  }
 
-    for (const original of operations) {
-      let operation = this.runtime.store.atomic((db) => retainedVerification(db, original.id))
-      if (!operation || !["accepted", "failed", "cancelled"].includes(operation.state)) continue
-      if (operation.state === "cancelled") {
-        try {
-          await this.runtime.recoverCancelledRetainedChecks(operation.id)
-        } catch {
-          // Keep the terminal operation and its native resources discoverable.
-        }
-        operation = this.runtime.store.atomic((db) => retainedVerification(db, original.id))
-        if (!operation) continue
-      }
+  private async readWorktreeInventory(): Promise<WorktreeInventory> {
+    const native = await this.runtime.host.worktrees()
+    return { native, gitWorktrees: await this.registeredGitWorktrees() }
+  }
 
-      let cleanupComplete = true
-      const workspaceResults = new Map<"task" | "combined", "complete" | "failed" | "pending">()
-      for (const phase of ["task", "combined"] as const) {
-        const workspace = this.retainedVerificationIsolatedWorkspace(operation, phase)
-        const workspaceState =
-          (phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState) ??
-          null
-        const checks = this.runtime.store.atomic((db) =>
-          retainedVerificationChecks(db, operation!.id, phase),
-        )
-        let checksSettled = true
-        for (const check of checks) {
-          if (check.state !== "completed" || !check.receipt) {
-            checksSettled = false
-            break
-          }
-          let receipt: CheckReceipt
-          try {
-            receipt = JSON.parse(check.receipt) as CheckReceipt
-          } catch {
-            checksSettled = false
-            break
-          }
-          if (!checkResourcesSettled(receipt)) {
-            checksSettled = false
-            break
-          }
-          const resourcePending = this.runtime.store.atomic((db) =>
-            db
-              .query<{ state: string }, [string, string, string]>(
-                "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=? AND check_id=?",
-              )
-              .all(operation!.id, phase, check.checkID)
-              .some((resource) => resource.state !== "removed"),
-          )
-          if (check.cleanupState !== "complete" || resourcePending) {
-            const setupClean = await this.cleanupRetainedCheckSetup(
-              operation,
-              phase,
-              check.checkID,
-              this.runtime.dataDirectory,
-              workspace ?? check.workspace,
-              undefined,
-              undefined,
-              undefined,
-            )
-            if (setupClean)
-              await this.cleanupRetainedCheckResources(
-                operation,
-                phase,
-                check.checkID,
-                check.contextPath,
-                receipt.isolation,
-                fence,
-              )
-          }
-        }
-        const refreshedChecks = this.runtime.store.atomic((db) =>
-          retainedVerificationChecks(db, operation!.id, phase),
-        )
-        const remainingResources = this.runtime.store.atomic((db) =>
-          db
-            .query<{ state: string }, [string, string]>(
-              "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
-            )
-            .all(operation!.id, phase)
-            .some((resource) => resource.state !== "removed"),
-        )
-        checksSettled &&= refreshedChecks.every(
-          (check) =>
-            check.state === "completed" &&
-            Boolean(check.receipt) &&
-            check.cleanupState === "complete",
-        )
-        checksSettled &&= !remainingResources
+  private async registeredGitWorktrees(): Promise<string[]> {
+    return (await worktreeListPorcelain(this.runtime.directory))
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => resolve(line.slice("worktree ".length)))
+  }
 
-        const candidates =
-          workspace && (workspaceState === "reserved" || workspaceState === "uncertain")
-            ? startupWorktreeCandidates(workspace)
-            : workspace
-              ? [workspace]
-              : []
-        const inventoryHasWorkspace = candidates.some(
-          (candidate) =>
-            native.some((entry) => resolve(entry) === resolve(candidate)) ||
-            gitWorktrees.includes(resolve(candidate)) ||
-            existsSync(candidate),
-        )
-        const workspaceNeedsCleanup = Boolean(
-          workspace && (workspaceState !== "removed" || inventoryHasWorkspace),
-        )
-        if (!checksSettled) {
-          if (workspaceNeedsCleanup) {
-            workspaceResults.set(phase, "pending")
-            cleanupComplete = false
-          }
-          if (refreshedChecks.length || remainingResources) cleanupComplete = false
-          continue
-        }
-        if (workspaceNeedsCleanup) {
-          const result = await this.removeRetainedVerificationWorkspace(operation, phase, fence)
-          workspaceResults.set(phase, result)
-          if (result !== "complete") cleanupComplete = false
-        } else if (workspaceState !== null && workspaceState !== "removed") {
-          workspaceResults.set(phase, "pending")
-          cleanupComplete = false
-        }
-      }
-
-      const refreshed = this.runtime.store.atomic((db) => retainedVerification(db, operation!.id))
-      if (!refreshed) continue
-      const taskResult = workspaceResults.get("task")
-      const combinedResult = workspaceResults.get("combined")
-      const workspaceUnresolved = [
-        [refreshed.taskWorkspace, refreshed.taskWorkspaceState, taskResult],
-        [refreshed.combinedWorkspace, refreshed.combinedWorkspaceState, combinedResult],
-      ].some(
-        ([workspace, state, result]) =>
-          Boolean(workspace) && (state !== "removed" || (result && result !== "complete")),
-      )
-      cleanupComplete &&= !workspaceUnresolved
-      const cleanupState = cleanupComplete ? "complete" : "failed"
-      if (refreshed.cleanupState !== cleanupState) {
-        this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
-          const current = retainedVerification(db, refreshed.id)
-          if (!current) return
-          saveRetainedVerification(db, {
-            ...current,
-            cleanupState,
-            updatedAt: this.runtime.now(),
-          })
-          this.runtime.store.record(
-            current.planID,
-            current.taskID,
-            cleanupComplete
-              ? "RETAINED_VERIFICATION_TERMINAL_CLEANUP_COMPLETED"
-              : "RETAINED_VERIFICATION_TERMINAL_CLEANUP_PENDING",
-            {
-              operationID: current.id,
-              workspaces: {
-                task: current.taskWorkspaceState,
-                combined: current.combinedWorkspaceState,
-              },
-              results: Object.fromEntries(workspaceResults),
-            },
-          )
-        })
-      }
-      const current = this.runtime.store.atomic((db) => retainedVerification(db, refreshed.id))
+  /** With no worktree inventory to judge by, remember already-clean operations so they are not rechecked at once. */
+  private deferTerminalCleanupChecks(operations: RetainedVerification[], checkedAt: number) {
+    for (const operation of operations) {
+      const current = this.runtime.store.atomic((db) => retainedVerification(db, operation.id))
       if (
-        cleanupComplete &&
         current &&
-        ["accepted", "failed", "cancelled"].includes(current.state) &&
+        current.updatedAt === operation.updatedAt &&
         this.terminalRetainedVerificationCleanupRecordedComplete(current)
       )
-        this.runtime.terminalRetainedVerificationCleanupChecks.set(current.id, {
+        this.runtime.terminalRetainedVerificationCleanupChecks.set(operation.id, {
           updatedAt: current.updatedAt,
-          checkedAt: this.runtime.now(),
+          checkedAt,
         })
-      else this.runtime.terminalRetainedVerificationCleanupChecks.delete(refreshed.id)
     }
+  }
+
+  private async reconcileTerminalOperation(
+    original: RetainedVerification,
+    inventory: WorktreeInventory,
+    fence: number,
+  ) {
+    let operation = this.runtime.store.atomic((db) => retainedVerification(db, original.id))
+    if (!operation || !isTerminalRetainedState(operation.state)) return
+    if (operation.state === "cancelled") {
+      try {
+        await this.runtime.recoverCancelledRetainedChecks(operation.id)
+      } catch {
+        // Keep the terminal operation and its native resources discoverable.
+      }
+      operation = this.runtime.store.atomic((db) => retainedVerification(db, original.id))
+      if (!operation) return
+    }
+
+    let cleanupComplete = true
+    const workspaceResults = new Map<"task" | "combined", "complete" | "failed" | "pending">()
+    for (const phase of ["task", "combined"] as const) {
+      const outcome = await this.reconcileTerminalPhase(operation, phase, inventory, fence)
+      if (outcome.result) workspaceResults.set(phase, outcome.result)
+      if (!outcome.complete) cleanupComplete = false
+    }
+
+    const refreshed = this.runtime.store.atomic((db) => retainedVerification(db, operation.id))
+    if (!refreshed) return
+    const taskResult = workspaceResults.get("task")
+    const combinedResult = workspaceResults.get("combined")
+    const workspaceUnresolved = [
+      [refreshed.taskWorkspace, refreshed.taskWorkspaceState, taskResult],
+      [refreshed.combinedWorkspace, refreshed.combinedWorkspaceState, combinedResult],
+    ].some(
+      ([workspace, state, result]) =>
+        Boolean(workspace) && (state !== "removed" || (result && result !== "complete")),
+    )
+    cleanupComplete &&= !workspaceUnresolved
+    this.recordTerminalCleanupState(refreshed, cleanupComplete, workspaceResults, fence)
+    const current = this.runtime.store.atomic((db) => retainedVerification(db, refreshed.id))
+    if (
+      cleanupComplete &&
+      current &&
+      isTerminalRetainedState(current.state) &&
+      this.terminalRetainedVerificationCleanupRecordedComplete(current)
+    )
+      this.runtime.terminalRetainedVerificationCleanupChecks.set(current.id, {
+        updatedAt: current.updatedAt,
+        checkedAt: this.runtime.now(),
+      })
+    else this.runtime.terminalRetainedVerificationCleanupChecks.delete(refreshed.id)
+  }
+
+  /** Persists the operation's terminal cleanup state when it changed, with the per-phase results. */
+  private recordTerminalCleanupState(
+    refreshed: RetainedVerification,
+    cleanupComplete: boolean,
+    workspaceResults: Map<"task" | "combined", "complete" | "failed" | "pending">,
+    fence: number,
+  ) {
+    const cleanupState = cleanupComplete ? "complete" : "failed"
+    if (refreshed.cleanupState === cleanupState) return
+    this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
+      const current = retainedVerification(db, refreshed.id)
+      if (!current) return
+      saveRetainedVerification(db, {
+        ...current,
+        cleanupState,
+        updatedAt: this.runtime.now(),
+      })
+      this.runtime.store.record(
+        current.planID,
+        current.taskID,
+        cleanupComplete
+          ? "RETAINED_VERIFICATION_TERMINAL_CLEANUP_COMPLETED"
+          : "RETAINED_VERIFICATION_TERMINAL_CLEANUP_PENDING",
+        {
+          operationID: current.id,
+          workspaces: {
+            task: current.taskWorkspaceState,
+            combined: current.combinedWorkspaceState,
+          },
+          results: Object.fromEntries(workspaceResults),
+        },
+      )
+    })
+  }
+
+  /** One phase of a terminal operation: clean its check resources, then its workspace once they are gone. */
+  private async reconcileTerminalPhase(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    inventory: WorktreeInventory,
+    fence: number,
+  ): Promise<{ complete: boolean; result?: "complete" | "failed" | "pending" }> {
+    const workspace = this.retainedVerificationIsolatedWorkspace(operation, phase)
+    const workspaceState =
+      (phase === "task" ? operation.taskWorkspaceState : operation.combinedWorkspaceState) ?? null
+    const checks = await this.cleanTerminalPhaseChecks(operation, phase, workspace, fence)
+
+    const candidates =
+      workspace && (workspaceState === "reserved" || workspaceState === "uncertain")
+        ? startupWorktreeCandidates(workspace)
+        : workspace
+          ? [workspace]
+          : []
+    const inventoryHasWorkspace = candidates.some(
+      (candidate) =>
+        inventory.native.some((entry) => resolve(entry) === resolve(candidate)) ||
+        inventory.gitWorktrees.includes(resolve(candidate)) ||
+        existsSync(candidate),
+    )
+    const workspaceNeedsCleanup = Boolean(
+      workspace && (workspaceState !== "removed" || inventoryHasWorkspace),
+    )
+    if (!checks.settled) {
+      const stillOwned = checks.refreshedCount > 0 || checks.remainingResources
+      if (workspaceNeedsCleanup) return { complete: false, result: "pending" }
+      return { complete: !stillOwned }
+    }
+    if (workspaceNeedsCleanup) {
+      const result = await this.removeRetainedVerificationWorkspace(operation, phase, fence)
+      return { complete: result === "complete", result }
+    }
+    if (workspaceState !== null && workspaceState !== "removed")
+      return { complete: false, result: "pending" }
+    return { complete: true }
+  }
+
+  /** Cleans each completed check's resources; settled only when every check and resource is gone. */
+  private async cleanTerminalPhaseChecks(
+    operation: RetainedVerification,
+    phase: "task" | "combined",
+    workspace: string | undefined,
+    fence: number,
+  ) {
+    const checks = this.runtime.store.atomic((db) =>
+      retainedVerificationChecks(db, operation.id, phase),
+    )
+    let checksSettled = true
+    for (const check of checks) {
+      if (check.state !== "completed" || !check.receipt) {
+        checksSettled = false
+        break
+      }
+      let receipt: CheckReceipt
+      try {
+        receipt = JSON.parse(check.receipt) as CheckReceipt
+      } catch {
+        checksSettled = false
+        break
+      }
+      if (!checkResourcesSettled(receipt)) {
+        checksSettled = false
+        break
+      }
+      const resourcePending = this.runtime.store.atomic((db) =>
+        db
+          .query<{ state: string }, [string, string, string]>(
+            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=? AND check_id=?",
+          )
+          .all(operation.id, phase, check.checkID)
+          .some((resource) => resource.state !== "removed"),
+      )
+      if (check.cleanupState === "complete" && !resourcePending) continue
+      const setupClean = await this.cleanupRetainedCheckSetup(
+        operation,
+        phase,
+        check.checkID,
+        this.runtime.dataDirectory,
+        workspace ?? check.workspace,
+        undefined,
+        undefined,
+        undefined,
+      )
+      if (setupClean)
+        await this.cleanupRetainedCheckResources(
+          operation,
+          phase,
+          check.checkID,
+          check.contextPath,
+          receipt.isolation,
+          fence,
+        )
+    }
+    const refreshedChecks = this.runtime.store.atomic((db) =>
+      retainedVerificationChecks(db, operation.id, phase),
+    )
+    const remainingResources = this.runtime.store.atomic((db) =>
+      db
+        .query<{ state: string }, [string, string]>(
+          "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
+        )
+        .all(operation.id, phase)
+        .some((resource) => resource.state !== "removed"),
+    )
+    checksSettled &&= refreshedChecks.every(
+      (check) =>
+        check.state === "completed" && Boolean(check.receipt) && check.cleanupState === "complete",
+    )
+    checksSettled &&= !remainingResources
+    return { settled: checksSettled, refreshedCount: refreshedChecks.length, remainingResources }
   }
 
   private terminalRetainedVerificationCleanupRecordedComplete(operation: RetainedVerification) {
