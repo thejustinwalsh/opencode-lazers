@@ -52,13 +52,14 @@ const wire = (change: Partial<WireInput> = {}): WireInput => ({
 
 function layer() {
   const window = new Window()
-  const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "g")
-  window.document.body.append(svg)
-  return svg as unknown as Element
+  const div = window.document.createElement("div")
+  window.document.body.append(div)
+  return div as unknown as Element
 }
-const dots = (element: Element) => [...element.querySelectorAll("circle")]
-const x = (dot: Element) =>
-  Number(/translate\(([-\d.]+)/.exec(dot.getAttribute("transform") ?? "")?.[1])
+const dots = (element: Element) =>
+  [...element.querySelectorAll(".lazers-radar-flow-dot")] as HTMLElement[]
+const x = (dot: HTMLElement) =>
+  Number(/translate3d\(([-\d.]+)px/.exec(dot.style.transform ?? "")?.[1])
 
 test("one frame loop draws pulses that move steadily, and a live update does not move them", () => {
   const { host, frame, state } = fakeHost()
@@ -148,5 +149,40 @@ test("frame cost: ten seconds at 60 fps over eight running wires", () => {
   expect(loop.pool.size).toBeGreaterThan(8)
   // 16.7 ms is the frame budget; the loop's own work should be a small fraction of it.
   expect(p(0.95)).toBeLessThan(4)
+  loop.dispose()
+})
+
+test("frames are capped: positions stay time-based while draws and style writes are skipped", () => {
+  const { host, frame } = fakeHost()
+  const capped = { ...host, minFrameMs: 33 }
+  const target = layer()
+  const loop = createPulseLoop(target, capped)
+  loop.update([wire()])
+  for (let i = 0; i < 120; i++) frame(16)
+  // 120 frames of 16 ms is 1920 ms; a draw needs 33 ms, so every third 16 ms frame: 40, not 120.
+  expect(loop.stats.frames).toBeLessThan(62)
+  expect(loop.stats.frames).toBeGreaterThan(30)
+  // Travel is by elapsed time, not by draw count: ~90 px/s over 1.9 s covers about 170 px.
+  const lead = Math.max(...dots(target).map(x))
+  expect(lead).toBeGreaterThan(100)
+  loop.dispose()
+})
+
+test("a frame writes only transforms, and only for dots that moved", () => {
+  const { host, frame } = fakeHost()
+  const target = layer()
+  const loop = createPulseLoop(target, host)
+  loop.update([wire()])
+  for (let i = 0; i < 40; i++) frame(16)
+  const writes: string[] = []
+  const observer = new (
+    target.ownerDocument!.defaultView as unknown as { MutationObserver: typeof MutationObserver }
+  ).MutationObserver((records) => {
+    for (const record of records) writes.push(`${record.type}:${record.attributeName}`)
+  })
+  observer.observe(target, { attributes: true, childList: true, subtree: true })
+  // Zero elapsed time: nothing moved, so nothing is written.
+  frame(0)
+  expect(writes).toEqual([])
   loop.dispose()
 })

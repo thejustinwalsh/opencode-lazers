@@ -76,7 +76,7 @@ export function RadarFlowCanvas(props: {
     return set !== undefined && !set.edgeKeys.has(key)
   }
   const still = reducedMotion()
-  let pulseLayer: SVGGElement | undefined
+  let pulseLayer: HTMLDivElement | undefined
   let visibleOnScreen = true
   onMount(() => {
     if (!pulseLayer || still) return
@@ -223,7 +223,6 @@ export function RadarFlowCanvas(props: {
             )
           }}
         </Index>
-        <g class="lazers-radar-flow-pulses" ref={(element) => (pulseLayer = element)} />
         <Index each={layout().sessions}>
           {(session) => {
             const color = () =>
@@ -361,6 +360,12 @@ export function RadarFlowCanvas(props: {
           }}
         </Index>
       </svg>
+      {/* Moving pulses live outside the SVG: transform-only dots never repaint the canvas. */}
+      <div
+        class="lazers-radar-flow-pulses"
+        aria-hidden="true"
+        ref={(element) => (pulseLayer = element)}
+      />
     </div>
   )
 }

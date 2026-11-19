@@ -11,12 +11,18 @@ export type PulseHost = {
   visible(): boolean
   /** True when the person asked for reduced motion; pulses then stay static. */
   reducedMotion(): boolean
+  /** Least milliseconds between drawn frames; positions are time-based, so skipping costs nothing. */
+  minFrameMs?: number
 }
+
+/** 30 fps: a 90 px/s dot moves 3 px between draws, and the compositor interpolates nothing. */
+export const FRAME_MS = 33
 
 export const browserHost = (): PulseHost => ({
   requestFrame: (callback) => globalThis.requestAnimationFrame(callback),
   cancelFrame: (handle) => globalThis.cancelAnimationFrame(handle),
   now: () => globalThis.performance.now(),
+  minFrameMs: FRAME_MS,
   visible: () => !globalThis.document?.hidden,
   reducedMotion: () => {
     try {
@@ -27,14 +33,16 @@ export const browserHost = (): PulseHost => ({
   },
 })
 
-type Dot = SVGCircleElement & { __dim?: boolean }
+type Dot = HTMLElement & { __dim?: boolean; __at?: string }
 
 /**
- * The one animation driver of the Flow view. It owns the pulse pool and a recycled set of circles
- * in `layer`, outside Solid's render path: a re-render, a live update or a layout change reaches
- * it only through `update`, which re-syncs wires and never touches a pulse in flight. One
- * `requestAnimationFrame` loop runs only while there is something to move, the view is visible and
- * motion is allowed.
+ * The one animation driver of the Flow view. It owns the pulse pool and a recycled set of small
+ * HTML dots in `layer`, an absolutely positioned layer over the SVG canvas, outside Solid's render
+ * path. Dots move only by `transform: translate3d` on their own compositor layers, so a frame
+ * never invalidates layout or repaints the SVG. A re-render, a live update or a layout change
+ * reaches the loop only through `update`, which re-syncs wires and never touches a pulse in
+ * flight. One `requestAnimationFrame` loop runs, at most every `minFrameMs`, only while there is
+ * something to move, the view is visible and motion is allowed.
  */
 export function createPulseLoop(layer: Element, host: PulseHost = browserHost()) {
   const pool = new PulsePool()
@@ -42,22 +50,20 @@ export function createPulseLoop(layer: Element, host: PulseHost = browserHost())
   let shown = 0
   let handle: number | undefined
   let disposed = false
+  let drawn = Number.NEGATIVE_INFINITY
   const stats = { frames: 0, started: 0 }
 
   const place = (dot: Dot, x: number, y: number) => {
-    const list = (dot as unknown as { transform?: SVGAnimatedTransformList }).transform?.baseVal
-    if (list && list.numberOfItems > 0) list.getItem(0).setTranslate(x, y)
-    else dot.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`)
+    const value = `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0)`
+    if (dot.__at === value) return
+    dot.__at = value
+    dot.style.transform = value
   }
   const dotAt = (index: number) => {
     let dot = dots[index]
     if (!dot) {
-      dot = layer.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "circle") as Dot
-      dot.setAttribute("class", "lazers-radar-flow-dot")
-      dot.setAttribute("r", "1.8")
-      dot.setAttribute("cx", "0")
-      dot.setAttribute("cy", "0")
-      dot.setAttribute("transform", "translate(0 0)")
+      dot = layer.ownerDocument.createElement("div") as Dot
+      dot.className = "lazers-radar-flow-dot"
       layer.append(dot)
       dots[index] = dot
     }
@@ -74,14 +80,15 @@ export function createPulseLoop(layer: Element, host: PulseHost = browserHost())
         dot.setAttribute("data-dim", String(dim))
       }
     })
-    for (let hide = index; hide < shown; hide++)
-      dots[hide]!.setAttribute("transform", "translate(-20 -20)")
+    for (let hide = index; hide < shown; hide++) place(dots[hide]!, -20, -20)
     shown = index
   }
   const enabled = () => !disposed && pool.active && host.visible() && !host.reducedMotion()
   const frame = (time: number) => {
     handle = undefined
     if (!enabled()) return
+    if (time - drawn < (host.minFrameMs ?? 0)) return schedule()
+    drawn = time
     stats.frames++
     pool.step(time)
     draw()
@@ -99,6 +106,7 @@ export function createPulseLoop(layer: Element, host: PulseHost = browserHost())
     if (host.visible()) {
       // Time spent hidden is not travel: restart the clock instead of jumping every pulse home.
       pool.resume(host.now())
+      drawn = Number.NEGATIVE_INFINITY
       schedule()
     } else stop()
   }
