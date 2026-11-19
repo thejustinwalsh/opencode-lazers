@@ -416,8 +416,43 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
               : "Reconciliation hold: awaiting review",
           waitingOn: resolvedTaskID === ids.held ? [ids.queuedFive] : [],
         },
-        attempts: [],
-        activity: [],
+        attempts:
+          resolvedTaskID === ids.held
+            ? [
+                {
+                  id: attemptIDs.held,
+                  number: 1,
+                  state: "running",
+                  startedAt: Date.now() - 48 * 60_000,
+                  artifact: null,
+                  tokenCount: null,
+                  toolCount: 17,
+                  model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
+                  summary: {
+                    lastActivityAt: Date.now() - 60_000,
+                    ticks: [
+                      { at: Date.now() - 40 * 60_000 },
+                      { at: Date.now() - 30 * 60_000, failed: true },
+                      { at: Date.now() - 20 * 60_000 },
+                    ],
+                    files: 5,
+                  },
+                },
+              ]
+            : [],
+        activity:
+          resolvedTaskID === ids.held
+            ? [
+                { id: 1, taskID: resolvedTaskID, event: "READY", payload: "{}", createdAt: 1_000 },
+                {
+                  id: 2,
+                  taskID: resolvedTaskID,
+                  event: "EFFECT_INTENDED",
+                  payload: '{"kind":"worker"}',
+                  createdAt: 2_000,
+                },
+              ]
+            : [],
         _activityKey: key,
       }
     }
@@ -595,18 +630,20 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       element.dispatchEvent(
         new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true }) as unknown as Event,
       )
-    const activityDetails = () =>
-      container.querySelector<HTMLDetailsElement>(".lazers-tasks-activity-details")!
-    const toggleActivityDetailsFromKeyboard = (key: "Enter" | " ") => {
-      const summary = activityDetails().querySelector("summary")!
-      summary.focus()
-      expect(summary.ownerDocument.activeElement).toBe(summary)
-      summary.dispatchEvent(
-        new dom.window.KeyboardEvent("keydown", { key, bubbles: true }) as unknown as Event,
-      )
-      // Happy DOM does not synthesize the browser's native summary keyboard click.
-      summary.click()
+    const disclosure = (label: string) =>
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          ".lazers-tasks-disclosures .lazers-kit-disclosure-toggle",
+        ),
+      ].find((toggle) => toggle.textContent?.startsWith(label))
+    const toggleDisclosureFromKeyboard = (label: string) => {
+      const toggle = disclosure(label)!
+      toggle.focus()
+      expect(toggle.ownerDocument.activeElement).toBe(toggle)
+      toggle.click()
     }
+    const disclosureBody = (label: string) =>
+      disclosure(label)?.parentElement?.querySelector(".lazers-kit-disclosure-body")
     await until(() =>
       Boolean(
         row(ids.held)
@@ -614,7 +651,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
           ?.includes("observed foreground activity inactive"),
       ),
     )
-    await until(() => Boolean(activityDetails()))
+    await until(() => Boolean(disclosure("Identifiers")))
     const heldRow = row(ids.held)!
     const activeRow = row(ids.active)!
     const unknownRow = row(ids.unknown)!
@@ -698,11 +735,10 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     )!
     expect(inspectorBlocker.textContent).toBe("LZ-8")
     expect(inspectorBlocker.tabIndex).toBe(0)
-    await until(() =>
-      Boolean(container.querySelector(".lazers-tasks-current-activity")?.textContent),
-    )
-    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
-      "Worker archived",
+    // The pane carries no second state vocabulary: no recorded-lifecycle or worker-foreground lines.
+    expect(container.querySelector(".lazers-tasks-current-activity")).toBeNull()
+    expect(container.querySelector(".lazers-tasks-detail")?.textContent).not.toMatch(
+      /Recorded running|Worker archived|Worker outcome|Observation unavailable/,
     )
     chooseAction("Open source plan")
     await until(() => sourceSelections.length === 1)
@@ -710,9 +746,6 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(opened.at(-1)?.[0]).toBe("file:design/roadmap.md")
     opened.length = 0
     expect(activeRow.closest(".lazers-tasks-entry")!.textContent).not.toContain("roadmap.md")
-    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
-      "Worker outcome succeeded",
-    )
     expect(activeRow.getAttribute("aria-label")).toContain("observed foreground activity active")
     expect(activeRow.getAttribute("aria-label")).toContain("waiting: Reconciliation hold")
     expect(activeRow.getAttribute("aria-label")).toContain("Input pending · Approval pending")
@@ -746,48 +779,90 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(inspectorPane.contains(paneHeader)).toBe(false)
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Waiting on"))
     expect(inspectorText.indexOf(taskNames.held)).toBeLessThan(inspectorText.indexOf("Done when"))
-    expect(inspectorPane.querySelectorAll(".lazers-tasks-assertions li").length).toBe(
-      Math.min(3, proposal.acceptance.length),
-    )
-    // The reason is a callout: a user sentence first, the runtime's own text behind Details.
+    // The reason is a callout: one user sentence with what happens next, no raw runtime text.
     const callout = inspectorPane.querySelector<HTMLElement>(".lazers-callout")!
     expect(callout.querySelector(".lazers-callout-icon")).not.toBeNull()
     const calloutText = callout.querySelector(".lazers-callout-text")!.textContent ?? ""
     expect(calloutText).not.toContain("Reconciliation hold")
-    expect(calloutText).toMatch(/\.\s*Details$/)
-    const rawReason = callout.querySelector<HTMLElement>(".lazers-callout-raw")!
-    expect(rawReason.textContent).toContain("Reconciliation hold")
-    expect(rawReason.hasAttribute("hidden")).toBe(true)
-    const detailsLink = callout.querySelector<HTMLButtonElement>(".lazers-callout-toggle")!
-    detailsLink.click()
-    await until(() => !rawReason.hasAttribute("hidden"))
-    expect(detailsLink.getAttribute("aria-expanded")).toBe("true")
-    detailsLink.click()
-    await until(() => rawReason.hasAttribute("hidden"))
-    // Two disclosures only, each a full-width row; the activity count sits at the right.
-    const disclosureLabels = [
-      ...inspectorPane.querySelectorAll(":scope > details > summary .lazers-tasks-section-label"),
+    expect(calloutText).toMatch(/\.$/)
+    expect(callout.querySelector(".lazers-callout-toggle")).toBeNull()
+    expect(callout.querySelector(".lazers-callout-raw")).toBeNull()
+    // First screen: Progress, then the stat row and the lane of the latest attempt.
+    const sectionLabels = [
+      ...inspectorPane.querySelectorAll(".lazers-kit-section-head > span"),
     ].map((label) => label.textContent)
-    expect(disclosureLabels).toEqual(["Details", "Activity"])
-    expect(inspectorPane.querySelectorAll(":scope > details")).toHaveLength(2)
+    expect(sectionLabels).toEqual(["Progress", "Activity", "Done when"])
+    const progressSteps = [...inspectorPane.querySelectorAll(".lazers-kit-step")]
+    expect(progressSteps.map((step) => step.textContent)).toEqual([
+      "Queued",
+      "Working",
+      "Checks",
+      "Review",
+      "Integrated",
+    ])
+    expect(progressSteps.map((step) => step.getAttribute("data-state"))).toEqual([
+      "passed",
+      "current",
+      "later",
+      "later",
+      "later",
+    ])
+    // A hold turns the running stage warning; the bar, callout and progress agree.
+    expect(progressSteps[1]!.getAttribute("data-lazers-tone")).toBe("warning")
+    const statValues = Object.fromEntries(
+      [...inspectorPane.querySelectorAll(".lazers-kit-stat")].map((stat) => [
+        stat.querySelector("dt")!.textContent,
+        stat.querySelector("dd")!.textContent,
+      ]),
+    )
+    expect(Object.keys(statValues)).toEqual(["Age", "Runtime", "Calls", "Model"])
+    expect(statValues.Runtime).toMatch(/^4[78]m$/)
+    expect(statValues.Calls).toBe("17 · 5 files")
+    expect(statValues.Model).toBe("gpt-6-luna · max")
+    expect(inspectorPane.querySelectorAll(".lazers-kit-lane .lazers-kit-tick")).toHaveLength(3)
+    expect(
+      inspectorPane.querySelectorAll(".lazers-kit-lane .lazers-kit-tick[data-failed='true']"),
+    ).toHaveLength(1)
+    expect(inspectorPane.querySelector(".lazers-tasks-link")?.textContent).toBe(
+      "Open in Trajectory",
+    )
+    // Disclosures add depth: a count where there is one, none empty, no old Details/Activity pair.
+    const disclosureLabels = [
+      ...inspectorPane.querySelectorAll(
+        ".lazers-tasks-disclosures > .lazers-kit-disclosure > button",
+      ),
+    ].map((toggle) => toggle.textContent)
+    expect(disclosureLabels).toEqual([
+      `Scope· ${proposal.writeScope.length}`,
+      `Checks· ${proposal.verification.length}`,
+      "Guidance",
+      "History· 2",
+      "Identifiers",
+    ])
     expect(inspectorText).not.toContain("Activity and holds")
-    // Done when: every item is one grid row of a 16px checkbox and its text, spaced uniformly.
-    const doneItems = [...inspectorPane.querySelectorAll(".lazers-tasks-assertions li")]
-    expect(doneItems.length).toBeGreaterThan(0)
+    // Done when: one short line per criterion, a square marker and a chevron for the full text.
+    const doneItems = [...inspectorPane.querySelectorAll(".lazers-tasks-criteria li")]
+    expect(doneItems.length).toBe(Math.min(6, proposal.acceptance.length))
     for (const item of doneItems) {
-      expect(item.children).toHaveLength(2)
       expect(item.children[0]!.classList.contains("lazers-tasks-check")).toBe(true)
-      expect(item.children[1]!.classList.contains("lazers-tasks-assertion-text")).toBe(true)
+      expect(item.children[1]!.classList.contains("lazers-tasks-criterion-toggle")).toBe(true)
     }
-    expect((tasksCSS ?? "").match(/^\.lazers-tasks-assertions \{[^}]*\}/m)![0]).toContain(
-      "gap: 10px",
+    const criterionToggle = doneItems[0]!.querySelector<HTMLButtonElement>(
+      ".lazers-tasks-criterion-toggle",
+    )!
+    expect(criterionToggle.getAttribute("aria-expanded")).toBe("false")
+    expect(doneItems[0]!.querySelector(".lazers-tasks-assertion-text")).toBeNull()
+    criterionToggle.click()
+    await until(() => criterionToggle.getAttribute("aria-expanded") === "true")
+    expect(doneItems[0]!.querySelector(".lazers-tasks-assertion-text")?.textContent).toContain(
+      proposal.acceptance[0]!.assertion,
     )
+    criterionToggle.click()
+    await until(() => !doneItems[0]!.querySelector(".lazers-tasks-assertion-text"))
     expect((tasksCSS ?? "").match(/\.lazers-tasks-check \{[^}]*\}/)![0]).toMatch(
-      /width: 16px;[^}]*height: 16px/,
+      /width: 10px;[^}]*height: 10px/,
     )
-    // No per-item padding or markdown margin can stack into an uneven band.
-    const itemRule = (tasksCSS ?? "").match(/\.lazers-tasks-assertions li \{[^}]*\}/)![0]
-    expect(itemRule).toContain("padding: 0;")
+    // No markdown margin can stack into an uneven band.
     expect((tasksCSS ?? "").match(/\.lazers-tasks-assertion-text p \{[^}]*\}/)![0]).toContain(
       "margin: 0;",
     )
@@ -828,9 +903,7 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     waitingLink.focus()
     expect(waitingLink.ownerDocument.activeElement).toBe(waitingLink)
     expect(inspectorText.indexOf("Waiting on")).toBeLessThan(inspectorText.indexOf("Done when"))
-    expect(activityDetails().open).toBe(false)
-    expect(inspectorText.indexOf("Done when")).toBeLessThan(inspectorText.indexOf("Activity"))
-    expect(activityDetails().open).toBe(false)
+    expect(inspectorText.indexOf("Activity")).toBeLessThan(inspectorText.indexOf("Done when"))
     const waitingLinkTarget = { href: waitingLink.getAttribute("href")!, session }
     expect(await taskLinkHandler.value!.exists(waitingLinkTarget)).toBe(true)
 
@@ -850,17 +923,30 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     row(ids.held)!.click()
     await until(() => row(ids.held)?.getAttribute("aria-selected") === "true")
 
-    toggleActivityDetailsFromKeyboard("Enter")
-    await until(() => activityDetails().open)
-    let diagnosticText = activityDetails().textContent ?? ""
-    expect(diagnosticText).toContain("Recorded running")
-    expect(diagnosticText).toContain("Worker archived")
-    expect(diagnosticText).toContain("ses-worker-held")
-    expect(diagnosticText).toContain("Worker outcome succeeded")
-    expect(diagnosticText).toContain("Reconciliation hold: awaiting review")
-    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
-    toggleActivityDetailsFromKeyboard("Enter")
-    await until(() => !activityDetails().open)
+    // History translates event names; the raw name stays in the row's payload.
+    toggleDisclosureFromKeyboard("History")
+    await until(() => Boolean(disclosureBody("History")))
+    const history = disclosureBody("History")!
+    expect(history.textContent).toContain("Ready to run")
+    expect(history.textContent).toContain("Action planned")
+    expect(history.textContent).not.toContain("EFFECT_INTENDED")
+    history.querySelectorAll<HTMLButtonElement>(".lazers-tasks-event-toggle")[1]!.click()
+    await until(() => history.textContent?.includes("EFFECT_INTENDED") ?? false)
+    // Identifiers is the only place for raw ids, each with a copy control.
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => Boolean(disclosureBody("Identifiers")))
+    const identifiers = disclosureBody("Identifiers")!
+    expect(identifiers.textContent).toContain("ses-worker-held")
+    expect(identifiers.textContent).toContain(ids.held)
+    expect(identifiers.querySelector("button[aria-label='Copy Task']")).not.toBeNull()
+    const sessionOutsideIdentifiers = (inspectorPane.textContent ?? "").replace(
+      identifiers.textContent ?? "",
+      "",
+    )
+    expect(sessionOutsideIdentifiers).not.toContain("ses-worker-held")
+    toggleDisclosureFromKeyboard("Identifiers")
+    toggleDisclosureFromKeyboard("History")
+    await until(() => !disclosureBody("History") && !disclosureBody("Identifiers"))
 
     const heldRowAfterNavigation = row(ids.held)!
     heldRowAfterNavigation.focus()
@@ -874,32 +960,27 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     const activeRowAfterNavigation = row(ids.active)!
     activeRowAfterNavigation.click()
     await until(
-      () =>
-        container
-          .querySelector(".lazers-tasks-current-activity")
-          ?.textContent?.includes("Worker active") ?? false,
+      () => container.querySelector(".lazers-tasks-title")?.textContent === taskNames.active,
     )
-    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
-      "ses-worker-active",
-    )
-    expect(container.querySelector(".lazers-tasks-current-activity")?.textContent).toContain(
-      "Latest worker",
-    )
-    expect(activityDetails().open).toBe(false)
+    expect(container.querySelector(".lazers-tasks-current-activity")).toBeNull()
+    // No attempt was recorded for this task: Runtime, Calls, Model and the lane are omitted, not
+    // labelled, and no gap word appears anywhere in the pane.
+    const activePane = container.querySelector<HTMLElement>(".lazers-tasks-detail")!
     expect(
-      container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("aria-label"),
-    ).toContain("Waiting; recorded lifecycle running")
-    toggleActivityDetailsFromKeyboard(" ")
-    await until(() => activityDetails().open)
-    diagnosticText = activityDetails().textContent ?? ""
-    expect(diagnosticText).toContain("Recorded running")
-    expect(diagnosticText).toContain("Worker active")
-    expect(diagnosticText).toContain("ses-worker-active")
-    expect(diagnosticText).toContain("Input pending")
-    expect(diagnosticText).toContain("Approval pending")
-    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
-    toggleActivityDetailsFromKeyboard(" ")
-    await until(() => !activityDetails().open)
+      [...activePane.querySelectorAll(".lazers-kit-stat dt")].map((label) => label.textContent),
+    ).toEqual(["Age"])
+    expect(activePane.querySelector(".lazers-kit-lane")).toBeNull()
+    expect(activePane.textContent).not.toMatch(/unknown|unavailable|not recorded/i)
+    // Native attention is the state word, and the callout says what the worker needs.
+    expect(container.querySelector(".lazers-tasks-inspector-state")?.textContent).toBe("Input")
+    expect(container.querySelector(".lazers-callout-text")?.textContent).toContain(
+      "waiting for your answer",
+    )
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => Boolean(disclosureBody("Identifiers")))
+    expect(disclosureBody("Identifiers")?.textContent).toContain("ses-worker-active")
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => !disclosureBody("Identifiers"))
     ;[...container.querySelectorAll<HTMLButtonElement>(".lazers-details-actions button")]
       .find((button) => button.textContent === "Open in Trajectory")!
       .click()
@@ -918,17 +999,14 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
       }) as unknown as Event,
     )
     await until(() => row(ids.unknown)?.getAttribute("aria-selected") === "true")
-    expect(activityDetails().open).toBe(false)
-    toggleActivityDetailsFromKeyboard("Enter")
-    await until(() => activityDetails().open)
-    diagnosticText = activityDetails().textContent ?? ""
-    expect(diagnosticText).toContain("Recorded running")
-    expect(diagnosticText).not.toContain("Worker unknown")
-    expect(diagnosticText).toContain("Observation unavailable")
-    expect(diagnosticText).toContain("ses-worker-unknown")
-    expect(diagnosticText).toContain("Additional hold: retain the audit trail")
-    toggleActivityDetailsFromKeyboard("Enter")
-    await until(() => !activityDetails().open)
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => Boolean(disclosureBody("Identifiers")))
+    expect(disclosureBody("Identifiers")?.textContent).toContain("ses-worker-unknown")
+    expect(container.querySelector(".lazers-tasks-detail")?.textContent).not.toMatch(
+      /Worker unknown|Observation unavailable/,
+    )
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => !disclosureBody("Identifiers"))
 
     // A task with dependencies is a collapsed accordion; its dependency tree opens beneath it.
     const branchRow = row(ids.branchA)!
@@ -1048,17 +1126,15 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     // another is chosen.
     row(ids.completed)!.click()
     await until(
-      () => container.querySelector(".lazers-tasks-inspector-state")?.textContent === "accepted",
+      () => container.querySelector(".lazers-tasks-inspector-state")?.textContent === "Accepted",
     )
     expect(
       container.querySelector(".lazers-tasks-inspector-state")?.getAttribute("data-waiting"),
     ).toBe("false")
-    const taskDetails = [
-      ...container.querySelectorAll<HTMLDetailsElement>(".lazers-tasks-section"),
-    ].find((details) => details.querySelector("summary")?.textContent?.includes("Details"))!
-    taskDetails.open = true
-    expect(taskDetails.textContent).toContain("Recorded lifecycle accepted")
-    expect(taskDetails.textContent).toContain("Plan status blocked")
+    toggleDisclosureFromKeyboard("Identifiers")
+    await until(() => Boolean(disclosureBody("Identifiers")))
+    expect(disclosureBody("Identifiers")?.textContent).toContain(ids.completed)
+    expect(disclosureBody("Identifiers")?.textContent).toContain("Combined checks remain open")
     expect(
       queryCalls.some((call) => call.state === "queued" && call.cursor === "queued-page-three"),
     ).toBe(true)

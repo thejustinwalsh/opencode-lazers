@@ -572,8 +572,18 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
     await until(() => facts().includes("Higher-priority target plan"))
     expect(facts()).toContain("Priority 1")
     expect(facts()).toContain("step 1")
+    const openScope = () => {
+      const scope = [
+        ...container.querySelectorAll<HTMLButtonElement>(".lazers-kit-disclosure-toggle"),
+      ].find((toggle) => toggle.textContent?.startsWith("Scope"))!
+      if (scope.getAttribute("aria-expanded") !== "true") scope.click()
+    }
     const parentPlanTitle = "Parent implementation with an unusually long prerequisite plan title"
     // The scheduler's plan reason and prerequisite plans are reachable from the inspector.
+    openScope()
+    await until(
+      () => container.querySelector(".lazers-tasks-detail .lazers-kit-disclosure-body") !== null,
+    )
     const planPrerequisite = [
       ...container.querySelectorAll<HTMLButtonElement>(".lazers-tasks-detail button"),
     ].find((button) => button.getAttribute("aria-label")?.includes("Open prerequisite"))!
@@ -623,7 +633,9 @@ test("registered Tasks lists priority-sorted task rows with scheduling reasons a
       )!
     }
     let nodeReason = await selectWaiting()
-    expect(nodeReason.textContent).toContain("Waiting for prerequisite source integration.")
+    expect(nodeReason.textContent).toContain(
+      "Waiting for prerequisite work to be integrated. This starts once it lands.",
+    )
     expect(nodeReason.textContent).toContain(
       "Showing 100 of 101 blocker task references visible in this session.",
     )
@@ -1100,10 +1112,19 @@ test("keyboard navigation reaches a held task and its related dependency when to
     await until(() => browserDocument.activeElement === row(ids.heldChild))
     // Every task is a top-level row: following a relation never expands anything.
     expect(row(ids.heldChild)?.getAttribute("aria-level")).toBe("1")
-    const planWait = [...container.querySelectorAll(".lazers-tasks-dependencies")].find((element) =>
-      element.textContent?.includes("Plan waits for"),
+    const scopeToggle = [
+      ...container.querySelectorAll<HTMLButtonElement>(".lazers-kit-disclosure-toggle"),
+    ].find((toggle) => toggle.textContent?.startsWith("Scope"))!
+    if (scopeToggle.getAttribute("aria-expanded") !== "true") scopeToggle.click()
+    await until(() =>
+      [...container.querySelectorAll(".lazers-tasks-dependencies")].some((element) =>
+        element.textContent?.includes("Plan runs after"),
+      ),
     )
-    expect(planWait?.textContent).toContain("showing 1 of 2 prerequisite plans")
+    const planWait = [...container.querySelectorAll(".lazers-tasks-dependencies")].find((element) =>
+      element.textContent?.includes("Plan runs after"),
+    )
+    expect(planWait?.textContent).toContain("(1 of 2)")
     expect(topologyCalls).toBeGreaterThan(0)
   } finally {
     mounted?.dispose()

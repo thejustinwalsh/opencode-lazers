@@ -137,14 +137,32 @@ Offer a contextual Run next action through the scheduler. A priority change
 moves eligible work ahead in the queue and keeps dependency and capacity checks
 in effect.
 
-The inspector leads with reference, state and actions, then a two-line title
-and one meta line: "Priority 1 · plan name · step n". Sequencing appears only
-when the task has dependencies. The reason is one sentence in user terms; the
-runtime's own wording sits behind Details. **Done when stays visible as a
-checklist.** Details and Activity start collapsed. Render descriptive Markdown
-with native Markdown; commands/JSON use native code. Full specification starts
-collapsed and scrolls within `min(24rem, 45vh)`. Acceptance requirements are not
-passed checks. Keep available runtime actions small and contextual;
+The inspector's bar holds reference, state glyph, one state word, title and
+actions. The state word comes from one function, `taskStateView`
+(`src/tasks/task-state.ts`), so the bar, callout and list never disagree and
+Radar and Trajectory can call it too. The body then reads, top to bottom, as the
+first screen: a two-line title and one meta line ("Priority 1 · plan name ·
+step n", plus sequencing when the task has dependencies); a callout for a task
+that is waiting, paused, failed or needs the owner, with the real reason in one
+user sentence and what to do (`taskExplanation`; the runtime's own wording sits
+under Identifiers); Progress (Queued, Working, Checks, Review, Integrated, from
+`taskProgress`, which covers every task lifecycle state; green only at
+Integrated); a stat row (Age, Runtime, Calls with edited files, Model); the
+Activity lane of the latest attempt with an Open in Trajectory link; and **Done
+when** as one short line per criterion (the humanized evidence name, else the
+first clause) with a square marker and a chevron that reveals the full text.
+Stats, the lane and per-criterion results appear only when the read recorded
+them; nothing is labelled unknown.
+
+Scope, Checks, Guidance, History and Identifiers are bare disclosures that start
+collapsed and carry a count where they have one. History translates event names
+and keeps the raw name in the row's payload. Raw ids, paths and the full
+specification JSON live only under Identifiers, each with a copy control. The
+latest attempt's model, tick times and edited-file count come from the task read
+(`attempts[].model`, `attempts[].summary`): one indexed range of
+`runner_progress` per attempt, never a trajectory. Render descriptive Markdown
+with native Markdown; commands/JSON use native code. Acceptance requirements are
+not passed checks. Keep available runtime actions small and contextual;
 specification changes go through Architect conversation.
 
 ## Radar

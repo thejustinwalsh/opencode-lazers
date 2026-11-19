@@ -292,38 +292,14 @@
   font-weight: 400;
   color: var(--text-weak);
 }
-.lazers-tasks-detail h4 + .lazers-tasks-assertions {
-  margin-top: -4px;
-}
-.lazers-tasks-assertions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.lazers-tasks-assertions li {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  column-gap: 10px;
-  align-items: start;
-  margin: 0;
-  padding: 0;
-  font-size: 13px;
-  line-height: 20px;
-  color: var(--text-base);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .lazers-tasks-check {
   box-sizing: border-box;
   display: block;
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
+  width: 10px;
+  height: 10px;
+  margin: 0 3px;
   border: 1.5px solid var(--icon-base);
-  border-radius: 4px;
+  border-radius: 2px;
   background: transparent;
 }
 /* A requirement the read marks as satisfied fills with a check. */
@@ -350,7 +326,7 @@
 }
 .lazers-tasks-more {
   align-self: flex-start;
-  margin: -4px 0 0 26px;
+  margin: 2px 0 0 22px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -362,75 +338,8 @@
 .lazers-tasks-more:hover {
   color: var(--text-strong);
 }
-/* Disclosures: Details and Activity, each a full-width row under a hairline. */
-.lazers-tasks-detail details {
-  margin: 0;
-}
-.lazers-tasks-detail summary {
-  cursor: pointer;
-  color: var(--text-base);
-  padding: 6px 0;
-}
-.lazers-tasks-section {
-  border-top: 1px solid var(--border-weak-base);
-  font-size: 13px;
-}
-.lazers-tasks-section > summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0;
-  list-style: none;
-  color: var(--text-base);
-}
-.lazers-tasks-section > summary::-webkit-details-marker {
-  display: none;
-}
-.lazers-tasks-section > summary svg,
-.lazers-tasks-section > summary [data-component="icon"] {
-  flex: none;
-  color: var(--text-weak);
-}
-.lazers-tasks-section[open] > summary svg {
-  transform: rotate(90deg);
-}
-.lazers-tasks-section > summary:hover {
-  color: var(--text-strong);
-}
-.lazers-tasks-section-label {
-  min-width: 0;
-}
-.lazers-tasks-section-count {
-  margin-left: auto;
-  color: var(--text-weak);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.lazers-tasks-section[open] > summary {
-  margin-bottom: 4px;
-}
-.lazers-tasks-evidence {
-  font-size: 12px;
-}
 .lazers-tasks-paths {
   padding-left: 16px;
-}
-.lazers-tasks-detail dl {
-  margin: 8px 0;
-}
-.lazers-tasks-detail dt {
-  margin: 12px 0 4px;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--text-weak);
-}
-.lazers-tasks-detail dd {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text-base);
-  line-height: 1.5;
 }
 .lazers-tasks-detail pre {
   white-space: pre-wrap;
@@ -438,29 +347,11 @@
   font: inherit;
   margin: 8px 0;
 }
-.lazers-tasks-current-activity {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 4px 0 8px;
-  color: var(--text-weak);
-  font-size: 12px;
-  line-height: 1.4;
-}
-.lazers-tasks-worker {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 .lazers-tasks-note {
   color: var(--text-weak);
   font-size: 13px;
   line-height: 1.5;
   padding: 12px 8px;
-}
-.lazers-tasks-reason {
-  color: var(--text-weak);
-  font-size: 12px;
 }
 .lazers-tasks-dependencies {
   display: flex;
@@ -500,23 +391,6 @@
 }
 .lazers-tasks-error {
   color: var(--text-critical-base);
-}
-.lazers-tasks-event {
-  min-width: 0;
-  margin: 12px 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-weak-base);
-}
-.lazers-tasks-event > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--text-base);
-}
-.lazers-tasks-event time {
-  color: var(--text-weak);
-  font-size: 11.5px;
 }
 .lazers-tasks-label {
   display: flex;
@@ -733,4 +607,125 @@
 .lazers-tasks-row-blocker:focus-visible {
   outline: 2px solid var(--border-selected);
   outline-offset: -2px;
+}
+
+/* Done when: one short line per criterion, a square marker and a chevron for the full text. */
+.lazers-tasks-criteria {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.lazers-tasks-criterion {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-tasks-criterion:first-child {
+  border-top: 0;
+}
+.lazers-tasks-criterion-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lazers-tasks-criterion-toggle:hover {
+  color: var(--text-strong);
+}
+.lazers-tasks-criterion-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-tasks-criterion-toggle [data-component="icon"] {
+  flex: none;
+  color: var(--text-weak);
+}
+.lazers-tasks-criterion .lazers-tasks-assertion-text {
+  grid-column: 2;
+  padding: 0 0 8px;
+  color: var(--text-base);
+}
+.lazers-tasks-disclosures {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-tasks-disclosures h4 {
+  margin: 8px 0 2px;
+}
+.lazers-tasks-disclosures p + p,
+.lazers-tasks-check-item + .lazers-tasks-check-item {
+  margin-top: 6px;
+}
+.lazers-tasks-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lazers-tasks-link:hover:not(:disabled) {
+  color: var(--text-strong);
+  text-decoration: underline;
+}
+.lazers-tasks-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.lazers-tasks-event {
+  min-width: 0;
+  border-top: 1px solid var(--border-weak-base);
+}
+.lazers-tasks-event:first-of-type {
+  border-top: 0;
+}
+.lazers-tasks-event-toggle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lazers-tasks-event-toggle:hover {
+  color: var(--text-strong);
+}
+.lazers-tasks-event time,
+.lazers-tasks-event-name,
+.lazers-tasks-history-note {
+  color: var(--text-weak);
+  font-size: 11.5px;
+}
+.lazers-tasks-event-name {
+  margin: 0 0 4px;
+}
+.lazers-tasks-coverage-note {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: 12px;
 }

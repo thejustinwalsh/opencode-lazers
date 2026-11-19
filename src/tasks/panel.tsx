@@ -44,9 +44,9 @@ import type { PanelData } from "./panel-state.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { createPanelStatus, PanelSkeleton, PanelStatus } from "../panel-status.tsx"
-import { taskTitle, taskHeading, taskReasonView, sourcePlanLine } from "./presentation.ts"
+import { taskTitle, taskHeading, sourcePlanLine } from "./presentation.ts"
 import { createTaskLinkHandler, taskMarkdownLink } from "./links.ts"
-import { StartFeedback, ScrollRestoration, canStart, workerActivityLabel } from "./panel-view.ts"
+import { StartFeedback, ScrollRestoration, canStart } from "./panel-view.ts"
 import {
   attentionLabel,
   distinctReasons,
@@ -79,7 +79,20 @@ import type { NavigationKey, VirtualItem, VirtualTaskItem } from "./virtual-rows
 import type { TaskTrajectoryTarget } from "../trajectory-panel/panel-state.ts"
 import { preferredTaskStateFilter } from "./state-filter.ts"
 import { Keyed } from "./keyed.ts"
-import { Callout } from "../details/components.tsx"
+import {
+  ActivityLane,
+  Callout,
+  Disclosure,
+  Identifiers,
+  Progress,
+  Section,
+  StatRow,
+} from "../details/index.ts"
+import { taskExplanation, taskStateView } from "./task-state.ts"
+import { PROGRESS_STEPS, taskProgress } from "./task-progress.ts"
+import { attemptLane, taskStats } from "./stats.ts"
+import { criterionLine } from "./criterion.ts"
+import { eventLabel } from "./history.ts"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -161,8 +174,28 @@ export function verificationTimingSummary(check: TaskProposal["verification"][nu
 /** Reservation holders listed before the rest move behind a disclosure; all stay linked. */
 const RESERVATION_PREVIEW = 8
 
-/** Done when previews this many criteria; explicit expansion shows every one. */
-const CRITERIA_PREVIEW = 3
+/** Done when lists this many one-line criteria; explicit expansion shows every one. */
+const CRITERIA_PREVIEW = 6
+
+/** History rows mounted at most; the count above them names the whole. */
+const HISTORY_LIMIT = 100
+
+/** A check's authored time limits as one phrase; limits left to the project default are omitted. */
+function checkTiming(check: TaskProposal["verification"][number]) {
+  return [
+    check.inactivityTimeoutMs !== undefined
+      ? `stops after ${check.inactivityTimeoutMs / 1000}s idle`
+      : "",
+    check.hardTimeoutMs !== undefined ? `at most ${check.hardTimeoutMs / 1000}s` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+const clock = (at: number | undefined) =>
+  at === undefined
+    ? undefined
+    : new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
 
 /** The goal repeats only when it says more than the derived title. */
 function objectiveExtendsTitle(objective: string) {
@@ -638,12 +671,6 @@ function TaskPanel(
         ])
       : []
   }
-  const selectedInspectorStatus = () =>
-    selectedIsWaiting()
-      ? "Waiting"
-      : selectedExecution()?.dispatchPause
-        ? "Paused"
-        : (selectedRecordedState() ?? "")
   const selectedRelations = () => {
     const taskID = inspected()?.selectedID
     const plan = schedulingPlan(selectedExecution()?.planID)
@@ -1026,8 +1053,8 @@ function TaskPanel(
   const selectedPresentation = () => {
     const row = selectedRow()
     const activity = selectedActivity()
-    if (row) return taskRowPresentation(row, activity, relationLabel)
-    return taskRowPresentation(
+    if (row) return taskStateView(row, activity, relationLabel)
+    return taskStateView(
       {
         taskID: inspected()?.selectedID ?? "",
         title: "",
@@ -1090,24 +1117,6 @@ function TaskPanel(
         state: planStateLabel(topology.state),
       }
     return undefined
-  }
-  /**
-   * A runtime reason as a callout: the state glyph, one user sentence and an inline Details link
-   * that reveals the raw runtime text. `children` render under the sentence (reservations).
-   */
-  const renderReason = (reason: string, className: string, children?: () => JSX.Element) => {
-    const view = taskReasonView(reason, selectedInspectorStatus())
-    return (
-      <Callout
-        class={className}
-        iconTone={selectedPresentation().tone}
-        icon={renderGlyph(selectedPresentation().icon)}
-        text={view.text}
-        raw={view.raw}
-      >
-        {children?.()}
-      </Callout>
-    )
   }
   /** "Priority 1 · Plan name · step 2": one line for what were four fact rows. */
   const selectedMeta = () => {
@@ -1497,9 +1506,9 @@ function TaskPanel(
           data-state={selectedRecordedState()}
           data-waiting={selectedIsWaiting()}
           data-tone={selectedPresentation().tone}
-          aria-label={`${selectedInspectorStatus()}${selectedRecordedState() ? `; recorded lifecycle ${selectedRecordedState()}` : ""}`}
+          aria-label={selectedPresentation().label}
         >
-          {selectedInspectorStatus()}
+          {selectedPresentation().label}
         </span>
         <span class="lazers-tasks-inspector-title">
           {" · "}
@@ -1552,6 +1561,137 @@ function TaskPanel(
         <Ui.Menu label="More task actions" items={secondaryActions()} />
       </>
     )
+  }
+  const latestAttempt = () => selectedDetail()?.attempts?.at(-1)
+  /** Where the callout's reason comes from, most specific first. */
+  const explanationSource = () => ({
+    hold: distinctReasons([...selectedHoldReasons(), selectedScheduling()?.reason]),
+    pause: selectedExecution()?.dispatchPause?.reason,
+    failure: selectedExecution()?.reason ?? selectedRow()?.reason,
+    activity: selectedActivity(),
+  })
+  /** The callout sentence for a waiting, paused, failed or needs-you task: the real reason. */
+  const explanation = () => taskExplanation(selectedPresentation(), explanationSource())
+  /** The scheduler's coverage sentence ("Showing 100 of 101 ..."): a bound on what is listed. */
+  const coverageNote = () => selectedScheduling()?.reason?.match(/Showing \d+ of \d+ [^.]*\./)?.[0]
+  /** The runtime's own wording behind the callout; shown only under Identifiers. */
+  const recordedReason = () => {
+    const source = explanationSource()
+    return source.hold[0] ?? source.pause ?? source.failure ?? selectedExecution()?.reason
+  }
+  const progress = createMemo(() =>
+    taskProgress({
+      state: selectedRecordedState() ?? selectedTask()?.status ?? "submitted",
+      planState: inspected()?.topology?.plans.find(
+        (plan) => plan.id === selectedExecution()?.planID,
+      )?.state,
+      held: selectedPresentation().explained && selectedPresentation().tone !== "failed",
+      attemptState: latestAttempt()?.state,
+      reason: selectedExecution()?.reason,
+    }),
+  )
+  const stats = () => {
+    const task = selectedTask()
+    return task
+      ? taskStats({
+          createdAt: Date.parse(task.createdAt),
+          now: minute(),
+          attempt: latestAttempt(),
+        })
+      : []
+  }
+  const lane = () => attemptLane(latestAttempt(), minute())
+  /** One done condition: a short derived line and a chevron that reveals the full text. */
+  const renderCriterion = (criterion: TaskProposal["acceptance"][number]) => {
+    const [open, setOpen] = createSignal(false)
+    return (
+      <li class="lazers-tasks-criterion" data-open={open()}>
+        <span class="lazers-tasks-check" aria-hidden="true" />
+        <button
+          type="button"
+          class="lazers-tasks-criterion-toggle"
+          aria-expanded={open()}
+          aria-label={`${criterionLine(criterion)}: show full text`}
+          onClick={() => setOpen(!open())}
+        >
+          <span class="lazers-tasks-criterion-line">{criterionLine(criterion)}</span>
+          <Ui.Icon name={open() ? "chevron-down" : "chevron-right"} size="small" />
+        </button>
+        <Show when={open()}>
+          <div class="lazers-tasks-assertion-text">
+            <Ui.Markdown text={criterion.assertion} />
+          </div>
+        </Show>
+      </li>
+    )
+  }
+  const hasGuidance = () => {
+    const task = selectedTask()
+    if (!task) return false
+    const proposal = task.proposal
+    return Boolean(
+      proposal.guidance ||
+      proposal.constraints.length ||
+      proposal.assumptions.length ||
+      proposal.context.length ||
+      objectiveExtendsTitle(proposal.objective),
+    )
+  }
+  const historyEvents = () => (selectedDetail()?.activity ?? []).slice(-HISTORY_LIMIT)
+  const historyHidden = () => Math.max(0, (selectedDetail()?.activity?.length ?? 0) - HISTORY_LIMIT)
+  const renderHistoryEvent = (event: { event: string; payload: string; createdAt: number }) => {
+    const [open, setOpen] = createSignal(false)
+    return (
+      <div class="lazers-tasks-event">
+        <button
+          type="button"
+          class="lazers-tasks-event-toggle"
+          aria-expanded={open()}
+          onClick={() => setOpen(!open())}
+        >
+          <span>{eventLabel(event.event)}</span>
+          <time dateTime={new Date(event.createdAt).toISOString()}>
+            {new Date(event.createdAt).toLocaleString([], {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </time>
+        </button>
+        <Show when={open()}>
+          <p class="lazers-tasks-event-name" style={{ "font-family": ctx.appearance.font("mono") }}>
+            {event.event}
+          </p>
+          <Ui.Code content={event.payload} language="json" />
+        </Show>
+      </div>
+    )
+  }
+  const identifiers = () => {
+    const task = selectedTask()
+    if (!task) return []
+    const attempt = latestAttempt()
+    const start = task.provenance.startingRevision
+    return [
+      { label: "Task", value: task.id },
+      { label: "Plan", value: selectedExecution()?.planID },
+      { label: "Attempt", value: attempt?.id },
+      { label: "Worker session", value: selectedActivity()?.workerSessionID },
+      { label: "Session", value: task.provenance.sessionID },
+      { label: "Artifact", value: attempt?.artifact },
+      { label: "Repository", value: task.provenance.projectDirectory },
+      {
+        label: "Workspace",
+        value:
+          task.provenance.workspaceDirectory === task.provenance.projectDirectory
+            ? undefined
+            : task.provenance.workspaceDirectory,
+      },
+      { label: "Starting revision", value: start.kind === "git" ? start.commit : undefined },
+      { label: "Created", value: task.createdAt },
+      { label: "Recorded reason", value: recordedReason() },
+    ]
   }
   return (
     <div
@@ -1849,6 +1989,21 @@ function TaskPanel(
               <Show when={selectedSequencing().kind === "sequenced"}>
                 <p class="lazers-tasks-meta">{selectedSequencing().detail}</p>
               </Show>
+              <Show when={explanation()}>
+                {(text) => (
+                  <Callout
+                    class="lazers-tasks-blocker lazers-tasks-node-reason"
+                    iconTone={selectedPresentation().tone}
+                    icon={renderGlyph(selectedPresentation().icon)}
+                    text={text()}
+                  >
+                    <Show when={coverageNote()}>
+                      {(note) => <p class="lazers-tasks-coverage-note">{note()}</p>}
+                    </Show>
+                    {reservationRefs()}
+                  </Callout>
+                )}
+              </Show>
               <Show
                 when={
                   selectedRelations().waitingOn.length || selectedRelations().waitingOnPlans.length
@@ -1877,167 +2032,165 @@ function TaskPanel(
                   </For>
                 </div>
               </Show>
-              <Show when={selectedExecution()?.dispatchPause}>
-                {(pause) => renderReason(pause().reason, "lazers-tasks-blocker")}
+              <Section label="Progress">
+                <Progress
+                  steps={PROGRESS_STEPS}
+                  current={progress().current}
+                  tone={progress().tone}
+                />
+              </Section>
+              <StatRow stats={stats()} />
+              <Show when={lane()}>
+                {(shown) => (
+                  <Section
+                    label="Activity"
+                    aside={
+                      <button
+                        type="button"
+                        class="lazers-tasks-link"
+                        disabled={!selectedDetail()?.reference}
+                        onClick={openSelectedTrajectory}
+                      >
+                        Open in Trajectory
+                      </button>
+                    }
+                  >
+                    <ActivityLane
+                      label="Tool calls of the latest attempt"
+                      ticks={shown().ticks}
+                      durationMs={shown().durationMs}
+                      start={clock(latestAttempt()!.startedAt)}
+                      end={shown().live ? "now" : clock(shown().end)}
+                    />
+                  </Section>
+                )}
               </Show>
-              <Show when={selectedScheduling()?.reason || selectedReservations().length}>
-                <Show
-                  when={selectedScheduling()?.reason}
-                  fallback={<div class="lazers-tasks-node-reason">{reservationRefs()}</div>}
-                >
-                  {(reason) =>
-                    renderReason(reason(), "lazers-tasks-node-reason", () => reservationRefs())
-                  }
+              <Section label="Done when">
+                <ul class="lazers-tasks-criteria" aria-label="Done when">
+                  <For
+                    each={
+                      showAllCriteria()
+                        ? task().proposal.acceptance
+                        : task().proposal.acceptance.slice(0, CRITERIA_PREVIEW)
+                    }
+                  >
+                    {(criterion) => renderCriterion(criterion)}
+                  </For>
+                </ul>
+                <Show when={task().proposal.acceptance.length > CRITERIA_PREVIEW}>
+                  <button
+                    type="button"
+                    class="lazers-tasks-more"
+                    aria-expanded={showAllCriteria()}
+                    onClick={() => setShowAllCriteria(!showAllCriteria())}
+                  >
+                    {showAllCriteria()
+                      ? "Show fewer"
+                      : `Show all ${task().proposal.acceptance.length}`}
+                  </button>
                 </Show>
-              </Show>
-              <Show
-                when={
-                  !selectedScheduling()?.reason &&
-                  !selectedExecution()?.dispatchPause &&
-                  selectedHoldReasons()[0]
-                }
-              >
-                {renderReason(selectedHoldReasons().join("\n"), "lazers-tasks-blocker")}
-              </Show>
-              <Show when={objectiveExtendsTitle(task().proposal.objective)}>
-                <div class="lazers-tasks-objective">
-                  <Ui.Markdown text={task().proposal.objective} />
-                </div>
-              </Show>
-              <h4>Done when</h4>
-              <ul class="lazers-tasks-assertions" aria-label="Done when">
-                <For
-                  each={
-                    showAllCriteria()
-                      ? task().proposal.acceptance
-                      : task().proposal.acceptance.slice(0, CRITERIA_PREVIEW)
-                  }
-                >
-                  {(assertion) => (
-                    <li>
-                      {/* The read records no per-requirement result, so none is drawn as met. */}
-                      <span class="lazers-tasks-check" aria-hidden="true" />
-                      <div class="lazers-tasks-assertion-text">
-                        <Ui.Markdown text={assertion.assertion} />
-                      </div>
-                    </li>
-                  )}
-                </For>
-              </ul>
-              <Show when={task().proposal.acceptance.length > CRITERIA_PREVIEW}>
-                <button
-                  type="button"
-                  class="lazers-tasks-more"
-                  aria-expanded={showAllCriteria()}
-                  onClick={() => setShowAllCriteria(!showAllCriteria())}
-                >
-                  {showAllCriteria()
-                    ? "Show fewer"
-                    : `Show all ${task().proposal.acceptance.length}`}
-                </button>
-              </Show>
-              <details class="lazers-tasks-section">
-                <summary>
-                  <Ui.Icon name="chevron-right" size="small" />
-                  <span class="lazers-tasks-section-label">Details</span>
-                </summary>
-                <details class="lazers-tasks-evidence">
-                  <summary>Required evidence</summary>
-                  <For each={task().proposal.acceptance}>
-                    {(assertion) => (
-                      <>
-                        <h4>{assertion.id}</h4>
-                        <For each={assertion.evidence}>
-                          {(evidence) => (
-                            <Ui.Markdown
-                              text={
-                                evidence.kind === "verification"
-                                  ? `Verification: ${evidence.verificationID}`
-                                  : evidence.reference
-                              }
-                            />
-                          )}
-                        </For>
-                      </>
+              </Section>
+              <div class="lazers-tasks-disclosures">
+                <Disclosure label="Scope" count={task().proposal.writeScope.length}>
+                  <ul
+                    class="lazers-tasks-paths"
+                    style={{ "font-family": ctx.appearance.font("mono") }}
+                  >
+                    <For each={task().proposal.writeScope}>{(path) => <li>{path}</li>}</For>
+                  </ul>
+                  <For each={[["Excludes", task().proposal.exclusions]] as const}>
+                    {([label, values]) => (
+                      <Show when={values.length}>
+                        <h4>{label}</h4>
+                        <For each={values}>{(text) => <Ui.Markdown text={text} />}</For>
+                      </Show>
                     )}
                   </For>
-                </details>
-                <dl>
-                  <dt>Task ID</dt>
-                  <dd style={{ "font-family": ctx.appearance.font("mono") }}>{task().id}</dd>
-                  <dt>Lifecycle</dt>
-                  <dd>
-                    Recorded lifecycle {selectedRecordedState() ?? task().status} · specification
-                    revision {task().revision}
-                    <Show when={selectedExecution()?.state !== selectedRecordedState()}>
-                      <p>Plan status {selectedExecution()?.state}</p>
-                    </Show>
-                    <Show when={selectedExecution()?.reason}>
-                      {(reason) => <p>Plan reason: {reason()}</p>}
-                    </Show>
-                  </dd>
-                  <dt>Session association</dt>
-                  <dd>
-                    <span style={{ "font-family": ctx.appearance.font("mono") }}>
-                      {task().provenance.sessionID}
-                    </span>
-                  </dd>
-                  <Show when={selectedExecution()}>
-                    {(execution) => (
-                      <>
-                        <dt>Plan</dt>
-                        <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                          {execution().planID}
-                        </dd>
-                        <Show when={selectedDetail()?.attempts?.length}>
-                          <dt>Attempts</dt>
-                          <dd>
-                            <For each={selectedDetail()?.attempts}>
-                              {(attempt) => (
-                                <p>
-                                  {attempt.number} · {attempt.state} ·{" "}
-                                  <span style={{ "font-family": ctx.appearance.font("mono") }}>
-                                    {attempt.id.slice(0, 8)}
-                                  </span>
-                                  <Show when={attempt.artifact}>
-                                    {(artifact) => (
-                                      <>
-                                        {" · "}
-                                        <span
-                                          style={{ "font-family": ctx.appearance.font("mono") }}
-                                        >
-                                          {artifact().slice(0, 8)}
-                                        </span>
-                                      </>
-                                    )}
-                                  </Show>
-                                </p>
-                              )}
-                            </For>
-                          </dd>
-                        </Show>
-                      </>
-                    )}
-                  </Show>
-                  <dt>Repository</dt>
-                  <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                    {task().provenance.projectDirectory}
-                  </dd>
-                  <dt>Workspace</dt>
-                  <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                    {task().provenance.workspaceDirectory}
-                  </dd>
-                  <dt>Starting revision</dt>
-                  <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                    {task().provenance.startingRevision.kind === "git"
-                      ? (task().provenance.startingRevision as { kind: "git"; commit: string })
-                          .commit
-                      : "Unborn repository"}
-                  </dd>
                   <For
                     each={
                       [
-                        ["Exclusions", task().proposal.exclusions],
+                        ["Runs after", selectedRelations().prerequisites],
+                        ["Blocks", selectedRelations().successors],
+                      ] as const
+                    }
+                  >
+                    {([label, ids]) => (
+                      <Show when={ids.length}>
+                        <div class="lazers-tasks-dependencies">
+                          <span>{label} </span>
+                          <For each={ids}>
+                            {(taskID, index) => (
+                              <>
+                                {index() ? ", " : ""}
+                                {renderRelation(taskID)}
+                              </>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    )}
+                  </For>
+                  <Show when={selectedRelations().planPrerequisites.length}>
+                    <div class="lazers-tasks-dependencies">
+                      <span>
+                        Plan runs after
+                        {selectedRelations().planPrerequisitesComplete
+                          ? " "
+                          : ` (${selectedRelations().planPrerequisites.length} of ${selectedRelations().planPrerequisitesCount}) `}
+                      </span>
+                      <For each={selectedRelations().planPrerequisites}>
+                        {(planID, index) => (
+                          <>
+                            {index() ? ", " : ""}
+                            {renderPlanRelation(planID)}
+                          </>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </Disclosure>
+                <Disclosure
+                  label="Checks"
+                  count={task().proposal.verification.length}
+                  when={task().proposal.verification.length > 0 || Boolean(task().proposal.limits)}
+                >
+                  <For each={task().proposal.verification}>
+                    {(item) => (
+                      <div class="lazers-tasks-check-item">
+                        <p>
+                          {item.id}
+                          <Show when={checkTiming(item)}>{(timing) => ` · ${timing()}`}</Show>
+                        </p>
+                        <Ui.Code content={item.command} language="bash" />
+                      </div>
+                    )}
+                  </For>
+                  <Show when={task().proposal.limits}>
+                    {(limits) => (
+                      <p>
+                        Proposed limits: {limits().maxTokens.toLocaleString()} tokens · $
+                        {limits().maxEstimatedCostUsd} · {limits().maxElapsedMs / 60000} min ·{" "}
+                        {limits().maxToolCalls} calls
+                      </p>
+                    )}
+                  </Show>
+                </Disclosure>
+                <Disclosure label="Guidance" when={hasGuidance()}>
+                  <Show when={objectiveExtendsTitle(task().proposal.objective)}>
+                    <h4>Objective</h4>
+                    <Ui.Markdown text={task().proposal.objective} />
+                  </Show>
+                  <Show when={task().proposal.guidance}>
+                    {(guidance) => (
+                      <>
+                        <h4>Advice</h4>
+                        <Ui.Markdown text={guidance()} />
+                      </>
+                    )}
+                  </Show>
+                  <For
+                    each={
+                      [
                         ["Constraints", task().proposal.constraints],
                         ["Assumptions", task().proposal.assumptions],
                       ] as const
@@ -2045,263 +2198,51 @@ function TaskPanel(
                   >
                     {([label, values]) => (
                       <Show when={values.length}>
-                        <dt>{label}</dt>
-                        <dd>
-                          <For each={values}>{(text) => <Ui.Markdown text={text} />}</For>
-                        </dd>
+                        <h4>{label}</h4>
+                        <For each={values}>{(text) => <Ui.Markdown text={text} />}</For>
                       </Show>
                     )}
                   </For>
-                  <Show when={task().proposal.guidance}>
-                    <dt>Implementation guidance (advisory)</dt>
-                    <dd>
-                      <Ui.Markdown text={task().proposal.guidance!} />
-                    </dd>
-                  </Show>
-                  <dt>Write scope</dt>
-                  <dd>
-                    <ul
-                      class="lazers-tasks-paths"
-                      style={{ "font-family": ctx.appearance.font("mono") }}
-                    >
-                      <For each={task().proposal.writeScope}>{(path) => <li>{path}</li>}</For>
-                    </ul>
-                  </dd>
                   <Show when={task().proposal.context.length}>
-                    <dt>Context</dt>
-                    <dd>
-                      <For each={task().proposal.context}>
-                        {(item) => (
-                          <>
-                            <Ui.Markdown text={item.reference} />
-                            <Show when={item.revision}>
-                              <code style={{ "font-family": ctx.appearance.font("mono") }}>
-                                {item.revision}
-                              </code>
-                            </Show>
-                          </>
-                        )}
-                      </For>
-                    </dd>
-                  </Show>
-                  <dt>Requirements</dt>
-                  <dd>
-                    <p>Risk: {task().proposal.requirements.risk}</p>
-                    <Show when={task().proposal.requirements.policyReference}>
-                      {(reference) => <Ui.Markdown text={reference()} />}
-                    </Show>
-                    <For each={task().proposal.requirements.capabilities}>
-                      {(text) => <Ui.Markdown text={text} />}
+                    <h4>Context</h4>
+                    <For each={task().proposal.context}>
+                      {(item) => <Ui.Markdown text={item.reference} />}
                     </For>
-                    <For each={task().proposal.requirements.skills}>
-                      {(text) => <Ui.Markdown text={text} />}
-                    </For>
-                  </dd>
-                  <Show when={task().proposal.verification.length}>
-                    <dt>Verification</dt>
-                    <dd>
-                      <For each={task().proposal.verification}>
-                        {(item) => (
-                          <div>
-                            <p>
-                              {item.id} · {verificationTimingSummary(item)}
-                            </p>
-                            <Ui.Code content={item.command} language="bash" />
-                          </div>
-                        )}
-                      </For>
-                    </dd>
                   </Show>
-                  <Show
-                    when={task().proposal.limits}
-                    fallback={
-                      <>
-                        <dt>Budget</dt>
-                        <dd>Not configured</dd>
-                      </>
-                    }
-                  >
-                    {(limits) => (
-                      <>
-                        <dt>Historical proposed limits</dt>
-                        <dd>
-                          <p>
-                            {limits().maxTokens.toLocaleString()} tokens · $
-                            {limits().maxEstimatedCostUsd} estimated cost ·{" "}
-                            {limits().maxElapsedMs / 60000} minutes
-                          </p>
-                          <p>
-                            {limits().maxToolCalls} tool calls · {limits().maxProviderRetries}{" "}
-                            provider retries · {limits().maxRepairAttempts} repairs
-                          </p>
-                          <p>Historical proposal; no model-based execution budget is configured.</p>
-                        </dd>
-                      </>
-                    )}
-                  </Show>
-                </dl>
-                <details>
-                  <summary>Full specification</summary>
-                  <div
-                    class="lazers-tasks-json"
-                    role="region"
-                    aria-label="Full task specification JSON"
-                    tabIndex={0}
-                  >
-                    <Ui.Code content={JSON.stringify(task(), null, 2)} language="json" />
-                  </div>
-                </details>
-              </details>
-              <details class="lazers-tasks-section lazers-tasks-activity-details">
-                <summary>
-                  <Ui.Icon name="chevron-right" size="small" />
-                  <span class="lazers-tasks-section-label">Activity</span>
-                  <Show when={selectedDetail()?.activity?.length}>
-                    {(count) => (
-                      <span class="lazers-tasks-section-count">
-                        {count()} {count() === 1 ? "event" : "events"}
-                      </span>
-                    )}
-                  </Show>
-                </summary>
-                <For each={selectedHoldReasons()}>
-                  {(reason) => (
-                    <p class="lazers-tasks-reason" role="status">
-                      Waiting: {reason}
-                    </p>
-                  )}
-                </For>
-                <Show
-                  when={
-                    ["running", "verifying"].includes(selectedRecordedState() ?? "") ||
-                    selectedIsWaiting() ||
-                    selectedActivity()?.foreground === "active" ||
-                    selectedActivity()?.waiting
-                  }
-                >
-                  <div
-                    class="lazers-tasks-current-activity"
-                    aria-label="Recorded lifecycle and observed foreground activity"
-                  >
-                    <span>Recorded {selectedRecordedState()}</span>
-                    <Show when={workerActivityLabel(selectedActivity())}>
-                      {(label) => (
-                        <span class="lazers-tasks-foreground">
-                          <span
-                            class="lazers-tasks-activity-indicator"
-                            data-state={selectedActivity()?.foreground}
-                            aria-hidden="true"
-                          />
-                          Worker {label()}
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.unknownReason}>
-                      {(reason) => (
-                        <span>
-                          Observation{" "}
-                          {reason() === "no-current-attempt"
-                            ? "has no current attempt"
-                            : "unavailable"}
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.workerSessionID}>
-                      {(workerSessionID) => (
-                        <span
-                          class="lazers-tasks-worker"
-                          aria-label={`Latest worker session ${workerSessionID()}`}
-                        >
-                          Latest worker{" "}
-                          <code style={{ "font-family": ctx.appearance.font("mono") }}>
-                            {workerSessionID()}
-                          </code>
-                        </span>
-                      )}
-                    </Show>
-                    <Show when={selectedActivity()?.outcome}>
-                      {(outcome) => <span>Worker outcome {outcome()}</span>}
-                    </Show>
-                    <Show when={selectedActivity()?.waiting}>
-                      <span class="lazers-tasks-waiting">Waiting</span>
-                    </Show>
-                    <Show when={selectedActivity()?.pendingInput}>
-                      <span>Input pending</span>
-                    </Show>
-                    <Show
-                      when={
-                        (selectedActivity()?.pendingPermissions ?? 0) > 0 ||
-                        (selectedActivity()?.pendingForms ?? 0) > 0
-                      }
+                  <p>
+                    Risk {task().proposal.requirements.risk}
+                    <For
+                      each={[
+                        ...task().proposal.requirements.capabilities,
+                        ...task().proposal.requirements.skills,
+                      ]}
                     >
-                      <span>Approval pending</span>
-                    </Show>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().prerequisites.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>Prerequisites </span>
-                    <For each={selectedRelations().prerequisites}>
-                      {(taskID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderRelation(taskID)}
-                        </>
-                      )}
+                      {(text) => ` · ${text}`}
                     </For>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().successors.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>Blocks </span>
-                    <For each={selectedRelations().successors}>
-                      {(taskID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderRelation(taskID)}
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <Show when={selectedRelations().planPrerequisites.length}>
-                  <div class="lazers-tasks-dependencies">
-                    <span>
-                      Plan waits for
-                      {selectedRelations().planPrerequisitesComplete
-                        ? " "
-                        : ` (showing ${selectedRelations().planPrerequisites.length} of ${selectedRelations().planPrerequisitesCount} prerequisite plans) `}
-                    </span>
-                    <For each={selectedRelations().planPrerequisites}>
-                      {(planID, index) => (
-                        <>
-                          {index() ? ", " : ""}
-                          {renderPlanRelation(planID)}
-                        </>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <p>
-                  Submitted {new Date(task().createdAt).toLocaleString()} ·{" "}
-                  <span style={{ "font-family": ctx.appearance.font("mono") }}>
-                    {task().provenance.sessionID}
-                  </span>
-                </p>
-                <For each={selectedDetail()?.activity ?? []}>
-                  {(event) => (
-                    <div class="lazers-tasks-event">
-                      <div>
-                        <strong>{event.event}</strong>
-                        <time dateTime={new Date(event.createdAt).toISOString()}>
-                          {new Date(event.createdAt).toLocaleString()}
-                        </time>
-                      </div>
-                      <Ui.Code content={event.payload} language="json" />
+                  </p>
+                </Disclosure>
+                <Disclosure label="History" count={selectedDetail()?.activity?.length}>
+                  <Show when={historyHidden() > 0}>
+                    <p class="lazers-tasks-history-note">
+                      Showing the latest {HISTORY_LIMIT} of {selectedDetail()?.activity?.length}
+                    </p>
+                  </Show>
+                  <For each={historyEvents()}>{(event) => renderHistoryEvent(event)}</For>
+                </Disclosure>
+                <Disclosure label="Identifiers">
+                  <Identifiers items={identifiers()} />
+                  <Disclosure label="Specification">
+                    <div
+                      class="lazers-tasks-json"
+                      role="region"
+                      aria-label="Full task specification JSON"
+                      tabIndex={0}
+                    >
+                      <Ui.Code content={JSON.stringify(task(), null, 2)} language="json" />
                     </div>
-                  )}
-                </For>
-              </details>
+                  </Disclosure>
+                </Disclosure>
+              </div>
             </>
           )}
         </Show>
