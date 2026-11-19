@@ -445,6 +445,247 @@ export class TaskPanelState {
     if (taskIDs.size) this.queueCurrentActivity([...taskIDs])
   }
 
+  /** One generation of the read was replaced or cancelled while a request was in flight. */
+  private superseded(generation: number, request: number, signal?: AbortSignal) {
+    return (
+      Boolean(signal?.aborted) || generation !== this.generation || request !== this.listRequest
+    )
+  }
+
+  /** The execution topology for the first page: carried, retried (a moved boundary), or superseded. */
+  private async readTopologyFor(
+    transport: TaskTransport,
+    first: TaskPage,
+    attempt: number,
+    generation: number,
+    request: number,
+    signal: AbortSignal,
+  ): Promise<
+    | "superseded"
+    | "retry"
+    | { topology: TopologyResponse | undefined; topologyError: string; boundaryMatches: boolean }
+  > {
+    if (!transport.topology)
+      return { topology: undefined, topologyError: "", boundaryMatches: true }
+    let boundaryMatches = true
+    try {
+      const observed = await transport.topology(signal)
+      if (this.superseded(generation, request, signal)) return "superseded"
+      if (observed.boundary.repositoryVersion !== first.snapshot) {
+        boundaryMatches = false
+        if ((!transport.scheduling || !this.schedulingScope) && attempt < 2) return "retry"
+      }
+      return { topology: observed, topologyError: "", boundaryMatches }
+    } catch (error) {
+      if (signal.aborted || generation !== this.generation) return "superseded"
+      const message = panelErrorMessage(error, "")
+      const topologyError = message
+        ? `Execution links unavailable: ${message}. Showing ungrouped tasks.`
+        : "Execution links unavailable. Showing ungrouped tasks."
+      return { topology: undefined, topologyError, boundaryMatches }
+    }
+  }
+
+  /** Follows the cursor chain from the first page up to the wanted count. */
+  private async followTaskPages(
+    transport: TaskTransport,
+    first: TaskPage,
+    generation: number,
+    request: number,
+    signal: AbortSignal,
+  ) {
+    const wanted = Math.max(
+      first.tasks.length,
+      this.data.tasks.length + Math.max(0, first.count - (this.data.page?.count ?? first.count)),
+    )
+    let page = first
+    const tasks: TaskSummary[] = []
+    const listed = new Set<string>()
+    const append = (next: readonly TaskSummary[]) => {
+      const before = tasks.length
+      for (const task of next) {
+        if (listed.has(task.taskID)) continue
+        listed.add(task.taskID)
+        tasks.push(task)
+      }
+      return tasks.length - before
+    }
+    append(first.tasks)
+    const followed = new Set<string>()
+    let stalled = false
+    let changedSnapshot = false
+    while (page.nextCursor && tasks.length < wanted) {
+      // A repeated cursor or a page that lists nothing new would re-read forever: stop here and
+      // leave the rest to an explicit Retry.
+      if (followed.has(page.nextCursor)) {
+        stalled = true
+        break
+      }
+      followed.add(page.nextCursor)
+      const next = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
+      if (generation !== this.generation || request !== this.listRequest) return "superseded"
+      if (next.snapshot !== first.snapshot) {
+        page = next
+        changedSnapshot = true
+        break
+      }
+      const added = append(next.tasks)
+      if (next.nextCursor && (added === 0 || followed.has(next.nextCursor))) {
+        // Keep the page that made progress, so Retry re-reads the cursor that stalled.
+        if (added > 0) page = next
+        stalled = true
+        break
+      }
+      page = next
+    }
+    return { page, tasks, followed, stalled, changedSnapshot }
+  }
+
+  /** The scheduling snapshot for this read, or the reason it is unavailable. */
+  private async readSchedulingFor(
+    prior: SchedulingSnapshot | undefined,
+    generation: number,
+    request: number,
+    signal: AbortSignal,
+  ) {
+    if (!this.schedulingScope)
+      return {
+        scheduling: prior,
+        schedulingError: "Scheduling scope is unavailable.",
+        succeeded: false,
+      }
+    try {
+      const scheduling = await this.readScheduling(
+        this.schedulingScope,
+        signal,
+        () => generation === this.generation && request === this.listRequest,
+      )
+      return { scheduling, schedulingError: "", succeeded: true }
+    } catch {
+      if (this.superseded(generation, request, signal)) return "superseded" as const
+      return {
+        scheduling: prior,
+        schedulingError: "Scheduling is unavailable or stale. Refresh to confirm Next.",
+        succeeded: false,
+      }
+    }
+  }
+
+  /** One attempt at a stable task snapshot: retry, superseded, or the page set with its sidecars. */
+  private async readSnapshotAttempt(
+    transport: TaskTransport,
+    attempt: number,
+    prior: SchedulingSnapshot | undefined,
+    generation: number,
+    request: number,
+    signal: AbortSignal,
+  ) {
+    const first = await transport.query({ ...this.query, cursor: undefined }, signal)
+    if (generation !== this.generation || request !== this.listRequest) return "superseded"
+    if (first.projectDirectory !== this.project)
+      throw new Error("Task response belongs to another project")
+    const observed = await this.readTopologyFor(
+      transport,
+      first,
+      attempt,
+      generation,
+      request,
+      signal,
+    )
+    if (observed === "superseded" || observed === "retry") return observed
+    let { topology, topologyError } = observed
+    const followed = await this.followTaskPages(transport, first, generation, request, signal)
+    if (followed === "superseded") return followed
+    const { page, tasks, stalled, changedSnapshot } = followed
+    if (changedSnapshot && attempt < 2) return "retry"
+    if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
+    if (!topology && transport.topology && !topologyError)
+      topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
+    const read = await this.readSchedulingFor(prior, generation, request, signal)
+    if (read === "superseded") return read
+    const { scheduling, schedulingError } = read
+    if (topology && read.succeeded && scheduling) {
+      if (
+        !relationshipsMatch(
+          topology,
+          scheduling,
+          tasks.map((task) => task.taskID),
+        )
+      ) {
+        topology = undefined
+        topologyError =
+          "Execution relationships changed during the read. Showing scheduling-backed groups."
+      }
+    } else if (topology && !observed.boundaryMatches) {
+      topology = undefined
+      topologyError = "Execution topology changed during the task read. Showing ungrouped tasks."
+    }
+    if (!topology && read.succeeded && topologyError.includes("Showing ungrouped tasks."))
+      topologyError = topologyError.replace(
+        "Showing ungrouped tasks.",
+        "Showing scheduling-backed groups where covered.",
+      )
+    return {
+      page,
+      tasks,
+      stateCounts: first.stateCounts,
+      topology,
+      topologyError,
+      scheduling,
+      schedulingError,
+      followed: followed.followed,
+      stalled,
+    }
+  }
+
+  /** The stable snapshot (three attempts), or undefined when the read was superseded. */
+  private async readStableSnapshot(
+    transport: TaskTransport,
+    generation: number,
+    request: number,
+    signal: AbortSignal,
+  ) {
+    const prior = this.data.scheduling
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const read = await this.readSnapshotAttempt(
+        transport,
+        attempt,
+        prior,
+        generation,
+        request,
+        signal,
+      )
+      if (read === "superseded") return undefined
+      if (read === "retry") continue
+      if (signal.aborted || generation !== this.generation || request !== this.listRequest)
+        return undefined
+      return read
+    }
+    throw new Error("Could not read a stable task snapshot")
+  }
+
+  /** Runs the finally-block bookkeeping of a refresh: re-arm, retry, or settle. */
+  private settleRefresh(generation: number) {
+    if (generation !== this.generation) return
+    this.refreshing = false
+    if (
+      this.refreshPending ||
+      (this.pendingVersion > (this.data.page?.snapshot ?? 0) && !this.data.error)
+    ) {
+      this.refreshPending = false
+      this.pendingVersion = 0
+      void this.refresh()
+    } else if (this.data.error || this.data.topologyError) {
+      this.retryRead(generation)
+    } else {
+      if (this.retry) clearTimeout(this.retry)
+      this.retry = undefined
+      this.retryDelayMs = 1_000
+      this.flushCurrentActivity()
+    }
+    this.announceIdle()
+  }
+
   async refresh() {
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
@@ -461,147 +702,18 @@ export class TaskPanelState {
     this.update({ activityError: "" })
     const signal = this.controller.signal
     try {
-      let stateCounts: PanelData["stateCounts"]
-      let page: TaskPage | undefined
-      let tasks: TaskSummary[] = []
-      let topology: TopologyResponse | undefined
-      let topologyError = ""
-      let scheduling = this.data.scheduling
-      let schedulingError = ""
-      let followed = new Set<string>()
-      let stalled = false
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const first = await transport.query({ ...this.query, cursor: undefined }, signal)
-        if (generation !== this.generation || request !== this.listRequest) return
-        if (first.projectDirectory !== this.project)
-          throw new Error("Task response belongs to another project")
-        topology = undefined
-        topologyError = ""
-        let topologyBoundaryMatches = true
-        if (transport.topology) {
-          try {
-            const observed = await transport.topology(signal)
-            if (signal.aborted || generation !== this.generation || request !== this.listRequest)
-              return
-            if (observed.boundary.repositoryVersion !== first.snapshot) {
-              topologyBoundaryMatches = false
-              if ((!transport.scheduling || !this.schedulingScope) && attempt < 2) continue
-            }
-            topology = observed
-          } catch (error) {
-            if (signal.aborted || generation !== this.generation) return
-            const message = panelErrorMessage(error, "")
-            topologyError = message
-              ? `Execution links unavailable: ${message}. Showing ungrouped tasks.`
-              : "Execution links unavailable. Showing ungrouped tasks."
-          }
-        }
-        const wanted = Math.max(
-          first.tasks.length,
-          this.data.tasks.length +
-            Math.max(0, first.count - (this.data.page?.count ?? first.count)),
-        )
-        page = first
-        stateCounts = first.stateCounts
-        tasks = []
-        const listed = new Set<string>()
-        const append = (next: readonly TaskSummary[]) => {
-          const before = tasks.length
-          for (const task of next) {
-            if (listed.has(task.taskID)) continue
-            listed.add(task.taskID)
-            tasks.push(task)
-          }
-          return tasks.length - before
-        }
-        append(first.tasks)
-        followed = new Set()
-        stalled = false
-        let changedSnapshot = false
-        while (page.nextCursor && tasks.length < wanted) {
-          // A repeated cursor or a page that lists nothing new would re-read forever: stop here and
-          // leave the rest to an explicit Retry.
-          if (followed.has(page.nextCursor)) {
-            stalled = true
-            break
-          }
-          followed.add(page.nextCursor)
-          const next = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
-          if (generation !== this.generation || request !== this.listRequest) return
-          if (next.snapshot !== first.snapshot) {
-            page = next
-            changedSnapshot = true
-            break
-          }
-          const added = append(next.tasks)
-          if (next.nextCursor && (added === 0 || followed.has(next.nextCursor))) {
-            // Keep the page that made progress, so Retry re-reads the cursor that stalled.
-            if (added > 0) page = next
-            stalled = true
-            break
-          }
-          page = next
-        }
-        if (changedSnapshot && attempt < 2) continue
-        if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
-        if (!topology && transport.topology && !topologyError)
-          topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
-        let schedulingReadSucceeded = false
-        if (this.schedulingScope) {
-          try {
-            scheduling = await this.readScheduling(
-              this.schedulingScope,
-              signal,
-              () => generation === this.generation && request === this.listRequest,
-            )
-            schedulingReadSucceeded = true
-          } catch {
-            if (generation !== this.generation || request !== this.listRequest || signal.aborted)
-              return
-            schedulingError = "Scheduling is unavailable or stale. Refresh to confirm Next."
-          }
-        } else {
-          schedulingError = "Scheduling scope is unavailable."
-        }
-        if (topology && schedulingReadSucceeded && scheduling) {
-          if (
-            !relationshipsMatch(
-              topology,
-              scheduling,
-              tasks.map((task) => task.taskID),
-            )
-          ) {
-            topology = undefined
-            topologyError =
-              "Execution relationships changed during the read. Showing scheduling-backed groups."
-          }
-        } else if (topology && !topologyBoundaryMatches) {
-          topology = undefined
-          topologyError =
-            "Execution topology changed during the task read. Showing ungrouped tasks."
-        }
-        if (
-          !topology &&
-          schedulingReadSucceeded &&
-          topologyError.includes("Showing ungrouped tasks.")
-        )
-          topologyError = topologyError.replace(
-            "Showing ungrouped tasks.",
-            "Showing scheduling-backed groups where covered.",
-          )
-        break
-      }
-      if (!page) throw new Error("Could not read a stable task snapshot")
-      if (signal.aborted || generation !== this.generation || request !== this.listRequest) return
+      const read = await this.readStableSnapshot(transport, generation, request, signal)
+      if (!read) return
+      const { page, tasks, stateCounts, followed, stalled } = read
       this.followedCursors = followed
       this.requestedMore = stalled ? page : undefined
       this.update({
         tasks,
         page,
-        topology,
-        topologyError,
-        scheduling,
-        schedulingError,
+        topology: read.topology,
+        topologyError: read.topologyError,
+        scheduling: read.scheduling,
+        schedulingError: read.schedulingError,
         loading: false,
         stale: !transport.online(),
         error: "",
@@ -626,25 +738,7 @@ export class TaskPanelState {
         this.update({ loading: false, stale: true, error: panelErrorMessage(error) })
       }
     } finally {
-      if (generation === this.generation) {
-        this.refreshing = false
-        if (
-          this.refreshPending ||
-          (this.pendingVersion > (this.data.page?.snapshot ?? 0) && !this.data.error)
-        ) {
-          this.refreshPending = false
-          this.pendingVersion = 0
-          void this.refresh()
-        } else if (this.data.error || this.data.topologyError) {
-          this.retryRead(generation)
-        } else {
-          if (this.retry) clearTimeout(this.retry)
-          this.retry = undefined
-          this.retryDelayMs = 1_000
-          this.flushCurrentActivity()
-        }
-        this.announceIdle()
-      }
+      this.settleRefresh(generation)
     }
   }
 
