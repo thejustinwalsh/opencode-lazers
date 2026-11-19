@@ -20,6 +20,7 @@ import {
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
+import { RecoveryBundles } from "./recovery-bundle.ts"
 import { sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
@@ -649,6 +650,7 @@ type AdvanceContext = {
 
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
+  private readonly recoveryBundles: RecoveryBundles
   private readonly worktreeCleanup: WorktreeCleanup
   private readonly adoptionExecution: AdoptionExecution
   private readonly retainedVerificationExecution: RetainedVerificationExecution
@@ -732,6 +734,17 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+    })
+    this.recoveryBundles = new RecoveryBundles({
+      store: this.store,
+      host: this.host,
+      directory: this.directory,
+      projectID: this.projectID,
+      owner: this.owner,
+      now: this.now,
+      validArchitect: this.validArchitect.bind(this),
+      ensureArchitectOwner: (plan, previous, adopt) =>
+        this.ensureArchitectOwner(plan, previous, adopt),
     })
     this.worktreeCleanup = new WorktreeCleanup({
       adoptionCheckReceiptMatches: (...args) =>
@@ -7193,6 +7206,21 @@ export class TaskRuntime {
         })
         if (heartbeatFailed) throw heartbeatError
       }
+      // Stale failed or held work is handed to an Architect as one bundle, then delivered below.
+      await sectionAsync("tick:recoveryBundle", async () => {
+        try {
+          await this.recoveryBundles.reconcile(fence)
+        } catch (error) {
+          if (errorText(error).includes("Stale scheduler fence")) throw error
+          const anchor = this.store.plans()[0]
+          if (anchor)
+            this.store.fenced(this.owner, fence, () =>
+              this.store.recordOnce(anchor.id, null, "RECOVERY_BUNDLE_FAILED", {
+                error: errorText(error).slice(0, 300),
+              }),
+            )
+        }
+      })
       // Notices held for a retryable reason are tried again soon, not at the next full interval.
       if (await sectionAsync("tick:deliver", () => this.outcomeDelivery.deliver(fence)))
         this.wakeScheduler?.(15_000)

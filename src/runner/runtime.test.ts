@@ -1,3 +1,4 @@
+import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -14791,4 +14792,48 @@ test("a plan that keeps moving mid-command fails after a bounded re-evaluation w
     f.runtime.command({ requestID: "moving-pause", planID, action: "pause", reason: "x" }, "owner"),
   ).rejects.toThrow("changed repeatedly while pause was applied")
   expect(reads).toBeLessThanOrEqual(6)
+})
+
+test("stale held work reaches one Architect as one recovery bundle once contact is enabled", async () => {
+  const clock = { at: Date.now() }
+  const f = fixture({ now: () => clock.at })
+  const planID = f.receipt.planID
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Dispatch failed: route lost' WHERE id=?",
+      )
+      .run(planID),
+  )
+  f.sessions.set("successor", { ...structuredClone(f.sessions.get("owner")!), id: "successor" })
+  f.sessions.get("owner")!.archived = true
+  const bundles = () =>
+    f.notifications.filter((notice) => notice.text.includes("LAZERS recovery bundle"))
+
+  // Fresh work is not stale yet.
+  await f.runtime.tick()
+  expect(bundles()).toHaveLength(0)
+
+  // Stale, but contact is paused: nothing is created or sent, and the set is retained.
+  clock.at += RECOVERY_STALE_MS + 60_000
+  f.store.setArchitectContact("paused", "operator")
+  await f.runtime.tick()
+  expect(bundles()).toHaveLength(0)
+  expect(f.store.latestTransition(planID, null, "RECOVERY_BUNDLE_RAISED")).toBeUndefined()
+
+  // Unpausing delivers one bundle to the live Architect; further ticks add none.
+  f.store.setArchitectContact("enabled", "")
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(bundles()).toHaveLength(1)
+  // The archived owner was replaced by the existing continuation path during the first tick.
+  const receiver = f.store.plan(planID)!.owner
+  expect(bundles()[0]!.sessionID).toBe(receiver)
+  expect(receiver).not.toBe("owner")
+  expect(bundles()[0]!.text).toContain(planID)
+
+  // Another live Architect commands the plan owned by the receiver and is adopted.
+  await f.runtime.command({ requestID: "recover-run", planID, action: "run" }, "successor")
+  expect(f.store.plan(planID)!.owner).toBe("successor")
+  expect(f.store.latestTransition(planID, null, "OWNER_ADOPTED")).toBeDefined()
 })
