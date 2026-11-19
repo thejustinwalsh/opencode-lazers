@@ -1,5 +1,5 @@
 export const REVIEW_ROUNDS = 3
-export const REVIEW_THRESHOLD = 0.7
+const REVIEW_THRESHOLD = 0.7
 
 export type ReviewDisposition =
   "resolved" | "not_applicable" | "non_regressed" | "limit" | "pending"

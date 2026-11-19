@@ -5,7 +5,7 @@ export const ProgressInput = z.strictObject({
   message: z.string().trim().min(1).max(1200),
 })
 
-export type ProgressInput = z.infer<typeof ProgressInput>
+type ProgressInput = z.infer<typeof ProgressInput>
 
 export type NativeLineageRejection =
   | "observer-stopped"

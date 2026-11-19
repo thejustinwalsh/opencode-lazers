@@ -35,7 +35,7 @@ const AdviceContent = {
   references: z.array(AdviceReference).max(4).default([]),
 }
 
-export const TaskAdviceInput = z.strictObject({
+const TaskAdviceInput = z.strictObject({
   taskID: z.uuid(),
   /** Omitted: advice attaches to the task's current specification revision. */
   specRevision: z.int().positive().optional(),
@@ -44,7 +44,7 @@ export const TaskAdviceInput = z.strictObject({
   expectedRevision: z.int().nonnegative().optional(),
   ...AdviceContent,
 })
-export type TaskAdviceInput = z.infer<typeof TaskAdviceInput>
+type TaskAdviceInput = z.infer<typeof TaskAdviceInput>
 
 /** The model tool supplies neither revision; legacy `specRevision`/`expectedRevision` are ignored. */
 export const TaskAdviceToolInput = ignoringLegacyFields(
@@ -65,7 +65,7 @@ export const TaskAdviceRecord = z.strictObject({
     createdAt: z.iso.datetime(),
   }),
 })
-export type TaskAdviceRecord = z.infer<typeof TaskAdviceRecord>
+type TaskAdviceRecord = z.infer<typeof TaskAdviceRecord>
 
 /** Bound worker-facing history without discarding durable corrections or refusing new ones. */
 export const TASK_ADVICE_HISTORY_PROJECTION_LIMIT = 20
@@ -78,7 +78,7 @@ export const TaskAdviceSnapshot = z.strictObject({
 })
 export type TaskAdviceSnapshot = z.infer<typeof TaskAdviceSnapshot>
 
-export const TaskAdviceReceipt = z.discriminatedUnion("status", [
+const TaskAdviceReceipt = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("recorded"),
     advice: TaskAdviceRecord,

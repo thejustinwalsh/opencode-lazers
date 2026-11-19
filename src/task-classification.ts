@@ -26,7 +26,7 @@ export const TaskClassificationAnnotationInput = z.strictObject({
   classification: TaskClassification,
   reason: z.string().trim().min(1).max(2_000),
 })
-export type TaskClassificationAnnotationInput = z.infer<typeof TaskClassificationAnnotationInput>
+type TaskClassificationAnnotationInput = z.infer<typeof TaskClassificationAnnotationInput>
 
 /** The model tool never supplies a revision; a legacy `expectedRevision` is ignored. */
 export const TaskClassificationToolInput = ignoringLegacyFields(

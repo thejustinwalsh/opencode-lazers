@@ -10,10 +10,10 @@ import type { TrajectoryHost, TrajectorySession } from "../../src/trajectory/nat
 export const taskID = "bb53fd1c-85cc-4d67-932d-b8b69a197d8b"
 export const firstAttemptID = "73cf4094-c79a-4e16-9705-aac76becaa44"
 export const secondAttemptID = "509e5ba7-6b7e-40eb-8f49-25b3789c1ba6"
-export const finalCommit = "b".repeat(40)
+const finalCommit = "b".repeat(40)
 export const cursorSecret = new Uint8Array(32).fill(7)
 
-export function makeMessages(which: "failed" | "accepted") {
+function makeMessages(which: "failed" | "accepted") {
   if (which === "failed")
     return [
       {

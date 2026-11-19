@@ -216,7 +216,7 @@ type TrackerState = {
 }
 
 /** Minimum spacing between synchronous source reads triggered by events or invalidations. */
-export const SOURCE_REFRESH_DEBOUNCE_MS = 250
+const SOURCE_REFRESH_DEBOUNCE_MS = 250
 
 const MAX_TRACKED_EVENTS = 4096
 export const LIVE_SIGNAL_LIMITS = {

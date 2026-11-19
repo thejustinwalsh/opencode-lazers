@@ -7,7 +7,7 @@ import { planPrioritySortSQL } from "../runner/priority.ts"
  *   0 running or verifying   1 other open (queued, ready, waiting, blocked, paused, unplanned)
  *   2 accepted   3 integrated   4 failed or exhausted   5 cancelled
  */
-export const STATE_RANK_SQL = (node: string, plan: string) => `CASE
+const STATE_RANK_SQL = (node: string, plan: string) => `CASE
   WHEN ${node}.state='cancelled' OR ${plan}.state='cancelled' THEN 5
   WHEN ${node}.state IN ('failed','exhausted') THEN 4
   WHEN ${node}.state='incorporated' THEN 3

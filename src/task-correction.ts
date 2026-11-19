@@ -10,7 +10,7 @@ export const TaskCorrectionInput = z.strictObject({
   expectedRevision: z.int().nonnegative().optional(),
   reason: z.string().trim().min(1).max(2_000),
 })
-export type TaskCorrectionInput = z.infer<typeof TaskCorrectionInput>
+type TaskCorrectionInput = z.infer<typeof TaskCorrectionInput>
 
 /** The model tool never supplies a revision; a legacy `expectedRevision` is ignored. */
 export const TaskCorrectionToolInput = ignoringLegacyFields(
@@ -51,7 +51,7 @@ export const TaskCorrectionReceipt = z.discriminatedUnion("status", [
 export type TaskCorrectionReceipt = z.infer<typeof TaskCorrectionReceipt>
 
 export const TaskCorrectionInspectionInput = z.strictObject({ taskID: z.uuid() })
-export type TaskCorrectionInspectionInput = z.infer<typeof TaskCorrectionInspectionInput>
+type TaskCorrectionInspectionInput = z.infer<typeof TaskCorrectionInspectionInput>
 
 export const TaskCorrectionRevisionIdentity = z.strictObject({
   schemaVersion: z.literal(1),
@@ -62,7 +62,7 @@ export const TaskCorrectionRevisionIdentity = z.strictObject({
 })
 export type TaskCorrectionRevisionIdentity = z.infer<typeof TaskCorrectionRevisionIdentity>
 
-export const TaskCorrectionMembership = z.strictObject({
+const TaskCorrectionMembership = z.strictObject({
   taskID: z.uuid(),
   rootTaskID: z.uuid(),
   memberTaskIDs: z.array(z.uuid()),
