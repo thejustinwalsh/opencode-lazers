@@ -1974,6 +1974,210 @@ test("uncertain writes stay unconfirmed until an exact authoritative readback ar
   }
 })
 
+test("reconnecting an in-flight assignment reads back its exact target without replaying the write", async () => {
+  const route = {
+    providerID: "manual-provider",
+    id: "remounted-model",
+    variant: "native/effort",
+  }
+  const pending = deferred<Awaited<ReturnType<ModelComparisonTransport["configure"]>>>()
+  let latest = settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" })
+  let settingsReads = 0
+  let configureCalls = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      comparison: async () => {
+        throw new Error("comparison is offline")
+      },
+      settings: async () => {
+        settingsReads++
+        return latest
+      },
+      configure: async () => {
+        configureCalls++
+        return pending.promise
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings !== undefined)
+    expect(state.data.comparison).toBeUndefined()
+    const save = state.configureMapping("ui", "task", route)
+    await until(() => state.data.assignmentWrite?.status === "saving")
+    const seed = state.data
+
+    state.connect(
+      "project-a",
+      "project-a",
+      "/repo",
+      transport({
+        settings: async () => {
+          settingsReads++
+          return latest
+        },
+        configure: async () => {
+          configureCalls++
+          throw new Error("Reconnection must not replay the mapping write")
+        },
+      }),
+      { selectedTaskID: idA, selectedCandidateID: null },
+      seed.decisionFilters,
+      seed,
+    )
+    await until(() => state.data.assignmentWrite?.status === "uncertain")
+    expect(settingsReads).toBe(2)
+    expect(configureCalls).toBe(1)
+
+    latest = settingsWithTaskRoute(idA, 2, route)
+    await state.recheckAssignmentWrite()
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", revision: 2, route })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(route)
+
+    pending.resolve({
+      status: "updated",
+      mapping: {
+        schemaVersion: 1,
+        target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+        persona: "ui",
+        revision: 2,
+        route,
+        updatedAt: 2,
+      },
+    })
+    await save
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", revision: 2, route })
+    expect(configureCalls).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
+test("a pending task assignment is not recovered into a different selected task", async () => {
+  const route = { providerID: "manual-provider", id: "task-a-route" }
+  let configureCalls = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      settings: async () => settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "old" }),
+      configure: async () => {
+        configureCalls++
+        throw new Error("connection closed after send")
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings?.taskID === idA && state.data.comparison !== undefined)
+    await state.configureMapping("ui", "task", route)
+    expect(state.data.assignmentWrite?.status).toBe("uncertain")
+    const seed: ModelComparisonPanelData = { ...state.data, decisionStatus: "ready" }
+    const requestedSettingsTasks: Array<string | undefined> = []
+
+    state.connect(
+      "project-a",
+      "project-a",
+      "/repo",
+      transport({
+        settings: async (taskID) => {
+          requestedSettingsTasks.push(taskID)
+          return settingsWithTaskRoute(idB, 1, { providerID: "openai", id: "task-b-route" })
+        },
+        queryTasks: async () => tasks([idB]),
+        configure: async () => {
+          configureCalls++
+          throw new Error("Reconnection must not replay the mapping write")
+        },
+      }),
+      { selectedTaskID: idB, selectedCandidateID: null },
+      seed.decisionFilters,
+      seed,
+    )
+    await until(() => state.data.settings?.taskID === idB)
+
+    expect(state.data.assignmentWrite).toBeUndefined()
+    expect(state.data.settings?.personas[0]?.layers.task?.route?.id).toBe("task-b-route")
+    expect(requestedSettingsTasks).toContain(idB)
+    expect(configureCalls).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
+test("reconnecting during assignment verification rechecks the accepted revision", async () => {
+  const route = { providerID: "manual-provider", id: "verified-remount" }
+  const staleReadback = deferred<ModelSettingsOutput>()
+  let latest = settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" })
+  let settingsReads = 0
+  let configureCalls = 0
+  const state = new ModelComparisonPanelState(() => {})
+  state.connect(
+    "project-a",
+    "project-a",
+    "/repo",
+    transport({
+      settings: async () => {
+        settingsReads++
+        return settingsReads === 2 ? staleReadback.promise : latest
+      },
+      configure: async () => {
+        configureCalls++
+        return {
+          status: "updated",
+          mapping: {
+            schemaVersion: 1,
+            target: { scope: "task", projectDirectory: "/repo", taskID: idA },
+            persona: "ui",
+            revision: 2,
+            route,
+            updatedAt: 2,
+          },
+        }
+      },
+    }),
+    { selectedTaskID: idA, selectedCandidateID: null },
+  )
+  try {
+    await until(() => state.data.settings?.taskID === idA && state.data.comparison !== undefined)
+    const save = state.configureMapping("ui", "task", route)
+    await until(() => state.data.assignmentWrite?.status === "verifying")
+    const seed: ModelComparisonPanelData = { ...state.data, decisionStatus: "ready" }
+    latest = settingsWithTaskRoute(idA, 2, route)
+
+    state.connect(
+      "project-a",
+      "project-a",
+      "/repo",
+      transport({
+        settings: async () => latest,
+        configure: async () => {
+          configureCalls++
+          throw new Error("Reconnection must not replay the mapping write")
+        },
+      }),
+      { selectedTaskID: idA, selectedCandidateID: null },
+      seed.decisionFilters,
+      seed,
+    )
+    await until(() => state.data.assignmentWrite?.status === "confirmed")
+    staleReadback.resolve(settingsWithTaskRoute(idA, 1, { providerID: "openai", id: "route-1" }))
+    await save
+
+    expect(state.data.assignmentWrite).toMatchObject({ status: "confirmed", revision: 2, route })
+    expect(state.data.settings?.personas[0]?.layers.task?.route).toEqual(route)
+    expect(configureCalls).toBe(1)
+  } finally {
+    state.close()
+  }
+})
+
 test("stale mapping revisions show the newer authoritative route without retrying", async () => {
   const currentRoute = { providerID: "other-editor", id: "route-2" }
   let configureCount = 0
