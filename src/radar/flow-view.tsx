@@ -473,6 +473,22 @@ export function RadarFlowActions(props: {
   )
 }
 
+/**
+ * Items keyed by id. `ids` changes only when rows come or go, so a new row inserts one node and an
+ * unchanged row keeps its DOM; `row(id)` is that row's latest data, patched in place.
+ */
+function keyed<T>(items: () => readonly T[], key: (item: T) => string) {
+  const ids = createMemo(() => items().map(key), [], {
+    equals: (a, b) => a.length === b.length && a.every((id, index) => id === b[index]),
+  })
+  const byID = createMemo(() => new Map(items().map((item) => [key(item), item])))
+  return {
+    ids,
+    row: (id: string) =>
+      createMemo((previous: T | undefined) => byID().get(id) ?? previous) as () => T,
+  }
+}
+
 /** The pane body: the feed rows or the model cards, filtered by the selection. */
 export function RadarFlowBody(props: {
   model: FlowModel
@@ -482,48 +498,64 @@ export function RadarFlowBody(props: {
   tab: "feed" | "models"
   narrow: boolean
 }) {
-  const feed = createMemo(() => filterFeed(props.model, props.selection))
+  const cards = keyed(
+    () => props.model.models,
+    (card) => card.id,
+  )
+  const feed = keyed(
+    () => filterFeed(props.model, props.selection),
+    (row) => row.id,
+  )
   return (
     <>
       <Show when={props.tab === "feed"}>
         <ol class="lazers-radar-feed" aria-label="Flow feed">
-          <For each={feed()}>
-            {(row) => (
-              <li
-                class="lazers-radar-feed-row"
-                data-live={row.live}
-                data-failed={row.failed}
-                data-narrow={props.narrow}
-              >
-                <span class="lazers-radar-feed-when" style={{ "font-family": props.monoFont }}>
-                  {feedWhen(row, props.now)}
-                </span>
-                <span class="lazers-radar-feed-agent">
-                  <Show when={row.ref}>
-                    <code style={{ "font-family": props.monoFont }}>{row.ref}</code>
-                  </Show>
-                  <Show when={!props.narrow}> {row.ref ? abbreviateRole(row.role) : row.role}</Show>
-                </span>
-                <span class="lazers-radar-feed-dest">
-                  <i style={{ background: destHue(row.kind) }} />
-                  {row.destName}
-                </span>
-                <span
-                  class="lazers-radar-feed-detail"
-                  style={{ "font-family": props.monoFont }}
-                  title={row.detail}
+          <For each={feed.ids()}>
+            {(id) => {
+              const row = feed.row(id)
+              return (
+                <li
+                  class="lazers-radar-feed-row"
+                  data-live={row().live}
+                  data-failed={row().failed}
+                  data-narrow={props.narrow}
                 >
-                  {row.detail}
-                </span>
-              </li>
-            )}
+                  <span class="lazers-radar-feed-when" style={{ "font-family": props.monoFont }}>
+                    {feedWhen(row(), props.now)}
+                  </span>
+                  <span class="lazers-radar-feed-agent">
+                    <Show when={row().ref}>
+                      <code style={{ "font-family": props.monoFont }}>{row().ref}</code>
+                    </Show>
+                    <Show when={!props.narrow}>
+                      {" "}
+                      {row().ref ? abbreviateRole(row().role) : row().role}
+                    </Show>
+                  </span>
+                  <span class="lazers-radar-feed-dest">
+                    <i style={{ background: destHue(row().kind) }} />
+                    {row().destName}
+                  </span>
+                  <span
+                    class="lazers-radar-feed-detail"
+                    style={{ "font-family": props.monoFont }}
+                    title={row().detail}
+                  >
+                    {row().detail}
+                  </span>
+                </li>
+              )
+            }}
           </For>
         </ol>
       </Show>
       <Show when={props.tab === "models"}>
         <div class="lazers-radar-models">
-          <For each={props.model.models}>
-            {(card) => <ModelCardView card={card} now={props.now} monoFont={props.monoFont} />}
+          <For each={cards.ids()}>
+            {(id) => {
+              const card = cards.row(id)
+              return <ModelCardView card={card()} now={props.now} monoFont={props.monoFont} />
+            }}
           </For>
           <p class="lazers-radar-flow-note">
             Bar: share of the last two minutes by session. Active models sort first.
