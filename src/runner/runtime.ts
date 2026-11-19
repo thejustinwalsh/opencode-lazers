@@ -7243,6 +7243,7 @@ export class TaskRuntime {
       // Stale failed or held work is handed to an Architect as one bundle, then delivered below.
       await sectionAsync("tick:recoveryBundle", async () => {
         try {
+          this.recoveryBundles.journalStruggling(fence)
           await this.recoveryBundles.reconcile(fence)
         } catch (error) {
           if (errorText(error).includes("Stale scheduler fence")) throw error

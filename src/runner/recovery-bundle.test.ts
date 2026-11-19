@@ -13,6 +13,7 @@ import {
   RECOVERY_REPRAISE_MS,
   RECOVERY_STALE_MS,
   RecoveryBundles,
+  recoveryBundleText,
   recommend,
   type RecoveryFacts,
   type RecoveryReuse,
@@ -538,4 +539,50 @@ test("the bundle text states what to do and lists each item with its advice", as
   expect(coalescedOutcomeText([{ planID: bundle.planID, payload: JSON.stringify(bundle) }])).toBe(
     text,
   )
+})
+
+test("a live task that keeps failing verification is raised as struggling even though it is fresh", async () => {
+  const f = fixture()
+  const grind = f.plan({ state: "running", node: "running" })
+  const calm = f.plan({ state: "running", node: "running" })
+  f.touch(grind.planID)
+  f.store.atomic((db) => {
+    for (const round of [1, 2, 3])
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+      ).run(grind.planID, grind.taskID, f.clock.at - round)
+    db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+    ).run(calm.planID, calm.taskID, f.clock.at)
+  })
+  const items = await collect(f)
+  expect(items.map((item) => [item.kind, item.taskID])).toEqual([["struggling", grind.taskID]])
+  const item = items[0]!
+  expect(item.struggling?.line).toBe("3 verification rounds")
+  expect(item.recommendation.because).toStartWith("continue")
+  // The same measures do not raise a second bundle; a bundle is raised once for them.
+  const first = await f.reconciler("scheduler").bundles.reconcile(1)
+  expect(first?.items).toHaveLength(1)
+  expect(recoveryBundleText(JSON.stringify(first))).toContain(
+    "Struggling (still live): 3 verification rounds",
+  )
+  expect(await f.reconciler("scheduler").bundles.reconcile(1)).toBeUndefined()
+})
+
+test("the first time a task becomes struggling is journaled once", async () => {
+  const f = fixture()
+  const grind = f.plan({ state: "running", node: "running" })
+  const { bundles, fence } = f.reconciler("scheduler")
+  expect(bundles.journalStruggling(fence)).toBe(0)
+  f.store.atomic((db) => {
+    for (const round of [1, 2, 3])
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+      ).run(grind.planID, grind.taskID, f.clock.at - round)
+  })
+  expect(bundles.journalStruggling(fence)).toBe(1)
+  expect(bundles.journalStruggling(fence)).toBe(0)
+  expect(
+    f.store.latestTransition<{ reasons: string[] }>(grind.planID, grind.taskID, "TASK_STRUGGLING"),
+  ).toMatchObject({ reasons: ["verify-rounds"], line: "3 verification rounds" })
 })
