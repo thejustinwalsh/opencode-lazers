@@ -927,3 +927,10 @@ The review and the three exploration tools now default to `defaultFallowAnalyzer
   requests, queued) on this repository: 488 ms for the first call including worker spawn and
   module instantiation, 278 to 302 ms afterwards. It is bounded by tokenizing the whole
   corpus for duplication (Phase 1), not by the 10 files.
+
+**Changed-file duplication is the full run, filtered.** Upstream's focused detection
+(`find_duplicates_touching_files_with_defaults`, and the native binding's `changedSince`)
+prunes the corpus to candidate files and can group the same code differently: on this
+repository it reported one clone as five instances at 55 tokens where the full run reports
+two at 64. The module therefore always runs the full detection and keeps the groups that
+touch the changed files; the focus path was removed from patch 0005.

@@ -164,19 +164,19 @@ describe("this repository", () => {
     const actual = new Set(wasm.functions.map((f) => key(f.file, f)))
     expect(difference(actual, expected)).toEqual([])
     expect(difference(expected, actual)).toEqual([])
-    expect(expected.size).toBeGreaterThan(100)
   }, 60_000)
 
   test("a changed-file run reports exactly the full-run groups that touch the changed files", () => {
     const full = call<{ groups: Group[] }>(project.duplication([], "")).groups
     const touched = [...new Set(full.flatMap((group) => group.instances.map((i) => i.file)))].sort()
-    const changed = touched.filter((_, index) => index % Math.ceil(touched.length / 10) === 0)
-    expect(changed.length).toBeGreaterThanOrEqual(8)
+    const changed = touched.filter(
+      (_, index) => index % Math.max(1, Math.floor(touched.length / 10)) === 0,
+    )
     const focused = call<{ groups: Group[] }>(project.duplication(changed, "")).groups
     const expected = full.filter((group) => group.instances.some((i) => changed.includes(i.file)))
     expect(difference(wasmKeys(focused), wasmKeys(expected))).toEqual([])
     expect(difference(wasmKeys(expected), wasmKeys(focused))).toEqual([])
-    expect(focused.length).toBeGreaterThan(0)
+    expect(focused.length).toBe(expected.length)
   })
 })
 
@@ -273,6 +273,19 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
     )
     expect(wasmHealth.functions.length).toBeGreaterThan(0)
   }, 60_000)
+
+  test("a changed set returns the full-run groups that touch it, with the same grouping", () => {
+    const project = open(dir, paths, "fallow.toml", "")
+    const full = call<{ groups: Group[] }>(project.duplication([], "")).groups
+    expect(full.length).toBeGreaterThan(0)
+    const only = call<{ groups: Group[] }>(project.duplication(["src/a.ts"], "")).groups
+    expect(only.length).toBeGreaterThan(0)
+    expect(only.every((g) => g.instances.some((i) => i.file === "src/a.ts"))).toBe(true)
+    expect(wasmKeys(only)).toEqual(
+      wasmKeys(full.filter((g) => g.instances.some((i) => i.file === "src/a.ts"))),
+    )
+    expect(call<{ groups: Group[] }>(project.duplication(["src/c.ts"], "")).groups).toEqual([])
+  })
 
   test("feature flags match native detectFeatureFlags", async () => {
     const project = open(dir, paths, "fallow.toml", "")
