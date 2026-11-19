@@ -245,6 +245,10 @@ function mappingTargetMatches(
   }
 }
 
+function isRecoverableAssignmentStatus(status: ModelAssignmentWrite["status"]) {
+  return status === "saving" || status === "verifying" || status === "uncertain"
+}
+
 function missingDecisionRPC(error: unknown) {
   return /unknown (?:rpc|method)|rpc (?:not found|not registered|unavailable)|method not found|no (?:rpc|method) handler|not implemented/i.test(
     errorMessage(error),
@@ -259,6 +263,13 @@ export function isSeedable(data: ModelComparisonPanelData) {
   )
 }
 
+export function isConnectionSeedable(data: ModelComparisonPanelData) {
+  return (
+    isSeedable(data) ||
+    Boolean(data.assignmentWrite && isRecoverableAssignmentStatus(data.assignmentWrite.status))
+  )
+}
+
 /** A cached snapshot as the starting point of a new connection: content kept, loading flags reset. */
 function seededData(
   seed: ModelComparisonPanelData,
@@ -268,6 +279,18 @@ function seededData(
   preferences: ModelComparisonPreferences,
   decisionFilters: ModelDecisionFilters,
 ): ModelComparisonPanelData {
+  const assignmentWrite = seed.assignmentWrite
+  const sameAssignmentScope =
+    seed.projectID === projectID &&
+    seed.projectDirectory === projectDirectory &&
+    seed.selectedTaskID === preferences.selectedTaskID &&
+    (assignmentWrite?.target?.scope !== "task" ||
+      assignmentWrite.target.taskID === preferences.selectedTaskID)
+  const keepAssignmentWrite =
+    sameAssignmentScope &&
+    (!assignmentWrite ||
+      !isRecoverableAssignmentStatus(assignmentWrite.status) ||
+      Boolean(assignmentWrite.target))
   return {
     ...seed,
     key,
@@ -277,6 +300,7 @@ function seededData(
     selectedTaskID: preferences.selectedTaskID,
     selectedCandidateID: preferences.selectedCandidateID,
     selectedConfigurationID: preferences.selectedConfigurationID ?? null,
+    assignmentWrite: keepAssignmentWrite ? assignmentWrite : undefined,
     decisionError: "",
     decisionRowsLoading: false,
     decisionConfigurationsLoading: false,
@@ -431,18 +455,21 @@ export class ModelComparisonPanelState {
     this.transport = transport
     this.projectID = projectID
     this.projectDirectory = projectDirectory
-    this.seededTask = Boolean(seed && isSeedable(seed) && seed.task)
+    this.seededTask = Boolean(seed && isConnectionSeedable(seed) && seed.task)
     this.data =
-      seed && isSeedable(seed)
+      seed && isConnectionSeedable(seed)
         ? seededData(seed, key, projectID, projectDirectory, preferences, decisionFilters)
         : blank(key, projectID, projectDirectory, preferences, decisionFilters)
+    const recoveringAssignment = this.restorePendingAssignmentWrite()
     const generation = this.generation
     const selectionRevision = this.selectionRevision
 
     // Invoke the cached bounded projection before starting the independent refresh.
     void this.refreshComparison(generation)
     void this.loadTasks(generation, preferences.selectedTaskID ?? undefined)
-    void this.loadSettings(generation, preferences.selectedTaskID ?? undefined, selectionRevision)
+    if (recoveringAssignment) void this.recheckAssignmentWrite()
+    else
+      void this.loadSettings(generation, preferences.selectedTaskID ?? undefined, selectionRevision)
     void this.loadCatalog(generation)
     void this.refreshSources(generation)
     void this.refreshDecisionSnapshot(generation)
@@ -1626,6 +1653,51 @@ export class ModelComparisonPanelState {
     this.assignmentController.abort()
     this.assignmentController = new AbortController()
     this.assignmentOperation = undefined
+  }
+
+  private restorePendingAssignmentWrite() {
+    const write = this.data.assignmentWrite
+    const target = write?.target
+    const transport = this.transport
+    if (
+      !write ||
+      !target ||
+      !isRecoverableAssignmentStatus(write.status) ||
+      !transport ||
+      this.controller.signal.aborted ||
+      this.data.projectID !== this.projectID ||
+      this.data.projectDirectory !== this.projectDirectory ||
+      (target.scope === "task" && target.taskID !== this.data.selectedTaskID)
+    )
+      return false
+
+    const targetRevision = write.revision ?? write.expectedRevision + 1
+    const operation: PendingAssignmentWrite = {
+      request: ++this.assignmentRequest,
+      generation: this.generation,
+      selectionRevision: this.selectionRevision,
+      taskID: this.data.selectedTaskID,
+      projectDirectory: this.projectDirectory,
+      transport,
+      target,
+      persona: write.persona,
+      route: write.route,
+      expectedRevision: write.expectedRevision,
+      targetRevision,
+      outcome: write.status === "verifying" ? "updated" : "uncertain",
+      signal: AbortSignal.any([this.controller.signal, this.assignmentController.signal]),
+    }
+    this.assignmentOperation = operation
+    this.update({
+      assignmentWrite: {
+        ...write,
+        status: "uncertain",
+        revision: targetRevision,
+        message:
+          "The previous connection ended before this route could be confirmed. Checking authoritative settings without replaying the write.",
+      },
+    })
+    return true
   }
 
   close() {

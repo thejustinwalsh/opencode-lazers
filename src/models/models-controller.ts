@@ -32,7 +32,7 @@ import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"
-import { ModelComparisonPanelState, isSeedable } from "./comparison-state.ts"
+import { ModelComparisonPanelState, isConnectionSeedable } from "./comparison-state.ts"
 import type {
   ModelCatalogOutput,
   ModelComparisonPanelData,
@@ -77,7 +77,7 @@ export const modelsSnapshotKey = (key: string, filters: ModelDecisionFilters) =>
   JSON.stringify([key, filters.persona, filters.taskKind, filters.period])
 
 export function rememberModelsSnapshot(data: ModelComparisonPanelData) {
-  if (!data.key || !isSeedable(data)) return
+  if (!data.key || !isConnectionSeedable(data)) return
   const key = modelsSnapshotKey(data.key, data.decisionFilters)
   snapshots.delete(key)
   snapshots.set(key, data)
@@ -238,11 +238,17 @@ export function createModelsController(props: ModelsProps) {
     if (!key) return undefined
     if (data().key === key) return data()
     const view = prefs()
-    return recallModelsSnapshot(key, {
+    const snapshot = recallModelsSnapshot(key, {
       persona: view.persona,
       taskKind: view.taskKind ?? null,
       period: { from: null, to: null },
     })
+    const write = snapshot?.assignmentWrite
+    return write &&
+      (snapshot.selectedTaskID !== view.selectedTaskID ||
+        (write.target?.scope === "task" && write.target.taskID !== view.selectedTaskID))
+      ? { ...snapshot, assignmentWrite: undefined }
+      : snapshot
   }
 
   onCleanup(() => {

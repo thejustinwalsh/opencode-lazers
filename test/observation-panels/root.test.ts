@@ -894,6 +894,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       throw new Error("Expected task fixture for settings authority")
     assignmentAuthorityRepository.insert(authorityTask.task)
     const settingsAuthority = new ModelSettingsService(assignmentAuthorityRepository)
+    let pendingAssignmentConfigure:
+      Deferred<ReturnType<ModelSettingsService["configure"]>> | undefined
     settingsAuthority.configure({
       target: { scope: "project" },
       persona: "ui",
@@ -1198,6 +1200,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                   currentRevision: 0,
                   current: null,
                 }
+              if (pendingAssignmentConfigure) return pendingAssignmentConfigure.promise
               return settingsAuthority.configure({
                 target: input.target,
                 persona: input.persona,
@@ -3490,7 +3493,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       () => (sourceSignals.get(DIRECTORY_A)?.length ?? 0) === sourceSignalsBeforePinnedRefresh + 2,
     )
     await new Promise<void>((r) => setTimeout(r, 500))
-    console.log("DBG", comparisonCounts.get(DIRECTORY_A), beforeLateHiddenResult)
     await until(() => (comparisonCounts.get(DIRECTORY_A) ?? 0) >= (beforeLateHiddenResult ?? 0) + 2)
     const afterReconnectComparisons = comparisonCounts.get(DIRECTORY_A)
     deferredA3.resolve(sourceEvidence())
@@ -3597,6 +3599,100 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     )
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedTaskID).toBe(TASK_A)
     expect(modelStore.snapshot().projects[DIRECTORY_A]?.selectedConfigurationID).toBe(CONFIG_ONE)
+
+    containerA
+      .querySelector<HTMLButtonElement>(
+        '[role="tab"][aria-controls="lazers-models-assignments-panel"]',
+      )
+      ?.click()
+    await until(() => containerA.querySelector(".lazers-models-assignment-editor") !== null)
+    rowForPersona("UI").click()
+    chooseScope("project")
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-current")
+          ?.textContent?.includes("gpt-6 · high") === true,
+    )
+    const reconnectRoute = {
+      providerID: "manual-provider",
+      id: "reconnected-model",
+      variant: "native/effort",
+    }
+    currentAssignmentEditor().querySelector<HTMLDetailsElement>(
+      ".lazers-models-assignment-manual-route",
+    )!.open = true
+    fillTextInput(containerA, "Provider ID", reconnectRoute.providerID)
+    fillTextInput(containerA, "Model ID", reconnectRoute.id)
+    fillTextInput(containerA, "Variant / effort (optional)", reconnectRoute.variant)
+    const pendingConfigure = deferred<ReturnType<ModelSettingsService["configure"]>>()
+    pendingAssignmentConfigure = pendingConfigure
+    const configureCountBeforeReconnect = calls.filter(
+      (call) => call.directory === DIRECTORY_A && call.method === "configure",
+    ).length
+    buttonWithText(containerA.querySelector(".lazers-details-bar")!, "Save")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.getAttribute("data-status") === "saving" &&
+        calls.filter((call) => call.directory === DIRECTORY_A && call.method === "configure")
+          .length ===
+          configureCountBeforeReconnect + 1,
+    )
+    const pendingConfigureCall = calls
+      .filter((call) => call.directory === DIRECTORY_A && call.method === "configure")
+      .at(-1)!
+    const locationCountBeforeReconnect = locationSignals.get(DIRECTORY_A)?.length ?? 0
+    mountA.setVisible(false)
+    await until(() => pendingConfigureCall.signal?.aborted === true)
+    mountA.setVisible(true)
+    await until(
+      () => (locationSignals.get(DIRECTORY_A)?.length ?? 0) === locationCountBeforeReconnect + 1,
+    )
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.getAttribute("data-status") === "uncertain",
+    )
+    const uncertainFeedback = containerA.querySelector<HTMLElement>(
+      ".lazers-models-assignment-feedback",
+    )!
+    expect(uncertainFeedback.textContent).toContain("Write unconfirmed")
+    expect(uncertainFeedback.textContent).not.toContain("Saved")
+    expect(
+      calls.filter((call) => call.directory === DIRECTORY_A && call.method === "configure"),
+    ).toHaveLength(configureCountBeforeReconnect + 1)
+
+    const recoveredMapping = settingsAuthority.configure({
+      target: { scope: "project" },
+      persona: "ui",
+      expectedRevision: 2,
+      route: reconnectRoute,
+    })
+    pendingConfigure.resolve(recoveredMapping)
+    pendingAssignmentConfigure = undefined
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(uncertainFeedback.getAttribute("data-status")).toBe("uncertain")
+    buttonWithText(uncertainFeedback, "Check saved settings")?.click()
+    await until(
+      () =>
+        containerA
+          .querySelector(".lazers-models-assignment-feedback")
+          ?.getAttribute("data-status") === "confirmed",
+    )
+    expect(containerA.querySelector(".lazers-models-assignment-feedback")?.textContent).toContain(
+      "Saved",
+    )
+    expect(
+      calls.filter((call) => call.directory === DIRECTORY_A && call.method === "configure"),
+    ).toHaveLength(configureCountBeforeReconnect + 1)
+    expect(
+      calls.filter((call) => call.directory === DIRECTORY_A && call.method === "settings").at(-1),
+    ).toMatchObject({
+      input: { sessionID: sessionA.id, taskID: TASK_A },
+    })
 
     const containerB = browserDocument.createElement("main")
     browserDocument.body.append(containerB)
