@@ -30,6 +30,8 @@ serde_json = "1"
 [profile.release]
 lto = true
 codegen-units = 1
-opt-level = "z"
+# Speed first: opt-level 3 ran the five report sections about 25% faster than "z" on this
+# repository (see .agents/plans/fallow-wasm-tools.md); the module is larger and that is accepted.
+opt-level = 3
 panic = "abort"
 strip = "debuginfo"
