@@ -1,141 +1,89 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
-import * as fallow from "@fallow-cli/fallow-node"
-import { Project, initSync } from "./fallow.js"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { loadNativeFallow, type NativeFallow } from "./native-reference.ts"
+import { makeFixture, repoRoot, runOp, trackedSources } from "./test-support.ts"
 
 /**
- * Parity of the WebAssembly module against native Fallow (the pinned
- * `@fallow-cli/fallow-node`), on this repository and on a small fixture.
+ * Parity of the WebAssembly module against native Fallow (the pinned `@fallow-cli/fallow-node`,
+ * a dev dependency; the file skips when it is not installed), on this repository and on a
+ * fixture whose dependency is reached through a symlink.
  *
- * Known, intended differences (everything else must match exactly):
- *  - CRAP-only complexity findings. Native also lists a function whose estimated CRAP score
- *    exceeds `maxCrap` with both complexities within limits. The module reports cyclomatic and
- *    cognitive findings only; CRAP needs the coverage model, which is not ported.
- *  - Dead code and architecture (import cycles) are not exposed: they need module resolution and
- *    plugin discovery over a real filesystem, which the module does not have.
+ * The dead-code, import-cycle, architecture, feature-flag, duplication and health reports must
+ * equal native field for field, apart from `elapsed_ms`. The two lighter operations the review
+ * uses (in-memory complexity and clone detection) are compared by finding location.
+ * Known, intended difference of those two: CRAP-only complexity findings are not reported, as
+ * CRAP needs the coverage model.
  */
-const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
-const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
+const native: NativeFallow | undefined = await loadNativeFallow()
+const parity = native ? describe : describe.skip
 
-type Instance = { file: string; startLine: number; endLine: number }
-type Group = { tokenCount: number; lineCount: number; instances: Instance[] }
-type Envelope<T> = { ok: true } & T
+const strip = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(strip)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .filter(([key]) => key !== "elapsed_ms")
+            .map(([key, entry]) => [key, strip(entry)]),
+        )
+      : value
 
-function call<T>(json: string): Envelope<T> {
-  const parsed = JSON.parse(json) as Envelope<T> | { error: { code: string; message: string } }
-  if ("error" in parsed) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
-  return parsed
+const sections = [
+  ["deadCode", "deadCode", "detectDeadCode", {}],
+  ["duplication", "duplicationReport", "detectDuplication", {}],
+  ["health", "health", "computeHealth", { css: true }],
+  ["architecture", "architecture", "detectArchitecture", {}],
+  ["featureFlags", "featureFlagReport", "detectFeatureFlags", {}],
+  ["cycles", "cycles", "detectCircularDependencies", {}],
+] as const
+
+/** Wall-clock milliseconds per analysis, recorded for the plan. */
+export const timings: Record<string, { wasm: number; native: number }> = {}
+
+async function compareSections(root: string, label: string) {
+  for (const [name, op, nativeFn, extra] of sections) {
+    const options = { root, threads: 1, noCache: true, explain: name !== "cycles", ...extra }
+    const startNative = performance.now()
+    const expected = await native![nativeFn]!(options)
+    const nativeMs = performance.now() - startNative
+    const startWasm = performance.now()
+    const { report } = runOp(op, root, { options: { threads: 1, explain: true, css: true } })
+    const wasmMs = performance.now() - startWasm
+    timings[`${label}:${name}`] = { wasm: Math.round(wasmMs), native: Math.round(nativeMs) }
+    // `cycles` with explain differs only in `_meta`, which native omits without the flag.
+    // Native keeps a process-wide registry of workspace diagnostics, so a `change-coupling-skipped`
+    // note from an earlier health call on the same root also shows up in the later sections of
+    // that process. Every module call starts clean and reports it only in health.
+    const normalize = (value: unknown) => {
+      const base = strip(value) as { workspace_diagnostics?: { kind: string }[] }
+      const diagnostics =
+        name === "health"
+          ? base.workspace_diagnostics
+          : base.workspace_diagnostics?.filter((d) => d.kind !== "change-coupling-skipped")
+      return {
+        ...base,
+        ...(diagnostics ? { workspace_diagnostics: diagnostics } : {}),
+        ...(name === "cycles" ? { _meta: undefined } : {}),
+      }
+    }
+    expect(normalize(report), `${label} ${name}`).toEqual(normalize(expected))
+  }
 }
 
-function groupKeys(groups: { instances: { file: string; start: number; end: number }[] }[]) {
-  return new Set(
-    groups.map((group) =>
-      group.instances
-        .map((instance) => `${instance.file}:${instance.start}-${instance.end}`)
-        .sort()
-        .join("|"),
-    ),
-  )
-}
-const wasmKeys = (groups: Group[]) =>
-  groupKeys(
-    groups.map((group) => ({
-      instances: group.instances.map((i) => ({ file: i.file, start: i.startLine, end: i.endLine })),
-    })),
-  )
-type NativeGroup = { instances: { file: string; start_line: number; end_line: number }[] }
-const nativeKeys = (groups: NativeGroup[]) =>
-  groupKeys(
-    groups.map((group) => ({
-      instances: group.instances.map((i) => ({
-        file: i.file,
-        start: i.start_line,
-        end: i.end_line,
-      })),
-    })),
-  )
+parity("this repository", () => {
+  test("dead code, cycles, architecture, feature flags, duplication and health equal native", async () => {
+    await compareSections(repoRoot, "repo")
+    console.log("fallow timings (ms)", JSON.stringify(timings))
+  }, 300_000)
 
-function difference(a: Set<string>, b: Set<string>) {
-  return [...a].filter((key) => !b.has(key)).sort()
-}
-
-function open(root: string, paths: string[], configName: string, configText: string) {
-  const contents = paths.map((path) => readFileSync(join(root, path), "utf8"))
-  return new Project("/ws", paths, contents, configName, configText)
-}
-
-beforeAll(() => {
-  initSync({ module: wasmBytes })
-})
-
-describe("this repository", () => {
-  const tracked = execFileSync("git", ["ls-files", "-z"], {
-    cwd: repoRoot,
-    maxBuffer: 1 << 28,
-  })
-    .toString()
-    .split("\0")
-    .filter(Boolean)
-  const config = readFileSync(join(repoRoot, ".fallowrc.json"), "utf8")
-  let project: Project
-
-  beforeAll(() => {
-    project = open(repoRoot, tracked, ".fallowrc.json", config)
-  })
-
-  test("clone groups match native detectDuplication", async () => {
-    const native = (await fallow.detectDuplication({
+  test("in-memory complexity and clone groups match native by location", async () => {
+    const paths = trackedSources(repoRoot)
+    const nativeHealth = (await native!.computeComplexity!({
       root: repoRoot,
       noCache: true,
       threads: 1,
-    })) as unknown as {
-      clone_groups: (NativeGroup & { token_count: number; line_count: number })[]
-      stats: {
-        total_files: number
-        total_lines: number
-        duplicated_lines: number
-        clone_groups: number
-      }
-    }
-    const wasm = call<{
-      groups: Group[]
-      stats: {
-        totalFiles: number
-        totalLines: number
-        duplicatedLines: number
-        cloneGroups: number
-      }
-    }>(project.duplication([], ""))
-
-    expect(difference(wasmKeys(wasm.groups), nativeKeys(native.clone_groups))).toEqual([])
-    expect(difference(nativeKeys(native.clone_groups), wasmKeys(wasm.groups))).toEqual([])
-    expect(wasm.groups.length).toBe(native.clone_groups.length)
-    expect(wasm.stats).toMatchObject({
-      totalFiles: native.stats.total_files,
-      totalLines: native.stats.total_lines,
-      duplicatedLines: native.stats.duplicated_lines,
-      cloneGroups: native.stats.clone_groups,
-    })
-    // Token and line counts agree per group, not only the locations.
-    const nativeCounts = new Map(
-      native.clone_groups.map((g) => [[...nativeKeys([g])][0], `${g.token_count}/${g.line_count}`]),
-    )
-    for (const group of wasm.groups) {
-      const key = [...wasmKeys([group])][0]
-      expect(`${group.tokenCount}/${group.lineCount}`).toBe(nativeCounts.get(key) as string)
-    }
-  }, 60_000)
-
-  test("complexity findings match native computeComplexity, apart from CRAP-only findings", async () => {
-    const native = (await fallow.computeComplexity({
-      root: repoRoot,
-      noCache: true,
-      threads: 1,
-    })) as unknown as {
+    })) as {
       findings: {
         path: string
         name: string
@@ -145,7 +93,7 @@ describe("this repository", () => {
         exceeded: string
       }[]
     }
-    const wasm = call<{
+    const wasmHealth = runOp("complexity", repoRoot, { paths, options: {} }).report as {
       functions: {
         file: string
         name: string
@@ -153,114 +101,7 @@ describe("this repository", () => {
         cyclomatic: number
         cognitive: number
       }[]
-    }>(project.complexity([]))
-    const key = (
-      file: string,
-      f: { name: string; line: number; cyclomatic: number; cognitive: number },
-    ) => `${file}:${f.line}:${f.name}:${f.cyclomatic}:${f.cognitive}`
-    const expected = new Set(
-      native.findings.filter((f) => f.exceeded !== "crap").map((f) => key(f.path, f)),
-    )
-    const actual = new Set(wasm.functions.map((f) => key(f.file, f)))
-    expect(difference(actual, expected)).toEqual([])
-    expect(difference(expected, actual)).toEqual([])
-  }, 60_000)
-
-  test("a changed-file run reports exactly the full-run groups that touch the changed files", () => {
-    const full = call<{ groups: Group[] }>(project.duplication([], "")).groups
-    const touched = [...new Set(full.flatMap((group) => group.instances.map((i) => i.file)))].sort()
-    const changed = touched.filter(
-      (_, index) => index % Math.max(1, Math.floor(touched.length / 10)) === 0,
-    )
-    const focused = call<{ groups: Group[] }>(project.duplication(changed, "")).groups
-    const expected = full.filter((group) => group.instances.some((i) => changed.includes(i.file)))
-    expect(difference(wasmKeys(focused), wasmKeys(expected))).toEqual([])
-    expect(difference(wasmKeys(expected), wasmKeys(focused))).toEqual([])
-    expect(focused.length).toBe(expected.length)
-  })
-})
-
-describe("fixture project", () => {
-  let dir: string
-  let paths: string[]
-  const block = (name: string) => `export function ${name}(items: number[], limit: number) {
-  const out: number[] = []
-  for (const item of items) {
-    if (item > limit) {
-      out.push(item * 2)
-    } else if (item < 0) {
-      out.push(-item)
-    } else {
-      out.push(item + limit)
     }
-  }
-  const total = out.reduce((sum, value) => sum + value, 0)
-  const average = out.length === 0 ? 0 : total / out.length
-  return { out, total, average, max: Math.max(...out), min: Math.min(...out) }
-}
-`
-  const branchy = `export function route(a: number, b: number, c: string): string {
-${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k${i}") {\n    if (b % 2 === 0) { return "even${i}" }\n  }`).join("\n")}
-  return "none"
-}
-`
-  const files: Record<string, string> = {
-    "package.json": JSON.stringify({ name: "fixture", type: "module" }),
-    "src/a.ts": block("alpha"),
-    "src/b.ts": block("beta"),
-    "src/c.ts": branchy,
-    "src/flags.ts": `export function mode(): number {
-  if (process.env.FEATURE_NEW_CHECKOUT) return 1
-  return process.env.ENABLE_BETA_PANEL ? 2 : 0
-}
-`,
-    "src/view.vue": `<script setup lang="ts">\n${block("gamma")}\n</script>\n<template><div /></template>\n`,
-  }
-
-  beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), "fallow-fixture-"))
-    for (const [path, text] of Object.entries(files)) {
-      mkdirSync(dirname(join(dir, path)), { recursive: true })
-      writeFileSync(join(dir, path), text)
-    }
-    paths = Object.keys(files)
-  })
-
-  test("clone groups and complexity match native", async () => {
-    const project = open(dir, paths, "fallow.toml", "")
-    const nativeDupes = (await fallow.detectDuplication({
-      root: dir,
-      noCache: true,
-      threads: 1,
-    })) as unknown as { clone_groups: NativeGroup[] }
-    const wasmDupes = call<{ groups: Group[] }>(project.duplication([], "")).groups
-    expect(nativeDupes.clone_groups.length).toBeGreaterThan(0)
-    expect(difference(wasmKeys(wasmDupes), nativeKeys(nativeDupes.clone_groups))).toEqual([])
-    expect(difference(nativeKeys(nativeDupes.clone_groups), wasmKeys(wasmDupes))).toEqual([])
-
-    const nativeHealth = (await fallow.computeComplexity({
-      root: dir,
-      noCache: true,
-      threads: 1,
-    })) as unknown as {
-      findings: {
-        path: string
-        name: string
-        line: number
-        cyclomatic: number
-        cognitive: number
-        exceeded: string
-      }[]
-    }
-    const wasmHealth = call<{
-      functions: {
-        file: string
-        name: string
-        line: number
-        cyclomatic: number
-        cognitive: number
-      }[]
-    }>(project.complexity([]))
     const key = (
       file: string,
       f: { name: string; line: number; cyclomatic: number; cognitive: number },
@@ -271,69 +112,160 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
         .map((f) => key(f.path, f))
         .sort(),
     )
-    expect(wasmHealth.functions.length).toBeGreaterThan(0)
-  }, 60_000)
 
-  test("a changed set returns the full-run groups that touch it, with the same grouping", () => {
-    const project = open(dir, paths, "fallow.toml", "")
-    const full = call<{ groups: Group[] }>(project.duplication([], "")).groups
-    expect(full.length).toBeGreaterThan(0)
-    const only = call<{ groups: Group[] }>(project.duplication(["src/a.ts"], "")).groups
-    expect(only.length).toBeGreaterThan(0)
-    expect(only.every((g) => g.instances.some((i) => i.file === "src/a.ts"))).toBe(true)
-    expect(wasmKeys(only)).toEqual(
-      wasmKeys(full.filter((g) => g.instances.some((i) => i.file === "src/a.ts"))),
+    const nativeDupes = (await native!.detectDuplication!({
+      root: repoRoot,
+      noCache: true,
+      threads: 1,
+    })) as {
+      clone_groups: { instances: { file: string; start_line: number; end_line: number }[] }[]
+    }
+    const wasmDupes = runOp("duplication", repoRoot, {
+      paths,
+      configPath: join(repoRoot, ".fallowrc.json"),
+      options: {},
+    }).report as { groups: { instances: { file: string; startLine: number; endLine: number }[] }[] }
+    const keys = (groups: { instances: { file: string; s: number; e: number }[] }[]) =>
+      groups
+        .map((g) =>
+          g.instances
+            .map((i) => `${i.file}:${i.s}-${i.e}`)
+            .sort()
+            .join("|"),
+        )
+        .sort()
+    expect(
+      keys(
+        wasmDupes.groups.map((g) => ({
+          instances: g.instances.map((i) => ({ file: i.file, s: i.startLine, e: i.endLine })),
+        })),
+      ),
+    ).toEqual(
+      keys(
+        nativeDupes.clone_groups.map((g) => ({
+          instances: g.instances.map((i) => ({ file: i.file, s: i.start_line, e: i.end_line })),
+        })),
+      ),
     )
-    expect(call<{ groups: Group[] }>(project.duplication(["src/c.ts"], "")).groups).toEqual([])
+  }, 120_000)
+})
+
+parity("fixture with a symlinked dependency", () => {
+  let dir: string
+  beforeAll(() => {
+    dir = makeFixture()
+  })
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  test("every section equals native", async () => {
+    await compareSections(dir, "fixture")
+  }, 120_000)
+
+  test("findings are the expected ones, so equality is not between two empty reports", () => {
+    const dead = runOp("deadCode", dir).report
+    // `dep-a` resolves through node_modules/dep-a -> ../packages/dep-a, so it is not unresolved,
+    // and the declared dependency nobody imports is reported.
+    expect(dead.unresolved_imports).toEqual([])
+    expect(dead.unused_files.map((f: { path: string }) => f.path)).toContain("src/orphan.ts")
+    expect(dead.unused_exports.map((f: { export_name: string }) => f.export_name)).toContain(
+      "unusedExport",
+    )
+    expect(dead.unused_dependencies.map((f: { package_name: string }) => f.package_name)).toEqual([
+      "never-used",
+    ])
+    const cycles = runOp("cycles", dir).report
+    expect(cycles.circular_dependencies.length).toBe(1)
+    const flags = runOp("featureFlagReport", dir).report
+    expect(flags.total_flags).toBeGreaterThan(0)
   })
 
-  test("feature flags match native detectFeatureFlags", async () => {
-    const project = open(dir, paths, "fallow.toml", "")
-    const native = (await fallow.detectFeatureFlags({
+  test("in-memory complexity, clone groups and flags match native", async () => {
+    const paths = trackedSources(dir)
+    const config = join(dir, ".fallowrc.json")
+    const nativeDupes = (await native!.detectDuplication!({
       root: dir,
       noCache: true,
       threads: 1,
-    })) as unknown as { feature_flags: { path: string; flag_name: string; line: number }[] }
-    const wasm = call<{ flags: { file: string; name: string; line: number }[] }>(
-      project.featureFlags([]),
-    )
-    const key = (file: string, name: string, line: number) => `${file}:${line}:${name}`
-    expect(native.feature_flags.length).toBeGreaterThan(0)
-    expect(wasm.flags.map((f) => key(f.file, f.name, f.line)).sort()).toEqual(
-      native.feature_flags.map((f) => key(f.path, f.flag_name, f.line)).sort(),
-    )
-  }, 60_000)
+      configPath: config,
+    })) as { clone_groups: unknown[] }
+    const wasmDupes = runOp("duplication", dir, { paths, configPath: config, options: {} }).report
+    expect(nativeDupes.clone_groups.length).toBeGreaterThan(0)
+    expect(wasmDupes.groups.length).toBe(nativeDupes.clone_groups.length)
 
-  afterAll(() => {
-    rmSync(dir, { recursive: true, force: true })
-  })
+    const nativeHealth = (await native!.computeComplexity!({
+      root: dir,
+      noCache: true,
+      threads: 1,
+      configPath: config,
+    })) as { findings: { exceeded: string; name: string }[] }
+    const wasmHealth = runOp("complexity", dir, { paths, configPath: config, options: {} }).report
+    expect(wasmHealth.functions.map((f: { name: string }) => f.name).sort()).toEqual(
+      nativeHealth.findings
+        .filter((f) => f.exceeded !== "crap")
+        .map((f) => f.name)
+        .sort(),
+    )
+    expect(wasmHealth.functions.length).toBeGreaterThan(0)
+
+    // Only files the changed set touches come back, grouped as in the full run.
+    const only = runOp("duplication", dir, {
+      paths,
+      files: ["src/a.ts"],
+      configPath: config,
+      options: {},
+    }).report
+    expect(only.groups.length).toBeGreaterThan(0)
+    expect(
+      only.groups.every((g: { instances: { file: string }[] }) =>
+        g.instances.some((i) => i.file === "src/a.ts"),
+      ),
+    ).toBe(true)
+  }, 60_000)
 })
 
-describe("config text", () => {
-  const errorFor = (name: string, text: string) => {
-    const project = new Project("/ws", ["a.ts"], ["export {}"], name, text)
-    return (JSON.parse(project.duplication([], "")) as { error?: { code: string } }).error?.code
-  }
+describe("config files", () => {
+  let dir: string
+  beforeAll(() => {
+    dir = makeFixture()
+    mkdirSync(join(dir, "config"), { recursive: true })
+    writeFileSync(
+      join(dir, "config/base.json"),
+      JSON.stringify({ ignorePatterns: ["src/a.ts", "src/b.ts", "src/view.vue"] }),
+    )
+    writeFileSync(
+      join(dir, "config/local.json"),
+      JSON.stringify({ extends: ["./base.json"], entry: ["src/index.ts"] }),
+    )
+    writeFileSync(
+      join(dir, "config/remote.json"),
+      JSON.stringify({ extends: ["https://example.com/base.json"] }),
+    )
+    writeFileSync(join(dir, "config/bad.json"), "{ nope")
+  })
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  test("a remote extends returns remote-extends-unsupported", () => {
-    expect(errorFor(".fallowrc.json", '{"extends":["https://example.com/base.json"]}')).toBe(
-      "remote-extends-unsupported",
-    )
-    expect(errorFor("fallow.toml", 'extends = ["https://example.com/base.json"]')).toBe(
-      "remote-extends-unsupported",
-    )
+  const duplication = (configPath: string, paths = trackedSources(dir)) =>
+    runOp("duplication", dir, { paths, configPath, options: {} }).report
+
+  test("a local extends resolves through the filesystem and changes the result", async () => {
+    // The base file ignores the three files that clone each other.
+    const withBase = duplication(join(dir, "config/local.json"))
+    const without = duplication(join(dir, ".fallowrc.json"))
+    expect(without.groups.length).toBeGreaterThan(0)
+    expect(withBase.groups.length).toBe(0)
+    if (native) {
+      const expected = (await native.detectDuplication!({
+        root: dir,
+        noCache: true,
+        threads: 1,
+        configPath: join(dir, "config/local.json"),
+      })) as { clone_groups: unknown[] }
+      expect(withBase.groups.length).toBe(expected.clone_groups.length)
+    }
   })
 
-  test("a local extends, an invalid file and an unknown key are errors, not silent defaults", () => {
-    expect(errorFor(".fallowrc.json", '{"extends":["./base.json"]}')).toBe("extends-unsupported")
-    expect(errorFor(".fallowrc.json", "{ nope")).toBe("config-invalid")
-    expect(errorFor(".fallowrc.json", '{"unknownField":true}')).toBe("config-invalid")
-  })
-
-  test("jsonc comments and toml parse", () => {
-    expect(
-      errorFor(".fallowrc.jsonc", '{ // comment\n "duplicates": { "minTokens": 30 } }'),
-    ).toBeUndefined()
-    expect(errorFor("fallow.toml", "[duplicates]\nminTokens = 30")).toBeUndefined()
+  test("a remote extends and an invalid file are explicit errors", () => {
+    expect(() => duplication(join(dir, "config/remote.json"))).toThrow(/extends/i)
+    expect(() => duplication(join(dir, "config/bad.json"))).toThrow(/config/i)
   })
 })

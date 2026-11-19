@@ -1,6 +1,18 @@
 import { realpath, readFile } from "node:fs/promises"
 import { AuditHistory } from "./history.ts"
+import { fallowSection, type ReportSection } from "./wasm-analyzer.ts"
 import type { AuditActor, AuditRun } from "./history.ts"
+
+/** The five sections, in the order they are stored. */
+const SECTIONS: readonly ReportSection[] = [
+  "deadCode",
+  "duplication",
+  "health",
+  "architecture",
+  "featureFlags",
+]
+/** A whole-repository section on a large project takes far longer than a changed-file review. */
+const SECTION_TIMEOUT_MS = 10 * 60_000
 
 export type AuditRequest = {
   requestID: string
@@ -19,7 +31,7 @@ async function result(history: AuditHistory, runID: string) {
     return { ...output, exportError: error instanceof Error ? error.message : String(error) }
   }
 }
-/** Persist each native result before proceeding; worktree files are never the history authority. */
+/** Persist each result before proceeding; worktree files are never the history authority. */
 export async function fallowReport(
   history: AuditHistory,
   input: AuditRequest,
@@ -30,20 +42,10 @@ export async function fallowReport(
   if (!start.created) return result(history, start.run.runID)
   const runID = start.run.runID
   try {
-    const fallow = await import("@fallow-cli/fallow-node")
-    const options = {
-      root: start.run.workspace,
-      threads: input.threads ?? 1,
-      explain: true,
-      noCache: true,
-    }
-    const scans = {
-      deadCode: () => fallow.detectDeadCode(options),
-      duplication: () => fallow.detectDuplication(options),
-      health: () => fallow.computeHealth({ ...options, css: true }),
-      architecture: () => fallow.detectArchitecture(options),
-      featureFlags: () => fallow.detectFeatureFlags(options),
-    }
+    const scope = { root: start.run.workspace, signal, timeoutMs: SECTION_TIMEOUT_MS }
+    const scans = Object.fromEntries(
+      SECTIONS.map((name) => [name, () => fallowSection(name, scope)]),
+    )
     for (const [name, scan] of Object.entries(scans)) {
       signal?.throwIfAborted()
       let report: unknown, failure: string | undefined

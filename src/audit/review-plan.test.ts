@@ -14,11 +14,6 @@ import { TaskRepository } from "../storage.ts"
 import { fallowPlanReview } from "./review-plan.ts"
 import { attributeFindingsToTasks } from "./task-attribution.ts"
 
-const nativeAvailable = await import("@fallow-cli/fallow-node").then(
-  () => true,
-  () => false,
-)
-
 const cleanups: (() => void)[] = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
@@ -145,76 +140,64 @@ test("a finding in one task's file names just that task", async () => {
   expect(result.introduced[0]?.taskIDs).toBeUndefined()
 })
 
-test.skipIf(!nativeAvailable)(
-  "an import cycle added since the plan base is a concern, not an introduced finding",
-  async () => {
-    const dir = await baseRepo()
-    writeFileSync(join(dir, "a.ts"), "export const a = 1\n")
-    writeFileSync(join(dir, "b.ts"), "import { a } from './a.ts'\nexport const b = a + 1\n")
-    const base = await commit(dir, "base: b imports a")
-    writeFileSync(
-      join(dir, "a.ts"),
-      "import { b } from './b.ts'\nexport const a = 1\nexport const c = b\n",
-    )
-    const artifact = await commit(dir, "a now imports b")
-    const result = await fallowPlanReview({
-      workspace: dir,
-      baseCommit: base,
-      artifact,
-      repository: repository(dir),
-    })
-    const cycle = result.concerns.find((finding) => finding.check === "cycle")
-    expect(cycle?.subject).toContain("a.ts")
-    expect(cycle?.subject).toContain("b.ts")
-    expect(result.introduced.filter((finding) => finding.check === "cycle")).toEqual([])
-    expect(existsSync(join(dir, ".fallow"))).toBe(false)
-  },
-  60_000,
-)
+test("an import cycle added since the plan base is a concern, not an introduced finding", async () => {
+  const dir = await baseRepo()
+  writeFileSync(join(dir, "a.ts"), "export const a = 1\n")
+  writeFileSync(join(dir, "b.ts"), "import { a } from './a.ts'\nexport const b = a + 1\n")
+  const base = await commit(dir, "base: b imports a")
+  writeFileSync(
+    join(dir, "a.ts"),
+    "import { b } from './b.ts'\nexport const a = 1\nexport const c = b\n",
+  )
+  const artifact = await commit(dir, "a now imports b")
+  const result = await fallowPlanReview({
+    workspace: dir,
+    baseCommit: base,
+    artifact,
+    repository: repository(dir),
+  })
+  const cycle = result.concerns.find((finding) => finding.check === "cycle")
+  expect(cycle?.subject).toContain("a.ts")
+  expect(cycle?.subject).toContain("b.ts")
+  expect(result.introduced.filter((finding) => finding.check === "cycle")).toEqual([])
+  expect(existsSync(join(dir, ".fallow"))).toBe(false)
+}, 60_000)
 
-test.skipIf(!nativeAvailable)(
-  "a cycle that already existed at the base is not reported",
-  async () => {
-    const dir = await baseRepo()
-    writeFileSync(
-      join(dir, "a.ts"),
-      "import { b } from './b.ts'\nexport const a = 1\nexport const c = b\n",
-    )
-    writeFileSync(join(dir, "b.ts"), "import { a } from './a.ts'\nexport const b = a + 1\n")
-    const base = await commit(dir, "base with a cycle")
-    writeFileSync(join(dir, "c.ts"), "export const unrelated = 1\n")
-    const artifact = await commit(dir, "unrelated")
-    const result = await fallowPlanReview({
-      workspace: dir,
-      baseCommit: base,
-      artifact,
-      repository: repository(dir),
-    })
-    expect(result.concerns.filter((finding) => finding.check === "cycle")).toEqual([])
-  },
-  60_000,
-)
+test("a cycle that already existed at the base is not reported", async () => {
+  const dir = await baseRepo()
+  writeFileSync(
+    join(dir, "a.ts"),
+    "import { b } from './b.ts'\nexport const a = 1\nexport const c = b\n",
+  )
+  writeFileSync(join(dir, "b.ts"), "import { a } from './a.ts'\nexport const b = a + 1\n")
+  const base = await commit(dir, "base with a cycle")
+  writeFileSync(join(dir, "c.ts"), "export const unrelated = 1\n")
+  const artifact = await commit(dir, "unrelated")
+  const result = await fallowPlanReview({
+    workspace: dir,
+    baseCommit: base,
+    artifact,
+    repository: repository(dir),
+  })
+  expect(result.concerns.filter((finding) => finding.check === "cycle")).toEqual([])
+}, 60_000)
 
-test.skipIf(!nativeAvailable)(
-  "dead code introduced since the base is a concern when the config declares entry points",
-  async () => {
-    const dir = await baseRepo()
-    writeFileSync(join(dir, ".fallowrc.json"), JSON.stringify({ entry: ["index.ts"] }))
-    writeFileSync(join(dir, "index.ts"), "import { used } from './lib.ts'\nconsole.log(used)\n")
-    writeFileSync(join(dir, "lib.ts"), "export const used = 1\n")
-    const base = await commit(dir, "base")
-    writeFileSync(join(dir, "lib.ts"), "export const used = 1\nexport const orphan = 2\n")
-    const artifact = await commit(dir, "add an export nothing imports")
-    const result = await fallowPlanReview({
-      workspace: dir,
-      baseCommit: base,
-      artifact,
-      repository: repository(dir),
-    })
-    const dead = result.concerns.find((finding) => finding.check === "dead-code")
-    expect(dead?.subject).toContain("orphan")
-    expect(result.introduced.filter((finding) => finding.check === "dead-code")).toEqual([])
-    expect(existsSync(join(dir, ".fallow"))).toBe(false)
-  },
-  60_000,
-)
+test("dead code introduced since the base is a concern when the config declares entry points", async () => {
+  const dir = await baseRepo()
+  writeFileSync(join(dir, ".fallowrc.json"), JSON.stringify({ entry: ["index.ts"] }))
+  writeFileSync(join(dir, "index.ts"), "import { used } from './lib.ts'\nconsole.log(used)\n")
+  writeFileSync(join(dir, "lib.ts"), "export const used = 1\n")
+  const base = await commit(dir, "base")
+  writeFileSync(join(dir, "lib.ts"), "export const used = 1\nexport const orphan = 2\n")
+  const artifact = await commit(dir, "add an export nothing imports")
+  const result = await fallowPlanReview({
+    workspace: dir,
+    baseCommit: base,
+    artifact,
+    repository: repository(dir),
+  })
+  const dead = result.concerns.find((finding) => finding.check === "dead-code")
+  expect(dead?.subject).toContain("orphan")
+  expect(result.introduced.filter((finding) => finding.check === "dead-code")).toEqual([])
+  expect(existsSync(join(dir, ".fallow"))).toBe(false)
+}, 60_000)
