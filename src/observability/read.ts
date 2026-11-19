@@ -670,6 +670,1221 @@ function stateTransitionSet() {
   return output
 }
 
+type RadarSource = ReturnType<typeof loadRadarSource>
+type PrivacyStats = ReturnType<typeof privacyStats>
+type RadarEdge = RadarResponse["edges"][number]
+type RadarEvidence = RadarEdge["evidence"][number]
+type RadarRoute = RadarResponse["routes"][number]
+type RadarSession = RadarResponse["sessions"][number]
+type RadarDeliveryStage = NonNullable<RadarEdge["deliveryStage"]>
+
+type RadarSessionContext = {
+  reasons: Map<string, Set<string>>
+  runtimeManagedSessionIDs: Set<string>
+  expectedDirectories: Map<string, Set<string>>
+  planIDs: Map<string, Set<string>>
+  taskIDs: Map<string, Set<string>>
+  attemptIDs: Map<string, Set<string>>
+}
+
+type RadarNativeResolution = {
+  nativeInventory: RadarResponse["freshness"]["nativeInventory"]
+  inventoryTruncated: boolean
+  nativeByID: Map<string, RadarNativeSession>
+  inventorySessionIDs: Set<string>
+  nativeFailures: Set<string>
+  foreignSessionIDs: Set<string>
+  resolvedSessionIDs: Set<string>
+  scopeAncestryIDs: Set<string>
+  ancestryTruncated: boolean
+}
+
+type RadarNativeReader = {
+  host: RadarSessionHost
+  projectID: string
+  signal: AbortSignal
+}
+
+type RadarRouteSink = { routes: RadarRoute[]; routeIDs: Set<string>; truncated: boolean }
+
+type RadarEdgeBuilder = {
+  edges: RadarEdge[]
+  edgeIDs: Set<string>
+  truncated: boolean
+  stats: PrivacyStats
+}
+
+type RadarTransitionIndex = {
+  byEffectID: Map<string, TransitionRecord[]>
+  byOutboxID: Map<string, TransitionRecord[]>
+}
+
+type RadarSessionInputs = {
+  projectID: string
+  selectedIDs: string[]
+  selectedSet: ReadonlySet<string>
+  native: RadarNativeResolution
+  context: RadarSessionContext
+  routeSink: RadarRouteSink
+  stats: PrivacyStats
+  observedAt: number
+  configuredBySession: Map<string, Set<string>>
+}
+
+function newRadarSessionContext(): RadarSessionContext {
+  return {
+    reasons: new Map(),
+    runtimeManagedSessionIDs: new Set(),
+    expectedDirectories: new Map(),
+    planIDs: new Map(),
+    taskIDs: new Map(),
+    attemptIDs: new Map(),
+  }
+}
+
+function newRadarNativeResolution(): RadarNativeResolution {
+  return {
+    nativeInventory: "managed-only",
+    inventoryTruncated: false,
+    nativeByID: new Map(),
+    inventorySessionIDs: new Set(),
+    nativeFailures: new Set(),
+    foreignSessionIDs: new Set(),
+    resolvedSessionIDs: new Set(),
+    scopeAncestryIDs: new Set(),
+    ancestryTruncated: false,
+  }
+}
+
+function addContext(map: Map<string, Set<string>>, sessionID: string, id: string) {
+  const values = map.get(sessionID) ?? new Set<string>()
+  values.add(id)
+  map.set(sessionID, values)
+}
+
+function reachableSessionIDs(nativeByID: Map<string, RadarNativeSession>, rootID: string) {
+  const reachable = new Set([rootID])
+  let expanded = true
+  while (expanded) {
+    expanded = false
+    for (const session of nativeByID.values()) {
+      if (session.parentID && reachable.has(session.parentID) && !reachable.has(session.id)) {
+        reachable.add(session.id)
+        expanded = true
+      }
+    }
+  }
+  return reachable
+}
+
+async function readNativeInventory(
+  reader: RadarNativeReader,
+  scope: ObservationScope,
+  native: RadarNativeResolution,
+  context: RadarSessionContext,
+) {
+  try {
+    const inventory =
+      scope.kind === "project"
+        ? await reader.host.project(reader.projectID, true, 500, reader.signal)
+        : await reader.host.descendants(reader.projectID, scope.sessionID, true, 500, reader.signal)
+    native.inventoryTruncated = inventory.truncated
+    native.nativeInventory = inventory.truncated ? "bounded" : "complete"
+    for (const session of inventory.sessions) {
+      if (session.projectID !== reader.projectID) continue
+      native.nativeByID.set(session.id, session)
+    }
+    if (scope.kind === "project") {
+      for (const session of native.nativeByID.values()) native.inventorySessionIDs.add(session.id)
+    } else {
+      const reachable = reachableSessionIDs(native.nativeByID, scope.sessionID)
+      for (const sessionID of reachable) {
+        if (sessionID === scope.sessionID) continue
+        native.inventorySessionIDs.add(sessionID)
+        addContext(context.reasons, sessionID, "native-ancestry")
+      }
+      for (const sessionID of [...native.nativeByID.keys()])
+        if (!reachable.has(sessionID)) native.nativeByID.delete(sessionID)
+    }
+  } catch (error) {
+    if (reader.signal.aborted) throw error
+    native.nativeInventory = "unavailable"
+  }
+}
+
+async function resolveScopeRoot(
+  reader: RadarNativeReader,
+  rootID: string,
+  native: RadarNativeResolution,
+) {
+  let current = native.nativeByID.get(rootID)
+  if (current) return current
+  reader.signal.throwIfAborted()
+  try {
+    current = (await reader.host.get(rootID, reader.signal)) ?? undefined
+    native.resolvedSessionIDs.add(rootID)
+    if (current?.projectID === reader.projectID) native.nativeByID.set(rootID, current)
+    else if (current && current.projectID !== reader.projectID) {
+      native.foreignSessionIDs.add(rootID)
+      current = undefined
+    }
+  } catch (error) {
+    if (reader.signal.aborted) throw error
+    native.nativeFailures.add(rootID)
+    native.resolvedSessionIDs.add(rootID)
+  }
+  return current
+}
+
+async function resolveScopeAncestry(
+  reader: RadarNativeReader,
+  rootID: string,
+  native: RadarNativeResolution,
+  context: RadarSessionContext,
+) {
+  native.scopeAncestryIDs.add(rootID)
+  let current = await resolveScopeRoot(reader, rootID, native)
+  const visited = new Set([rootID])
+  for (let depth = 0; current?.parentID; depth++) {
+    const parentID = current.parentID
+    if (visited.has(parentID)) break
+    if (depth >= 50) {
+      native.ancestryTruncated = true
+      break
+    }
+    visited.add(parentID)
+    reader.signal.throwIfAborted()
+    try {
+      const parent = await reader.host.get(parentID, reader.signal)
+      native.resolvedSessionIDs.add(parentID)
+      if (!parent) break
+      if (parent.projectID !== reader.projectID) {
+        native.foreignSessionIDs.add(parentID)
+        break
+      }
+      native.scopeAncestryIDs.add(parentID)
+      addContext(context.reasons, parentID, "native-ancestry")
+      native.nativeByID.set(parentID, parent)
+      current = parent
+    } catch (error) {
+      if (reader.signal.aborted) throw error
+      native.nativeFailures.add(parentID)
+      native.resolvedSessionIDs.add(parentID)
+      break
+    }
+  }
+}
+
+function recordContinuationContext(
+  continuation: RadarSource["continuations"][number],
+  context: RadarSessionContext,
+) {
+  context.runtimeManagedSessionIDs.add(continuation.session_id)
+  addContext(context.reasons, continuation.session_id, "continuation")
+  addContext(context.planIDs, continuation.session_id, continuation.plan_id)
+  addContext(context.expectedDirectories, continuation.session_id, continuation.directory)
+  if (continuation.parent_id) {
+    addContext(context.reasons, continuation.parent_id, "native-ancestry")
+    addContext(context.planIDs, continuation.parent_id, continuation.plan_id)
+  }
+}
+
+function recordAttemptContext(attempt: RadarAttemptRecord, context: RadarSessionContext) {
+  context.runtimeManagedSessionIDs.add(attempt.session_id)
+  addContext(context.reasons, attempt.session_id, "attempt")
+  addContext(context.planIDs, attempt.session_id, attempt.plan_id)
+  addContext(context.taskIDs, attempt.session_id, attempt.task_id)
+  addContext(context.attemptIDs, attempt.session_id, attempt.id)
+  addContext(context.expectedDirectories, attempt.session_id, attempt.workspace)
+}
+
+function recordSourceSessionContext(source: RadarSource, context: RadarSessionContext) {
+  for (const task of source.tasks)
+    addContext(context.reasons, task.provenance.sessionID, "task-submitter")
+  for (const plan of source.radarPlans) {
+    addContext(context.reasons, plan.owner, "plan-owner")
+    addContext(context.planIDs, plan.owner, plan.id)
+  }
+  for (const continuation of source.continuations) recordContinuationContext(continuation, context)
+  for (const attempt of source.radarAttempts) recordAttemptContext(attempt, context)
+  for (const task of source.tasks) addContext(context.taskIDs, task.provenance.sessionID, task.id)
+}
+
+function selectRadarSessionIDs(
+  scope: ObservationScope,
+  source: RadarSource,
+  native: RadarNativeResolution,
+) {
+  const requestedIDs = new Set(source.managedSessionIDs)
+  for (const sessionID of native.inventorySessionIDs) requestedIDs.add(sessionID)
+  for (const sessionID of native.scopeAncestryIDs) requestedIDs.add(sessionID)
+  const orderedIDs = [
+    ...(scope.kind === "session" ? [scope.sessionID] : []),
+    ...[...source.managedSessionIDs].sort(),
+    ...[...native.scopeAncestryIDs].filter((id) => !source.managedSessionIDs.has(id)).sort(),
+    ...[...native.inventorySessionIDs].filter((id) => !source.managedSessionIDs.has(id)).sort(),
+  ]
+  const selectedIDs = [...new Set(orderedIDs)].slice(0, 500)
+  return { requestedIDs, selectedIDs }
+}
+
+async function resolveSelectedSessions(
+  reader: RadarNativeReader,
+  selectedIDs: string[],
+  native: RadarNativeResolution,
+) {
+  for (const sessionID of selectedIDs) {
+    if (native.nativeByID.has(sessionID) || native.resolvedSessionIDs.has(sessionID)) continue
+    reader.signal.throwIfAborted()
+    try {
+      const session = await reader.host.get(sessionID, reader.signal)
+      if (session?.projectID === reader.projectID) native.nativeByID.set(sessionID, session)
+      else if (session && session.projectID !== reader.projectID)
+        native.foreignSessionIDs.add(sessionID)
+    } catch (error) {
+      if (reader.signal.aborted) throw error
+      native.nativeFailures.add(sessionID)
+    }
+  }
+}
+
+function addRoute(sink: RadarRouteSink, route: RadarRoute) {
+  if (sink.routeIDs.has(route.id)) return route.id
+  if (sink.routes.length >= 20_000) {
+    sink.truncated = true
+    return null
+  }
+  sink.routeIDs.add(route.id)
+  sink.routes.push(route)
+  return route.id
+}
+
+function routeFromPolicy(sink: RadarRouteSink, stats: PrivacyStats, attempt: RadarAttemptRecord) {
+  const policy = jsonObject(attempt.policy)
+  const model = object(policy?.model)
+  if (typeof model?.providerID !== "string" || typeof model.id !== "string") return null
+  const providerID = safeText(model.providerID, stats, 200)
+  const modelID = safeText(model.id, stats, 300)
+  if (!providerID || !modelID) return null
+  return addRoute(sink, {
+    id: `route:attempt:${attempt.id}`,
+    providerID,
+    modelID,
+    variant: typeof model.variant === "string" ? safeText(model.variant, stats, 200) : null,
+    source: "attempt-policy",
+    sessionID: attempt.session_id,
+    attemptID: attempt.id,
+    messageID: null,
+    eventID: null,
+    observedAt: null,
+  })
+}
+
+function addConfiguredRoutes(sink: RadarRouteSink, stats: PrivacyStats, source: RadarSource) {
+  const configuredByAttempt = new Map<string, string | null>()
+  const configuredBySession = new Map<string, Set<string>>()
+  for (const attempt of source.radarAttempts) {
+    const routeID = routeFromPolicy(sink, stats, attempt)
+    configuredByAttempt.set(attempt.id, routeID)
+    if (routeID) addContext(configuredBySession, attempt.session_id, routeID)
+  }
+  return { configuredByAttempt, configuredBySession }
+}
+
+function radarSessionAvailability(
+  native: RadarNativeSession | undefined,
+  failure: boolean,
+  expected: Set<string> | undefined,
+): RadarSession["availability"] {
+  const moved = Boolean(native && expected?.size && !expected.has(native.directory))
+  return failure
+    ? "unavailable"
+    : !native
+      ? "missing"
+      : native.archived
+        ? "archived"
+        : moved
+          ? "moved"
+          : "available"
+}
+
+function radarSessionClassification(
+  sessionID: string,
+  reasons: Set<string>,
+  inputs: RadarSessionInputs,
+): RadarSession["classification"] {
+  return inputs.context.runtimeManagedSessionIDs.has(sessionID)
+    ? "managed"
+    : inputs.native.scopeAncestryIDs.has(sessionID) ||
+        [...reasons].some((reason) => reason !== "scope-anchor" && reason !== "native-ancestry")
+      ? "associated"
+      : "unmanaged"
+}
+
+function currentSelectionRoute(
+  sessionID: string,
+  native: RadarNativeSession | undefined,
+  inputs: RadarSessionInputs,
+) {
+  if (!native?.model) return null
+  return addRoute(inputs.routeSink, {
+    id: `route:selection:${stableToken(sessionID)}`,
+    providerID: safeText(native.model.providerID, inputs.stats, 200),
+    modelID: safeText(native.model.id, inputs.stats, 300),
+    variant: native.model.variant ? safeText(native.model.variant, inputs.stats, 200) : null,
+    source: "session-selection",
+    sessionID,
+    attemptID: null,
+    messageID: null,
+    eventID: null,
+    observedAt: inputs.observedAt,
+  })
+}
+
+function radarSessionEntry(sessionID: string, inputs: RadarSessionInputs): RadarSession {
+  const { native: resolution, context } = inputs
+  const reasons = context.reasons.get(sessionID) ?? new Set<string>()
+  const native = resolution.nativeByID.get(sessionID)
+  const failure = resolution.nativeFailures.has(sessionID)
+  const availability = radarSessionAvailability(
+    native,
+    failure,
+    context.expectedDirectories.get(sessionID),
+  )
+  const fresh = availability === "available"
+  const currentRouteID = fresh ? currentSelectionRoute(sessionID, native, inputs) : null
+  const classification = radarSessionClassification(sessionID, reasons, inputs)
+  return {
+    id: sessionNodeID(sessionID),
+    sessionID,
+    projectID: inputs.projectID,
+    parentSessionID:
+      fresh && native?.parentID && inputs.selectedSet.has(native.parentID) ? native.parentID : null,
+    classification,
+    associations: [...reasons].sort() as RadarSession["associations"],
+    availability,
+    freshness: fresh
+      ? "current"
+      : availability === "missing" || availability === "unavailable"
+        ? "unknown"
+        : "stale",
+    agent: fresh ? (native?.agent ?? null) : null,
+    state: fresh ? (native?.busy === null ? "unknown" : native?.busy ? "busy" : "idle") : "unknown",
+    currentRouteID,
+    configuredRouteIDs: [...(inputs.configuredBySession.get(sessionID) ?? [])].sort().slice(0, 100),
+    planIDs: [...(context.planIDs.get(sessionID) ?? [])].sort().slice(0, 100),
+    taskIDs: [...(context.taskIDs.get(sessionID) ?? [])].sort().slice(0, 100),
+    attemptIDs: [...(context.attemptIDs.get(sessionID) ?? [])].sort().slice(0, 100),
+    updatedAt: fresh ? (native?.updatedAt ?? null) : null,
+    observedAt: native ? inputs.observedAt : null,
+  }
+}
+
+function buildRadarSessions(inputs: RadarSessionInputs) {
+  const sessions: RadarResponse["sessions"] = []
+  for (const sessionID of inputs.selectedIDs) {
+    if (inputs.native.foreignSessionIDs.has(sessionID)) continue
+    const native = inputs.native.nativeByID.get(sessionID)
+    if (native && native.projectID !== inputs.projectID) continue
+    sessions.push(radarSessionEntry(sessionID, inputs))
+  }
+  return sessions
+}
+
+function addEdge(builder: RadarEdgeBuilder, edge: RadarEdge) {
+  if (builder.edgeIDs.has(edge.id)) return
+  if (builder.edges.length >= 20_000) {
+    builder.truncated = true
+    return
+  }
+  builder.edgeIDs.add(edge.id)
+  builder.edges.push(edge)
+}
+
+function codeEvidence(reference: string): RadarEdge["evidence"] {
+  return [{ source: "code", reference, at: null }]
+}
+
+function addBaseEdge(
+  builder: RadarEdgeBuilder,
+  id: string,
+  kind: RadarEdge["kind"],
+  from: string,
+  to: string,
+  status: string,
+  values: Partial<RadarEdge> = {},
+) {
+  addEdge(builder, {
+    id,
+    kind,
+    from,
+    to,
+    status: safeText(status, builder.stats, 80),
+    agentID: null,
+    deliveryStage: null,
+    planID: null,
+    taskID: null,
+    attemptID: null,
+    messageID: null,
+    callID: null,
+    routeID: null,
+    startedAt: null,
+    observedAt: null,
+    live: false,
+    evidence: [],
+    ...values,
+  })
+}
+
+function radarComponents(): RadarResponse["components"] {
+  return [
+    {
+      id: "component:runner-runtime",
+      name: "Task runtime",
+      responsibility: "Admits plans, schedules attempts, and reconciles native effects.",
+      sourceFile: "src/runner/runtime.ts",
+    },
+    {
+      id: "component:runner-store",
+      name: "Runner store",
+      responsibility: "Persists plans, attempts, effects, continuations, and outcome delivery.",
+      sourceFile: "src/runner/store.ts",
+    },
+    {
+      id: "component:native-session-api",
+      name: "Native session API",
+      responsibility: "Provides public session identity, selection, and busy/idle observations.",
+      sourceFile: "src/runner/native.ts",
+    },
+    {
+      id: "component:progress-recorder",
+      name: "Progress recorder",
+      responsibility:
+        "Coalesces identified native step/tool observations with durable worker progress.",
+      sourceFile: "src/progress/recorder.ts",
+    },
+    {
+      id: "component:observability",
+      name: "Observability projection",
+      responsibility:
+        "Reads bounded, scoped runner and native-session metadata without execution writes.",
+      sourceFile: "src/observability/read.ts",
+    },
+  ]
+}
+
+function addArchitectureEdges(builder: RadarEdgeBuilder) {
+  for (const [from, to, file] of [
+    ["component:runner-runtime", "component:runner-store", "src/runner/runtime.ts"],
+    ["component:runner-runtime", "component:native-session-api", "src/runner/native.ts"],
+    ["component:progress-recorder", "component:runner-store", "src/progress/recorder.ts"],
+    ["component:observability", "component:runner-store", "src/observability/read.ts"],
+    ["component:observability", "component:native-session-api", "src/observability/native.ts"],
+  ] as const)
+    addBaseEdge(builder, `architecture:${from}:${to}`, "architecture", from, to, "structural", {
+      evidence: codeEvidence(file),
+    })
+}
+
+function transitionPayload(row: TransitionRecord) {
+  return jsonObject(row.payload) ?? {}
+}
+
+function indexTransitions(transitions: TransitionRecord[]): RadarTransitionIndex {
+  const byEffectID = new Map<string, TransitionRecord[]>()
+  const byOutboxID = new Map<string, TransitionRecord[]>()
+  for (const row of transitions) {
+    const payload = transitionPayload(row)
+    const effectID = typeof payload.effectID === "string" ? payload.effectID : null
+    if (effectID) {
+      const values = byEffectID.get(effectID) ?? []
+      values.push(row)
+      byEffectID.set(effectID, values)
+    }
+    const outboxID = typeof payload.outboxID === "string" ? payload.outboxID : null
+    if (outboxID) {
+      const values = byOutboxID.get(outboxID) ?? []
+      values.push(row)
+      byOutboxID.set(outboxID, values)
+    }
+  }
+  return { byEffectID, byOutboxID }
+}
+
+function transitionEvidence(
+  stats: PrivacyStats,
+  row: TransitionRecord,
+  payload: JsonObject,
+  fallbackMessageID: string | null = null,
+): RadarEvidence {
+  return {
+    source: "runner-transition",
+    sequence: row.id,
+    event: safeText(row.event, stats, 120),
+    effectID: typeof payload.effectID === "string" ? safeText(payload.effectID, stats, 200) : null,
+    outboxID: typeof payload.outboxID === "string" ? safeText(payload.outboxID, stats, 200) : null,
+    messageID:
+      typeof payload.messageID === "string"
+        ? safeText(payload.messageID, stats, 200)
+        : fallbackMessageID,
+    at: row.created_at,
+  }
+}
+
+function progressEvidence(
+  stats: PrivacyStats,
+  row: ProgressRow,
+  at: number | null = row.at,
+): RadarEvidence {
+  return {
+    source: "runner-record",
+    recordID: `progress:${row.seq}`,
+    messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
+    callID: row.call_id ? safeText(row.call_id, stats, 200) : null,
+    at,
+  }
+}
+
+function eventEvidence(
+  stats: PrivacyStats,
+  eventID: string,
+  eventType: string,
+  sessionID: string,
+  messageID: string | null,
+  callID: string | null,
+  at: number,
+): RadarEvidence {
+  return {
+    source: "native-event",
+    eventID: safeText(eventID, stats, 200),
+    eventType: safeText(eventType, stats, 120),
+    sessionID,
+    messageID,
+    callID,
+    at,
+  }
+}
+
+function runnerRecordEvidence(recordID: string): RadarEvidence[] {
+  return [{ source: "runner-record", recordID, messageID: null, callID: null, at: null }]
+}
+
+function summarizeRadarPlans(source: RadarSource, stats: PrivacyStats) {
+  return source.radarPlans.slice(0, 1000).map((plan) => ({
+    id: plan.id,
+    state: safeText(plan.state, stats, 80),
+    ownerSessionID: plan.owner,
+    title: planInput(plan)?.title ? safeText(planInput(plan)!.title!, stats, 120) : null,
+  }))
+}
+
+function planIDByTask(source: RadarSource) {
+  const planByTask = new Map<string, string>()
+  for (const node of source.nodes)
+    if (!planByTask.has(node.task_id)) planByTask.set(node.task_id, node.plan_id)
+  return planByTask
+}
+
+function summarizeRadarTasks(source: RadarSource, planByTask: Map<string, string>) {
+  const nodesByTask = new Map(source.nodes.map((node) => [node.task_id, node]))
+  return source.tasks.slice(0, 1000).map((task) => ({
+    id: task.id,
+    planID: planByTask.get(task.id) ?? null,
+    state: nodesByTask.get(task.id)?.state ?? ("submitted" as const),
+  }))
+}
+
+function summarizeRadarAttempts(
+  source: RadarSource,
+  stats: PrivacyStats,
+  configuredByAttempt: Map<string, string | null>,
+) {
+  return source.radarAttempts.slice(0, 10_000).map((attempt) => ({
+    id: attempt.id,
+    planID: attempt.plan_id,
+    taskID: attempt.task_id,
+    sessionID: attempt.session_id,
+    number: attempt.number,
+    state: safeText(attempt.state, stats, 80),
+    startedAt: attempt.started_at,
+    configuredRouteID: configuredByAttempt.get(attempt.id) ?? null,
+  }))
+}
+
+function addAssociationEdges(
+  builder: RadarEdgeBuilder,
+  source: RadarSource,
+  plans: ReturnType<typeof summarizeRadarPlans>,
+  planByTask: Map<string, string>,
+) {
+  for (const plan of plans)
+    addBaseEdge(
+      builder,
+      `association:plan:${plan.id}:${stableToken(plan.ownerSessionID)}`,
+      "association",
+      `plan:${plan.id}`,
+      sessionNodeID(plan.ownerSessionID),
+      "plan-owner",
+      { planID: plan.id, evidence: runnerRecordEvidence(plan.id) },
+    )
+  for (const task of source.tasks) {
+    const submitter = task.provenance.sessionID
+    addBaseEdge(
+      builder,
+      `association:task:${task.id}:${stableToken(submitter)}`,
+      "association",
+      `task:${task.id}`,
+      sessionNodeID(submitter),
+      "task-submitter",
+      {
+        planID: planByTask.get(task.id) ?? null,
+        taskID: task.id,
+        evidence: runnerRecordEvidence(task.id),
+      },
+    )
+  }
+  for (const dependency of source.dependencies)
+    addBaseEdge(
+      builder,
+      `dependency:${dependency.plan_id}:${dependency.prerequisite}:${dependency.successor}`,
+      "dependency",
+      `task:${dependency.prerequisite}`,
+      `task:${dependency.successor}`,
+      "dependency",
+      {
+        planID: dependency.plan_id,
+        taskID: dependency.successor,
+        evidence: runnerRecordEvidence(dependency.plan_id),
+      },
+    )
+}
+
+function effectsByAttemptID(effects: RadarEffectRecord[]) {
+  const byAttempt = new Map<string, RadarEffectRecord[]>()
+  for (const effect of effects) {
+    if (!effect.attempt_id) continue
+    const values = byAttempt.get(effect.attempt_id) ?? []
+    values.push(effect)
+    byAttempt.set(effect.attempt_id, values)
+  }
+  return byAttempt
+}
+
+function addAssignmentEdge(
+  builder: RadarEdgeBuilder,
+  attempt: RadarAttemptRecord,
+  sessionEffect: RadarEffectRecord | undefined,
+  sessionTransitions: TransitionRecord[],
+) {
+  addBaseEdge(
+    builder,
+    `assignment:${attempt.id}`,
+    "assignment",
+    `plan:${attempt.plan_id}`,
+    sessionNodeID(attempt.session_id),
+    sessionEffect?.state ?? "reserved",
+    {
+      planID: attempt.plan_id,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      startedAt: attempt.started_at,
+      observedAt: sessionTransitions.at(-1)?.created_at ?? null,
+      evidence: [
+        {
+          source: "runner-record" as const,
+          recordID: attempt.id,
+          messageID: attempt.message_id,
+          callID: null,
+          at: attempt.started_at,
+        },
+        ...sessionTransitions.map((row) =>
+          transitionEvidence(builder.stats, row, transitionPayload(row)),
+        ),
+      ].slice(-100),
+    },
+  )
+}
+
+function addPromptEdge(
+  builder: RadarEdgeBuilder,
+  attempt: RadarAttemptRecord,
+  plan: RadarPlanRecord,
+  promptEffect: RadarEffectRecord,
+  promptTransitions: TransitionRecord[],
+) {
+  const { stats } = builder
+  const effectPayload = jsonObject(promptEffect.payload) ?? {}
+  const messageID =
+    typeof effectPayload.messageID === "string" ? effectPayload.messageID : attempt.message_id
+  const stage =
+    promptEffect.state === "intended"
+      ? "persisted"
+      : promptEffect.state === "completed"
+        ? "admitted"
+        : "unknown"
+  addBaseEdge(
+    builder,
+    `prompt:${promptEffect.id}`,
+    "prompt",
+    sessionNodeID(plan.owner),
+    sessionNodeID(attempt.session_id),
+    promptEffect.state,
+    {
+      deliveryStage: stage,
+      planID: attempt.plan_id,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      messageID: safeText(messageID, stats, 200),
+      startedAt: promptTransitions[0]?.created_at ?? null,
+      observedAt: promptTransitions.at(-1)?.created_at ?? null,
+      evidence: promptTransitions
+        .map((row) =>
+          transitionEvidence(stats, row, transitionPayload(row), safeText(messageID, stats, 200)),
+        )
+        .slice(-100),
+    },
+  )
+}
+
+function addAttemptEdges(
+  builder: RadarEdgeBuilder,
+  source: RadarSource,
+  transitions: RadarTransitionIndex,
+) {
+  const plansByID = new Map(source.radarPlans.map((plan) => [plan.id, plan]))
+  const effectsByAttempt = effectsByAttemptID(source.radarEffects)
+  for (const attempt of source.radarAttempts) {
+    const plan = plansByID.get(attempt.plan_id)
+    const effects = effectsByAttempt.get(attempt.id) ?? []
+    const sessionEffect = effects.find((effect) => effect.kind === "session")
+    const promptEffect = effects.find((effect) => effect.kind === "prompt")
+    const transitionsFor = (effectID: string | undefined) =>
+      effectID ? (transitions.byEffectID.get(effectID) ?? []) : []
+    addAssignmentEdge(builder, attempt, sessionEffect, transitionsFor(sessionEffect?.id))
+    if (promptEffect && plan)
+      addPromptEdge(builder, attempt, plan, promptEffect, transitionsFor(promptEffect.id))
+  }
+}
+
+function outboxDeliveryStage(state: string): RadarDeliveryStage {
+  return state === "pending"
+    ? "persisted"
+    : state === "admitted" || state === "delivered"
+      ? "admitted"
+      : state === "consumed"
+        ? "consumed"
+        : state === "rejected"
+          ? "rejected"
+          : state === "superseded"
+            ? "superseded"
+            : "unknown"
+}
+
+function addOutboxEdges(
+  builder: RadarEdgeBuilder,
+  source: RadarSource,
+  transitions: RadarTransitionIndex,
+) {
+  for (const outbox of source.outbox) {
+    const transitionRows = transitions.byOutboxID.get(outbox.id) ?? []
+    const stage = outboxDeliveryStage(outbox.state)
+    const evidence = transitionRows.map((row) =>
+      transitionEvidence(builder.stats, row, transitionPayload(row), outbox.message_id),
+    )
+    if (!evidence.length)
+      evidence.push({
+        source: "runner-record",
+        recordID: outbox.id,
+        messageID: outbox.message_id,
+        callID: null,
+        at: null,
+      })
+    addBaseEdge(
+      builder,
+      `outcome:${outbox.id}`,
+      "outcome",
+      "component:runner-runtime",
+      sessionNodeID(outbox.session_id),
+      outbox.state,
+      {
+        deliveryStage: stage,
+        planID: outbox.plan_id,
+        messageID: safeText(outbox.message_id, builder.stats, 200),
+        startedAt: transitionRows[0]?.created_at ?? null,
+        observedAt: transitionRows.at(-1)?.created_at ?? null,
+        evidence: evidence.slice(-100),
+      },
+    )
+  }
+}
+
+type RadarStepStart = { routeID: string; startedAt: number | null; agentID: string | null }
+type RadarStepContext = {
+  builder: RadarEdgeBuilder
+  routeSink: RadarRouteSink
+  liveEventIDs: ReadonlySet<string>
+  stepStarts: Map<string, RadarStepStart>
+}
+type RadarStepEvent = {
+  row: ProgressRow
+  observation: JsonObject
+  eventID: string
+  messageID: string
+  eventType: string
+  at: number
+}
+
+function orderedStepObservations(progress: ProgressRow[]) {
+  const stepObservations = progress.flatMap((row) => {
+    if (row.kind !== "step") return []
+    const fact = projectProgressFact(row)
+    const observations = fact.observations
+    if (!Array.isArray(observations)) return []
+    return observations.flatMap((rawObservation, index) => {
+      const observation = object(rawObservation)
+      const at = observation?.at
+      if (observation?.source !== "native-event" || typeof at !== "number" || !Number.isFinite(at))
+        return []
+      return [{ row, messageID: fact.messageID, observation, index, at }]
+    })
+  })
+  stepObservations.sort(
+    (left, right) => left.at - right.at || left.row.seq - right.row.seq || left.index - right.index,
+  )
+  return stepObservations
+}
+
+function stepEventOf(
+  entry: ReturnType<typeof orderedStepObservations>[number],
+): RadarStepEvent | null {
+  const { row, messageID, observation, at } = entry
+  if (
+    typeof observation.eventID !== "string" ||
+    !observation.eventID ||
+    typeof observation.messageID !== "string" ||
+    !observation.messageID ||
+    observation.messageID !== messageID ||
+    !["session.step.started", "session.step.ended", "session.step.failed"].includes(
+      String(observation.eventType),
+    )
+  )
+    return null
+  return {
+    row,
+    observation,
+    eventID: observation.eventID,
+    messageID: observation.messageID,
+    eventType: String(observation.eventType),
+    at,
+  }
+}
+
+function addStepStartEdge(step: RadarStepContext, event: RadarStepEvent, key: string) {
+  const { builder } = step
+  const { row, observation, eventID, messageID, at } = event
+  const route = object(observation.route)
+  if (
+    !route ||
+    typeof route.providerID !== "string" ||
+    !route.providerID ||
+    typeof route.modelID !== "string" ||
+    !route.modelID
+  )
+    return
+  const routeID = addRoute(step.routeSink, {
+    id: `route:step:${stableToken(eventID)}`,
+    providerID: route.providerID,
+    modelID: route.modelID,
+    variant: typeof route.variant === "string" ? route.variant : null,
+    source: "step-event",
+    sessionID: row.session_id,
+    attemptID: row.attempt_id,
+    messageID,
+    eventID,
+    observedAt: at,
+  })
+  if (!routeID) return
+  const agentID =
+    typeof observation.agent === "string" ? safeText(observation.agent, builder.stats, 200) : null
+  const recordedStartedAt = observation.startedAt
+  const startedAt =
+    typeof recordedStartedAt === "number" && Number.isFinite(recordedStartedAt)
+      ? recordedStartedAt
+      : at
+  step.stepStarts.set(key, { routeID, startedAt, agentID })
+  addBaseEdge(
+    builder,
+    `model-request:${stableToken(eventID)}`,
+    "model-request",
+    sessionNodeID(row.session_id),
+    routeID,
+    "started",
+    {
+      planID: row.plan_id,
+      taskID: row.task_id,
+      attemptID: row.attempt_id,
+      agentID,
+      messageID,
+      routeID,
+      startedAt,
+      observedAt: at,
+      live: step.liveEventIDs.has(eventID),
+      evidence: [
+        eventEvidence(builder.stats, eventID, event.eventType, row.session_id, messageID, null, at),
+      ],
+    },
+  )
+}
+
+function addStepEndEdge(step: RadarStepContext, event: RadarStepEvent, key: string) {
+  const started = step.stepStarts.get(key)
+  if (!started) return
+  const { row, eventID, messageID, at } = event
+  const failed = event.eventType === "session.step.failed"
+  addBaseEdge(
+    step.builder,
+    `model-response:${stableToken(eventID)}`,
+    "model-response",
+    started.routeID,
+    sessionNodeID(row.session_id),
+    failed ? "failed" : "ended",
+    {
+      planID: row.plan_id,
+      taskID: row.task_id,
+      attemptID: row.attempt_id,
+      agentID: started.agentID,
+      messageID,
+      routeID: started.routeID,
+      startedAt: started.startedAt,
+      observedAt: at,
+      live: step.liveEventIDs.has(eventID),
+      evidence: [
+        eventEvidence(
+          step.builder.stats,
+          eventID,
+          event.eventType,
+          row.session_id,
+          messageID,
+          null,
+          at,
+        ),
+      ],
+    },
+  )
+}
+
+function addStepEdges(
+  builder: RadarEdgeBuilder,
+  routeSink: RadarRouteSink,
+  progress: ProgressRow[],
+  liveEventIDs: ReadonlySet<string>,
+) {
+  const step: RadarStepContext = {
+    builder,
+    routeSink,
+    liveEventIDs,
+    stepStarts: new Map<string, RadarStepStart>(),
+  }
+  for (const entry of orderedStepObservations(progress)) {
+    const event = stepEventOf(entry)
+    if (!event) continue
+    const key = `${event.row.session_id}\u0000${event.messageID}`
+    if (event.eventType === "session.step.started") addStepStartEdge(step, event, key)
+    else addStepEndEdge(step, event, key)
+  }
+}
+
+type RadarToolEventType = "session.tool.called" | "session.tool.success" | "session.tool.failed"
+
+function orderedToolObservations(observations: unknown[]) {
+  return observations
+    .flatMap((rawObservation, index) => {
+      const observation = object(rawObservation)
+      if (
+        observation?.source !== "native-event" ||
+        typeof observation.at !== "number" ||
+        !Number.isFinite(observation.at)
+      )
+        return []
+      return [{ observation, index, at: observation.at }]
+    })
+    .sort((left, right) => left.at - right.at || left.index - right.index)
+}
+
+function toolEventOf(
+  observation: JsonObject,
+  callID: string,
+): { eventID: string; eventType: RadarToolEventType } | null {
+  if (
+    typeof observation.eventID !== "string" ||
+    !observation.eventID ||
+    observation.callID !== callID ||
+    (observation.eventType !== "session.tool.called" &&
+      observation.eventType !== "session.tool.success" &&
+      observation.eventType !== "session.tool.failed")
+  )
+    return null
+  return { eventID: observation.eventID, eventType: observation.eventType }
+}
+
+function addToolFlowEdge(
+  builder: RadarEdgeBuilder,
+  liveEventIDs: ReadonlySet<string>,
+  row: ProgressRow,
+  toolID: string,
+  observation: JsonObject,
+  event: { eventID: string; eventType: RadarToolEventType },
+  at: number,
+) {
+  const { stats } = builder
+  if (!row.call_id) return
+  const isCall = event.eventType === "session.tool.called"
+  const evidence = eventEvidence(
+    stats,
+    event.eventID,
+    event.eventType,
+    row.session_id,
+    row.message_id ? safeText(row.message_id, stats, 200) : null,
+    safeText(row.call_id, stats, 200),
+    at,
+  )
+  addBaseEdge(
+    builder,
+    `tool-flow:${stableToken(event.eventID)}`,
+    isCall ? "tool-call" : "tool-result",
+    isCall ? sessionNodeID(row.session_id) : toolID,
+    isCall ? toolID : sessionNodeID(row.session_id),
+    typeof observation.status === "string" ? observation.status : "observed",
+    {
+      planID: row.plan_id,
+      taskID: row.task_id,
+      attemptID: row.attempt_id,
+      messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
+      callID: safeText(row.call_id, stats, 200),
+      observedAt: at,
+      live: liveEventIDs.has(event.eventID),
+      evidence: [evidence],
+    },
+  )
+}
+
+function addToolEdges(
+  builder: RadarEdgeBuilder,
+  progress: ProgressRow[],
+  liveEventIDs: ReadonlySet<string>,
+) {
+  const tools = new Map<string, { id: string; name: string }>()
+  for (const row of progress) {
+    if (row.kind !== "tool") continue
+    const fact = projectProgressFact(row)
+    const observations = Array.isArray(fact.observations) ? fact.observations : []
+    const name = typeof fact.tool === "string" ? fact.tool : ""
+    const callID = typeof fact.callID === "string" ? fact.callID : ""
+    if (!name || !row.call_id || !callID) continue
+    const toolID = `tool:${stableToken(name)}`
+    tools.set(toolID, { id: toolID, name })
+    for (const { observation, at } of orderedToolObservations(observations)) {
+      const event = toolEventOf(observation, callID)
+      if (!event) continue
+      addToolFlowEdge(builder, liveEventIDs, row, toolID, observation, event, at)
+    }
+  }
+  return tools
+}
+
+function reminderDeliveryStage(delivery: string): RadarDeliveryStage {
+  return delivery === "dispatching"
+    ? "persisted"
+    : delivery === "admitted"
+      ? "admitted"
+      : delivery === "rejected"
+        ? "rejected"
+        : "unknown"
+}
+
+function addReminderEdges(
+  builder: RadarEdgeBuilder,
+  progress: ProgressRow[],
+  liveEventIDs: ReadonlySet<string>,
+) {
+  const { stats } = builder
+  for (const row of progress) {
+    if (row.kind !== "reminder") continue
+    const fact = projectProgressFact(row)
+    const delivery = typeof fact.delivery === "string" ? fact.delivery : "unknown"
+    const stage = reminderDeliveryStage(delivery)
+    const eventID = typeof fact.nativeEventID === "string" ? fact.nativeEventID : null
+    const observed = typeof fact.observedAt === "number" ? fact.observedAt : null
+    const evidence: RadarEdge["evidence"] = [progressEvidence(stats, row, observed ?? row.at)]
+    if (eventID && observed !== null)
+      evidence.push(
+        eventEvidence(
+          stats,
+          eventID,
+          "session.synthetic",
+          row.session_id,
+          row.message_id,
+          null,
+          observed,
+        ),
+      )
+    addBaseEdge(
+      builder,
+      `reminder:${row.attempt_id}`,
+      "prompt",
+      "component:progress-recorder",
+      sessionNodeID(row.session_id),
+      delivery,
+      {
+        planID: row.plan_id,
+        taskID: row.task_id,
+        attemptID: row.attempt_id,
+        messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
+        startedAt: row.at,
+        observedAt: observed,
+        live: Boolean(eventID && liveEventIDs.has(eventID)),
+        deliveryStage: stage,
+        evidence: evidence.slice(0, 100),
+      },
+    )
+  }
+}
+
+function addSessionEdges(
+  builder: RadarEdgeBuilder,
+  sessions: RadarResponse["sessions"],
+  observedAt: number,
+) {
+  for (const session of sessions) {
+    if (session.parentSessionID)
+      addBaseEdge(
+        builder,
+        `ancestry:${stableToken(session.parentSessionID)}:${stableToken(session.sessionID)}`,
+        "ancestry",
+        sessionNodeID(session.parentSessionID),
+        session.id,
+        "native-parent",
+        {
+          observedAt,
+          evidence: [{ source: "native-read", sessionID: session.sessionID, at: observedAt }],
+        },
+      )
+    if (session.availability === "available")
+      addBaseEdge(
+        builder,
+        `observation:${session.sessionID}`,
+        "observation",
+        "component:observability",
+        session.id,
+        "metadata-read",
+        {
+          observedAt,
+          evidence: [{ source: "native-read", sessionID: session.sessionID, at: observedAt }],
+        },
+      )
+  }
+}
+
 export class ObservationReadChangedError extends Error {
   constructor(readonly source: "native" | "runner") {
     super(
@@ -730,981 +1945,80 @@ export class ObservationReads {
         loadRadarSource(db, this.store.repository.projectDirectory, scope, this.secret),
       )
       const nativeRevision = tracker.nativeRevision
-      const sessionReasons = new Map<string, Set<string>>()
-      const addReason = (sessionID: string, reason: string) => {
-        const reasons = sessionReasons.get(sessionID) ?? new Set<string>()
-        reasons.add(reason)
-        sessionReasons.set(sessionID, reasons)
-      }
-      const runtimeManagedSessionIDs = new Set<string>()
-      const expectedDirectories = new Map<string, Set<string>>()
-      const sessionPlanIDs = new Map<string, Set<string>>()
-      const sessionTaskIDs = new Map<string, Set<string>>()
-      const sessionAttemptIDs = new Map<string, Set<string>>()
-      const addContext = (map: Map<string, Set<string>>, sessionID: string, id: string) => {
-        const values = map.get(sessionID) ?? new Set<string>()
-        values.add(id)
-        map.set(sessionID, values)
-      }
-      if (scope.kind === "session") addReason(scope.sessionID, "scope-anchor")
+      const context = newRadarSessionContext()
+      if (scope.kind === "session") addContext(context.reasons, scope.sessionID, "scope-anchor")
 
-      let nativeInventory: RadarResponse["freshness"]["nativeInventory"] = "managed-only"
-      let inventoryTruncated = false
-      const nativeByID = new Map<string, RadarNativeSession>()
-      const inventorySessionIDs = new Set<string>()
-      const nativeFailures = new Set<string>()
-      const foreignSessionIDs = new Set<string>()
-      const resolvedSessionIDs = new Set<string>()
-      if (includeUnmanagedSessions) {
-        try {
-          const inventory =
-            scope.kind === "project"
-              ? await this.nativeSessions.project(this.projectID, true, 500, signal)
-              : await this.nativeSessions.descendants(
-                  this.projectID,
-                  scope.sessionID,
-                  true,
-                  500,
-                  signal,
-                )
-          inventoryTruncated = inventory.truncated
-          nativeInventory = inventory.truncated ? "bounded" : "complete"
-          for (const session of inventory.sessions) {
-            if (session.projectID !== this.projectID) continue
-            nativeByID.set(session.id, session)
-          }
-          if (scope.kind === "project") {
-            for (const session of nativeByID.values()) inventorySessionIDs.add(session.id)
-          } else {
-            const reachable = new Set([scope.sessionID])
-            let expanded = true
-            while (expanded) {
-              expanded = false
-              for (const session of nativeByID.values()) {
-                if (
-                  session.parentID &&
-                  reachable.has(session.parentID) &&
-                  !reachable.has(session.id)
-                ) {
-                  reachable.add(session.id)
-                  expanded = true
-                }
-              }
-            }
-            for (const sessionID of reachable) {
-              if (sessionID === scope.sessionID) continue
-              inventorySessionIDs.add(sessionID)
-              addReason(sessionID, "native-ancestry")
-            }
-            for (const sessionID of [...nativeByID.keys()])
-              if (!reachable.has(sessionID)) nativeByID.delete(sessionID)
-          }
-        } catch (error) {
-          if (signal.aborted) throw error
-          nativeInventory = "unavailable"
-        }
+      const reader: RadarNativeReader = {
+        host: this.nativeSessions,
+        projectID: this.projectID,
+        signal,
       }
+      const native = newRadarNativeResolution()
+      if (includeUnmanagedSessions) await readNativeInventory(reader, scope, native, context)
+      if (scope.kind === "session")
+        await resolveScopeAncestry(reader, scope.sessionID, native, context)
 
-      const scopeAncestryIDs = new Set<string>()
-      let ancestryTruncated = false
-      if (scope.kind === "session") {
-        const rootID = scope.sessionID
-        scopeAncestryIDs.add(rootID)
-        let current = nativeByID.get(rootID)
-        if (!current) {
-          signal.throwIfAborted()
-          try {
-            current = (await this.nativeSessions.get(rootID, signal)) ?? undefined
-            resolvedSessionIDs.add(rootID)
-            if (current?.projectID === this.projectID) nativeByID.set(rootID, current)
-            else if (current && current.projectID !== this.projectID) {
-              foreignSessionIDs.add(rootID)
-              current = undefined
-            }
-          } catch (error) {
-            if (signal.aborted) throw error
-            nativeFailures.add(rootID)
-            resolvedSessionIDs.add(rootID)
-          }
-        }
-        const visited = new Set([rootID])
-        for (let depth = 0; current?.parentID; depth++) {
-          const parentID = current.parentID
-          if (visited.has(parentID)) break
-          if (depth >= 50) {
-            ancestryTruncated = true
-            break
-          }
-          visited.add(parentID)
-          signal.throwIfAborted()
-          try {
-            const parent = await this.nativeSessions.get(parentID, signal)
-            resolvedSessionIDs.add(parentID)
-            if (!parent) break
-            if (parent.projectID !== this.projectID) {
-              foreignSessionIDs.add(parentID)
-              break
-            }
-            scopeAncestryIDs.add(parentID)
-            addReason(parentID, "native-ancestry")
-            nativeByID.set(parentID, parent)
-            current = parent
-          } catch (error) {
-            if (signal.aborted) throw error
-            nativeFailures.add(parentID)
-            resolvedSessionIDs.add(parentID)
-            break
-          }
-        }
-      }
-
-      if (scope.kind === "session" && scopeAncestryIDs.size > 1) {
+      if (scope.kind === "session" && native.scopeAncestryIDs.size > 1) {
         source = connection.store.read((db) =>
           loadRadarSource(
             db,
             this.store.repository.projectDirectory,
             scope,
             this.secret,
-            scopeAncestryIDs,
+            native.scopeAncestryIDs,
           ),
         )
       }
-      for (const task of source.tasks) addReason(task.provenance.sessionID, "task-submitter")
-      for (const plan of source.radarPlans) {
-        addReason(plan.owner, "plan-owner")
-        addContext(sessionPlanIDs, plan.owner, plan.id)
-      }
-      for (const continuation of source.continuations) {
-        runtimeManagedSessionIDs.add(continuation.session_id)
-        addReason(continuation.session_id, "continuation")
-        addContext(sessionPlanIDs, continuation.session_id, continuation.plan_id)
-        const expected = expectedDirectories.get(continuation.session_id) ?? new Set<string>()
-        expected.add(continuation.directory)
-        expectedDirectories.set(continuation.session_id, expected)
-        if (continuation.parent_id) {
-          addReason(continuation.parent_id, "native-ancestry")
-          addContext(sessionPlanIDs, continuation.parent_id, continuation.plan_id)
-        }
-      }
-      for (const attempt of source.radarAttempts) {
-        runtimeManagedSessionIDs.add(attempt.session_id)
-        addReason(attempt.session_id, "attempt")
-        addContext(sessionPlanIDs, attempt.session_id, attempt.plan_id)
-        addContext(sessionTaskIDs, attempt.session_id, attempt.task_id)
-        addContext(sessionAttemptIDs, attempt.session_id, attempt.id)
-        const expected = expectedDirectories.get(attempt.session_id) ?? new Set<string>()
-        expected.add(attempt.workspace)
-        expectedDirectories.set(attempt.session_id, expected)
-      }
-      for (const task of source.tasks)
-        addContext(sessionTaskIDs, task.provenance.sessionID, task.id)
+      recordSourceSessionContext(source, context)
 
-      const requestedIDs = new Set(source.managedSessionIDs)
-      for (const sessionID of inventorySessionIDs) requestedIDs.add(sessionID)
-      for (const sessionID of scopeAncestryIDs) requestedIDs.add(sessionID)
-      const orderedIDs = [
-        ...(scope.kind === "session" ? [scope.sessionID] : []),
-        ...[...source.managedSessionIDs].sort(),
-        ...[...scopeAncestryIDs].filter((id) => !source.managedSessionIDs.has(id)).sort(),
-        ...[...inventorySessionIDs].filter((id) => !source.managedSessionIDs.has(id)).sort(),
-      ]
-      const selectedIDs = [...new Set(orderedIDs)].slice(0, 500)
+      const { requestedIDs, selectedIDs } = selectRadarSessionIDs(scope, source, native)
       if (requestedIDs.size > selectedIDs.length) {
-        inventoryTruncated = true
-        nativeInventory = nativeInventory === "unavailable" ? "unavailable" : "bounded"
+        native.inventoryTruncated = true
+        native.nativeInventory =
+          native.nativeInventory === "unavailable" ? "unavailable" : "bounded"
       }
       const selectedSet = new Set(selectedIDs)
-      for (const sessionID of selectedIDs) {
-        if (nativeByID.has(sessionID) || resolvedSessionIDs.has(sessionID)) continue
-        signal.throwIfAborted()
-        try {
-          const session = await this.nativeSessions.get(sessionID, signal)
-          if (session?.projectID === this.projectID) nativeByID.set(sessionID, session)
-          else if (session && session.projectID !== this.projectID) foreignSessionIDs.add(sessionID)
-        } catch (error) {
-          if (signal.aborted) throw error
-          nativeFailures.add(sessionID)
-        }
-      }
-      if (ancestryTruncated && nativeInventory !== "unavailable") nativeInventory = "bounded"
+      await resolveSelectedSessions(reader, selectedIDs, native)
+      if (native.ancestryTruncated && native.nativeInventory !== "unavailable")
+        native.nativeInventory = "bounded"
       tracker.trackScopedSessions(selectedIDs)
 
       const observedAt = Date.now()
       const stats = privacyStats()
-      const routes: RadarResponse["routes"] = []
-      const routeIDs = new Set<string>()
-      let routeTruncated = false
-      const addRoute = (route: RadarResponse["routes"][number]) => {
-        if (routeIDs.has(route.id)) return route.id
-        if (routes.length >= 20_000) {
-          routeTruncated = true
-          return null
-        }
-        routeIDs.add(route.id)
-        routes.push(route)
-        return route.id
-      }
-      const routeFromPolicy = (attempt: RadarAttemptRecord) => {
-        const policy = jsonObject(attempt.policy)
-        const model = object(policy?.model)
-        if (typeof model?.providerID !== "string" || typeof model.id !== "string") return null
-        const providerID = safeText(model.providerID, stats, 200)
-        const modelID = safeText(model.id, stats, 300)
-        if (!providerID || !modelID) return null
-        return addRoute({
-          id: `route:attempt:${attempt.id}`,
-          providerID,
-          modelID,
-          variant: typeof model.variant === "string" ? safeText(model.variant, stats, 200) : null,
-          source: "attempt-policy",
-          sessionID: attempt.session_id,
-          attemptID: attempt.id,
-          messageID: null,
-          eventID: null,
-          observedAt: null,
-        })
-      }
-      const configuredByAttempt = new Map<string, string | null>()
-      const configuredBySession = new Map<string, Set<string>>()
-      for (const attempt of source.radarAttempts) {
-        const routeID = routeFromPolicy(attempt)
-        configuredByAttempt.set(attempt.id, routeID)
-        if (routeID) addContext(configuredBySession, attempt.session_id, routeID)
-      }
-
-      const sessions: RadarResponse["sessions"] = []
-      for (const sessionID of selectedIDs) {
-        if (foreignSessionIDs.has(sessionID)) continue
-        const reasons = sessionReasons.get(sessionID) ?? new Set<string>()
-        const native = nativeByID.get(sessionID)
-        const failure = nativeFailures.has(sessionID)
-        if (native && native.projectID !== this.projectID) continue
-        const expected = expectedDirectories.get(sessionID)
-        const moved = Boolean(native && expected?.size && !expected.has(native.directory))
-        const availability: RadarResponse["sessions"][number]["availability"] = failure
-          ? "unavailable"
-          : !native
-            ? "missing"
-            : native.archived
-              ? "archived"
-              : moved
-                ? "moved"
-                : "available"
-        const fresh = availability === "available"
-        const currentRouteID =
-          fresh && native?.model
-            ? addRoute({
-                id: `route:selection:${stableToken(sessionID)}`,
-                providerID: safeText(native.model.providerID, stats, 200),
-                modelID: safeText(native.model.id, stats, 300),
-                variant: native.model.variant ? safeText(native.model.variant, stats, 200) : null,
-                source: "session-selection",
-                sessionID,
-                attemptID: null,
-                messageID: null,
-                eventID: null,
-                observedAt,
-              })
-            : null
-        const classification = runtimeManagedSessionIDs.has(sessionID)
-          ? "managed"
-          : scopeAncestryIDs.has(sessionID) ||
-              [...reasons].some(
-                (reason) => reason !== "scope-anchor" && reason !== "native-ancestry",
-              )
-            ? "associated"
-            : "unmanaged"
-        sessions.push({
-          id: sessionNodeID(sessionID),
-          sessionID,
-          projectID: this.projectID,
-          parentSessionID:
-            fresh && native?.parentID && selectedSet.has(native.parentID) ? native.parentID : null,
-          classification,
-          associations: [...reasons].sort() as RadarResponse["sessions"][number]["associations"],
-          availability,
-          freshness: fresh
-            ? "current"
-            : availability === "missing" || availability === "unavailable"
-              ? "unknown"
-              : "stale",
-          agent: fresh ? (native?.agent ?? null) : null,
-          state: fresh
-            ? native?.busy === null
-              ? "unknown"
-              : native?.busy
-                ? "busy"
-                : "idle"
-            : "unknown",
-          currentRouteID,
-          configuredRouteIDs: [...(configuredBySession.get(sessionID) ?? [])].sort().slice(0, 100),
-          planIDs: [...(sessionPlanIDs.get(sessionID) ?? [])].sort().slice(0, 100),
-          taskIDs: [...(sessionTaskIDs.get(sessionID) ?? [])].sort().slice(0, 100),
-          attemptIDs: [...(sessionAttemptIDs.get(sessionID) ?? [])].sort().slice(0, 100),
-          updatedAt: fresh ? (native?.updatedAt ?? null) : null,
-          observedAt: native ? observedAt : null,
-        })
-      }
-
-      const edges: RadarResponse["edges"] = []
-      const edgeIDs = new Set<string>()
-      let edgeTruncated = false
-      const addEdge = (edge: RadarResponse["edges"][number]) => {
-        if (edgeIDs.has(edge.id)) return
-        if (edges.length >= 20_000) {
-          edgeTruncated = true
-          return
-        }
-        edgeIDs.add(edge.id)
-        edges.push(edge)
-      }
-      const codeEvidence = (reference: string): RadarResponse["edges"][number]["evidence"] => [
-        { source: "code", reference, at: null },
-      ]
-      const baseEdge = (
-        id: string,
-        kind: RadarResponse["edges"][number]["kind"],
-        from: string,
-        to: string,
-        status: string,
-        values: Partial<RadarResponse["edges"][number]> = {},
-      ): RadarResponse["edges"][number] => ({
-        id,
-        kind,
-        from,
-        to,
-        status: safeText(status, stats, 80),
-        agentID: null,
-        deliveryStage: null,
-        planID: null,
-        taskID: null,
-        attemptID: null,
-        messageID: null,
-        callID: null,
-        routeID: null,
-        startedAt: null,
-        observedAt: null,
-        live: false,
-        evidence: [],
-        ...values,
-      })
-
-      const components: RadarResponse["components"] = [
-        {
-          id: "component:runner-runtime",
-          name: "Task runtime",
-          responsibility: "Admits plans, schedules attempts, and reconciles native effects.",
-          sourceFile: "src/runner/runtime.ts",
-        },
-        {
-          id: "component:runner-store",
-          name: "Runner store",
-          responsibility: "Persists plans, attempts, effects, continuations, and outcome delivery.",
-          sourceFile: "src/runner/store.ts",
-        },
-        {
-          id: "component:native-session-api",
-          name: "Native session API",
-          responsibility:
-            "Provides public session identity, selection, and busy/idle observations.",
-          sourceFile: "src/runner/native.ts",
-        },
-        {
-          id: "component:progress-recorder",
-          name: "Progress recorder",
-          responsibility:
-            "Coalesces identified native step/tool observations with durable worker progress.",
-          sourceFile: "src/progress/recorder.ts",
-        },
-        {
-          id: "component:observability",
-          name: "Observability projection",
-          responsibility:
-            "Reads bounded, scoped runner and native-session metadata without execution writes.",
-          sourceFile: "src/observability/read.ts",
-        },
-      ]
-      for (const [from, to, file] of [
-        ["component:runner-runtime", "component:runner-store", "src/runner/runtime.ts"],
-        ["component:runner-runtime", "component:native-session-api", "src/runner/native.ts"],
-        ["component:progress-recorder", "component:runner-store", "src/progress/recorder.ts"],
-        ["component:observability", "component:runner-store", "src/observability/read.ts"],
-        ["component:observability", "component:native-session-api", "src/observability/native.ts"],
-      ] as const)
-        addEdge(
-          baseEdge(`architecture:${from}:${to}`, "architecture", from, to, "structural", {
-            evidence: codeEvidence(file),
-          }),
-        )
-
-      const transitionPayload = (row: TransitionRecord) => jsonObject(row.payload) ?? {}
-      const transitionsByEffectID = new Map<string, TransitionRecord[]>()
-      const transitionsByOutboxID = new Map<string, TransitionRecord[]>()
-      for (const row of source.transitions) {
-        const payload = transitionPayload(row)
-        const effectID = typeof payload.effectID === "string" ? payload.effectID : null
-        if (effectID) {
-          const values = transitionsByEffectID.get(effectID) ?? []
-          values.push(row)
-          transitionsByEffectID.set(effectID, values)
-        }
-        const outboxID = typeof payload.outboxID === "string" ? payload.outboxID : null
-        if (outboxID) {
-          const values = transitionsByOutboxID.get(outboxID) ?? []
-          values.push(row)
-          transitionsByOutboxID.set(outboxID, values)
-        }
-      }
-      const transitionEvidence = (
-        row: TransitionRecord,
-        payload: JsonObject,
-        fallbackMessageID: string | null = null,
-      ): RadarResponse["edges"][number]["evidence"][number] => ({
-        source: "runner-transition",
-        sequence: row.id,
-        event: safeText(row.event, stats, 120),
-        effectID:
-          typeof payload.effectID === "string" ? safeText(payload.effectID, stats, 200) : null,
-        outboxID:
-          typeof payload.outboxID === "string" ? safeText(payload.outboxID, stats, 200) : null,
-        messageID:
-          typeof payload.messageID === "string"
-            ? safeText(payload.messageID, stats, 200)
-            : fallbackMessageID,
-        at: row.created_at,
-      })
-      const progressEvidence = (
-        row: ProgressRow,
-        at: number | null = row.at,
-      ): RadarResponse["edges"][number]["evidence"][number] => ({
-        source: "runner-record",
-        recordID: `progress:${row.seq}`,
-        messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
-        callID: row.call_id ? safeText(row.call_id, stats, 200) : null,
-        at,
-      })
-      const eventEvidence = (
-        eventID: string,
-        eventType: string,
-        sessionID: string,
-        messageID: string | null,
-        callID: string | null,
-        at: number,
-      ): RadarResponse["edges"][number]["evidence"][number] => ({
-        source: "native-event",
-        eventID: safeText(eventID, stats, 200),
-        eventType: safeText(eventType, stats, 120),
-        sessionID,
-        messageID,
-        callID,
-        at,
-      })
-
-      const plans = source.radarPlans.slice(0, 1000).map((plan) => ({
-        id: plan.id,
-        state: safeText(plan.state, stats, 80),
-        ownerSessionID: plan.owner,
-        title: planInput(plan)?.title ? safeText(planInput(plan)!.title!, stats, 120) : null,
-      }))
-      const nodesByTask = new Map(source.nodes.map((node) => [node.task_id, node]))
-      const planByTask = new Map<string, string>()
-      for (const node of source.nodes)
-        if (!planByTask.has(node.task_id)) planByTask.set(node.task_id, node.plan_id)
-      const tasks = source.tasks.slice(0, 1000).map((task) => ({
-        id: task.id,
-        planID: planByTask.get(task.id) ?? null,
-        state: nodesByTask.get(task.id)?.state ?? ("submitted" as const),
-      }))
-      const attempts = source.radarAttempts.slice(0, 10_000).map((attempt) => ({
-        id: attempt.id,
-        planID: attempt.plan_id,
-        taskID: attempt.task_id,
-        sessionID: attempt.session_id,
-        number: attempt.number,
-        state: safeText(attempt.state, stats, 80),
-        startedAt: attempt.started_at,
-        configuredRouteID: configuredByAttempt.get(attempt.id) ?? null,
-      }))
-
-      const plansByID = new Map(source.radarPlans.map((plan) => [plan.id, plan]))
-      for (const plan of plans) {
-        addEdge(
-          baseEdge(
-            `association:plan:${plan.id}:${stableToken(plan.ownerSessionID)}`,
-            "association",
-            `plan:${plan.id}`,
-            sessionNodeID(plan.ownerSessionID),
-            "plan-owner",
-            {
-              planID: plan.id,
-              evidence: [
-                {
-                  source: "runner-record",
-                  recordID: plan.id,
-                  messageID: null,
-                  callID: null,
-                  at: null,
-                },
-              ],
-            },
-          ),
-        )
-      }
-      for (const task of source.tasks) {
-        const submitter = task.provenance.sessionID
-        addEdge(
-          baseEdge(
-            `association:task:${task.id}:${stableToken(submitter)}`,
-            "association",
-            `task:${task.id}`,
-            sessionNodeID(submitter),
-            "task-submitter",
-            {
-              planID: planByTask.get(task.id) ?? null,
-              taskID: task.id,
-              evidence: [
-                {
-                  source: "runner-record",
-                  recordID: task.id,
-                  messageID: null,
-                  callID: null,
-                  at: null,
-                },
-              ],
-            },
-          ),
-        )
-      }
-      for (const dependency of source.dependencies)
-        addEdge(
-          baseEdge(
-            `dependency:${dependency.plan_id}:${dependency.prerequisite}:${dependency.successor}`,
-            "dependency",
-            `task:${dependency.prerequisite}`,
-            `task:${dependency.successor}`,
-            "dependency",
-            {
-              planID: dependency.plan_id,
-              taskID: dependency.successor,
-              evidence: [
-                {
-                  source: "runner-record",
-                  recordID: dependency.plan_id,
-                  messageID: null,
-                  callID: null,
-                  at: null,
-                },
-              ],
-            },
-          ),
-        )
-
-      const liveEventIDs = tracker.peekLiveEvents(selectedSet)
-      const effectsByAttempt = new Map<string, RadarEffectRecord[]>()
-      for (const effect of source.radarEffects) {
-        if (!effect.attempt_id) continue
-        const values = effectsByAttempt.get(effect.attempt_id) ?? []
-        values.push(effect)
-        effectsByAttempt.set(effect.attempt_id, values)
-      }
-      for (const attempt of source.radarAttempts) {
-        const plan = plansByID.get(attempt.plan_id)
-        const effects = effectsByAttempt.get(attempt.id) ?? []
-        const sessionEffect = effects.find((effect) => effect.kind === "session")
-        const promptEffect = effects.find((effect) => effect.kind === "prompt")
-        const transitionsFor = (effectID: string | undefined) =>
-          effectID ? (transitionsByEffectID.get(effectID) ?? []) : []
-        const sessionTransitions = transitionsFor(sessionEffect?.id)
-        addEdge(
-          baseEdge(
-            `assignment:${attempt.id}`,
-            "assignment",
-            `plan:${attempt.plan_id}`,
-            sessionNodeID(attempt.session_id),
-            sessionEffect?.state ?? "reserved",
-            {
-              planID: attempt.plan_id,
-              taskID: attempt.task_id,
-              attemptID: attempt.id,
-              startedAt: attempt.started_at,
-              observedAt: sessionTransitions.at(-1)?.created_at ?? null,
-              evidence: [
-                {
-                  source: "runner-record" as const,
-                  recordID: attempt.id,
-                  messageID: attempt.message_id,
-                  callID: null,
-                  at: attempt.started_at,
-                },
-                ...sessionTransitions.map((row) => transitionEvidence(row, transitionPayload(row))),
-              ].slice(-100),
-            },
-          ),
-        )
-        if (promptEffect && plan) {
-          const effectPayload = jsonObject(promptEffect.payload) ?? {}
-          const messageID =
-            typeof effectPayload.messageID === "string"
-              ? effectPayload.messageID
-              : attempt.message_id
-          const promptTransitions = transitionsFor(promptEffect.id)
-          const stage =
-            promptEffect.state === "intended"
-              ? "persisted"
-              : promptEffect.state === "completed"
-                ? "admitted"
-                : "unknown"
-          addEdge(
-            baseEdge(
-              `prompt:${promptEffect.id}`,
-              "prompt",
-              sessionNodeID(plan.owner),
-              sessionNodeID(attempt.session_id),
-              promptEffect.state,
-              {
-                deliveryStage: stage,
-                planID: attempt.plan_id,
-                taskID: attempt.task_id,
-                attemptID: attempt.id,
-                messageID: safeText(messageID, stats, 200),
-                startedAt: promptTransitions[0]?.created_at ?? null,
-                observedAt: promptTransitions.at(-1)?.created_at ?? null,
-                evidence: promptTransitions
-                  .map((row) =>
-                    transitionEvidence(
-                      row,
-                      transitionPayload(row),
-                      safeText(messageID, stats, 200),
-                    ),
-                  )
-                  .slice(-100),
-              },
-            ),
-          )
-        }
-      }
-
-      for (const outbox of source.outbox) {
-        const transitionRows = transitionsByOutboxID.get(outbox.id) ?? []
-        const stage: NonNullable<RadarResponse["edges"][number]["deliveryStage"]> =
-          outbox.state === "pending"
-            ? "persisted"
-            : outbox.state === "admitted" || outbox.state === "delivered"
-              ? "admitted"
-              : outbox.state === "consumed"
-                ? "consumed"
-                : outbox.state === "rejected"
-                  ? "rejected"
-                  : outbox.state === "superseded"
-                    ? "superseded"
-                    : "unknown"
-        const evidence = transitionRows.map((row) =>
-          transitionEvidence(row, transitionPayload(row), outbox.message_id),
-        )
-        if (!evidence.length)
-          evidence.push({
-            source: "runner-record",
-            recordID: outbox.id,
-            messageID: outbox.message_id,
-            callID: null,
-            at: null,
-          })
-        addEdge(
-          baseEdge(
-            `outcome:${outbox.id}`,
-            "outcome",
-            "component:runner-runtime",
-            sessionNodeID(outbox.session_id),
-            outbox.state,
-            {
-              deliveryStage: stage,
-              planID: outbox.plan_id,
-              messageID: safeText(outbox.message_id, stats, 200),
-              startedAt: transitionRows[0]?.created_at ?? null,
-              observedAt: transitionRows.at(-1)?.created_at ?? null,
-              evidence: evidence.slice(-100),
-            },
-          ),
-        )
-      }
-
-      const stepStarts = new Map<
-        string,
-        { routeID: string; startedAt: number | null; agentID: string | null }
-      >()
-      const stepObservations = source.progress.flatMap((row) => {
-        if (row.kind !== "step") return []
-        const fact = projectProgressFact(row)
-        const observations = fact.observations
-        if (!Array.isArray(observations)) return []
-        return observations.flatMap((rawObservation, index) => {
-          const observation = object(rawObservation)
-          const at = observation?.at
-          if (
-            observation?.source !== "native-event" ||
-            typeof at !== "number" ||
-            !Number.isFinite(at)
-          )
-            return []
-          return [{ row, messageID: fact.messageID, observation, index, at }]
-        })
-      })
-      stepObservations.sort(
-        (left, right) =>
-          left.at - right.at || left.row.seq - right.row.seq || left.index - right.index,
+      const routeSink: RadarRouteSink = { routes: [], routeIDs: new Set(), truncated: false }
+      const { configuredByAttempt, configuredBySession } = addConfiguredRoutes(
+        routeSink,
+        stats,
+        source,
       )
-      for (const { row, messageID, observation, at } of stepObservations) {
-        if (
-          typeof observation.eventID !== "string" ||
-          !observation.eventID ||
-          typeof observation.messageID !== "string" ||
-          !observation.messageID ||
-          observation.messageID !== messageID ||
-          !["session.step.started", "session.step.ended", "session.step.failed"].includes(
-            String(observation.eventType),
-          )
-        )
-          continue
-        const key = `${row.session_id}\u0000${observation.messageID}`
-        if (observation.eventType === "session.step.started") {
-          const route = object(observation.route)
-          if (
-            !route ||
-            typeof route.providerID !== "string" ||
-            !route.providerID ||
-            typeof route.modelID !== "string" ||
-            !route.modelID
-          )
-            continue
-          const routeID = addRoute({
-            id: `route:step:${stableToken(observation.eventID)}`,
-            providerID: route.providerID,
-            modelID: route.modelID,
-            variant: typeof route.variant === "string" ? route.variant : null,
-            source: "step-event",
-            sessionID: row.session_id,
-            attemptID: row.attempt_id,
-            messageID: observation.messageID,
-            eventID: observation.eventID,
-            observedAt: at,
-          })
-          if (!routeID) continue
-          const agentID =
-            typeof observation.agent === "string" ? safeText(observation.agent, stats, 200) : null
-          const recordedStartedAt = observation.startedAt
-          const startedAt =
-            typeof recordedStartedAt === "number" && Number.isFinite(recordedStartedAt)
-              ? recordedStartedAt
-              : at
-          stepStarts.set(key, { routeID, startedAt, agentID })
-          addEdge(
-            baseEdge(
-              `model-request:${stableToken(observation.eventID)}`,
-              "model-request",
-              sessionNodeID(row.session_id),
-              routeID,
-              "started",
-              {
-                planID: row.plan_id,
-                taskID: row.task_id,
-                attemptID: row.attempt_id,
-                agentID,
-                messageID: observation.messageID,
-                routeID,
-                startedAt,
-                observedAt: at,
-                live: liveEventIDs.has(observation.eventID),
-                evidence: [
-                  eventEvidence(
-                    observation.eventID,
-                    String(observation.eventType),
-                    row.session_id,
-                    observation.messageID,
-                    null,
-                    at,
-                  ),
-                ],
-              },
-            ),
-          )
-        } else {
-          const started = stepStarts.get(key)
-          if (!started) continue
-          const failed = observation.eventType === "session.step.failed"
-          addEdge(
-            baseEdge(
-              `model-response:${stableToken(observation.eventID)}`,
-              "model-response",
-              started.routeID,
-              sessionNodeID(row.session_id),
-              failed ? "failed" : "ended",
-              {
-                planID: row.plan_id,
-                taskID: row.task_id,
-                attemptID: row.attempt_id,
-                agentID: started.agentID,
-                messageID: observation.messageID,
-                routeID: started.routeID,
-                startedAt: started.startedAt,
-                observedAt: at,
-                live: liveEventIDs.has(observation.eventID),
-                evidence: [
-                  eventEvidence(
-                    observation.eventID,
-                    String(observation.eventType),
-                    row.session_id,
-                    observation.messageID,
-                    null,
-                    at,
-                  ),
-                ],
-              },
-            ),
-          )
-        }
-      }
-      const tools = new Map<string, { id: string; name: string }>()
-      for (const row of source.progress) {
-        if (row.kind !== "tool") continue
-        const fact = projectProgressFact(row)
-        const observations = Array.isArray(fact.observations) ? fact.observations : []
-        const name = typeof fact.tool === "string" ? fact.tool : ""
-        const callID = typeof fact.callID === "string" ? fact.callID : ""
-        if (!name || !row.call_id || !callID) continue
-        const toolID = `tool:${stableToken(name)}`
-        tools.set(toolID, { id: toolID, name })
-        const orderedObservations = observations
-          .flatMap((rawObservation, index) => {
-            const observation = object(rawObservation)
-            if (
-              observation?.source !== "native-event" ||
-              typeof observation.at !== "number" ||
-              !Number.isFinite(observation.at)
-            )
-              return []
-            return [{ observation, index, at: observation.at }]
-          })
-          .sort((left, right) => left.at - right.at || left.index - right.index)
-        for (const { observation, at } of orderedObservations) {
-          if (
-            typeof observation.eventID !== "string" ||
-            !observation.eventID ||
-            observation.callID !== callID ||
-            (observation.eventType !== "session.tool.called" &&
-              observation.eventType !== "session.tool.success" &&
-              observation.eventType !== "session.tool.failed")
-          )
-            continue
-          const isCall = observation.eventType === "session.tool.called"
-          const evidence = eventEvidence(
-            observation.eventID,
-            observation.eventType,
-            row.session_id,
-            row.message_id ? safeText(row.message_id, stats, 200) : null,
-            safeText(row.call_id, stats, 200),
-            at,
-          )
-          addEdge(
-            baseEdge(
-              `tool-flow:${stableToken(observation.eventID)}`,
-              isCall ? "tool-call" : "tool-result",
-              isCall ? sessionNodeID(row.session_id) : toolID,
-              isCall ? toolID : sessionNodeID(row.session_id),
-              typeof observation.status === "string" ? observation.status : "observed",
-              {
-                planID: row.plan_id,
-                taskID: row.task_id,
-                attemptID: row.attempt_id,
-                messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
-                callID: safeText(row.call_id, stats, 200),
-                observedAt: at,
-                live: liveEventIDs.has(observation.eventID),
-                evidence: [evidence],
-              },
-            ),
-          )
-        }
-      }
-      for (const row of source.progress) {
-        if (row.kind !== "reminder") continue
-        const fact = projectProgressFact(row)
-        const delivery = typeof fact.delivery === "string" ? fact.delivery : "unknown"
-        const stage: NonNullable<RadarResponse["edges"][number]["deliveryStage"]> =
-          delivery === "dispatching"
-            ? "persisted"
-            : delivery === "admitted"
-              ? "admitted"
-              : delivery === "rejected"
-                ? "rejected"
-                : "unknown"
-        const eventID = typeof fact.nativeEventID === "string" ? fact.nativeEventID : null
-        const observed = typeof fact.observedAt === "number" ? fact.observedAt : null
-        const evidence: RadarResponse["edges"][number]["evidence"] = [
-          progressEvidence(row, observed ?? row.at),
-        ]
-        if (eventID && observed !== null)
-          evidence.push(
-            eventEvidence(
-              eventID,
-              "session.synthetic",
-              row.session_id,
-              row.message_id,
-              null,
-              observed,
-            ),
-          )
-        addEdge(
-          baseEdge(
-            `reminder:${row.attempt_id}`,
-            "prompt",
-            "component:progress-recorder",
-            sessionNodeID(row.session_id),
-            delivery,
-            {
-              planID: row.plan_id,
-              taskID: row.task_id,
-              attemptID: row.attempt_id,
-              messageID: row.message_id ? safeText(row.message_id, stats, 200) : null,
-              startedAt: row.at,
-              observedAt: observed,
-              live: Boolean(eventID && liveEventIDs.has(eventID)),
-              deliveryStage: stage,
-              evidence: evidence.slice(0, 100),
-            },
-          ),
-        )
-      }
+      const sessions = buildRadarSessions({
+        projectID: this.projectID,
+        selectedIDs,
+        selectedSet,
+        native,
+        context,
+        routeSink,
+        stats,
+        observedAt,
+        configuredBySession,
+      })
 
-      for (const session of sessions) {
-        if (session.parentSessionID)
-          addEdge(
-            baseEdge(
-              `ancestry:${stableToken(session.parentSessionID)}:${stableToken(session.sessionID)}`,
-              "ancestry",
-              sessionNodeID(session.parentSessionID),
-              session.id,
-              "native-parent",
-              {
-                observedAt,
-                evidence: [{ source: "native-read", sessionID: session.sessionID, at: observedAt }],
-              },
-            ),
-          )
-        if (session.availability === "available")
-          addEdge(
-            baseEdge(
-              `observation:${session.sessionID}`,
-              "observation",
-              "component:observability",
-              session.id,
-              "metadata-read",
-              {
-                observedAt,
-                evidence: [{ source: "native-read", sessionID: session.sessionID, at: observedAt }],
-              },
-            ),
-          )
-      }
+      const builder: RadarEdgeBuilder = { edges: [], edgeIDs: new Set(), truncated: false, stats }
+      const components = radarComponents()
+      addArchitectureEdges(builder)
+      const transitions = indexTransitions(source.transitions)
+      const plans = summarizeRadarPlans(source, stats)
+      const planByTask = planIDByTask(source)
+      const tasks = summarizeRadarTasks(source, planByTask)
+      const attempts = summarizeRadarAttempts(source, stats, configuredByAttempt)
+      addAssociationEdges(builder, source, plans, planByTask)
+      const liveEventIDs = tracker.peekLiveEvents(selectedSet)
+      addAttemptEdges(builder, source, transitions)
+      addOutboxEdges(builder, source, transitions)
+      addStepEdges(builder, routeSink, source.progress, liveEventIDs)
+      const tools = addToolEdges(builder, source.progress, liveEventIDs)
+      addReminderEdges(builder, source.progress, liveEventIDs)
+      addSessionEdges(builder, sessions, observedAt)
 
       if (tracker.nativeRevision !== nativeRevision) throw new ObservationReadChangedError("native")
       const latest = connection.store.read((db) =>
@@ -1726,7 +2040,7 @@ export class ObservationReads {
         boundary,
         freshness: {
           runner: "current",
-          nativeInventory,
+          nativeInventory: native.nativeInventory,
           nativeEvents: tracker.hasConnectedEventStream ? "connected" : "gap-or-unavailable",
         },
         coverage: {
@@ -1734,26 +2048,26 @@ export class ObservationReads {
           managedSessionCount: sessions.filter((session) => session.classification !== "unmanaged")
             .length,
           includeUnmanagedSessions,
-          inventoryTruncated: inventoryTruncated || ancestryTruncated,
+          inventoryTruncated: native.inventoryTruncated || native.ancestryTruncated,
           workTruncated:
             source.workTruncated ||
             source.tasks.length > 1000 ||
             selectedIDs.length < requestedIDs.size,
           progressTruncated: source.progressTruncated,
-          routeTruncated,
+          routeTruncated: routeSink.truncated,
           toolTruncated: tools.size > 200,
-          edgeTruncated,
+          edgeTruncated: builder.truncated,
         },
         components,
         sessions,
-        routes,
+        routes: routeSink.routes,
         tools: [...tools.values()]
           .sort((left, right) => left.id.localeCompare(right.id))
           .slice(0, 200),
         plans,
         tasks,
         attempts,
-        edges,
+        edges: builder.edges,
       })
     } finally {
       connection.close()
