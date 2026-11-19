@@ -325,7 +325,7 @@ test.each(["stdout", "stderr"] as const)(
       )
       expect(receipt.exitCode).toBe(0)
       expect(receipt.timedOut).toBe(false)
-      expect(receipt[stream]).toContain("[output truncated]")
+      expect(receipt[stream]).toMatch(/\[\.\.\. \d+ bytes omitted \.\.\.\]/)
       expect(Date.now() - receipt.startedAt).toBeGreaterThan(250)
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -900,6 +900,34 @@ test("combined artifact comparison uses tree OID and ordered parents, not the co
       parent === first ? "first" : parent === second ? "second" : parent
     const rewritten = sibling([second, first].toReversed())
     expect(await combinedArtifactsMatch(root, rewritten, stored, map)).toBe(true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("captured output keeps the head and the true end once it exceeds the limit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-check-capture-"))
+  try {
+    const run = (id: string, total: number) =>
+      runCheck(
+        root,
+        "candidate",
+        {
+          id,
+          command: `bun -e 'process.stdout.write("H".repeat(100) + "x".repeat(${total} - 110) + "TAIL-END!!")'`,
+          inactivityTimeoutMs: 20_000,
+          hardTimeoutMs: 30_000,
+        },
+        join(root, `${id}.json`),
+      )
+    const small = await run("small", 32_768)
+    expect(small.stdout).toHaveLength(32_768)
+    expect(small.stdout).not.toContain("bytes omitted")
+    const large = await run("large", 100_000)
+    expect(large.stdout.startsWith("H".repeat(100))).toBe(true)
+    expect(large.stdout).toMatch(/\n\[\.\.\. 67232 bytes omitted \.\.\.\]\n/)
+    expect(large.stdout.endsWith("TAIL-END!!")).toBe(true)
+    expect(large.stdout.length).toBeLessThan(32_768 + 64)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -4942,6 +4942,66 @@ test("repair handoffs do not copy legacy skill bodies into a new attempt", async
   expectNoSkillBody(attempts[1]!.policy)
 })
 
+test("a repair attempt is told about every failing check", async () => {
+  const f = fixture({
+    repair: true,
+    beforeCheck: "echo before-out; echo before-err >&2; exit 3",
+    checkCommand: "echo content-out; echo content-err >&2; exit 7",
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  const repairs = f.store
+    .activity(planID, f.tasks[0]!.id)
+    .filter((event) => event.event === "REPAIR")
+  expect(repairs).toHaveLength(1)
+  expect(JSON.stringify(repairs[0])).toContain(
+    "Verification before exited with code 3; Verification content exited with code 7",
+  )
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  await f.runtime.tick()
+  const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
+  expect(prompt).toContain("- before: `echo before-out; echo before-err >&2; exit 3` exit 3")
+  expect(prompt).toContain("stdout:\n```\nbefore-out\n\n```")
+  expect(prompt).toContain("stderr:\n```\nbefore-err\n\n```")
+  expect(prompt).toContain("- content: `echo content-out; echo content-err >&2; exit 7` exit 7")
+  expect(prompt).toContain("stdout:\n```\ncontent-out\n\n```")
+  expect(prompt).toContain("stderr:\n```\ncontent-err\n\n```")
+})
+
+test("a single failing check keeps its unchanged failure reason", async () => {
+  const f = fixture({ fail: true, repair: true })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  const repairs = f.store
+    .activity(planID, f.tasks[0]!.id)
+    .filter((event) => event.event === "REPAIR")
+  expect(repairs).toHaveLength(1)
+  expect(JSON.stringify(repairs[0])).toContain("Verification content exited with code 7")
+  expect(JSON.stringify(repairs[0])).not.toContain(";")
+})
+
+test("an ordinary failure beside a timeout still holds without repair", async () => {
+  const f = fixture({
+    repair: true,
+    beforeCheck: "exit 3",
+    checkCommand: "sleep 5",
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  expect(f.store.plan(planID)?.reason).toBe("Verification content timed out")
+  expect(
+    f.store.activity(planID, f.tasks[0]!.id).filter((event) => event.event === "REPAIR"),
+  ).toHaveLength(0)
+  expect(f.store.attempts(planID)).toHaveLength(1)
+})
+
 test("verification failure and scope violations cannot unblock a successor", async () => {
   for (const options of [{ fail: true }, { outside: true }, { missingEvidence: true }]) {
     const f = fixture(options)
