@@ -53,6 +53,30 @@ const reasonMap: ReadonlyArray<readonly [RegExp, string]> = [
     /checkout or write scope|scopes are reserved|conflicting write scope/i,
     "Another task holds the files this one needs. This starts when they are free.",
   ],
+  [
+    /combined artifact (verification failed|conflict)/i,
+    "This work conflicts with other accepted changes when combined. Open Architect to reconcile it.",
+  ],
+  [
+    /worker (execution )?(was )?interrupted|could not resume/i,
+    "The worker was interrupted and the runtime could not resume it. Open Architect to resume or retry it.",
+  ],
+  [
+    /verification .*(exited with code|failed)|checks? failed/i,
+    "A verification check failed. Open Architect to retry or amend the task.",
+  ],
+  [
+    /no native worker route/i,
+    "No worker model is configured for this kind of task. Assign one in Models.",
+  ],
+  [
+    /landing branch or head changed/i,
+    "The target branch moved while integrating. Open Architect to integrate again.",
+  ],
+  [
+    /owned worktree (is dirty|has unmerged)/i,
+    "The task's worktree holds work that was kept. Open Architect to decide what to do with it.",
+  ],
   [/higher-priority/i, "A higher-priority plan goes first. This runs after it."],
   [/cancellation requested/i, "Cancellation was requested. The runtime is stopping this work."],
   [/awaits human evidence/i, "This needs evidence from you. Open Architect to provide it."],

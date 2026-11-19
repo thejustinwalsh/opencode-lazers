@@ -11,6 +11,7 @@ import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
 import { taskAdviceSnapshot } from "./advice.ts"
+import { attemptModel, readAttemptSummary } from "./attempt-summary.ts"
 import type { TaskState } from "../runner/schema.ts"
 
 const TERMINAL_NODE_STATES = new Set([
@@ -213,10 +214,13 @@ export class TaskReads {
         reference,
         ...(disposition ? { disposition } : {}),
       })
-    const attempts = this.runner
+    const ownAttempts = this.runner
       .attempts(execution.planID)
       .filter((attempt) => attempt.task_id === task.id)
-      .map((attempt) => ({
+    const latestAttempt = ownAttempts.at(-1)
+    const attempts = ownAttempts.map((attempt) => {
+      const model = attemptModel(attempt.policy)
+      return {
         id: attempt.id,
         number: attempt.number,
         state: attempt.state,
@@ -224,7 +228,10 @@ export class TaskReads {
         artifact: attempt.artifact,
         tokenCount: attempt.token_count,
         toolCount: attempt.tool_count,
-      }))
+        ...(model ? { model } : {}),
+        ...(attempt === latestAttempt ? this.attemptSummary(attempt.id) : {}),
+      }
+    })
     const activity = this.runner.activity(execution.planID, task.id).map((event) => ({
       id: event.id,
       taskID: event.task_id,
@@ -320,6 +327,19 @@ export class TaskReads {
   recordedStateForTask(taskID: string): TaskState | undefined {
     const execution = this.effectiveExecution(taskID)
     return execution ? this.recordedNodeState(taskID, execution.planID) : undefined
+  }
+
+  /** The latest attempt's compact activity; a failed read leaves the pane without it. */
+  protected attemptSummary(attemptID: string) {
+    try {
+      return {
+        summary: this.repository.read((db) =>
+          readAttemptSummary(db, this.repository.projectDirectory, attemptID),
+        ),
+      }
+    } catch {
+      return {}
+    }
   }
 
   /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */

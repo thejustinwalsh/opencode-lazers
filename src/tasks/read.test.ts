@@ -547,6 +547,90 @@ test("current activity candidates are limited to requested, authorized latest at
   ).toThrow("invalid")
 })
 
+test("the task read carries the model and a compact summary for the latest attempt only", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const task = insert(repository, "Summarised attempts")
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "attempt-summary-plan",
+      objective: task.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID: task.id, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [task.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "architect",
+  )
+  const attempts = [crypto.randomUUID(), crypto.randomUUID()]
+  repository.atomic((db) => {
+    attempts.forEach((id, index) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts
+          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,tool_count)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          id,
+          plan.planID,
+          task.id,
+          index + 1,
+          `worker-${index}`,
+          `message-${index}`,
+          "/worktree",
+          "a".repeat(40),
+          null,
+          index === 1
+            ? JSON.stringify({ model: { providerID: "openai", id: "gpt-6-luna", variant: "max" } })
+            : "{}",
+          index === 1 ? "running" : "failed",
+          1_000 * (index + 1),
+          index === 1 ? 2 : 1,
+        ),
+    )
+    const progress = (attempt: string, at: number, status: string, files: string[]) =>
+      db
+        .query(
+          `INSERT INTO runner_progress
+           (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,sources_json,kind,event_ids_json,call_id,dedupe_key,payload)
+           VALUES(?,?,?,?,?,?,?,'native','[]','tool','[]',?,?,?)`,
+        )
+        .run(
+          repository.projectDirectory,
+          "global",
+          plan.planID,
+          task.id,
+          attempt,
+          "worker",
+          at,
+          `call-${at}`,
+          `dedupe-${at}`,
+          JSON.stringify({ status, fileTargets: { operation: "edit", paths: files } }),
+        )
+    progress(attempts[0]!, 1_500, "succeeded", ["old.ts"])
+    progress(attempts[1]!, 2_100, "succeeded", ["a.ts"])
+    progress(attempts[1]!, 2_400, "failed", ["b.ts"])
+  })
+  const found = reads.get({ taskID: task.id })
+  if (found.status !== "found") throw new Error("task not found")
+  const [first, latest] = found.attempts!
+  expect(first!.summary).toBeUndefined()
+  expect(first!.model).toBeUndefined()
+  expect(latest).toMatchObject({
+    toolCount: 2,
+    model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
+    summary: {
+      lastActivityAt: 2_400,
+      ticks: [{ at: 2_100 }, { at: 2_400, failed: true }],
+      files: 2,
+    },
+  })
+})
+
 test("source plan provenance survives storage and task reads without inventing it for standalone tasks", () => {
   const { open } = fixture()
   const repository = open()
