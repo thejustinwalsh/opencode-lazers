@@ -407,9 +407,11 @@ export class TaskRepository {
       shared.once("tasks", migrateTasks)
       shared.once("task-advice-and-projects", () => {
         installTaskAdviceSchema(this)
-        installObservedRevisionsSchema(this)
         installProjectSchema(this)
       })
+      // The connection and its `once` keys outlive a plugin reload (they hang off globalThis), so
+      // a schema added later needs its own key or a reloaded service never installs it.
+      shared.once("task-observations", () => installObservedRevisionsSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined
