@@ -280,6 +280,301 @@ function safeToolContent(value: unknown, stats: PrivacyStats) {
   return safeText(output.join("\n"), stats)
 }
 
+type MessageContext = {
+  stats: PrivacyStats
+  base: (id: string, at: number | null, kind: string) => Record<string, unknown>
+  add: (event: Record<string, unknown>) => void
+}
+
+type MessageSlice = {
+  message: Record<string, unknown>
+  messageID: string
+  createdAt: number | null
+}
+
+const TOOL_STATUSES = ["streaming", "running", "completed", "error"]
+
+function userMessageEvents(ctx: MessageContext, { message, messageID, createdAt }: MessageSlice) {
+  if (typeof message.text === "string")
+    ctx.add({
+      ...ctx.base(`${messageID}:text`, createdAt, message.type as string),
+      text: safeText(message.text, ctx.stats),
+    })
+  if (Array.isArray(message.files)) ctx.stats.omittedAttachments += message.files.length
+}
+
+function assistantStepStatus(message: Record<string, unknown>, createdAt: number | null) {
+  const messageTime = object(message.time)
+  if (message.error) return "failed"
+  if (dateMillis(messageTime?.completed) !== null) return "ended"
+  if (dateMillis(messageTime?.streamed) !== null) return "streamed"
+  return createdAt !== null ? "started" : "unknown"
+}
+
+function assistantStepEvent(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const messageTime = object(message.time)
+  const stepStatus = assistantStepStatus(message, createdAt)
+  ctx.add({
+    ...ctx.base(`${messageID}:assistant-step`, createdAt, "assistant-step"),
+    model,
+    status: stepStatus,
+    timing: contextTiming({
+      startedAt: {
+        value: messageTime?.created,
+        sourceType: "session-message.assistant.time.created",
+        meaning: "Retained assistant message start time",
+      },
+      streamedAt: {
+        value: messageTime?.streamed,
+        sourceType: "session-message.assistant.time.streamed",
+        meaning: "Provider response-body end before tool settlement",
+      },
+      completedAt: {
+        value: messageTime?.completed,
+        sourceType: "session-message.assistant.time.completed",
+        meaning: "Assistant completion after tool settlement",
+      },
+    }),
+  })
+}
+
+function assistantToolEvent(
+  ctx: MessageContext,
+  part: Record<string, unknown>,
+  partIndex: number,
+  { messageID }: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const { stats } = ctx
+  const toolState = object(part.state)
+  const status = typeof toolState?.status === "string" ? toolState.status : "unsupported"
+  if (!toolState || !TOOL_STATUSES.includes(status)) stats.omittedUnsupportedParts++
+  const input = toolState?.input
+  const inputView = typeof input === "string" ? safeText(input, stats) : safeValue(input, stats)
+  const toolTime = object(part.time)
+  const ranAt = dateMillis(toolTime?.ran)
+  const completedAt = dateMillis(toolTime?.completed)
+  const executed = typeof part.executed === "boolean" ? part.executed : null
+  const content =
+    status === "completed" || status === "error" ? safeToolContent(toolState?.content, stats) : ""
+  const error = status === "error" ? safeErrorView(toolState?.error, stats) : null
+  ctx.add({
+    ...ctx.base(
+      `${messageID}:tool:${typeof part.id === "string" ? part.id : partIndex}`,
+      ranAt,
+      "tool",
+    ),
+    model,
+    tool: typeof part.name === "string" ? safeText(part.name, stats, 160) : "[unknown tool]",
+    status: TOOL_STATUSES.includes(status) ? status : "unsupported",
+    callStatus: ranAt !== null || executed !== null ? "called" : null,
+    input: inputView,
+    result: content,
+    ...(error ? { error } : {}),
+    completedAt,
+    execution: {
+      status: executed === null ? "unknown" : executed ? "executed" : "not-executed",
+      source: executed === null ? null : "native-context",
+      sourceType: executed === null ? null : "session-message.assistant.tool.executed",
+      meaning: "Retained explicit executed flag; called/ran time alone is not execution proof",
+    },
+    timing: contextTiming({
+      inputAt: {
+        value: toolTime?.created,
+        sourceType: "session-message.assistant.tool.time.created",
+        meaning: "Retained assistant tool input creation boundary",
+      },
+      calledAt: {
+        value: toolTime?.ran,
+        sourceType: "session-message.assistant.tool.time.ran",
+        meaning: "Retained assistant tool call boundary; not proof that the tool executed",
+      },
+      completedAt: {
+        value: toolTime?.completed,
+        sourceType: "session-message.assistant.tool.time.completed",
+        meaning: "Retained assistant tool result terminal boundary",
+      },
+    }),
+  })
+}
+
+function assistantPartEvent(
+  ctx: MessageContext,
+  rawPart: unknown,
+  partIndex: number,
+  slice: MessageSlice,
+  model: ReturnType<typeof modelView>,
+) {
+  const { stats } = ctx
+  const part = object(rawPart)
+  if (!part || typeof part.type !== "string") {
+    stats.omittedUnsupportedParts++
+    return
+  }
+  if (part.type === "reasoning") {
+    stats.omittedReasoning++
+    return
+  }
+  if (part.type === "text") {
+    if (typeof part.text !== "string") {
+      stats.omittedUnsupportedParts++
+      return
+    }
+    ctx.add({
+      ...ctx.base(`${slice.messageID}:text:${partIndex}`, slice.createdAt, "assistant-text"),
+      model,
+      text: safeText(part.text, stats),
+    })
+    return
+  }
+  if (part.type !== "tool") {
+    stats.omittedUnsupportedParts++
+    return
+  }
+  assistantToolEvent(ctx, part, partIndex, slice, model)
+}
+
+function assistantTrailingEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+) {
+  if (message.retry) {
+    const retry = object(message.retry)
+    if (retry) {
+      ctx.add({
+        ...ctx.base(`${messageID}:provider-retry`, dateMillis(retry.at), "provider-retry"),
+        attempt: asNumber(retry.attempt),
+        error: safeErrorView(retry.error, ctx.stats),
+        timing: contextTiming({
+          scheduledAt: {
+            value: retry.at,
+            sourceType: "session-message.assistant.retry.at",
+            meaning: "Retained provider retry scheduled time",
+          },
+        }),
+      })
+    }
+  }
+  if (message.error) {
+    ctx.add({
+      ...ctx.base(`${messageID}:error`, createdAt, "assistant-error"),
+      error: safeErrorView(message.error, ctx.stats),
+    })
+  }
+}
+
+function assistantMessageEvents(ctx: MessageContext, slice: MessageSlice) {
+  const model = modelView(slice.message.model, ctx.stats)
+  const parts = Array.isArray(slice.message.content) ? slice.message.content : []
+  assistantStepEvent(ctx, slice, model)
+  for (const [partIndex, rawPart] of parts.entries())
+    assistantPartEvent(ctx, rawPart, partIndex, slice, model)
+  assistantTrailingEvents(ctx, slice)
+}
+
+function shellMessageEvents(ctx: MessageContext, { message, messageID, createdAt }: MessageSlice) {
+  const { stats } = ctx
+  const output = object(message.output)
+  const shellTime = object(message.time)
+  ctx.add({
+    ...ctx.base(messageID, createdAt, "shell"),
+    command: typeof message.command === "string" ? safeText(message.command, stats) : "",
+    status: typeof message.status === "string" ? safeText(message.status, stats, 80) : "unknown",
+    exit: asNumber(message.exit),
+    output: typeof output?.output === "string" ? safeText(output.output, stats) : "",
+    outputTruncated: output?.truncated === true,
+    completedAt: dateMillis(shellTime?.completed),
+    timing: contextTiming({
+      createdAt: {
+        value: shellTime?.created,
+        sourceType: "session-message.shell.time.created",
+        meaning: "Retained shell message creation; not process start",
+      },
+      startedAt: {
+        value: undefined,
+        sourceType: "session-message.shell.process.started",
+        meaning: "Process start is not available in the retained shell message",
+      },
+      completedAt: {
+        value: shellTime?.completed,
+        sourceType: "session-message.shell.time.completed",
+        meaning: "Retained shell completion time",
+      },
+    }),
+  })
+  if (output?.truncated === true) stats.truncated++
+}
+
+function compactionMessageEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+) {
+  ctx.stats.compacted++
+  const status = message.status
+  const failed = status === "failed"
+  ctx.add({
+    ...ctx.base(messageID, createdAt, "compaction"),
+    status: ["running", "completed", "failed"].includes(String(status)) ? status : "unknown",
+    reason: message.reason === "auto" || message.reason === "manual" ? message.reason : "unknown",
+    ...(failed ? { error: safeErrorView(message.error, ctx.stats) } : {}),
+    summary: "[omitted: compaction summary and replay data are private]",
+  })
+}
+
+function switchMessageEvents(
+  ctx: MessageContext,
+  { message, messageID, createdAt }: MessageSlice,
+): boolean {
+  const { stats } = ctx
+  if (message.type === "idle") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "session-idle"),
+      outcome: ["succeeded", "failed", "interrupted"].includes(String(message.outcome))
+        ? message.outcome
+        : "unknown",
+      error: safeErrorView(message.error, stats),
+    })
+    return true
+  }
+  if (message.type === "model-switched") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "model-switched"),
+      model: modelView(message.model, stats),
+      previous: modelView(message.previous, stats),
+    })
+    return true
+  }
+  if (message.type === "agent-switched") {
+    ctx.add({
+      ...ctx.base(messageID, createdAt, "agent-switched"),
+      agent: typeof message.agent === "string" ? safeText(message.agent, stats, 120) : null,
+      previous:
+        typeof message.previous === "string" ? safeText(message.previous, stats, 120) : null,
+    })
+    return true
+  }
+  if (message.type === "location-switched") {
+    ctx.add({ ...ctx.base(messageID, createdAt, "location-switched"), location: "[path omitted]" })
+    return true
+  }
+  return false
+}
+
+function messageSliceEvents(ctx: MessageContext, slice: MessageSlice) {
+  const type = slice.message.type
+  if (type === "user" || type === "synthetic") return userMessageEvents(ctx, slice)
+  if (type === "assistant") return assistantMessageEvents(ctx, slice)
+  if (type === "shell") return shellMessageEvents(ctx, slice)
+  if (type === "compaction") return compactionMessageEvents(ctx, slice)
+  if (switchMessageEvents(ctx, slice)) return
+  if (type === "system" || type === "skill") ctx.stats.omittedSystem++
+  else ctx.stats.omittedUnsupportedParts++
+}
+
 function messageEvents(
   rawMessages: ReadonlyArray<SessionMessage.Info>,
   attempt: AttemptRow,
@@ -287,14 +582,17 @@ function messageEvents(
   stats: PrivacyStats,
 ) {
   const events: Record<string, unknown>[] = []
-  const base = (id: string, at: number | null, kind: string) => ({
-    id: safeText(id, stats, 256),
-    at,
-    attemptID: safeText(attempt.id, stats, 128),
-    sessionID: safeText(session.id, stats, 128),
-    kind,
-  })
-  const add = (event: Record<string, unknown>) => events.push(event)
+  const ctx: MessageContext = {
+    stats,
+    base: (id, at, kind) => ({
+      id: safeText(id, stats, 256),
+      at,
+      attemptID: safeText(attempt.id, stats, 128),
+      sessionID: safeText(session.id, stats, 128),
+      kind,
+    }),
+    add: (event) => events.push(event),
+  }
 
   const messages = rawMessages.slice(0, MAX_CONTEXT_MESSAGES)
   if (rawMessages.length > messages.length) stats.truncated++
@@ -304,244 +602,11 @@ function messageEvents(
       stats.omittedUnsupportedParts++
       continue
     }
-    const messageID = typeof message.id === "string" ? message.id : `unknown-${index}`
-    const createdAt = dateMillis(object(message.time)?.created)
-    if (message.type === "user" || message.type === "synthetic") {
-      if (typeof message.text === "string")
-        add({
-          ...base(`${messageID}:text`, createdAt, message.type),
-          text: safeText(message.text, stats),
-        })
-      if (Array.isArray(message.files)) stats.omittedAttachments += message.files.length
-      continue
-    }
-    if (message.type === "assistant") {
-      const model = modelView(message.model, stats)
-      const parts = Array.isArray(message.content) ? message.content : []
-      const messageTime = object(message.time)
-      const streamedAt = dateMillis(messageTime?.streamed)
-      const completedAt = dateMillis(messageTime?.completed)
-      const stepStatus = message.error
-        ? "failed"
-        : completedAt !== null
-          ? "ended"
-          : streamedAt !== null
-            ? "streamed"
-            : createdAt !== null
-              ? "started"
-              : "unknown"
-      add({
-        ...base(`${messageID}:assistant-step`, createdAt, "assistant-step"),
-        model,
-        status: stepStatus,
-        timing: contextTiming({
-          startedAt: {
-            value: messageTime?.created,
-            sourceType: "session-message.assistant.time.created",
-            meaning: "Retained assistant message start time",
-          },
-          streamedAt: {
-            value: messageTime?.streamed,
-            sourceType: "session-message.assistant.time.streamed",
-            meaning: "Provider response-body end before tool settlement",
-          },
-          completedAt: {
-            value: messageTime?.completed,
-            sourceType: "session-message.assistant.time.completed",
-            meaning: "Assistant completion after tool settlement",
-          },
-        }),
-      })
-      for (const [partIndex, rawPart] of parts.entries()) {
-        const part = object(rawPart)
-        if (!part || typeof part.type !== "string") {
-          stats.omittedUnsupportedParts++
-          continue
-        }
-        if (part.type === "reasoning") {
-          stats.omittedReasoning++
-          continue
-        }
-        if (part.type === "text") {
-          if (typeof part.text === "string")
-            add({
-              ...base(`${messageID}:text:${partIndex}`, createdAt, "assistant-text"),
-              model,
-              text: safeText(part.text, stats),
-            })
-          else stats.omittedUnsupportedParts++
-          continue
-        }
-        if (part.type !== "tool") {
-          stats.omittedUnsupportedParts++
-          continue
-        }
-        const toolState = object(part.state)
-        const status = typeof toolState?.status === "string" ? toolState.status : "unsupported"
-        if (!toolState || !["streaming", "running", "completed", "error"].includes(status))
-          stats.omittedUnsupportedParts++
-        const input = toolState?.input
-        const inputView =
-          typeof input === "string" ? safeText(input, stats) : safeValue(input, stats)
-        const toolTime = object(part.time)
-        const ranAt = dateMillis(toolTime?.ran)
-        const completedAt = dateMillis(toolTime?.completed)
-        const executed = typeof part.executed === "boolean" ? part.executed : null
-        const content =
-          status === "completed" || status === "error"
-            ? safeToolContent(toolState?.content, stats)
-            : ""
-        const error = status === "error" ? safeErrorView(toolState?.error, stats) : null
-        add({
-          ...base(
-            `${messageID}:tool:${typeof part.id === "string" ? part.id : partIndex}`,
-            ranAt,
-            "tool",
-          ),
-          model,
-          tool: typeof part.name === "string" ? safeText(part.name, stats, 160) : "[unknown tool]",
-          status: ["streaming", "running", "completed", "error"].includes(status)
-            ? status
-            : "unsupported",
-          callStatus: ranAt !== null || executed !== null ? "called" : null,
-          input: inputView,
-          result: content,
-          ...(error ? { error } : {}),
-          completedAt,
-          execution: {
-            status: executed === null ? "unknown" : executed ? "executed" : "not-executed",
-            source: executed === null ? null : "native-context",
-            sourceType: executed === null ? null : "session-message.assistant.tool.executed",
-            meaning:
-              "Retained explicit executed flag; called/ran time alone is not execution proof",
-          },
-          timing: contextTiming({
-            inputAt: {
-              value: toolTime?.created,
-              sourceType: "session-message.assistant.tool.time.created",
-              meaning: "Retained assistant tool input creation boundary",
-            },
-            calledAt: {
-              value: toolTime?.ran,
-              sourceType: "session-message.assistant.tool.time.ran",
-              meaning: "Retained assistant tool call boundary; not proof that the tool executed",
-            },
-            completedAt: {
-              value: toolTime?.completed,
-              sourceType: "session-message.assistant.tool.time.completed",
-              meaning: "Retained assistant tool result terminal boundary",
-            },
-          }),
-        })
-      }
-      if (message.retry) {
-        const retry = object(message.retry)
-        if (retry) {
-          add({
-            ...base(`${messageID}:provider-retry`, dateMillis(retry.at), "provider-retry"),
-            attempt: asNumber(retry.attempt),
-            error: safeErrorView(retry.error, stats),
-            timing: contextTiming({
-              scheduledAt: {
-                value: retry.at,
-                sourceType: "session-message.assistant.retry.at",
-                meaning: "Retained provider retry scheduled time",
-              },
-            }),
-          })
-        }
-      }
-      if (message.error) {
-        add({
-          ...base(`${messageID}:error`, createdAt, "assistant-error"),
-          error: safeErrorView(message.error, stats),
-        })
-      }
-      continue
-    }
-    if (message.type === "shell") {
-      const output = object(message.output)
-      const shellTime = object(message.time)
-      add({
-        ...base(messageID, createdAt, "shell"),
-        command: typeof message.command === "string" ? safeText(message.command, stats) : "",
-        status:
-          typeof message.status === "string" ? safeText(message.status, stats, 80) : "unknown",
-        exit: asNumber(message.exit),
-        output: typeof output?.output === "string" ? safeText(output.output, stats) : "",
-        outputTruncated: output?.truncated === true,
-        completedAt: dateMillis(shellTime?.completed),
-        timing: contextTiming({
-          createdAt: {
-            value: shellTime?.created,
-            sourceType: "session-message.shell.time.created",
-            meaning: "Retained shell message creation; not process start",
-          },
-          startedAt: {
-            value: undefined,
-            sourceType: "session-message.shell.process.started",
-            meaning: "Process start is not available in the retained shell message",
-          },
-          completedAt: {
-            value: shellTime?.completed,
-            sourceType: "session-message.shell.time.completed",
-            meaning: "Retained shell completion time",
-          },
-        }),
-      })
-      if (output?.truncated === true) stats.truncated++
-      continue
-    }
-    if (message.type === "compaction") {
-      stats.compacted++
-      const status = message.status
-      const failed = status === "failed"
-      add({
-        ...base(messageID, createdAt, "compaction"),
-        status: ["running", "completed", "failed"].includes(String(status)) ? status : "unknown",
-        reason:
-          message.reason === "auto" || message.reason === "manual" ? message.reason : "unknown",
-        ...(failed ? { error: safeErrorView(message.error, stats) } : {}),
-        summary: "[omitted: compaction summary and replay data are private]",
-      })
-      continue
-    }
-    if (message.type === "idle") {
-      add({
-        ...base(messageID, createdAt, "session-idle"),
-        outcome: ["succeeded", "failed", "interrupted"].includes(String(message.outcome))
-          ? message.outcome
-          : "unknown",
-        error: safeErrorView(message.error, stats),
-      })
-      continue
-    }
-    if (message.type === "model-switched") {
-      add({
-        ...base(messageID, createdAt, "model-switched"),
-        model: modelView(message.model, stats),
-        previous: modelView(message.previous, stats),
-      })
-      continue
-    }
-    if (message.type === "agent-switched") {
-      add({
-        ...base(messageID, createdAt, "agent-switched"),
-        agent: typeof message.agent === "string" ? safeText(message.agent, stats, 120) : null,
-        previous:
-          typeof message.previous === "string" ? safeText(message.previous, stats, 120) : null,
-      })
-      continue
-    }
-    if (message.type === "location-switched") {
-      add({ ...base(messageID, createdAt, "location-switched"), location: "[path omitted]" })
-      continue
-    }
-    if (message.type === "system" || message.type === "skill") {
-      stats.omittedSystem++
-      continue
-    }
-    stats.omittedUnsupportedParts++
+    messageSliceEvents(ctx, {
+      message,
+      messageID: typeof message.id === "string" ? message.id : `unknown-${index}`,
+      createdAt: dateMillis(object(message.time)?.created),
+    })
   }
   return events
 }
