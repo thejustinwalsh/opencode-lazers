@@ -15,6 +15,7 @@ import type { FallowFinding, FallowPackage } from "./contract.ts"
  */
 
 import type { LineRange } from "./attribution.ts"
+import { AHEAD_KINDS } from "./suppression-flow.ts"
 export type { LineRange }
 
 export type ClassifyContext = {
@@ -447,11 +448,15 @@ export const DEAD_CODE_CLASSES: Record<string, DeadCodeClass> = {
   stale_suppressions: {
     check: "dead-code",
     kind: "stale-suppression",
-    fix: "Remove the suppression comment: nothing it covers is reported any more.",
-    where: located(
-      (f) => text(f.path),
-      () => "suppression comment that matches nothing",
-    ),
+    fix: "Remove the suppression comment: the code it covers is used or gone.",
+    where: (f) => {
+      const origin = (f.origin ?? {}) as { issue_kind?: string; reason?: string }
+      return {
+        file: text(f.path),
+        line: num(f.line),
+        subject: `suppression of ${origin.issue_kind ?? "a finding"}${origin.reason ? ` (reason: ${origin.reason})` : ""} suppresses nothing: the code it covers is used now`,
+      }
+    },
   },
 }
 
@@ -507,6 +512,16 @@ const DIFF_RISK_FIX: Record<string, string> = {
   "added-dependency": "Confirm the dependency is needed; prefer what the project already uses.",
 }
 
+/** A reasoned suppression of unused code is the sanctioned way to add code ahead of its consumer. */
+function suppressionSuggestion(finding: EngineDiffRiskFinding): string | undefined {
+  const kinds = finding.suppression?.kinds ?? []
+  if (finding.rule !== "added-suppression" || !kinds.some((kind) => AHEAD_KINDS.includes(kind)))
+    return undefined
+  return finding.suppression?.reason
+    ? "Allowed for code added ahead of its consumer: the Architect checks the named consumer is queued. The consumer removes the comment."
+    : "Add the reason naming the consumer: `-- consumed by <task reference>`; without one the Architect cannot judge it."
+}
+
 function diffRiskFinding(finding: EngineDiffRiskFinding): FallowFinding {
   const key = finding.kind ? `${finding.rule}:${finding.kind}` : finding.rule
   const related = (finding.related ?? []).slice(0, 3).map((r) => ({
@@ -525,9 +540,19 @@ function diffRiskFinding(finding: EngineDiffRiskFinding): FallowFinding {
     message: finding.message,
     ...(related.length ? { relatedLocations: related } : {}),
     suggestion:
-      DIFF_RISK_FIX[key] ?? DIFF_RISK_FIX[finding.rule] ?? "Reverse the change or justify it.",
+      suppressionSuggestion(finding) ??
+      DIFF_RISK_FIX[key] ??
+      DIFF_RISK_FIX[finding.rule] ??
+      "Reverse the change or justify it.",
     ...(suppressionOf(finding.actions) ? { suppress: suppressionOf(finding.actions) } : {}),
-    ...(suppression ? { symbol: `suppressed:${suppression.reason ?? ""}` } : {}),
+    ...(suppression
+      ? {
+          suppression: {
+            kinds: suppression.kinds,
+            ...(suppression.reason ? { reason: suppression.reason } : {}),
+          },
+        }
+      : {}),
   }
 }
 

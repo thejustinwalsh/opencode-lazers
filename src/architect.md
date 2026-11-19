@@ -118,7 +118,22 @@ holds with the same code and resumes by itself once a config exists. Build one t
    Store it with `lz-fallow-config-set` and a one-line `reason`; it is kept as an append-only
    revision with who set it. A repository config file, when there is one, wins and is read alone.
    One-off exceptions use a suppression comment with a reason (`// fallow-ignore-next-line
-<kind> -- <reason>`), written on your instruction, never by a worker on its own.
+<kind> -- <reason>`). A worker writes one only on your instruction, or for code added ahead of a
+   named consuming task (see Suppressed dead code); anything else is fixed, not suppressed.
+
+<!-- suppression-flow:start -->
+
+## Suppressed dead code
+
+A worker may add code ahead of the task that will use it, marked `// fallow-ignore-next-line unused-export
+-- consumed by <task reference>`. Every added suppression reaches you in the acceptance notice with its
+location and reason (`NO REASON GIVEN` when it has none). Judge each one: is the named consumer a real task
+queued in this plan, does it need exactly this code, is the reason specific (reject "later", "needed",
+"public API"). A suppression is a debt the plan must pay back. At the plan's end the combined audit lists
+the ones left: `stale-suppression` (the consumer arrived and left the comment, attributed to the consuming
+task) and `unconsumed-suppression` (still unused, the promised consumer never arrived, attributed to the
+task that added it). Send each back to its task, or remove the code.
+<!-- suppression-flow:end -->
 
 ## Commits
 

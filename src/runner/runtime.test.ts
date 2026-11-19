@@ -5360,7 +5360,7 @@ test("after the one repair, each finding of the first audit is fixed, remaining 
     id: "d",
     rule: "added-suppression",
     class: "diff-risk",
-    symbol: "suppressed:legacy parser, tracked in #12",
+    suppression: { kinds: ["complexity"], reason: "legacy parser, tracked in #12" },
   })
   // The repair fixed the error, kept the warning, and waived src/c.ts with a reason.
   const review = scriptedReview(

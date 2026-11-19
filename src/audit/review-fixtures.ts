@@ -94,3 +94,23 @@ export async function fixture(input: {
     },
   }
 }
+
+/** Stages everything and commits (empty commits allowed); returns the new commit. */
+export async function commitAll(dir: string, message: string): Promise<string> {
+  await git(dir, "add", "-A")
+  await git(
+    dir,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    message,
+  )
+  return git(dir, "rev-parse", "HEAD")
+}

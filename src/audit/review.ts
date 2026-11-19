@@ -1,6 +1,8 @@
 import type { TaskRepository } from "../storage.ts"
 import { buildPackage, DEFAULT_MAX_CRAP, notChecked } from "./audit-findings.ts"
 import type { FallowPackage, FallowReviewOutput } from "./contract.ts"
+import { staleSuppressionsIntroduced, withExtraFindings } from "./suppression-flow.ts"
+import type { FallowFinding } from "./contract.ts"
 import { parseEngineAudit, type EngineAudit } from "./engine-audit.ts"
 import type { FallowAnalyzer } from "./analyzer.ts"
 import { defaultFallowAnalyzer } from "./wasm-analyzer.ts"
@@ -50,7 +52,7 @@ async function auditReport(
   input: FallowReviewInput,
   analyzer: FallowAnalyzer,
   resolved: ResolvedFallowConfig,
-): Promise<EngineAudit> {
+): Promise<{ report: EngineAudit; stale: FallowFinding[] }> {
   const base = await materialiseBaseArchive(input.workspace, input.baseCommit)
   try {
     const raw = await withTimeout(
@@ -69,7 +71,24 @@ async function auditReport(
         }),
       AUDIT_TIMEOUT_MS + 5_000,
     )
-    return parseEngineAudit(raw)
+    const report = parseEngineAudit(raw)
+    // Dead code stays on: the consumer of code added ahead of it must be told to drop the comment.
+    const stale = report.summary.dead_code_skipped
+      ? []
+      : await withTimeout(
+          () =>
+            staleSuppressionsIntroduced({
+              analyzer,
+              workspace: input.workspace,
+              base: input.baseCommit,
+              configPath: resolved.configPath,
+              cacheSeed: input.repository.projectDirectory,
+              signal: input.signal,
+              timeoutMs: AUDIT_TIMEOUT_MS,
+            }),
+          AUDIT_TIMEOUT_MS + 5_000,
+        )
+    return { report, stale }
   } finally {
     await base.cleanup()
   }
@@ -115,19 +134,20 @@ export async function fallowReview(input: FallowReviewInput): Promise<FallowRevi
     const changed = await changedAuditFiles(input.workspace, input.baseCommit)
     if (changed.length === 0)
       return { status: "clean", package: untouchedPackage(resolved, input.baseCommit) }
-    const [report, added] = await Promise.all([
+    const [{ report, stale }, added] = await Promise.all([
       auditReport(input, analyzer, resolved),
       addedRangesForFiles(input.workspace, input.baseCommit, changed),
     ])
     const config = configOf(resolved)
     config.classesNotChecked.push(...notChecked(report))
-    const pkg = buildPackage(report, {
+    const built = buildPackage(report, {
       thresholds: thresholdsFrom(resolved.config),
       maxCrap: maxCrapFrom(resolved.config),
       changed: new Set(changed),
       added,
       config,
     })
+    const pkg = withExtraFindings(built, stale)
     return {
       status: pkg.summary.errors + pkg.summary.warnings === 0 ? "clean" : "findings",
       package: pkg,
