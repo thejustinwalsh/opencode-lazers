@@ -103,6 +103,17 @@ What this changes in the plan:
 - **The budget for the changed-file check is realistic.** The whole repository
   takes 1.3 s for health natively with threads; the review analyses changed
   files only.
+- **Unused class members are not trustworthy.** Across both cleanup waves the
+  analyzer reported 50 class members as unused; 46 were false. It misses a
+  call made through an instance held in another object (`this.store.renew()`
+  in `src/runner/runtime.ts`, 30 of the 33 `RunnerStore` findings) and counts
+  a test-only caller as none. Exports and types were reliable: about 1 in 30
+  was wrong. `lz-fallow-dead-code` and the plan review therefore leave class
+  members out unless the project's config turns them on.
+- **Un-exporting can trade one finding for another.** A zod schema used only
+  through `z.infer<typeof X>` draws a lint warning once it loses its export.
+  The fix guidance for an unused export must say "remove the export only if
+  the value is still used in the file".
 - **Clean up first.** This repository is cleaned before Fallow is dogfooded in
   OpenCode (owner decision). Done means: zero dead-code findings or each one
   dispositioned, the import cycle removed, no clone group over 20 lines
