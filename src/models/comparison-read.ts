@@ -257,6 +257,19 @@ function benchmarkNameIndex(records: OpenRouterBenchmarkRecord[]) {
   return index
 }
 
+/** The unconditional rate of a native record: the tier with no context threshold. */
+function nativeBasePrice(record: NativeRecord) {
+  const base = record.prices?.tiers.find((tier) => tier.contextTierTokens === null)
+  return base && base.input !== null && base.output !== null
+    ? {
+        input: base.input,
+        output: base.output,
+        cacheRead: base.cacheRead,
+        cacheWrite: base.cacheWrite,
+      }
+    : null
+}
+
 function candidatesFor(
   nativeSnapshot: Extract<ModelEvidenceSnapshot, { source: "native-catalog" }> | null,
   catalogSource: ModelEvidenceComparisonSourceRead,
@@ -344,6 +357,7 @@ function candidatesFor(
     }
     const publicModel = join.modelsDev(route)
     const publicBenchmarks = join.epoch(route).slice(0, 100)
+    const publicQuotes = join.quotesForRoute(route)
     const candidateVariants = sortedUnique([...group.candidateVariants])
     for (const variant of candidateVariants) {
       const native = nativeEvidence(nativeSnapshot, group, variant)
@@ -369,6 +383,7 @@ function candidatesFor(
         },
         publicModel: publicModel?.record ?? null,
         publicBenchmarks: publicBenchmarks,
+        publicQuotes: publicQuotes,
       })
     }
   }
@@ -474,6 +489,7 @@ export function readModelComparison(
             providerID: record.providerID,
             modelID: record.id,
             name: record.name,
+            nativePrice: nativeBasePrice(record),
           }))
         : [],
     })
@@ -516,7 +532,10 @@ export function readModelComparison(
     totalCandidates: allCandidates.length,
     nextCursor,
     ...(offset === 0
-      ? { publicCoverage: { epoch: join.coverage() }, publicCatalog: join.external() }
+      ? {
+          publicCoverage: { epoch: join.coverage() },
+          publicCatalog: [...join.external(), ...join.scoredRoutes()].slice(0, 200),
+        }
       : {}),
   })
 }

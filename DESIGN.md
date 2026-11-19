@@ -355,6 +355,16 @@ listed them (when it is configured) and scored on the same basis; they are never
 route. A policy saved before models.dev existed gains it, last, when read; an explicitly empty
 list stays empty.
 
+One price walk, everywhere (`price-resolution.ts`): every view that prices a model (Projected
+ranking and scatter, Benchmark, All models, details, tooltips) gathers what each source quotes
+for that model identity and takes the first configured source that quotes it, keeping its source
+and snapshot time ("priced by OpenRouter"). A source with no quote is skipped. A model is left
+off a cost plot only when no configured source prices it, and then the footer counts it and the
+nested disclosure names it. A public score is itself a reason to list a model: the first page of a
+comparison read also lists every routed model that has a score (with its quotes), so scored,
+priced models plot at once instead of waiting for the page that carries their route; one model
+is one point, whatever providers offer it.
+
 Agent routes: Architect, Implementor and Auditor are top-level assignments beside the three
 persona kinds. They are rows in the same versioned mapping store (all projects, this project;
 never per task), saved through the same RPC. Each agent's model comes from, in order: the

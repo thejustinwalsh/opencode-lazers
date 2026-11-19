@@ -695,6 +695,7 @@ export function createModelsController(props: ModelsProps) {
       },
       observedRoutes: observedRouteKeys(),
       preferredBasis: pickedBasis(),
+      external: visible()?.comparison?.publicCatalog ?? [],
       label: (route) => modelDisplayLabel({ ...route, variant: null }, routes, candidates, catalog),
     })
   })
@@ -973,7 +974,9 @@ export function createModelsController(props: ModelsProps) {
   }
   /** The public score that ranks the set: the Coding Index, or one Epoch benchmark. */
   const scoreBasis = () => baseline()?.scoreBasis ?? AA_BASIS
-  const scoreOptionsList = createMemo(() => scoreOptions(visible()?.candidates ?? []))
+  const scoreOptionsList = createMemo(() =>
+    scoreOptions(visible()?.candidates ?? [], visible()?.comparison?.publicCatalog ?? []),
+  )
   const scoreBasisKey = () => {
     const basis = scoreBasis()
     return basis.source === "epoch" ? basis.benchmarkID : "aa"
@@ -1002,6 +1005,9 @@ export function createModelsController(props: ModelsProps) {
       coverage.benchmarks.find((entry) => entry.benchmarkID === wanted) ?? coverage.benchmarks[0]
     return row ? `${row.matched} of ${row.rows} ${row.benchmark} rows matched` : undefined
   }
+  /** Scored models no configured source prices: left off the cost plots, counted and named. */
+  const scoredWithoutPrice = () =>
+    (baseline()?.gaps ?? []).filter((gap) => gap.reason === "no-price").map((gap) => gap.label)
   const benchmarkEmptyText = () => {
     const current = baseline()
     if (!current || current.points.length + current.gaps.length === 0)
@@ -1026,7 +1032,7 @@ export function createModelsController(props: ModelsProps) {
   const openProviderSettings = () => props.ctx.layout.settings("providers")
   const selectedBenchmark = () => {
     const current = baseline()
-    const selectedID = visible()?.selectedCandidateID
+    const selectedID = selectedEntryID()
     if (!current || !selectedID) return undefined
     const candidate = visible()?.candidates.find((entry) => entry.candidateID === selectedID)
     const key = candidate ? routeKey(candidate.identity) : undefined
@@ -1450,6 +1456,7 @@ export function createModelsController(props: ModelsProps) {
     benchmarkAsOf,
     benchmarkEmptyText,
     benchmarkNeedsOpenRouter,
+    scoredWithoutPrice,
     epochCoverage,
     epochCoverageLine,
     scoreBasis,

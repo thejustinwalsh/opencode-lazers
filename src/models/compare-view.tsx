@@ -372,7 +372,7 @@ export function CompareTop(props: { ctl: ModelsController }) {
                   selectedID={selectedBenchmark()?.id ?? null}
                   onSelect={(candidateID) => {
                     revealDetails(ctl)
-                    state.selectCandidate(candidateID)
+                    ctl.pickEntryID(candidateID)
                   }}
                   xTitle={`List price per 1M tokens (${BENCHMARK_PRICE_MIX.input}:${BENCHMARK_PRICE_MIX.output} in:out)`}
                   yTitle={scoreBasis().label}
@@ -391,7 +391,39 @@ export function CompareTop(props: { ctl: ModelsController }) {
                   {epochCoverageLine() && scoreBasis().source === "epoch"
                     ? ` · ${epochCoverageLine()}`
                     : ""}
+                  {ctl.scoredWithoutPrice().length
+                    ? ` · ${ctl.scoredWithoutPrice().length} scored ${ctl.scoredWithoutPrice().length === 1 ? "model has" : "models have"} no price in any source`
+                    : ""}
                 </p>
+                <Show
+                  when={
+                    ctl.scoredWithoutPrice().length > 0 ||
+                    (ctl.catalogSummary()?.hidden.length ?? 0) > 0
+                  }
+                >
+                  <details class="lazers-models-sources-details">
+                    <summary>Scored models left off the plot</summary>
+                    <For each={ctl.scoredWithoutPrice()}>
+                      {(name) => (
+                        <p class="lazers-models-source-meta">
+                          {name} · no price in any configured source
+                        </p>
+                      )}
+                    </For>
+                    <Show when={ctl.catalogSummary()?.hidden.length}>
+                      <p class="lazers-models-source-meta">
+                        {ctl.catalogSummary()!.hidden.length} hidden by a rule: not tool-capable
+                      </p>
+                    </Show>
+                    <For each={ctl.catalogSummary()?.hidden ?? []}>
+                      {(entry) => (
+                        <p class="lazers-models-source-meta">
+                          {entry.name} · {entry.reason}
+                        </p>
+                      )}
+                    </For>
+                  </details>
+                </Show>
               </Show>
             </Show>
             <Show when={catalogLoadingLine()}>

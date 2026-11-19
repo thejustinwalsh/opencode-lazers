@@ -1,5 +1,8 @@
 import type { ModelCandidate } from "./comparison-state.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import { mergeRoutesByIdentity, representativeOf, routeIdentityKey } from "./model-groups.ts"
+import type { PublicCatalogItem } from "./comparison-schema.ts"
+import { priceCandidate, priceExternal } from "./price-resolution.ts"
 import { AA_BASIS, chooseScoreBasis, scoreOn } from "./public-score.ts"
 import type { ScoreBasis } from "./public-score.ts"
 
@@ -12,7 +15,7 @@ import type { ScoreBasis } from "./public-score.ts"
  * an explicit 3 input : 1 output token mix (the benchmark publisher's convention);
  * input and output rates stay separate in detail.
  */
-export const BENCHMARK_PRICE_MIX = { input: 3, output: 1 } as const
+export { BENCHMARK_PRICE_MIX } from "./price-resolution.ts"
 
 export type BenchmarkRoute = { providerID: string; modelID: string }
 
@@ -85,96 +88,13 @@ export function routeKey(route: BenchmarkRoute) {
   return `${route.providerID}\u0000${route.modelID}`
 }
 
-function finiteDecimal(value: string | null) {
-  if (value === null) return null
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
-}
-
-function blend(input: number, output: number) {
-  const { input: inputShare, output: outputShare } = BENCHMARK_PRICE_MIX
-  return (input * inputShare + output * outputShare) / (inputShare + outputShare)
-}
-
-/** Unconditional OpenRouter rate: no prompt threshold and no time-of-day schedule. */
-function openRouterPrice(candidate: ModelCandidate, retrievedAt: string | null) {
-  if (candidate.correspondence.status !== "exact") return null
-  const tiers = candidate.externalModel?.prices?.tiers ?? []
-  const base = tiers.find(
-    (tier) =>
-      tier.minPromptTokens === null &&
-      (tier.utcStart ?? null) === null &&
-      (tier.utcEnd ?? null) === null,
-  )
-  const input = finiteDecimal(base?.prompt ?? null)
-  const output = finiteDecimal(base?.completion ?? null)
-  if (!base || input === null || output === null) return null
-  const thresholds = tiers.flatMap((tier) => (tier.minPromptTokens ? [tier.minPromptTokens] : []))
-  const perMillion = (value: number | null) => (value === null ? null : value * 1_000_000)
-  return {
-    source: "openrouter" as const,
-    input: input * 1_000_000,
-    output: output * 1_000_000,
-    cacheRead: perMillion(finiteDecimal(base.inputCacheRead)),
-    cacheWrite: perMillion(finiteDecimal(base.inputCacheWrite)),
-    blended: blend(input, output) * 1_000_000,
-    appliesBelowTokens: thresholds.length ? Math.min(...thresholds) : null,
-    retrievedAt,
-  }
-}
-
-/** Unconditional OpenCode catalog rate: the tier with no context threshold. */
-function openCodePrice(candidate: ModelCandidate, retrievedAt: string | null) {
-  const tiers = candidate.native.prices?.tiers ?? []
-  const base = tiers.find((tier) => tier.contextTierTokens === null)
-  if (!base || base.input === null || base.output === null) return null
-  const thresholds = tiers.flatMap((tier) =>
-    tier.contextTierTokens ? [tier.contextTierTokens] : [],
-  )
-  return {
-    source: "opencode" as const,
-    input: base.input,
-    output: base.output,
-    cacheRead: base.cacheRead,
-    cacheWrite: base.cacheWrite,
-    blended: blend(base.input, base.output),
-    appliesBelowTokens: thresholds.length ? Math.min(...thresholds) : null,
-    retrievedAt,
-  }
-}
-
-/** models.dev list price: USD per million tokens, for the route's own provider or its first party. */
-function modelsDevPrice(candidate: ModelCandidate, retrievedAt: string | null) {
-  const prices = candidate.publicModel?.prices
-  if (!prices || prices.input === null || prices.output === null) return null
-  return {
-    source: "models-dev" as const,
-    input: prices.input,
-    output: prices.output,
-    cacheRead: prices.cacheRead,
-    cacheWrite: prices.cacheWrite,
-    blended: blend(prices.input, prices.output),
-    appliesBelowTokens: null,
-    retrievedAt,
-  }
-}
-
-/** First applicable price in the configured order; unavailable sources are skipped. */
+/** A native route's price by the ordered sources: the one walk in `price-resolution.ts`. */
 export function benchmarkPrice(
   candidate: ModelCandidate,
   order: readonly ModelPriceSource[],
   dates: BenchmarkSourceDates,
 ): BenchmarkPrice | null {
-  for (const source of order) {
-    const price =
-      source === "openrouter"
-        ? openRouterPrice(candidate, dates.openrouter)
-        : source === "opencode"
-          ? openCodePrice(candidate, dates.opencode)
-          : modelsDevPrice(candidate, dates.modelsDev ?? null)
-    if (price) return price
-  }
-  return null
+  return priceCandidate(candidate, order, dates)
 }
 
 export function benchmarkBaseline(input: {
@@ -184,26 +104,32 @@ export function benchmarkBaseline(input: {
   observedRoutes: ReadonlySet<string>
   /** The score basis the user picked, when any. */
   preferredBasis?: string | null
+  /** Public-catalog models no route runs: plotted when scored and priced, like any route. */
+  external?: readonly PublicCatalogItem[]
   label: (route: BenchmarkRoute, candidate: ModelCandidate) => string
 }): BenchmarkBaseline {
-  const routes = new Map<string, ModelCandidate[]>()
-  for (const candidate of input.candidates) {
-    const key = routeKey(candidate.identity)
-    routes.set(key, [...(routes.get(key) ?? []), candidate])
-  }
+  // One model is one point, whatever providers offer it.
+  const { groups: routes, siblings } = mergeRoutesByIdentity(input.candidates)
   const points: BenchmarkBaselinePoint[] = []
   const gaps: BenchmarkBaselineGap[] = []
   let unmatchedRoutes = 0
   let ambiguousRoutes = 0
-  const { basis } = chooseScoreBasis(input.candidates, input.preferredBasis)
+  const { basis } = chooseScoreBasis(input.candidates, input.preferredBasis, input.external)
   for (const [key, group] of routes) {
     // The benchmark and catalog price describe the model, so every effort of a
     // route shares them; prefer the effort-less configuration as the handle.
-    const representative =
-      group.find((candidate) => candidate.identity.variant === null) ?? group[0]!
+    const chosen = representativeOf(group)
+    const reps = [chosen, ...(siblings.get(key) ?? []).map(representativeOf)]
+    // The chosen provider speaks for the model; a sibling's score or quote stands in when it has
+    // none, so a model is left out only when no route and no source carries it.
+    const representative = reps.find((rep) => scoreOn(rep, basis) !== null) ?? chosen
+    const resolved = () =>
+      reps
+        .map((rep) => benchmarkPrice(rep, input.priceSources, input.sourceDates))
+        .find((price) => price !== null) ?? null
     if (basis.source === "epoch") {
       const score = scoreOn(representative, basis)
-      const price = benchmarkPrice(representative, input.priceSources, input.sourceDates)
+      const price = resolved()
       if (!score) {
         unmatchedRoutes++
         continue
@@ -260,7 +186,7 @@ export function benchmarkBaseline(input: {
       agenticIndex: benchmark.agenticIndex,
       intelligenceIndex: benchmark.intelligenceIndex,
     }
-    const price = benchmarkPrice(representative, input.priceSources, input.sourceDates)
+    const price = resolved()
     const label = input.label(route, representative)
     if (scores.codingIndex === null || !price) {
       gaps.push({
@@ -278,6 +204,44 @@ export function benchmarkBaseline(input: {
       route,
       label,
       benchmark: { ...scores, codingIndex: scores.codingIndex },
+      price,
+      observed: input.observedRoutes.has(key),
+    })
+  }
+  // Public-catalog models: scored on the basis and priced by the one walk.
+  const seen = new Set([...routes.keys()])
+  const loadedModels = new Set(
+    [...routes.values()].map((group) => routeIdentityKey(group[0]!.identity)),
+  )
+  for (const item of input.external ?? []) {
+    if (basis.source !== "epoch") break
+    const route = { providerID: item.providerID, modelID: item.modelID }
+    const key = routeKey(route)
+    if (seen.has(key) || loadedModels.has(routeIdentityKey(route))) continue
+    const rows = item.benchmarks.filter((row) => row.benchmarkID === basis.benchmarkID)
+    if (!rows.length) continue
+    seen.add(key)
+    const best = rows.reduce((top, row) => (row.score > top.score ? row : top))
+    const scores: BenchmarkScores = {
+      scoreName: basis.label,
+      scoreCaption: basis.caption,
+      displayName: best.modelVersion,
+      modelPermaslug: best.modelVersion,
+      codingIndex: Math.round(best.score * 1000) / 10,
+      agenticIndex: null,
+      intelligenceIndex: null,
+    }
+    const price = priceExternal(item, input.priceSources, input.sourceDates)
+    const label = item.name ?? item.modelID
+    if (!price) {
+      gaps.push({ id: key, route, label, benchmark: scores, price: null, reason: "no-price" })
+      continue
+    }
+    points.push({
+      id: key,
+      route,
+      label,
+      benchmark: { ...scores, codingIndex: scores.codingIndex! },
       price,
       observed: input.observedRoutes.has(key),
     })
