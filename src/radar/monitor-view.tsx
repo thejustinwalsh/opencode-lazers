@@ -28,6 +28,7 @@ import {
   workerStats,
 } from "./worker-pane.ts"
 import type { WorkerAttempt } from "./worker-pane.ts"
+import { isHeldWorker } from "./worker-hold.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import type { DetailsState } from "../details-pane.ts"
 import { RadarFlowActions, RadarFlowBody, RadarFlowCanvas, RadarFlowTabs } from "./flow-view.tsx"
@@ -58,7 +59,6 @@ import {
   sessionGroups,
   sessionModel,
   sessionRole,
-  sessionState,
   sessionTask,
   sessionTaskTitle,
   sessionTone,
@@ -403,7 +403,7 @@ export function RadarMonitorView(props: Props) {
               aria-pressed={selected()}
               aria-label={[
                 sessionTitle(value()),
-                sessionState(value()),
+                stateOf(value()).word.toLowerCase(),
                 model()?.label ? `model ${model()!.label}` : "",
                 age() ? `last activity ${age()}` : "",
               ]
@@ -459,7 +459,7 @@ export function RadarMonitorView(props: Props) {
                 )}
               </Show>
               <span class="lazers-radar-session-when">
-                <Show when={sessionState(value())}>
+                <Show when={stateOf(value()).word.toLowerCase()}>
                   {(word) => (
                     <span class="lazers-radar-session-state" data-tone={sessionTone(value())}>
                       {word()}
@@ -602,10 +602,6 @@ export function RadarMonitorView(props: Props) {
       : []
   }
   const lane = () => workerLane(paneAttempt(), now())
-  const startedClock = () => {
-    const at = paneSession()?.assignment?.startedAt
-    return at === undefined ? undefined : clockMinutes(at)
-  }
   /** Older runner-progress calls that precede every call the live read already lists. */
   const olderCalls = () => {
     const oldest = Math.min(...sessionCalls().map((line) => line.startedAt ?? Infinity))
@@ -1095,7 +1091,9 @@ export function RadarMonitorView(props: Props) {
                         )}
                       </Show>
                     </Show>
-                    <Show when={node().id === "group:runtime" || node().id === "group:checks"}>
+                    <Show
+                      when={["group:runtime", "group:checks", "group:waiting"].includes(node().id)}
+                    >
                       <Rows
                         columns="72px minmax(0, 1fr) auto"
                         label="Workers"
@@ -1134,7 +1132,13 @@ export function RadarMonitorView(props: Props) {
                       <code style={{ "font-family": props.monoFont }} title={callTarget(call())}>
                         {callTarget(call())}
                       </code>
-                      <Show when={idle()}>{(text) => <Label tone="neutral">{text()}</Label>}</Show>
+                      <Show when={idle()}>
+                        {(text) => (
+                          <Label tone={isHeldWorker(session()) ? "warning" : "neutral"}>
+                            {text()}
+                          </Label>
+                        )}
+                      </Show>
                     </p>
                   )}
                 </Show>
@@ -1146,8 +1150,7 @@ export function RadarMonitorView(props: Props) {
                         label="Tool calls of the latest attempt"
                         ticks={shown().ticks}
                         durationMs={shown().durationMs}
-                        start={startedClock()}
-                        end={shown().live ? "now" : undefined}
+                        originAt={shown().originAt}
                       />
                     </Section>
                   )}

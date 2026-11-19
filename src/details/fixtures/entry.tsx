@@ -43,8 +43,20 @@ export function mountKit(container: HTMLElement) {
             label="Activity"
             ticks={Array.from({ length: 5000 }, (_, i) => ({ at: i * 10, failed: i === 2500 }))}
             maxMarks={100}
-            start="12:58"
-            end="now"
+            originAt={new Date(2026, 0, 1, 12, 58).getTime()}
+          />
+          <ActivityLane
+            label="Quiet"
+            noun="calls"
+            originAt={new Date(2026, 0, 1, 12, 58).getTime()}
+            ticks={[
+              { at: 0, label: "Read", durationMs: 1500 },
+              { at: 60_000, label: "Search", failed: true },
+              { at: 120_000 },
+              { at: 121_000 },
+              { at: 20 * 3_600_000, label: "Edit" },
+            ]}
+            durationMs={21 * 3_600_000}
           />
         </section>
         <section id="coverage-empty">

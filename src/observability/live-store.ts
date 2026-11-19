@@ -84,6 +84,8 @@ export type LiveAttemptAssignment = {
   /** From the task record; absent when the task tables or fields are missing. */
   taskTitle?: string
   taskReference?: string
+  /** The task node's and plan's recorded state; absent when the runner tables cannot supply it. */
+  task?: { state: string; reason: string | null; planState: string; planReason: string | null }
 }
 
 /** Counts of recorded task states in non-terminal plans; no new notion, just the runner nodes. */
@@ -412,6 +414,44 @@ function readWorkload(db: Database, metrics: LiveStoreMetrics, projectDirectory:
   }
 }
 
+/** Each active attempt's task node and plan state, by primary key; best effort. */
+function readTaskStates(
+  db: Database,
+  metrics: LiveStoreMetrics,
+  assignments: Map<string, LiveAttemptAssignment>,
+) {
+  try {
+    const query = db.query<
+      {
+        state: string
+        reason: string | null
+        plan_state: string
+        plan_reason: string | null
+      },
+      [string, string]
+    >(
+      `SELECT n.state AS state,substr(n.reason,1,600) AS reason,
+              p.state AS plan_state,substr(p.reason,1,600) AS plan_reason
+         FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+        WHERE n.plan_id=? AND n.task_id=?`,
+    )
+    for (const assignment of assignments.values()) {
+      countQuery(metrics)
+      const row = query.get(assignment.planID, assignment.taskID)
+      if (!row) continue
+      countRows(metrics, [row])
+      assignment.task = {
+        state: row.state,
+        reason: row.reason,
+        planState: row.plan_state,
+        planReason: row.plan_reason,
+      }
+    }
+  } catch {
+    // An older store without these tables leaves the session's own state.
+  }
+}
+
 /** Task title and reference for the active attempts, by primary-key lookup; best effort. */
 function readTaskLabels(
   db: Database,
@@ -692,6 +732,7 @@ export class LiveReadStore {
         signal.throwIfAborted()
         const workload = readWorkload(db, metrics, this.projectDirectory)
         readTaskLabels(db, metrics, this.projectDirectory, assignments)
+        readTaskStates(db, metrics, assignments)
 
         if (factsAvailable && assignments.size) {
           signal.throwIfAborted()

@@ -566,7 +566,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     expect(container.querySelector(".lazers-radar-monitor-activity")?.textContent).not.toMatch(
       /[0-9a-f]{8}-[0-9a-f]{4}-/,
     )
-    expect(sessionButton("ses-failed")?.textContent).toContain("running")
+    // The row names the task's own state word, the one Tasks shows.
+    expect(sessionButton("ses-failed")?.textContent).toContain("accepted")
     expect(
       lines().find((line) => line.textContent?.includes("Patch failed"))?.textContent,
     ).toContain("Patch failed after the request; change is unknown.")
@@ -604,6 +605,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       ),
     ).toContain("Started")
     expect(container.querySelector(".lazers-radar-last-call")?.textContent).toContain("Last call")
+    // The stat row is a direct, unwrapped child of the inspector, so it spans the pane's width.
+    const statRow = container.querySelector<HTMLElement>(
+      ".lazers-radar-monitor-inspector > .lazers-kit-stats",
+    )
+    expect(statRow).not.toBeNull()
+    expect(statRow!.style.getPropertyValue("--lazers-kit-columns")).toMatch(/^[1-4]$/)
     // The attempt read supplies the call count; the state word is the task's own word.
     await until(() =>
       [...container.querySelectorAll(".lazers-radar-monitor-inspector .lazers-kit-stat dt")].some(

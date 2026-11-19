@@ -1,7 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js"
 import type { JSX } from "solid-js"
+import { durationText } from "./format.ts"
 import { laneLayout } from "./lane.ts"
-import type { LaneInput } from "./lane.ts"
+import type { LaneInput, LaneMark } from "./lane.ts"
 import { progressSteps } from "./progress.ts"
 import type { LabelTone } from "./tone.ts"
 
@@ -92,47 +93,145 @@ export function Progress(props: {
   )
 }
 
+/** Width of a collapsed quiet stretch; it carries no text, only a break in the track. */
+const IDLE_PX = 20
+
 /**
- * One Trajectory-style lane. Layout is `laneLayout`, which merges ticks into a bounded number of
- * marks, so thousands of ticks cost at most `maxMarks` nodes per active segment.
+ * One Trajectory-style lane: a bare track with no text and no captions. Hover or keyboard focus
+ * (the lane takes Arrow keys) shows the detail of one mark or quiet stretch, and the lane's
+ * accessible name states the summary in words. The DOM holds at most `maxMarks` marks per active
+ * segment however many ticks there are.
+ *
+ * `originAt` (epoch ms of the lane's start) turns offsets into clock times; without it hovers
+ * read as offsets (`+4m 12s`). `noun` names what the ticks are (`calls`).
  */
 export function ActivityLane(
-  props: LaneInput & { label: string; start?: string; middle?: string; end?: string },
+  props: LaneInput & {
+    label: string
+    originAt?: number
+    noun?: string
+    /** Retained for callers that still pass captions; the lane no longer draws them. */
+    start?: string
+    middle?: string
+    end?: string
+  },
 ): JSX.Element {
   const segments = createMemo(() => laneLayout(props))
+  const [active, setActive] = createSignal(-1)
+  const clock = (ms: number) =>
+    props.originAt === undefined
+      ? `+${durationText(ms)}`
+      : new Date(props.originAt + ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+  const range = (from: number, to: number) =>
+    from === to ? clock(from) : `${clock(from)} – ${clock(to)}`
+  const markTip = (mark: LaneMark) =>
+    mark.count > 1
+      ? `${mark.count} ${props.noun ?? "calls"} · ${range(mark.fromMs, mark.toMs)}${mark.failed ? " · includes a failure" : ""}`
+      : [
+          mark.label ?? "Call",
+          clock(mark.fromMs),
+          mark.durationMs !== undefined ? durationText(mark.durationMs) : "",
+          mark.failed ? "failed" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
+  const idleTip = (segment: { startMs: number; endMs: number; label: string }) =>
+    `${segment.label} · ${range(segment.startMs, segment.endMs)}`
+  const activeSum = createMemo(() =>
+    segments().reduce((sum, segment) => sum + (segment.kind === "active" ? segment.width : 0), 0),
+  )
+  const idleCount = createMemo(() => segments().filter((segment) => segment.kind === "idle").length)
+  /** Marks and idle stretches in track order: what Arrow keys step through. */
+  const stops = createMemo(() =>
+    segments().flatMap((segment) =>
+      segment.kind === "idle"
+        ? [{ tip: idleTip(segment) }]
+        : segment.marks.map((mark) => ({ tip: markTip(mark) })),
+    ),
+  )
+  const span = () => {
+    const last = segments().at(-1)
+    return { start: 0, end: last?.endMs ?? 0 }
+  }
+  const summary = createMemo(() => {
+    const ticks = props.ticks.length
+    const lastTick = props.ticks.reduce((max, tick) => Math.max(max, tick.at), 0)
+    const idle = segments().flatMap((segment) =>
+      segment.kind === "idle" ? [`idle ${segment.label.replace(/ idle$/, "")}`] : [],
+    )
+    return [
+      `${ticks} ${props.noun ?? "calls"}${props.originAt !== undefined ? ` from ${clock(0)}` : ""}`,
+      ticks > 0 && props.originAt !== undefined ? `last activity ${clock(lastTick)}` : "",
+      ...idle,
+    ]
+      .filter(Boolean)
+      .join(", ")
+  })
+  /** Index of each segment's first stop. */
+  const starts = createMemo(() => {
+    let next = 0
+    return segments().map((segment) => {
+      const start = next
+      next += segment.kind === "idle" ? 1 : segment.marks.length
+      return start
+    })
+  })
+  const trackTip = () =>
+    props.originAt !== undefined ? range(span().start, span().end) : undefined
   return (
     <div class="lazers-kit-section">
-      <div class="lazers-kit-lane" role="img" aria-label={props.label}>
+      <div
+        class="lazers-kit-lane"
+        role="img"
+        tabIndex={0}
+        aria-label={`${props.label}: ${summary()}`}
+        data-tip={trackTip()}
+        onKeyDown={(event) => {
+          const count = stops().length
+          if (!count) return
+          if (event.key === "ArrowRight") setActive(Math.min(count - 1, active() + 1))
+          else if (event.key === "ArrowLeft") setActive(Math.max(0, active() - 1))
+          else if (event.key === "Escape") setActive(-1)
+          else return
+          event.preventDefault()
+        }}
+        onBlur={() => setActive(-1)}
+      >
         <For each={segments()}>
-          {(segment) =>
-            segment.kind === "idle" ? (
-              <div class="lazers-kit-lane-idle" style={{ width: `${segment.width}%` }}>
-                {segment.label}
-              </div>
+          {(segment, segmentIndex) => {
+            const start = starts()[segmentIndex()]!
+            return segment.kind === "idle" ? (
+              <div
+                class="lazers-kit-lane-idle"
+                style={{ width: `${IDLE_PX}px` }}
+                data-tip={idleTip(segment)}
+                data-active={active() === start}
+              />
             ) : (
-              <div class="lazers-kit-lane-active" style={{ width: `${segment.width}%` }}>
+              <div
+                class="lazers-kit-lane-active"
+                style={{
+                  width: `calc((100% - ${idleCount() * IDLE_PX}px) * ${(segment.width / (activeSum() || 1)).toFixed(6)})`,
+                }}
+              >
                 <For each={segment.marks}>
-                  {(mark) => (
+                  {(mark, markIndex) => (
                     <span
                       class="lazers-kit-tick"
                       data-failed={mark.failed}
                       data-selected={mark.selected}
+                      data-active={active() === start + markIndex()}
+                      data-edge={mark.left < 18 ? "start" : mark.left > 82 ? "end" : undefined}
+                      data-tip={markTip(mark)}
                       style={{ left: `${mark.left}%` }}
                     />
                   )}
                 </For>
               </div>
             )
-          }
+          }}
         </For>
       </div>
-      <Show when={props.start || props.middle || props.end}>
-        <div class="lazers-kit-lane-captions">
-          <span>{props.start}</span>
-          <span>{props.middle}</span>
-          <span>{props.end}</span>
-        </div>
-      </Show>
     </div>
   )
 }

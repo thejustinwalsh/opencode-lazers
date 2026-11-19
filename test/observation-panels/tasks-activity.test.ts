@@ -820,6 +820,11 @@ test("registered Tasks panel separates lifecycle, foreground activity and holds 
     expect(statValues.Calls).toBe("17 · 5 files")
     expect(statValues.Model).toBe("gpt-6-luna · max")
     expect(inspectorPane.querySelectorAll(".lazers-kit-lane .lazers-kit-tick")).toHaveLength(3)
+    // The lane is a bare track: no text or captions; its name states the summary in words.
+    const laneNode = inspectorPane.querySelector(".lazers-kit-lane")!
+    expect(laneNode.textContent).toBe("")
+    expect(inspectorPane.querySelector(".lazers-kit-lane-captions")).toBeNull()
+    expect(laneNode.getAttribute("aria-label")).toMatch(/3 calls from .+, last activity /)
     expect(
       inspectorPane.querySelectorAll(".lazers-kit-lane .lazers-kit-tick[data-failed='true']"),
     ).toHaveLength(1)

@@ -463,6 +463,15 @@ const LiveAssignment = z.strictObject({
   attemptNumber: z.int().positive().optional(),
   taskTitle: z.string().min(1).max(240).optional(),
   taskReference: z.string().min(1).max(60).optional(),
+  /** Additive: the task node and plan state, so every panel names a held worker the same way. */
+  task: z
+    .strictObject({
+      state: z.string().min(1).max(40),
+      reason: z.string().max(600).nullable(),
+      planState: z.string().min(1).max(40),
+      planReason: z.string().max(600).nullable(),
+    })
+    .optional(),
 })
 
 const LiveSession = z.strictObject({

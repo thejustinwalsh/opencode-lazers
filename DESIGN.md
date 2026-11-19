@@ -151,6 +151,10 @@ Integrated); a stat row (Age, Runtime, Calls with edited files, Model); the
 Activity lane of the latest attempt with an Open in Trajectory link; and **Done
 when** as one short line per criterion (the humanized evidence name, else the
 first clause) with a square marker and a chevron that reveals the full text.
+The Activity lane carries no text or captions: hover or Arrow keys show a mark's
+tool and time, a cluster's count and range, a quiet stretch's length and times,
+and its accessible name reads like "98 calls from 12:58 PM, last activity 1:46
+PM, idle 1d 20h"; a collapsed quiet stretch is a narrow hatched break.
 Stats, the lane and per-criterion results appear only when the read recorded
 them; nothing is labelled unknown.
 
