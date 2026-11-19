@@ -3,6 +3,7 @@ import { taskReferenceFor } from "./task-reference.ts"
 import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
+import { installObservedRevisionsSchema } from "./tasks/observed-revisions.ts"
 import { mkdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join } from "node:path"
@@ -406,6 +407,7 @@ export class TaskRepository {
       shared.once("tasks", migrateTasks)
       shared.once("task-advice-and-projects", () => {
         installTaskAdviceSchema(this)
+        installObservedRevisionsSchema(this)
         installProjectSchema(this)
       })
       return shared

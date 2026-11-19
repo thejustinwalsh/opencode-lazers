@@ -473,7 +473,7 @@ test("concurrent distinct submissions allocate unique project-local references",
   )
 }, 30_000)
 
-test("concurrent classification corrections ignore legacy revision guards and serialize contiguously", async () => {
+test("concurrent stale classification corrections serialize to one commit and one conflict", async () => {
   const { path, provenance } = fixture()
   const repository = open(path)
   const { classification: _classification, ...legacyProposal } = validProposal()
@@ -517,10 +517,15 @@ test("concurrent classification corrections ignore legacy revision guards and se
       },
     },
   ])
-  // The model tool drops expectedRevision (60ba2b5f), so both append; the write lock orders them.
-  expect(results.map((result) => result.status)).toEqual(["recorded", "recorded"])
+  // Neither session has inspected the task, so both write against revision 0; the write lock
+  // orders them and the loser sees the winner's revision (60ba2b5f dropped the model-supplied one).
+  expect(results.map((result) => result.status).sort()).toEqual(["conflict", "recorded"])
+  expect(results.find((result) => result.status === "conflict")).toMatchObject({
+    expectedRevision: 0,
+    currentRevision: 1,
+  })
   expect(repository.taskClassification(task.id)?.history.map((item) => item.revision)).toEqual([
-    0, 1, 2,
+    0, 1,
   ])
   expect(
     repository.atomic(
@@ -531,7 +536,7 @@ test("concurrent classification corrections ignore legacy revision guards and se
           )
           .get("/repo", task.id)!.count,
     ),
-  ).toBe(2)
+  ).toBe(1)
 }, 30_000)
 
 test("storage keeps compare-and-set for explicit stale classification and correction revisions", () => {
@@ -649,7 +654,7 @@ test("independent processes replay durable project-local correction receipts wit
         }),
       ),
     ),
-  ).toMatchObject({ status: "recorded", correction: { revision: 2 } })
+  ).toMatchObject({ status: "conflict", expectedRevision: 0, currentRevision: 1 })
 
   const independentProjectInput = {
     ...input,
@@ -698,7 +703,7 @@ test("independent processes replay durable project-local correction receipts wit
             )
             .get("/repo", correction.taskID)!.count,
       ),
-    ).toBe(2)
+    ).toBe(1)
   } finally {
     reader.close()
   }

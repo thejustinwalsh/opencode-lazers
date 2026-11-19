@@ -19,6 +19,11 @@ export const schemaModules = {
     source: "src/tasks/advice.ts",
     tables: ["task_advice"],
   },
+  "task-observations": {
+    generation: 1,
+    source: "src/tasks/observed-revisions.ts",
+    tables: ["task_observed_revisions"],
+  },
   projects: {
     generation: 1,
     source: "src/project-key.ts",
