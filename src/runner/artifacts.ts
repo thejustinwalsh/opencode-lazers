@@ -81,6 +81,14 @@ export function worktreeListPorcelain(directory: string): Promise<string> {
   return pending
 }
 
+/** Absolute paths of every worktree git has registered for the repository. */
+export async function registeredWorktreePaths(directory: string): Promise<string[]> {
+  return (await worktreeListPorcelain(directory))
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => resolve(line.slice("worktree ".length)))
+}
+
 /**
  * Blocking Git for CLI scripts, fixtures and tests only. The plugin service is
  * single-threaded: runtime code must use `gitAsync`.
