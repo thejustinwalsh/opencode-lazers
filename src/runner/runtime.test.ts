@@ -5016,11 +5016,13 @@ function fallowFinding(file: string, line: number): Finding {
 /** Scripted reviews: each call takes the next result and the last one repeats. */
 function scriptedReview(...results: FallowReviewResult[]) {
   const calls: number[] = []
-  const run: FallowReview = async () => {
+  const bases: string[] = []
+  const run: FallowReview = async (input) => {
     calls.push(Date.now())
+    bases.push(input.baseCommit)
     return results[Math.min(calls.length, results.length) - 1]!
   }
-  return { run, calls }
+  return { run, calls, bases }
 }
 
 const introducedResult = (...findings: Finding[]): FallowReviewResult => ({
@@ -5071,6 +5073,18 @@ test("fallow findings alone send one repair carrying the guidance, then accept w
   expect(outcomes[0]!.fallow).toMatchObject({ introduced: [{ file: "src/a.ts", line: 12 }] })
   expect(outcomes[0]!.evidence).toEqual(["content"])
   expect(review.calls).toHaveLength(2)
+  // The repair attempt starts from the first attempt's artifact, but the review still measures
+  // what the task introduced: both reviews use the first attempt's base.
+  const [first, repair] = f.store.attempts(planID)
+  expect(repair!.base_commit).toBe(first!.artifact!)
+  expect(review.bases).toEqual([first!.base_commit, first!.base_commit])
+  // A retry from a new baseline starts a new chain.
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET base_commit=? WHERE id=?").run(f.base, repair!.id),
+  )
+  const fresh = f.store.attempts(planID)[1]!
+  expect(f.runtime["taskChainBase"](fresh)).toBe(f.base)
+  expect(f.runtime["taskChainBase"](f.store.attempts(planID)[0]!)).toBe(first!.base_commit)
 })
 
 test("fallow findings and a failing check give exactly one repair carrying both", async () => {
