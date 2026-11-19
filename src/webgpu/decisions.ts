@@ -3,7 +3,7 @@ import type { SystemOneQuestion } from "./system-one.ts"
 import type { z } from "zod"
 import type { SystemOneAnswer } from "./system-one.ts"
 
-export const DecisionSpec = Schema.Union([
+const DecisionSpec = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("boolean") }),
   Schema.Struct({
     kind: Schema.Literal("choice"),

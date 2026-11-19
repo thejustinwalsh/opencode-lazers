@@ -17,16 +17,9 @@ const boundedText = Schema.String.check(Schema.isMaxLength(4_000))
 const stringList = Schema.Array(shortText).check(Schema.isMaxLength(100))
 const empty = portable(Schema.Struct({}))
 
-export const NATIVE_BARE_KEYS = [
-  "Enter",
-  "Escape",
-  "Tab",
-  "Backspace",
-  "ArrowUp",
-  "ArrowDown",
-] as const
+const NATIVE_BARE_KEYS = ["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown"] as const
 export const NATIVE_KEYS = [...NATIVE_BARE_KEYS, "Ctrl+T"] as const
-export const NativeKey = Schema.Literals(NATIVE_KEYS)
+const NativeKey = Schema.Literals(NATIVE_KEYS)
 export type NativeKey = typeof NativeKey.Type
 
 export function parseNativeKey(value: unknown): NativeKey | undefined {
@@ -41,7 +34,7 @@ export function nativeKeyUsesModifiers(key: NativeKey): boolean {
   return key === "Ctrl+T"
 }
 
-export const NativeProcessIdentity = Schema.Struct({
+const NativeProcessIdentity = Schema.Struct({
   pid: positiveInt,
   startedAt: shortText,
   command: pathText,
@@ -49,7 +42,7 @@ export const NativeProcessIdentity = Schema.Struct({
 
 export const NATIVE_VERIFICATION_BASE_ENV = "OPENCODE_LAZERS_VERIFICATION_BASE"
 
-export const NativeCandidateIdentity = Schema.Struct({
+const NativeCandidateIdentity = Schema.Struct({
   workspace: pathText,
   revision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40,64}$/)),
   dirtyPaths: stringList,
@@ -60,7 +53,7 @@ export const NativeCandidateIdentity = Schema.Struct({
   architectDescription: boundedText,
 })
 
-export const NativeBinding = Schema.Struct({
+const NativeBinding = Schema.Struct({
   ownerID: shortText,
   createdAt: shortText,
   root: pathText,
@@ -86,7 +79,7 @@ export const NativeBinding = Schema.Struct({
 })
 export type NativeBinding = typeof NativeBinding.Type
 
-export const NativeWindowReference = Schema.Struct({
+const NativeWindowReference = Schema.Struct({
   windowID: positiveInt,
   webContentsID: positiveInt,
   rendererPID: positiveInt,
@@ -96,12 +89,12 @@ export const NativeWindowReference = Schema.Struct({
 })
 export type NativeWindowReference = typeof NativeWindowReference.Type
 
-export const NativeInteractionCapabilities = Schema.Struct({
+const NativeInteractionCapabilities = Schema.Struct({
   modifiedKeys: Schema.Boolean,
 })
 export type NativeInteractionCapabilities = typeof NativeInteractionCapabilities.Type
 
-export const NativeElement = Schema.Struct({
+const NativeElement = Schema.Struct({
   ref: shortText,
   role: shortText,
   tag: shortText,
@@ -116,7 +109,7 @@ export const NativeElement = Schema.Struct({
 })
 export type NativeElement = typeof NativeElement.Type
 
-export const NativeSnapshot = Schema.Struct({
+const NativeSnapshot = Schema.Struct({
   snapshotID: shortText,
   window: NativeWindowReference,
   capturedAt: Schema.Number,
@@ -128,7 +121,7 @@ export const NativeSnapshot = Schema.Struct({
 export type NativeSnapshot = typeof NativeSnapshot.Type
 
 const Windowed = { window: NativeWindowReference }
-export const NativeOperation = Schema.Union([
+const NativeOperation = Schema.Union([
   Schema.Struct({ kind: Schema.Literals(["snapshot"]), ...Windowed }),
   Schema.Struct({ kind: Schema.Literals(["capture"]), ...Windowed }),
   Schema.Struct({ kind: Schema.Literals(["focus"]), ...Windowed }),
@@ -169,7 +162,7 @@ export const NativeOperation = Schema.Union([
 ])
 export type NativeOperation = typeof NativeOperation.Type
 
-export const NativeActionResult = Schema.Struct({
+const NativeActionResult = Schema.Struct({
   delivery: Schema.Literals(["not-delivered", "delivered", "ambiguous"]),
   message: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(256))),
   snapshot: Schema.optionalKey(NativeSnapshot),

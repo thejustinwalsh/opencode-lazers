@@ -1,8 +1,8 @@
 import { z } from "zod"
 const text = z.string().min(1)
 const timestamp = z.int().nonnegative()
-export const AuditPhase = z.enum(["baseline", "follow-up", "inspection"])
-export const AuditRunSchema = z.strictObject({
+const AuditPhase = z.enum(["baseline", "follow-up", "inspection"])
+const AuditRunSchema = z.strictObject({
   schemaVersion: z.literal(1),
   runID: z.uuid(),
   projectDirectory: text,
@@ -25,7 +25,7 @@ export const AuditRunSchema = z.strictObject({
   importedMetadata: z.unknown().optional(),
 })
 export type AuditRun = z.infer<typeof AuditRunSchema>
-export const AuditSummary = AuditRunSchema.omit({ requestInput: true }).extend({
+const AuditSummary = AuditRunSchema.omit({ requestInput: true }).extend({
   reportPath: text,
   analyses: z.array(
     z.strictObject({

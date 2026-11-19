@@ -7,7 +7,7 @@ const commit = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/)
 const positiveInteger = z.number().int().positive().safe()
 
-export const MaintenanceProcessIdentitySchema = z.strictObject({
+const MaintenanceProcessIdentitySchema = z.strictObject({
   pid: positiveInteger,
   startedAt: z.string().min(1).max(256).regex(/\S/),
   command: z.string().min(1).max(4_096).regex(/\S/),
@@ -15,7 +15,7 @@ export const MaintenanceProcessIdentitySchema = z.strictObject({
 export type MaintenanceProcessIdentity = z.infer<typeof MaintenanceProcessIdentitySchema>
 
 /** Exact durable bindings supplied to an offline maintenance inspection. */
-export const MaintenanceBindingSchema = z
+const MaintenanceBindingSchema = z
   .strictObject({
     projectID: identifier,
     projectDirectory: path,
@@ -172,21 +172,9 @@ export const CheckReceiptSchema = z.strictObject({
 })
 export type CheckReceipt = z.infer<typeof CheckReceiptSchema>
 
-export const GitWorkspaceObservationSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("observed"),
-    root: path,
-    head: commit.nullable(),
-    clean: z.boolean(),
-    unmerged: z.boolean(),
-  }),
-  z.strictObject({ kind: z.literal("unavailable") }),
-])
-export type GitWorkspaceObservation = z.infer<typeof GitWorkspaceObservationSchema>
+export type GitWorkspaceObservation =
+  | { kind: "observed"; root: string; head: string | null; clean: boolean; unmerged: boolean }
+  | { kind: "unavailable" }
 
-export const ReceiptObservationSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("missing") }),
-  z.strictObject({ kind: z.literal("present"), receipt: z.unknown() }),
-  z.strictObject({ kind: z.literal("unavailable") }),
-])
-export type ReceiptObservation = z.infer<typeof ReceiptObservationSchema>
+export type ReceiptObservation =
+  { kind: "missing" } | { kind: "present"; receipt: unknown } | { kind: "unavailable" }

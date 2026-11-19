@@ -2,7 +2,6 @@ import { canonical } from "../../identity.ts"
 import type { ProbeRepository } from "../probe/store.ts"
 import { ProbeActorSchema } from "../probe/schema.ts"
 import type { ProbeActor, ProbeRun, ProbeVerdict } from "../probe/schema.ts"
-import { FilesystemFixtureAdapter } from "./fixture.ts"
 import type { OwnedResourceAdapter } from "./fixture.ts"
 import { ResourceRegistrationInputSchema } from "./schema.ts"
 import type { OwnedResource, ResourceOwner, ResourceRegistrationInput } from "./schema.ts"
@@ -524,13 +523,4 @@ export class OwnedProbeLifecycle {
   private errorMessage(error: unknown): string {
     return error instanceof Error ? error.message.slice(0, 500) : "Unknown resource lifecycle error"
   }
-}
-
-/** Convenience constructor keeps the shared SQLite coordinator explicit. */
-export function filesystemProbeLifecycle(
-  repository: ResourceRepository,
-  probes: ProbeRepository,
-  rootDirectory: string,
-): OwnedProbeLifecycle {
-  return new OwnedProbeLifecycle(repository, probes, new FilesystemFixtureAdapter(rootDirectory))
 }

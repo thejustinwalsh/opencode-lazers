@@ -18,7 +18,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { OpenCode } from "@opencode/client"
 import { NATIVE_VERIFICATION_BASE_ENV, type NativeBinding } from "./native-interaction-contract.ts"
 
-export const DEFAULT_SERVICE_PORT = 49374
+const DEFAULT_SERVICE_PORT = 49374
 const MANIFEST_NAME = "owned-launch.json"
 const OWNER_NAME = "owner.json"
 const SERVICE_ARGS = ["serve", "--service", "--hostname", "127.0.0.1"] as const
@@ -216,7 +216,7 @@ export function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
   return env
 }
 
-export function parseShellEnvironment(data: Uint8Array): Map<string, string> {
+function parseShellEnvironment(data: Uint8Array): Map<string, string> {
   const entries = new Map<string, string>()
   for (const item of Buffer.from(data).toString("utf8").split("\0")) {
     const separator = item.indexOf("=")
@@ -723,7 +723,7 @@ export function openDesktopProcessLog(root: string) {
   return open(join(root, `desktop-process-${crypto.randomUUID()}.log`), "ax", 0o600)
 }
 
-export class SystemLaunchDependencies implements LaunchDependencies {
+class SystemLaunchDependencies implements LaunchDependencies {
   private reservation?: Reservation
 
   constructor(private readonly baseDirectory: string) {}
@@ -1628,7 +1628,7 @@ export async function resolveNativeInteraction(
   }
 }
 
-export function candidateConfig(workspace: string): string {
+function candidateConfig(workspace: string): string {
   const source = join(resolve(workspace), "src", "index.ts")
   return `export { default } from ${JSON.stringify(source)}\n`
 }
@@ -1689,7 +1689,7 @@ export function normalizeVersion(value: string): string {
   return token.replace(/^v(?=\d)/i, "")
 }
 
-export async function inspectCandidate(candidatePath: string): Promise<Candidate> {
+async function inspectCandidate(candidatePath: string): Promise<Candidate> {
   const workspace = await realpath(candidatePath)
   const revision = command("git", ["-C", workspace, "rev-parse", "HEAD"]).trim()
   if (!/^[0-9a-f]{40,64}$/.test(revision))

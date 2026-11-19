@@ -33,12 +33,12 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 export const JsonObjectSchema = z.record(z.string(), JsonValueSchema)
 export type JsonObject = z.infer<typeof JsonObjectSchema>
 
-export const HandoffKnowledge = z.discriminatedUnion("status", [
+const HandoffKnowledge = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("known"), value: text }),
   z.strictObject({ status: z.literal("unknown"), reason: text.optional() }),
   z.strictObject({ status: z.literal("not-applicable"), reason: text.optional() }),
 ])
-export type HandoffKnowledge = z.infer<typeof HandoffKnowledge>
+type HandoffKnowledge = z.infer<typeof HandoffKnowledge>
 
 export const HandoffEvidence = z.strictObject({
   kind: z.enum(["artifact", "verification", "trajectory", "task", "message", "human", "other"]),
@@ -106,20 +106,20 @@ export const HandoffDraft = z.strictObject({
     reportedQuiescence: z.enum(["idle", "active", "unknown"]),
   }),
 })
-export type HandoffDraft = z.infer<typeof HandoffDraft>
+type HandoffDraft = z.infer<typeof HandoffDraft>
 
 export const HandoffDraftSubmissionInput = z.strictObject({
   requestID: identifier,
   draftID: z.uuid(),
   draft: HandoffDraft,
 })
-export type HandoffDraftSubmissionInput = z.infer<typeof HandoffDraftSubmissionInput>
+type HandoffDraftSubmissionInput = z.infer<typeof HandoffDraftSubmissionInput>
 
 export const HandoffRequestBody = z.strictObject({
   purpose: text,
   references: HandoffEvidenceList,
 })
-export type HandoffRequestBody = z.infer<typeof HandoffRequestBody>
+type HandoffRequestBody = z.infer<typeof HandoffRequestBody>
 
 export const HandoffActor = z.strictObject({
   sessionID: identifier,
@@ -133,7 +133,7 @@ export const HandoffRequestInput = z.strictObject({
   sourceAttemptID: z.uuid(),
   request: HandoffRequestBody,
 })
-export type HandoffRequestInput = z.infer<typeof HandoffRequestInput>
+type HandoffRequestInput = z.infer<typeof HandoffRequestInput>
 
 export const HandoffAttachment = z.strictObject({
   projectDirectory: reference,
@@ -144,7 +144,7 @@ export const HandoffAttachment = z.strictObject({
   sourceSessionID: identifier,
   requestGeneration: z.int().positive(),
 })
-export type HandoffAttachment = z.infer<typeof HandoffAttachment>
+type HandoffAttachment = z.infer<typeof HandoffAttachment>
 
 export const RecoverySource = z.strictObject({
   projectDirectory: reference,
@@ -160,7 +160,7 @@ export const RecoverySource = z.strictObject({
 })
 export type RecoverySource = z.infer<typeof RecoverySource>
 
-export const RecoveryEvidenceBoundary = z
+const RecoveryEvidenceBoundary = z
   .strictObject({
     fromSequence: z.int().nonnegative(),
     throughSequence: z.int().nonnegative(),
@@ -169,9 +169,9 @@ export const RecoveryEvidenceBoundary = z
     path: ["throughSequence"],
     message: "The evidence boundary cannot end before it begins.",
   })
-export type RecoveryEvidenceBoundary = z.infer<typeof RecoveryEvidenceBoundary>
+type RecoveryEvidenceBoundary = z.infer<typeof RecoveryEvidenceBoundary>
 
-export const RecoveryEvidence = z
+const RecoveryEvidence = z
   .array(HandoffEvidence)
   .max(40)
   .superRefine((evidence, context) => {
@@ -192,7 +192,7 @@ export const RecoveryConcernInput = z.strictObject({
   evidenceBoundary: RecoveryEvidenceBoundary,
   evidence: RecoveryEvidence,
 })
-export type RecoveryConcernInput = z.infer<typeof RecoveryConcernInput>
+type RecoveryConcernInput = z.infer<typeof RecoveryConcernInput>
 
 export const RecoveryConcernRecord = z.strictObject({
   requestID: identifier,
@@ -210,11 +210,11 @@ export const RecoveryConcernRecord = z.strictObject({
 })
 export type RecoveryConcernRecord = z.infer<typeof RecoveryConcernRecord>
 
-export const RecoveryFollowUp = z.discriminatedUnion("kind", [
+const RecoveryFollowUp = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("at"), dueAt: z.iso.datetime() }),
   z.strictObject({ kind: z.literal("condition"), condition: text }),
 ])
-export type RecoveryFollowUp = z.infer<typeof RecoveryFollowUp>
+type RecoveryFollowUp = z.infer<typeof RecoveryFollowUp>
 
 export const RecoveryDispositionInput = z
   .strictObject({
@@ -272,7 +272,7 @@ export const RecoveryCheckpointInput = z.strictObject({
   evidenceBoundary: RecoveryEvidenceBoundary,
   guidance: text.optional(),
 })
-export type RecoveryCheckpointInput = z.infer<typeof RecoveryCheckpointInput>
+type RecoveryCheckpointInput = z.infer<typeof RecoveryCheckpointInput>
 
 export const RecoveryCheckpointRecord = z.strictObject({
   ...RecoveryCheckpointInput.shape,
@@ -292,7 +292,7 @@ export const RecoveryCheckpointDelivery = z.strictObject({
   detail: text.optional(),
   observedAt: z.iso.datetime(),
 })
-export type RecoveryCheckpointDelivery = z.infer<typeof RecoveryCheckpointDelivery>
+type RecoveryCheckpointDelivery = z.infer<typeof RecoveryCheckpointDelivery>
 
 export const RecoveryCheckpointConsumptionRecord = z.strictObject({
   requestID: identifier,
@@ -301,9 +301,7 @@ export const RecoveryCheckpointConsumptionRecord = z.strictObject({
   observedBy: HandoffActor,
   createdAt: z.iso.datetime(),
 })
-export type RecoveryCheckpointConsumptionRecord = z.infer<
-  typeof RecoveryCheckpointConsumptionRecord
->
+type RecoveryCheckpointConsumptionRecord = z.infer<typeof RecoveryCheckpointConsumptionRecord>
 
 export const RecoveryCheckpointResponseInput = z.strictObject({
   requestID: identifier,
@@ -407,7 +405,7 @@ export const HandoffReviewReservationInput = z.strictObject({
 })
 export type HandoffReviewReservationInput = z.infer<typeof HandoffReviewReservationInput>
 
-export const HandoffUsage = z.strictObject({
+const HandoffUsage = z.strictObject({
   inputTokens: z.number().int().nonnegative().nullable(),
   outputTokens: z.number().int().nonnegative().nullable(),
   reasoningTokens: z.number().int().nonnegative().nullable(),
@@ -464,7 +462,7 @@ export const HandoffReviewOutcomeInput = z.strictObject({
   round: z.int().positive(),
   outcome: HandoffReviewOutcome,
 })
-export type HandoffReviewOutcomeInput = z.infer<typeof HandoffReviewOutcomeInput>
+type HandoffReviewOutcomeInput = z.infer<typeof HandoffReviewOutcomeInput>
 
 export const HandoffReviewFinalizationAuthorizationInput = z.strictObject({
   requestID: identifier,
@@ -474,7 +472,7 @@ export const HandoffReviewFinalizationAuthorizationInput = z.strictObject({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   result: JsonObjectSchema,
 })
-export type HandoffReviewFinalizationAuthorizationInput = z.infer<
+type HandoffReviewFinalizationAuthorizationInput = z.infer<
   typeof HandoffReviewFinalizationAuthorizationInput
 >
 
@@ -489,7 +487,7 @@ export const HandoffFinalizeInput = z.strictObject({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
 })
-export type HandoffFinalizeInput = z.infer<typeof HandoffFinalizeInput>
+type HandoffFinalizeInput = z.infer<typeof HandoffFinalizeInput>
 
 export const HandoffReportRecord = z.strictObject({
   reportID: z.uuid(),
@@ -599,12 +597,6 @@ export type HandoffEventRecord = z.infer<typeof HandoffEventRecord>
 export const HandoffHistoryCursor = z.strictObject({
   requestID: identifier,
   before: z.int().positive(),
-})
-
-export const RecoveryHistoryCursor = z.strictObject({
-  attemptID: z.uuid(),
-  concernID: z.uuid(),
-  beforeVersion: z.int().positive(),
 })
 
 export const RecoveryConcernCursor = z.strictObject({

@@ -11,7 +11,7 @@ type SettingsStore = { readonly value: Settings | undefined; set(value: Settings
 const localTime = (ms: number | string) => new Date(ms).toLocaleString()
 
 /** `label` and `percent` are null while there is no reading: the ring is drawn dashed, with no text. */
-export function presentation(settings: Settings, usage: Usage) {
+function presentation(settings: Settings, usage: Usage) {
   const provider = settings.provider === "go" ? "OpenCode Go" : "OpenRouter"
   if (usage.status !== "available")
     return {
@@ -276,7 +276,7 @@ export function setupBudget(
   return Section
 }
 
-export const budgetStyles = `
+const budgetStyles = `
 ${settingLabelStyles}
 .lazers-budget { display:inline-flex; align-items:center; justify-content:center; gap:5px; flex-shrink:0; height:26px; min-width:26px; padding:0 7px; border:0; border-radius:6px; background:transparent; color:var(--text-base); font:inherit; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; cursor:pointer; }
 .lazers-budget:hover { background:var(--surface-base-hover); }

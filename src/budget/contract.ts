@@ -14,8 +14,8 @@ export const defaults: Settings = {
   mode: "monthly",
   weeklyUSD: 300,
 }
-export const Meter = Schema.Struct({ percent: Schema.Finite, resetsAt: Schema.String })
-export const Usage = Schema.Struct({
+const Meter = Schema.Struct({ percent: Schema.Finite, resetsAt: Schema.String })
+const Usage = Schema.Struct({
   status: Schema.Literals(["available", "unavailable"]),
   reason: Schema.String,
   monthly: Schema.NullOr(Meter),

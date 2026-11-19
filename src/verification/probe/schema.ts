@@ -60,19 +60,17 @@ export const ProbeTargetSchema = z.discriminatedUnion("kind", [
 ])
 export type ProbeTarget = z.infer<typeof ProbeTargetSchema>
 
-export const ProbeScenarioSchema = z.strictObject({
+const ProbeScenarioSchema = z.strictObject({
   id: identifier,
   summary: shortText,
   acceptanceIDs: z.array(identifier).min(1).max(100),
   procedure: ProbeBasisSchema,
 })
-export type ProbeScenario = z.infer<typeof ProbeScenarioSchema>
 
-export const ProbeNotApplicableSchema = z.strictObject({
+const ProbeNotApplicableSchema = z.strictObject({
   acceptanceID: identifier,
   reason: fact,
 })
-export type ProbeNotApplicable = z.infer<typeof ProbeNotApplicableSchema>
 
 export const ProbeDefinitionInputSchema = z
   .strictObject({
@@ -134,40 +132,35 @@ const ProbeActionSchema = z.strictObject({
   summary: shortText,
   reference: reference.optional(),
 })
-export type ProbeAction = z.infer<typeof ProbeActionSchema>
 
 const ProbeObservationSchema = z.strictObject({
   source: z.enum(["tool-observation", "worker-commentary", "architect-judgment"]),
   fact,
   reference: reference.optional(),
 })
-export type ProbeObservation = z.infer<typeof ProbeObservationSchema>
 
 const ProbeEvidenceReferenceSchema = z.strictObject({
   kind: z.enum(["artifact", "interaction", "runtime", "external"]),
   reference,
 })
-export type ProbeEvidenceReference = z.infer<typeof ProbeEvidenceReferenceSchema>
 
-export const ProbeTimingSchema = z.strictObject({
+const ProbeTimingSchema = z.strictObject({
   startedAt: z.number().int().nonnegative().nullable(),
   finishedAt: z.number().int().nonnegative().nullable(),
   elapsedMs: z.number().int().nonnegative().nullable(),
 })
-export type ProbeTiming = z.infer<typeof ProbeTimingSchema>
 
-export const ProbeUsageSchema = z.strictObject({
+const ProbeUsageSchema = z.strictObject({
   tokens: z.number().int().nonnegative().nullable(),
   toolCalls: z.number().int().nonnegative().nullable(),
   costUsd: z.number().nonnegative().nullable(),
 })
-export type ProbeUsage = z.infer<typeof ProbeUsageSchema>
 
-export const ProbeCleanupState = z.enum(["not-required", "pending", "complete", "failed"])
-export type ProbeCleanupState = z.infer<typeof ProbeCleanupState>
-export const ProbeLifecycle = z.enum(["pending", "interrupted", "cancelled", "completed"])
-export type ProbeLifecycle = z.infer<typeof ProbeLifecycle>
-export const ProbeVerdict = z.enum(["passed", "product-failed", "environment-blocked"])
+const ProbeCleanupState = z.enum(["not-required", "pending", "complete", "failed"])
+type ProbeCleanupState = z.infer<typeof ProbeCleanupState>
+const ProbeLifecycle = z.enum(["pending", "interrupted", "cancelled", "completed"])
+type ProbeLifecycle = z.infer<typeof ProbeLifecycle>
+const ProbeVerdict = z.enum(["passed", "product-failed", "environment-blocked"])
 export type ProbeVerdict = z.infer<typeof ProbeVerdict>
 
 export const ProbeRunStartInputSchema = z.strictObject({
@@ -261,7 +254,6 @@ export const ProbeEligibilityInputSchema = z.strictObject({
   inputs: ProbeBasisSchema,
   environment: ProbeBasisSchema,
 })
-export type ProbeEligibilityInput = z.infer<typeof ProbeEligibilityInputSchema>
 
 export const ProbeActorSchema = actorSchema
 export type ProbeActor = z.infer<typeof ProbeActorSchema>

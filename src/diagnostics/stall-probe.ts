@@ -32,7 +32,7 @@ export type LongSection = {
   /** performance.now() when the section started. */
   start: number
 }
-export type SectionTotal = { count: number; totalMs: number; maxMs: number }
+type SectionTotal = { count: number; totalMs: number; maxMs: number }
 export type StallRecord = {
   event: "lazers.stall"
   at: string
@@ -60,8 +60,8 @@ export type ProbeOptions = {
   profile?: ProfileOptions
 }
 
-export const SLICE_THRESHOLD_MS = 50
-export const DRIFT_THRESHOLD_MS = 200
+const SLICE_THRESHOLD_MS = 50
+const DRIFT_THRESHOLD_MS = 200
 const TICK_MS = 50
 const RING = 20
 const MAX_BYTES = 5 * 1024 * 1024
@@ -346,7 +346,7 @@ export const sectionEffect = <A, E, R>(
  * Wrap each handler of one RPC implementation as a section named `rpc:<contract id>.<method>`.
  * Effect results are timed per run; promises by prefix and total; plain values synchronously.
  */
-export function instrumentHandlers<H extends object>(contractID: string, handlers: H): H {
+function instrumentHandlers<H extends object>(contractID: string, handlers: H): H {
   const wrapped: Record<string, unknown> = {}
   for (const [method, handler] of Object.entries(handlers)) {
     if (typeof handler !== "function") {
