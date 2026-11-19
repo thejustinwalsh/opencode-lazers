@@ -10,7 +10,7 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::git_process::Command;
 
 /// Last segment of the gitdir that the stub of a deregistered snapshot names.
 const UNREGISTERED_GITDIR_NAME: &str = "fallow-audit-unregistered";

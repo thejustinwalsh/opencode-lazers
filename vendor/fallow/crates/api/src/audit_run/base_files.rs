@@ -153,6 +153,15 @@ impl BaseFileReader {
     /// Returns `None` when the spawn fails or the stdio pipes are not
     /// available. The caller then treats the files as not reusable.
     #[must_use]
+    #[cfg(target_os = "wasi")]
+    pub fn spawn(_root: &Path) -> Option<Self> {
+        // A long-lived piped child cannot exist without processes.
+        None
+    }
+
+    /// Spawn one `git cat-file --batch` process in `root`.
+    #[must_use]
+    #[cfg(not(target_os = "wasi"))]
     pub fn spawn(root: &Path) -> Option<Self> {
         let mut command = fallow_engine::changed_files::git_command_in(root);
         command

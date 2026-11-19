@@ -1477,6 +1477,29 @@ pub struct DiscoveredSources {
     pub diagnostics: Vec<WorkspaceDiagnostic>,
 }
 
+/// Visit the tree with the parallel walker, or on the calling thread where threads do not exist
+/// (WASI preview 1 cannot spawn them).
+#[cfg(not(target_os = "wasi"))]
+fn walk_source_tree(
+    walk_builder: &WalkBuilder,
+    visitor_builder: &mut dyn ignore::ParallelVisitorBuilder<'_>,
+) {
+    walk_builder.build_parallel().visit(visitor_builder);
+}
+
+#[cfg(target_os = "wasi")]
+fn walk_source_tree(
+    walk_builder: &WalkBuilder,
+    visitor_builder: &mut dyn ignore::ParallelVisitorBuilder<'_>,
+) {
+    let mut visitor = visitor_builder.build();
+    for entry in walk_builder.build() {
+        if matches!(visitor.visit(entry), ignore::WalkState::Quit) {
+            break;
+        }
+    }
+}
+
 /// [`discover_files_and_config_candidates`] plus the source-discovery
 /// diagnostics this walk recorded, for callers that must carry a per-analysis
 /// snapshot instead of reading the shared registry back (issue #2366).
@@ -1520,7 +1543,7 @@ pub fn discover_files_config_candidates_and_diagnostics(
         config_shared: capture_config.then_some(&config_collected),
         excluded_shared: &excluded_collected,
     };
-    walk_builder.build_parallel().visit(&mut visitor_builder);
+    walk_source_tree(&walk_builder, &mut visitor_builder);
     config.ignore_patterns.mark_walked();
 
     let mut raw = collected

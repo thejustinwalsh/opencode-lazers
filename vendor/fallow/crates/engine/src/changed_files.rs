@@ -1,7 +1,7 @@
 //! Changed-file helpers owned by the engine boundary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use crate::git_process::{Command, Output};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -23,7 +23,7 @@ pub use crate::git_env::{
 
 /// Function pointer signature used to intercept short-running git
 /// subprocesses spawned by changed-file helpers.
-pub type ChangedFilesSpawnHook = fn(&mut std::process::Command) -> std::io::Result<Output>;
+pub type ChangedFilesSpawnHook = fn(&mut Command) -> std::io::Result<Output>;
 
 static SPAWN_HOOK: OnceLock<ChangedFilesSpawnHook> = OnceLock::new();
 

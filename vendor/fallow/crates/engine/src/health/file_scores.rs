@@ -49,31 +49,25 @@ pub fn compute_file_scores_and_churn<T>(
     before_scores: impl FnOnce() -> Result<(T, Option<DeadCodeAnalysisArtifacts>), HealthError>,
 ) -> Result<(FileScoresAndChurn, T), HealthError> {
     let needs_churn = input.opts.hotspots || input.opts.targets;
+    // WASI preview 1 has no threads: the churn load runs on the calling thread, after scoring.
+    #[cfg(target_os = "wasi")]
+    {
+        let (before, precomputed_for_scores) = before_scores()?;
+        let t = Instant::now();
+        let score_result = score_files(&input, needs_churn, precomputed_for_scores)?;
+        let fs_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let churn = needs_churn
+            .then(|| hotspots::fetch_churn_data(input.opts, &input.config.cache_dir))
+            .flatten();
+        return Ok(((score_result, fs_ms, churn), before));
+    }
+    #[cfg(not(target_os = "wasi"))]
     std::thread::scope(|s| {
         let churn_handle = needs_churn
             .then(|| s.spawn(|| hotspots::fetch_churn_data(input.opts, &input.config.cache_dir)));
         let (before, precomputed_for_scores) = before_scores()?;
         let t = Instant::now();
-        let score_result = if input.needs_file_scores {
-            compute_filtered_file_scores(FileScoreInput {
-                config: input.config,
-                modules: input.modules,
-                file_paths: input.file_paths,
-                changed_files: input.changed_files,
-                ws_roots: input.ws_roots,
-                ignore_set: input.ignore_set,
-                istanbul_coverage: input.istanbul_coverage,
-                pre_computed: precomputed_for_scores,
-                crap_thresholds: scoring::CrapScoreThresholds {
-                    resolver: input.threshold_resolver,
-                    enforce_crap: input.enforce_crap,
-                },
-                with_static_links: needs_churn,
-                test_reach: input.test_reach,
-            })?
-        } else {
-            (None, None, None)
-        };
+        let score_result = score_files(&input, needs_churn, precomputed_for_scores)?;
         let fs_ms = t.elapsed().as_secs_f64() * 1000.0;
         let churn = match churn_handle {
             Some(handle) => handle
@@ -82,6 +76,32 @@ pub fn compute_file_scores_and_churn<T>(
             None => None,
         };
         Ok(((score_result, fs_ms, churn), before))
+    })
+}
+
+fn score_files(
+    input: &FileScoresAndChurnInput<'_>,
+    needs_churn: bool,
+    precomputed_for_scores: Option<DeadCodeAnalysisArtifacts>,
+) -> Result<FileScoreResult, HealthError> {
+    if !input.needs_file_scores {
+        return Ok((None, None, None));
+    }
+    compute_filtered_file_scores(FileScoreInput {
+        config: input.config,
+        modules: input.modules,
+        file_paths: input.file_paths,
+        changed_files: input.changed_files,
+        ws_roots: input.ws_roots,
+        ignore_set: input.ignore_set,
+        istanbul_coverage: input.istanbul_coverage,
+        pre_computed: precomputed_for_scores,
+        crap_thresholds: scoring::CrapScoreThresholds {
+            resolver: input.threshold_resolver,
+            enforce_crap: input.enforce_crap,
+        },
+        with_static_links: needs_churn,
+        test_reach: input.test_reach,
     })
 }
 

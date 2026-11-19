@@ -24,7 +24,7 @@ pub fn remove_audit_worktree(repo_root: &Path, path: &Path) {
         "--force",
         path.to_string_lossy().as_ref(),
     ]);
-    match fallow_process::output(&mut command) {
+    match crate::git_process::output(&mut command) {
         Ok(output) => {
             if !output.status.success() && path.exists() {
                 let stderr = String::from_utf8_lossy(&output.stderr);

@@ -178,7 +178,7 @@ pub(crate) fn merge_base(root: &Path, base_ref: &str) -> String {
     let mut command = fallow_engine::changed_files::git_command_in(root);
     command
         .args(["merge-base", "--end-of-options", base_ref, "HEAD"])
-        .stderr(std::process::Stdio::null());
+        .stderr(fallow_engine::git_process::Stdio::null());
     command
         .output()
         .ok()

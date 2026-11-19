@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Stdio;
+use crate::git_process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fallow_types::flag_retirement::{FlagAgeMode, FlagCommit, RetirementFlag};

@@ -503,7 +503,7 @@ fn peel_to_commit(rev: &str) -> String {
     format!("{rev}^{{commit}}")
 }
 
-fn run_git(dir: &Path, args: &[&str]) -> Result<std::process::Output, BaseBaselineError> {
+fn run_git(dir: &Path, args: &[&str]) -> Result<crate::git_process::Output, BaseBaselineError> {
     crate::git_env::git_command(dir)
         .args(args)
         .current_dir(dir)

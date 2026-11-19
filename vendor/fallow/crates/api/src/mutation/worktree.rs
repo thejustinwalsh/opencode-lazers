@@ -219,7 +219,7 @@ pub fn snapshot(
     if start.is_none() {
         command.arg("--ignored=matching");
     }
-    let output = fallow_process::output(&mut command)
+    let output = fallow_engine::git_process::output(&mut command)
         .map_err(|error| format!("cannot run git status: {error}"))?;
     if !output.status.success() {
         return Err(format!(
