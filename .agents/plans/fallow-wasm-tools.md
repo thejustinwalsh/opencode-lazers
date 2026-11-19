@@ -348,7 +348,6 @@ if they do not hold.
 
 | Budget                                      | Proposed limit                              | Reference                                      |
 | ------------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
-| `fallow.wasm` after `wasm-opt -Oz`          | 8 MB raw                                    | Native addon is 27 MB                          |
 | Worker start to module ready                | 300 ms                                      | None measured                                  |
 | Changed-file check on this repository       | 2 s at p95                                  | None measured                                  |
 | Full five-section report on this repository | 15 s                                        | Native took 4.866 s, multi-phase, with threads |
@@ -695,8 +694,9 @@ function in `src/runner/checks.ts`.
 Accept when: on this repository and on one fixture with a framework plugin,
 WASM and native agree on clone groups (file and line ranges), complexity
 findings, and dead-code finding keys, with every difference listed and
-explained; size, start time, check time and memory are measured and written
-into this plan against the budgets; a failed budget is reported, not hidden.
+explained; start time, check time and memory are measured and written
+into this plan against the budgets; a failed budget is reported, not hidden. Module size has no
+budget (owner decision 2026-11-19: speed matters more than size).
 
 Stop and return to the owner when: duplication cannot be built without
 rewriting the detector.
@@ -749,7 +749,7 @@ Total 206 changed lines. The spike's "JavaScript entropy" patch is not needed.
   piece of work, well past the patch budget. Feature flags need none of that and are
   exposed.
 
-Parity against native 3.43.2 (`src/audit/wasm/fallow-parity.test.ts`, all passing):
+Parity against native 3.43.2 (one-time A/B check, since removed):
 
 | Check                              | This repository (371 analysed files)                      | Fixture (4 files)   |
 | ---------------------------------- | --------------------------------------------------------- | ------------------- |
@@ -773,16 +773,13 @@ Measurements, this repository, Apple silicon, Bun 1.4.4, module run in a `Worker
 
 | Budget                             | Limit   | Measured                                                                                                                                       | Result |
 | ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `fallow.wasm` after `wasm-opt -Oz` | 8 MB    | 4.86 MB (4,859,933 bytes)                                                                                                                      | pass   |
 | Worker start to module ready       | 300 ms  | 15 ms (first call 5 ms)                                                                                                                        | pass   |
 | Changed-file check, 10 files       | 2 s p95 | 235 ms p50, 370 to 465 ms p95 for complexity and duplication; with reading 647 files and building the `Project`, 255 ms p50, 410 to 500 ms p95 | pass   |
 | Whole-repository duplication       | 15 s    | 221 ms p50, 225 to 238 ms p95; whole-repository complexity 1.4 s                                                                               | pass   |
 | Worker memory (recorded, no limit) | n/a     | wasm linear memory 98.6 MB; worker RSS about 220 MB after the run                                                                              | n/a    |
 
-The module is built for size (`opt-level = "z"`, fat LTO). At `opt-level = 3` it was
-8.83 MB (over the 8 MB budget) and about twice as fast (changed check 175 ms p50,
-whole-repository duplication 165 ms). The size-optimised build is committed because every
-budget holds with it; the speed build is one line in `crates/fallow-wasm/Cargo.toml`.
+That first build was size-optimised (`opt-level = "z"`, fat LTO, 4.86 MB). There is no size
+budget (owner decision 2026-11-19); the shipped module is built for speed, see "Build settings".
 A changed-file check re-tokenizes the whole corpus (the cost is the corpus, not the 10
 files), so it is about as slow as a full run; a token cache across calls would remove that.
 
@@ -903,8 +900,8 @@ Fix these inside your write scope. Do not add fallow-ignore comments.
 
 ### What is in WebAssembly and what is not
 
-Everything. Superseded 2026-11-19 by "Everything runs in WebAssembly" below: the native
-addon is a dev dependency used only by the parity tests.
+Everything. Superseded 2026-11-19 by "Everything runs in WebAssembly" below. No Fallow npm
+package is a dependency of any kind (see "Verification without a native reference").
 
 ## Everything runs in WebAssembly (2026-11-19)
 
@@ -960,9 +957,24 @@ Evidence for each open question in the brief:
 Patch queue additions (`vendor/fallow-patches/`): 0007 (no threads on WASI: pool, walker,
 churn), 0008 (git through a host call). `crates/api` is now imported.
 
-### Parity against native 3.43.2
+### Verification without a native reference
 
-`src/audit/wasm/fallow-parity.test.ts`, Bun 1.4.4 canary and 1.4.4 release. On this repository
+The port was checked once against native Fallow 3.43.2 and that comparison is finished. Its
+tests, `native-reference.ts` and the `@fallow-cli/fallow-node` dev dependency were deleted on
+2026-11-19 (owner rule: no native binary may be downloaded, even by a dev install), and no
+snapshot of native output was kept. `package.json` and `bun.lock` are tested never to name
+a Fallow package. What verifies our use of Fallow now are hand-written tests with
+expectations written against small fixture projects, run on both modules and required to
+agree with each other: `src/audit/wasm/fallow-analysis.test.ts` (dead code, cycles,
+architecture, duplication, complexity, feature flags, symlinked `node_modules`, local and
+remote `extends`, and invariants for this repository only: no error, deterministic, plausible
+counts), `src/audit/wasm/fallow-wasm.test.ts` (host: read-only, git refusals, import surface,
+helper reuse, termination), `src/audit/fallow-threads.test.ts` (option, module choice,
+fallback), and the review layer tests in `src/audit/`. What the removal cost: nothing checks
+that a new Fallow version agrees with the previous one on real code; a version bump now
+relies on those tests and on reading the changelog.
+
+The one-time A/B result, for the record (Bun 1.4.4 canary and 1.4.4 release). On this repository
 and on a fixture whose dependency is reached through `node_modules/dep-a -> ../packages/dep-a`.
 Each report is compared whole, field for field, with `elapsed_ms` removed. Counts are from the tree at measurement time.
 
@@ -1002,34 +1014,155 @@ Differences from native, all of them intended:
 | 3-file complexity, warm worker       | 43 ms       |                      |
 | Changed-set duplication, warm worker | 544 ms      |                      |
 
-Module: 12.5 MB after `wasm-opt -Oz` (20 MB before); the 8 MB budget in this plan does not
-hold (the engine, `fallow-api`, `oxc_resolver` and the plugin set are now in the module).
-Worker RSS 171 MB after those calls. The five-section total is inside the 15 s budget.
+Module: 12.5 MB after `wasm-opt -Oz` (20 MB before), as first measured; see "Build settings"
+for the shipped speed build. There is no size budget. Worker RSS 171 MB after those calls. The
+five-section total is inside the 15 s budget.
 
-### Threads (`wasm32-wasip1-threads`): built, correct, not faster, not shipped
+### Build settings (2026-11-19): speed first, no size budget
 
-Bun 1.4.4 supports what it needs: shared `WebAssembly.Memory`, `Atomics.wait` in workers, and
-a worker per `wasi.thread-spawn` that instantiates the same compiled module on the shared
-memory and calls `wasi_thread_start`. `wasi.start()` also accepts an object with `memory` and
-a `_start` that calls it, which binds the memory for a helper thread. Reports with 1, 4 and 8 pool
-threads equal each other. What it cost, measured on this repository:
+Owner decision: speed matters more than size. Every combination was built from the same
+sources and run on this repository, the five report sections in sequence (dead code, duplication,
+health, architecture, feature flags), Bun 1.4.4 canary, quiet Apple silicon machine, three runs
+each (the machine drifts by up to 15% between runs, so min and median are both shown):
 
-| Run                        | Dead code | Health |
-| -------------------------- | --------- | ------ |
-| Single-threaded module     | 2.0 s     | 4.2 s  |
-| Threaded module, 1 thread  | 2.7 s     | 5.4 s  |
-| Threaded module, 4 threads | 2.6 s     | 4.9 s  |
-| Threaded module, 8 threads | 3.9 s     | 5.6 s  |
+| `opt-level` | `wasm-opt` | Size    | Five sections, min / median |
+| ----------- | ---------- | ------- | --------------------------- |
+| `"z"`       | `-Oz`      | 12.5 MB | 13.0 s / 17.8 s (noisy)     |
+| `"z"`       | `-O3`      | 12.8 MB | 11.9 s / 11.9 s             |
+| `"z"`       | `-O4`      | 12.8 MB | 11.0 s / 11.2 s             |
+| `"s"`       | `-Oz`      | 17.2 MB | 9.2 s / 9.4 s               |
+| `"s"`       | `-O3`      | 17.3 MB | 9.4 s / 9.5 s               |
+| `"s"`       | `-O4`      | 17.3 MB | 8.9 s / 11.9 s (noisy)      |
+| `3`         | `-Oz`      | 23.0 MB | 8.5 s / 9.1 s               |
+| `3`         | `-O3`      | 23.2 MB | 8.7 s / 8.9 s               |
+| `3`         | `-O4`      | 23.2 MB | 8.8 s / 9.4 s               |
 
-Findings: (1) the engine also spawns a thread per file for deep-stack parsing; each spawn
-starts a Bun worker (about 10 ms), 813 of them took 8 s, so the host must refuse spawns beyond
-the pool size (the engine falls back to running in place); (2) growing the shared memory is
-slow and an initial 128 MiB made `health` trap with an out-of-bounds access, so the module
-needs a 1 GiB initial shared memory; (3) with both fixed there is no measurable speedup and
-more threads are slower. Single-threaded stays. The code was removed rather than shipped
-unused; to retry: `rustup target add wasm32-wasip1-threads`, link flags
-`--initial-memory=1073741824 --max-memory=4294967296 --export-memory`, patch `use_current_thread`
-to apply only without `target_feature = "atomics"`, and refuse spawns beyond the pool.
+LTO stays fat. `opt-level = 3` is about 25% faster than `"z"` and about 5% faster than `"s"`.
+The `wasm-opt` level makes no measurable difference once Rust has optimised for speed: five
+more interleaved runs of the three `opt-level = 3` modules gave medians of 9.7 s (`-Oz`), 9.7 s
+(`-O3`) and 9.2 s (`-O4`) with a spread larger than that. Shipped: `opt-level = 3` and
+`wasm-opt -O3`; 23.2 MB. Five-section run on this repository, single run per section, median
+of three: dead code 1.8 s, duplication 0.35 s, health 3.9 s, architecture 1.45 s, feature flags
+1.4 s, total 8.8 s.
+
+### Threads (`wasm32-wasip1-threads`): shipped, on by default behind `fallowThreads`
+
+Owner decision (2026-11-19): ship the threaded module and turn it on by default, with no
+file-count threshold, whatever the measurements say. They are recorded below so the default can
+be revisited.
+
+**Setting.** Plugin option `fallowThreads: "on" | "off"` beside `fallowReview`, read in
+`src/core/core.ts` (`parseFallowThreads`: anything but `"off"` is `"on"`) and applied with
+`setFallowThreads` in `src/audit/wasm-analyzer.ts`; each analysis request carries it. `"off"`
+uses the single-threaded module exactly as before and never loads the threaded one.
+
+**Artifacts.** `src/audit/wasm/fallow.wasm` and `fallow-threads.wasm`, both committed, both
+described in `ARTIFACT.json`, both copied to `dist/` by `scripts/build-server.ts` and packaged by
+`scripts/release-package.ts`, with the helper script `fallow-thread.js` (spawned through
+`workerURL`). Both are built by `bun scripts/build-fallow-wasm.ts` (opt-level 3, `wasm-opt -O3`,
+23.2 MB each). Patch 0009 keeps rayon's requested pool size when `target_feature = "atomics"`.
+
+**Threads.** The pool is two threads, the constant `MAX_FALLOW_THREADS`. The module imports a
+shared `env.memory` (65535 pages up front, 65536 maximum) and `wasi.thread-spawn`; the host grants
+at most two spawns per run and refuses the rest (the engine tries one thread per deeply nested
+file and then runs it in place). Helper workers belong to the analysis worker and are reused:
+when a run ends, the rayon pool shuts down, each helper's `wasi_thread_start` returns and sets a
+shared flag, and the next run hands the idle helper a new instance and memory. A helper that has
+not returned within 100 ms is terminated. So the wasi-threads model does not force re-creation:
+the first run creates two workers and later runs reuse them. Measured on this repository,
+duplication: 398 ms with creation, about 300 ms reusing. Idle helpers are unref'd; terminating the
+analysis worker (abort or timeout) takes its helpers with it, and a test starts a threaded run in
+a child process, cancels it and checks the process exits by itself. Nothing writes to the
+analysed tree: every helper has its own read-only WASI instance.
+
+**Safety net.** If shared memory is unavailable, the threaded module fails to load, or a
+threaded call traps, that call runs again on the single-threaded module, every later call in the
+process does too, and the reason is logged once (`Fallow threaded analysis unavailable; using
+the single-threaded module`). A helper that traps while the main thread waits cannot be seen from
+outside; the request's timeout ends such a run (it then falls under the usual timeout error).
+Tests: option parsing and default, "off" never loads the threaded module, an injected failing
+and an injected trapping threaded module fall back, abort terminates helpers, the bundled worker
+serves both modules, `test/runner/recovery.test.ts` passes with threads on.
+
+**End to end, off versus on.** Through the real analyzer (worker, request, report) in a fresh
+process per cell, median of the runs shown (two for the first three corpora, one for the larger),
+Apple silicon, Bun 1.4.4 canary. "First tiny call" is a one-file complexity request on a cold
+process: worker, module compile and, with threads on, helper start. "Review" is the shape of a
+per-task review: complexity of 10 files twice, a changed-set duplication, and dead code twice.
+Peak RSS is the whole process.
+
+| Corpus (files)                  | Threads | First tiny call | Dead code, warm | Health | Five sections | Review | Peak RSS |
+| ------------------------------- | ------- | --------------- | --------------- | ------ | ------------- | ------ | -------- |
+| This repository (~700)          | off     | 0.07 s          | 1.75 s          | 4.28 s | 9.5 s         | 4.0 s  | 1.11 GB  |
+|                                 | on      | 0.06 s          | 1.51 s          | 3.71 s | 8.3 s         | 3.4 s  | 1.05 GB  |
+| Real tree (~6k incl. `.d.ts`)   | off     | 0.06 s          | 1.92 s          | 3.54 s | 10.6 s        | 5.3 s  | 1.44 GB  |
+|                                 | on      | 0.07 s          | 1.71 s          | 3.36 s | 9.5 s         | 4.6 s  | 1.49 GB  |
+| `src/` x 5 (~3.0k)              | off     | 0.07 s          | 6.2 s           | 9.9 s  | 31.7 s        | 14.7 s | 2.50 GB  |
+|                                 | on      | 0.08 s          | 6.5 s           | 10.1 s | 30.2 s        | 13.6 s | 2.86 GB  |
+| `src/` x 17 (~10k)              | off     | 0.07 s          | 21.1 s          | 33.6 s | 101.5 s       | 46.8 s | 4.90 GB  |
+|                                 | on      | 0.09 s          | 22.2 s          | 36.4 s | 107.6 s       | 46.1 s | 5.50 GB  |
+| small `src/` files x 124 (~30k) | off     | 0.07 s          | 26.5 s          | 41.9 s | 123.1 s       | 58.0 s | 3.11 GB  |
+|                                 | on      | 0.10 s          | 27.7 s          | 44.5 s | 126.8 s       | 60.2 s | 5.99 GB  |
+
+Reading it: with threads on, up to about 6k files the analyses are 8 to 15% faster; around 3k
+the two are level; from 10k files on threads on are 0 to 6% slower and use 12 to 90% more
+memory. Cold start costs the same either way (tens of milliseconds). 30k full-size files do not
+run on either module (wasm32 memory). Revisit the default if large projects matter more than
+the 650 to 6k file ones the review mostly sees. The bare-module comparison made before the decision
+(directly on the modules, one thread against two) saw no speedup at any size, so the gain
+above is small and may come from work moving off the analysis worker's own thread; it was not
+investigated further.
+
+#### Module-level A/B, before the decision
+
+Module-level A/B (2026-11-19), run before the decision below: the threaded module was rebuilt (`opt-level = 3`, `wasm-opt -O3`, 23.2 MB),
+with the host refusing helper threads beyond the pool (hard cap 2), and compared with the
+single-threaded module on corpora up to 30k files. Reports from both modules were identical
+(dead code compared whole, `elapsed_ms` removed). Wall time is the median of the runs listed;
+peak RSS is the largest seen, from `/usr/bin/time -l` on a process that ran the five sections
+in sequence. Five sections = dead code, duplication, health, architecture, feature flags.
+
+| Corpus                                                                         | Files | Runs | Threads | Dead code     | Health | Five sections | Peak RSS |
+| ------------------------------------------------------------------------------ | ----- | ---- | ------- | ------------- | ------ | ------------- | -------- |
+| This repository                                                                | ~700  | 3    | 1       | 1.8 s         | 3.9 s  | 8.8 s         | 0.98 GB  |
+|                                                                                |       | 2    | 2       | 1.9 s         | 3.8 s  | 9.0 s         | 1.25 GB  |
+| Real: happy-dom, OpenTelemetry, Redis client, zod (copied from `node_modules`) | ~6.1k | 2    | 1       | 1.9 s         | 3.2 s  | 9.6 s         | 0.94 GB  |
+|                                                                                |       | 2    | 2       | 1.9 s         | 3.1 s  | 9.4 s         | 1.56 GB  |
+| This repository's `src/` x 5                                                   | ~3.0k | 2    | 1       | 6.7 s         | 9.8 s  | 30.5 s        | 1.86 GB  |
+|                                                                                |       | 2    | 2       | 6.8 s         | 10.5 s | 32.2 s        | 3.45 GB  |
+| `src/` x 17                                                                    | ~10k  | 2    | 1       | 20.9 s        | 34.0 s | 101.3 s       | 4.37 GB  |
+|                                                                                |       | 2    | 2       | 21.6 s        | 35.7 s | 108.6 s       | 5.27 GB  |
+| `src/` files under 6 KB x 124                                                  | ~30k  | 1    | 1       | 27.1 s        | 36.8 s | 119.6 s       | 3.37 GB  |
+|                                                                                |       | 1    | 2       | 25.7 s        | 44.1 s | 143.3 s       | 6.79 GB  |
+| `src/` x 51 (full-size files)                                                  | ~30k  | 1    | 1 and 2 | out of memory |        |               |          |
+
+Measured on the bare modules, two threads are not faster beyond noise (one dead-code run at 30k is 5% quicker, its health
+run 20% slower), and use 1.3 to 2 times the memory. Duplication, the most parallel looking phase,
+is no faster either. The cause was not proven. The two helper threads ran (the host granted
+both) but CPU time equalled the single-threaded run, so the work stayed effectively serial. The
+likely suspects are one global allocator lock (the Rust and `wasi-libc` allocator is a single
+heap shared by all threads, and tokenising and parsing allocate constantly) and the host
+serving every file read through one JavaScript WASI implementation per thread. Neither was
+tested; a per-thread allocator would be the first thing to try.
+
+Limits found on the way, which matter more than threads:
+
+- **wasm32 memory.** Linear memory ends at 4 GiB. The single-threaded module analyses 10k
+  full-size files (peak RSS 4.4 GB) and 30k small files (3.4 GB), and runs out of memory at
+  30k full-size files (`memory allocation of 27157728 bytes failed`). A real tree that includes
+  `effect` (a few thousand files with very large type-level sources) fails in `health` asking
+  for one 1.6 GB allocation. Failures arrive as `analyzer-panic` with the allocation message.
+  Native has no such ceiling; a project beyond it needs a fallback or a smaller scope, which is
+  not built.
+- **Signed pointers.** Beyond 2 GiB of linear memory the WASI host received negative pointers
+  (`byteOffset cannot be negative`). Fixed in `src/audit/fallow-wasi.ts`: every import sees its
+  arguments unsigned.
+- **Bun and shared memory.** Growing a shared memory traps in Bun 1.4.4 ("Out of bounds
+  access"), so a threaded module must start at its final size, and `wasi-libc` then only uses
+  the pages the module declares. 4 GiB (minus one page, a full 4 GiB overflows the heap end)
+  declared as the initial memory worked.
+
+To retry the build from scratch: see the recipe in `crates/fallow-wasm/.cargo/config.toml`, patch 0009 and `src/audit/fallow-wasi.ts`.
 
 ## Open questions for the owner
 
