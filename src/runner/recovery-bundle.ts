@@ -322,7 +322,11 @@ export class RecoveryBundles {
     return false
   }
 
-  private async inLanding(artifact: string, head: string | null): Promise<boolean | null> {
+  private async inLanding(
+    artifact: string,
+    landing: () => Promise<string | null>,
+  ): Promise<boolean | null> {
+    const head = await landing()
     if (!head) return null
     const { directory } = this.deps
     try {
@@ -361,10 +365,12 @@ export class RecoveryBundles {
     return results.length ? results.every(Boolean) : null
   }
 
-  private async worktree(attempt: AttemptRow | undefined, head: string | null) {
-    if (!attempt || !head) return null
+  private async worktree(attempt: AttemptRow | undefined, landing: () => Promise<string | null>) {
+    if (!attempt) return null
     const path = attempt.workspace
     if (!path || path === this.deps.directory || !this.exists(path)) return null
+    const head = await landing()
+    if (!head) return null
     try {
       const [unmerged, status] = await Promise.all([
         this.git(path, ["rev-list", "--count", "HEAD", `^${head}`]),
@@ -384,7 +390,7 @@ export class RecoveryBundles {
     plan: PlanRow,
     node: NodeRow | undefined,
     attempt: AttemptRow | undefined,
-    head: string | null,
+    head: () => Promise<string | null>,
   ): Promise<RecoveryReuse> {
     const artifact = (node ? (attempt?.artifact ?? node.artifact) : plan.artifact) ?? null
     const session = attempt ? await this.deps.host.session(attempt.session_id) : undefined
@@ -414,7 +420,9 @@ export class RecoveryBundles {
   /** Every item that needs an Architect decision now. Read-only. */
   async collect(): Promise<RecoveryItem[]> {
     const { store, directory } = this.deps
-    const head = await this.git(directory, ["rev-parse", "HEAD"]).catch(() => null)
+    // Git is only asked when a stale item needs it; an idle project runs no git at all.
+    let landing: Promise<string | null> | undefined
+    const head = () => (landing ??= this.git(directory, ["rev-parse", "HEAD"]).catch(() => null))
     const items: RecoveryItem[] = []
     for (const plan of store.plans()) {
       const stuck = ["blocked", "failed", "accepted", "cleanup-blocked", "cancelling"].includes(
