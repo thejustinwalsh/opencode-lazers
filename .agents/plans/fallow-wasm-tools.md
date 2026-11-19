@@ -1456,14 +1456,14 @@ Replaces the per-task dead-code caveat. How the vendored engine (v3.43.2) treats
   (`config/src/config/rules.rs:576`, populated in `core/src/analyze/mod.rs:1037`). The audit reports one only for a
   file the change touched, so the consumer's own audit (it never touches the file holding the comment) stays silent.
   Verified by experiment: base to adder gives two `added-suppression` and no stale; adder to consumer gives pass.
-- Implemented here (`src/audit/suppression-flow.ts`): (1) the consumer's per-task audit runs the whole-repository
-  dead-code analysis at head and base and reports each stale suppression the change made stale (a
+- Implemented here (`src/audit/suppression-flow.ts`): (1) the consumer's per-task audit confirms, with one whole-repository
+  dead-code pass at head, each suppression whose name the change now mentions, and reports the stale ones (a
   `stale-suppression` finding in its package); (2) the plan audit adds `unconsumed-suppression` for each
   added-suppression of an unused-code kind that is still present and not stale; (3) `attributeFindingsToTasks`
   credits a stale suppression to the task whose diff uses the suppressed name, and an unconsumed one to the task that
   touched the file. The package renders every added suppression with its reason or `NO REASON GIVEN`, and
   the repair text names the exact comment to write.
-- Cost: one extra dead-code pass per side (cached) in a repository that has any `fallow-ignore-` comment; none otherwise.
+- Cost rule: the stale check for the consumer runs one whole-repository dead-code pass at head, and only when the change's added lines (diff and untracked files) mention a name that sits under an unused-code suppression comment; any other change costs about 150 ms of `git grep` and diff. Measured on this repository, warm: 0.58 s for a 49-file change that does mention one; the first version (two passes whenever any `fallow-ignore-` exists) cost 1.3 s. A suppression already stale at the base is reported again to a second consumer.
 
 ## Follow-ups noticed, not part of this plan
 

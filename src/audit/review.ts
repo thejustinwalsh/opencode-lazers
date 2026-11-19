@@ -80,7 +80,7 @@ async function auditReport(
             staleSuppressionsIntroduced({
               analyzer,
               workspace: input.workspace,
-              baseRoot: base.directory,
+              base: input.baseCommit,
               configPath: resolved.configPath,
               cacheSeed: input.repository.projectDirectory,
               signal: input.signal,

@@ -26,9 +26,6 @@ type StaleItem = {
   origin?: { issue_kind?: string; reason?: string; is_file_level?: boolean }
 }
 
-const staleKey = (item: StaleItem) =>
-  `${item.path}\0${item.origin?.issue_kind ?? ""}\0${item.origin?.reason ?? ""}`
-
 function staleItems(report: unknown): StaleItem[] {
   const list = (report as { stale_suppressions?: unknown }).stale_suppressions
   return Array.isArray(list) ? (list as StaleItem[]) : []
@@ -54,43 +51,101 @@ export function staleFinding(item: StaleItem): FallowFinding {
   }
 }
 
-/** Whether any file carries a fallow-ignore comment; a repository with none needs no extra pass. */
-export async function hasSuppressionComments(workspace: string): Promise<boolean> {
-  const found = await runGit(workspace, "grep", "--untracked", "-l", "fallow-ignore-")
-  return found !== undefined && found.trim().length > 0
+type Candidate = { path: string; line: number; name: string }
+
+const MARKER_LINE = /fallow-ignore-(?:next-line|file)(.*)$/
+
+/** Suppression comments that stand for code left unused: an unused-code kind, or no kind at all. */
+async function aheadSuppressions(workspace: string): Promise<Candidate[]> {
+  const found = await runGit(workspace, "grep", "-n", "--untracked", "fallow-ignore-")
+  const candidates: Candidate[] = []
+  for (const row of (found ?? "").split("\n")) {
+    const [path, lineText, ...rest] = row.split(":")
+    const marker = MARKER_LINE.exec(rest.join(":"))
+    if (!path || !marker) continue
+    const targets = marker[1]!.split("--")[0]!
+    if (targets.trim() && !AHEAD_KINDS.some((kind) => targets.includes(kind))) continue
+    const line = Number(lineText)
+    const fileLevel = rest.join(":").includes("fallow-ignore-file")
+    const name = fileLevel ? undefined : await suppressedSymbol(workspace, path, line)
+    const stem = path.slice(path.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "")
+    candidates.push({ path, line, name: name ?? stem })
+  }
+  return candidates
+}
+
+/** Added lines of the change per file (tracked diff, plus the content of untracked files). */
+async function addedLinesByFile(workspace: string, base: string): Promise<Map<string, string[]>> {
+  const added = new Map<string, string[]>()
+  const diff = (await runGit(workspace, "diff", "-U0", base)) ?? ""
+  let current = ""
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++ ")) current = line.replace(/^\+\+\+ (?:b\/)?/, "")
+    else if (line.startsWith("+") && current)
+      (added.get(current) ?? added.set(current, []).get(current)!).push(line.slice(1))
+  }
+  const untracked = (await runGit(workspace, "ls-files", "--others", "--exclude-standard")) ?? ""
+  for (const path of untracked.split("\n").filter(Boolean)) {
+    const text = await Bun.file(`${workspace}/${path}`)
+      .text()
+      .catch(() => "")
+    added.set(path, text.split("\n"))
+  }
+  return added
+}
+
+const word = (name: string) => new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\b`)
+
+/**
+ * The suppressions this change may have made stale: a comment on unused code whose name the
+ * change's added lines mention outside the file holding it. (One already stale at the base is
+ * reported again to a second consumer; harmless, and it still needs removing.)
+ */
+async function possiblyConsumed(workspace: string, base: string): Promise<Candidate[]> {
+  const comments = await aheadSuppressions(workspace)
+  if (comments.length === 0) return []
+  const added = await addedLinesByFile(workspace, base)
+  const result: Candidate[] = []
+  for (const candidate of comments) {
+    const pattern = word(candidate.name)
+    const mentioned = [...added].some(
+      ([path, lines]) => path !== candidate.path && lines.some((line) => pattern.test(line)),
+    )
+    if (mentioned) result.push(candidate)
+  }
+  return result
 }
 
 /**
- * Stale suppressions the change made stale: present in the head's whole-repository dead-code
- * results and not in the base's. The consumer of code that was added ahead of it leaves the
- * comment in a file it never touched; this is how its own audit tells it to remove it.
+ * Stale suppressions the change made stale. The engine's audit hides them in files the change did
+ * not touch, and the consumer of code added ahead of its consumer never touches that file; this is
+ * how its own audit says "remove the comment". The rule: only when the change's added lines
+ * mention the name under a suppression comment, one whole-
+ * repository dead-code pass at head confirms which of those comments are stale now. A change
+ * that mentions no suppressed name costs a `git grep` and nothing else.
  */
 export async function staleSuppressionsIntroduced(input: {
   analyzer: FallowAnalyzer
   workspace: string
-  baseRoot: string
+  base: string
   configPath?: string
   cacheSeed?: string
   signal?: AbortSignal
   timeoutMs?: number
 }): Promise<FallowFinding[]> {
-  if (!(await hasSuppressionComments(input.workspace))) return []
-  const scope = (root: string) => ({
-    root,
+  const candidates = await possiblyConsumed(input.workspace, input.base)
+  if (candidates.length === 0) return []
+  const head = await input.analyzer.deadCode({
+    root: input.workspace,
     configPath: input.configPath,
     signal: input.signal,
     timeoutMs: input.timeoutMs,
-    ...(root === input.workspace
-      ? { cacheSeed: input.cacheSeed, cachePublish: input.cacheSeed }
-      : { cacheSeed: input.workspace }),
+    cacheSeed: input.cacheSeed,
+    cachePublish: input.cacheSeed,
   })
-  const [head, base] = await Promise.all([
-    input.analyzer.deadCode(scope(input.workspace)),
-    input.analyzer.deadCode(scope(input.baseRoot)),
-  ])
-  const before = new Set(staleItems(base).map(staleKey))
+  const at = new Set(candidates.map((c) => `${c.path}\0${c.line}`))
   return staleItems(head)
-    .filter((item) => !before.has(staleKey(item)))
+    .filter((item) => at.has(`${item.path}\0${item.line}`))
     .map(staleFinding)
 }
 

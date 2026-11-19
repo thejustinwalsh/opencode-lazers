@@ -118,7 +118,8 @@ holds with the same code and resumes by itself once a config exists. Build one t
    Store it with `lz-fallow-config-set` and a one-line `reason`; it is kept as an append-only
    revision with who set it. A repository config file, when there is one, wins and is read alone.
    One-off exceptions use a suppression comment with a reason (`// fallow-ignore-next-line
-<kind> -- <reason>`), written on your instruction, never by a worker on its own.
+<kind> -- <reason>`). A worker writes one only on your instruction, or for code added ahead of a
+   named consuming task (see Suppressed dead code); anything else is fixed, not suppressed.
 
 <!-- suppression-flow:start -->
 
