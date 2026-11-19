@@ -532,6 +532,78 @@ type CommandContext = {
   obs: GitObservations
 }
 
+const WORKTREE_EFFECT_KINDS = [
+  "worktree",
+  "worktree-recovery",
+  "graph-worktree",
+  "adoption-task-worktree",
+  "adoption-combined-worktree",
+]
+
+/** The blocked-plan reason startup recovery wrote for an uncertain worktree effect, if any. */
+function startupWorktreeRecoveryReason(
+  effect: EffectRow,
+  nativeFailure: ReturnType<typeof nativeWorktreeFailureFromReceipt>,
+): string | undefined {
+  if (
+    !["worktree", "worktree-recovery"].includes(effect.kind) ||
+    effect.state !== "uncertain" ||
+    !effect.receipt ||
+    nativeFailure
+  )
+    return undefined
+  try {
+    const receipt = JSON.parse(effect.receipt) as { error?: unknown }
+    return typeof receipt.error === "string"
+      ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Native worktrees at the effect's base commit (clean ones only, for adoption worktrees). */
+async function worktreeReconcileCandidates(
+  effect: EffectRow,
+  payload: { workspace: string; base: string },
+  nativeWorktrees: readonly string[],
+) {
+  const possibleCandidates: string[] = []
+  for (const directory of nativeWorktrees.filter((directory) =>
+    effect.kind === "worktree-recovery"
+      ? directory === payload.workspace
+      : isStartupWorktreeCandidate(payload.workspace, directory),
+  ))
+    if (
+      existsSync(directory) &&
+      (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
+    )
+      possibleCandidates.push(directory)
+  const candidates: string[] = []
+  for (const directory of possibleCandidates) {
+    if (
+      effect.kind.startsWith("adoption-") &&
+      (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
+    )
+      continue
+    candidates.push(directory)
+  }
+  return candidates
+}
+
+/** The check receipt a runner subprocess left at the effect's receipt path, when there is one. */
+function readCheckReceipt(payload: { receiptPath: string }): CheckReceipt | undefined {
+  return existsSync(payload.receiptPath)
+    ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt)
+    : undefined
+}
+
+function unsettledCheckError(label: "Mechanical" | "Verification", check: CheckReceipt) {
+  return new Error(
+    `${label} command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
+  )
+}
+
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly worktreeCleanup: WorktreeCleanup
@@ -11106,375 +11178,7 @@ export class TaskRuntime {
   private async reconcileEffect(effect: EffectRow, fence: number) {
     const payload = JSON.parse(effect.payload)
     try {
-      if (effect.kind === "scope-instruction") {
-        const update = payload as WorkerInstruction
-        const attempt = this.store
-          .attempts(effect.plan_id)
-          .find((item) => item.id === effect.attempt_id)
-        const plan = this.store.plan(effect.plan_id)!
-        if (
-          !attempt ||
-          attempt.task_id !== effect.task_id ||
-          update.attemptID !== attempt.id ||
-          update.sessionID !== attempt.session_id ||
-          update.directory !== attempt.workspace ||
-          update.projectID !== this.projectID
-        )
-          throw new Error("Scope instruction no longer matches its owned attempt")
-        if (
-          plan.state === "cancelling" ||
-          terminal.has(plan.state) ||
-          !["preparing", "running", "verifying"].includes(attempt.state)
-        ) {
-          this.receipt(
-            effect,
-            {
-              skipped: true,
-              reason: "Attempt no longer executing",
-              sessionID: update.sessionID,
-              key: update.key,
-            },
-            fence,
-          )
-          return
-        }
-        await this.host.updateInstruction(update)
-        this.receipt(
-          effect,
-          {
-            sessionID: update.sessionID,
-            key: update.key,
-            nativeEntryConfirmed: true,
-            modelConsumption: "unknown",
-          },
-          fence,
-        )
-        return
-      } else if (effect.kind === "session") {
-        const session = await this.host.session(payload.sessionID)
-        if (session) {
-          this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)
-          return
-        }
-      } else if (effect.kind === "prompt") {
-        const session = await this.host.session(payload.sessionID, { messages: true })
-        if (session?.messages.some((m) => m.id === payload.messageID)) {
-          this.receipt(
-            effect,
-            {
-              messageID: payload.messageID,
-              reconciled: true,
-            },
-            fence,
-          )
-          return
-        }
-        // These adapter guards throw before ctx.session.prompt. Record the
-        // conclusive non-dispatch so reconciliation can retry the same worker.
-        if (
-          !session?.messages.some((m) => m.id === payload.messageID) &&
-          [
-            "Worker session is not in its assigned worktree",
-            "Worker prompt target is not the exact assigned session and route",
-          ].includes(JSON.parse(effect.receipt ?? "{}").error)
-        ) {
-          this.store.fenced(this.owner, fence, (db) => {
-            db.query(
-              "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
-            ).run(
-              JSON.stringify({
-                notSent: true,
-                reason: "Native prompt guard prevented dispatch",
-              }),
-              effect.id,
-            )
-            db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
-              messageID(),
-              effect.attempt_id!,
-            )
-            this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
-              effectID: effect.id,
-              continuation: "new durable message after native prompt guard",
-            })
-          })
-          return
-        }
-      } else if (
-        [
-          "worktree",
-          "worktree-recovery",
-          "graph-worktree",
-          "adoption-task-worktree",
-          "adoption-combined-worktree",
-        ].includes(effect.kind)
-      ) {
-        const nativeFailure =
-          effect.kind === "worktree" || effect.kind === "worktree-recovery"
-            ? nativeWorktreeFailureFromReceipt(effect.receipt)
-            : undefined
-        const startupRecoveryReason = (() => {
-          if (
-            !["worktree", "worktree-recovery"].includes(effect.kind) ||
-            effect.state !== "uncertain" ||
-            !effect.receipt ||
-            nativeFailure
-          )
-            return undefined
-          try {
-            const receipt = JSON.parse(effect.receipt) as { error?: unknown }
-            return typeof receipt.error === "string"
-              ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
-              : undefined
-          } catch {
-            return undefined
-          }
-        })()
-        const nativeWorktrees = await this.host.worktrees()
-        // A typed native failure is affirmative terminal evidence, not a lost
-        // success response. It can never be promoted to a ready workspace.
-        if (nativeFailure) return
-        const possibleCandidates: string[] = []
-        for (const directory of nativeWorktrees.filter((directory) =>
-          effect.kind === "worktree-recovery"
-            ? directory === payload.workspace
-            : isStartupWorktreeCandidate(payload.workspace, directory),
-        ))
-          if (
-            existsSync(directory) &&
-            (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
-          )
-            possibleCandidates.push(directory)
-        const candidates: string[] = []
-        for (const directory of possibleCandidates) {
-          if (
-            effect.kind.startsWith("adoption-") &&
-            (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
-          )
-            continue
-          candidates.push(directory)
-        }
-        if (candidates.length === 1) {
-          const workspace = candidates[0]!
-          if (effect.attempt_id)
-            this.store.fenced(this.owner, fence, (db) =>
-              db
-                .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
-                .run(workspace, effect.attempt_id!),
-            )
-          this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
-          if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
-            this.store.setAdoptionWorkspace(
-              payload.adoptionID,
-              effect.kind === "adoption-task-worktree" ? "task" : "combined",
-              workspace,
-              { owner: this.owner, value: fence },
-            )
-          if (startupRecoveryReason && effect.attempt_id) {
-            const plan = this.store.plan(effect.plan_id)
-            const attempt = plan
-              ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
-              : undefined
-            const authorization =
-              effect.kind === "worktree-recovery" && plan && attempt
-                ? this.startupRecoveryAuthorization(plan, attempt)
-                : undefined
-            let recoveryBinding = true
-            if (effect.kind === "worktree-recovery") {
-              try {
-                const operation = JSON.parse(effect.payload) as {
-                  recoveryID?: unknown
-                  sourceEffectID?: unknown
-                }
-                recoveryBinding = Boolean(
-                  authorization &&
-                  plan &&
-                  plan.version >= authorization.planVersion &&
-                  operation.recoveryID === authorization.recoveryID &&
-                  operation.sourceEffectID === authorization.sourceEffectID,
-                )
-              } catch {
-                recoveryBinding = false
-              }
-            }
-            if (
-              plan?.state === "blocked" &&
-              plan.reason === startupRecoveryReason &&
-              attempt?.state === "preparing" &&
-              recoveryBinding
-            ) {
-              this.store.fenced(this.owner, fence, (db) => {
-                const changed =
-                  db
-                    .query(
-                      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
-                    )
-                    .run(plan.id, startupRecoveryReason).changes === 1
-                if (!changed) return
-                if (effect.kind === "worktree-recovery" && authorization)
-                  this.store.record(
-                    plan.id,
-                    attempt!.task_id,
-                    "STARTUP_RECOVERY_OPERATION_RESUMED",
-                    {
-                      effectID: effect.id,
-                      sourceEffectID: authorization.sourceEffectID,
-                      recoveryID: authorization.recoveryID,
-                      attemptID: effect.attempt_id,
-                      workspace,
-                      planVersion: plan.version + 2,
-                    },
-                  )
-                else
-                  this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
-                    effectID: effect.id,
-                    attemptID: effect.attempt_id,
-                    workspace,
-                  })
-              })
-            }
-          }
-          return
-        }
-      } else if (effect.kind === "mechanical-fix") {
-        const activityIdentity = { effectID: effect.id, payload: effect.payload }
-        const activity = this.checkActivity(effect.id, activityIdentity)
-        if (activity?.state === "running") return
-        if (existsSync(payload.receiptPath)) {
-          const check = JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt
-          const preparation = check.preparation
-          const scope = this.store.effectiveWriteScope(effect.task_id!)
-          if (
-            check.id === payload.check.id &&
-            check.command === payload.command &&
-            check.cwd === payload.workspace &&
-            check.artifact === payload.baseCommit &&
-            check.inputIdentity === payload.inputFingerprint &&
-            check.environmentIdentity === payload.environmentIdentity &&
-            preparation !== undefined &&
-            preparation.inputFingerprint === payload.inputFingerprint &&
-            JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
-            JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
-            JSON.stringify(scope) === JSON.stringify(payload.scope) &&
-            preparation.resultingFingerprint ===
-              (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
-            !scopeViolations(preparation.paths, scope).length
-          ) {
-            if (check.aborted) {
-              this.uncertain(effect, "Verification was interrupted before completion", fence, {
-                check,
-              })
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            if (!checkResourcesSettled(check)) {
-              this.uncertain(
-                effect,
-                new Error(
-                  `Mechanical command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-                ),
-                fence,
-                { check },
-              )
-              return
-            }
-            this.receipt(effect, { check, reconciled: true }, fence)
-            forgetVerificationActivity(
-              verificationActivityKey(this.store.repository.path, effect.id),
-              fingerprint(activityIdentity),
-            )
-            this.tickRequested = true
-            return
-          }
-        }
-        if (activity?.state === "failed") {
-          this.uncertain(effect, activity.error, fence)
-          forgetVerificationActivity(
-            verificationActivityKey(this.store.repository.path, effect.id),
-            fingerprint(activityIdentity),
-          )
-          return
-        }
-      } else if (effect.kind.startsWith("verify:") || effect.kind.startsWith("graph-verify:")) {
-        const activityIdentity = { effectID: effect.id, payload: effect.payload }
-        const activity = this.checkActivity(effect.id, activityIdentity)
-        if (activity?.state === "running") return
-        if (existsSync(payload.receiptPath)) {
-          const check = JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt
-          if (
-            check.id === payload.check.id &&
-            check.artifact === payload.artifact &&
-            check.cwd === payload.workspace &&
-            check.command === payload.check.command &&
-            check.inputIdentity === payload.identity
-          ) {
-            if (check.aborted) {
-              this.uncertain(effect, "Verification was interrupted before completion", fence, {
-                check,
-              })
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id) {
-              try {
-                this.progress.recordVerification(effect.attempt_id, effect.id, check)
-              } catch {
-                // The runner receipt remains authoritative if progress annotation fails.
-              }
-              this.store.atomic((db) =>
-                db
-                  .query(
-                    "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
-                  )
-                  .run(
-                    effect.id,
-                    effect.plan_id,
-                    effect.task_id,
-                    effect.attempt_id,
-                    check.artifact,
-                    JSON.stringify(check),
-                    Date.now(),
-                  ),
-              )
-            }
-            if (!checkResourcesSettled(check)) {
-              this.uncertain(
-                effect,
-                new Error(
-                  `Verification command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-                ),
-                fence,
-                { check },
-              )
-              forgetVerificationActivity(
-                verificationActivityKey(this.store.repository.path, effect.id),
-                fingerprint(activityIdentity),
-              )
-              return
-            }
-            this.receipt(effect, { check, reconciled: true }, fence)
-            this.tickRequested = true
-            forgetVerificationActivity(
-              verificationActivityKey(this.store.repository.path, effect.id),
-              fingerprint(activityIdentity),
-            )
-            return
-          }
-        }
-        if (activity?.state === "failed") {
-          this.uncertain(effect, activity.error, fence)
-          forgetVerificationActivity(
-            verificationActivityKey(this.store.repository.path, effect.id),
-            fingerprint(activityIdentity),
-          )
-          return
-        }
-      }
+      if (await this.reconcileEffectByKind(effect, payload, fence)) return
       if (isRerunnableEffect(effect.kind)) {
         this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
         this.tickRequested = true
@@ -11489,5 +11193,360 @@ export class TaskRuntime {
     } catch (error) {
       if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
     }
+  }
+
+  /** True when the effect's kind settled it; false leaves the generic no-receipt handling to run. */
+  private async reconcileEffectByKind(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    if (effect.kind === "scope-instruction")
+      return this.reconcileScopeInstruction(effect, payload as WorkerInstruction, fence)
+    if (effect.kind === "session") return this.reconcileSessionEffect(effect, payload, fence)
+    if (effect.kind === "prompt") return this.reconcilePromptEffect(effect, payload, fence)
+    if (WORKTREE_EFFECT_KINDS.includes(effect.kind))
+      return this.reconcileWorktreeEffect(effect, payload, fence)
+    if (
+      effect.kind === "mechanical-fix" ||
+      effect.kind.startsWith("verify:") ||
+      effect.kind.startsWith("graph-verify:")
+    )
+      return this.reconcileCheckEffect(effect, payload, fence)
+    return false
+  }
+
+  private async reconcileScopeInstruction(
+    effect: EffectRow,
+    update: WorkerInstruction,
+    fence: number,
+  ): Promise<boolean> {
+    const attempt = this.store
+      .attempts(effect.plan_id)
+      .find((item) => item.id === effect.attempt_id)
+    const plan = this.store.plan(effect.plan_id)!
+    if (
+      !attempt ||
+      attempt.task_id !== effect.task_id ||
+      update.attemptID !== attempt.id ||
+      update.sessionID !== attempt.session_id ||
+      update.directory !== attempt.workspace ||
+      update.projectID !== this.projectID
+    )
+      throw new Error("Scope instruction no longer matches its owned attempt")
+    if (
+      plan.state === "cancelling" ||
+      terminal.has(plan.state) ||
+      !["preparing", "running", "verifying"].includes(attempt.state)
+    ) {
+      this.receipt(
+        effect,
+        {
+          skipped: true,
+          reason: "Attempt no longer executing",
+          sessionID: update.sessionID,
+          key: update.key,
+        },
+        fence,
+      )
+      return true
+    }
+    await this.host.updateInstruction(update)
+    this.receipt(
+      effect,
+      {
+        sessionID: update.sessionID,
+        key: update.key,
+        nativeEntryConfirmed: true,
+        modelConsumption: "unknown",
+      },
+      fence,
+    )
+    return true
+  }
+
+  private async reconcileSessionEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const session = await this.host.session(payload.sessionID)
+    if (!session) return false
+    this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)
+    return true
+  }
+
+  private async reconcilePromptEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const session = await this.host.session(payload.sessionID, { messages: true })
+    if (session?.messages.some((m) => m.id === payload.messageID)) {
+      this.receipt(
+        effect,
+        {
+          messageID: payload.messageID,
+          reconciled: true,
+        },
+        fence,
+      )
+      return true
+    }
+    // These adapter guards throw before ctx.session.prompt. Record the
+    // conclusive non-dispatch so reconciliation can retry the same worker.
+    if (
+      !session?.messages.some((m) => m.id === payload.messageID) &&
+      [
+        "Worker session is not in its assigned worktree",
+        "Worker prompt target is not the exact assigned session and route",
+      ].includes(JSON.parse(effect.receipt ?? "{}").error)
+    ) {
+      this.store.fenced(this.owner, fence, (db) => {
+        db.query(
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
+        ).run(
+          JSON.stringify({
+            notSent: true,
+            reason: "Native prompt guard prevented dispatch",
+          }),
+          effect.id,
+        )
+        db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
+          messageID(),
+          effect.attempt_id!,
+        )
+        this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
+          effectID: effect.id,
+          continuation: "new durable message after native prompt guard",
+        })
+      })
+      return true
+    }
+    return false
+  }
+
+  private async reconcileWorktreeEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const nativeFailure =
+      effect.kind === "worktree" || effect.kind === "worktree-recovery"
+        ? nativeWorktreeFailureFromReceipt(effect.receipt)
+        : undefined
+    const startupRecoveryReason = startupWorktreeRecoveryReason(effect, nativeFailure)
+    const nativeWorktrees = await this.host.worktrees()
+    // A typed native failure is affirmative terminal evidence, not a lost
+    // success response. It can never be promoted to a ready workspace.
+    if (nativeFailure) return true
+    const candidates = await worktreeReconcileCandidates(effect, payload, nativeWorktrees)
+    if (candidates.length !== 1) return false
+    const workspace = candidates[0]!
+    if (effect.attempt_id)
+      this.store.fenced(this.owner, fence, (db) =>
+        db
+          .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
+          .run(workspace, effect.attempt_id!),
+      )
+    this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
+    if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
+      this.store.setAdoptionWorkspace(
+        payload.adoptionID,
+        effect.kind === "adoption-task-worktree" ? "task" : "combined",
+        workspace,
+        { owner: this.owner, value: fence },
+      )
+    if (startupRecoveryReason && effect.attempt_id)
+      this.resumeStartupRecovery(effect, fence, workspace, startupRecoveryReason)
+    return true
+  }
+
+  /** Unblocks the plan that startup recovery parked on this worktree effect, once it is ready. */
+  private resumeStartupRecovery(
+    effect: EffectRow,
+    fence: number,
+    workspace: string,
+    startupRecoveryReason: string,
+  ) {
+    const plan = this.store.plan(effect.plan_id)
+    const attempt = plan
+      ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
+      : undefined
+    const authorization =
+      effect.kind === "worktree-recovery" && plan && attempt
+        ? this.startupRecoveryAuthorization(plan, attempt)
+        : undefined
+    let recoveryBinding = true
+    if (effect.kind === "worktree-recovery") {
+      try {
+        const operation = JSON.parse(effect.payload) as {
+          recoveryID?: unknown
+          sourceEffectID?: unknown
+        }
+        recoveryBinding = Boolean(
+          authorization &&
+          plan &&
+          plan.version >= authorization.planVersion &&
+          operation.recoveryID === authorization.recoveryID &&
+          operation.sourceEffectID === authorization.sourceEffectID,
+        )
+      } catch {
+        recoveryBinding = false
+      }
+    }
+    if (!(
+      plan?.state === "blocked" &&
+      plan.reason === startupRecoveryReason &&
+      attempt?.state === "preparing" &&
+      recoveryBinding
+    ))
+      return
+    this.store.fenced(this.owner, fence, (db) => {
+      const changed =
+        db
+          .query(
+            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
+          )
+          .run(plan.id, startupRecoveryReason).changes === 1
+      if (!changed) return
+      if (effect.kind === "worktree-recovery" && authorization)
+        this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_OPERATION_RESUMED", {
+          effectID: effect.id,
+          sourceEffectID: authorization.sourceEffectID,
+          recoveryID: authorization.recoveryID,
+          attemptID: effect.attempt_id,
+          workspace,
+          planVersion: plan.version + 2,
+        })
+      else
+        this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
+          effectID: effect.id,
+          attemptID: effect.attempt_id,
+          workspace,
+        })
+    })
+  }
+
+  /** Drops the in-memory activity record of a check the reconciler has now settled. */
+  private forgetCheckActivity(effect: EffectRow, activityIdentity: unknown) {
+    forgetVerificationActivity(
+      verificationActivityKey(this.store.repository.path, effect.id),
+      fingerprint(activityIdentity),
+    )
+  }
+
+  /** Settles a check effect from its in-memory activity and the receipt the subprocess left. */
+  private async reconcileCheckEffect(
+    effect: EffectRow,
+    payload: any,
+    fence: number,
+  ): Promise<boolean> {
+    const activityIdentity = { effectID: effect.id, payload: effect.payload }
+    const activity = this.checkActivity(effect.id, activityIdentity)
+    if (activity?.state === "running") return true
+    const check = readCheckReceipt(payload)
+    if (check && (await this.checkReceiptMatchesEffect(effect, payload, check)))
+      return this.settleMatchedCheck(effect, check, fence, activityIdentity)
+    return this.settleFailedCheckActivity(effect, activity, fence, activityIdentity)
+  }
+
+  private async checkReceiptMatchesEffect(
+    effect: EffectRow,
+    payload: any,
+    check: CheckReceipt,
+  ): Promise<boolean> {
+    if (effect.kind !== "mechanical-fix")
+      return (
+        check.id === payload.check.id &&
+        check.artifact === payload.artifact &&
+        check.cwd === payload.workspace &&
+        check.command === payload.check.command &&
+        check.inputIdentity === payload.identity
+      )
+    const preparation = check.preparation
+    const scope = this.store.effectiveWriteScope(effect.task_id!)
+    return (
+      check.id === payload.check.id &&
+      check.command === payload.command &&
+      check.cwd === payload.workspace &&
+      check.artifact === payload.baseCommit &&
+      check.inputIdentity === payload.inputFingerprint &&
+      check.environmentIdentity === payload.environmentIdentity &&
+      preparation !== undefined &&
+      preparation.inputFingerprint === payload.inputFingerprint &&
+      JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
+      JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
+      JSON.stringify(scope) === JSON.stringify(payload.scope) &&
+      preparation.resultingFingerprint ===
+        (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
+      !scopeViolations(preparation.paths, scope).length
+    )
+  }
+
+  private settleMatchedCheck(
+    effect: EffectRow,
+    check: CheckReceipt,
+    fence: number,
+    activityIdentity: unknown,
+  ): boolean {
+    const mechanical = effect.kind === "mechanical-fix"
+    if (check.aborted) {
+      this.uncertain(effect, "Verification was interrupted before completion", fence, { check })
+      this.forgetCheckActivity(effect, activityIdentity)
+      return true
+    }
+    if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id)
+      this.recordVerificationEvidence(effect, check)
+    if (!checkResourcesSettled(check)) {
+      this.uncertain(
+        effect,
+        unsettledCheckError(mechanical ? "Mechanical" : "Verification", check),
+        fence,
+        { check },
+      )
+      if (!mechanical) this.forgetCheckActivity(effect, activityIdentity)
+      return true
+    }
+    this.receipt(effect, { check, reconciled: true }, fence)
+    this.tickRequested = true
+    this.forgetCheckActivity(effect, activityIdentity)
+    return true
+  }
+
+  private recordVerificationEvidence(effect: EffectRow, check: CheckReceipt) {
+    try {
+      this.progress.recordVerification(effect.attempt_id!, effect.id, check)
+    } catch {
+      // The runner receipt remains authoritative if progress annotation fails.
+    }
+    this.store.atomic((db) =>
+      db
+        .query(
+          "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
+        )
+        .run(
+          effect.id,
+          effect.plan_id,
+          effect.task_id,
+          effect.attempt_id,
+          check.artifact,
+          JSON.stringify(check),
+          Date.now(),
+        ),
+    )
+  }
+
+  /** A check whose activity failed without a matching receipt is uncertain; anything else falls through. */
+  private settleFailedCheckActivity(
+    effect: EffectRow,
+    activity: VerificationActivity<CheckReceipt> | undefined,
+    fence: number,
+    activityIdentity: unknown,
+  ): boolean {
+    if (activity?.state !== "failed") return false
+    this.uncertain(effect, activity.error, fence)
+    this.forgetCheckActivity(effect, activityIdentity)
+    return true
   }
 }
