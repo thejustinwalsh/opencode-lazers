@@ -437,6 +437,9 @@ function fallowAcceptance(review: FallowReviewResult | undefined) {
   return fallow ? { fallow } : {}
 }
 
+/** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
+const SLOW_RECONCILE_MS = 30_000
+
 /** Verification effects only read the candidate; a missing receipt means run the check again. */
 function isRerunnableEffect(kind: string): boolean {
   return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
@@ -536,6 +539,8 @@ export class TaskRuntime {
   private readonly architectRouting: ArchitectRoutingOptions
   private readonly autoResumeInterrupted: boolean
   private readonly fallowReviewEnabled: boolean
+  private reconcileTiming: Map<string, number> | undefined
+  private readonly slowRecorded = new Set<string>()
   private readonly fallowReviewRun: FallowReview
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
@@ -6663,6 +6668,9 @@ export class TaskRuntime {
     phase: "step" | "cleanup" | "delivery",
     run: () => void | Promise<void>,
   ) {
+    const timing = new Map<string, number>()
+    this.reconcileTiming = timing
+    const started = this.now()
     try {
       await sectionAsync("tick:plan", async () => run())
     } catch (error) {
@@ -6672,6 +6680,44 @@ export class TaskRuntime {
           error: safeText(errorText(error), privacyStats()),
         })
       })
+    } finally {
+      this.reconcileTiming = undefined
+      this.recordSlowReconcile(planID, phase, this.now() - started, timing, fence)
+    }
+  }
+
+  /** Time an awaited host or runtime call inside the plan reconcile in progress. */
+  private async timed<T>(name: string, run: () => Promise<T>): Promise<T> {
+    const timing = this.reconcileTiming
+    const started = this.now()
+    try {
+      return await sectionAsync(name, run)
+    } finally {
+      if (timing) timing.set(name, (timing.get(name) ?? 0) + (this.now() - started))
+    }
+  }
+
+  /** Diagnostics only: a journal record, never a state change, and never a failure. */
+  private recordSlowReconcile(
+    planID: string,
+    phase: "step" | "cleanup" | "delivery",
+    ms: number,
+    timing: Map<string, number>,
+    fence: number,
+  ) {
+    if (ms <= SLOW_RECONCILE_MS || this.slowRecorded.has(`${planID}:${phase}`)) return
+    this.slowRecorded.add(`${planID}:${phase}`)
+    const sections = [...timing]
+      .map(([name, sectionMs]) => ({ name, ms: sectionMs }))
+      .sort((left, right) => right.ms - left.ms)
+      .slice(0, 8)
+    try {
+      this.store.fenced(this.owner, fence, () => {
+        if (this.store.plan(planID))
+          this.store.record(planID, null, "PLAN_STEP_SLOW", { ms, phase, sections })
+      })
+    } catch {
+      // Timing facts never affect scheduling.
     }
   }
 
@@ -6769,6 +6815,7 @@ export class TaskRuntime {
   }
 
   private async runTick() {
+    this.slowRecorded.clear()
     this.running = true
     let heartbeat: ReturnType<typeof sharedScheduler.register> | undefined
     try {
@@ -7094,15 +7141,21 @@ export class TaskRuntime {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
     if (plan.state === "cancelling") {
-      const activities = await this.cancelCheckActivities(plan.id)
-      await this.reconcileCancelledCheckActivities(plan, activities, fence)
+      const activities = await this.timed("step:cancelCheckActivities", () =>
+        this.cancelCheckActivities(plan!.id),
+      )
+      await this.timed("step:reconcileCancelledCheckActivities", () =>
+        this.reconcileCancelledCheckActivities(plan!, activities, fence),
+      )
       const cancelledOperations = this.store.atomic((db) =>
         retainedVerificationsForPlan(db, this.directory, plan!.id).filter(
           (operation) => operation.state === "cancelled",
         ),
       )
       for (const operation of cancelledOperations)
-        await this.recoverCancelledRetainedChecks(operation.id)
+        await this.timed("step:recoverCancelledRetainedChecks", () =>
+          this.recoverCancelledRetainedChecks(operation.id),
+        )
       const retainedProblem = this.store.atomic((db) =>
         retainedVerificationsForPlan(db, this.directory, plan!.id).some(
           (operation) =>
@@ -7114,7 +7167,7 @@ export class TaskRuntime {
       if (unsettled || retainedProblem) {
         // Process uncertainty fences terminal settlement, not interruption of
         // other owned workers. Continue cancellation without declaring idle.
-        await this.cancelWorkers(plan, fence, false)
+        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence, false))
         const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
         this.store.fenced(this.owner, fence, (db) => {
           if (this.store.plan(plan!.id)?.reason === reason) return
@@ -7126,11 +7179,12 @@ export class TaskRuntime {
         })
         return
       }
-      await this.cancelWorkers(plan, fence)
+      await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
       const pending = this.store
         .effects(plan.id)
         .find((e) => ["intended", "uncertain"].includes(e.state))
-      if (pending) await this.reconcileEffect(pending, fence)
+      if (pending)
+        await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
       return
     }
     const contactPaused = this.store.architectContactPaused()
@@ -7139,24 +7193,30 @@ export class TaskRuntime {
       planRenewal &&
       ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
     ) {
-      await this.continueArchitectRenewal(planRenewal, fence)
+      await this.timed("step:continueArchitectRenewal", () =>
+        this.continueArchitectRenewal(planRenewal, fence),
+      )
       return
     }
     // Routing always reaches a live Architect: the owner is advisory, so a
     // missing or archived one is replaced before any branch can return early.
-    const owner = await this.host.session(plan.owner)
+    const owner = await this.timed("step:host.session", () => this.host.session(plan!.owner))
     if (!this.validArchitect(owner) && !contactPaused) {
       this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-      await this.ensureArchitectOwner(plan, owner)
+      await this.timed("step:ensureArchitectOwner", () => this.ensureArchitectOwner(plan!, owner))
       plan = this.store.plan(plan.id)!
     }
     if (plan.state === "cleaning") {
-      await this.worktreeCleanup.cleanupWorktrees(plan, fence)
+      await this.timed("step:cleanupWorktrees", () =>
+        this.worktreeCleanup.cleanupWorktrees(plan!, fence),
+      )
       return
     }
     const adoption = this.store.activeAdoptions(plan.id)[0]
     if (adoption) {
-      await this.adoptionExecution.advanceAdoption(plan, adoption, fence)
+      await this.timed("step:advanceAdoption", () =>
+        this.adoptionExecution.advanceAdoption(plan!, adoption, fence),
+      )
       return
     }
     if (this.validArchitect(owner) && !contactPaused) {
@@ -7165,13 +7225,20 @@ export class TaskRuntime {
         renewal &&
         ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state)
       ) {
-        await this.continueArchitectRenewal(renewal, fence)
+        await this.timed("step:continueArchitectRenewal", () =>
+          this.continueArchitectRenewal(renewal, fence),
+        )
         return
       }
       // Only work that needs judgement routes; a cold, large Architect is replaced.
       if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
         this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-        if (await this.considerArchitectRenewal(plan, owner, fence)) return
+        if (
+          await this.timed("step:considerArchitectRenewal", () =>
+            this.considerArchitectRenewal(plan!, owner, fence),
+          )
+        )
+          return
       }
     }
     // An owner read can overlap an authorized resume, cancellation, or reassignment.
@@ -7207,7 +7274,7 @@ export class TaskRuntime {
         this.tickRequested = true
         return
       }
-      await this.reconcileEffect(pending, fence)
+      await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
       return
     }
     const active = this.store
@@ -7246,12 +7313,14 @@ export class TaskRuntime {
             scopeWait.reason === plan!.reason
           )
             return
-          return this.advanceAttempt(this.store.plan(plan!.id)!, attempt, fence)
+          return this.timed("step:advanceAttempt", () =>
+            this.advanceAttempt(this.store.plan(plan!.id)!, attempt, fence),
+          )
         }),
       )
       plan = this.store.plan(plan.id)!
       if (plan.state === "cancelling") {
-        await this.cancelWorkers(plan, fence)
+        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
         return
       }
     }
@@ -7261,7 +7330,9 @@ export class TaskRuntime {
     let input = PlanInput.parse(rawInput)
     const prerequisites = input.afterPlans ?? []
     const prerequisiteBaseline = prerequisites.length
-      ? await this.integratedPrerequisiteBaseline(prerequisites)
+      ? await this.timed("step:integratedPrerequisiteBaseline", () =>
+          this.integratedPrerequisiteBaseline(prerequisites),
+        )
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
       if (
@@ -7290,7 +7361,12 @@ export class TaskRuntime {
     const nodes = this.store.nodes(plan.id)
     const occupied = this.store.dispatchReservations()
     let pause = this.store.dispatchPause(plan.id)
-    if (pause?.untilPlans.length && (await this.integratedPrerequisiteBaseline(pause.untilPlans))) {
+    if (
+      pause?.untilPlans.length &&
+      (await this.timed("step:integratedPrerequisiteBaseline", () =>
+        this.integratedPrerequisiteBaseline(pause!.untilPlans),
+      ))
+    ) {
       this.store.fenced(this.owner, fence, () =>
         this.store.setDispatchPause(plan!.id, null, { source: "resume-condition" }),
       )
@@ -7313,7 +7389,11 @@ export class TaskRuntime {
       const prerequisites = this.taskDependencyIDs(input, node)
       if (
         prerequisites.length === 0 ||
-        (await this.taskDependencyIntegration(plan!, input, node)).status === "ready"
+        (
+          await this.timed("step:taskDependencyIntegration", () =>
+            this.taskDependencyIntegration(plan!, input, node),
+          )
+        ).status === "ready"
       )
         ready.push(node)
     }
@@ -7333,7 +7413,7 @@ export class TaskRuntime {
       await Promise.all(
         selected.map(async (node) => {
           try {
-            await this.dispatch(plan!, node, fence)
+            await this.timed("step:dispatch", () => this.dispatch(plan!, node, fence))
           } catch (error) {
             const current = this.store.plan(plan!.id)
             if (current && current.state !== "blocked")
@@ -7362,7 +7442,7 @@ export class TaskRuntime {
       return
     }
     if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated")) {
-      await this.finish(plan, fence)
+      await this.timed("step:finish", () => this.finish(plan!, fence))
       return
     }
     if (ready.length && occupied.length) {

@@ -5172,6 +5172,51 @@ test("concerns alone accept without a repair and reach the Architect", async () 
   expect(text).toContain("Fallow concerns (1):\n- complexity src/c.ts:5 cloned block")
 })
 
+test("a plan reconcile over 30 seconds records PLAN_STEP_SLOW naming the slow call; a fast one records none", async () => {
+  let clock = 2_000_000_000_000
+  const slowOwnerRead = (f: ReturnType<typeof fixture>, slow: boolean) => {
+    const read = f.host.session
+    f.host.session = async (id, options) => {
+      if (slow && id === "owner") clock += 45_000
+      return read(id, options)
+    }
+  }
+  const slowRecords = (f: ReturnType<typeof fixture>) =>
+    f.store
+      .atomic((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='PLAN_STEP_SLOW'",
+          )
+          .all(f.receipt.planID),
+      )
+      .map(
+        (row) =>
+          JSON.parse(row.payload) as {
+            ms: number
+            phase: string
+            sections: { name: string; ms: number }[]
+          },
+      )
+
+  const fast = fixture({ now: () => clock, taskFiles: singleTask })
+  slowOwnerRead(fast, false)
+  await runPlan(fast)
+  await fast.runtime.tick()
+  expect(slowRecords(fast)).toHaveLength(0)
+
+  const slow = fixture({ now: () => clock, taskFiles: singleTask })
+  slowOwnerRead(slow, true)
+  await runPlan(slow)
+  await slow.runtime.tick()
+  const records = slowRecords(slow)
+  expect(records).toHaveLength(1)
+  expect(records[0]!.phase).toBe("step")
+  expect(records[0]!.ms).toBeGreaterThanOrEqual(45_000)
+  expect(records[0]!.sections[0]).toMatchObject({ name: "step:host.session" })
+  expect(records[0]!.sections[0]!.ms).toBeGreaterThanOrEqual(45_000)
+})
+
 test("a single failing check keeps its unchanged failure reason", async () => {
   const f = fixture({ fail: true, repair: true })
   const planID = f.receipt.planID
