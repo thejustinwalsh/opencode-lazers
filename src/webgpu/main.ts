@@ -21,6 +21,7 @@ import {
   RENDERER_ARMED_SAMPLING_INTERVAL_US,
   RENDERER_ARMED_STOP_MS,
 } from "./renderer-armed-capture.ts"
+import { DesktopInferenceRelay } from "./relay/desktop.ts"
 
 const ProcessLeaseSchema = Schema.Struct({
   ...ModelLeasePersistenceSchema.fields,
@@ -39,9 +40,14 @@ const safeRendererPID = (window: { webContents: { getOSProcessId(): number } }) 
 export const setupMain: Plugin.MainSetup = (ctx) => {
   // Main-only: renderer module evaluation must not read Node process exports.
   const processIdentity = `${pid}:${performance.timeOrigin}`
+  const inferenceRelay = new DesktopInferenceRelay(
+    () => ctx.client,
+    ctx.signal ?? new AbortController().signal,
+  )
   const configured = ctx.options.dataDirectory
   if (configured !== undefined && typeof configured !== "string")
     throw new Error("dataDirectory must be a string")
+  inferenceRelay.start()
   const cache = new ModelCache(modelCacheDirectory(configured))
   const decisions = new ModelCache(
     join(dirname(cache.directory), DECISION_REVISION),
@@ -373,6 +379,7 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     lease.seal()
     stopping = (async () => {
       try {
+        await inferenceRelay.close()
         while (inFlightLeaseOperations.size)
           await Promise.allSettled(Array.from(inFlightLeaseOperations))
         await armedCaptures.shutdown()
