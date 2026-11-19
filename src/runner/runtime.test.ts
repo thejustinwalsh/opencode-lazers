@@ -26,6 +26,7 @@ import { DEFAULT_ARCHITECT_CACHE_WINDOW_MS } from "./architect-routing.ts"
 import { UNCERTAIN_EFFECT_RECEIPT_SCHEMA } from "./startup-recovery.ts"
 import { TaskRuntime as ProductionTaskRuntime, architectIdleWindowMs } from "./runtime.ts"
 import type { FallowReview } from "./fallow-check.ts"
+import type { AuditorReport } from "./auditor-report.ts"
 import type { FallowReviewResult, Finding } from "../audit/review.ts"
 import { RunnerStore, type AttemptRow } from "./store.ts"
 import { retireOutboxLifecycle } from "./retire-gates.ts"
@@ -66,6 +67,7 @@ class TaskRuntime extends ProductionTaskRuntime {
     super(store, host, projectID, progress, {
       fallowReviewRun: async () => cleanFallowResult,
       fallowPlanReviewRun: async () => cleanFallowResult,
+      auditorReportRun: async () => undefined,
       ...options,
     })
   }
@@ -114,6 +116,7 @@ function fixture(
     fallowReview?: "on" | "off"
     fallowReviewRun?: FallowReview
     fallowPlanReviewRun?: FallowReview
+    auditorReportRun?: AuditorReport
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -434,6 +437,7 @@ function fixture(
     ...(options.fallowReview ? { fallowReview: options.fallowReview } : {}),
     ...(options.fallowReviewRun ? { fallowReviewRun: options.fallowReviewRun } : {}),
     ...(options.fallowPlanReviewRun ? { fallowPlanReviewRun: options.fallowPlanReviewRun } : {}),
+    ...(options.auditorReportRun ? { auditorReportRun: options.auditorReportRun } : {}),
     architectPromptHook: options.architectPromptHook,
     wakeScheduler: options.wakeScheduler,
     ...(options.verificationTimeoutDefaults === undefined
@@ -5297,6 +5301,42 @@ test("a failing authored combined check still holds and the plan review never ru
   expect(f.store.plan(f.receipt.planID)?.reason).toBe("Combined artifact verification failed")
   expect(review.calls).toHaveLength(0)
   expect(planAcceptedOutcomes(f)).toHaveLength(0)
+})
+
+test("an Auditor attempt starts exactly one baseline and one follow-up; an implementor starts none", async () => {
+  const runs: { requestID: string; phase: string; workspace: string; sessionID: string }[] = []
+  const auditorReportRun = async (input: (typeof runs)[number]) => {
+    runs.push(input)
+  }
+  const f = fixture({
+    shared: true,
+    workerAgent: "auditor",
+    personas: ["systems"],
+    taskFiles: singleTask,
+    auditorReportRun,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  expect(runs.map((run) => run.phase)).toEqual(["baseline"])
+  expect(runs[0]).toMatchObject({
+    requestID: `runtime-baseline:${attempt.id}`,
+    workspace: attempt.workspace,
+    sessionID: attempt.session_id,
+  })
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(runs.map((run) => run.requestID)).toEqual([
+    `runtime-baseline:${attempt.id}`,
+    `runtime-follow-up:${attempt.id}`,
+  ])
+  // A restarted runtime ticks the same state again; request IDs make the stored runs replay.
+  const plain = fixture({ taskFiles: singleTask, auditorReportRun })
+  const before = runs.length
+  await runPlan(plain)
+  await drive(plain.runtime)
+  expect(runs).toHaveLength(before)
 })
 
 test("a plan reconcile over 30 seconds records PLAN_STEP_SLOW naming the slow call; a fast one records none", async () => {

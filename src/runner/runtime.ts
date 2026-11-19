@@ -23,6 +23,7 @@ import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
+import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
 import {
   evaluatePrerequisiteIntegration,
   evaluateTaskPrerequisiteIntegration,
@@ -258,6 +259,8 @@ export type TaskRuntimeOptions = {
   fallowReviewRun?: FallowReview
   /** The combined-artifact review; defaults to the Fallow analyzer. Tests inject a stub. */
   fallowPlanReviewRun?: FallowReview
+  /** The Auditor's baseline and follow-up report; defaults to the durable Fallow report. */
+  auditorReportRun?: AuditorReport
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
   architectPromptHook?: boolean
@@ -556,6 +559,8 @@ export class TaskRuntime {
   private readonly slowRecorded = new Set<string>()
   private readonly fallowReviewRun: FallowReview
   private readonly fallowPlanReviewRun: FallowReview
+  private readonly auditorReportRun: AuditorReport
+  private readonly startedAuditorReports = new Set<string>()
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
   private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
@@ -583,6 +588,7 @@ export class TaskRuntime {
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
     this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
     this.fallowPlanReviewRun = options.fallowPlanReviewRun ?? defaultFallowPlanReview
+    this.auditorReportRun = options.auditorReportRun ?? defaultAuditorReport
     this.workerNoProgressWindowMs = options.workerNoProgressWindowMs ?? 30 * 60_000
     this.cancelIdleWaitMs = options.cancelIdleWaitMs ?? 30_000
     this.architectRouting = {
@@ -9226,6 +9232,7 @@ export class TaskRuntime {
       }
     }
     if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
+    this.startAuditorReport(attempt, "baseline")
     const repairPrompt = retainedRepair
       ? existing.find(
           (effect) =>
@@ -10347,6 +10354,7 @@ export class TaskRuntime {
         true,
       )
     })
+    this.startAuditorReport(attempt, "follow-up")
     try {
       this.progress.recordAttemptOutcome(attempt.id, "accepted")
     } catch {
@@ -10480,6 +10488,26 @@ export class TaskRuntime {
     })
     await writeCheckReceipt(receiptPath, receipt)
     return receipt
+  }
+
+  /**
+   * An Auditor attempt's durable Fallow report, started in the background: the baseline when the
+   * attempt is dispatched, the follow-up when its verification passes. Best effort: a failure is
+   * already recorded in the audit history and never touches the attempt. The request ID makes a
+   * restart replay the stored run instead of scanning again.
+   */
+  private startAuditorReport(attempt: AttemptRow, phase: "baseline" | "follow-up") {
+    if (workerAgent(JSON.parse(attempt.policy).agent) !== "auditor") return
+    const requestID = `runtime-${phase === "baseline" ? "baseline" : "follow-up"}:${attempt.id}`
+    if (this.startedAuditorReports.has(requestID)) return
+    this.startedAuditorReports.add(requestID)
+    void this.auditorReportRun({
+      requestID,
+      phase,
+      workspace: attempt.workspace,
+      sessionID: attempt.session_id,
+      repository: this.store.repository,
+    }).catch(() => undefined)
   }
 
   /**

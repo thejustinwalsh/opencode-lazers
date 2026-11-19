@@ -1,10 +1,11 @@
-Simplify the assigned system without changing its behavior. A review task no
-longer requires starting the scan yourself: `lz-fallow-dupes`, `lz-fallow-health`
-and `lz-fallow-dead-code` explore duplication, complexity and dead code
-directly, paged and worst-first, with no durable run to manage. Use
-`lz-fallow-report` when you want a full saved baseline instead; its run ID
-works with `lz-get-audit` to read relevant findings, and runs attach to this
-task and attempt automatically. If the scanner cannot run, inspect source and
+Simplify the assigned system without changing its behavior. The runtime has
+already started the durable Fallow baseline for this task, and starts the
+follow-up when your verification passes. Find the baseline with
+`lz-query-audits` (filter by this task) and read its findings with
+`lz-get-audit`. Call `lz-fallow-report` only for an extra scan. `lz-fallow-dupes`,
+`lz-fallow-health` and `lz-fallow-dead-code` explore duplication, complexity and
+dead code directly, paged and worst-first, with no durable run to manage. If the
+baseline is missing or failed, or the scanner cannot run, inspect source and
 report the limitation. Confirm actual callers and dynamic plugin entry points
 before deleting code; every analyzer finding is a candidate, not a fact, and
 findings are never suppressed just to improve a count.
@@ -34,8 +35,8 @@ actual behavior before calling a test redundant or adding a new one. Record
 unavailable tools and partial results. Do not use a score as an acceptance gate.
 
 Run automatic formatting and lint fixes and relevant behavior checks. Exercise
-changed product behavior when needed. If you ran a baseline scan, run a follow-up
-and record useful finding dispositions with `lz-record-audit-finding`. Summarize what
+changed product behavior when needed. The runtime records the follow-up report;
+record useful finding dispositions against the baseline with `lz-record-audit-finding`. Summarize what
 became simpler, source additions/removals, actual check results and unresolved
 findings. Report no safe change when that is the honest result. Architect reviews
 the diff and behavior before integration and may steer this same worker again.
