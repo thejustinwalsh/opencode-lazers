@@ -450,18 +450,31 @@ today's behaviour (fail, one repair attempt, then a hold).
 Complexity and duplication are treated as an extension of linting (owner
 direction, 2026-11-19). The review sits beside the existing mechanical
 preparation (`prepareVerificationCandidate`, `src/runner/runtime.ts`), which
-already runs `bun fmt` and `bun lint --fix` on changed files:
+already runs `bun fmt` and `bun lint --fix` on changed files.
+
+One repair carries everything (owner decision, 2026-11-19). The runtime runs
+the Fallow review and every authored check on the candidate, then decides
+once:
 
 ```
 worker finishes
   → format + lint --fix      runtime, automatic, fixes committed into the artifact
-  → Fallow review            runtime; feedback goes to a repair attempt with the findings
-  → authored checks          runtime, tests and typecheck, once, on the reviewed code
-  → outcome to the Architect
+  → Fallow review            runtime            ┐ both always run;
+  → authored checks          runtime            ┘ neither short-circuits the other
+  → decide once
 ```
 
-The review runs before the authored checks so the test suite runs once, on
-the code the Architect will see. Unlike mechanical preparation, it does not
+| Fallow review | Authored checks | Repair attempt left | Result                                                                                |
+| ------------- | --------------- | ------------------- | ------------------------------------------------------------------------------------- |
+| Clean         | Pass            |                     | Accept                                                                                |
+| Findings      | Pass            | Yes                 | One `REPAIR`, input carries the Fallow findings                                       |
+| Clean         | Fail            | Yes                 | One `REPAIR`, input carries the check failures (today's behaviour)                    |
+| Findings      | Fail            | Yes                 | One `REPAIR`, input carries both                                                      |
+| Findings      | Pass            | No                  | Accept; the remaining findings go to the Architect as concerns                        |
+| Any           | Fail            | No                  | Today's behaviour: `FAIL` and a hold. Fallow findings are attached to the hold reason |
+
+Fallow never spends a repair attempt of its own and never competes with a
+test failure for one. Unlike mechanical preparation, the review does not
 depend on the task declaring a quality command: it runs for every worker
 attempt whose changed files the analyzer supports.
 
@@ -474,7 +487,7 @@ Thresholds come from the effective Fallow config, else Fallow's defaults
 | Worker dispatched               | None                                                                                                                          |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
 | Worker mid-task                 | Complexity and duplication on its changed files                                                                               | Agent tool `lz-fallow-check`, optional       | Same record and rounds as the runtime's review; an unchanged tree replays  | Findings and a `next` instruction                                                                                                |
 | Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                      | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
-| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, before authored checks          | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
+| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, alongside the authored checks   | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
 | Task accepted                   | Concerns left after the rounds; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
 | Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                 | Runtime                                      | Same rounds                                                                | Same guidance. Finding-count delta goes to the Architect                                                                         |
 | Architect review                | None automatic                                                                                                                | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
@@ -625,20 +638,19 @@ at the base commit. Phase 1 tests both.
 
 No new state. No new machine event. `lifecycleMachines` is unchanged.
 
-| Need                                      | Existing mechanism                                                                                                                                                                                                                                                                           |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Journal and run the review                | An effect in `effectMachine`, kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. Both prefixes are already re-runnable (`runtime.ts:413`)                                                                                                                                          |
-| `feedback`                                | `failAttempt()` → task `verifying --REPAIR--> ready` (`src/runner/machine.ts`): a repair attempt in a new session, dispatched with `previousAttempt` evidence that carries the Fallow findings. Owner decision, 2026-11-19: the repair path is fine as long as the findings reach the worker |
-| `completed`, with or without concerns     | The existing `ACCEPT` path in `verify()`                                                                                                                                                                                                                                                     |
-| `unavailable` (analyzer error or timeout) | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                                                                                                                                                          |
-| Rounds                                    | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                                                                                                                                                             |
-| No repair attempt left                    | Accept with concerns. A Fallow result never moves a task to `failed` and never raises a hold                                                                                                                                                                                                 |
-| Service restart mid-review                | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                                                                                                                                                                    |
+| Need                                                    | Existing mechanism                                                                                                                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Journal and run the review                              | An effect in `effectMachine`, kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. Both prefixes are already re-runnable (`runtime.ts:413`)                        |
+| Findings, or a failed check, with a repair attempt left | One `failAttempt()` → task `verifying --REPAIR--> ready` (`src/runner/machine.ts`). The repair attempt's input carries the Fallow findings and the check failures together |
+| `completed`, with or without concerns                   | The existing `ACCEPT` path in `verify()`                                                                                                                                   |
+| `unavailable` (analyzer error or timeout)               | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                                        |
+| Rounds                                                  | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                                           |
+| Findings only, no repair attempt left                   | Accept with concerns. Fallow alone never moves a task to `failed` and never raises a hold                                                                                  |
+| Service restart mid-review                              | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                                                  |
 
-Rounds are `1 + maxRepairAttempts` (default 1, so two looks: the original
-attempt and its repair). The repair budget is shared with authored-check
-failures. Every path ends in `accepted`, so the review adds no state that can
-stall.
+Looks are `1 + maxRepairAttempts` (default 1: the original attempt and its
+repair). The review adds no repair of its own, no state and no hold, so it
+cannot stall a task.
 
 The receipt is a `CheckReceipt` with `command: "lazers:fallow-check"`. It is
 recorded for the Trajectory but is not in the set `failAttempt()` reads, so a
@@ -717,7 +729,8 @@ the existing stall probe); each tool's output for this repository is under
 2. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
    record, the fingerprint.
 3. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
-   preparation and before the authored checks; receipt, guidance text,
+   preparation and alongside the authored checks; one combined decision;
+   receipt, guidance text,
    `REPAIR` with the findings in the repair attempt's input on `feedback`, `FALLOW_UNAVAILABLE`,
    reserved check ID, plugin option `fallowReview: "on" | "off"`.
 4. Three lines in `src/implementor.md`; contract wording in the three places
@@ -727,7 +740,10 @@ Accept when, in `runtime.test.ts`: a task that adds a clone moves `REPAIR`,
 the repair attempt's dispatch input contains the guidance, and it is accepted
 clean after it removes the clone; a task whose repair attempt does not fix it
 is accepted with the concern in the `task-accepted` outcome and is never
-`failed` or held; an unchanged tree replays without using a round; a
+`failed` or held; a task that adds a clone and breaks a test gets exactly one
+`REPAIR` whose input contains both the Fallow findings and the test failure;
+a task whose test still fails after the repair holds as it does today, with
+the Fallow findings attached; an unchanged tree replays its review result; a
 task that edits a file with an old over-limit function, without touching it,
 gets no feedback; an analyzer error accepts the task and records
 `FALLOW_UNAVAILABLE` once; a restart mid-review re-runs it;
