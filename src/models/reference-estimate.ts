@@ -14,7 +14,7 @@ const Range = z
     message: "A reference estimate range cannot have its minimum above its maximum",
   })
 
-export const ReferenceRouteSchema = z.strictObject({
+const ReferenceRouteSchema = z.strictObject({
   providerID: z.string().min(1).max(512),
   modelID: z.string().min(1).max(512),
   variant: z.string().min(1).max(512).nullable(),

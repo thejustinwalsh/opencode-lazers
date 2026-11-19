@@ -27,7 +27,7 @@ export const CATALOG_TOP = 30
 /** Without public scores, how many priced models are taken in the source's own order. */
 export const CATALOG_SOURCE_TOP = 40
 /** BYOK providers whose lineups are always included, newest by coding index first. */
-export const BYOK_PROVIDERS = ["anthropic", "openai"] as const
+const BYOK_PROVIDERS = ["anthropic", "openai"] as const
 export const BYOK_PER_PROVIDER = 12
 
 export type SourceTag = "observed" | "routed" | "catalog"
@@ -510,7 +510,7 @@ export function rankCatalog(entries: readonly CatalogEntry[]): CatalogEntry[] {
   })
 }
 
-export const sourceKeyLabel: Record<ModelPriceSource, string> = {
+const sourceKeyLabel: Record<ModelPriceSource, string> = {
   openrouter: "OpenRouter",
   opencode: "OpenCode",
   "models-dev": "models.dev",

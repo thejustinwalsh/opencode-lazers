@@ -31,21 +31,21 @@ const NullableRange = z
     message: "An empirical range cannot have its minimum above its maximum",
   })
 
-export const ModelDecisionTaskKindSchema = z.enum(MODELS_DECISION_TASK_KINDS)
+const ModelDecisionTaskKindSchema = z.enum(MODELS_DECISION_TASK_KINDS)
 export type ModelDecisionTaskKind = z.infer<typeof ModelDecisionTaskKindSchema>
 
-export const ModelDecisionRouteSchema = z.strictObject({
+const ModelDecisionRouteSchema = z.strictObject({
   providerID: ModelPolicy.shape.providerID,
   modelID: ModelPolicy.shape.id,
   variant: z.string().min(1).max(512).nullable(),
 })
 export type ModelDecisionRoute = z.infer<typeof ModelDecisionRouteSchema>
 
-export const ModelDecisionScopeSchema = z.strictObject({
+const ModelDecisionScopeSchema = z.strictObject({
   projectDirectory: z.string().min(1).max(8192),
 })
 
-export const ModelDecisionFiltersSchema = z.strictObject({
+const ModelDecisionFiltersSchema = z.strictObject({
   persona: WorkerPersona.nullable(),
   taskKind: ModelDecisionTaskKindSchema.nullable(),
   period: z.strictObject({
@@ -106,7 +106,7 @@ export const ModelDecisionInspectRPCInputSchema = z.strictObject({
   ...ModelDecisionInspectInputSchema.shape,
 })
 
-export const ModelDecisionAccountingSchema = z.strictObject({
+const ModelDecisionAccountingSchema = z.strictObject({
   id: z.literal(MODELS_DECISION_ACCOUNTING_BASIS),
   numerator: z.literal("all-attributable-cohort-failed-retry-and-accepted-effort"),
   denominator: z.literal("accepted-logical-tasks"),
@@ -116,12 +116,12 @@ export const ModelDecisionAccountingSchema = z.strictObject({
   nativeReportedCosts: z.literal("retained-separately-not-market-equivalent"),
 })
 
-export const ModelDecisionTaskKindCatalogSchema = z.strictObject({
+const ModelDecisionTaskKindCatalogSchema = z.strictObject({
   id: z.literal(MODELS_DECISION_TASK_KIND_CATALOG),
   kinds: z.array(ModelDecisionTaskKindSchema).length(6),
 })
 
-export const ModelDecisionClassificationCoverageSchema = z.strictObject({
+const ModelDecisionClassificationCoverageSchema = z.strictObject({
   status: z.enum(["complete", "partial", "backend-not-ready"]),
   classifiedTaskCount: Count,
   unclassifiedTaskCount: Count,
@@ -129,7 +129,7 @@ export const ModelDecisionClassificationCoverageSchema = z.strictObject({
   totalTaskCount: Count,
 })
 
-export const ModelDecisionPriceIndexSchema = z
+const ModelDecisionPriceIndexSchema = z
   .strictObject({
     source: z.enum(["openrouter", "opencode", "mixed", "unavailable"]),
     sourcePolicyRevision: Count,
@@ -240,7 +240,7 @@ export const ModelDecisionContextSchema = z
   })
 export type ModelDecisionContext = z.infer<typeof ModelDecisionContextSchema>
 
-export const ModelDecisionCohortCountsSchema = z.strictObject({
+const ModelDecisionCohortCountsSchema = z.strictObject({
   logicalTaskCount: Count,
   classifiedTaskCount: Count,
   unclassifiedTaskCount: Count,
@@ -252,7 +252,7 @@ export const ModelDecisionCohortCountsSchema = z.strictObject({
 })
 export type ModelDecisionCohortCounts = z.infer<typeof ModelDecisionCohortCountsSchema>
 
-export const ModelDecisionPricePinSchema = z
+const ModelDecisionPricePinSchema = z
   .strictObject({
     source: ModelPricePinSourceSchema.nullable(),
     sourcePolicyRevision: Count,
@@ -291,9 +291,8 @@ export const ModelDecisionPricePinSchema = z
         message: "A selected price source requires an authentic available quote pin",
       })
   })
-export type ModelDecisionPricePin = z.infer<typeof ModelDecisionPricePinSchema>
 
-export const ModelDecisionNativeCostSchema = z.strictObject({
+const ModelDecisionNativeCostSchema = z.strictObject({
   status: z.enum(["available", "partial", "unknown", "unmetered"]),
   totalUSD: Nonnegative.nullable(),
   source: z.literal("native-reported"),
@@ -309,7 +308,7 @@ const NoEfficiencyValues = {
   currentMarketUSDPerAcceptedTask: z.null(),
 }
 
-export const ModelDecisionEfficiencySchema = z.discriminatedUnion("status", [
+const ModelDecisionEfficiencySchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("available"),
     ...EfficiencyValues,
@@ -461,7 +460,7 @@ export const ModelDecisionGraphPointSchema = z
   })
 export type ModelDecisionGraphPoint = z.infer<typeof ModelDecisionGraphPointSchema>
 
-export const ModelDecisionGraphSchema = z.strictObject({
+const ModelDecisionGraphSchema = z.strictObject({
   scope: z.literal("global-filtered-snapshot"),
   points: z.array(ModelDecisionGraphPointSchema),
   frontierConfigurationIDs: z.array(OpaqueID),
@@ -479,7 +478,6 @@ export const ModelDecisionGraphSchema = z.strictObject({
     )
     .optional(),
 })
-export type ModelDecisionGraph = z.infer<typeof ModelDecisionGraphSchema>
 
 const Page = {
   totalCount: Count,
@@ -543,13 +541,10 @@ const EmptyEmpiricalRange = z.strictObject({
  * Route coverage for the complete retry history of accepted logical tasks.
  * `mixed` means the history contains both same-route and cross-route observations.
  */
-export const ModelDecisionEstimateHistoryScopeSchema = z.strictObject({
+const ModelDecisionEstimateHistoryScopeSchema = z.strictObject({
   completeness: z.literal("complete-accepted-logical-task-retry-history"),
   routeScope: z.enum(["same-route", "cross-route", "mixed", "unknown"]),
 })
-export type ModelDecisionEstimateHistoryScope = z.infer<
-  typeof ModelDecisionEstimateHistoryScopeSchema
->
 
 const EstimateHistoryScope = {
   /** Omission preserves old v2 records without implying same-route history. */
@@ -618,7 +613,7 @@ export const ModelDecisionEstimateSchema = z
   })
 export type ModelDecisionEstimate = z.infer<typeof ModelDecisionEstimateSchema>
 
-export const ModelDecisionContributorSchema = z.strictObject({
+const ModelDecisionContributorSchema = z.strictObject({
   taskID: z.uuid(),
   taskReference: TaskReferenceSchema,
   attemptID: z.uuid().nullable(),
@@ -635,7 +630,7 @@ export const ModelDecisionContributorSchema = z.strictObject({
 })
 export type ModelDecisionContributor = z.infer<typeof ModelDecisionContributorSchema>
 
-export const ModelDecisionContributorPageSchema = z.strictObject({
+const ModelDecisionContributorPageSchema = z.strictObject({
   contributors: z.array(ModelDecisionContributorSchema).max(100),
   ...Page,
 })

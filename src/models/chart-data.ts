@@ -2,7 +2,7 @@ import { BENCHMARK_PRICE_MIX } from "./benchmark-baseline.ts"
 import type { ModelChartPoint, RankingChartRow } from "./model-chart.tsx"
 import type { CatalogEntry } from "./catalog-projection.ts"
 import { SMALL_SAMPLE_TERMINAL_TASKS, paretoFrontier } from "./chart-layout.ts"
-import type { BenchmarkBaselineGap, BenchmarkBaselinePoint } from "./benchmark-baseline.ts"
+import type { BenchmarkBaselinePoint } from "./benchmark-baseline.ts"
 import type { ModelDecisionGraphPoint } from "./decision-contract.ts"
 import type { ModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import {
@@ -84,30 +84,6 @@ export function comparisonChartEmptyText(
   return `Nothing to plot yet: ${reasons.length ? reasons.join("; ") : `${plural(models, "model is", "models are")} missing a price or token measurement`}. Chart data lists each model.`
 }
 
-/** Short visible Chart data row: model · cost · tokens, or what keeps it off the plot. */
-export function comparisonChartChoiceSummary(choice: {
-  point?: ComparisonChartPoint
-  reference?: ComparisonChartReference
-}) {
-  if (choice.point && plottable(choice.point))
-    return `${comparisonChartPointTooltip(choice.point)} · ${compactTokenAxisValue(choice.point.tokensPerAcceptedTask)} tokens`
-  const reference = choice.reference
-  if (reference) {
-    const cost = comparisonChartReferenceTooltip(reference)
-    if (cost && reference.tokensPerAcceptedTask !== null)
-      return `${cost} · ${compactTokenAxisValue(reference.tokensPerAcceptedTask)} tokens`
-    const name = boundedModelEffortLabel(
-      modelEffortLabel(reference.label, reference.estimate.route),
-    )
-    if (cost) return `${cost} · not plotted, no token measurement`
-    return reference.estimate.acceptedTaskCount < 1
-      ? `${name} · not plotted, no accepted tasks`
-      : `${name} · not plotted, no price`
-  }
-  const point = choice.point!
-  return `${boundedModelEffortLabel(modelEffortLabel(point.label, point.route))} · not plotted`
-}
-
 type KeyboardChoice = { configurationID: string; label: string; tokens: number; amount: number }
 
 /** Plotted marks in left-to-right order for arrow-key travel; one stop per model. */
@@ -145,7 +121,7 @@ export function compactTokenAxisValue(value: number) {
   return tokenAxis.format(value)
 }
 
-export function comparisonChartPointText(point: ComparisonChartPoint) {
+function comparisonChartPointText(point: ComparisonChartPoint) {
   const identity = point.route
     ? `exact route ${routeLabel(point.route)}`
     : `producer label ${point.label}; exact route metadata not present`
@@ -164,7 +140,7 @@ export function comparisonChartPointText(point: ComparisonChartPoint) {
 }
 
 /** Terse model · cost text shared by the pointer tooltip and keyboard announcement. */
-export function comparisonChartPointTooltip(point: ComparisonChartPoint) {
+function comparisonChartPointTooltip(point: ComparisonChartPoint) {
   const label = boundedModelEffortLabel(modelEffortLabel(point.label, point.route))
   return `${label} · ≈${formatMarketAmount(point.currentMarketUSDPerAcceptedTask)} / task`
 }
@@ -189,7 +165,7 @@ export function referenceAmount(
   return undefined
 }
 
-export function comparisonChartReferenceText(reference: ComparisonChartReference) {
+function comparisonChartReferenceText(reference: ComparisonChartReference) {
   const estimate = reference.estimate
   const amount = referenceAmount(estimate)
   const amountLabel = amount
@@ -211,7 +187,7 @@ export function comparisonChartReferenceText(reference: ComparisonChartReference
 }
 
 /** Terse model · cost text; a known subtotal is a lower bound, never a total. */
-export function comparisonChartReferenceTooltip(reference: ComparisonChartReference) {
+function comparisonChartReferenceTooltip(reference: ComparisonChartReference) {
   const amount = referenceAmount(reference.estimate)
   if (!amount) return ""
   const label = boundedModelEffortLabel(modelEffortLabel(reference.label, reference.estimate.route))
@@ -252,13 +228,6 @@ function referenceIsPlottable(reference: ComparisonChartReference) {
     reference.tokensPerAcceptedTask >= 0 &&
     amount !== undefined
   )
-}
-
-export function comparisonChartHasPlottablePoints(
-  points: readonly ComparisonChartPoint[],
-  references: readonly ComparisonChartReference[] = [],
-) {
-  return points.some(plottable) || references.some(referenceIsPlottable)
 }
 
 function comparisonChartDescription(
@@ -393,7 +362,7 @@ export function comparisonChartMarks(data: ComparisonChartData): ChartMark[] {
   return [...marks.values()]
 }
 
-export function chartMarkLabel(
+function chartMarkLabel(
   label: string,
   route: { providerID: string; modelID: string; variant?: string | null } | undefined,
   limit: number,
@@ -420,11 +389,6 @@ export const benchmarkSourceName = {
   "models-dev": "models.dev",
 } as const
 
-/** Terse model · score · price shared by tooltip, keyboard announcement and Chart data. */
-export function benchmarkPointTooltip(point: BenchmarkBaselinePoint) {
-  return `${boundedModelLabel(point.label)} · ${point.benchmark.scoreName ?? "Coding"} ${index.format(point.benchmark.codingIndex)} · ${formatMarketAmount(point.price.blended)} / 1M tokens`
-}
-
 /** Complete accessible description; names sources, units and the token mix. */
 export function benchmarkPointText(point: BenchmarkBaselinePoint) {
   const price = point.price
@@ -434,20 +398,12 @@ export function benchmarkPointText(point: BenchmarkBaselinePoint) {
   return `${point.label} · exact route ${routeLabel(point.route)}: ${point.benchmark.scoreCaption ?? "Artificial Analysis Coding Index"} ${index.format(point.benchmark.codingIndex)} for ${point.benchmark.displayName ?? point.benchmark.modelPermaslug}; ${benchmarkSourceName[price.source]} list price ${formatMarketAmount(price.input)} input and ${formatMarketAmount(price.output)} output per 1M tokens, ${formatMarketAmount(price.blended)} per 1M at ${mix}${tier}; ${point.observed ? "has observed task outcomes for these filters" : "no observed task outcomes for these filters"}.`
 }
 
-export function benchmarkGapText(gap: BenchmarkBaselineGap) {
-  return gap.reason === "no-price"
-    ? `${boundedModelLabel(gap.label)} · not plotted, no price`
-    : `${boundedModelLabel(gap.label)} · not plotted, no ${gap.benchmark.scoreName ?? "Coding Index"}`
-}
-
 /**
  * Non-dominated plotted points: no other point is at most as expensive with at
  * least as high a Coding Index (and strictly better on one). Sorted by price
  * ascending, then Coding Index descending, then id. Real coordinates only.
  */
-export function benchmarkFrontier(
-  points: readonly BenchmarkBaselinePoint[],
-): BenchmarkBaselinePoint[] {
+function benchmarkFrontier(points: readonly BenchmarkBaselinePoint[]): BenchmarkBaselinePoint[] {
   const x = (point: BenchmarkBaselinePoint) => point.price.blended
   const y = (point: BenchmarkBaselinePoint) => point.benchmark.codingIndex
   const sorted = points
@@ -584,7 +540,7 @@ export function projectedChartPoints(entries: readonly CatalogEntry[]): ModelCha
  * variants). A published zero is real, so it is shown as "free", never as "$0", and kept out of
  * the cost ranking where it would top every list.
  */
-export const isFreeEntry = (entry: CatalogEntry) =>
+const isFreeEntry = (entry: CatalogEntry) =>
   entry.price !== null && entry.price.input === 0 && entry.price.output === 0
 
 /** The free models, listed apart from the ranking, by name. */

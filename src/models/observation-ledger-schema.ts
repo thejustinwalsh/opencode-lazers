@@ -345,4 +345,3 @@ export const ObservationLedgerOutputSchema = z.strictObject({
 })
 
 export type ObservationLedgerOutput = z.infer<typeof ObservationLedgerOutputSchema>
-export type ObservationLedgerTask = z.infer<typeof TaskSchema>

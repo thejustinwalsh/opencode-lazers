@@ -91,7 +91,7 @@ const VariantCoverageSchema = z.strictObject({
 })
 
 /** What one price source quotes for a model, USD per million tokens. */
-export const PriceQuoteSchema = z.strictObject({
+const PriceQuoteSchema = z.strictObject({
   source: z.enum(["openrouter", "opencode", "models-dev"]),
   input: z.number().finite().nonnegative(),
   output: z.number().finite().nonnegative(),
@@ -137,7 +137,7 @@ export const ModelComparisonCandidateSchema = z.strictObject({
   publicQuotes: z.array(PriceQuoteSchema).max(3).optional(),
 })
 
-export const PublicCoverageSchema = z.strictObject({
+const PublicCoverageSchema = z.strictObject({
   epoch: z
     .strictObject({
       benchmarks: z
@@ -158,14 +158,13 @@ export const PublicCoverageSchema = z.strictObject({
     })
     .nullable(),
 })
-export type PublicCoverage = z.infer<typeof PublicCoverageSchema>
 
 /**
  * A model of the public catalogs that no route of this install runs: the Anthropic and OpenAI
  * lineups (BYOK) and the newest or most listed models of models.dev and OpenRouter. They are
  * listed and priced, never offered as a route.
  */
-export const PublicCatalogItemSchema = z.strictObject({
+const PublicCatalogItemSchema = z.strictObject({
   source: z.enum(["models-dev", "openrouter", "opencode"]),
   /** A model one of this install's routes runs, listed so it plots before its page loads. */
   routed: z.boolean().optional(),

@@ -320,10 +320,6 @@ export function routeLabel(route: {
   return `${route.providerID} / ${route.modelID}${route.variant ? ` · ${route.variant}` : ""}`
 }
 
-export function candidateLabel(candidate: ModelCandidate) {
-  return routeLabel(candidate.identity)
-}
-
 type ModelDisplayRoute = { providerID: string; modelID: string; variant?: string | null }
 type CandidateDisplayMetadata = {
   identity: ModelDisplayRoute

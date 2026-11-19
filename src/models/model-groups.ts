@@ -2,7 +2,7 @@ import type { ModelCandidate } from "./comparison-state.ts"
 import { parseModelName, vendorSlug } from "./name-identity.ts"
 
 export type RouteRef = { providerID: string; modelID: string }
-export const routeRefKey = (route: RouteRef) => `${route.providerID}\u0000${route.modelID}`
+const routeRefKey = (route: RouteRef) => `${route.providerID}\u0000${route.modelID}`
 
 /**
  * One model is one entry, whoever offers it and under whatever alias: a dated snapshot and its

@@ -5,7 +5,7 @@ import { z } from "zod"
  * and is the fallback that keeps the catalog priced when OpenRouter access is absent.
  */
 export const MODEL_PRICE_SOURCES = ["openrouter", "opencode", "models-dev"] as const
-export const ModelPriceSourceSchema = z.enum(MODEL_PRICE_SOURCES)
+const ModelPriceSourceSchema = z.enum(MODEL_PRICE_SOURCES)
 export type ModelPriceSource = z.infer<typeof ModelPriceSourceSchema>
 /**
  * The sources recorded usage is repriced from. models.dev prices the catalog and unobserved
@@ -33,9 +33,9 @@ export const ModelPriceSourceUpdateSchema = z.strictObject({
   expectedRevision: z.int().nonnegative(),
   sources: SourceOrderSchema,
 })
-export type ModelPriceSourceUpdate = z.infer<typeof ModelPriceSourceUpdateSchema>
+type ModelPriceSourceUpdate = z.infer<typeof ModelPriceSourceUpdateSchema>
 
-export const ModelPriceSourceAccessSchema = z.enum([
+const ModelPriceSourceAccessSchema = z.enum([
   "configured",
   "not-configured",
   "reauthentication-required",

@@ -7,7 +7,7 @@ import { formatMarketAmount, formatMarketRange } from "./comparison-presentation
 const date = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short" })
 
 /** Cost per task: the measured range for an observed model, the projection otherwise. */
-export function entryCostText(entry: CatalogEntry) {
+function entryCostText(entry: CatalogEntry) {
   if (entry.observed)
     return entry.observed.range
       ? formatMarketRange(entry.observed.range)
@@ -16,7 +16,7 @@ export function entryCostText(entry: CatalogEntry) {
   return cost === null ? "" : `≈${formatMarketAmount(cost)} projected`
 }
 
-export function entryPriceText(entry: CatalogEntry) {
+function entryPriceText(entry: CatalogEntry) {
   if (!entry.price) return ""
   const when = entry.price.retrievedAt ? Date.parse(entry.price.retrievedAt) : Number.NaN
   return [benchmarkSourceName[entry.price.source], Number.isFinite(when) ? date.format(when) : ""]

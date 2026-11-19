@@ -273,7 +273,7 @@ function ProjectedPlot(props: { ctl: ModelsController }) {
 }
 
 /** Compare mode top pane: the plot for the chosen basis, drawn by `ModelChart`. */
-export function CompareTop(props: { ctl: ModelsController }) {
+function CompareTop(props: { ctl: ModelsController }) {
   const ctl = props.ctl
   const {
     Ui,

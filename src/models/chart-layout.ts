@@ -4,8 +4,8 @@
  * `model-chart.tsx` draws what this returns as SVG.
  */
 
-export const CHART_FONT = 11.5
-export const MARK_RADIUS = 4.5
+const CHART_FONT = 11.5
+const MARK_RADIUS = 4.5
 const LABEL_GAP = 3
 
 /** Below this many terminal tasks a model is marked "small sample"; it still counts. */
@@ -198,7 +198,7 @@ export type ChartLayout = {
   clusters: string[][]
 }
 
-export const CLUSTER_PX = 10
+const CLUSTER_PX = 10
 
 /** Plot height from its width: clamp(width x 0.48, 220, 360). */
 export function chartHeight(width: number) {

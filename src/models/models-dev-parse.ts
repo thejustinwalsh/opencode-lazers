@@ -3,10 +3,10 @@ import type { ModelsDevModelRecordSchema } from "./source-schema.ts"
 type ModelsDevRecord = typeof ModelsDevModelRecordSchema._output
 
 /** Records one snapshot may hold (the evidence schema's cap). */
-export const MODELS_DEV_MAX_RECORDS = 2_000
+const MODELS_DEV_MAX_RECORDS = 2_000
 
 /** Providers whose lineups are always kept: the BYOK ones, whatever the install routes. */
-export const MODELS_DEV_ALWAYS_PROVIDERS = ["anthropic", "openai"] as const
+const MODELS_DEV_ALWAYS_PROVIDERS = ["anthropic", "openai"] as const
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

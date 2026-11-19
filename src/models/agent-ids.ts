@@ -8,8 +8,8 @@ export const LAZERS_AGENTS = [
   { agentID: "auditor", label: "Auditor" },
 ] as const
 
-export const AgentRouteID = z.enum(["architect", "lazers-implementor", "auditor"])
-export type AgentRouteID = z.infer<typeof AgentRouteID>
+const AgentRouteID = z.enum(["architect", "lazers-implementor", "auditor"])
+type AgentRouteID = z.infer<typeof AgentRouteID>
 
 /**
  * What a model route is saved for: a worker persona (UI, Systems, Small task) or a whole agent.

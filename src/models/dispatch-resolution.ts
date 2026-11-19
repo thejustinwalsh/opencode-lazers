@@ -19,7 +19,7 @@ const ConfiguredImplementorInputSchema = z.strictObject({
 })
 
 /** Inputs are snapshots from their named authorities; only the plan selection is intentional. */
-export const DispatchRouteInputSchema = z
+const DispatchRouteInputSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     persona: WorkerPersona,

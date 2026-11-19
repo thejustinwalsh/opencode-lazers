@@ -9,7 +9,7 @@ export const ModelMappingTargetInputSchema = z.discriminatedUnion("scope", [
 ])
 export type ModelMappingTargetInput = z.infer<typeof ModelMappingTargetInputSchema>
 
-export const ModelMappingTargetSchema = z.discriminatedUnion("scope", [
+const ModelMappingTargetSchema = z.discriminatedUnion("scope", [
   z.strictObject({ scope: z.literal("shared") }),
   z.strictObject({ scope: z.literal("project"), projectDirectory: z.string().min(1) }),
   z.strictObject({
@@ -18,7 +18,6 @@ export const ModelMappingTargetSchema = z.discriminatedUnion("scope", [
     taskID: z.uuid(),
   }),
 ])
-export type ModelMappingTarget = z.infer<typeof ModelMappingTargetSchema>
 
 export const ModelMappingUpdateSchema = z.strictObject({
   target: ModelMappingTargetInputSchema,
@@ -57,9 +56,8 @@ export const ModelMappingResolutionInputSchema = z.strictObject({
   persona: ModelMappingSubject,
   taskID: z.uuid().optional(),
 })
-export type ModelMappingResolutionInput = z.infer<typeof ModelMappingResolutionInputSchema>
 
-export const ModelMappingProvenanceSchema = z.strictObject({
+const ModelMappingProvenanceSchema = z.strictObject({
   target: ModelMappingTargetSchema,
   revision: z.int().positive(),
 })

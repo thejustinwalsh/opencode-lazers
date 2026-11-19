@@ -5,7 +5,7 @@ import { KnownUsageMarketCategorySchema } from "./market-range.ts"
 const MarketEquivalentCostSchema = TaskValuationSchema.shape.marketEquivalentCost
 const MarketSessionSchema = MarketEquivalentCostSchema.shape.sessions.element
 
-export const SelectedPriceSourceSchema = z.strictObject({
+const SelectedPriceSourceSchema = z.strictObject({
   source: z.enum(["native-catalog", "openrouter-models"]),
   snapshotID: z.uuid(),
   generation: z.number().int().positive(),
@@ -23,7 +23,7 @@ const EstimateRangeSchema = z
   })
   .refine((range) => range.minimum <= range.maximum)
 
-export const ObservedUsageEstimateSourceSchema = z.strictObject({
+const ObservedUsageEstimateSourceSchema = z.strictObject({
   source: z.enum(["native-catalog", "openrouter-models"]),
   snapshotID: z.uuid(),
   generation: z.number().int().positive(),
