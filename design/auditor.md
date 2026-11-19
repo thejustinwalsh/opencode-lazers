@@ -47,6 +47,18 @@ make exact tool retries return the existing run without rescanning.
 - `lz-import-audit`: preserve a legacy report without rerunning analysis;
   imported metadata remains provenance, not inferred worker ownership.
 
+Exploration tools need no durable run: `lz-fallow-dupes`, `lz-fallow-health`
+and `lz-fallow-dead-code` page duplication, complexity and dead-code findings
+directly against the current worktree, worst first, with no source fragments.
+`lz-fallow-config` reads the effective config (repo file, else the stored
+LAZERS project config, else defaults) and can propose a draft; only
+`lz-fallow-config-set`, which stores a new LAZERS config revision, is denied
+to worker agents. `lz-fallow-check` previews the introduced-only review the
+runtime runs when an attempt finishes; the Implementor's instance of it is
+denied, since that preview is Auditor- and Architect-facing. Findings from
+every one of these tools are feedback, never a rejection: only what a change
+introduces or worsens is ever reported, and older findings are never counted.
+
 All five tools are available in Code Mode with native permissions. Task details
 include a compact history locator. JSON exports live in `audits/<runID>.json`
 beside the task database, outside worktrees. SQLite remains authoritative when
