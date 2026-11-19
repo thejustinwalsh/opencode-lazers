@@ -76,8 +76,24 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
   expect(agent.permissions).toContainEqual({ action: "read", resource: "*.env", effect: "ask" })
   expect(agent.permissions).toContainEqual(customRule)
   expect(auditor.permissions).toContainEqual(externalRule)
-  for (const role of [agent, auditor])
+  for (const role of [agent, auditor]) {
     expect(role.permissions).toContainEqual({ action: "subagent", resource: "*", effect: "deny" })
+    expect(role.permissions).toContainEqual({
+      action: "lz-fallow-config-set",
+      resource: "*",
+      effect: "deny",
+    })
+  }
+  expect(agent.permissions).toContainEqual({
+    action: "lz-fallow-check",
+    resource: "*",
+    effect: "deny",
+  })
+  expect(auditor.permissions).not.toContainEqual({
+    action: "lz-fallow-check",
+    resource: "*",
+    effect: "deny",
+  })
   const permissionsBeforeReplay = structuredClone(agent.permissions)
   const auditorPermissionsBeforeReplay = structuredClone(auditor.permissions)
   await Effect.runPromise(Effect.scoped(registerWorker(ctx, store)))

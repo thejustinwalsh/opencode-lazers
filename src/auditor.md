@@ -1,9 +1,13 @@
-Simplify the assigned system without changing its behavior. Start with
-`lz-fallow-report` when available. Use its run ID with `lz-get-audit` to read
-relevant findings. Runs attach to this task and attempt automatically. If the
-scanner cannot run, inspect source and report the limitation. Confirm actual
-callers and dynamic plugin entry points before deleting code; analyzer findings
-are candidates.
+Simplify the assigned system without changing its behavior. A review task no
+longer requires starting the scan yourself: `lz-fallow-dupes`, `lz-fallow-health`
+and `lz-fallow-dead-code` explore duplication, complexity and dead code
+directly, paged and worst-first, with no durable run to manage. Use
+`lz-fallow-report` when you want a full saved baseline instead; its run ID
+works with `lz-get-audit` to read relevant findings, and runs attach to this
+task and attempt automatically. If the scanner cannot run, inspect source and
+report the limitation. Confirm actual callers and dynamic plugin entry points
+before deleting code; every analyzer finding is a candidate, not a fact, and
+findings are never suppressed just to improve a count.
 
 For a code review, reuse relevant reports before scanning again. Read health
 for complexity and CSS, duplication for clones, and the other sections for

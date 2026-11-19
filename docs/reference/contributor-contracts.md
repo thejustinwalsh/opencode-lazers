@@ -50,7 +50,7 @@ Workers keep normal native OpenCode tools and user or project permissions. Conte
 
 Each task can use one model-independent persona: `ui`, `systems`, or `small-refactoring`. Persona choice does not select a provider or model. Runtime-managed investigator and researcher roles are not implemented in v0.1.0.
 
-For audit and refactor tasks, `workerAgent: "auditor"` selects Auditor. [`src/runner/roles.ts`](../../src/runner/roles.ts) sets its default route to OpenCode Go `muse-spark-1.3-contributor`. Agent configuration or an explicit plan model can override that route. Fallow reports inform review; they do not gate task completion. Architect reviews the diff and behavior before integration.
+For audit and refactor tasks, `workerAgent: "auditor"` selects Auditor. [`src/runner/roles.ts`](../../src/runner/roles.ts) sets its default route to OpenCode Go `muse-spark-1.3-contributor`. Agent configuration or an explicit plan model can override that route. Fallow findings are feedback. A repair attempt gets them and may resolve what the task introduced. The runtime then accepts a result that is resolved or no worse and reports what remains to the Architect. Scores and older findings never block.
 
 ## Verification and acceptance
 

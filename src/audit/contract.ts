@@ -74,3 +74,97 @@ export const AuditDetailOutput = z.strictObject({
   nextOffset: z.int().nonnegative().nullable(),
   reports: z.record(z.string(), z.unknown()).optional(),
 })
+
+const Thresholds = z.strictObject({
+  cyclomatic: z.int().positive(),
+  cognitive: z.int().positive(),
+})
+const FindingSchema = z.strictObject({
+  id: text,
+  check: z.enum(["duplication", "complexity", "dead-code", "cycle"]),
+  status: z.enum(["introduced", "worsened"]),
+  file: text,
+  line: z.int().nonnegative(),
+  endLine: z.int().nonnegative().optional(),
+  subject: text,
+  measured: z.number().optional(),
+  limit: z.number().optional(),
+  before: z.number().optional(),
+  others: z
+    .array(
+      z.strictObject({ file: text, line: z.int().nonnegative(), endLine: z.int().nonnegative() }),
+    )
+    .optional(),
+  fix: text,
+})
+export const FallowCheckOutput = z.strictObject({
+  status: z.enum(["clean", "findings", "unavailable"]),
+  introduced: z.array(FindingSchema),
+  concerns: z.array(FindingSchema),
+  thresholds: Thresholds,
+})
+export const FallowDupesOutput = z.strictObject({
+  groups: z.array(
+    z.strictObject({
+      id: text,
+      lines: z.int().nonnegative(),
+      tokens: z.int().nonnegative(),
+      instances: z
+        .array(
+          z.strictObject({
+            file: text,
+            startLine: z.int().nonnegative(),
+            endLine: z.int().nonnegative(),
+          }),
+        )
+        .max(5),
+      moreInstances: z.int().nonnegative(),
+    }),
+  ),
+  total: z.int().nonnegative(),
+  duplicationPct: z.number(),
+  nextOffset: z.int().nonnegative().nullable(),
+})
+export const FallowHealthOutput = z.strictObject({
+  functions: z.array(
+    z.strictObject({
+      file: text,
+      line: z.int().nonnegative(),
+      name: text,
+      cyclomatic: z.int().nonnegative(),
+      cognitive: z.int().nonnegative(),
+      lines: z.int().nonnegative(),
+      exceeded: z.boolean(),
+    }),
+  ),
+  total: z.int().nonnegative(),
+  thresholds: Thresholds,
+  nextOffset: z.int().nonnegative().nullable(),
+})
+export const FallowDeadCodeOutput = z.strictObject({
+  findings: z.array(
+    z.strictObject({
+      id: text,
+      kind: z.enum(["file", "export", "type", "dependency", "member"]),
+      file: text,
+      line: z.int().nonnegative(),
+      name: text,
+    }),
+  ),
+  total: z.int().nonnegative(),
+  nextOffset: z.int().nonnegative().nullable(),
+})
+export const FallowConfigOutput = z.strictObject({
+  source: z.enum(["repo", "lazers", "defaults"]),
+  sha256: text.optional(),
+  config: z.unknown().nullable(),
+  deadCodeEnabled: z.boolean(),
+  shadowedLazersConfig: z.boolean().optional(),
+  missing: z.array(text).optional(),
+  draft: z.unknown().optional(),
+})
+export const FallowConfigSetOutput = z.strictObject({
+  sha256: text,
+  config: z.unknown(),
+  createdAt: timestamp,
+})
