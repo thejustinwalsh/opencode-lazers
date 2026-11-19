@@ -35,6 +35,7 @@ export class WorktreeCleanup {
       progress: TaskRuntime["progress"]
       projectID: TaskRuntime["projectID"]
       store: TaskRuntime["store"]
+      timed<T>(name: string, run: () => Promise<T>): Promise<T>
     },
   ) {}
 
@@ -343,11 +344,17 @@ export class WorktreeCleanup {
     )
       return "reserved-by-other-attempt"
     try {
-      const native = await this.runtime.host.worktrees()
+      const native = await this.runtime.timed("cleanup:host.worktrees", () =>
+        this.runtime.host.worktrees(),
+      )
       if (!cleanupCurrent()) return "superseded"
       if (native.some((directory) => resolve(directory) === target))
         return "native-resource-present"
-      const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
+      const gitWorktrees = (
+        await this.runtime.timed("cleanup:git.worktreeList", () =>
+          worktreeListPorcelain(this.runtime.directory),
+        )
+      )
         .split(/\r?\n/)
         .filter((line) => line.startsWith("worktree "))
         .map((line) => resolve(line.slice("worktree ".length)))
@@ -617,64 +624,94 @@ export class WorktreeCleanup {
             retryFactsUnavailable: true,
           })
         }
-        const listed = await this.runtime.host.worktrees()
+        const listed = await this.runtime.timed("cleanup:host.worktrees", () =>
+          this.runtime.host.worktrees(),
+        )
         if (!cleanupCurrent()) {
           this.abandonCleanupEffect(effect, fence)
           return
         }
         const target = resolve(workspace)
         const listedWorkspace = listed.some((entry) => resolve(entry) === target)
-        const gitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
+        const gitWorktrees = (
+          await this.runtime.timed("cleanup:git.worktreeList", () =>
+            worktreeListPorcelain(this.runtime.directory),
+          )
+        )
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
         const gitRegistered = gitWorktrees.includes(target)
         if (listedWorkspace && existsSync(workspace)) {
-          if (await gitAsync(workspace, ["status", "--porcelain"]))
+          if (
+            await this.runtime.timed("cleanup:git.status", () =>
+              gitAsync(workspace, ["status", "--porcelain"]),
+            )
+          )
             throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
           }
           const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
-          await this.assertHeadMerged(workspace, head)
+          await this.runtime.timed("cleanup:assertHeadMerged", () =>
+            this.assertHeadMerged(workspace, head),
+          )
           for (const attempt of this.runtime.store
             .attempts(plan.id)
             .filter((candidate) => candidate.workspace === workspace && candidate.artifact))
             if (mode === "integration" && attempt.state === "accepted")
-              await this.assertArtifactIntegrated(attempt)
-          await this.assertWorktreeQuiescent(
-            plan,
-            sourceEffect,
-            workspace,
-            mode === "cancellation",
-            true,
+              await this.runtime.timed("cleanup:assertArtifactIntegrated", () =>
+                this.assertArtifactIntegrated(attempt),
+              )
+          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+            this.assertWorktreeQuiescent(
+              plan,
+              sourceEffect,
+              workspace,
+              mode === "cancellation",
+              true,
+            ),
           )
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          await this.assertWorktreeQuiescent(
-            plan,
-            sourceEffect,
-            workspace,
-            mode === "cancellation",
-            true,
+          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+            this.assertWorktreeQuiescent(
+              plan,
+              sourceEffect,
+              workspace,
+              mode === "cancellation",
+              true,
+            ),
           )
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          if (await gitAsync(workspace, ["status", "--porcelain"]))
+          if (
+            await this.runtime.timed("cleanup:git.status", () =>
+              gitAsync(workspace, ["status", "--porcelain"]),
+            )
+          )
             throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
           const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
-          await this.assertHeadMerged(workspace, finalHead)
-          const finalNative = await this.runtime.host.worktrees()
+          await this.runtime.timed("cleanup:assertHeadMerged", () =>
+            this.assertHeadMerged(workspace, finalHead),
+          )
+          const finalNative = await this.runtime.timed("cleanup:host.worktrees", () =>
+            this.runtime.host.worktrees(),
+          )
           if (!cleanupCurrent()) {
             this.abandonCleanupEffect(effect, fence)
             return
           }
-          const finalGitWorktrees = (await worktreeListPorcelain(this.runtime.directory))
+          const finalGitWorktrees = (
+            await this.runtime.timed("cleanup:git.worktreeList", () =>
+              worktreeListPorcelain(this.runtime.directory),
+            )
+          )
             .split(/\r?\n/)
             .filter((line) => line.startsWith("worktree "))
             .map((line) => resolve(line.slice("worktree ".length)))
@@ -685,20 +722,32 @@ export class WorktreeCleanup {
             throw new Error("Exact owned worktree registration changed before removal; preserve it")
           if (!cleanupCurrent()) return
           beginCleanup()
-          await this.runtime.host.removeWorktree(workspace)
+          await this.runtime.timed("cleanup:removeWorktree", () =>
+            this.runtime.host.removeWorktree(workspace),
+          )
         } else if (listedWorkspace || gitRegistered) {
           // A disappeared directory can still have a native/Git registration.
           // Ask the recorded native strategy to retire that exact owned path;
           // never substitute filesystem deletion or force removal.
-          await this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation")
+          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+            this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation"),
+          )
           beginCleanup()
-          await this.runtime.host.removeWorktree(workspace)
+          await this.runtime.timed("cleanup:removeWorktree", () =>
+            this.runtime.host.removeWorktree(workspace),
+          )
         } else if (existsSync(workspace))
           throw new Error(
             "Owned directory is not registered with OpenCode; preserve it for reconciliation",
           )
-        const remainingNative = await this.runtime.host.worktrees()
-        const remainingGit = (await worktreeListPorcelain(this.runtime.directory))
+        const remainingNative = await this.runtime.timed("cleanup:host.worktrees", () =>
+          this.runtime.host.worktrees(),
+        )
+        const remainingGit = (
+          await this.runtime.timed("cleanup:git.worktreeList", () =>
+            worktreeListPorcelain(this.runtime.directory),
+          )
+        )
           .split(/\r?\n/)
           .filter((line) => line.startsWith("worktree "))
           .map((line) => resolve(line.slice("worktree ".length)))
@@ -709,10 +758,8 @@ export class WorktreeCleanup {
         )
           throw new Error(`Native worktree removal is not confirmed absent: ${workspace}`)
         if (this.runtime.host.retireWorktreeLocation) beginCleanup()
-        const cacheRetirement = await this.retireCleanedWorktreeLocation(
-          plan,
-          workspace,
-          cleanupCurrent,
+        const cacheRetirement = await this.runtime.timed("cleanup:retireWorktreeLocation", () =>
+          this.retireCleanedWorktreeLocation(plan, workspace, cleanupCurrent),
         )
         if (!cleanupCurrent()) return
         if (!(["unsupported", "not-loaded", "evicted"] as string[]).includes(cacheRetirement))

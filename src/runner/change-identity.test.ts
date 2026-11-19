@@ -4,6 +4,7 @@ import { git } from "./artifacts.ts"
 import {
   artifactIdentity,
   changeContained,
+  containmentComputationCount,
   ensureNotesConfig,
   pushChangeNotes,
   readChangeNote,
@@ -169,4 +170,29 @@ test("pushChangeNotes pushes the notes ref and returns false instead of throwing
     git(root, ["rev-parse", "refs/notes/lazers"]),
   )
   expect(await pushChangeNotes(root, "missing-remote")).toBe(false)
+})
+
+test("an unchanged change and target are proven once, and a new target commit is proven again", async () => {
+  const { root, evidence } = await workerBranch()
+  const before = containmentComputationCount()
+  const first = await changeContained(root, evidence, "main")
+  const again = await changeContained(root, evidence, "main")
+  expect(again).toEqual(first)
+  expect(containmentComputationCount() - before).toBe(1)
+  commitFile(root, "later.txt", "later\n", "later")
+  await changeContained(root, evidence, "main")
+  expect(containmentComputationCount() - before).toBe(2)
+})
+
+test("a squash split across target commits is found among many unrelated commits", async () => {
+  const { root, evidence } = await workerBranch()
+  for (let n = 0; n < 60; n++) commitFile(root, `noise-${n}.txt`, `${n}\n`, `noise ${n}`)
+  commitFile(root, "feature.txt", "feature\n", "port: feature")
+  commitFile(root, "feature2.txt", "feature two\n", "port: more")
+  const result = await changeContained(
+    root,
+    { ...evidence, changeId: undefined, commitPatchIds: undefined, tree: undefined },
+    "main",
+  )
+  expect(result).toMatchObject({ status: "contained", via: "patch-id" })
 })
