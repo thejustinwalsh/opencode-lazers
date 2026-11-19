@@ -1,4 +1,14 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import {
+  For,
+  Index,
+  untrack,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import type { Ui } from "@opencode/plugin/gui"
 import type { ObservationScope } from "../observability/contract.ts"
@@ -65,6 +75,9 @@ import {
 } from "./monitor-model.ts"
 import type { ActivityLine, LiveFlow, LiveSession } from "./monitor-model.ts"
 
+/** How often the flow model, map and visible set re-derive from the clock. */
+const MODEL_TICK_MS = 5_000
+
 export type MonitorScopeChoice = RadarScopeChoice
 
 type Props = {
@@ -106,9 +119,27 @@ export function RadarMonitorView(props: Props) {
   const Ui = props.ui
   /** The selected call is highlighted in the list; the inspector heading never changes for it. */
   const [selectedCallID, setSelectedCallID] = createSignal<string | null>(null)
+  // One clock for relative-time text, stopped while the tab is hidden. Layout, the map and the
+  // flow model read `modelNow`, which moves every 5 s, so a quiet second recomputes none of them.
   const [now, setNow] = createSignal(Date.now())
-  const clock = setInterval(() => setNow(Date.now()), 1_000)
-  onCleanup(() => clearInterval(clock))
+  const modelNow = createMemo(() => Math.floor(now() / MODEL_TICK_MS) * MODEL_TICK_MS)
+  let clock: ReturnType<typeof setInterval> | undefined
+  const startClock = () => {
+    if (clock !== undefined || globalThis.document?.hidden) return
+    setNow(Date.now())
+    clock = setInterval(() => setNow(Date.now()), 1_000)
+  }
+  const stopClock = () => {
+    if (clock !== undefined) clearInterval(clock)
+    clock = undefined
+  }
+  const onVisibility = () => (globalThis.document?.hidden ? stopClock() : startClock())
+  startClock()
+  globalThis.document?.addEventListener?.("visibilitychange", onVisibility)
+  onCleanup(() => {
+    stopClock()
+    globalThis.document?.removeEventListener?.("visibilitychange", onVisibility)
+  })
   let root: HTMLDivElement | undefined
   /** The inspector opens only once the user picks something; nothing is selected at first. */
   const [inspecting, setInspecting] = createSignal(false)
@@ -126,7 +157,7 @@ export function RadarMonitorView(props: Props) {
   const sessions = () => live()?.sessions ?? []
   const visibility = createMemo(() =>
     live()
-      ? visibleSessions(live()!, now(), {
+      ? visibleSessions(live()!, modelNow(), {
           showIdle: props.showIdle,
           selectedID: inspecting() ? props.data().selectedSessionID : null,
         })
@@ -187,7 +218,7 @@ export function RadarMonitorView(props: Props) {
     onCleanup(() => observer.disconnect())
   })
   const flowModel = createMemo(() =>
-    live() ? createFlowModel(live()!, now(), visibility()?.shown) : undefined,
+    live() ? createFlowModel(live()!, modelNow(), visibility()?.shown) : undefined,
   )
   const [flowSelection, setFlowSelection] = createSignal<FlowSelection>(null)
   const [flowTab, setFlowTab] = createSignal<"feed" | "models">("feed")
@@ -202,7 +233,7 @@ export function RadarMonitorView(props: Props) {
     return session ? session.ref || session.role : ""
   }
   const map = createMemo(() =>
-    live() ? createRadarMap(live()!, now(), visibility()?.shown) : undefined,
+    live() ? createRadarMap(live()!, modelNow(), visibility()?.shown) : undefined,
   )
   const mapSelection = () => {
     const id = mapSelectedID()
@@ -764,87 +795,109 @@ export function RadarMonitorView(props: Props) {
   }
   const paneEmpty = () => (props.view === "flow" ? "Nothing is flowing" : "No session selected")
   /** One line saying what is selected; it is also the collapsed pane. */
-  const paneHeader = () => {
-    if (props.view === "flow")
-      return flowPane() ? (
-        <RadarFlowTabs
-          feedCount={flowCounts().feed}
-          modelsCount={flowCounts().models}
-          tab={flowTab()}
-          onTab={(next) => {
-            setFlowTab(next)
-            if (!props.details.open) props.onDetailsChange({ open: true })
-          }}
-        />
-      ) : undefined
+  /**
+   * What the pane header shows, as a primitive: the header and actions are rebuilt only when this
+   * changes (another session, node or view), never on a live update of the same selection.
+   */
+  const headerKey = createMemo(() => {
+    if (props.view === "flow") return flowPane() ? "flow" : ""
     const session = paneSession()
-    if (session)
-      return (
-        <>
-          <span
-            class="lazers-radar-inspector-state"
-            data-tone={sessionTone(session)}
-            data-lazers-tone={stateOf(session).tone}
-          >
-            <span class="lazers-radar-inspector-glyph" aria-hidden="true">
-              {renderStateGlyph(session)}
-            </span>
-            <span class="lazers-radar-inspector-word">{stateOf(session).word}</span>
-            <Show when={session.assignment?.taskReference}>
-              {(reference) => (
-                <code class="lazers-radar-session-ref" style={{ "font-family": props.monoFont }}>
-                  {reference()}
-                </code>
-              )}
-            </Show>
-          </span>
-          <span class="lazers-radar-pane-title">
-            {" · "}
-            {sessionHeading(session)}
-          </span>
-        </>
-      )
+    if (session) return `session:${session.sessionID}`
     const node = paneNode()
-    return node ? (
-      <>
-        <strong>{node.title}</strong>
-        <Show when={node.sub}>
-          <span class="lazers-radar-pane-title">
-            {" · "}
-            {node.sub}
-          </span>
-        </Show>
-      </>
-    ) : undefined
+    return node ? `node:${node.id}` : ""
+  })
+  const paneHeader = () => {
+    const key = headerKey()
+    return untrack(() => {
+      if (key === "flow")
+        return (
+          <RadarFlowTabs
+            feedCount={flowCounts().feed}
+            modelsCount={flowCounts().models}
+            tab={flowTab()}
+            onTab={(next) => {
+              setFlowTab(next)
+              if (!props.details.open) props.onDetailsChange({ open: true })
+            }}
+          />
+        )
+      if (key.startsWith("session:")) {
+        const session = () => paneSession()!
+        return (
+          <>
+            <span
+              class="lazers-radar-inspector-state"
+              data-tone={sessionTone(session())}
+              data-lazers-tone={stateOf(session()).tone}
+            >
+              <span class="lazers-radar-inspector-glyph" aria-hidden="true">
+                {renderStateGlyph(session())}
+              </span>
+              <span class="lazers-radar-inspector-word">{stateOf(session()).word}</span>
+              <Show when={session().assignment?.taskReference}>
+                {(reference) => (
+                  <code class="lazers-radar-session-ref" style={{ "font-family": props.monoFont }}>
+                    {reference()}
+                  </code>
+                )}
+              </Show>
+            </span>
+            <span class="lazers-radar-pane-title">
+              {" · "}
+              {sessionHeading(session())}
+            </span>
+          </>
+        )
+      }
+      if (key.startsWith("node:")) {
+        const node = () => paneNode()!
+        return (
+          <>
+            <strong>{node().title}</strong>
+            <Show when={node().sub}>
+              <span class="lazers-radar-pane-title">
+                {" · "}
+                {node().sub}
+              </span>
+            </Show>
+          </>
+        )
+      }
+      return undefined
+    })
   }
   const paneActions = () => {
-    if (props.view === "flow")
-      return (
-        <RadarFlowActions
-          selection={flowSelection()}
-          selectionLabel={flowSelectionLabel()}
-          onClear={() => setFlowSelection(null)}
-        />
-      )
-    const session = paneSession()
-    return session ? (
-      <>
-        <Actions session={session} />
-        <Show when={props.onOpenWorker}>
-          <Ui.Menu
-            label="Session actions"
-            icon="outline-dots"
-            items={[
-              {
-                label: "Open worker",
-                icon: "square-arrow-top-right",
-                onSelect: () => props.onOpenWorker!(session.sessionID),
-              },
-            ]}
+    const key = headerKey()
+    return untrack(() => {
+      if (key === "flow")
+        return (
+          <RadarFlowActions
+            selection={flowSelection()}
+            selectionLabel={flowSelectionLabel()}
+            onClear={() => setFlowSelection(null)}
           />
-        </Show>
-      </>
-    ) : undefined
+        )
+      if (!key.startsWith("session:")) return undefined
+      const session = () => paneSession()!
+      return (
+        <>
+          <Actions session={session()} />
+          <Show when={props.onOpenWorker}>
+            <Ui.Menu
+              label="Session actions"
+              icon="outline-dots"
+              items={[
+                {
+                  label: "Open worker",
+                  icon: "square-arrow-top-right",
+                  onSelect: () => props.onOpenWorker!(session().sessionID),
+                },
+              ]}
+            />
+          </Show>
+        </>
+      )
+    })
   }
 
   return (
@@ -895,13 +948,13 @@ export function RadarMonitorView(props: Props) {
               >
                 {(response) => (
                   <p class="lazers-radar-summary">
-                    <For each={summarySegments(response())}>
+                    <Index each={summarySegments(response())}>
                       {(segment) => (
                         <span>
-                          <strong>{segment.count}</strong> {segment.word}
+                          <strong>{segment().count}</strong> {segment().word}
                         </span>
                       )}
-                    </For>
+                    </Index>
                     <Show when={(visibility()?.hidden ?? 0) > 0 || props.showIdle}>
                       <button
                         type="button"

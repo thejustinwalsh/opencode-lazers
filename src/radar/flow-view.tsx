@@ -1,5 +1,15 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import {
+  For,
+  Index,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js"
 import { layoutFlow } from "./flow-layout.ts"
+import { browserHost, createPulseLoop } from "./pulse-loop.ts"
 import {
   abbreviateRole,
   compactCount,
@@ -66,6 +76,39 @@ export function RadarFlowCanvas(props: {
     return set !== undefined && !set.edgeKeys.has(key)
   }
   const still = reducedMotion()
+  let pulseLayer: SVGGElement | undefined
+  let visibleOnScreen = true
+  onMount(() => {
+    if (!pulseLayer || still) return
+    const environment = browserHost()
+    const loop = createPulseLoop(pulseLayer, {
+      ...environment,
+      visible: () => environment.visible() && visibleOnScreen,
+    })
+    createEffect(() =>
+      loop.update(
+        layout().edges.map((edge) => ({
+          id: `${edge.sessionID}>${edge.destID}`,
+          x0: edge.x0,
+          y0: edge.y0,
+          x1: edge.x1,
+          y1: edge.y1,
+          mx: edge.mx,
+          running: edge.running,
+          dim: edgeDim(`${edge.sessionID}>${edge.destID}`),
+        })),
+      ),
+    )
+    if (host && typeof IntersectionObserver !== "undefined") {
+      const observer = new IntersectionObserver((entries) => {
+        visibleOnScreen = entries.at(-1)?.isIntersecting !== false
+        loop.wake()
+      })
+      observer.observe(host)
+      onCleanup(() => observer.disconnect())
+    }
+    onCleanup(() => loop.dispose())
+  })
   const toggle = (next: FlowSelection) => {
     const current = props.selection
     props.onSelect(
@@ -95,148 +138,152 @@ export function RadarFlowCanvas(props: {
           height={layout().frame.height}
           rx={8}
         />
-        <For each={layout().links}>
+        <Index each={layout().links}>
           {(link) => (
-            <path class="lazers-radar-flow-link" data-dim={sessionDim(link.sessionID)} d={link.d} />
+            <path
+              class="lazers-radar-flow-link"
+              data-dim={sessionDim(link().sessionID)}
+              d={link().d}
+            />
           )}
-        </For>
-        <For each={layout().headings}>
+        </Index>
+        <Index each={layout().headings}>
           {(heading) => (
-            <text class="lazers-radar-flow-group" x={heading.x} y={heading.y} text-anchor="end">
-              {heading.label}
+            <text class="lazers-radar-flow-group" x={heading().x} y={heading().y} text-anchor="end">
+              {heading().label}
             </text>
           )}
-        </For>
-        <For each={layout().destinations}>
+        </Index>
+        <Index each={layout().destinations}>
           {(dest) => (
             <g
               class="lazers-radar-flow-dest"
-              data-dim={destDim(dest.id)}
+              data-dim={destDim(dest().id)}
               data-selected={
-                props.selection?.kind === "destination" && props.selection.id === dest.id
+                props.selection?.kind === "destination" && props.selection.id === dest().id
               }
               role="button"
               tabIndex={0}
               aria-pressed={
-                props.selection?.kind === "destination" && props.selection.id === dest.id
+                props.selection?.kind === "destination" && props.selection.id === dest().id
               }
-              aria-label={`${dest.name}, ${dest.count} ${dest.count === 1 ? "flow" : "flows"}`}
-              onClick={() => toggle({ kind: "destination", id: dest.id })}
+              aria-label={`${dest().name}, ${dest().count} ${dest().count === 1 ? "flow" : "flows"}`}
+              onClick={() => toggle({ kind: "destination", id: dest().id })}
               onKeyDown={(event) =>
-                press(event, () => toggle({ kind: "destination", id: dest.id }))
+                press(event, () => toggle({ kind: "destination", id: dest().id }))
               }
             >
               <rect
-                x={dest.x - 4}
-                y={dest.y - 5}
+                x={dest().x - 4}
+                y={dest().y - 5}
                 width={9}
                 height={9}
                 rx={2}
-                fill={HUE[dest.kind]}
+                fill={HUE[dest().kind]}
                 fill-opacity={0.22}
-                stroke={HUE[dest.kind]}
+                stroke={HUE[dest().kind]}
               />
-              <text class="lazers-radar-flow-sink" x={dest.x - 12} y={dest.y + 4} text-anchor="end">
-                {truncate(dest.name, layout().sinkChars)}
+              <text
+                class="lazers-radar-flow-sink"
+                x={dest().x - 12}
+                y={dest().y + 4}
+                text-anchor="end"
+              >
+                {truncate(dest().name, layout().sinkChars)}
                 <Show when={!layout().narrow}>
-                  <tspan class="lazers-radar-flow-count"> {dest.count}</tspan>
+                  <tspan class="lazers-radar-flow-count"> {dest().count}</tspan>
                 </Show>
               </text>
             </g>
           )}
-        </For>
-        <For each={layout().edges}>
+        </Index>
+        <Index each={layout().edges}>
           {(edge) => {
             const kind = () =>
-              props.model.destinations.find((dest) => dest.id === edge.destID)!.kind
+              props.model.destinations.find((dest) => dest.id === edge().destID)!.kind
             return (
-              <g data-dim={edgeDim(`${edge.sessionID}>${edge.destID}`)}>
+              <g data-dim={edgeDim(`${edge().sessionID}>${edge().destID}`)}>
                 <path
                   class="lazers-radar-flow-edge"
-                  d={edge.d}
+                  d={edge().d}
                   fill="none"
                   stroke={HUE[kind()]}
-                  stroke-width={edge.width.toFixed(2)}
-                  stroke-opacity={edge.opacity.toFixed(2)}
+                  stroke-width={edge().width.toFixed(2)}
+                  stroke-opacity={edge().opacity.toFixed(2)}
                 />
-                <Show when={edge.running}>
-                  <For each={edge.dots}>
-                    {(dot, index) =>
-                      still ? (
-                        <circle class="lazers-radar-flow-dot" cx={dot.x} cy={dot.y} r={1.8} />
-                      ) : (
-                        <circle class="lazers-radar-flow-dot" cx={0} cy={0} r={1.8}>
-                          <animateMotion
-                            dur={`${2.4 + index() * 0.7}s`}
-                            begin={`${-index() * 1.1}s`}
-                            repeatCount="indefinite"
-                            path={edge.d}
-                          />
-                        </circle>
-                      )
-                    }
-                  </For>
+                {/* Reduced motion keeps still dots; moving pulses are drawn by the pulse loop. */}
+                <Show when={still && edge().running}>
+                  <Index each={edge().dots}>
+                    {(dot) => (
+                      <circle class="lazers-radar-flow-dot" cx={dot().x} cy={dot().y} r={1.8} />
+                    )}
+                  </Index>
                 </Show>
               </g>
             )
           }}
-        </For>
-        <For each={layout().sessions}>
+        </Index>
+        <g class="lazers-radar-flow-pulses" ref={(element) => (pulseLayer = element)} />
+        <Index each={layout().sessions}>
           {(session) => {
             const color = () =>
-              session.doingFailed
+              session().doingFailed
                 ? "var(--icon-critical-base)"
-                : session.waiting
+                : session().waiting
                   ? "var(--icon-warning-base)"
-                  : session.tone === "run"
+                  : session().tone === "run"
                     ? "var(--text-interactive-base)"
                     : "var(--icon-base)"
             const selected = () =>
-              props.selection?.kind === "session" && props.selection.id === session.sessionID
-            const label = () => (layout().narrow ? abbreviateRole(session.role) : session.role)
+              props.selection?.kind === "session" && props.selection.id === session().sessionID
+            const label = () => (layout().narrow ? abbreviateRole(session().role) : session().role)
             /** Characters left on the name line for the title, after the role and reference. */
             const titleRoom = () =>
-              session.title
-                ? Math.floor((layout().frame.width - (session.x + 14) - 12) / 6.2) -
-                  (label().length + (session.ref ? session.ref.length + 1 : 0) + 3)
+              session().title
+                ? Math.floor((layout().frame.width - (session().x + 14) - 12) / 6.2) -
+                  (label().length + (session().ref ? session().ref.length + 1 : 0) + 3)
                 : 0
             return (
               <g
                 class="lazers-radar-flow-session"
-                data-dim={sessionDim(session.sessionID)}
+                data-dim={sessionDim(session().sessionID)}
                 data-selected={selected()}
                 role="button"
                 tabIndex={0}
                 aria-pressed={selected()}
-                aria-label={[session.role, session.ref, session.doing].filter(Boolean).join(", ")}
-                onClick={() => toggle({ kind: "session", id: session.sessionID })}
+                aria-label={[session().role, session().ref, session().doing]
+                  .filter(Boolean)
+                  .join(", ")}
+                onClick={() => toggle({ kind: "session", id: session().sessionID })}
                 onKeyDown={(event) =>
-                  press(event, () => toggle({ kind: "session", id: session.sessionID }))
+                  press(event, () => toggle({ kind: "session", id: session().sessionID }))
                 }
               >
                 <rect
                   class="lazers-radar-flow-hit"
-                  x={session.x - 14}
-                  y={session.y - 16}
-                  width={layout().frame.width - session.x + 6}
+                  x={session().x - 14}
+                  y={session().y - 16}
+                  width={layout().frame.width - session().x + 6}
                   height={34}
                   fill="transparent"
                 />
-                <Show when={session.tone === "run" && !session.waiting && !session.doingFailed}>
+                <Show
+                  when={session().tone === "run" && !session().waiting && !session().doingFailed}
+                >
                   <circle
                     class="lazers-radar-flow-halo"
-                    cx={session.x}
-                    cy={session.y}
+                    cx={session().x}
+                    cy={session().y}
                     r={11}
                     fill="none"
                     stroke={color()}
                     stroke-opacity={0.28}
                   />
                 </Show>
-                <Show when={session.waiting}>
+                <Show when={session().waiting}>
                   <circle
-                    cx={session.x}
-                    cy={session.y}
+                    cx={session().x}
+                    cy={session().y}
                     r={11}
                     fill="none"
                     stroke={color()}
@@ -246,8 +293,8 @@ export function RadarFlowCanvas(props: {
                 </Show>
                 <Show when={selected()}>
                   <circle
-                    cx={session.x}
-                    cy={session.y}
+                    cx={session().x}
+                    cy={session().y}
                     r={12.5}
                     fill="none"
                     stroke="var(--text-strong)"
@@ -255,62 +302,64 @@ export function RadarFlowCanvas(props: {
                   />
                 </Show>
                 <circle
-                  cx={session.x}
-                  cy={session.y}
+                  cx={session().x}
+                  cy={session().y}
                   r={6.5}
                   fill="var(--background-base)"
                   stroke={color()}
                   stroke-width={1.5}
                 />
-                <Show when={session.tone === "run" && !session.waiting && !session.doingFailed}>
-                  <path d={`M${session.x} ${session.y - 4}a4 4 0 010 8z`} fill={color()} />
+                <Show
+                  when={session().tone === "run" && !session().waiting && !session().doingFailed}
+                >
+                  <path d={`M${session().x} ${session().y - 4}a4 4 0 010 8z`} fill={color()} />
                 </Show>
-                <Show when={session.doingFailed}>
+                <Show when={session().doingFailed}>
                   <path
-                    d={`M${session.x - 2.4} ${session.y - 2.4}l4.8 4.8M${session.x + 2.4} ${session.y - 2.4}l-4.8 4.8`}
+                    d={`M${session().x - 2.4} ${session().y - 2.4}l4.8 4.8M${session().x + 2.4} ${session().y - 2.4}l-4.8 4.8`}
                     stroke={color()}
                     stroke-width={1.4}
                     stroke-linecap="round"
                     fill="none"
                   />
                 </Show>
-                <Show when={session.waiting}>
+                <Show when={session().waiting}>
                   <path
-                    d={`M${session.x} ${session.y - 3.4}v3.6M${session.x} ${session.y + 2.8}h.01`}
+                    d={`M${session().x} ${session().y - 3.4}v3.6M${session().x} ${session().y + 2.8}h.01`}
                     stroke={color()}
                     stroke-width={1.5}
                     stroke-linecap="round"
                     fill="none"
                   />
                 </Show>
-                <text x={session.x + 14} y={session.y - 2}>
+                <text x={session().x + 14} y={session().y - 2}>
                   <tspan class="lazers-radar-flow-name">{label()}</tspan>
-                  <Show when={session.ref}>
-                    <tspan class="lazers-radar-flow-ref"> {session.ref}</tspan>
+                  <Show when={session().ref}>
+                    <tspan class="lazers-radar-flow-ref"> {session().ref}</tspan>
                   </Show>
                   <Show when={!layout().narrow && titleRoom() > 3}>
                     <tspan class="lazers-radar-flow-title">
                       {" "}
-                      · {truncate(session.title, titleRoom())}
+                      · {truncate(session().title, titleRoom())}
                     </tspan>
                   </Show>
                 </text>
-                <Show when={session.doing}>
+                <Show when={session().doing}>
                   <text
                     class="lazers-radar-flow-doing"
                     data-tone={
-                      session.doingFailed ? "failed" : session.waiting ? "waiting" : undefined
+                      session().doingFailed ? "failed" : session().waiting ? "waiting" : undefined
                     }
-                    x={session.x + 14}
-                    y={session.y + 12}
+                    x={session().x + 14}
+                    y={session().y + 12}
                   >
-                    {truncate(session.doing!, layout().doingChars)}
+                    {truncate(session().doing!, layout().doingChars)}
                   </text>
                 </Show>
               </g>
             )
           }}
-        </For>
+        </Index>
       </svg>
     </div>
   )
