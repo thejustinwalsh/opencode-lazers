@@ -5,7 +5,11 @@ import { RunnerStore } from "../runner/store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/trajectory/fixture.ts"
-import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
+import {
+  projectTaskValuation,
+  taskValuationApplicabilities,
+  taskValuationPerCallUsage,
+} from "./valuation.ts"
 import type { CurrentPriceIndex } from "./valuation-schema.ts"
 import {
   nativeMillionTokenIndex,
@@ -1357,3 +1361,48 @@ test("F-S10-2 mixed metered and unmetered sessions preserve the known subtotal w
     subtotalUSD: 1,
   })
 })
+
+test("route allocation over many sessions reads each session's facts, not every fact per session", () => {
+  const sessions = 1_000
+  const stepsPerSession = 60
+  const attempts = Array.from({ length: sessions }, (_, index) =>
+    attempt({
+      id: `attempt-${index}`,
+      sessionID: `session-${index}`,
+      stepRoutes: [],
+      currentRoute: route,
+    }),
+  )
+  const facts = attempts.flatMap((entry, session) =>
+    Array.from({ length: stepsPerSession }, (_, step) => ({
+      id: `fact-${session}-${step}`,
+      sequence: session * stepsPerSession + step,
+      sessionID: entry.sessionID,
+      attemptID: entry.id,
+      kind: "worker-step",
+      at: 1_000 + step,
+      recordedAt: 1_001 + step,
+      messageID: `message-${session}-${step}`,
+      measurementBasis: "additive-step-measurement",
+      usage: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, costUSD: null },
+      route,
+      observations: [],
+    })),
+  )
+  const input = {
+    attempts,
+    progressFacts: facts,
+    progressTruncated: false,
+    truncatedContextSessionIDs: [],
+  }
+  const started = performance.now()
+  const applicabilities = taskValuationApplicabilities(input)
+  const elapsed = performance.now() - started
+  // Every session resolves to the one route, whatever the size of the capture.
+  expect(applicabilities).toHaveLength(sessions)
+  expect(new Set(applicabilities.map((entry) => entry.route.modelID))).toEqual(
+    new Set([route.modelID]),
+  )
+  // 60,000 facts x 1,000 sessions took seconds when each session rescanned the capture.
+  expect(elapsed).toBeLessThan(750)
+}, 30_000)
