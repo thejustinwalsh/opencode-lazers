@@ -77,6 +77,7 @@ export function outcomeText(serialized: string) {
       action = "Recorded runtime update; no automatic action is requested."
   }
   if (payload.status === "task-accepted" && payload.fallow) action += fallowNotice(payload.fallow)
+  if (payload.status === "accepted" && payload.fallow) action += planFallowNotice(payload.fallow)
   const evidence = Array.isArray(payload.evidence)
     ? payload.evidence.map((check: unknown) =>
         typeof check === "object" && check !== null && "id" in check ? check.id : check,
@@ -114,4 +115,28 @@ function fallowNotice(fallow: { introduced?: unknown; concerns?: unknown }): str
     ...section("Fallow concerns", fallow.concerns),
   ]
   return lines.length ? `\n${lines.join("\n")}` : ""
+}
+
+/** The task(s) a plan-level finding is attributed to, for the Architect to send it back to. */
+function taskReference(item: { taskID?: unknown; taskIDs?: unknown }): string {
+  const ids = Array.isArray(item.taskIDs)
+    ? item.taskIDs.filter((id): id is string => typeof id === "string")
+    : typeof item.taskID === "string"
+      ? [item.taskID]
+      : []
+  return ids.length ? ` (${ids.length > 1 ? "tasks" : "task"} ${ids.join(", ")})` : ""
+}
+
+/** Findings only the combined plan shows, such as two tasks that each added the same helper. */
+function planFallowNotice(fallow: { introduced?: unknown; concerns?: unknown }): string {
+  const items = [fallow.introduced, fallow.concerns].flatMap((list) =>
+    Array.isArray(list) ? list : [],
+  )
+  if (!items.length) return ""
+  const lines = items
+    .slice(0, FALLOW_NOTICE_LIMIT)
+    .map(
+      (item) => `- ${item.check} ${item.file}:${item.line} ${item.subject}${taskReference(item)}`,
+    )
+  return `\nFallow findings on the combined plan (${items.length}):\n${lines.join("\n")}\nThe plan is accepted. Send a finding back to the named task, submit a cleanup task, or accept it.`
 }

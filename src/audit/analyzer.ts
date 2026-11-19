@@ -17,6 +17,8 @@ export interface FallowAnalyzer {
   complexity(scope: AnalyzerScope): Promise<HealthReport>
   duplication(scope: AnalyzerScope): Promise<DuplicationReport>
   deadCode(scope: AnalyzerScope): Promise<DeadCodeReport>
+  /** Import cycles; the report's `circular_dependencies` lists them. Native only. */
+  cycles(scope: AnalyzerScope): Promise<DeadCodeReport>
 }
 
 const NATIVE_DEFAULTS = { noCache: true, threads: 1 } as const
@@ -53,6 +55,16 @@ export const nativeFallowAnalyzer: FallowAnalyzer = {
     checkAborted(signal)
     const fallow = await import("@fallow-cli/fallow-node")
     return fallow.detectDeadCode({
+      ...NATIVE_DEFAULTS,
+      root,
+      configPath,
+      ...(files ? { files: [...files] } : {}),
+    })
+  },
+  async cycles({ root, configPath, signal, files }) {
+    checkAborted(signal)
+    const fallow = await import("@fallow-cli/fallow-node")
+    return fallow.detectCircularDependencies({
       ...NATIVE_DEFAULTS,
       root,
       configPath,

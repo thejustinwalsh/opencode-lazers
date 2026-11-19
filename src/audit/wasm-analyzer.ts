@@ -278,6 +278,14 @@ export const wasmFallowAnalyzer: FallowAnalyzer = {
       )
     return nativeFallowAnalyzer.deadCode(scope)
   },
+  async cycles(scope) {
+    if (!(await canUseNative()))
+      throw new AnalyzerError(
+        "cycles-unavailable",
+        "import cycles need the native Fallow binding, which could not be loaded",
+      )
+    return nativeFallowAnalyzer.cycles(scope)
+  },
 }
 
 /** The analyzer the review and the exploration tools use unless a caller passes another. */

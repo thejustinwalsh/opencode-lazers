@@ -80,3 +80,33 @@ export async function materialiseBaseTree(
   }
   return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) }
 }
+
+async function exitCode(command: string[]): Promise<number> {
+  const proc = Bun.spawn(command, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+  return proc.exited
+}
+
+/**
+ * The whole tree at `base`, extracted with `git archive` into a fresh temp directory outside the
+ * repository. Unlike a worktree it writes nothing into the repository's own metadata.
+ */
+export async function materialiseBaseArchive(
+  repoDirectory: string,
+  base: string,
+): Promise<MaterialisedBaseTree> {
+  const directory = await mkdtemp(join(tmpdir(), "lz-fallow-base-tree-"))
+  const cleanup = () => rm(directory, { recursive: true, force: true })
+  const archive = join(directory, ".base.tar")
+  const tree = join(directory, "tree")
+  try {
+    await mkdir(tree)
+    if ((await exitCode(["git", "-C", repoDirectory, "archive", "-o", archive, base])) !== 0)
+      throw new Error("git archive failed")
+    if ((await exitCode(["tar", "-xf", archive, "-C", tree])) !== 0) throw new Error("tar failed")
+    await rm(archive, { force: true })
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
+  return { directory: tree, cleanup }
+}

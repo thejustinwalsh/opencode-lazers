@@ -6,9 +6,15 @@ import type { CheckReceipt } from "./artifacts.ts"
 export { FALLOW_CHECK_ID } from "../task.ts"
 export const FALLOW_CHECK_COMMAND = "lazers:fallow-review"
 export const FALLOW_EFFECT_KIND = "verify:lazers-fallow"
+/** The plan-level review of the combined artifact; never holds or fails the plan. */
+export const FALLOW_PLAN_EFFECT_KIND = "graph-verify:lazers-fallow"
 const OUTCOME_ITEM_LIMIT = 10
 
 export type FallowReview = (input: FallowReviewInput) => Promise<FallowReviewResult>
+
+/** Loads the plan review on first use, like the task review. */
+export const defaultFallowPlanReview: FallowReview = async (input) =>
+  (await import("../audit/review-plan.ts")).fallowPlanReview(input)
 
 /** Loads the analyzer on first use so a service that never verifies never pays for it. */
 export const defaultFallowReview: FallowReview = async (input) =>
@@ -28,8 +34,10 @@ export function fallowCheckReceipt(input: {
   startedAt: number
   endedAt: number
   result: FallowReviewResult
+  /** The plan-level review reports but never fails: exit 0 whatever it found. */
+  advisory?: boolean
 }): CheckReceipt {
-  const failing = input.result.introduced.length > 0
+  const failing = !input.advisory && input.result.introduced.length > 0
   return {
     id: input.id,
     command: FALLOW_CHECK_COMMAND,
