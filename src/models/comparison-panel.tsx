@@ -211,7 +211,7 @@ export function setupModelsPanel(ctx: ModelsContext, openTrajectory: TaskTraject
     )),
     () => (
       <div class="flex min-w-0 items-center gap-1.5">
-        <Ui.Icon name="settings-gear" size="small" class="shrink-0" />
+        <Ui.Icon name="models" size="small" class="shrink-0" />
         <span>Models</span>
       </div>
     ),

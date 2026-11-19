@@ -36,7 +36,7 @@ export function registerModelsPanel(
     id: "models.open",
     menu: "session.panel",
     title: "Models",
-    icon: "settings-gear",
+    icon: "models",
     order: 50,
     run: open,
   })

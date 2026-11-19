@@ -2433,7 +2433,8 @@ export function setupTaskPanel(
     run: open,
   })
   // Native `session.panel` items list in ascending `order` (Review 10, Browser 15, Terminal 20,
-  // Files 30); Tasks 40 places it last in the extra-panel + menu.
+  // Files 30) and an item without `order` is 0, ahead of them. Every LAZERS item sets one above
+  // 30 so they list together after the host's: Tasks 40, Models 50, Trajectory 60, Radar 70.
   ctx.add(MenuItem, {
     id: "tasks.open",
     menu: "session.panel",
