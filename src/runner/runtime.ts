@@ -10448,7 +10448,7 @@ export class TaskRuntime {
     const startedAt = Date.now()
     const result = await this.fallowReviewRun({
       workspace: attempt.workspace,
-      baseCommit: attempt.base_commit,
+      baseCommit: this.taskChainBase(attempt),
       artifact: artifact.commit,
       repository: this.store.repository,
       signal,
@@ -10465,6 +10465,28 @@ export class TaskRuntime {
     })
     await writeCheckReceipt(receiptPath, receipt)
     return receipt
+  }
+
+  /**
+   * The commit a task's own change is measured from: the `base_commit` of the first attempt in
+   * this attempt's continuation chain. A repair or resume starts from the previous attempt's
+   * artifact (`dispatch()` sets `base` to it), so its own `base_commit` already contains the
+   * task's earlier work. A retry from a new baseline (`base_commit` is not the previous artifact)
+   * starts a new chain, so integrated work from others is never attributed to the task.
+   */
+  private taskChainBase(attempt: AttemptRow): string {
+    const earlier = this.store
+      .attempts(attempt.plan_id)
+      .filter(
+        (candidate) => candidate.task_id === attempt.task_id && candidate.number < attempt.number,
+      )
+      .sort((left, right) => right.number - left.number)
+    let base = attempt.base_commit
+    for (const previous of earlier) {
+      if (previous.artifact !== base) break
+      base = previous.base_commit
+    }
+    return base
   }
 
   /** True while this attempt, if it fails, moves its task to REPAIR rather than FAIL. */
