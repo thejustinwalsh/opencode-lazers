@@ -25,6 +25,8 @@ import { projectProgressFact } from "../progress/projection.ts"
 import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import { LiveRadarReader } from "./live-read.ts"
 import type {
+  LiveAttemptRequestInput,
+  LiveGroupRequestInput,
   LiveHistoryRequestInput,
   LiveRadarRequestInput,
   ObservationScope,
@@ -1920,6 +1922,14 @@ export class ObservationReads {
     streamEpoch: string,
   ) {
     return this.liveRadarReader.radar(input, tracker, signal, streamEpoch)
+  }
+
+  liveGroup(input: LiveGroupRequestInput, signal: AbortSignal) {
+    return this.liveRadarReader.group(input, signal)
+  }
+
+  liveAttempt(input: LiveAttemptRequestInput, signal: AbortSignal) {
+    return this.liveRadarReader.attempt(input, signal)
   }
 
   liveHistory(input: LiveHistoryRequestInput, signal: AbortSignal) {
