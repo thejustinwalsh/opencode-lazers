@@ -2,3 +2,17 @@
 # Analysis recurses deeply on nested sources; the default 1 MiB WASI stack is too small. This
 # matches the 16 MiB worker stack native Fallow gives its threads.
 rustflags = ["-C", "link-arg=-zstack-size=16777216"]
+
+[target.wasm32-wasip1-threads]
+# The threaded module imports one shared memory the host creates, at 4 GiB less a page: Bun traps
+# when shared memory grows, and the allocator only uses the pages the module declares up front.
+# Pages cost nothing until touched. The stack size is the main thread's; helper threads get
+# their stack from the engine's thread builder.
+rustflags = [
+  "-C",
+  "link-arg=-zstack-size=16777216",
+  "-C",
+  "link-arg=--initial-memory=4294901760",
+  "-C",
+  "link-arg=--max-memory=4294967296",
+]

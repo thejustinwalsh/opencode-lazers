@@ -1,0 +1,16 @@
+diff --git a/crates/engine/src/thread_pool.rs b/crates/engine/src/thread_pool.rs
+--- a/crates/engine/src/thread_pool.rs
++++ b/crates/engine/src/thread_pool.rs
+@@ -21,8 +21,10 @@ pub fn worker_pool_builder(threads: usize) -> rayon::ThreadPoolBuilder {
+         .num_threads(threads)
+         .stack_size(WORKER_STACK_SIZE)
+         .start_handler(|_| fallow_extract::register_thread_stack(WORKER_STACK_SIZE));
+-    // WASI preview 1 cannot spawn threads: the calling thread is the pool's only worker.
+-    #[cfg(target_os = "wasi")]
++    // WASI preview 1 cannot spawn threads: the calling thread is the pool's only worker. A
++    // `wasm32-wasip1-threads` build (atomics) keeps the requested pool; its host decides how many
++    // threads it starts.
++    #[cfg(all(target_os = "wasi", not(target_feature = "atomics")))]
+     let builder = builder.num_threads(1).use_current_thread();
+     builder
+ }

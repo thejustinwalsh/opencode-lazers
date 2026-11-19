@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, rmSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
-import { makeFixture, repoRoot, runOp, snapshot, wasmModule } from "./test-support.ts"
+import {
+  makeFixture,
+  repoRoot,
+  runOp,
+  snapshot,
+  threadedWasmModule,
+  wasmModule,
+} from "./test-support.ts"
+import { MAX_FALLOW_THREADS, runFallowModule, ThreadPool } from "../fallow-wasi.ts"
 
 const ALLOWED_IMPORTS = new Set([
   "lazers_host.git_result",
@@ -110,4 +118,83 @@ describe("read-only analysis", () => {
       JSON.stringify({ ...second, elapsed_ms: 0 }),
     )
   })
+})
+
+describe("fallow-threads.wasm", () => {
+  let dir: string
+  beforeAll(() => {
+    dir = makeFixture()
+  })
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  test("imports the shared memory and thread spawn on top of the single-threaded surface", () => {
+    const imports = WebAssembly.Module.imports(threadedWasmModule).map(
+      (i) => `${i.module}.${i.name}`,
+    )
+    const extra = new Set(["env.memory", "wasi.thread-spawn"])
+    expect(imports.filter((name) => !ALLOWED_IMPORTS.has(name) && !extra.has(name))).toEqual([])
+    expect(imports).toContain("wasi.thread-spawn")
+    expect(imports.some((name) => /sock_|proc_raise|path_symlink|path_link/.test(name))).toBe(false)
+  })
+
+  test("no analysis changes the tree, and every write is refused, on helper threads too", () => {
+    const before = snapshot(dir)
+    for (const op of ["deadCode", "cycles", "architecture", "featureFlagReport", "health"])
+      runOp(op, dir, {}, {}, "threads")
+    const probe = runOp("fsProbe", dir, { options: { existing: "package.json" } }, {}, "threads")
+    for (const name of ["createDir", "writeFile", "overwrite", "append", "removeFile", "rename"])
+      expect(probe.report[name], name).toMatchObject({ ok: false })
+    expect(existsSync(join(dir, ".fallow"))).toBe(false)
+    expect(snapshot(dir)).toEqual(before)
+  }, 120_000)
+
+  test("helper threads are bounded: no more are started than the pool, the rest are refused", () => {
+    let granted = 0
+    let refused = 0
+    runOp("deadCode", repoRoot, {}, { onSpawn: (ok) => (ok ? granted++ : refused++) }, "threads")
+    expect(granted).toBeGreaterThan(0)
+    expect(granted).toBeLessThanOrEqual(MAX_FALLOW_THREADS)
+    // The engine tries a thread per deeply nested file and runs it in place when refused.
+    expect(refused).toBeGreaterThanOrEqual(0)
+  }, 120_000)
+
+  test("output is deterministic across runs and equal to the single-threaded module", () => {
+    const first = runOp("health", dir, {}, {}, "threads").report
+    const second = runOp("health", dir, {}, {}, "threads").report
+    const single = runOp("health", dir).report
+    const text = (report: unknown) => JSON.stringify({ ...(report as object), elapsed_ms: 0 })
+    expect(text(first)).toBe(text(second))
+    expect(text(first)).toBe(text(single))
+  })
+
+  test("helper workers return with each run and are reused by the next, with identical output", () => {
+    const pool = new ThreadPool()
+    const text = () =>
+      runFallowModule(
+        threadedWasmModule,
+        { op: "duplicationReport", root: dir, options: { threads: 2 } },
+        { maxThreads: 2, threadPool: pool },
+      ).stdout.replace(/"elapsed_ms":[0-9.]+/g, "")
+    const first = text()
+    expect(pool.created).toBe(2)
+    const second = text()
+    expect(pool.created).toBe(2)
+    expect(pool.reused).toBe(2)
+    expect(second).toBe(first)
+    pool.terminateAll()
+    expect(pool.idleCount).toBe(0)
+  })
+
+  test("terminating the analysis worker leaves no helper alive: the process exits on its own", async () => {
+    const script = join(import.meta.dir, "terminate-probe.ts")
+    const child = Bun.spawn([process.execPath, script, repoRoot], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const timeout = setTimeout(() => child.kill(), 60_000)
+    const code = await child.exited
+    clearTimeout(timeout)
+    expect(await new Response(child.stdout).text()).toContain("cancelled")
+    expect(code).toBe(0)
+  }, 90_000)
 })

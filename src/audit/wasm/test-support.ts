@@ -14,11 +14,23 @@ import {
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { runFallowModule, type GitCall, type RunOptions } from "../fallow-wasi.ts"
+import {
+  MAX_FALLOW_THREADS,
+  runFallowModule,
+  type GitCall,
+  type RunOptions,
+} from "../fallow-wasi.ts"
 
 export const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
 export const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
 export const wasmModule = new WebAssembly.Module(wasmBytes)
+export const threadedWasmModule = new WebAssembly.Module(
+  readFileSync(new URL("./fallow-threads.wasm", import.meta.url)),
+)
+
+/** The shipped modules: one thread, and the threaded build run with `MAX_FALLOW_THREADS`. */
+export const moduleKinds = ["single", "threads"] as const
+export type ModuleKind = (typeof moduleKinds)[number]
 
 export type OpResult = { report: Record<string, any>; git: GitCall[]; stderr: string }
 
@@ -28,12 +40,14 @@ export function runOp(
   root: string,
   extra: Record<string, unknown> = {},
   options: RunOptions = {},
+  kind: ModuleKind = "single",
 ): OpResult {
   const git: GitCall[] = []
+  const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
   const outcome = runFallowModule(
-    wasmModule,
-    { op, root, options: { threads: 1, explain: true, css: true }, ...extra },
-    { ...options, onGit: (call) => (git.push(call), options.onGit?.(call)) },
+    kind === "threads" ? threadedWasmModule : wasmModule,
+    { op, root, options: { threads, explain: true, css: true }, ...extra },
+    { maxThreads: threads, ...options, onGit: (call) => (git.push(call), options.onGit?.(call)) },
   )
   const parsed = JSON.parse(outcome.stdout) as {
     report?: Record<string, any>

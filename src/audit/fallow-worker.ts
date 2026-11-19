@@ -2,7 +2,8 @@ import { readdir, realpath } from "node:fs/promises"
 import { dirname, join, sep } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { wasmURL } from "../worker-url.ts"
-import { runFallowModule, WasiTrap } from "./fallow-wasi.ts"
+import { FallowModules, sharedMemoryAvailable, type FallowThreads } from "./fallow-threads.ts"
+import { runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
 
 /**
  * Serves Fallow analysis from the WebAssembly module on a worker thread, so the CPU work stays
@@ -34,10 +35,18 @@ export type FallowWorkerRequest = {
   /** Absolute path of the Fallow config. Local `extends` resolve through the filesystem. */
   configPath?: string
   options?: Record<string, unknown>
+  /** "on" (default) runs on the threaded module when it works, "off" never loads it. */
+  threads?: FallowThreads
 }
 
 export type FallowWorkerResponse =
-  | { id: number; ok: true; report: Record<string, unknown> }
+  | {
+      id: number
+      ok: true
+      report: Record<string, unknown>
+      /** Why this call ran on the single-threaded module although threads were on. */
+      fallback?: string
+    }
   | { id: number; error: { code: string; message: string } }
 
 const SOURCE_EXTENSIONS = new Set([
@@ -111,8 +120,18 @@ function extraRoots(request: FallowWorkerRequest): string[] {
   return directory === request.root || directory.startsWith(request.root + sep) ? [] : [directory]
 }
 
-const module = new WebAssembly.Module(
-  await Bun.file(wasmURL("./wasm/fallow.wasm", import.meta.url)).arrayBuffer(),
+const load = async (name: string) =>
+  new WebAssembly.Module(await Bun.file(wasmURL(`./wasm/${name}`, import.meta.url)).arrayBuffer())
+
+/** Helper workers of the threaded module, kept for the life of this worker and reused. */
+const threadPool = new ThreadPool()
+
+const modules = new FallowModules(
+  () => load("fallow.wasm"),
+  async () => {
+    if (!sharedMemoryAvailable()) throw new Error("shared memory is unavailable in this runtime")
+    return load("fallow-threads.wasm")
+  },
 )
 
 /** The host preopens real paths, so the root and the config are resolved before the module sees them. */
@@ -124,11 +143,14 @@ async function resolved(request: FallowWorkerRequest): Promise<FallowWorkerReque
   return { ...request, root, ...(configPath ? { configPath } : {}) }
 }
 
-async function run(raw: FallowWorkerRequest): Promise<Record<string, unknown>> {
+async function run(
+  raw: FallowWorkerRequest,
+): Promise<{ report: Record<string, unknown>; fallback?: string }> {
   const request = await resolved(raw)
   const inMemory = request.kind === "complexity" || request.kind === "duplication"
   const files = request.kind === "duplication" ? request.changed : request.files
-  if (request.kind === "complexity" && request.files?.length === 0) return { functions: [] }
+  if (request.kind === "complexity" && request.files?.length === 0)
+    return { report: { functions: [] } }
   // Complexity reads only the requested files; duplication needs the whole root as its corpus.
   const paths = !inMemory
     ? undefined
@@ -141,24 +163,33 @@ async function run(raw: FallowWorkerRequest): Promise<Record<string, unknown>> {
     configPath: request.configPath ?? "",
     ...(paths ? { paths } : {}),
     files: files ?? [],
-    options: { threads: 1, ...request.options, files: request.files ?? [] },
+    options: { ...request.options, files: request.files ?? [] },
   }
-  let stdout: string
+  let executed
   try {
-    stdout = runFallowModule(module, wasmRequest, { extraRoots: extraRoots(request) }).stdout
+    executed = await modules.execute(request.threads ?? "on", (module, threads) =>
+      runFallowModule(
+        module,
+        { ...wasmRequest, options: { ...wasmRequest.options, threads } },
+        { extraRoots: extraRoots(request), maxThreads: threads, threadPool },
+      ),
+    )
   } catch (error) {
     if (error instanceof WasiTrap)
       throw new WorkerError("analyzer-panic", error.stderr.trim().slice(-2000) || error.message)
     throw error
   }
-  const parsed = JSON.parse(stdout) as Envelope
+  const parsed = JSON.parse(executed.result.stdout) as Envelope
   if (parsed.error) throw new WorkerError(parsed.error.code, parsed.error.message)
-  return parsed.report ?? {}
+  return {
+    report: parsed.report ?? {},
+    ...(executed.fallback ? { fallback: executed.fallback } : {}),
+  }
 }
 
 async function handle(request: FallowWorkerRequest): Promise<FallowWorkerResponse> {
   try {
-    return { id: request.id, ok: true, report: await run(request) }
+    return { id: request.id, ok: true, ...(await run(request)) }
   } catch (error) {
     if (error instanceof WorkerError)
       return { id: request.id, error: { code: error.code, message: error.message } }

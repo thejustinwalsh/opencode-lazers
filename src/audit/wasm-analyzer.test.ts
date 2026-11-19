@@ -4,77 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { wasmFallowAnalyzer } from "./wasm-analyzer.ts"
-import { loadNativeFallow, nativeFallowAnalyzer } from "./wasm/native-reference.ts"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 const configPath = join(root, ".fallowrc.json")
-const nativeBinding = await loadNativeFallow()
-const nativeSuite = nativeBinding ? describe : describe.skip
-const native_ = nativeBinding ? nativeFallowAnalyzer(nativeBinding) : undefined
-
-const complexKey = (f: {
-  path: string
-  name: string
-  line: number
-  cyclomatic: number
-  cognitive: number
-}) => `${f.path}:${f.line}:${f.name}:${f.cyclomatic}:${f.cognitive}`
-const groupKey = (g: { instances: { file: string; start_line: number; end_line: number }[] }) =>
-  g.instances
-    .map((i) => `${i.file}:${i.start_line}-${i.end_line}`)
-    .sort()
-    .join("|")
-
-nativeSuite("wasmFallowAnalyzer matches nativeFallowAnalyzer on this repository", () => {
-  test("complexity findings, whole root and a file subset", async () => {
-    const scope = { root, configPath }
-    const [wasm, native] = await Promise.all([
-      wasmFallowAnalyzer.complexity(scope),
-      native_!.complexity(scope),
-    ])
-    // CRAP-only findings are native-only: the module has no coverage model.
-    const expected = native.findings.filter((f) => f.exceeded !== "crap")
-    expect(wasm.findings.map(complexKey).sort()).toEqual(expected.map(complexKey).sort())
-
-    // The native binding ignores `files` for health, so a subset is the whole report filtered.
-    // Pick the subset from files that have findings today, so a later cleanup of any one
-    // file cannot empty it.
-    const files = [...new Set(expected.map((f) => f.path))].slice(0, 3)
-    const wasmSub = await wasmFallowAnalyzer.complexity({ ...scope, files })
-    expect(wasmSub.findings.map(complexKey).sort()).toEqual(
-      expected
-        .filter((f) => files.includes(f.path))
-        .map(complexKey)
-        .sort(),
-    )
-    for (const f of wasmSub.findings) expect(files).toContain(f.path)
-  }, 90_000)
-
-  test("clone groups and the duplication percentage, whole root and a changed set", async () => {
-    const scope = { root, configPath }
-    const [wasm, native] = await Promise.all([
-      wasmFallowAnalyzer.duplication(scope),
-      native_!.duplication(scope),
-    ])
-    expect(wasm.clone_groups.map(groupKey).sort()).toEqual(native.clone_groups.map(groupKey).sort())
-    expect(wasm.stats.duplication_percentage).toBeCloseTo(native.stats.duplication_percentage, 6)
-    const byTokens = (g: { token_count: number; line_count: number }) =>
-      `${g.token_count}/${g.line_count}`
-    expect(wasm.clone_groups.map(byTokens).sort()).toEqual(native.clone_groups.map(byTokens).sort())
-
-    // The native binding ignores `files` for duplication; a changed set keeps the groups that
-    // touch it, every file staying in the corpus.
-    const touched = [...new Set(native.clone_groups.flatMap((g) => g.instances.map((i) => i.file)))]
-    const files = touched.slice(0, 10)
-    const wasmSub = await wasmFallowAnalyzer.duplication({ ...scope, files })
-    expect(wasmSub.clone_groups.map(groupKey).sort()).toEqual(
-      native.clone_groups
-        .filter((g) => g.instances.some((i) => files.includes(i.file)))
-        .map(groupKey)
-        .sort(),
-    )
-  }, 90_000)
-})
 
 describe("worker behaviour", () => {
   let dir: string
@@ -144,7 +76,7 @@ describe("worker behaviour", () => {
     expect(existsSync(join(root, ".fallow"))).toBe(false)
   })
 
-  test("dead code and cycles run in the module, with no native binding", async () => {
+  test("dead code and cycles run in the module", async () => {
     const dead = await wasmFallowAnalyzer.deadCode({ root: dir })
     expect(Array.isArray(dead.unused_files)).toBe(true)
     const cycles = await wasmFallowAnalyzer.cycles({ root: dir })

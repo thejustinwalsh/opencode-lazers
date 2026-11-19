@@ -16,6 +16,7 @@ const entries = [
   ["src/models/decision-worker.ts", "decision-worker.js"],
   ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
   ["src/audit/fallow-worker.ts", "fallow-worker.js"],
+  ["src/audit/fallow-thread.ts", "fallow-thread.js"],
 ] as const
 
 export async function buildServer() {
@@ -31,8 +32,9 @@ export async function buildServer() {
     })
     if (!result.success) throw new AggregateError(result.logs, `Server build failed: ${entry}`)
   }
-  // The fallow worker loads this module beside itself through wasmURL.
-  copyFileSync(`${root}src/audit/wasm/fallow.wasm`, `${root}dist/fallow.wasm`)
+  // The fallow worker loads these modules beside itself through wasmURL.
+  for (const module of ["fallow.wasm", "fallow-threads.wasm"])
+    copyFileSync(`${root}src/audit/wasm/${module}`, `${root}dist/${module}`)
 }
 
 if (import.meta.main) {

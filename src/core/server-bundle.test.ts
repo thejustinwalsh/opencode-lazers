@@ -31,6 +31,7 @@ test("build emits one server file plus its workers, and the bundle exports the s
       "repo-worker.js",
       "decision-worker.js",
       "fallow-worker.js",
+      "fallow-thread.js",
     ]),
   )
   const built = (await import(`${dist}server.js`)) as { default: typeof sourcePlugin }
@@ -109,32 +110,51 @@ test("worker URLs resolve beside the bundle and fall back to source", () => {
   )
 })
 
-test("the bundled fallow worker finds dist/fallow.wasm and answers a complexity request", async () => {
+test("the bundled fallow worker finds both modules and its thread script, and answers on threads and off", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lz-bundle-fallow-"))
+  const branches = Array.from({ length: 25 }, (_, i) => `  if (a === ${i}) return ${i}`).join("\n")
+  writeFileSync(join(root, "package.json"), '{"name":"bundle-fixture"}')
+  writeFileSync(
+    join(root, "complex.ts"),
+    `export function route(a: number) {\n${branches}\n  return -1\n}\n`,
+  )
   const worker = new Worker(pathToFileURL(`${dist}fallow-worker.js`))
-  try {
-    const response = await new Promise<{
-      id?: number
-      ok?: boolean
-      report?: { functions: { file: string }[] }
-      error?: unknown
-    }>((resolve, reject) => {
-      worker.on("error", reject)
-      worker.on("message", (message: { ready?: true; id?: number }) => {
-        if (message.ready)
-          worker.postMessage({
-            id: 1,
-            kind: "complexity",
-            root: fileURLToPath(new URL("../..", import.meta.url)),
-            files: ["src/audit/history.ts"],
-          })
-        else resolve(message)
-      })
+  type Reply = {
+    id?: number
+    ok?: boolean
+    report?: { functions: { file: string; name: string }[]; unused_files?: unknown[] }
+    error?: unknown
+    fallback?: string
+  }
+  const ask = (request: Record<string, unknown>) =>
+    new Promise<Reply>((resolve, reject) => {
+      worker.once("error", reject)
+      const onMessage = (message: Reply & { ready?: true }) => {
+        if (message.ready) return
+        worker.off("message", onMessage)
+        resolve(message)
+      }
+      worker.on("message", onMessage)
+      worker.postMessage({ root, ...request })
     })
-    expect(response.error).toBeUndefined()
-    expect(response.ok).toBe(true)
-    expect(response.report?.functions.length).toBeGreaterThan(0)
-    expect(response.report?.functions.every((f) => f.file === "src/audit/history.ts")).toBe(true)
+  try {
+    await new Promise((resolve) => worker.once("message", resolve))
+    for (const [id, threads] of [
+      [1, "off"],
+      [2, "on"],
+    ] as const) {
+      const complexity = await ask({ id, kind: "complexity", files: ["complex.ts"], threads })
+      expect(complexity.error).toBeUndefined()
+      expect(complexity.report?.functions.map((f) => f.name)).toEqual(["route"])
+    }
+    // A whole-project run on the threaded module needs dist/fallow-threads.wasm and
+    // dist/fallow-thread.js; a fallback would name the one that is missing.
+    const dead = await ask({ id: 3, kind: "deadCode", threads: "on" })
+    expect(dead.error).toBeUndefined()
+    expect(dead.ok).toBe(true)
+    expect(dead.fallback).toBeUndefined()
   } finally {
     await worker.terminate()
+    rmSync(root, { recursive: true, force: true })
   }
 }, 60_000)

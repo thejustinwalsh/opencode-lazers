@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs"
 import { sep } from "node:path"
 import { WASI } from "node:wasi"
+import { Worker } from "node:worker_threads"
+import { workerURL } from "../worker-url.ts"
 
 /**
  * Host for the Fallow WebAssembly module (a `wasm32-wasip1` command, `crates/fallow-wasm`).
@@ -117,15 +119,106 @@ export type RunOptions = {
   extraRoots?: readonly string[]
   /** Observe each git call that was allowed to run (tests, diagnostics). */
   onGit?: (call: GitCall) => void
+  /**
+   * Threaded modules only: how many helper threads the module may start, normally the size of
+   * its rayon pool (at most `MAX_FALLOW_THREADS`). A thread costs a Bun worker, and the engine
+   * also tries a thread per file where it can fall back to running in place, so further spawns
+   * are refused.
+   */
+  maxThreads?: number
+  /** Threaded modules only: observe each spawn request and whether it was granted. */
+  onSpawn?: (granted: boolean) => void
+  /** Threaded modules only: the worker script a helper thread runs. Defaults to `fallow-thread`. */
+  threadScript?: URL
+  /** Threaded modules only: helper workers kept between runs. Without it each run starts its own. */
+  threadPool?: ThreadPool
 }
 
-/** Instantiate `module` and run one request to completion. Throws `WasiTrap` on a trap. */
-export function runFallowModule(
-  module: WebAssembly.Module,
-  request: WasiRequest,
-  options: RunOptions = {},
-): WasiOutcome {
-  const roots = [request.root, ...(options.extraRoots ?? [])].map((root) => realpathSync(root))
+type Helper = { worker: Worker; flag: Int32Array }
+const HELPER_RUNNING = 0
+const HELPER_DONE = 1
+const HELPER_WAIT_MS = 100
+
+/**
+ * Helper workers of the threaded module, kept between runs when a run's pool threads return
+ * (`wasi_thread_start` ends) by the time the run does. A helper that is still inside the module
+ * cannot be reused and is terminated. Idle helpers are unref'd, so they never keep the process
+ * alive, and `terminateAll` ends every one of them.
+ */
+export class ThreadPool {
+  private readonly idle: Helper[] = []
+  /** Helpers created and helpers reused, for tests and measurements. */
+  created = 0
+  reused = 0
+
+  constructor(private readonly script?: URL) {}
+
+  take(script?: URL): Helper {
+    const idle = this.idle.pop()
+    if (idle) {
+      this.reused++
+      return idle
+    }
+    this.created++
+    const worker = new Worker(
+      script ?? this.script ?? workerURL("./fallow-thread", import.meta.url),
+    )
+    // An idle helper must not keep the process alive.
+    worker.unref()
+    // A helper that traps cannot be reported from here, the main thread being inside the module;
+    // the request's timeout ends the run.
+    worker.on("error", () => {})
+    return { worker, flag: new Int32Array(new SharedArrayBuffer(4)) }
+  }
+
+  /** After a run: keep the helpers that left the module, end the others. */
+  settle(helpers: readonly Helper[], keep: boolean): void {
+    for (const helper of helpers) {
+      let done = false
+      if (keep) {
+        try {
+          Atomics.wait(helper.flag, 0, HELPER_RUNNING, HELPER_WAIT_MS)
+        } catch {}
+        done = Atomics.load(helper.flag, 0) === HELPER_DONE
+      }
+      if (done) this.idle.push(helper)
+      else void helper.worker.terminate()
+    }
+  }
+
+  terminateAll(): void {
+    for (const helper of this.idle.splice(0)) void helper.worker.terminate()
+  }
+
+  get idleCount(): number {
+    return this.idle.length
+  }
+}
+
+/** Most helper threads a module may start. The analyzer chooses 1 or 2 within this bound. */
+export const MAX_FALLOW_THREADS = 2
+
+/** Initial and maximum size, in 64 KiB pages, of the shared memory a threaded module imports. */
+export const SHARED_MEMORY = { initial: 65535, maximum: 65536 } as const
+
+/** True for a module built for `wasm32-wasip1-threads`: it imports its (shared) memory. */
+export function isThreadedModule(module: WebAssembly.Module): boolean {
+  return WebAssembly.Module.imports(module).some((entry) => entry.kind === "memory")
+}
+
+type Sinks = { input: Uint8Array; inputOffset: number; out: Uint8Array[]; err: Uint8Array[] }
+
+/**
+ * The imports a module asks of its host, for the main thread and for each helper thread. Every
+ * thread has its own WASI instance (its own descriptor table) over the same preopens, and all
+ * of them are read-only.
+ */
+export function hostImports(
+  roots: readonly string[],
+  getMemory: () => WebAssembly.Memory,
+  sinks: Sinks,
+  onGit?: (call: GitCall) => void,
+): { wasi: WASI; imports: Record<string, Record<string, (...args: never[]) => number>> } {
   const preopens: Record<string, string> = Object.fromEntries(roots.map((root) => [root, root]))
   const wasi = new WASI({
     version: "preview1",
@@ -134,17 +227,12 @@ export function runFallowModule(
     preopens,
     returnOnExit: true,
   })
-  const imports: Record<string, (...args: never[]) => number> = {
-    ...(wasi.wasiImport as unknown as Record<string, (...args: never[]) => number>),
-  }
-  let memory: WebAssembly.Memory | undefined
-  const view = () => new DataView(memory!.buffer)
-  const input = new TextEncoder().encode(JSON.stringify({ ...request, root: roots[0] }))
-  let inputOffset = 0
-  const out: Uint8Array[] = []
-  const err: Uint8Array[] = []
-
   const original = wasi.wasiImport as unknown as Record<string, (...args: number[]) => number>
+  const imports: Record<string, (...args: never[]) => number> = { ...original } as Record<
+    string,
+    (...args: never[]) => number
+  >
+  const view = () => new DataView(getMemory().buffer)
   const bind = (name: string, fn: (...args: never[]) => number) => {
     imports[name] = fn
   }
@@ -160,11 +248,11 @@ export function runFallowModule(
     for (let i = 0; i < count; i++) {
       const pointer = dv.getUint32(iovs + i * 8, true)
       const length = dv.getUint32(iovs + i * 8 + 4, true)
-      const chunk = Math.min(length, input.length - inputOffset)
-      new Uint8Array(memory!.buffer, pointer, chunk).set(
-        input.subarray(inputOffset, inputOffset + chunk),
+      const chunk = Math.min(length, sinks.input.length - sinks.inputOffset)
+      new Uint8Array(getMemory().buffer, pointer, chunk).set(
+        sinks.input.subarray(sinks.inputOffset, sinks.inputOffset + chunk),
       )
-      inputOffset += chunk
+      sinks.inputOffset += chunk
       total += chunk
     }
     dv.setUint32(nread, total, true)
@@ -178,7 +266,9 @@ export function runFallowModule(
     for (let i = 0; i < count; i++) {
       const pointer = dv.getUint32(iovs + i * 8, true)
       const length = dv.getUint32(iovs + i * 8 + 4, true)
-      ;(fd === 1 ? out : err).push(new Uint8Array(memory!.buffer, pointer, length).slice())
+      ;(fd === 1 ? sinks.out : sinks.err).push(
+        new Uint8Array(getMemory().buffer, pointer, length).slice(),
+      )
       total += length
     }
     dv.setUint32(nwritten, total, true)
@@ -217,7 +307,7 @@ export function runFallowModule(
 
   // Deterministic entropy: hash maps and other seeds must not vary between runs.
   bind("random_get", ((buffer: number, length: number) => {
-    const bytes = new Uint8Array(memory!.buffer, buffer, length)
+    const bytes = new Uint8Array(getMemory().buffer, buffer, length)
     let state = 0x9e3779b9
     for (let i = 0; i < length; i++) {
       state = (Math.imul(state, 1664525) + 1013904223) >>> 0
@@ -229,7 +319,9 @@ export function runFallowModule(
   let pendingGit: Uint8Array | undefined
   const host = {
     git_run(requestPtr: number, requestLen: number): number {
-      const text = decoder.decode(new Uint8Array(memory!.buffer, requestPtr, requestLen))
+      const text = decoder.decode(
+        new Uint8Array(getMemory().buffer, requestPtr, requestLen).slice(),
+      )
       let call: GitCall
       try {
         call = JSON.parse(text) as GitCall
@@ -243,7 +335,7 @@ export function runFallowModule(
         return -1
       }
       if (!inside(cwd, roots) || gitSubcommand(call.args) === undefined) return -1
-      options.onGit?.({ ...call, cwd })
+      onGit?.({ ...call, cwd })
       const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: "/nonexistent" }
       for (const [key, value] of Object.entries(call.env ?? {})) {
         if (value !== null && !GIT_ENV_DROP.includes(key)) env[key] = value
@@ -278,30 +370,117 @@ export function runFallowModule(
       const result = pendingGit
       pendingGit = undefined
       if (!result || result.length > capacity) return -1
-      new Uint8Array(memory!.buffer, destination, result.length).set(result)
+      new Uint8Array(getMemory().buffer, destination, result.length).set(result)
       return result.length
     },
   }
+  // Pointers and lengths reach the host as signed 32-bit numbers; past 2 GiB of linear memory
+  // they would be negative. Every import sees them unsigned.
+  const unsigned = <T extends Record<string, (...args: never[]) => number>>(table: T): T =>
+    Object.fromEntries(
+      Object.entries(table).map(([name, fn]) => [
+        name,
+        (...args: unknown[]) =>
+          (fn as (...values: unknown[]) => number)(
+            ...args.map((arg) => (typeof arg === "number" ? arg >>> 0 : arg)),
+          ),
+      ]),
+    ) as unknown as T
+  return {
+    wasi,
+    imports: {
+      wasi_snapshot_preview1: unsigned(imports),
+      lazers_host: unsigned(host as never),
+    },
+  }
+}
 
-  const instance = new WebAssembly.Instance(module, {
-    wasi_snapshot_preview1: imports,
-    lazers_host: host,
-  } as WebAssembly.Imports)
-  memory = instance.exports.memory as WebAssembly.Memory
+/** What a helper thread needs to join a run (sent to its worker as a message). */
+export type ThreadStart = {
+  module: WebAssembly.Module
+  memory: WebAssembly.Memory
+  roots: string[]
+  tid: number
+  arg: number
+  /** Set to 1 (and notified) when the thread's entry point returns. */
+  flag: Int32Array
+}
+
+/** Instantiate `module` and run one request to completion. Throws `WasiTrap` on a trap. */
+export function runFallowModule(
+  module: WebAssembly.Module,
+  request: WasiRequest,
+  options: RunOptions = {},
+): WasiOutcome {
+  const roots = [request.root, ...(options.extraRoots ?? [])].map((root) => realpathSync(root))
+  const sinks: Sinks = {
+    input: new TextEncoder().encode(JSON.stringify({ ...request, root: roots[0] })),
+    inputOffset: 0,
+    out: [],
+    err: [],
+  }
+  const threaded = isThreadedModule(module)
+  let memory: WebAssembly.Memory | undefined = threaded
+    ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true })
+    : undefined
+  const { wasi, imports } = hostImports(roots, () => memory!, sinks, options.onGit)
+  const helpers: Helper[] = []
+  const pool = options.threadPool ?? new ThreadPool(options.threadScript)
+  const allowed = Math.min(options.maxThreads ?? 1, MAX_FALLOW_THREADS)
+  let nextTid = 1
+  const instanceImports: Record<string, Record<string, unknown>> = { ...imports }
+  if (threaded) {
+    instanceImports.env = { memory }
+    instanceImports.wasi = {
+      "thread-spawn": (arg: number) => {
+        if (nextTid > allowed) return (options.onSpawn?.(false), -1)
+        const tid = nextTid++
+        try {
+          const helper = pool.take(options.threadScript)
+          helper.flag = new Int32Array(new SharedArrayBuffer(4))
+          const start: ThreadStart = {
+            module,
+            memory: memory!,
+            roots,
+            tid,
+            arg,
+            flag: helper.flag,
+          }
+          helper.worker.postMessage(start)
+          helpers.push(helper)
+        } catch {
+          nextTid--
+          return (options.onSpawn?.(false), -1)
+        }
+        options.onSpawn?.(true)
+        return tid
+      },
+    }
+  }
+  const instance = new WebAssembly.Instance(module, instanceImports as WebAssembly.Imports)
+  memory = (instance.exports.memory as WebAssembly.Memory | undefined) ?? memory
   let exitCode: number | undefined
   try {
-    exitCode = wasi.start(instance as never) as number | undefined
+    // A threaded module imports its memory; `start` wants it as an export, so hand it an
+    // instance-shaped object.
+    exitCode = wasi.start(
+      (threaded
+        ? { exports: { memory, _start: () => (instance.exports._start as () => void)() } }
+        : instance) as never,
+    ) as number | undefined
   } catch (error) {
     if (error instanceof WasiExit) exitCode = error.code
     else
       throw new WasiTrap(
         error instanceof Error ? error.message : String(error),
-        decoder.decode(Buffer.concat(err)),
+        decoder.decode(Buffer.concat(sinks.err)),
       )
+  } finally {
+    pool.settle(helpers, options.threadPool !== undefined)
   }
   return {
-    stdout: decoder.decode(Buffer.concat(out)),
-    stderr: decoder.decode(Buffer.concat(err)),
+    stdout: decoder.decode(Buffer.concat(sinks.out)),
+    stderr: decoder.decode(Buffer.concat(sinks.err)),
     exitCode,
   }
 }

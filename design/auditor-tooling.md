@@ -8,15 +8,14 @@ WebAssembly Fallow build. The project test runner executes the checks.
 ## What ships today
 
 The published [v0.1.0 archive](https://github.com/thejustinwalsh/opencode-lazers/releases/tag/v0.1.0)
-contains no native executables, native libraries, or WebAssembly modules. A
-clean macOS arm64 install with `bun add --ignore-scripts` installs 19
-WebAssembly modules for Repomix and Tree-sitter, plus these Mach-O files:
-
-| File under `node_modules`                                            | Role                                                                                                                     |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `@fallow-cli/fallow-node-darwin-arm64/fallow-node.darwin-arm64.node` | Loaded by `src/audit/report.ts` for static analysis.                                                                     |
-| `@fallow-cli/fallow-similar-code-darwin-arm64/fallow-similar-code`   | Optional similar-code companion. The audit report does not start it.                                                     |
-| `@typescript/typescript-darwin-arm64/lib/tsc`                        | Native compiler from the optional `fallow-type-aware` dependency. The audit report does not request type-aware analysis. |
+contained no native executables, native libraries, or WebAssembly modules, and a clean
+macOS arm64 install with `bun add --ignore-scripts` installed 19 WebAssembly modules for
+Repomix and Tree-sitter plus Mach-O files from the native Fallow packages
+(`@fallow-cli/fallow-node-darwin-arm64`, `@fallow-cli/fallow-similar-code-darwin-arm64`)
+and the native compiler of the optional `fallow-type-aware` dependency. Those Fallow
+packages are no longer a dependency of any kind; Fallow now ships as two committed
+WebAssembly modules (single-threaded and threaded) built from vendored source, and
+`bun.lock` and `package.json` are tested never to name a Fallow package.
 
 Build-only Vite dependencies do not appear in this consumer install. Scope the
 inventory to macOS arm64. Repeat it on each release target that needs the same

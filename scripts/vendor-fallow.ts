@@ -12,6 +12,12 @@ import { join } from "node:path"
  * The tag defaults to the one already recorded in vendor/fallow/UPSTREAM.json. A tarball whose
  * sha256 differs from a recorded hash for the same tag fails loudly. A patch that no longer
  * applies fails the import and leaves vendor/fallow untouched.
+ *
+ * Re-pin procedure: import the new tag, fix any patch that stops applying, run
+ * `bun scripts/build-fallow-wasm.ts` (builds both modules and rewrites ARTIFACT.json), then run
+ * `bun test src/audit scripts`. There is no native reference to compare against and no Fallow
+ * npm package may be installed, even temporarily in this repository; the hand-written fixture
+ * tests in src/audit/wasm/ are the check, so update their expectations by reading the change.
  */
 const root = fileURLToPath(new URL("..", import.meta.url))
 const vendorDir = join(root, "vendor/fallow")

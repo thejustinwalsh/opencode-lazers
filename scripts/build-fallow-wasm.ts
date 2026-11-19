@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
@@ -7,17 +7,24 @@ import { fileURLToPath } from "node:url"
 import { patchSetSha256 } from "./vendor-fallow.ts"
 
 /**
- * Builds the vendored Fallow analysis to a WebAssembly (WASI preview 1) command and writes the
- * committed artifact:
+ * Builds the vendored Fallow analysis to two WebAssembly (WASI preview 1) commands and writes
+ * the committed artifacts:
  *
- *   bun scripts/build-fallow-wasm.ts
+ *   bun scripts/build-fallow-wasm.ts [fallow.wasm] [fallow-threads.wasm]
  *
- *   cargo build --release --locked --target wasm32-wasip1  ->  wasm-opt -Oz
- *   -> src/audit/wasm/{fallow.wasm, ARTIFACT.json}
+ *   cargo build --release --locked --target wasm32-wasip1          ->  wasm-opt -O3
+ *   cargo build --release --locked --target wasm32-wasip1-threads  ->  wasm-opt -O3
+ *   -> src/audit/wasm/{fallow.wasm, fallow-threads.wasm, ARTIFACT.json}
  *
- * Needs rustc with the wasm32-wasip1 target and `wasm-opt` on PATH.
+ * The threaded module imports a shared memory and a thread-spawn call the host serves (see
+ * `src/audit/fallow-wasi.ts`); the analyzer uses it only for large projects.
+ * Needs rustc with both targets and `wasm-opt` on PATH.
  */
-const TARGET = "wasm32-wasip1"
+const MODULES = [
+  { file: "fallow.wasm", target: "wasm32-wasip1", threads: false },
+  { file: "fallow-threads.wasm", target: "wasm32-wasip1-threads", threads: true },
+] as const
+const WASM_OPT_LEVEL = "-O3"
 const root = fileURLToPath(new URL("..", import.meta.url))
 const crateDir = join(root, "crates/fallow-wasm")
 const targetDir = join(root, ".cache/fallow-wasm-target")
@@ -72,33 +79,25 @@ async function importList(wasm: Uint8Array) {
     .sort()
 }
 
-export async function buildFallowWasm() {
-  const upstream = JSON.parse(await readFile(join(root, "vendor/fallow/UPSTREAM.json"), "utf8"))
-  const toolchain = {
-    rustc: await version(["rustc", "--version"]),
-    cargo: await version(["cargo", "--version"]),
-    wasmOpt: await version(["wasm-opt", "--version"]),
-  }
-  const sysroot = (await run(["rustc", "--print", "sysroot"])).trim()
-  await run(["cargo", "build", "--release", "--locked", "--target", TARGET], crateDir, {
+async function buildModule(
+  module: (typeof MODULES)[number],
+  flags: string[],
+): Promise<{ target: string; wasmSha256: string; bytes: number; imports: string[] }> {
+  await run(["cargo", "build", "--release", "--locked", "--target", module.target], crateDir, {
     CARGO_TARGET_DIR: targetDir,
-    // Replaces .cargo/config.toml rustflags, so the stack size is repeated. The path remaps keep
-    // panic locations from embedding this checkout's or the user's cargo home path.
+    // Replaces .cargo/config.toml rustflags, so the target's flags are repeated there and here.
     CARGO_ENCODED_RUSTFLAGS: [
-      "-C",
-      "link-arg=-zstack-size=16777216",
-      `--remap-path-prefix=${root.replace(/\/$/, "")}=/lazers`,
-      `--remap-path-prefix=${cargoHome}=/cargo`,
-      `--remap-path-prefix=${sysroot}=/rustc-sysroot`,
+      ...flags,
+      ...(module.threads
+        ? ["-C", "link-arg=--initial-memory=4294901760", "-C", "link-arg=--max-memory=4294967296"]
+        : []),
     ].join("\x1f"),
   })
-  const raw = join(targetDir, `${TARGET}/release/fallow-wasi.wasm`)
-
-  await mkdir(outDir, { recursive: true })
-  const wasmPath = join(outDir, "fallow.wasm")
+  const raw = join(targetDir, `${module.target}/release/fallow-wasi.wasm`)
+  const wasmPath = join(outDir, module.file)
   await run([
     "wasm-opt",
-    "-Oz",
+    WASM_OPT_LEVEL,
     "--strip-debug",
     "--strip-producers",
     "--enable-bulk-memory",
@@ -107,25 +106,59 @@ export async function buildFallowWasm() {
     "--enable-nontrapping-float-to-int",
     "--enable-multivalue",
     "--enable-reference-types",
+    ...(module.threads ? ["--enable-threads"] : []),
     raw,
     "-o",
     wasmPath,
   ])
-
   const wasm = await readFile(wasmPath)
-  const manifest = {
-    upstreamTag: upstream.tag as string,
-    upstreamCommit: upstream.commit as string,
-    target: TARGET,
-    patchSetSha256: await patchSetSha256(),
-    bindingSha256: await bindingSha256(),
+  console.log(`src/audit/wasm/${module.file} ${wasm.byteLength} bytes`)
+  return {
+    target: module.target,
     wasmSha256: sha256(wasm),
     bytes: wasm.byteLength,
     imports: await importList(wasm),
+  }
+}
+
+/** Build the named modules (default: all); the others keep their entry in the manifest. */
+export async function buildFallowWasm(only: readonly string[] = []) {
+  const upstream = JSON.parse(await readFile(join(root, "vendor/fallow/UPSTREAM.json"), "utf8"))
+  const toolchain = {
+    rustc: await version(["rustc", "--version"]),
+    cargo: await version(["cargo", "--version"]),
+    wasmOpt: await version(["wasm-opt", "--version"]),
+  }
+  const sysroot = (await run(["rustc", "--print", "sysroot"])).trim()
+  // The path remaps keep panic locations from embedding this checkout's or the user's cargo home.
+  const flags = [
+    "-C",
+    "link-arg=-zstack-size=16777216",
+    `--remap-path-prefix=${root.replace(/\/$/, "")}=/lazers`,
+    `--remap-path-prefix=${cargoHome}=/cargo`,
+    `--remap-path-prefix=${sysroot}=/rustc-sysroot`,
+  ]
+  await mkdir(outDir, { recursive: true })
+  const previous = existsSync(join(outDir, "ARTIFACT.json"))
+    ? (JSON.parse(await readFile(join(outDir, "ARTIFACT.json"), "utf8")).modules ?? {})
+    : {}
+  const modules: Record<string, Awaited<ReturnType<typeof buildModule>>> = { ...previous }
+  for (const module of MODULES) {
+    if (only.length > 0 && !only.includes(module.file)) continue
+    modules[module.file] = await buildModule(module, flags)
+    // The two targets share nothing worth keeping; free the disk between builds.
+    await rm(join(targetDir, module.target), { recursive: true, force: true })
+  }
+  const manifest = {
+    upstreamTag: upstream.tag as string,
+    upstreamCommit: upstream.commit as string,
+    patchSetSha256: await patchSetSha256(),
+    bindingSha256: await bindingSha256(),
+    optimization: { rustOptLevel: 3, wasmOpt: WASM_OPT_LEVEL },
+    modules,
     toolchain,
   }
   await writeFile(join(outDir, "ARTIFACT.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  console.log(`src/audit/wasm/fallow.wasm ${manifest.bytes} bytes sha256 ${manifest.wasmSha256}`)
   return manifest
 }
 
@@ -133,5 +166,5 @@ if (import.meta.main) {
   if (!existsSync(join(root, "vendor/fallow/UPSTREAM.json"))) {
     throw new Error("vendor/fallow is missing; run: bun scripts/vendor-fallow.ts")
   }
-  await buildFallowWasm()
+  await buildFallowWasm(process.argv.slice(2))
 }

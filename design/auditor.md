@@ -24,13 +24,17 @@ layer, approval service or model caller is introduced.
 
 ## Fallow
 
-Pinned production dependency: `@fallow-cli/fallow-node` 3.41.0, including its
-platform-specific native optional dependency. The library loads only when
-`lz-fallow-report` runs. Async native calls run on the server; scans run
-sequentially with one analysis thread by default, configurable per call. There
-is no renderer scan, daemon, recurring timer or local inference model.
+Fallow runs as committed WebAssembly modules built from vendored Fallow 3.43.2
+(`src/audit/wasm/`); no Fallow npm package, native addon or companion binary is a
+dependency, development or otherwise. The modules load only when an analysis runs,
+in a worker thread, so scans stay off the service event loop. By default a scan
+runs on the threaded module with a pool of two threads (plugin option
+`fallowThreads: "on" | "off"`, default `"on"`; `"off"` uses the single-threaded
+module); if the threaded module is unavailable or traps, that call and every later
+one run on the single-threaded module and the reason is logged once. There is no
+renderer scan, daemon, recurring timer or local inference model.
 
-The task SQLite database stores each run and its complete native report sections,
+The task SQLite database stores each run and its complete report sections,
 linked to project, task, plan, attempt and session. Worker association comes from
 the runtime assignment, not model claims. Start, section capture, finish and
 finding decisions carry Unix millisecond timestamps. Each analysis is committed
