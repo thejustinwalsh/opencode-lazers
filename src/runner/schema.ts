@@ -1,7 +1,7 @@
 import { MAX_PRIORITY, NO_PRIORITY } from "./priority.ts"
 import { z } from "zod"
 import { WorkerAgent } from "./worker-agent.ts"
-import { TaskProposalSchema, dropLegacyHumanEvidence } from "../task.ts"
+import { FALLOW_CHECK_ID, TaskProposalSchema, dropLegacyHumanEvidence } from "../task.ts"
 
 export const TaskState = z.enum([
   "queued",
@@ -153,6 +153,11 @@ const StrictPlanInput = z
     const verificationIDs = new Set(plan.verification.map((v) => v.id))
     if (verificationIDs.size !== plan.verification.length)
       fail("verification", "Duplicate verification ID")
+    if (verificationIDs.has(FALLOW_CHECK_ID))
+      fail(
+        "verification",
+        `Verification ID ${FALLOW_CHECK_ID} is reserved for the runtime's Fallow review`,
+      )
     if (new Set(plan.acceptance.map((a) => a.id)).size !== plan.acceptance.length)
       fail("acceptance", "Duplicate acceptance ID")
     for (const assertion of plan.acceptance)
