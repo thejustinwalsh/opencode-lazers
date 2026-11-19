@@ -41,6 +41,7 @@ test("summary rows come from the recorded events and omit what is not recorded",
     state: "cancelled",
     calls: 37,
     files: 13,
+    gaps: 3,
     failedCalls: ["shell", "shell"],
     attemptStart: 1_000,
     attemptEnd: 12_000,
@@ -49,7 +50,7 @@ test("summary rows come from the recorded events and omit what is not recorded",
   expect(rows[0]).toMatchObject({ text: "Prompt, session and worktree ready", durationMs: 2_000 })
   expect(rows[1]).toMatchObject({ text: "37 tool calls across 13 files", durationMs: 6_000 })
   expect(rows[2]).toMatchObject({
-    text: "2 shell failures · 1 provider retry · 2 recording gaps",
+    text: "2 shell failures · 1 provider retry · 3 gaps",
     action: "errors",
   })
   expect(rows[3]).toMatchObject({
@@ -64,6 +65,7 @@ test("Errors appears only when there are errors; a missing phase is left out", (
     state: "running",
     calls: 1,
     files: 0,
+    gaps: 0,
     failedCalls: [],
     attemptStart: 1_000,
     attemptEnd: null,
@@ -77,6 +79,7 @@ test("Errors appears only when there are errors; a missing phase is left out", (
       state: "accepted",
       calls: 0,
       files: 0,
+      gaps: 0,
       failedCalls: [],
       attemptStart: null,
       attemptEnd: null,
@@ -304,8 +307,74 @@ test("no price source means no cost at all", () => {
   expect(ratesRows(report(undefined))).toEqual([])
 })
 
-test("unpriced usage shows in Coverage and sets the partial label", () => {
+test("a partially priced estimate: the bar, caption and cost agree", () => {
+  // The estimate priced 8,000 of 10,000 recorded tokens; the strict-index sessions are all
+  // unpriced. The figure came from the estimate, so the bar reads the estimate, not the sessions.
+  const unpricedSession = {
+    categories: {
+      uncachedInput: category("unknown", 1_000),
+      output: category("unknown", 3_900),
+      reasoning: category("unknown", 9_600),
+      cacheRead: category("unknown", 1_200_000),
+      cacheWrite: category("zero-usage", 0),
+    },
+  }
+  const estimate = priced().observedUsageEstimate
   const cost = priced({
+    sessions: [unpricedSession],
+    coverage: {
+      totalUniqueSessions: 1,
+      pricedSessions: 0,
+      partialSessions: 1,
+      unpricedSessionIDs: ["s1"],
+    },
+    observedUsageEstimate: {
+      ...estimate,
+      status: "partial",
+      valueUSD: null,
+      pricedPortionUSD: { minimum: 0.12, maximum: 0.12 },
+      retainedCallCount: 57,
+      categories: {
+        uncachedInput: { tokens: 1_000, status: "observed" },
+        output: { tokens: 3_900, status: "observed" },
+        reasoning: { tokens: 9_600, status: "observed" },
+        cacheRead: { tokens: 600_000, status: "partial" },
+        cacheWrite: { tokens: null, status: "missing" },
+      },
+    },
+  })
+  const view = coverageView(report(cost))!
+  // Some tokens are priced, so the bar is not all warning colour, and the cost is partial.
+  expect(view.priced).toBeGreaterThan(0)
+  expect(view.priced).toBe(1_000 + 3_900 + 9_600 + 600_000)
+  expect(view.unpriced).toBe(600_000)
+  expect(view.note).toBe("cache reads have no published price")
+  expect(view.caption).toBe("57 calls priced")
+  expect(costView(report(cost))).toMatchObject({ value: "$0.12", partial: true })
+})
+
+test("an exact estimate is fully priced even when the index sessions are not", () => {
+  const cost = priced({
+    coverage: {
+      totalUniqueSessions: 1,
+      pricedSessions: 0,
+      partialSessions: 1,
+      unpricedSessionIDs: ["s1"],
+    },
+    sessions: [{ categories: { output: category("unknown", 5) } }],
+  })
+  expect(costView(report(cost))?.partial).toBe(false)
+  expect(coverageView(report(cost))).toMatchObject({ unpriced: 0 })
+})
+
+test("index-priced usage with an unpriced category is partial", () => {
+  const cost = priced({
+    observedUsageEstimate: undefined,
+    currentIndex: {
+      retrievedAt: "2026-11-19T00:00:00.000Z",
+      indexID: "x",
+      sources: [{ source: "native-catalog" }],
+    },
     sessions: [
       {
         categories: {
@@ -318,13 +387,11 @@ test("unpriced usage shows in Coverage and sets the partial label", () => {
       },
     ],
   })
-  expect(costView(report(cost))?.partial).toBe(true)
-  expect(coverageView(report(cost))).toEqual({
+  expect(costView(report(cost, 0.5))?.partial).toBe(true)
+  expect(coverageView(report(cost, 0.5))).toMatchObject({
     priced: 8_000,
     unpriced: 2_000,
-    caption: "24 calls priced",
     note: "cache writes have no published price",
-    aside: "OpenRouter prices · Nov 19",
   })
 })
 

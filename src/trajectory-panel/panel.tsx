@@ -20,12 +20,19 @@ import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { PanelIcon } from "./icons.tsx"
 import { AttemptPane, CallPane, clock, startedText } from "./details-body.tsx"
 import type { CallPaneProps } from "./details-body.tsx"
-import { attemptSummary, endReason, eventsForAttempt, priceIdentifiers } from "./attempt-summary.ts"
+import {
+  attemptSummary,
+  endReason,
+  eventsForAttempt,
+  priceIdentifiers,
+  recordGapCount,
+} from "./attempt-summary.ts"
 import { eventIsError, eventLabel, translateRuntimeWords } from "./event-names.ts"
 import type { EventFilter } from "./event-names.ts"
 import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
 import { taskStatePresentation } from "./state-presentation.ts"
+import { attemptDuration, reportTaskView, taskReason } from "./attempt-state.ts"
 import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
 import type { TaskGlyph } from "../tasks/row-presentation.ts"
@@ -45,7 +52,6 @@ import {
   durationText,
   elapsedLabel,
   eventPayload,
-  isActiveAttemptState,
   settledHistory,
   currentTaskState,
   sourceReferences,
@@ -180,16 +186,6 @@ function attemptModel(attempt: TrajectoryAttempt | undefined) {
 
 function modelLabel(model: NonNullable<ReturnType<typeof attemptModel>>) {
   return `${model.id}${model.variant ? ` · ${model.variant}` : ""}`
-}
-
-/** Recorded attempt duration; an active attempt reports elapsed time as of capture. */
-function attemptDuration(attempt: TrajectoryAttempt, asOf: number | null) {
-  const start = attempt.intervals.attempt.startedAt ?? attempt.startedAt
-  const end = attempt.intervals.attempt.endedAt
-  if (end !== null && end >= start) return { ms: end - start, open: false }
-  if (end === null && isActiveAttemptState(attempt.state) && asOf !== null && asOf >= start)
-    return { ms: asOf - start, open: true }
-  return null
 }
 
 /** One glyph per outcome, never shared; an outcome that was not recorded draws none. */
@@ -832,7 +828,7 @@ function PanelView(
   const headerModel = () => attemptModel(headerAttempt())
   const headerTiming = () => {
     const attempt = headerAttempt()
-    const duration = attempt ? attemptDuration(attempt, capturedAt()) : null
+    const duration = attempt ? spanOf(attempt) : null
     return duration ? { text: durationText(duration.ms), open: duration.open } : null
   }
   const taskStatus = () => (report() ? currentTaskState(report()!) : "")
@@ -917,7 +913,39 @@ function PanelView(
   }
   const operationText = { read: "Read", edit: "Edited", patch: "Patched" } as const
 
-  const presentation = () => taskStatePresentation(taskStatus())
+  /** The one state view every panel shows for this task (held is Waiting, not Running). */
+  const taskView = createMemo(() => {
+    const line = report()
+    return line ? reportTaskView(line, loadedEvents()) : undefined
+  })
+  const presentation = () => {
+    const view = taskView()
+    return view
+      ? { glyph: view.icon, tone: view.tone, label: view.label }
+      : taskStatePresentation(taskStatus())
+  }
+  const isLatestAttempt = (attempt: { id: string }) => report()?.attempts.at(-1)?.id === attempt.id
+  const lastActivityOf = (attempt: { id: string }) => {
+    let last: number | null = null
+    for (const event of loadedEvents())
+      if (event.attemptID === attempt.id && typeof event.at === "number")
+        last = last === null ? event.at : Math.max(last, event.at)
+    return last
+  }
+  /** Time a recorded-running attempt stops at when its task is not working. */
+  const heldFor = (attempt: TrajectoryAttempt) =>
+    isLatestAttempt(attempt) && taskView() && !taskView()!.working
+      ? { lastActivity: lastActivityOf(attempt) }
+      : undefined
+  const spanOf = (attempt: TrajectoryAttempt) =>
+    attemptDuration(attempt, capturedAt(), heldFor(attempt))
+  /** The latest attempt wears its task's state; an older attempt keeps its own outcome. */
+  const attemptState = (attempt: TrajectoryAttempt) => {
+    const view = taskView()
+    if (view && isLatestAttempt(attempt))
+      return { glyph: view.icon, tone: view.tone, label: view.label }
+    return taskStatePresentation(attempt.state)
+  }
   const hasTask = () =>
     Boolean(currentData()?.taskID || prefs().target?.taskID || prefs().selectedTaskID)
   /** A person picked something on the timeline: open the details pane (it keeps its size). */
@@ -1131,7 +1159,7 @@ function PanelView(
     if (extra && extra.at !== null)
       ticks.push({ at: Math.max(0, extra.at - start), failed: extra.failed, id: extra.id })
     if (ticks.length === 0) return null
-    const span = attemptDuration(attempt, capturedAt())
+    const span = spanOf(attempt)
     const durationMs = Math.max(span?.ms ?? 0, ...ticks.map((tick) => tick.at))
     return {
       ticks,
@@ -1278,29 +1306,38 @@ function PanelView(
     if (paneKind() !== "attempt" || !attempt || !line) return undefined
     const events = attemptEvents()
     const marks = attemptTools()
+    // Tasks and Radar count only files a call edited or patched; reads stay in the Files lane.
     const files = new Set(
       (tracks()?.files ?? [])
         .filter((file) => !file.attemptID || file.attemptID === attempt.id)
+        .filter((file) => file.operation !== "read")
         .flatMap((file) => file.paths),
     ).size
     const start = attempt.intervals.attempt.startedAt ?? attempt.startedAt
-    const presentation = taskStatePresentation(attempt.state)
+    const presentation = attemptState(attempt)
+    const ended = endReason({ state: attempt.state, events })
+    const view = taskView()
+    const explained =
+      view && isLatestAttempt(attempt) && view.explained
+        ? taskReason(view, loadedEvents(), ended?.raw ?? ended?.text)
+        : undefined
     return {
       attempt,
       line,
       events,
       files,
-      duration: attemptDuration(attempt, capturedAt()),
+      duration: spanOf(attempt),
       summary: attemptSummary({
         events,
         state: attempt.state,
         calls: attempt.toolCount.value,
         files,
+        gaps: recordGapCount(events, dataGaps()),
         failedCalls: marks.filter((mark) => mark.outcome === "failed").map((mark) => mark.tool),
         attemptStart: start,
         attemptEnd: attempt.intervals.attempt.endedAt,
       }),
-      reason: endReason({ state: attempt.state, events }),
+      reason: explained ? { text: explained, tone: presentation.tone } : ended,
       icon: <StateGlyph glyph={presentation.glyph} />,
       identifiers: identifiers([
         ["Session", attempt.sessionID],
@@ -1334,7 +1371,7 @@ function PanelView(
       </Match>
       <Match when={paneKind() === "attempt" && selectedAttempt()}>
         {(attempt) => {
-          const presentation = () => taskStatePresentation(attempt().state)
+          const presentation = () => attemptState(attempt())
           return (
             <>
               <Show when={attempt().state !== "unknown"}>
@@ -1847,7 +1884,7 @@ function PanelView(
                             const selected = () => attemptSelected(lane().attempt.id)
                             const duration = () => {
                               const value = detail()
-                              return value ? attemptDuration(value, capturedAt()) : null
+                              return value ? spanOf(value) : null
                             }
                             return (
                               <div

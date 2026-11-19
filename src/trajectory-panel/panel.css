@@ -836,6 +836,11 @@
 .lazers-trajectory-callout .lazers-callout-icon[data-tone="failed"] {
   color: var(--icon-critical-base);
 }
+.lazers-trajectory-callout .lazers-callout-icon[data-tone="waiting"],
+.lazers-trajectory-callout .lazers-callout-icon[data-tone="attention"],
+.lazers-trajectory-callout .lazers-callout-icon[data-tone="paused"] {
+  color: var(--icon-warning-active, var(--icon-warning-base));
+}
 .lazers-trajectory-callout .lazers-callout-icon[data-tone="cancelled"] {
   color: var(--text-weak);
 }
