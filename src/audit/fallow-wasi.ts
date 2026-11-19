@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs"
-import { sep } from "node:path"
+import { lstatSync, realpathSync } from "node:fs"
+import { join, normalize, sep } from "node:path"
 import { WASI } from "node:wasi"
 import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
@@ -48,6 +48,9 @@ export class WasiTrap extends Error {
     super(message)
   }
 }
+
+/** Size cap of the cache file, in MB; Fallow evicts the least recently seen entries beyond it. */
+export const FALLOW_CACHE_MAX_MB = 128
 
 const ERRNO_ROFS = 69
 const ERRNO_BADF = 8
@@ -123,7 +126,24 @@ function gitSubcommand(args: readonly string[]): string | undefined {
   return undefined
 }
 
+/** Observes every import call after it ran, with the module's memory (measurement only). */
+export type HostTrace = (
+  name: string,
+  args: readonly unknown[],
+  result: unknown,
+  memory: WebAssembly.Memory,
+) => void
+
 export type RunOptions = {
+  /** Measurement only: called after every host import. */
+  trace?: HostTrace
+  /** Measurement only: called with the instance once it exists. */
+  onInstance?: (instance: WebAssembly.Instance) => void
+  /**
+   * Let the module write Fallow's cache, and nothing else: `<root>/.fallow` (never a link).
+   * Everything outside it stays read-only.
+   */
+  cache?: boolean
   /** Extra directories to preopen, read-only. Each must exist. */
   extraRoots?: readonly string[]
   /** Observe each git call that was allowed to run (tests, diagnostics). */
@@ -227,12 +247,15 @@ export function hostImports(
   getMemory: () => WebAssembly.Memory,
   sinks: Sinks,
   onGit?: (call: GitCall) => void,
+  trace?: HostTrace,
+  /** The one directory the module may write: `<root>/.fallow`, Fallow's own cache. */
+  cacheDir?: string,
 ): { wasi: WASI; imports: Record<string, Record<string, (...args: never[]) => number>> } {
   const preopens: Record<string, string> = Object.fromEntries(roots.map((root) => [root, root]))
   const wasi = new WASI({
     version: "preview1",
     args: ["fallow"],
-    env: {},
+    env: cacheDir ? { FALLOW_CACHE_MAX_SIZE: String(FALLOW_CACHE_MAX_MB) } : {},
     preopens,
     returnOnExit: true,
   })
@@ -249,6 +272,77 @@ export function hostImports(
     throw new WasiExit(code)
   }) as never)
   for (const name of WRITE_IMPORTS) if (name in original) bind(name, () => ERRNO_ROFS)
+
+  // Writes are confined to `cacheDir`. Directory descriptors are followed so a write relative to
+  // one is judged by where it lands; a link anywhere inside the cache tree refuses the write.
+  const dirOf = new Map<number, string>()
+  const writable = new Set<number>()
+  const text = (pointer: number, length: number) =>
+    decoder.decode(new Uint8Array(getMemory().buffer, pointer, length).slice())
+  const target = (fd: number, pointer: number, length: number): string | undefined => {
+    const base = dirOf.get(fd)
+    return base === undefined ? undefined : normalize(join(base, text(pointer, length)))
+  }
+  const confined = (path: string | undefined): boolean => {
+    if (!cacheDir || path === undefined) return false
+    if (path !== cacheDir && !path.startsWith(cacheDir + sep)) return false
+    let current = cacheDir
+    for (const part of ["", ...path.slice(cacheDir.length).split(sep).filter(Boolean)]) {
+      current = part ? join(current, part) : current
+      try {
+        if (lstatSync(current).isSymbolicLink()) return false
+      } catch {
+        return true
+      }
+    }
+    return true
+  }
+  if (cacheDir) {
+    bind("fd_prestat_dir_name", ((fd: number, pointer: number, length: number) => {
+      const rc = original.fd_prestat_dir_name!(fd, pointer, length)
+      if (rc === 0) dirOf.set(fd, text(pointer, length))
+      return rc
+    }) as never)
+    bind("fd_close", ((fd: number) => {
+      dirOf.delete(fd)
+      writable.delete(fd)
+      return original.fd_close!(fd)
+    }) as never)
+    bind("path_create_directory", ((fd: number, pointer: number, length: number) =>
+      confined(target(fd, pointer, length))
+        ? original.path_create_directory!(fd, pointer, length)
+        : ERRNO_ROFS) as never)
+    bind("path_unlink_file", ((fd: number, pointer: number, length: number) =>
+      confined(target(fd, pointer, length))
+        ? original.path_unlink_file!(fd, pointer, length)
+        : ERRNO_ROFS) as never)
+    bind("path_remove_directory", ((fd: number, pointer: number, length: number) =>
+      confined(target(fd, pointer, length))
+        ? original.path_remove_directory!(fd, pointer, length)
+        : ERRNO_ROFS) as never)
+    bind("path_rename", ((
+      fd: number,
+      pointer: number,
+      length: number,
+      toFd: number,
+      toPointer: number,
+      toLength: number,
+    ) =>
+      confined(target(fd, pointer, length)) && confined(target(toFd, toPointer, toLength))
+        ? original.path_rename!(fd, pointer, length, toFd, toPointer, toLength)
+        : ERRNO_ROFS) as never)
+    for (const name of [
+      "fd_pwrite",
+      "fd_allocate",
+      "fd_filestat_set_size",
+      "fd_filestat_set_times",
+      "fd_datasync",
+      "fd_sync",
+    ] as const)
+      if (name in original)
+        bind(name, ((fd: number, ...rest: number[]) =>
+          writable.has(fd) ? original[name]!(fd, ...rest) : ERRNO_ROFS) as never)
+  }
 
   bind("fd_read", ((fd: number, iovs: number, count: number, nread: number) => {
     if (fd !== 0) return original.fd_read!(fd, iovs, count, nread)
@@ -269,7 +363,10 @@ export function hostImports(
   }) as never)
 
   bind("fd_write", ((fd: number, iovs: number, count: number, nwritten: number) => {
-    if (fd !== 1 && fd !== 2) return fd < 3 ? ERRNO_BADF : ERRNO_ROFS
+    if (fd !== 1 && fd !== 2) {
+      if (fd < 3) return ERRNO_BADF
+      return writable.has(fd) ? original.fd_write!(fd, iovs, count, nwritten) : ERRNO_ROFS
+    }
     const dv = view()
     let total = 0
     for (let i = 0; i < count; i++) {
@@ -295,13 +392,13 @@ export function hostImports(
     fdflags: number,
     opened: number,
   ) => {
-    if (
+    const where = target(fd, pathPtr, pathLen)
+    const writes =
       oflags & (OFLAGS_CREAT | OFLAGS_EXCL | OFLAGS_TRUNC) ||
       fdflags & FDFLAGS_APPEND ||
       rightsBase & WRITE_RIGHTS
-    )
-      return ERRNO_ROFS
-    return original.path_open!(
+    if (writes && !confined(where)) return ERRNO_ROFS
+    const rc = original.path_open!(
       fd,
       dirflags,
       pathPtr,
@@ -312,6 +409,12 @@ export function hostImports(
       fdflags,
       opened,
     )
+    if (rc === 0 && cacheDir) {
+      const newFd = view().getUint32(opened, true)
+      if (where !== undefined) dirOf.set(newFd, where)
+      if (writes) writable.add(newFd)
+    }
+    return rc
   }) as never)
 
   // Deterministic entropy: hash maps and other seeds must not vary between runs.
@@ -389,10 +492,12 @@ export function hostImports(
     Object.fromEntries(
       Object.entries(table).map(([name, fn]) => [
         name,
-        (...args: unknown[]) =>
-          (fn as (...values: unknown[]) => number)(
-            ...args.map((arg) => (typeof arg === "number" ? arg >>> 0 : arg)),
-          ),
+        (...args: unknown[]) => {
+          const values = args.map((arg) => (typeof arg === "number" ? arg >>> 0 : arg))
+          const result = (fn as (...values: unknown[]) => number)(...values)
+          trace?.(name, values, result, getMemory())
+          return result
+        },
       ]),
     ) as unknown as T
   return {
@@ -432,7 +537,14 @@ export function runFallowModule(
   let memory: WebAssembly.Memory | undefined = threaded
     ? new WebAssembly.Memory({ ...SHARED_MEMORY, shared: true })
     : undefined
-  const { wasi, imports } = hostImports(roots, () => memory!, sinks, options.onGit)
+  const { wasi, imports } = hostImports(
+    roots,
+    () => memory!,
+    sinks,
+    options.onGit,
+    options.trace,
+    options.cache ? join(roots[0]!, ".fallow") : undefined,
+  )
   const helpers: Helper[] = []
   const pool = options.threadPool ?? new ThreadPool(options.threadScript)
   const allowed = Math.min(options.maxThreads ?? 1, MAX_FALLOW_THREADS)
@@ -468,6 +580,7 @@ export function runFallowModule(
   }
   const instance = new WebAssembly.Instance(module, instanceImports as WebAssembly.Imports)
   memory = (instance.exports.memory as WebAssembly.Memory | undefined) ?? memory
+  options.onInstance?.(instance)
   let exitCode: number | undefined
   try {
     // A threaded module imports its memory; `start` wants it as an export, so hand it an

@@ -2,6 +2,7 @@ import { readdir, realpath } from "node:fs/promises"
 import { dirname, join, sep } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { wasmURL } from "../worker-url.ts"
+import { CACHE_MAX_FILES, publishCache, seedCache } from "./fallow-cache.ts"
 import { FallowModules, sharedMemoryAvailable, type FallowThreads } from "./fallow-threads.ts"
 import { memoryExhausted, runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
 
@@ -37,6 +38,10 @@ export type FallowWorkerRequest = {
   options?: Record<string, unknown>
   /** "on" (default) runs on the threaded module when it works, "off" never loads it. */
   threads?: FallowThreads
+  /** Use Fallow's cache in `<root>/.fallow` (whole-project analyses only). Default on. */
+  cache?: boolean
+  cacheSeed?: string
+  cachePublish?: string
 }
 
 export type FallowWorkerResponse =
@@ -166,12 +171,20 @@ async function run(
     options: { ...request.options, files: request.files ?? [] },
   }
   let executed
+  let cached = false
   try {
+    // The cache costs memory (its file is held decoded and encoded), so big projects skip it.
+    cached =
+      request.cache !== false &&
+      !inMemory &&
+      (await enumerate(request.root)).length <= CACHE_MAX_FILES
+    const cache = cached
+    if (cache && request.cacheSeed) await seedCache(request.root, request.cacheSeed).catch(() => 0)
     executed = await modules.execute(request.threads ?? "on", (module, threads) =>
       runFallowModule(
         module,
-        { ...wasmRequest, options: { ...wasmRequest.options, threads } },
-        { extraRoots: extraRoots(request), maxThreads: threads, threadPool },
+        { ...wasmRequest, options: { ...wasmRequest.options, threads, cache } },
+        { extraRoots: extraRoots(request), maxThreads: threads, threadPool, cache },
       ),
     )
   } catch (error) {
@@ -184,6 +197,8 @@ async function run(
       throw new WorkerError("analyzer-panic", error.stderr.trim().slice(-2000) || error.message)
     throw error
   }
+  if (request.cachePublish && cached)
+    await publishCache(request.root, request.cachePublish).catch(() => 0)
   const parsed = JSON.parse(executed.result.stdout) as Envelope
   if (parsed.error) throw new WorkerError(parsed.error.code, parsed.error.message)
   return {

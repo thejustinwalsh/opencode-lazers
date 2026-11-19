@@ -10,8 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+#[cfg(feature = "memstats")]
+mod memstats;
 mod project;
 mod realpath;
+
+#[cfg(feature = "memstats")]
+#[global_allocator]
+static ALLOCATOR: memstats::Counting = memstats::Counting;
 
 pub(crate) struct Failure {
     pub code: String,
@@ -46,6 +52,8 @@ struct Request {
 struct ApiOptions {
     explain: bool,
     css: bool,
+    /// Use Fallow's own cache (`<root>/.fallow`). The host decides whether it may write there.
+    cache: bool,
     threads: Option<usize>,
     files: Vec<String>,
 }
@@ -61,8 +69,8 @@ fn analysis(request: &Request, options: &ApiOptions) -> api::AnalysisOptions {
     api::AnalysisOptions {
         root: Some(PathBuf::from(&request.root)),
         config_path: (!request.config_path.is_empty()).then(|| PathBuf::from(&request.config_path)),
-        // The module never writes: no cache directory is created in the analysed tree.
-        no_cache: true,
+        // Without `cache` the module writes nothing, and no cache directory is created.
+        no_cache: !options.cache,
         threads: options.threads,
         explain: options.explain,
         ..api::AnalysisOptions::default()
@@ -169,6 +177,13 @@ fn probe(request: &Request) -> Outcome {
                 "removeFile": io_result(std::fs::remove_file(root.join(existing))),
                 "rename": io_result(
                     std::fs::rename(root.join(existing), root.join("zz-probe-renamed"))
+                ),
+                "cacheWrite": io_result(
+                    std::fs::create_dir_all(root.join(".fallow/probe"))
+                        .and_then(|()| std::fs::write(root.join(".fallow/probe/x"), b"x"))
+                ),
+                "cacheEscape": io_result(
+                    std::fs::create_dir_all(root.join(".fallow/probe/../../zz-escape"))
                 ),
                 "reads": reads,
             }))

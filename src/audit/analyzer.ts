@@ -5,6 +5,13 @@ export type AnalyzerScope = {
   root: string
   configPath?: string
   signal?: AbortSignal
+  /**
+   * Another checkout of the same project whose `.fallow` cache seeds this root's when it has
+   * none. Entries are keyed by content, so a file that differs is simply parsed.
+   */
+  cacheSeed?: string
+  /** The canonical checkout that receives this root's cache after a run, for later worktrees. */
+  cachePublish?: string
   /** Overrides the default per-call time limit. */
   timeoutMs?: number
   /** Workspace-relative or absolute paths. Omitted means the whole root. */

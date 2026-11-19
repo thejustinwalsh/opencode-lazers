@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -72,6 +73,11 @@ function leftoverTemps() {
   return readdirSync(tmpdir()).filter((name) => name.startsWith("lz-fallow-base"))
 }
 
+/** Fallow's cache is the one thing a review may leave in a tree, and it ignores itself. */
+const ignoredCacheOnly = (directory: string) =>
+  !existsSync(join(directory, ".fallow")) ||
+  readFileSync(join(directory, ".fallow/.gitignore"), "utf8") === "*\n"
+
 test("a helper added by two tasks is reported as duplication naming both files and both tasks", async () => {
   const dir = await baseRepo()
   writeFileSync(join(dir, "seed.ts"), "export const seed = 1\n")
@@ -105,7 +111,7 @@ test("a helper added by two tasks is reported as duplication naming both files a
     "task-1",
     "task-2",
   ])
-  expect(existsSync(join(dir, ".fallow"))).toBe(false)
+  expect(ignoredCacheOnly(dir)).toBe(true)
   expect(leftoverTemps()).toEqual(before)
 }, 60_000)
 
@@ -160,7 +166,7 @@ test("an import cycle added since the plan base is a concern, not an introduced 
   expect(cycle?.subject).toContain("a.ts")
   expect(cycle?.subject).toContain("b.ts")
   expect(result.introduced.filter((finding) => finding.check === "cycle")).toEqual([])
-  expect(existsSync(join(dir, ".fallow"))).toBe(false)
+  expect(ignoredCacheOnly(dir)).toBe(true)
 }, 60_000)
 
 test("a cycle that already existed at the base is not reported", async () => {
@@ -199,5 +205,5 @@ test("dead code introduced since the base is a concern when the config declares 
   const dead = result.concerns.find((finding) => finding.check === "dead-code")
   expect(dead?.subject).toContain("orphan")
   expect(result.introduced.filter((finding) => finding.check === "dead-code")).toEqual([])
-  expect(existsSync(join(dir, ".fallow"))).toBe(false)
+  expect(ignoredCacheOnly(dir)).toBe(true)
 }, 60_000)
