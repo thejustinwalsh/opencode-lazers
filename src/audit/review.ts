@@ -14,12 +14,12 @@ import { nativeFallowAnalyzer, type FallowAnalyzer } from "./analyzer.ts"
 import {
   cleanupResolvedFallowConfig,
   resolveFallowConfig,
+  thresholdsFrom,
   type ResolvedFallowConfig,
 } from "./config.ts"
 import { addedRangesForFiles, changedAnalysableFiles, materialiseBaseTree } from "./review-git.ts"
 
 const TIMEOUT_MS = 60_000
-const DEFAULT_THRESHOLDS = { cyclomatic: 20, cognitive: 15 }
 
 export type Finding = {
   id: string
@@ -52,16 +52,6 @@ export type FallowReviewInput = {
   repository: TaskRepository
   analyzer?: FallowAnalyzer
   signal?: AbortSignal
-}
-
-function thresholdsFrom(config: object | null): { cyclomatic: number; cognitive: number } {
-  const limits = (config as { limits?: Record<string, unknown> } | null)?.limits
-  const cyclomatic = typeof limits?.maxCyclomatic === "number" ? limits.maxCyclomatic : undefined
-  const cognitive = typeof limits?.maxCognitive === "number" ? limits.maxCognitive : undefined
-  return {
-    cyclomatic: cyclomatic ?? DEFAULT_THRESHOLDS.cyclomatic,
-    cognitive: cognitive ?? DEFAULT_THRESHOLDS.cognitive,
-  }
 }
 
 async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise<T> {

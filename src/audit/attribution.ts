@@ -5,6 +5,7 @@ export type ComplexityPoint = {
   name: string
   cyclomatic: number
   cognitive: number
+  line?: number
 }
 
 export type ComplexityAttribution = {
@@ -12,6 +13,7 @@ export type ComplexityAttribution = {
   name: string
   cyclomatic: number
   cognitive: number
+  line?: number
   status: "introduced" | "worsened"
   before?: { cyclomatic: number; cognitive: number }
 }

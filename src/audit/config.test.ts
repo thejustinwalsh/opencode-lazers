@@ -64,31 +64,31 @@ function repository(directory: string) {
 }
 
 test("repo config file at the base commit wins over a stored LAZERS config", async () => {
-  const { dir, base } = await repoWithConfig({ limits: { maxCyclomatic: 5 } })
+  const { dir, base } = await repoWithConfig({ health: { maxCyclomatic: 5 } })
   const r = repository(dir)
-  setFallowConfig(r, { limits: { maxCyclomatic: 99 } }, { sessionID: "s", agent: "a" })
+  setFallowConfig(r, { health: { maxCyclomatic: 99 } }, { sessionID: "s", agent: "a" })
   const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
   expect(resolved.source).toBe("repo")
-  expect(resolved.config).toEqual({ limits: { maxCyclomatic: 5 } })
+  expect(resolved.config).toEqual({ health: { maxCyclomatic: 5 } })
   await cleanupResolvedFallowConfig(resolved)
 })
 
 test("a repo config changed in the working tree but not committed at base is ignored", async () => {
-  const { dir, base } = await repoWithConfig({ limits: { maxCyclomatic: 5 } })
-  writeFileSync(join(dir, ".fallowrc.json"), JSON.stringify({ limits: { maxCyclomatic: 1000 } }))
+  const { dir, base } = await repoWithConfig({ health: { maxCyclomatic: 5 } })
+  writeFileSync(join(dir, ".fallowrc.json"), JSON.stringify({ health: { maxCyclomatic: 1000 } }))
   const r = repository(dir)
   const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
-  expect(resolved.config).toEqual({ limits: { maxCyclomatic: 5 } })
+  expect(resolved.config).toEqual({ health: { maxCyclomatic: 5 } })
   await cleanupResolvedFallowConfig(resolved)
 })
 
 test("stored LAZERS config is used when the repo has no config file", async () => {
   const { dir, base } = await repoWithConfig(undefined)
   const r = repository(dir)
-  setFallowConfig(r, { limits: { maxCyclomatic: 42 } }, { sessionID: "s", agent: "a" })
+  setFallowConfig(r, { health: { maxCyclomatic: 42 } }, { sessionID: "s", agent: "a" })
   const resolved = await resolveFallowConfig({ directory: dir, baseCommit: base, repository: r })
   expect(resolved.source).toBe("lazers")
-  expect(resolved.config).toEqual({ limits: { maxCyclomatic: 42 } })
+  expect(resolved.config).toEqual({ health: { maxCyclomatic: 42 } })
   await cleanupResolvedFallowConfig(resolved)
 })
 

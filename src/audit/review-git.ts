@@ -38,6 +38,26 @@ export async function addedRangesForFiles(
   return addedLineRangesFromDiff(text)
 }
 
+/**
+ * The merge-base with the repository's default branch, else `HEAD~1`, for a read-only preview
+ * that has no runner-assigned base commit.
+ */
+export async function resolvePreviewBaseCommit(directory: string): Promise<string> {
+  const originHead = (
+    await runGit(directory, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+  )?.trim()
+  const candidates = [originHead, "origin/main", "origin/master", "main", "master"].filter(
+    (c): c is string => Boolean(c),
+  )
+  for (const candidate of candidates) {
+    const mergeBase = await runGit(directory, "merge-base", "HEAD", candidate)
+    if (mergeBase) return mergeBase.trim()
+  }
+  const previous = await runGit(directory, "rev-parse", "HEAD~1")
+  if (previous) return previous.trim()
+  throw new Error("Could not resolve a base commit for the preview")
+}
+
 export type MaterialisedBaseTree = { directory: string; cleanup: () => Promise<void> }
 
 /**

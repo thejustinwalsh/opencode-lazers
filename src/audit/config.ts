@@ -91,12 +91,10 @@ export type ResolvedFallowConfig = {
   configPath?: string
 }
 
+/** Dead code needs entry points (Fallow's `entry` config field); with none it stays off. */
 function deadCodeEnabledFor(config: object | null): boolean {
-  if (!config) return false
-  const dead = (config as { deadCode?: unknown; rules?: Record<string, unknown> }).deadCode
-  if (dead === false) return false
-  const entryPoints = (config as { entryPoints?: unknown }).entryPoints
-  return Array.isArray(entryPoints) ? entryPoints.length > 0 : dead !== undefined
+  const entry = (config as { entry?: unknown } | null)?.entry
+  return Array.isArray(entry) && entry.length > 0
 }
 
 /**
@@ -147,6 +145,35 @@ export async function resolveFallowConfig(input: {
 export async function cleanupResolvedFallowConfig(resolved: ResolvedFallowConfig): Promise<void> {
   if (!resolved.configPath) return
   await rm(resolved.configPath, { recursive: false, force: true }).catch(() => {})
+}
+
+/** Resolves the effective config at the workspace's current HEAD, for tools with no base commit. */
+export async function resolveCurrentFallowConfig(input: {
+  directory: string
+  repository: TaskRepository
+}): Promise<ResolvedFallowConfig> {
+  const head = await runGit(input.directory, "rev-parse", "HEAD")
+  if (head === undefined) return { source: "defaults", config: null, deadCodeEnabled: false }
+  return resolveFallowConfig({ ...input, baseCommit: head.trim() })
+}
+
+const DEFAULT_THRESHOLDS = { cyclomatic: 20, cognitive: 15 }
+
+/** Complexity limits from the effective config's `health` section, else Fallow's defaults. */
+export function thresholdsFrom(config: object | null): { cyclomatic: number; cognitive: number } {
+  const health = (config as { health?: Record<string, unknown> } | null)?.health
+  const cyclomatic = typeof health?.maxCyclomatic === "number" ? health.maxCyclomatic : undefined
+  const cognitive = typeof health?.maxCognitive === "number" ? health.maxCognitive : undefined
+  return {
+    cyclomatic: cyclomatic ?? DEFAULT_THRESHOLDS.cyclomatic,
+    cognitive: cognitive ?? DEFAULT_THRESHOLDS.cognitive,
+  }
+}
+
+/** Whether the effective config explicitly turns the unused-class-members rule on. */
+export function classMembersRuleEnabled(config: object | null): boolean {
+  const rules = (config as { rules?: Record<string, unknown> } | null)?.rules
+  return rules?.["unused-class-members"] === "on"
 }
 
 // --- LAZERS project config store (append-only revisions in the task database) ---
