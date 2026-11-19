@@ -330,6 +330,217 @@ function architectSourceResult(
   return result
 }
 
+type NativeSessionInfo = Effect.Success<ReturnType<Plugin.Context["session"]["get"]>>
+
+function sessionIdentity(value: NativeSessionInfo) {
+  return JSON.stringify({
+    id: value.id,
+    parentID: value.parentID,
+    projectID: value.projectID,
+    agent: value.agent,
+    attemptID: value.metadata?.lazersAttemptID,
+    directory: value.location.directory,
+    archived: value.time.archived !== undefined,
+  })
+}
+
+function sessionExecutionState(value: NativeSessionInfo) {
+  return JSON.stringify({
+    busy: value.time.busy ? DateTime.toEpochMillis(value.time.busy) : 0,
+    idle: value.time.idle ? DateTime.toEpochMillis(value.time.idle) : 0,
+    outcome: value.outcome,
+    archived: value.time.archived !== undefined,
+  })
+}
+
+/** The reads that bracket one observation disagree: the worker changed while it was being read. */
+function observationChanged(input: {
+  before: NativeWorkerObservation
+  after: NativeWorkerObservation
+  inputBefore: string | undefined
+  currentInputID: string | undefined
+  session: NativeSessionInfo
+  middle: NativeSessionInfo
+  latest: NativeSessionInfo
+}) {
+  const { before, after, session, middle, latest } = input
+  return (
+    before.active !== after.active ||
+    before.inbox !== after.inbox ||
+    before.permissionRequests !== after.permissionRequests ||
+    before.forms !== after.forms ||
+    before.shells !== after.shells ||
+    input.inputBefore !== input.currentInputID ||
+    sessionIdentity(session) !== sessionIdentity(middle) ||
+    sessionIdentity(middle) !== sessionIdentity(latest) ||
+    sessionExecutionState(session) !== sessionExecutionState(middle) ||
+    sessionExecutionState(middle) !== sessionExecutionState(latest)
+  )
+}
+
+/** The assistant reply that followed the current input is still streaming or waiting on tools. */
+function replyUnfinished(
+  response: Extract<SessionMessage.Info, { type: "assistant" }> | undefined,
+) {
+  return (
+    response !== undefined &&
+    (response.time.completed === undefined ||
+      response.finish === "tool-calls" ||
+      response.content.some(
+        (part) =>
+          part.type === "tool" &&
+          (part.state.status === "running" || part.state.status === "streaming"),
+      ))
+  )
+}
+
+/** The current input's position in the context, its latest reply, and the turn's idle marker. */
+function turnAfterInput(
+  messages: readonly SessionMessage.Info[],
+  currentInputID: string | undefined,
+) {
+  const lastInputIndex = messages.reduce(
+    (index, message, current) =>
+      message.id === currentInputID && (message.type === "user" || message.type === "synthetic")
+        ? current
+        : index,
+    -1,
+  )
+  const response = currentInputID
+    ? [...messages.slice(lastInputIndex + 1)]
+        .reverse()
+        .find(
+          (message): message is Extract<SessionMessage.Info, { type: "assistant" }> =>
+            message.type === "assistant",
+        )
+    : undefined
+  const terminalMarker =
+    lastInputIndex >= 0
+      ? messages.slice(lastInputIndex + 1).findLast((message) => message.type === "idle")
+      : undefined
+  return { response, terminalMarker }
+}
+
+function nativeTurnState(input: {
+  currentInputID: string | undefined
+  interrupted: boolean
+  response: unknown
+  failedBeforeResponse: boolean
+  unfinishedAssistant: boolean
+}): "pending" | "completed" | "interrupted" | "unknown" {
+  if (input.currentInputID === undefined) return "unknown"
+  if (input.interrupted) return "interrupted"
+  if (input.response === undefined && !input.failedBeforeResponse) return "pending"
+  return input.unfinishedAssistant ? "interrupted" : "completed"
+}
+
+/** The host-shaped message list the runner reads; a compacted window may need the retained input first. */
+function hostMessages(
+  retainedCurrentInput: HostMessage | undefined,
+  messages: readonly SessionMessage.Info[],
+) {
+  return [
+    ...(retainedCurrentInput ? [retainedCurrentInput] : []),
+    ...messages.map((message) => ({
+      id: message.id,
+      ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
+      ...(message.metadata ? { metadata: message.metadata } : {}),
+      text:
+        message.type === "user" || message.type === "synthetic"
+          ? message.text
+          : message.type === "assistant"
+            ? message.content
+                .filter((part) => part.type === "text")
+                .map((part) => part.text)
+                .join("\n")
+            : "",
+    })),
+  ]
+}
+
+function sessionUsage(latest: NativeSessionInfo) {
+  return {
+    usage: {
+      input: latest.tokens.input,
+      output: latest.tokens.output,
+      reasoning: latest.tokens.reasoning,
+      cacheRead: latest.tokens.cache.read,
+      cacheWrite: latest.tokens.cache.write,
+      provenance: "OpenCode 2.2.5 session.get cumulative token snapshot",
+    },
+    tokens:
+      latest.tokens.input +
+      latest.tokens.output +
+      latest.tokens.reasoning +
+      latest.tokens.cache.read +
+      latest.tokens.cache.write,
+  }
+}
+
+function assistantToolCount(messages: readonly SessionMessage.Info[]) {
+  return messages.reduce(
+    (sum, message) =>
+      sum +
+      (message.type === "assistant"
+        ? message.content.filter((part) => part.type === "tool").length
+        : 0),
+    0,
+  )
+}
+
+function hostSessionView(input: {
+  latest: NativeSessionInfo
+  active: boolean
+  contradicted: boolean
+  observationUnstable: boolean
+  pendingInput: boolean
+  pendingPermissions: number
+  pendingForms: number
+  turn:
+    | { inputID: string | null; state: "pending" | "completed" | "interrupted" | "unknown" }
+    | undefined
+  runningShells: number
+  activeChildren: number
+  idleAt: number
+  busyAt: number
+  outcome: NativeSessionInfo["outcome"] | "interrupted"
+  messages: readonly SessionMessage.Info[]
+  retainedCurrentInput: HostMessage | undefined
+}) {
+  const { latest, active, contradicted, observationUnstable, pendingInput } = input
+  const { pendingPermissions, pendingForms, turn, idleAt, busyAt } = input
+  return {
+    id: latest.id,
+    parentID: latest.parentID,
+    projectID: latest.projectID,
+    directory: latest.location.directory,
+    agent: latest.agent,
+    metadata: latest.metadata,
+    archived: latest.time.archived !== undefined,
+    busy: active,
+    ...(contradicted ? { staleActive: { cause: "completed-turn" } } : {}),
+    ...(!observationUnstable || pendingInput ? { pendingInput } : {}),
+    ...(!observationUnstable || pendingPermissions ? { pendingPermissions } : {}),
+    ...(!observationUnstable || pendingForms ? { pendingForms } : {}),
+    ...(observationUnstable ? { observationUnstable: true } : {}),
+    ...(turn ? { turn } : {}),
+    runningShells: input.runningShells,
+    activeChildren: input.activeChildren,
+    ...(idleAt ? { idleAt } : {}),
+    // Last model activity: request start or completion, whichever is later.
+    ...(Math.max(busyAt, idleAt) > 0 ? { activityAt: Math.max(busyAt, idleAt) } : {}),
+    outcome: input.outcome,
+    model: latest.model,
+    ...sessionUsage(latest),
+    tools: assistantToolCount(input.messages),
+    // Subscription billing is not a dated equivalent API estimate.
+    cost: null,
+    // A compacted window can omit the real input's review binding. Read that
+    // exact retained input without replaying history or changing turn evidence.
+    messages: hostMessages(input.retainedCurrentInput, input.messages),
+  }
+}
+
 export function nativeHost(
   ctx: Plugin.Context,
   repository: TaskRepository,
@@ -378,6 +589,27 @@ export function nativeHost(
   const retainedInputID = async (sessionID: string) => {
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
+  }
+  /** The exact retained current input, read when a compacted context window no longer lists it. */
+  const readRetainedCurrentInput = async (
+    client: NativeInboxClient,
+    sessionID: string,
+    currentInputID: string,
+  ): Promise<HostMessage> => {
+    const input = await runNative(client, () =>
+      client.session.message.get({
+        sessionID,
+        messageID: SessionMessage.ID.make(currentInputID),
+      }),
+    )
+    if (input.id !== currentInputID || (input.type !== "user" && input.type !== "synthetic"))
+      throw new Error("Retained current input does not match the native worker input")
+    return {
+      id: input.id,
+      type: input.type,
+      text: input.text ?? "",
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    }
   }
   const host: RunnerHost & {
     retainedInputID(sessionID: string): Promise<string | undefined>
@@ -516,28 +748,13 @@ export function nativeHost(
       const currentInputID = detailed
         ? await resolveNativeInputID(messages, () => retainedInputID(id))
         : undefined
-      let retainedCurrentInput: HostMessage | undefined
-      if (
+      const retainedCurrentInput =
         options?.messages &&
         isWorkerAgent(session.agent) &&
         currentInputID &&
         !messages.some((message) => message.id === currentInputID)
-      ) {
-        const input = await runNative(client, () =>
-          client.session.message.get({
-            sessionID: id,
-            messageID: SessionMessage.ID.make(currentInputID),
-          }),
-        )
-        if (input.id !== currentInputID || (input.type !== "user" && input.type !== "synthetic"))
-          throw new Error("Retained current input does not match the native worker input")
-        retainedCurrentInput = {
-          id: input.id,
-          type: input.type,
-          text: input.text ?? "",
-          ...(input.metadata ? { metadata: input.metadata } : {}),
-        }
-      }
+          ? await readRetainedCurrentInput(client, id, currentInputID)
+          : undefined
       const latest = detailed ? await readSession() : session
       if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       if (!latest) {
@@ -546,67 +763,25 @@ export function nativeHost(
         return null
       }
 
-      const sessionIdentity = (value: NonNullable<typeof session>) =>
-        JSON.stringify({
-          id: value.id,
-          parentID: value.parentID,
-          projectID: value.projectID,
-          agent: value.agent,
-          attemptID: value.metadata?.lazersAttemptID,
-          directory: value.location.directory,
-          archived: value.time.archived !== undefined,
-        })
-      const sessionExecutionState = (value: NonNullable<typeof session>) =>
-        JSON.stringify({
-          busy: value.time.busy ? DateTime.toEpochMillis(value.time.busy) : 0,
-          idle: value.time.idle ? DateTime.toEpochMillis(value.time.idle) : 0,
-          outcome: value.outcome,
-          archived: value.time.archived !== undefined,
-        })
-      const beforeState = sessionExecutionState(session)
-      const afterState = sessionExecutionState(latest)
       const observationUnstable =
         detailed &&
-        (before.active !== after.active ||
-          before.inbox !== after.inbox ||
-          before.permissionRequests !== after.permissionRequests ||
-          before.forms !== after.forms ||
-          before.shells !== after.shells ||
-          inputBefore !== currentInputID ||
-          sessionIdentity(session) !== sessionIdentity(middle) ||
-          sessionIdentity(middle) !== sessionIdentity(latest) ||
-          beforeState !== sessionExecutionState(middle) ||
-          sessionExecutionState(middle) !== afterState)
+        observationChanged({
+          before,
+          after,
+          inputBefore,
+          currentInputID,
+          session,
+          middle,
+          latest,
+        })
       const reportedActive = before.active || after.active
       const pendingInput = before.pendingInput || after.pendingInput
       const pendingPermissions = Math.max(before.pendingPermissions, after.pendingPermissions)
       const pendingForms = Math.max(before.pendingForms, after.pendingForms)
       const busyAt = latest.time.busy ? DateTime.toEpochMillis(latest.time.busy) : 0
       const idleAt = latest.time.idle ? DateTime.toEpochMillis(latest.time.idle) : 0
-      const lastInputIndex = detailed
-        ? messages.reduce(
-            (index, message, current) =>
-              message.id === currentInputID &&
-              (message.type === "user" || message.type === "synthetic")
-                ? current
-                : index,
-            -1,
-          )
-        : -1
-      const response = currentInputID
-        ? [...messages.slice(lastInputIndex + 1)]
-            .reverse()
-            .find((message) => message.type === "assistant")
-        : undefined
-      const unfinishedAssistant =
-        response !== undefined &&
-        (response.time.completed === undefined ||
-          response.finish === "tool-calls" ||
-          response.content.some(
-            (part) =>
-              part.type === "tool" &&
-              (part.state.status === "running" || part.state.status === "streaming"),
-          ))
+      const { response, terminalMarker } = turnAfterInput(detailed ? messages : [], currentInputID)
+      const unfinishedAssistant = replyUnfinished(response)
       const pendingInteraction = pendingPermissions > 0 || pendingForms > 0
       // Live background activity: read from the host now, never from a hook report.
       const runningShells = Math.max(before.runningShells, after.runningShells)
@@ -635,10 +810,6 @@ export function nativeHost(
         !observationUnstable &&
         (busyAt > idleAt || unfinishedAssistant)
       // Provider admission can fail before OpenCode creates an assistant message.
-      const terminalMarker =
-        lastInputIndex >= 0
-          ? messages.slice(lastInputIndex + 1).findLast((message) => message.type === "idle")
-          : undefined
       const failedBeforeResponse =
         response === undefined &&
         latest.outcome === "failed" &&
@@ -648,15 +819,13 @@ export function nativeHost(
       const turn = options?.messages
         ? {
             inputID: currentInputID ?? null,
-            state: (currentInputID === undefined
-              ? "unknown"
-              : interrupted
-                ? "interrupted"
-                : response === undefined && !failedBeforeResponse
-                  ? "pending"
-                  : unfinishedAssistant
-                    ? "interrupted"
-                    : "completed") as "pending" | "completed" | "interrupted" | "unknown",
+            state: nativeTurnState({
+              currentInputID,
+              interrupted,
+              response,
+              failedBeforeResponse,
+              unfinishedAssistant,
+            }),
           }
         : undefined
       const outcome =
@@ -665,72 +834,23 @@ export function nativeHost(
           : interrupted
             ? "interrupted"
             : latest.outcome
-      return {
-        id: latest.id,
-        parentID: latest.parentID,
-        projectID: latest.projectID,
-        directory: latest.location.directory,
-        agent: latest.agent,
-        metadata: latest.metadata,
-        archived: latest.time.archived !== undefined,
-        busy: active,
-        ...(contradicted ? { staleActive: { cause: "completed-turn" } } : {}),
-        ...(!observationUnstable || pendingInput ? { pendingInput } : {}),
-        ...(!observationUnstable || pendingPermissions ? { pendingPermissions } : {}),
-        ...(!observationUnstable || pendingForms ? { pendingForms } : {}),
-        ...(observationUnstable ? { observationUnstable: true } : {}),
-        ...(turn ? { turn } : {}),
+      return hostSessionView({
+        latest,
+        active,
+        contradicted,
+        observationUnstable,
+        pendingInput,
+        pendingPermissions,
+        pendingForms,
+        turn,
         runningShells,
         activeChildren,
-        ...(idleAt ? { idleAt } : {}),
-        // Last model activity: request start or completion, whichever is later.
-        ...(Math.max(busyAt, idleAt) > 0 ? { activityAt: Math.max(busyAt, idleAt) } : {}),
+        idleAt,
+        busyAt,
         outcome,
-        model: latest.model,
-        usage: {
-          input: latest.tokens.input,
-          output: latest.tokens.output,
-          reasoning: latest.tokens.reasoning,
-          cacheRead: latest.tokens.cache.read,
-          cacheWrite: latest.tokens.cache.write,
-          provenance: "OpenCode 2.2.5 session.get cumulative token snapshot",
-        },
-        tokens:
-          latest.tokens.input +
-          latest.tokens.output +
-          latest.tokens.reasoning +
-          latest.tokens.cache.read +
-          latest.tokens.cache.write,
-        tools: messages.reduce(
-          (sum, message) =>
-            sum +
-            (message.type === "assistant"
-              ? message.content.filter((part) => part.type === "tool").length
-              : 0),
-          0,
-        ),
-        // Subscription billing is not a dated equivalent API estimate.
-        cost: null,
-        // A compacted window can omit the real input's review binding. Read that
-        // exact retained input without replaying history or changing turn evidence.
-        messages: [
-          ...(retainedCurrentInput ? [retainedCurrentInput] : []),
-          ...messages.map((message) => ({
-            id: message.id,
-            ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
-            ...(message.metadata ? { metadata: message.metadata } : {}),
-            text:
-              message.type === "user" || message.type === "synthetic"
-                ? message.text
-                : message.type === "assistant"
-                  ? message.content
-                      .filter((part) => part.type === "text")
-                      .map((part) => part.text)
-                      .join("\n")
-                  : "",
-          })),
-        ],
-      }
+        messages,
+        retainedCurrentInput,
+      })
     },
     async retireIntegratedWorker(input) {
       const client = await connectedClient()
