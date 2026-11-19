@@ -574,6 +574,8 @@ export function compactDuration(milliseconds: number) {
 export type SelectedModelFacts = {
   /** Rounded price range per accepted task; absent when no complete price exists. */
   price?: string
+  /** The same range unrounded, for the pane's two-decimal headline. */
+  priceRange?: { minimum: number; maximum: number }
   accepted?: number
   terminal?: number
   tokens?: string
@@ -607,7 +609,10 @@ export function selectedModelFacts(input: {
     }
   else if (referenceEstimate?.status === "conditional" && referenceEstimate.rangeUSDPerAcceptedTask)
     range = referenceEstimate.rangeUSDPerAcceptedTask
-  if (range) facts.price = formatPriceRange(range)
+  if (range) {
+    facts.price = formatPriceRange(range)
+    facts.priceRange = range
+  }
 
   facts.accepted = cohort.acceptedTaskCount
   facts.terminal = cohort.terminalTaskCount

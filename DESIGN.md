@@ -307,13 +307,30 @@ observations and refresh without blocking the panel. Native OpenCode remains
 the authority for available execution routes; the data source does not choose
 or restrict the execution provider.
 Show a focused Pareto plot. Keep a complete keyboard-accessible data alternative
-behind a disclosure, rather than a persistent competing table. Selecting a model
-reveals a concise task estimate, with quality/acceptance, sample size, tokens,
-cost, time, related runs and price details available below. Use current OpenRouter
-market prices for the estimate when available, with the configured source fallback.
-An estimate does not require exact historical billing reconstruction. Use readable
-rounded prices in the summary; retain precise values and the estimate basis in
-accessible detail. Do not invent missing prices or present a known subtotal as a
+behind an `All models · n` disclosure in the list region under the chart, never in the
+details pane. Selecting a model opens the details pane (`src/models/model-pane.tsx`,
+presentation in `src/models/pane-presentation.ts`), built from the details kit:
+
+- Your runs: the bar (name, route in mono, Assign), then one headline figure, the
+  cost per accepted task at two decimals with its unit and a `small sample` Label when
+  fewer than three terminal tasks back it; a stat row (Accepted, Tokens / task, Time /
+  task, Attempts / task); a Coverage bar (priced share of tokens and, in one caption,
+  what has no published price); Runs as flat rows (task, outcome, tokens, cost,
+  Trajectory link); then the disclosures Tokens, Sources, Caveats (at most three short
+  lines) and Identifiers.
+- Benchmark: the headline score with its benchmark name; a stat row (Input, Output,
+  Cached price per 1M); disclosures Scores (only when the source reports more than the
+  headline), Sources, Caveats and Identifiers. The chart's 3:1 blended price is named
+  once, in Caveats, and is not a stat.
+- Exact figures (up to four significant digits), usage by kind with rate coverage,
+  price pins, snapshot read times (once, in Sources), and every id, hash and revision
+  appear only inside the disclosures. Contract enums are translated for display; a
+  missing price omits the figure rather than labelling it. The price source that valued
+  the estimate stays visible under Sources, with its quote kind.
+
+Use current OpenRouter market prices for the estimate when available, with the
+configured source fallback. An estimate does not require exact historical billing
+reconstruction. Do not invent missing prices or present a known subtotal as a
 complete total. Omit genuinely unpriced costs without an unavailable label.
 The Benchmark empty state names what is missing and offers "Open provider
 settings".
@@ -342,7 +359,7 @@ with where it came from: Observed (recorded runs), Routed (named by the model
 router's persona and layer routes) and Catalog (the configured price sources in
 order, the top 30 by public coding index, plus the current Anthropic and OpenAI
 lineups for BYOK). Nothing is hard-coded; a source that is unavailable contributes
-nothing and is named in the "Estimate basis and prices" disclosure. Unobserved
+nothing and is named under Sources in the details pane. Unobserved
 models are projected: list prices times the median tokens per accepted task of our
 own accepted tasks, with the basis stated. The segmented control is
 `Your runs · Projected · Benchmark`. "All models" lists every entry ranked best
