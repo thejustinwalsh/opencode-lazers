@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Models your runs details pane</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
+        <style>
+          body {
+            margin: 0;
+          }
+          a {
+            color: #9aa0aa;
+          }
+          a:hover {
+            color: #f2f3f5;
+          }
+        </style>
+      </helmet>
+      <div
+        style="
+          width: 680px;
+          height: 620px;
+          box-sizing: border-box;
+          background: #0a0c10;
+          color: #c9cdd4;
+          font-family: Inter, system-ui, sans-serif;
+          font-size: 13px;
+          line-height: 1.45;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+        "
+      >
+        <div
+          style="
+            height: 32px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 8px 0 4px;
+            box-sizing: border-box;
+            border-top: 1px solid #1b1f26;
+            font-size: 12.5px;
+          "
+        >
+          <button
+            aria-label="Collapse details"
+            style="
+              width: 20px;
+              height: 24px;
+              padding: 0;
+              border: 0;
+              border-radius: 4px;
+              background: none;
+              display: inline-grid;
+              place-items: center;
+            "
+          >
+            <svg
+              aria-hidden="true"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="#8b919b"
+              stroke-width="1.4"
+            >
+              <path d="M2 3.5 5 6.5l3-3"></path>
+            </svg>
+          </button>
+          <span style="font-weight: 600; color: #f2f3f5">Kimi K3.1 Pro</span>
+          <span
+            style="
+              font-family: &quot;JetBrains Mono&quot;, monospace;
+              font-size: 12px;
+              color: #8b919b;
+            "
+            >opencode-go/kimi-k3.1-pro · high</span
+          >
+          <span style="flex: 1"></span>
+          <button
+            style="
+              height: 24px;
+              padding: 0 8px;
+              border: 1px solid #2a303a;
+              border-radius: 6px;
+              background: none;
+              color: #c9cdd4;
+              font: inherit;
+            "
+          >
+            Assign…
+          </button>
+        </div>
+
+        <div
+          style="
+            flex: 1;
+            min-height: 0;
+            padding: 8px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          "
+        >
+          <div style="display: flex; align-items: baseline; gap: 10px">
+            <span
+              style="
+                font-size: 22px;
+                font-weight: 600;
+                color: #f2f3f5;
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+              "
+              >$2.93</span
+            >
+            <span style="color: #8b919b">per accepted task</span>
+            <span style="flex: 1"></span>
+            <span
+              style="
+                padding: 0 5px;
+                border: 1px solid #f0b48a;
+                border-radius: 3px;
+                background: rgba(240, 180, 138, 0.22);
+                color: #f6cdb0;
+                font-size: 11px;
+                line-height: 16px;
+              "
+              >small sample</span
+            >
+          </div>
+
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 16px;
+              padding: 10px 0;
+              border-top: 1px solid #1b1f26;
+              border-bottom: 1px solid #1b1f26;
+            "
+          >
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Accepted</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >1 of 2</span
+              >
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Tokens / task</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >10.8M</span
+              >
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Time / task</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >32m</span
+              >
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Attempts / task</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >2</span
+              >
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; align-items: center; justify-content: space-between">
+              <span style="font-size: 12px; color: #8b919b">Coverage</span>
+              <span style="font-size: 12px; color: #8b919b">market prices · Nov 19</span>
+            </div>
+            <div style="height: 4px; background: #252a33; display: flex">
+              <div style="width: 80%; background: #9ed3f7"></div>
+              <div style="width: 20%; background: #f0b48a"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px">
+              <span
+                ><span style="font-family: &quot;JetBrains Mono&quot;, monospace">$2.33</span>
+                priced from the OpenRouter catalog</span
+              ><span style="color: #f0b48a">cache writes have no published price</span>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column">
+            <div
+              style="
+                display: grid;
+                grid-template-columns: 84px 1fr 72px 64px 72px;
+                gap: 12px;
+                align-items: center;
+                height: 26px;
+                border-bottom: 1px solid #1b1f26;
+                font-size: 12px;
+                color: #8b919b;
+              "
+            >
+              <span>Task</span><span>Outcome</span><span style="text-align: right">Tokens</span
+              ><span style="text-align: right">Cost</span><span></span>
+            </div>
+            <div
+              style="
+                display: grid;
+                grid-template-columns: 84px 1fr 72px 64px 72px;
+                gap: 12px;
+                align-items: center;
+                height: 28px;
+                border-bottom: 1px solid #1b1f26;
+              "
+            >
+              <span
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12px;
+                  color: #8b919b;
+                "
+                >[TASK ID]</span
+              ><span style="color: #f2f3f5">Accepted</span
+              ><span
+                style="
+                  text-align: right;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                "
+                >10.8M</span
+              ><span
+                style="
+                  text-align: right;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                "
+                >$2.93</span
+              ><a href="#trajectory" style="font-size: 12px; text-align: right">Trajectory</a>
+            </div>
+            <div
+              style="
+                display: grid;
+                grid-template-columns: 84px 1fr 72px 64px 72px;
+                gap: 12px;
+                align-items: center;
+                height: 28px;
+              "
+            >
+              <span
+                style="
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12px;
+                  color: #8b919b;
+                "
+                >LZ-104</span
+              ><span>Retry</span
+              ><span
+                style="
+                  text-align: right;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                "
+                >37.7k</span
+              ><span
+                style="
+                  text-align: right;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 11.5px;
+                "
+                >$0.08</span
+              ><a href="#trajectory" style="font-size: 12px; text-align: right">Trajectory</a>
+            </div>
+          </div>
+
+          <div
+            style="
+              display: flex;
+              flex-direction: column;
+              border-top: 1px solid #1b1f26;
+              padding-top: 6px;
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Tokens</span><span style="color: #8b919b">· 5 kinds</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Sources</span><span style="color: #8b919b">· OpenRouter, OpenCode</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Caveats</span><span style="color: #8b919b">· 3</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Identifiers</span>
+            </div>
+          </div>
+        </div>
+        <div
+          style="
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 362px;
+            border-top: 1px dashed #3a404a;
+            pointer-events: none;
+          "
+        ></div>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":680,"height":620}}'>
+      class Component extends DCLogic {
+      renderVals() {
+      return {};
+      }
+      }
+    </script>
+  </body>
+</html>

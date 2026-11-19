@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Trajectory tool call details pane</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
+        <style>
+          body {
+            margin: 0;
+          }
+          a {
+            color: #9aa0aa;
+          }
+          a:hover {
+            color: #f2f3f5;
+          }
+        </style>
+      </helmet>
+      <div
+        style="
+          width: 680px;
+          height: 700px;
+          box-sizing: border-box;
+          background: #0a0c10;
+          color: #c9cdd4;
+          font-family: Inter, system-ui, sans-serif;
+          font-size: 13px;
+          line-height: 1.45;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+        "
+      >
+        <div
+          style="
+            height: 32px;
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 8px 0 4px;
+            box-sizing: border-box;
+            border-top: 1px solid #1b1f26;
+            font-size: 12.5px;
+          "
+        >
+          <button
+            aria-label="Collapse details"
+            style="
+              width: 20px;
+              height: 24px;
+              padding: 0;
+              border: 0;
+              border-radius: 4px;
+              background: none;
+              display: inline-grid;
+              place-items: center;
+            "
+          >
+            <svg
+              aria-hidden="true"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="#8b919b"
+              stroke-width="1.4"
+            >
+              <path d="M2 3.5 5 6.5l3-3"></path>
+            </svg>
+          </button>
+          <svg role="img" aria-label="Succeeded" width="14" height="14" viewBox="0 0 14 14">
+            <circle cx="7" cy="7" r="6" fill="#6bd28f"></circle>
+            <path d="M4.2 7.2 6.2 9l3.6-4" fill="none" stroke="#0a0c10" stroke-width="1.5"></path>
+          </svg>
+          <span style="color: #6bd28f">Succeeded</span>
+          <span
+            style="
+              font-family: &quot;JetBrains Mono&quot;, monospace;
+              font-size: 12px;
+              color: #c9cdd4;
+            "
+            >shell</span
+          >
+          <span style="flex: 1"></span>
+          <span
+            style="
+              font-family: &quot;JetBrains Mono&quot;, monospace;
+              font-size: 12px;
+              color: #8b919b;
+            "
+            >12 / 38</span
+          >
+          <button
+            aria-label="Previous call"
+            style="
+              width: 24px;
+              height: 24px;
+              padding: 0;
+              border: 0;
+              border-radius: 4px;
+              background: none;
+              display: inline-grid;
+              place-items: center;
+            "
+          >
+            <svg
+              aria-hidden="true"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="#c9cdd4"
+              stroke-width="1.4"
+            >
+              <path d="M6.5 2 3.5 5l3 3"></path>
+            </svg>
+          </button>
+          <button
+            aria-label="Next call"
+            style="
+              width: 24px;
+              height: 24px;
+              padding: 0;
+              border: 0;
+              border-radius: 4px;
+              background: none;
+              display: inline-grid;
+              place-items: center;
+            "
+          >
+            <svg
+              aria-hidden="true"
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="#c9cdd4"
+              stroke-width="1.4"
+            >
+              <path d="M3.5 2 6.5 5l-3 3"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div
+          style="
+            flex: 1;
+            min-height: 0;
+            padding: 8px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          "
+        >
+          <div style="font-size: 12px; color: #8b919b">
+            <a href="TrajectoryAttempt.dc.html">LZ-240 · Attempt 1</a> › shell
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 12px; color: #8b919b">Command</span>
+            <div
+              style="
+                padding: 8px 10px;
+                border-radius: 6px;
+                background: #12151b;
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-size: 12px;
+                color: #f2f3f5;
+              "
+            >
+              git diff --check
+            </div>
+          </div>
+
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 16px;
+              padding: 10px 0;
+              border-top: 1px solid #1b1f26;
+              border-bottom: 1px solid #1b1f26;
+            "
+          >
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Started</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >8:14:02 PM · +22m</span
+              >
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Duration</span
+              ><span
+                style="
+                  color: #f2f3f5;
+                  font-family: &quot;JetBrains Mono&quot;, monospace;
+                  font-size: 12.5px;
+                "
+                >25ms</span
+              >
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 2px">
+              <span style="font-size: 12px; color: #8b919b">Result</span
+              ><span
+                ><span
+                  style="
+                    padding: 0 5px;
+                    border: 1px solid #6bd28f;
+                    border-radius: 3px;
+                    background: rgba(107, 210, 143, 0.22);
+                    color: #a8e6bd;
+                    font-family: &quot;JetBrains Mono&quot;, monospace;
+                    font-size: 11px;
+                    line-height: 16px;
+                  "
+                  >exit 0</span
+                ></span
+              >
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 12px; color: #8b919b">Position</span>
+            <div
+              style="
+                height: 26px;
+                background: #0e1116;
+                border-top: 1px solid #1b1f26;
+                border-bottom: 1px solid #1b1f26;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                padding: 0 8px;
+                overflow: hidden;
+              "
+            >
+              <span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 14px"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span
+                style="
+                  width: 8px;
+                  height: 18px;
+                  border: 1px solid #f2f3f5;
+                  border-radius: 3px;
+                  box-sizing: border-box;
+                  display: inline-grid;
+                  place-items: center;
+                "
+                ><span style="width: 2px; height: 10px; background: #b4a0f0"></span></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 40px"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #e5484d"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 90px"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #e5484d"></span
+              ><span style="width: 120px"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span
+              ><span style="width: 2px; height: 12px; background: #6e628f"></span>
+            </div>
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                font-family: &quot;JetBrains Mono&quot;, monospace;
+                font-size: 11px;
+                color: #8b919b;
+              "
+            >
+              <span>7:51 PM</span><span>11:51 PM</span>
+            </div>
+          </div>
+
+          <div
+            style="
+              display: flex;
+              flex-direction: column;
+              border-top: 1px solid #1b1f26;
+              padding-top: 6px;
+            "
+          >
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Payload</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; height: 28px">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="#8b919b"
+                stroke-width="1.4"
+              >
+                <path d="M3.5 2 6.5 5l-3 3"></path></svg
+              ><span>Identifiers</span>
+            </div>
+          </div>
+        </div>
+        <div
+          style="
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 362px;
+            border-top: 1px dashed #3a404a;
+            pointer-events: none;
+          "
+        ></div>
+      </div>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":680,"height":700}}'>
+      class Component extends DCLogic {
+      renderVals() {
+      return {};
+      }
+      }
+    </script>
+  </body>
+</html>
