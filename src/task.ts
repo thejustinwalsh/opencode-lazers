@@ -55,7 +55,28 @@ export const TaskProposalSchema = z
       .array(writePath)
       .max(100)
       .describe(
-        "Use exact file paths or Bun glob patterns. For a directory and its subtree, use dir/**; dir alone does not include its files.",
+        "Existing files the worker may modify (the edit scope). Use exact file paths or Bun glob patterns. For a directory and its subtree, use dir/**; dir alone does not include its files. Prefer a module folder (dir/**) over one large file when the work is local to the module.",
+      ),
+    createScope: z
+      .array(
+        z.strictObject({
+          path: writePath.describe(
+            "A new file, or a folder ending in / for new files. Describes where new code belongs; creating it is expected, creating elsewhere is not forbidden.",
+          ),
+          purpose: text.describe("One short line: what belongs there."),
+        }),
+      )
+      .max(50)
+      .optional()
+      .describe(
+        "The expected structure: new files or folders the worker should create, each with its purpose. Additive only; new files beside edit-scoped files are allowed without listing them.",
+      ),
+    protectedScope: z
+      .array(writePath)
+      .max(100)
+      .optional()
+      .describe(
+        "Exact paths or Bun glob patterns the worker must not touch. The only hard boundary: a change here holds the task until the Architect decides.",
       ),
     context: z.array(z.strictObject({ reference: text, revision: text.nullable() })).max(100),
     acceptance: z

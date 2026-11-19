@@ -46,7 +46,7 @@ The runtime owns plan admission, dispatch, dependencies, verification, configure
 
 Preserve the exact provider, model, and variant. Catalog metadata does not veto a configured route. Keep native route failures visible; do not substitute another model or effort. Running attempts keep their recorded route.
 
-Workers keep normal native OpenCode tools and user or project permissions. Context packets guide source reads; they do not limit permitted reads. The runtime enforces task write scope. [`registerWorker`](../../src/runner/roles.ts) blocks worker delegation and plan-dispatch tools.
+Workers keep normal native OpenCode tools and user or project permissions. Context packets guide source reads; they do not limit permitted reads. The runtime enforces the task scope: `protectedScope` changes hold the task; a change outside `writeScope`/`createScope` is a reviewed divergence the Architect decides before acceptance (see [runtime state machines](../../design/runtime-state-machines.md)). [`registerWorker`](../../src/runner/roles.ts) blocks worker delegation and plan-dispatch tools.
 
 Each task can use one model-independent persona: `ui`, `systems`, or `small-refactoring`. Persona choice does not select a provider or model. Runtime-managed investigator and researcher roles are not implemented in v0.1.0.
 

@@ -1,5 +1,6 @@
 import { FallowAcceptance } from "../audit/contract.ts"
 import { findingLine, renderNotice } from "../audit/fallow-render.ts"
+import { ScopeReport, scopeNotice } from "./scope.ts"
 import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
 
 /** Human action beside durable machine identity, without replaying full check logs. */
@@ -83,6 +84,10 @@ export function outcomeText(serialized: string) {
       action = "Recorded runtime update; no automatic action is requested."
   }
   if (payload.status === "task-accepted" && payload.fallow) action += fallowNotice(payload.fallow)
+  if (payload.status === "task-accepted" && payload.scope) {
+    const scope = ScopeReport.safeParse(payload.scope)
+    if (scope.success) action += scopeNotice(scope.data)
+  }
   if (payload.status === "accepted" && payload.fallow) action += planFallowNotice(payload.fallow)
   const evidence = Array.isArray(payload.evidence)
     ? payload.evidence.map((check: unknown) =>

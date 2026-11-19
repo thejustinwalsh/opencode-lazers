@@ -28,6 +28,8 @@ import {
 } from "./artifacts.ts"
 import { checkSucceeded } from "./checks.ts"
 
+const only = (...allowed: string[]) => ({ protected: ["**"], released: allowed })
+
 test("F-S5-11 a slow Git observation leaves timers responsive and preserves command failures", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-async-git-"))
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -407,6 +409,10 @@ test("identical check modules retain the same environment identity across reload
         JSON.stringify(fileURLToPath(new URL("./quality-failure.ts", import.meta.url))),
       )
       .replace(
+        '"./scope.ts"',
+        JSON.stringify(fileURLToPath(new URL("./scope.ts", import.meta.url))),
+      )
+      .replace(
         '"./verification-timeout.ts"',
         JSON.stringify(fileURLToPath(new URL("./verification-timeout.ts", import.meta.url))),
       )
@@ -581,12 +587,12 @@ test("worker commits are retained and their committed changes remain subject to 
     git(root, ["add", "source.txt"])
     commit("worker implementation")
     const head = git(root, ["rev-parse", "HEAD"])
-    const artifact = await commitArtifact(root, base, ["source.txt"])
+    const artifact = await commitArtifact(root, base, only("source.txt"))
     expect(artifact.commit).toBe(head)
     expect(artifact.paths).toEqual(["source.txt"])
-    await expect(commitArtifact(root, base, ["other.txt"])).rejects.toThrow("Out-of-scope")
+    await expect(commitArtifact(root, base, only("other.txt"))).rejects.toThrow("Out-of-scope")
     writeFileSync(join(root, "source.txt"), "repair")
-    const dirty = await commitArtifact(root, base, ["source.txt"])
+    const dirty = await commitArtifact(root, base, only("source.txt"))
     expect(git(root, ["rev-parse", `${dirty.commit}^`])).toBe(head)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -628,21 +634,21 @@ test("isolated rebases exclude reviewed main changes while retaining worker scop
       "main",
     ])
     const candidate = git(root, ["rev-parse", "HEAD"])
-    expect(await commitArtifact(root, base, ["source.txt"], true, reviewed)).toEqual({
+    expect(await commitArtifact(root, base, only("source.txt"), true, reviewed)).toEqual({
       commit: candidate,
       identity: candidate,
       paths: ["source.txt"],
       scopeBase: reviewed,
     })
     // Shared execution still compares against its admitted baseline.
-    await expect(commitArtifact(root, base, ["source.txt"], false, reviewed)).rejects.toThrow(
+    await expect(commitArtifact(root, base, only("source.txt"), false, reviewed)).rejects.toThrow(
       "Out-of-scope",
     )
-    expect((await commitArtifact(root, reviewed, ["source.txt"], true, base)).scopeBase).toBe(
+    expect((await commitArtifact(root, reviewed, only("source.txt"), true, base)).scopeBase).toBe(
       reviewed,
     )
     writeFileSync(join(root, "escape.txt"), "unreviewed worker edit")
-    await expect(commitArtifact(root, base, ["source.txt"], true, reviewed)).rejects.toThrow(
+    await expect(commitArtifact(root, base, only("source.txt"), true, reviewed)).rejects.toThrow(
       "escape.txt",
     )
   } finally {
@@ -658,13 +664,13 @@ test("divergent isolated repairs compare against the safe merge of admitted and 
     expect(git(root, ["merge-base", base, incorporated])).toBe(fixture.origin)
 
     // Shared execution still measures from the admitted base, not isolated review ancestry.
-    await expect(commitArtifact(root, base, ["repair/**"], false, reviewedHead)).rejects.toThrow(
-      "reviewed.txt",
-    )
+    await expect(
+      commitArtifact(root, base, only("repair/fix.ts"), false, reviewedHead),
+    ).rejects.toThrow("reviewed.txt")
 
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "fix.ts"), "repair")
-    const artifact = await commitArtifact(root, base, ["repair/**"], true, reviewedHead)
+    const artifact = await commitArtifact(root, base, only("repair/fix.ts"), true, reviewedHead)
 
     expect(artifact.paths).toEqual(["repair/fix.ts"])
     expect(artifact.commit).toBe(artifact.identity)
@@ -694,9 +700,9 @@ test("edits to reviewed paths and unauthorized files remain violations in every 
       }
 
       const violation = variant === "untracked" ? "unauthorized.txt" : "reviewed.txt"
-      await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
-        violation,
-      )
+      await expect(
+        commitArtifact(root, base, only("repair/fix.ts"), true, reviewedHead),
+      ).rejects.toThrow(violation)
       if (variant === "committed") {
         expect(git(root, ["rev-parse", "HEAD"])).not.toBe(workerHead)
       } else {
@@ -729,9 +735,9 @@ test("reviewed content copied without shared ancestry is not exempted", async ()
     const workerHead = commitAll(root, "copy reviewed content without ancestry")
 
     expect(git(root, ["merge-base", workerHead, reviewedHead])).toBe(origin)
-    await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
-      "copied.txt",
-    )
+    await expect(
+      commitArtifact(root, base, only("repair/fix.ts"), true, reviewedHead),
+    ).rejects.toThrow("copied.txt")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -758,9 +764,9 @@ test("conflicting virtual baselines fail before staging even when the worker res
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "allowed.ts"), "must remain unstaged")
 
-    await expect(commitArtifact(root, base, ["repair/**"], true, reviewedHead)).rejects.toThrow(
-      "conflict-free reviewed artifact baseline",
-    )
+    await expect(
+      commitArtifact(root, base, only("repair/fix.ts"), true, reviewedHead),
+    ).rejects.toThrow("conflict-free reviewed artifact baseline")
     expect(git(root, ["rev-parse", "HEAD"])).toBe(workerHead)
     expect(git(root, ["diff", "--cached", "--name-only"])).toBe("")
     expect(git(root, ["ls-files", "--others", "--exclude-standard"])).toBe("repair/allowed.ts")
@@ -792,9 +798,9 @@ test("ambiguous reviewed ancestry fails closed before staging", async () => {
     git(root, ["checkout", "first"])
     mkdirSync(join(root, "repair"), { recursive: true })
     writeFileSync(join(root, "repair", "allowed.ts"), "must remain unstaged")
-    await expect(commitArtifact(root, origin, ["repair/**"], true, reviewedHead)).rejects.toThrow(
-      "unique merge base",
-    )
+    await expect(
+      commitArtifact(root, origin, only("repair/fix.ts"), true, reviewedHead),
+    ).rejects.toThrow("unique merge base")
     expect(git(root, ["diff", "--cached", "--name-only"])).toBe("")
     expect(git(root, ["ls-files", "--others", "--exclude-standard"])).toBe("repair/allowed.ts")
   } finally {
@@ -853,7 +859,7 @@ test("combined artifacts and verified candidates use the configured identity and
 
     git(root, ["config", "commit.gpgsign", "false"])
     writeFileSync(join(root, "second.txt"), "dirty")
-    const candidate = await commitArtifact(root, origin, ["second.txt"])
+    const candidate = await commitArtifact(root, origin, only("second.txt"))
     expect(git(root, ["show", "-s", "--format=%an <%ae>", candidate.commit])).toBe(
       "Configured Person <person@example.com>",
     )

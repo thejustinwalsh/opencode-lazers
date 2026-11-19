@@ -303,7 +303,7 @@ export class TaskReads {
         reason: `Waiting for prerequisite integration: ${prerequisites.join("; ")}`,
       }
     const mode = input.data.workspaceMode
-    const scope = this.runner.effectiveWriteScope(taskID)
+    const scope = this.runner.effectiveReservationScope(taskID)
     const blockers = [
       ...new Set(
         this.runner

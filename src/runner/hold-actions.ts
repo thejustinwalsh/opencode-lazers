@@ -27,6 +27,11 @@ export const HOLD_FAMILIES: readonly HoldFamily[] = [
     actions: ["reconcile", "resume", "cancel"],
   },
   {
+    name: "scope-divergence",
+    match: /^Scope divergence needs a decision/,
+    actions: ["amend-scope", "retained-repair", "reconcile", "cancel"],
+  },
+  {
     name: "scope-violation",
     match: /scope|outside the write scope|not permitted/i,
     actions: ["amend-scope", "reconcile", "cancel"],

@@ -585,7 +585,7 @@ async function selectPlanCandidates(
 
   const activeReservations = facts.reservations.map((attempt) => ({
     shared: attempt.workspace === directory,
-    scopes: store.effectiveWriteScope(attempt.task_id),
+    scopes: store.effectiveReservationScope(attempt.task_id),
     taskID: attempt.task_id,
   }))
   const knownReservationTaskIDs = new Set([
@@ -601,7 +601,7 @@ async function selectPlanCandidates(
     plan.workspaceMode,
     candidateNodes.map((node) => ({
       taskID: node.taskID,
-      scopes: store.effectiveWriteScope(node.taskID),
+      scopes: store.effectiveReservationScope(node.taskID),
     })),
     scopedReservations,
   )
@@ -619,7 +619,7 @@ async function selectPlanCandidates(
     for (const taskID of selection.selectedTaskIDs)
       state.previouslySelectedReservations.push({
         shared: plan.workspaceMode === "shared",
-        scopes: store.effectiveWriteScope(taskID),
+        scopes: store.effectiveReservationScope(taskID),
         taskID,
       })
     plan.schedule.decision = "eligible"
@@ -736,7 +736,7 @@ async function buildSnapshot(input: SnapshotBuildInput): Promise<BuiltProjection
 
   const adoptionReservations = facts.adoptions.map((adoption) => ({
     shared: false,
-    scopes: store.effectiveWriteScope(adoption.task_id),
+    scopes: store.effectiveReservationScope(adoption.task_id),
     taskID: adoption.task_id,
   }))
   const sessionTaskIDs =
