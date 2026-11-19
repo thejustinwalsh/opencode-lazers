@@ -22,7 +22,7 @@ function deferred<T>() {
 }
 
 async function until(predicate: () => boolean) {
-  for (let index = 0; index < 100; index++) {
+  for (let index = 0; index < 1_200; index++) {
     if (predicate()) return
     await Bun.sleep(1)
   }
@@ -502,4 +502,34 @@ test("the skeleton belongs to a first load: another scope key starts empty", asy
   expect(two.data.live).toBeUndefined()
   expect(two.data.loading).toBe(true)
   two.close()
+})
+
+test("a burst of events becomes a few spaced reads, and an idle view reads nothing", async () => {
+  let latest = 1
+  const fake = fakeTransport({
+    radar: () => Promise.resolve(live(latest)),
+  })
+  const state = new RadarMonitorState(() => {})
+  state.connect("project-key", "project", projectScope, fake.transport, false)
+  try {
+    await until(() => Boolean(state.data.live))
+    const idleBase = fake.liveReads()
+    await Bun.sleep(1_200)
+    // No polling: with no events there are no reads.
+    expect(fake.liveReads()).toBe(idleBase)
+    // 100 events over one second would have been up to 100 back-to-back reads.
+    const started = fake.liveReads()
+    for (let i = 0; i < 50; i++) {
+      latest++
+      fake.emit(latest)
+      await Bun.sleep(20)
+    }
+    await Bun.sleep(600)
+    const reads = fake.liveReads() - started
+    console.info("MONITOR-READS-PER-50-EVENTS-IN-1S", reads)
+    expect(reads).toBeGreaterThan(0)
+    expect(reads).toBeLessThanOrEqual(6)
+  } finally {
+    state.close()
+  }
 })

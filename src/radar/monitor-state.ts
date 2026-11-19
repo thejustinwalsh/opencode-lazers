@@ -127,6 +127,22 @@ function historyRestartRequired(error: unknown) {
   )
 }
 
+/** Least time between the starts of two live reads. */
+const MIN_READ_GAP_MS = 400
+
+function pause(signal: AbortSignal, milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", done)
+      resolve()
+    }
+    const timer = setTimeout(done, milliseconds)
+    signal.addEventListener("abort", done, { once: true })
+  })
+}
+
 function delay(signal: AbortSignal) {
   return new Promise<void>((resolve) => {
     if (signal.aborted) return resolve()
@@ -174,6 +190,7 @@ export class RadarMonitorState {
   private validateSelectionOnNextLiveRead = false
   private refreshPending = false
   private refreshRunning = false
+  private lastReadAt?: number
   private historyEpoch = 0
 
   constructor(private readonly changed: (data: RadarMonitorData) => void) {}
@@ -202,6 +219,7 @@ export class RadarMonitorState {
         ? this.selectionPreference.sessionID
         : storedSessionID
     this.close()
+    this.lastReadAt = undefined
     this.validateSelectionOnNextLiveRead = Boolean(preferredSessionID)
     this.transport = transport
     this.projectID = projectID
@@ -238,6 +256,15 @@ export class RadarMonitorState {
     this.refreshRunning = true
     let catchupReads = 0
     do {
+      // Reads start at most once per MIN_READ_GAP_MS. Events that arrive meanwhile coalesce into
+      // the one read that follows, so a busy worker's event stream is a few reads a second, not
+      // one per event. The first read after a quiet spell is immediate.
+      const wait = (this.lastReadAt ?? -Infinity) + MIN_READ_GAP_MS - Date.now()
+      if (wait > 0) {
+        await pause(signal, wait)
+        if (!this.current(epoch, transport, signal)) break
+      }
+      this.lastReadAt = Date.now()
       this.refreshPending = false
       if (!transport.online()) {
         if (this.current(epoch, transport, signal))
