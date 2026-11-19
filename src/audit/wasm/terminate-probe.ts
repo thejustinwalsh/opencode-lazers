@@ -6,7 +6,9 @@ import { wasmFallowAnalyzer } from "../wasm-analyzer.ts"
  * thread or the analysis worker were still running.
  */
 const controller = new AbortController()
-setTimeout(() => controller.abort("probe"), 700)
+// Early enough to land mid-run even when a warm `.fallow` cache makes the analysis take well
+// under half a second, late enough that the worker and its helpers have started.
+setTimeout(() => controller.abort("probe"), 150)
 await wasmFallowAnalyzer.deadCode({ root: process.argv[2]!, signal: controller.signal }).then(
   () => console.log("finished before the cancel"),
   (error: Error) => console.log(error.message),
