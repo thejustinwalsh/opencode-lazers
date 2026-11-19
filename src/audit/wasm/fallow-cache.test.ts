@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -180,6 +181,83 @@ describe("sharing a cache between checkouts", () => {
       mkdirSync(join(elsewhere, "x"))
     } finally {
       for (const path of [target, elsewhere, source]) rmSync(path, { recursive: true, force: true })
+    }
+  }, 60_000)
+})
+
+describe("what a module keeps, and what a warm run reads", () => {
+  const sinkFile = `import { exec } from "node:child_process"\nexport const run = (command: string) => exec(command)\n`
+
+  for (const kind of moduleKinds)
+    test(`${kind} module: a config that turns the security rules on runs without the cache and gives the same findings`, () => {
+      // The security facts are about a third of what a module keeps after extraction, and nothing
+      // this module reports reads them, so they are dropped unless a rule asks for them; the
+      // cache stores modules without them, so such a config also runs without it.
+      const plain = makeFixture({ "src/sink.ts": sinkFile })
+      const strict = makeFixture({
+        "src/sink.ts": sinkFile,
+        ".fallowrc.json": JSON.stringify({
+          entry: ["src/index.ts"],
+          rules: { "security-sink": "warn" },
+        }),
+      })
+      try {
+        const normal = runOp("deadCode", plain, {}, { cache: true }, kind).report
+        const withRule = runOp("deadCode", strict, {}, { cache: true }, kind).report
+        expect(existsSync(join(plain, ".fallow"))).toBe(true)
+        expect(existsSync(join(strict, ".fallow"))).toBe(false)
+        expect(withRule.unused_files).toEqual(normal.unused_files)
+        expect(withRule.unused_exports).toEqual(normal.unused_exports)
+      } finally {
+        rmSync(plain, { recursive: true, force: true })
+        rmSync(strict, { recursive: true, force: true })
+      }
+    }, 60_000)
+
+  test("a warm run reads none of the source files it has cached", async () => {
+    const dir = makeFixture()
+    try {
+      // Settled long ago, so the cache may trust a file's size and times without its content.
+      for (const [path] of snapshot(dir)) {
+        if (path.startsWith(".git/") || path === ".git") continue
+        try {
+          utimesSync(join(dir, path), 1_700_000_000, 1_700_000_000)
+        } catch {}
+      }
+      const sourceBytes = () => {
+        const names = new Map<number, string>()
+        let bytes = 0
+        const decoder = new TextDecoder()
+        runOp(
+          "deadCode",
+          dir,
+          {},
+          {
+            cache: true,
+            trace: (name, args, result, memory) => {
+              if (name === "path_open" && result === 0)
+                names.set(
+                  new DataView(memory.buffer).getUint32(args[8] as number, true),
+                  decoder.decode(
+                    new Uint8Array(memory.buffer, args[2] as number, args[3] as number),
+                  ),
+                )
+              if (
+                name === "fd_read" &&
+                /^src\/.*\.(ts|vue)$/.test(names.get(args[0] as number) ?? "")
+              )
+                bytes += new DataView(memory.buffer).getUint32(args[3] as number, true)
+            },
+          },
+        )
+        return bytes
+      }
+      // A fingerprint is trusted once the file has not changed for three seconds.
+      await Bun.sleep(3300)
+      expect(sourceBytes()).toBeGreaterThan(0)
+      expect(sourceBytes()).toBe(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   }, 60_000)
 })

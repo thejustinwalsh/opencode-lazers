@@ -47,3 +47,13 @@ pub extern "C" fn lz_alloc_peak() -> u64 {
 pub extern "C" fn lz_alloc_count() -> u64 {
     ALLOCS.load(Relaxed)
 }
+
+pub fn live() -> u64 {
+    LIVE.load(Relaxed)
+}
+pub fn peak() -> u64 {
+    PEAK.load(Relaxed)
+}
+pub fn reset_peak() {
+    PEAK.store(LIVE.load(Relaxed), Relaxed);
+}

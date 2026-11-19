@@ -214,13 +214,40 @@ fn probe(request: &Request) -> Outcome {
     }
 }
 
+/// Whether the project's config turns on a rule that reads the security facts of a module. When
+/// it does, or the config cannot be read, modules keep those facts and the cache stays off (it
+/// stores modules without them).
+fn security_rules_on(request: &Request) -> bool {
+    use fallow_config::{FallowConfig, Severity};
+    let loaded = if request.config_path.is_empty() {
+        FallowConfig::find_and_load(std::path::Path::new(&request.root))
+            .map(|found| found.map(|(config, _)| config))
+            .map_err(|error| format!("{error:?}"))
+    } else {
+        FallowConfig::load(std::path::Path::new(&request.config_path))
+            .map(Some)
+            .map_err(|error| format!("{error:?}"))
+    };
+    match loaded {
+        Ok(Some(config)) => {
+            config.rules.security_sink != Severity::Off
+                || config.rules.security_client_server_leak != Severity::Off
+        }
+        Ok(None) => false,
+        Err(_) => true,
+    }
+}
+
 fn run(request: &Request) -> Outcome {
-    let options: ApiOptions = if request.options.is_null() {
+    let mut options: ApiOptions = if request.options.is_null() {
         ApiOptions::default()
     } else {
         serde_json::from_value(request.options.clone())
             .map_err(|error| failure("options-invalid", error.to_string()))?
     };
+    let security = security_rules_on(request);
+    fallow_extract::set_retain_security_facts(security);
+    options.cache = options.cache && !security;
     match request.op.as_str() {
         "complexity" | "duplication" | "featureFlags" => {
             let project =
@@ -238,6 +265,8 @@ fn run(request: &Request) -> Outcome {
         "duplicationReport" => duplication_report(request, &options),
         "health" => health_report(request, &options),
         "fsProbe" | "gitProbe" => probe(request),
+        #[cfg(feature = "memstats")]
+        "retentionProbe" => retention_probe(request),
         other => Err(failure("unknown-op", format!("unknown op {other}"))),
     }
 }
@@ -272,4 +301,62 @@ fn main() {
     let mut stdout = std::io::stdout().lock();
     let _ = stdout.write_all(text.as_bytes());
     let _ = stdout.flush();
+}
+
+/// What one extraction keeps after the source and the syntax tree are gone (feature memstats).
+#[cfg(feature = "memstats")]
+fn retention_probe(request: &Request) -> Outcome {
+    use fallow_types::discover::FileId;
+    use memstats::{live, peak, reset_peak};
+    let root = PathBuf::from(&request.root);
+    let mut modules = Vec::new();
+    let mut source_bytes = 0u64;
+    let mut worst_transient = 0u64;
+    let mut transient_sum = 0u64;
+    let before_all = live();
+    for (index, path) in request.paths.iter().enumerate() {
+        let Ok(source) = std::fs::read_to_string(root.join(path)) else { continue };
+        source_bytes += source.len() as u64;
+        let base = live();
+        reset_peak();
+        let info = fallow_extract::parse_from_content(FileId(index as u32), &root.join(path), &source);
+        let transient = peak().saturating_sub(base);
+        worst_transient = worst_transient.max(transient);
+        transient_sum += transient;
+        drop(source);
+        modules.push(info);
+    }
+    let retained = live() - before_all;
+    let files = modules.len() as u64;
+    let mut fields = serde_json::Map::new();
+    macro_rules! field {
+        ($($name:ident),* $(,)?) => {$(
+            let before = live();
+            for info in modules.iter_mut() { drop(std::mem::take(&mut info.$name)); }
+            fields.insert(stringify!($name).to_owned(), serde_json::json!(before - live()));
+        )*};
+    }
+    field!(
+        exports, imports, re_exports, dynamic_imports, dynamic_import_patterns, require_calls,
+        package_path_references, type_package_references, bin_path_references,
+        package_resolve_sites, member_accesses, semantic_facts, whole_object_uses, suppressions,
+        unknown_suppression_kinds, unused_import_bindings, type_referenced_import_bindings,
+        value_referenced_import_bindings, line_offsets, complexity, flag_uses, class_heritage,
+        exported_factory_returns, exported_factory_return_object_shapes, type_member_types,
+        injection_tokens, local_type_declarations, public_signature_type_references,
+        namespace_object_aliases, iconify_prefixes, iconify_icon_names, auto_import_candidates,
+        directives, client_only_dynamic_import_spans, security_sinks,
+        security_unresolved_callee_sites, tainted_bindings, sanitized_sink_args,
+        security_control_sites, callee_uses
+    );
+    Ok(serde_json::json!({
+        "files": files,
+        "sourceBytes": source_bytes,
+        "retainedBytes": retained,
+        "retainedPerFile": retained / files.max(1),
+        "transientPeakAvg": transient_sum / files.max(1),
+        "transientPeakWorst": worst_transient,
+        "afterFieldsBytes": live() - before_all,
+        "fieldBytes": fields,
+    }))
 }

@@ -417,6 +417,38 @@ export function hostImports(
     return rc
   }) as never)
 
+  // The module cannot read a change time on WASI, so a file's fingerprint (what lets a warm cache
+  // skip reading it) is its modification time and size. Report the later of the modification and
+  // change time as the modification time: a rename, a chmod or a restored mtime then still
+  // invalidates the entry, as the change time does for native Fallow. Bun answers a stat by path
+  // in whole milliseconds, cut short but carrying float noise just below them, and a stat of an
+  // open file in nanoseconds; the first is rounded and the second cut to milliseconds, or the two
+  // views of one file would never agree.
+  const foldChangeTime = (statPointer: number, byPath: boolean) => {
+    const dv = view()
+    const modified = dv.getBigUint64(statPointer + 48, true)
+    const changed = dv.getBigUint64(statPointer + 56, true)
+    const latest = changed > modified ? changed : modified
+    const milliseconds = byPath ? (latest + 500_000n) / 1_000_000n : latest / 1_000_000n
+    dv.setBigUint64(statPointer + 48, milliseconds * 1_000_000n, true)
+  }
+  bind("path_filestat_get", ((
+    fd: number,
+    flags: number,
+    pathPtr: number,
+    pathLen: number,
+    statPointer: number,
+  ) => {
+    const rc = original.path_filestat_get!(fd, flags, pathPtr, pathLen, statPointer)
+    if (rc === 0) foldChangeTime(statPointer, true)
+    return rc
+  }) as never)
+  bind("fd_filestat_get", ((fd: number, statPointer: number) => {
+    const rc = original.fd_filestat_get!(fd, statPointer)
+    if (rc === 0) foldChangeTime(statPointer, false)
+    return rc
+  }) as never)
+
   // Deterministic entropy: hash maps and other seeds must not vary between runs.
   bind("random_get", ((buffer: number, length: number) => {
     const bytes = new Uint8Array(getMemory().buffer, buffer, length)
