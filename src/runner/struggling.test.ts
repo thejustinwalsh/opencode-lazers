@@ -33,7 +33,7 @@ test("each measure trips alone at its threshold and not below it", () => {
     [{ attemptMs: t.attemptMs }, "attempt-time"],
     [{ tokens: t.tokens }, "tokens"],
     [{ interruptions: t.interruptions }, "interruptions"],
-    [{ reopenedAfterAccept: 1 }, "reopened-after-accept"],
+    [{ reopenedAfterAccept: t.reopenedAfterAccept }, "reopened-after-accept"],
     [{ repeatedHold: { family: "check-failed", count: t.sameHoldFamily } }, "repeated-hold"],
   ]
   for (const [change, reason] of cases)
@@ -82,7 +82,9 @@ test("facts are read from the journal and attempts, summed across attempts", asy
   add("VERIFY", {}, 2)
   add("REPAIR", {}, 3)
   add("RETAINED_REPAIR", { from: "accepted" }, 4)
+  add("WORKER_STARTED", { attemptID: "a1" }, 0)
   add("WORKER_STOPPED", { attemptID: "a1", outcome: "interrupted" }, hour)
+  add("ATTEMPT_RESUMED", { attemptID: "a2" }, 2 * hour)
   for (let i = 0; i < 3; i++) add("BLOCKED", { reason: "Out-of-scope changes: src/x.ts" }, 5 + i)
   db.run("INSERT INTO runner_attempts VALUES('a1','p','t','failed',0,1000,10,NULL)")
   db.run(

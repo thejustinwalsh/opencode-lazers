@@ -8,12 +8,13 @@ import { holdFamily } from "./hold-actions.ts"
  *
  * Thresholds come from the 175 tasks that were accepted in the production database
  * (Nov 2026). Each constant sits at or just past the 90th percentile of that distribution, so
- * roughly one task in ten trips any single rule and a task that trips several is an outlier:
+ * roughly one task in ten trips any single rule and a task that trips several is an outlier. Run
+ * against those 175 tasks the seven rules together flag 32; the live database flags one task:
  *
  *   fact                          median   p90    p95    max     threshold
  *   verification rounds              1      2      3      7        3
  *   repairs + resumes                0      2      2      7        3
- *   time inside attempts           0.4 h  2.4 h  7.0 h  23 h       3 h
+ *   worker running time           0.5 h  3.8 h  11.7 h  24 h        4 h
  *   tokens (cumulative, sum)        11 M   53 M   76 M  215 M      75 M
  *   interrupted workers              0      1      1      2        2
  *
@@ -24,10 +25,10 @@ import { holdFamily } from "./hold-actions.ts"
 export const STRUGGLING_THRESHOLDS = {
   verifyRounds: 3,
   repairsAndResumes: 3,
-  attemptMs: 3 * 3_600_000,
+  attemptMs: 4 * 3_600_000,
   tokens: 75_000_000,
   interruptions: 2,
-  reopenedAfterAccept: 1,
+  reopenedAfterAccept: 2,
   sameHoldFamily: 3,
 } as const
 
@@ -39,7 +40,7 @@ export type StrugglingFacts = {
   reopenedAfterAccept: number
   /** The most-repeated hold family across this task's BLOCKED records. */
   repeatedHold: { family: string; count: number } | null
-  /** Sum over attempts of the span from start to the last stop, or to now while one is open. */
+  /** Time a worker ran: each start or resume up to the next stop, or to now while one runs. */
   attemptMs: number
   tokens: number
   toolCalls: number
@@ -151,7 +152,7 @@ export function readStrugglingFacts(
     .query<{ event: string; payload: string; created_at: number }, [string, string]>(
       `SELECT event,payload,created_at FROM runner_transitions
        WHERE plan_id=? AND task_id=? AND event IN
-         ('VERIFY','REPAIR','RESUME','RETAINED_REPAIR','RETRY_REQUESTED','WORKER_STOPPED','BLOCKED')
+         ('VERIFY','REPAIR','RESUME','RETAINED_REPAIR','RETRY_REQUESTED','WORKER_STARTED','ATTEMPT_RESUMED','WORKER_STOPPED','BLOCKED')
        ORDER BY id`,
     )
     .all(planID, taskID)
@@ -167,16 +168,21 @@ export function readStrugglingFacts(
   let interruptions = 0
   let reopenedAfterAccept = 0
   const holds = new Map<string, number>()
-  const lastStop = new Map<string, number>()
+  // Worker time: from a start or resume to the next stop; time on hold in between is not work.
+  let attemptMs = 0
+  let runningSince: number | null = null
   for (const row of transitions) {
     const body = parse(row.payload)
     if (row.event === "VERIFY") verifyRounds += 1
     else if (REPAIR_EVENTS.includes(row.event)) {
       repairsAndResumes += 1
       if (row.event === "RETAINED_REPAIR" && body.from === "accepted") reopenedAfterAccept += 1
+    } else if (row.event === "WORKER_STARTED" || row.event === "ATTEMPT_RESUMED") {
+      runningSince ??= row.created_at
     } else if (row.event === "WORKER_STOPPED") {
       if (body.outcome === "interrupted") interruptions += 1
-      if (typeof body.attemptID === "string") lastStop.set(body.attemptID, row.created_at)
+      if (runningSince !== null) attemptMs += Math.max(0, row.created_at - runningSince)
+      runningSince = null
     } else if (row.event === "BLOCKED" && typeof body.reason === "string") {
       const family = holdFamily(body.reason)?.name ?? "unclassified"
       holds.set(family, (holds.get(family) ?? 0) + 1)
@@ -197,13 +203,9 @@ export function readStrugglingFacts(
       "SELECT id,state,started_at,token_count,tool_count,cost FROM runner_attempts WHERE plan_id=? AND task_id=?",
     )
     .all(planID, taskID)
-  let attemptMs = 0
-  for (const attempt of attempts) {
-    const open = ["preparing", "running", "verifying"].includes(attempt.state)
-    const stop = lastStop.get(attempt.id)
-    const end = open ? now : stop
-    if (end !== undefined && end > attempt.started_at) attemptMs += end - attempt.started_at
-  }
+  // A worker that never stopped is still working when its attempt is live.
+  if (runningSince !== null && attempts.some((a) => ["preparing", "running"].includes(a.state)))
+    attemptMs += Math.max(0, now - runningSince)
   const priced = attempts.filter((attempt) => attempt.cost !== null)
   const [family, count] = [...holds.entries()].toSorted((a, b) => b[1] - a[1])[0] ?? []
   return {
