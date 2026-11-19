@@ -5217,6 +5217,52 @@ test("a plan reconcile over 30 seconds records PLAN_STEP_SLOW naming the slow ca
   expect(records[0]!.sections[0]!.ms).toBeGreaterThanOrEqual(45_000)
 })
 
+test("a cancelled plan's cleanup runs after runnable plans and is not re-evaluated while its facts are unchanged", async () => {
+  const clock = 2_000_000_000_000
+  const f = fixture({ delayed: true, now: () => clock, taskFiles: singleTask })
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const worker = f.store.attempts(planID)[0]!
+  f.completeWorker(worker.session_id, "interrupted")
+  await f.runtime.command(
+    { requestID: "cancel-a", planID, action: "cancel", reason: "supersede" },
+    "owner",
+  )
+  const worktreeReads: string[] = []
+  const read = f.host.worktrees
+  f.host.worktrees = async () => {
+    worktreeReads.push(`worktrees@${f.events.length}`)
+    f.events.push("cleanup:host.worktrees")
+    return read()
+  }
+  for (let n = 0; n < 6 && f.store.plan(planID)?.state !== "cancelled"; n++) await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("cancelled")
+  const readsBefore = worktreeReads.length
+
+  // A runnable plan and a pending cleanup in one tick: the runnable plan is stepped first.
+  const taskB = f.createTask("b", "b.txt")
+  const planB = f.store.submit(f.inputFor([taskB], { requestID: "second-plan" }), "owner")
+  await runPlan(f, planB.planID, "run-b")
+  const eventsBefore = f.events.length
+  f.store.atomic((db) =>
+    db.query("DELETE FROM runner_effects WHERE plan_id=? AND kind='worktree-remove'").run(planID),
+  )
+  await f.runtime.tick()
+  const tickEvents = f.events.slice(eventsBefore)
+  const created = tickEvents.findIndex((event) => event.startsWith("create:"))
+  const cleaned = tickEvents.indexOf("cleanup:host.worktrees")
+  expect(created).toBeGreaterThanOrEqual(0)
+  expect(cleaned).toBeGreaterThan(created)
+
+  // Nothing observable changed and the clock did not move: the blocker is not re-evaluated.
+  const settledReads = worktreeReads.length
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(worktreeReads.length).toBe(settledReads)
+  expect(readsBefore).toBeLessThanOrEqual(settledReads)
+})
+
 test("a single failing check keeps its unchanged failure reason", async () => {
   const f = fixture({ fail: true, repair: true })
   const planID = f.receipt.planID

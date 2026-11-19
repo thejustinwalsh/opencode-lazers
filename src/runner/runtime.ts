@@ -612,6 +612,7 @@ export class TaskRuntime {
       progress: this.progress,
       projectID: this.projectID,
       store: this.store,
+      timed: (name, run) => this.timed(name, run),
     })
     this.adoptionExecution = new AdoptionExecution({
       adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
@@ -6916,22 +6917,6 @@ export class TaskRuntime {
         }
         void running.then(finished, finished)
       }
-      const terminalCleanupPlanIDs = section("tick:terminalCleanupPlanIDs", () =>
-        this.store.terminalCleanupPlanIDs(),
-      )
-      for (const planID of terminalCleanupPlanIDs) {
-        await this.reconcilePlan(planID, fence, "cleanup", async () => {
-          const plan = this.store.plan(planID)
-          if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
-          if (!this.worktreeCleanup.pendingOwnedWorktreeCleanup(plan)) return
-          if (plan.state === "cleanup-blocked") {
-            if (!(await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))) return
-            await this.worktreeCleanup.cleanupWorktrees(plan, fence)
-          } else if (await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))
-            await this.worktreeCleanup.cleanupWorktrees(plan, fence, "cancellation")
-        })
-        if (heartbeatFailed) throw heartbeatError
-      }
       await sectionAsync("tick:reconcileTerminalRetained", () =>
         this.retainedVerificationExecution.reconcileTerminalRetainedVerifications(fence),
       )
@@ -6987,6 +6972,24 @@ export class TaskRuntime {
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
           this.requestQueueReview(waits, fence),
         )
+      // Worktree cleanup of cancelled and blocked plans holds no dispatch reservation, so it runs
+      // after the plans that can make progress: a slow removal delays only itself.
+      const terminalCleanupPlanIDs = section("tick:terminalCleanupPlanIDs", () =>
+        this.store.terminalCleanupPlanIDs(),
+      )
+      for (const planID of terminalCleanupPlanIDs) {
+        await this.reconcilePlan(planID, fence, "cleanup", async () => {
+          const plan = this.store.plan(planID)
+          if (!plan || !["cleanup-blocked", "cancelled"].includes(plan.state)) return
+          if (!this.worktreeCleanup.pendingOwnedWorktreeCleanup(plan)) return
+          if (plan.state === "cleanup-blocked") {
+            if (!(await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))) return
+            await this.worktreeCleanup.cleanupWorktrees(plan, fence)
+          } else if (await this.worktreeCleanup.worktreeCleanupFactsChanged(plan))
+            await this.worktreeCleanup.cleanupWorktrees(plan, fence, "cancellation")
+        })
+        if (heartbeatFailed) throw heartbeatError
+      }
       // Notices held for a retryable reason are tried again soon, not at the next full interval.
       if (await sectionAsync("tick:deliver", () => this.outcomeDelivery.deliver(fence)))
         this.wakeScheduler?.(15_000)
