@@ -63,3 +63,47 @@ test("lane: thousands of ticks stay bounded and keep failures and the selection"
   expect(marks.filter((m) => m.failed)).toHaveLength(1)
   expect(marks.filter((m) => m.selected)).toHaveLength(1)
 })
+
+test("lane: only gaps that dominate the span collapse, at most three, and ticks keep the width", () => {
+  const minute = 60_000
+  const hour = 60 * minute
+  // LZ-232: calls from 0 to 48 minutes with quiet stretches of 1 to 17 minutes, then 1d 20h idle.
+  const times = [0, 2, 3, 5, 7, 8, 9, 10, 27, 28, 30, 31, 33, 34, 36, 40, 48].map((m) => m * minute)
+  const segments = laneLayout({
+    ticks: times.map((at) => ({ at })),
+    durationMs: 44 * hour,
+  })
+  expect(segments.map((s) => s.kind)).toEqual(["active", "idle"])
+  const idle = segments[1]!
+  expect(idle.kind === "idle" && idle.label).toBe("1d 19h idle")
+  expect(idle.width).toBeLessThanOrEqual(12)
+  expect(segments[0]!.width).toBeGreaterThan(85)
+  // Four equal huge gaps: only the three largest collapse; the rest stays space.
+  const gaps = laneLayout({
+    ticks: [0, 10, 20, 30, 40].map((h) => ({ at: h * hour })),
+    durationMs: 41 * hour,
+  })
+  expect(gaps.filter((s) => s.kind === "idle")).toHaveLength(3)
+  expect(gaps.reduce((sum, s) => sum + s.width, 0)).toBeCloseTo(100, 6)
+  // A small gap inside a long span is not collapsed at all.
+  expect(
+    laneLayout({ ticks: Array.from({ length: 16 }, (_, i) => ({ at: i * 4 * minute })) }).map(
+      (s) => s.kind,
+    ),
+  ).toEqual(["active"])
+})
+
+test("lane: the selected call is still marked in a lane with a collapsed idle span", () => {
+  const hour = 3_600_000
+  const segments = laneLayout({
+    ticks: [
+      { at: 0, id: "a" },
+      { at: 1000, id: "b" },
+      { at: 20 * hour, id: "c" },
+    ],
+    selectedId: "c",
+  })
+  expect(segments.map((s) => s.kind)).toEqual(["active", "idle", "active"])
+  const marks = segments.flatMap((s) => (s.kind === "active" ? s.marks : []))
+  expect(marks.filter((m) => m.selected)).toHaveLength(1)
+})

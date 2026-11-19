@@ -34,17 +34,21 @@ export type LaneInput = {
 }
 
 const IDLE_MIN_MS = 60_000
-/** Track share one collapsed idle span takes, however long it was. */
-const IDLE_WIDTH = 14
+/** A quiet stretch also has to be this share of the whole span to collapse. */
+const IDLE_MIN_SHARE = 0.08
+/** Quiet stretches collapsed at most; the largest win, the rest stay proportional space. */
+const MAX_IDLE_SPANS = 3
+/** Track share a collapsed idle span takes: enough for its label, however long it was. */
+const IDLE_WIDTH = 10
 const MIN_ACTIVE_WIDTH = 3
 
 /**
- * Pure layout for the Activity lane. Ticks are sorted, split into active segments at every quiet
- * stretch of `idleMinMs` or more, and each idle stretch collapses to a fixed share of the track
- * with a label (`1d 19h idle`). Active segments share the rest by their duration. Within a
- * segment ticks are merged into at most `maxMarks` buckets, so the DOM stays bounded for
- * thousands of ticks; a bucket is failed when any tick in it failed and selected when it holds the
- * selected tick.
+ * Pure layout for the Activity lane. Ticks are sorted and the quiet stretches that dominate the
+ * span (at least `idleMinMs` and 8 % of the whole, the three largest) collapse to labelled idle
+ * spans of a small fixed width (`1d 20h idle`); every other gap stays empty space inside an active
+ * segment. Active segments share the rest of the track by their duration. Within a segment ticks
+ * are merged into at most `maxMarks` buckets, so the DOM stays bounded for thousands of ticks; a
+ * bucket is failed when any tick in it failed and selected when it holds the selected tick.
  */
 export function laneLayout(input: LaneInput): LaneSegment[] {
   const idleMin = input.idleMinMs ?? IDLE_MIN_MS
@@ -53,30 +57,41 @@ export function laneLayout(input: LaneInput): LaneSegment[] {
   const duration = Math.max(input.durationMs ?? 0, ticks.at(-1)?.at ?? 0)
   if (duration <= 0 && ticks.length === 0) return []
 
+  // Gap `index` precedes tick `index`; the trailing gap has index `ticks.length`.
+  const gapBounds = (index: number) => ({
+    from: index === 0 ? 0 : ticks[index - 1]!.at,
+    to: index === ticks.length ? duration : ticks[index]!.at,
+  })
+  const collapsed = new Set(
+    Array.from({ length: ticks.length + 1 }, (_, index) => {
+      const { from, to } = gapBounds(index)
+      return { index, size: to - from }
+    })
+      .filter((gap) => gap.size >= idleMin && gap.size >= duration * IDLE_MIN_SHARE)
+      .toSorted((left, right) => right.size - left.size)
+      .slice(0, MAX_IDLE_SPANS)
+      .map((gap) => gap.index),
+  )
+
   const spans: Array<{ kind: "active" | "idle"; start: number; end: number; ticks: LaneTick[] }> =
     []
   let start = 0
   let group: LaneTick[] = []
-  let previous = 0
   const closeActive = (end: number) => {
     if (!group.length && end <= start) return
     spans.push({ kind: "active", start, end, ticks: group })
     group = []
   }
-  for (const tick of ticks) {
-    if (tick.at - previous >= idleMin) {
-      if (group.length) closeActive(previous)
-      else if (previous > start) closeActive(previous)
-      spans.push({ kind: "idle", start: previous, end: tick.at, ticks: [] })
-      start = tick.at
+  for (let index = 0; index <= ticks.length; index++) {
+    if (collapsed.has(index)) {
+      const { from, to } = gapBounds(index)
+      closeActive(from)
+      spans.push({ kind: "idle", start: from, end: to, ticks: [] })
+      start = to
     }
-    group.push(tick)
-    previous = tick.at
+    if (index < ticks.length) group.push(ticks[index]!)
   }
-  if (duration - previous >= idleMin) {
-    closeActive(previous)
-    spans.push({ kind: "idle", start: previous, end: duration, ticks: [] })
-  } else closeActive(Math.max(previous, duration))
+  closeActive(Math.max(ticks.at(-1)?.at ?? 0, duration))
 
   const idleCount = spans.filter((span) => span.kind === "idle").length
   const activeShare = Math.max(MIN_ACTIVE_WIDTH, 100 - idleCount * IDLE_WIDTH)
