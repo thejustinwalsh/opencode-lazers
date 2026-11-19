@@ -81,6 +81,17 @@ type Fact = {
   messageID?: string
 }
 
+/** One retained message plus the fields every recovery fact builder reads. */
+type RetainedMessage = {
+  db: Database
+  assignment: ProgressAssignment
+  message: JsonObject
+  messageID: string
+  messageTime: JsonObject | undefined
+  messageCreatedAt: number | undefined
+  at: number
+}
+
 type ToolCall = {
   tool: string
   sessionID: string
@@ -1008,6 +1019,365 @@ function sameReminderOwnership(value: unknown, expected: ReminderOwnership): boo
   )
 }
 
+/** One native event, decoded once: the fields every fact builder reads. */
+type NativeContext = {
+  type: string
+  sessionID: string
+  data: JsonObject
+  eventID: string | undefined
+  eventAt: number | undefined
+  at: number
+  messageID: string | undefined
+  stats: ReturnType<typeof privacyStats>
+}
+
+/** 0 input-started, 1 called, 2 terminal: the order a tool call's events arrive in. */
+function toolPhase(type: string) {
+  return type === "session.tool.success" || type === "session.tool.failed"
+    ? 2
+    : type === "session.tool.called"
+      ? 1
+      : 0
+}
+
+function toolStatus(type: string, data: JsonObject) {
+  if (type === "session.tool.input.started") return "input-started"
+  if (type === "session.tool.called")
+    return data.executed === false ? "not-executed" : data.executed === true ? "running" : "unknown"
+  return type === "session.tool.success" ? "succeeded" : "failed"
+}
+
+function toolTimingOf({ type, eventAt }: NativeContext) {
+  return factTiming({
+    inputAt:
+      type === "session.tool.input.started"
+        ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool input-started boundary")
+        : undefined,
+    calledAt:
+      type === "session.tool.called"
+        ? timedEndpoint(
+            eventAt,
+            "native-event",
+            type,
+            "OpenCode tool call boundary; distinct from explicit executed status",
+          )
+        : undefined,
+    completedAt:
+      type === "session.tool.success" || type === "session.tool.failed"
+        ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool result terminal boundary")
+        : undefined,
+  })
+}
+
+function nativeToolFact(ctx: NativeContext): Fact | undefined {
+  const { type, sessionID, data, eventID, eventAt, at, messageID, stats } = ctx
+  const callID = text(data.id)
+  if (!callID) return undefined
+  const toolName =
+    type === "session.tool.input.started" && text(data.name)
+      ? { tool: safeText(text(data.name)!, stats, 160) }
+      : {}
+  const payload: Record<string, unknown> = { ...toolName, status: toolStatus(type, data) }
+  if (type !== "session.tool.input.started") payload.callStatus = "called"
+  if (typeof data.executed === "boolean")
+    payload.execution = {
+      status: data.executed ? "executed" : "not-executed",
+      source: "native-event",
+      sourceType: type,
+      phase: toolPhase(type),
+      meaning: "OpenCode executed flag; a tool call is not execution proof",
+    }
+  const toolTiming = toolTimingOf(ctx)
+  if (toolTiming) payload.timing = toolTiming
+  // Native terminal content cannot be safely associated with a file operation
+  // when the call input event is absent or delayed. Keep terminal evidence only.
+  if (type === "session.tool.failed") {
+    const error = errorView(data.error, stats)
+    if (error !== undefined) payload.error = error
+  }
+  payload.observations = [
+    {
+      source: "native-event",
+      ...(eventID ? { eventID } : {}),
+      eventType: type,
+      at,
+      unit: EPOCH_MILLIS,
+      meaning: "Native event creation time; not a substitute for an absent tool endpoint",
+      status: payload.status,
+      phase: toolPhase(type),
+      messageID: messageID ?? null,
+      callID,
+      ...(type === "session.tool.input.started" && text(data.name)
+        ? { tool: safeText(text(data.name)!, stats, 160) }
+        : {}),
+    },
+  ]
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "tool",
+    dedupeKey: `tool:${sessionID}:${callID}`,
+    at,
+    eventID,
+    callID,
+    messageID,
+    payload,
+  }
+}
+
+function stepStatus(type: string) {
+  return type === "session.step.started"
+    ? "started"
+    : type === "session.step.streamed"
+      ? "streamed"
+      : type === "session.step.failed"
+        ? "failed"
+        : "ended"
+}
+
+function stepTimingOf({ type, data, eventAt }: NativeContext) {
+  return factTiming({
+    startedAt:
+      type === "session.step.started"
+        ? timedEndpoint(
+            data.started,
+            "native-event",
+            type,
+            "OpenCode request dispatch time before provider output",
+          )
+        : undefined,
+    streamedAt:
+      type === "session.step.streamed"
+        ? timedEndpoint(
+            eventAt,
+            "native-event",
+            type,
+            "OpenCode provider response-body end before tool settlement",
+          )
+        : undefined,
+    completedAt:
+      type === "session.step.ended" || type === "session.step.failed"
+        ? timedEndpoint(
+            eventAt,
+            "native-event",
+            type,
+            "OpenCode assistant step terminal boundary after tool settlement",
+          )
+        : undefined,
+  })
+}
+
+function nativeStepFact(ctx: NativeContext): Fact | undefined {
+  const { type, sessionID, data, eventID, at, messageID, stats } = ctx
+  if (!messageID) return undefined
+  const status = stepStatus(type)
+  const payload: Record<string, unknown> = { status }
+  const observedAgent = type === "session.step.started" ? text(data.agent) : undefined
+  const routeEvidence =
+    type === "session.step.started" && Object.hasOwn(data, "model")
+      ? routeEvidenceFromModel(data.model, stats)
+      : undefined
+  const route = object(routeEvidence?.route)
+  if (observedAgent) payload.agent = safeText(observedAgent, stats, 200)
+  if (routeEvidence) payload.routeEvidence = routeEvidence
+  if (route) payload.route = route
+  if (type === "session.step.ended" || type === "session.step.failed") {
+    if (object(data.tokens) || number(data.cost) !== undefined) {
+      payload.measurementBasis = "additive-step-measurement"
+      payload.usage = measuredUsage(data.tokens, data.cost)
+    }
+    if (text(data.finish)) payload.finish = safeText(text(data.finish)!, stats, 80)
+  }
+  const stepTiming = stepTimingOf(ctx)
+  if (stepTiming) payload.timing = stepTiming
+  const error = errorView(data.error, stats)
+  if (error !== undefined) payload.error = error
+  payload.observations = [
+    {
+      source: "native-event",
+      ...(eventID ? { eventID } : {}),
+      eventType: type,
+      at,
+      unit: EPOCH_MILLIS,
+      meaning: "Native event creation time; step endpoints are recorded separately",
+      status,
+      messageID,
+      ...(observedAgent ? { agent: safeText(observedAgent, stats, 200) } : {}),
+      ...(route ? { route } : {}),
+      ...(routeEvidence ? { routeEvidence } : {}),
+      ...(type === "session.step.started" && dateMillis(data.started) !== undefined
+        ? { startedAt: dateMillis(data.started) }
+        : {}),
+    },
+  ]
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "step",
+    dedupeKey: `step:${sessionID}:${messageID}`,
+    at,
+    eventID,
+    messageID,
+    payload,
+  }
+}
+
+function nativeUsageFact({ type, sessionID, data, eventID, at }: NativeContext): Fact {
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "usage-snapshot",
+    dedupeKey: `usage-snapshot:${sessionID}`,
+    at,
+    eventID,
+    payload: {
+      measurementBasis: "cumulative-session-snapshot",
+      usage: measuredUsage(data.tokens, data.cost),
+    },
+  }
+}
+
+function nativeRetryFact(ctx: NativeContext): Fact | undefined {
+  const { type, sessionID, data, eventID, at, messageID, stats } = ctx
+  if (!messageID) return undefined
+  const attemptNumber = number(data.attempt)
+  const error = errorView(data.error, stats)
+  const retryTiming = factTiming({
+    scheduledAt: timedEndpoint(
+      data.at,
+      "native-event",
+      type,
+      "OpenCode provider retry scheduled time",
+    ),
+  })
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "provider-retry",
+    dedupeKey: `retry:${sessionID}:${messageID}:${attemptNumber ?? "unknown"}`,
+    at: dateMillis(data.at) ?? at,
+    eventID,
+    messageID,
+    payload: {
+      ...(attemptNumber !== undefined ? { attempt: attemptNumber } : {}),
+      ...(error !== undefined ? { error } : {}),
+      ...(retryTiming ? { timing: retryTiming } : {}),
+    },
+  }
+}
+
+const EXECUTION_OUTCOMES = new Set(["started", "succeeded", "failed", "interrupted"])
+
+function nativeExecutionFact(ctx: NativeContext): Fact | undefined {
+  const { type, sessionID, data, eventID, at, messageID, stats } = ctx
+  const outcome = type.slice("session.execution.".length)
+  if (!EXECUTION_OUTCOMES.has(outcome)) return undefined
+  const error = errorView(data.error, stats)
+  // Pinned OpenCode creates terminal idle messages from this exact event ID
+  // (schema SessionMessage.ID.fromEvent; core session/message-updater.ts).
+  const terminalMessageID = eventID?.replace(/^evt_/, "msg_")
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "execution-outcome",
+    dedupeKey:
+      outcome !== "started" && terminalMessageID
+        ? `turn:${sessionID}:${terminalMessageID}`
+        : `execution-event:${sessionID}:${eventID ?? `${outcome}:${at}`}`,
+    at,
+    eventID,
+    messageID: outcome === "started" ? messageID : terminalMessageID,
+    payload: {
+      outcome,
+      ...(error !== undefined ? { error } : {}),
+    },
+  }
+}
+
+function nativeShellFact(ctx: NativeContext): Fact | undefined {
+  const { type, sessionID, data, eventID, at, stats } = ctx
+  const shell = object(data.shell)
+  const shellID = text(shell?.id)
+  if (!shell || !shellID) return undefined
+  const payload: Record<string, unknown> = {
+    shellID,
+    status: text(shell.status) ?? (type.endsWith("started") ? "running" : "unknown"),
+  }
+  if (text(shell.command)) payload.command = safeText(text(shell.command)!, stats)
+  if (number(shell.exit) !== undefined) payload.exit = number(shell.exit)
+  const output = object(data.output)
+  const shellOutput = text(output?.output)
+  if (shellOutput) payload.output = safeText(shellOutput, stats)
+  if (output?.truncated === true) payload.truncated = true
+  const shellTime = object(shell.time)
+  const shellTiming = factTiming({
+    startedAt: timedEndpoint(
+      shellTime?.started,
+      "native-event",
+      `${type}.shell.time.started`,
+      "OpenCode shell process start time",
+    ),
+    completedAt: timedEndpoint(
+      shellTime?.completed,
+      "native-event",
+      `${type}.shell.time.completed`,
+      "OpenCode shell process completion time",
+    ),
+  })
+  if (shellTiming) payload.timing = shellTiming
+  return {
+    source: "native-event",
+    sourceType: type,
+    kind: "shell",
+    dedupeKey: `shell:${sessionID}:${shellID}`,
+    at: dateMillis(shellTime?.started) ?? at,
+    eventID,
+    payload,
+  }
+}
+
+function nativeTextFact({ type, sessionID, data, eventID, at, messageID, stats }: NativeContext) {
+  if (!messageID || typeof data.ordinal !== "number" || typeof data.text !== "string")
+    return undefined
+  const fact: Fact = {
+    source: "native-event",
+    sourceType: type,
+    kind: "visible-text",
+    dedupeKey: `text:${sessionID}:${messageID}:${data.ordinal}`,
+    at,
+    eventID,
+    messageID,
+    payload: { text: safeText(data.text, stats) },
+  }
+  return fact
+}
+
+/** The fact a native event records, or undefined when the event carries nothing to record. */
+function nativeFact(ctx: NativeContext): Fact | undefined {
+  const { type } = ctx
+  if (
+    type === "session.tool.input.started" ||
+    type === "session.tool.called" ||
+    type === "session.tool.success" ||
+    type === "session.tool.failed"
+  )
+    return nativeToolFact(ctx)
+  if (
+    type === "session.step.started" ||
+    type === "session.step.streamed" ||
+    type === "session.step.ended" ||
+    type === "session.step.failed"
+  )
+    return nativeStepFact(ctx)
+  if (type === "session.usage.updated") return nativeUsageFact(ctx)
+  if (type === "session.retry.scheduled") return nativeRetryFact(ctx)
+  if (type.startsWith("session.execution.")) return nativeExecutionFact(ctx)
+  if (type === "session.shell.started" || type === "session.shell.ended")
+    return nativeShellFact(ctx)
+  if (type === "session.text.ended") return nativeTextFact(ctx)
+  return undefined
+}
+
 /**
  * One append-only, project-scoped ordered log shared by model commentary,
  * OpenCode observations, recovery and runtime verification facts.
@@ -1878,313 +2248,7 @@ export class ProgressRecorder {
         : undefined
     // Unowned sessions have nothing to record: skip fact building and privacy scrubbing.
     if (verifiedToolSession !== true && !this.mayBeAssigned(sessionID)) return undefined
-    let fact: Fact | undefined
-
-    if (
-      type === "session.tool.input.started" ||
-      type === "session.tool.called" ||
-      type === "session.tool.success" ||
-      type === "session.tool.failed"
-    ) {
-      const callID = text(data.id)
-      if (!callID) return undefined
-      const payload: Record<string, unknown> = {
-        ...(type === "session.tool.input.started" && text(data.name)
-          ? { tool: safeText(text(data.name)!, stats, 160) }
-          : {}),
-        status:
-          type === "session.tool.input.started"
-            ? "input-started"
-            : type === "session.tool.called"
-              ? data.executed === false
-                ? "not-executed"
-                : data.executed === true
-                  ? "running"
-                  : "unknown"
-              : type === "session.tool.success"
-                ? "succeeded"
-                : "failed",
-      }
-      if (type !== "session.tool.input.started") payload.callStatus = "called"
-      if (typeof data.executed === "boolean")
-        payload.execution = {
-          status: data.executed ? "executed" : "not-executed",
-          source: "native-event",
-          sourceType: type,
-          phase:
-            type === "session.tool.success" || type === "session.tool.failed"
-              ? 2
-              : type === "session.tool.called"
-                ? 1
-                : 0,
-          meaning: "OpenCode executed flag; a tool call is not execution proof",
-        }
-      const toolTiming = factTiming({
-        inputAt:
-          type === "session.tool.input.started"
-            ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool input-started boundary")
-            : undefined,
-        calledAt:
-          type === "session.tool.called"
-            ? timedEndpoint(
-                eventAt,
-                "native-event",
-                type,
-                "OpenCode tool call boundary; distinct from explicit executed status",
-              )
-            : undefined,
-        completedAt:
-          type === "session.tool.success" || type === "session.tool.failed"
-            ? timedEndpoint(eventAt, "native-event", type, "OpenCode tool result terminal boundary")
-            : undefined,
-      })
-      if (toolTiming) payload.timing = toolTiming
-      // Native terminal content cannot be safely associated with a file operation
-      // when the call input event is absent or delayed. Keep terminal evidence only.
-      if (type === "session.tool.failed") {
-        const error = errorView(data.error, stats)
-        if (error !== undefined) payload.error = error
-      }
-      payload.observations = [
-        {
-          source: "native-event",
-          ...(eventID ? { eventID } : {}),
-          eventType: type,
-          at,
-          unit: EPOCH_MILLIS,
-          meaning: "Native event creation time; not a substitute for an absent tool endpoint",
-          status: payload.status,
-          phase:
-            type === "session.tool.success" || type === "session.tool.failed"
-              ? 2
-              : type === "session.tool.called"
-                ? 1
-                : 0,
-          messageID: messageID ?? null,
-          callID,
-          ...(type === "session.tool.input.started" && text(data.name)
-            ? { tool: safeText(text(data.name)!, stats, 160) }
-            : {}),
-        },
-      ]
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "tool",
-        dedupeKey: `tool:${sessionID}:${callID}`,
-        at,
-        eventID,
-        callID,
-        messageID,
-        payload,
-      }
-    } else if (
-      type === "session.step.started" ||
-      type === "session.step.streamed" ||
-      type === "session.step.ended" ||
-      type === "session.step.failed"
-    ) {
-      if (!messageID) return undefined
-      const status =
-        type === "session.step.started"
-          ? "started"
-          : type === "session.step.streamed"
-            ? "streamed"
-            : type === "session.step.failed"
-              ? "failed"
-              : "ended"
-      const payload: Record<string, unknown> = { status }
-      const observedAgent = type === "session.step.started" ? text(data.agent) : undefined
-      const routeEvidence =
-        type === "session.step.started" && Object.hasOwn(data, "model")
-          ? routeEvidenceFromModel(data.model, stats)
-          : undefined
-      const route = object(routeEvidence?.route)
-      if (observedAgent) payload.agent = safeText(observedAgent, stats, 200)
-      if (routeEvidence) payload.routeEvidence = routeEvidence
-      if (route) payload.route = route
-      if (type === "session.step.ended" || type === "session.step.failed") {
-        if (object(data.tokens) || number(data.cost) !== undefined) {
-          payload.measurementBasis = "additive-step-measurement"
-          payload.usage = measuredUsage(data.tokens, data.cost)
-        }
-        if (text(data.finish)) payload.finish = safeText(text(data.finish)!, stats, 80)
-      }
-      const stepTiming = factTiming({
-        startedAt:
-          type === "session.step.started"
-            ? timedEndpoint(
-                data.started,
-                "native-event",
-                type,
-                "OpenCode request dispatch time before provider output",
-              )
-            : undefined,
-        streamedAt:
-          type === "session.step.streamed"
-            ? timedEndpoint(
-                eventAt,
-                "native-event",
-                type,
-                "OpenCode provider response-body end before tool settlement",
-              )
-            : undefined,
-        completedAt:
-          type === "session.step.ended" || type === "session.step.failed"
-            ? timedEndpoint(
-                eventAt,
-                "native-event",
-                type,
-                "OpenCode assistant step terminal boundary after tool settlement",
-              )
-            : undefined,
-      })
-      if (stepTiming) payload.timing = stepTiming
-      const error = errorView(data.error, stats)
-      if (error !== undefined) payload.error = error
-      payload.observations = [
-        {
-          source: "native-event",
-          ...(eventID ? { eventID } : {}),
-          eventType: type,
-          at,
-          unit: EPOCH_MILLIS,
-          meaning: "Native event creation time; step endpoints are recorded separately",
-          status,
-          messageID,
-          ...(observedAgent ? { agent: safeText(observedAgent, stats, 200) } : {}),
-          ...(route ? { route } : {}),
-          ...(routeEvidence ? { routeEvidence } : {}),
-          ...(type === "session.step.started" && dateMillis(data.started) !== undefined
-            ? { startedAt: dateMillis(data.started) }
-            : {}),
-        },
-      ]
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "step",
-        dedupeKey: `step:${sessionID}:${messageID}`,
-        at,
-        eventID,
-        messageID,
-        payload,
-      }
-    } else if (type === "session.usage.updated") {
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "usage-snapshot",
-        dedupeKey: `usage-snapshot:${sessionID}`,
-        at,
-        eventID,
-        payload: {
-          measurementBasis: "cumulative-session-snapshot",
-          usage: measuredUsage(data.tokens, data.cost),
-        },
-      }
-    } else if (type === "session.retry.scheduled") {
-      if (!messageID) return undefined
-      const attemptNumber = number(data.attempt)
-      const error = errorView(data.error, stats)
-      const retryTiming = factTiming({
-        scheduledAt: timedEndpoint(
-          data.at,
-          "native-event",
-          type,
-          "OpenCode provider retry scheduled time",
-        ),
-      })
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "provider-retry",
-        dedupeKey: `retry:${sessionID}:${messageID}:${attemptNumber ?? "unknown"}`,
-        at: dateMillis(data.at) ?? at,
-        eventID,
-        messageID,
-        payload: {
-          ...(attemptNumber !== undefined ? { attempt: attemptNumber } : {}),
-          ...(error !== undefined ? { error } : {}),
-          ...(retryTiming ? { timing: retryTiming } : {}),
-        },
-      }
-    } else if (type.startsWith("session.execution.")) {
-      const outcome = type.slice("session.execution.".length)
-      if (!new Set(["started", "succeeded", "failed", "interrupted"]).has(outcome)) return undefined
-      const error = errorView(data.error, stats)
-      // Pinned OpenCode creates terminal idle messages from this exact event ID
-      // (schema SessionMessage.ID.fromEvent; core session/message-updater.ts).
-      const terminalMessageID = eventID?.replace(/^evt_/, "msg_")
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "execution-outcome",
-        dedupeKey:
-          outcome !== "started" && terminalMessageID
-            ? `turn:${sessionID}:${terminalMessageID}`
-            : `execution-event:${sessionID}:${eventID ?? `${outcome}:${at}`}`,
-        at,
-        eventID,
-        messageID: outcome === "started" ? messageID : terminalMessageID,
-        payload: {
-          outcome,
-          ...(error !== undefined ? { error } : {}),
-        },
-      }
-    } else if (type === "session.shell.started" || type === "session.shell.ended") {
-      const shell = object(data.shell)
-      const shellID = text(shell?.id)
-      if (!shell || !shellID) return undefined
-      const payload: Record<string, unknown> = {
-        shellID,
-        status: text(shell.status) ?? (type.endsWith("started") ? "running" : "unknown"),
-      }
-      if (text(shell.command)) payload.command = safeText(text(shell.command)!, stats)
-      if (number(shell.exit) !== undefined) payload.exit = number(shell.exit)
-      const output = object(data.output)
-      const shellOutput = text(output?.output)
-      if (shellOutput) payload.output = safeText(shellOutput, stats)
-      if (output?.truncated === true) payload.truncated = true
-      const shellTime = object(shell.time)
-      const shellTiming = factTiming({
-        startedAt: timedEndpoint(
-          shellTime?.started,
-          "native-event",
-          `${type}.shell.time.started`,
-          "OpenCode shell process start time",
-        ),
-        completedAt: timedEndpoint(
-          shellTime?.completed,
-          "native-event",
-          `${type}.shell.time.completed`,
-          "OpenCode shell process completion time",
-        ),
-      })
-      if (shellTiming) payload.timing = shellTiming
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "shell",
-        dedupeKey: `shell:${sessionID}:${shellID}`,
-        at: dateMillis(shellTime?.started) ?? at,
-        eventID,
-        payload,
-      }
-    } else if (type === "session.text.ended") {
-      if (!messageID || typeof data.ordinal !== "number" || typeof data.text !== "string")
-        return undefined
-      fact = {
-        source: "native-event",
-        sourceType: type,
-        kind: "visible-text",
-        dedupeKey: `text:${sessionID}:${messageID}:${data.ordinal}`,
-        at,
-        eventID,
-        messageID,
-        payload: { text: safeText(data.text, stats) },
-      }
-    }
+    const fact = nativeFact({ type, sessionID, data, eventID, eventAt, at, messageID, stats })
     return fact ? this.appendForSession(sessionID, fact, verifiedToolSession) : undefined
   }
 
@@ -2391,248 +2455,282 @@ export class ProgressRecorder {
 
   /** Record one retained message's durable facts; the unit of incremental work. */
   private reconcileMessageIn(db: Database, assignment: ProgressAssignment, raw: unknown): void {
-    const sessionID = assignment.sessionID
     const message = object(raw)
     const messageID = text(message?.id)
     if (!message || !messageID) return
     const messageTime = object(message.time)
     const messageCreatedAt = dateMillis(messageTime?.created)
-    const at = messageCreatedAt ?? Date.now()
+    const retained: RetainedMessage = {
+      db,
+      assignment,
+      message,
+      messageID,
+      messageTime,
+      messageCreatedAt,
+      at: messageCreatedAt ?? Date.now(),
+    }
     if (
       (message.type === "user" || message.type === "synthetic") &&
       isNativeInput(raw) &&
       typeof message.text === "string"
-    ) {
-      this.appendIn(db, assignment, {
-        source: "recovery",
-        sourceType: `retained-${message.type}-message.text`,
-        kind: "visible-text",
-        dedupeKey: `input:${sessionID}:${messageID}`,
-        at,
-        messageID,
-        payload: {
-          text: safeText(message.text, privacyStats()),
-          messageType: message.type,
-          createdAt: messageCreatedAt ?? null,
-        },
-      })
-    }
-    if (message.type === "assistant") {
-      const parts = Array.isArray(message.content) ? message.content : []
-      for (const [index, rawPart] of parts.entries()) {
-        const part = object(rawPart)
-        if (!part) continue
-        this.reconcileStats.parts++
-        const stats = privacyStats()
-        if (part.type === "text" && typeof part.text === "string") {
-          this.appendIn(db, assignment, {
-            source: "recovery",
-            sourceType: "retained-assistant-message.text",
-            kind: "visible-text",
-            dedupeKey: `text:${sessionID}:${messageID}:${index}`,
-            at,
-            messageID,
-            payload: { text: safeText(part.text, stats) },
-          })
-        } else if (part.type === "tool") {
-          this.recordRecoveredToolIn(db, assignment, messageID, part, at)
-        }
-      }
-      const tokens = object(message.tokens)
-      const messageCost = number(message.cost)
-      const streamedAt = dateMillis(messageTime?.streamed)
-      const completedAt = dateMillis(messageTime?.completed)
-      const status = message.error
-        ? "failed"
-        : completedAt !== undefined
-          ? "ended"
-          : streamedAt !== undefined
-            ? "streamed"
-            : messageCreatedAt !== undefined
-              ? "started"
-              : "unknown"
-      const assistantTiming = factTiming({
-        startedAt: timedEndpoint(
-          messageTime?.created,
-          "recovery",
-          "retained-assistant-message.time.created",
-          "Retained assistant message start time",
-        ),
-        streamedAt: timedEndpoint(
-          messageTime?.streamed,
-          "recovery",
-          "retained-assistant-message.time.streamed",
-          "Retained assistant provider response-body end before tool settlement",
-        ),
-        completedAt: timedEndpoint(
-          messageTime?.completed,
-          "recovery",
-          "retained-assistant-message.time.completed",
-          "Retained assistant completion after tool settlement",
-        ),
-      })
-      const routeEvidence = Object.hasOwn(message, "model")
-        ? routeEvidenceFromModel(message.model, privacyStats())
-        : undefined
-      const route = object(routeEvidence?.route)
-      if (
-        assistantTiming ||
-        tokens ||
-        messageCost !== undefined ||
-        message.error ||
-        routeEvidence
-      ) {
-        const payload: Record<string, unknown> = {
-          status,
-          ...(routeEvidence ? { routeEvidence } : {}),
-          ...(route ? { route } : {}),
-          ...(tokens || messageCost !== undefined
-            ? {
-                measurementBasis: "additive-step-measurement",
-                usage: measuredUsage(tokens, messageCost),
-              }
-            : {}),
-          observations: [
-            {
-              source: "recovery",
-              eventType: "retained-assistant-message",
-              at: messageCreatedAt ?? null,
-              unit: EPOCH_MILLIS,
-              meaning: "Retained assistant message creation when available; endpoints are separate",
-              status,
-              messageID,
-              ...(route ? { route } : {}),
-              ...(routeEvidence ? { routeEvidence } : {}),
-            },
-          ],
-          ...(assistantTiming ? { timing: assistantTiming } : {}),
-          ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
-        }
-        this.appendIn(db, assignment, {
-          source: "recovery",
-          sourceType: "retained-assistant-message",
-          kind: "step",
-          dedupeKey: `step:${sessionID}:${messageID}`,
-          at,
-          messageID,
-          payload,
-        })
-      }
-      const retry = object(message.retry)
-      if (retry) {
-        const retryAttempt = number(retry.attempt)
-        const error = errorView(retry.error, privacyStats())
-        const retryAt = dateMillis(retry.at)
-        const retryTiming = factTiming({
-          scheduledAt: timedEndpoint(
-            retry.at,
-            "recovery",
-            "retained-assistant-message.retry.at",
-            "Retained provider retry scheduled time",
-          ),
-        })
-        this.appendIn(db, assignment, {
-          source: "recovery",
-          sourceType: "retained-assistant-message.retry",
-          kind: "provider-retry",
-          dedupeKey: `retry:${sessionID}:${messageID}:${retryAttempt ?? "unknown"}`,
-          at: retryAt ?? at,
-          messageID,
-          payload: {
-            ...(retryAttempt !== undefined ? { attempt: retryAttempt } : {}),
-            ...(error !== undefined ? { error } : {}),
-            ...(retryTiming ? { timing: retryTiming } : {}),
-          },
-        })
-      }
-      if (message.error) {
-        this.appendIn(db, assignment, {
-          source: "recovery",
-          sourceType: "retained-assistant-message.error",
-          kind: "execution-outcome",
-          dedupeKey: `assistant-error:${sessionID}:${messageID}`,
-          at,
-          messageID,
-          payload: { outcome: "failed", error: errorView(message.error, privacyStats()) },
-        })
-      }
-      return
-    }
-    if (message.type === "shell") {
+    )
+      this.reconcileInputIn(retained, message.type, message.text)
+    if (message.type === "assistant") return this.reconcileAssistantIn(retained)
+    if (message.type === "shell") return this.reconcileShellIn(retained)
+    if (message.type === "idle") return this.reconcileIdleIn(retained)
+    if (message.type === "compaction") this.reconcileCompactionIn(retained)
+  }
+
+  private reconcileInputIn(
+    { db, assignment, messageID, messageCreatedAt, at }: RetainedMessage,
+    messageType: string,
+    messageText: string,
+  ) {
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: `retained-${messageType}-message.text`,
+      kind: "visible-text",
+      dedupeKey: `input:${assignment.sessionID}:${messageID}`,
+      at,
+      messageID,
+      payload: {
+        text: safeText(messageText, privacyStats()),
+        messageType,
+        createdAt: messageCreatedAt ?? null,
+      },
+    })
+  }
+
+  private reconcileAssistantIn(retained: RetainedMessage) {
+    const { db, assignment, message, messageID, at } = retained
+    const sessionID = assignment.sessionID
+    const parts = Array.isArray(message.content) ? message.content : []
+    for (const [index, rawPart] of parts.entries()) {
+      const part = object(rawPart)
+      if (!part) continue
+      this.reconcileStats.parts++
       const stats = privacyStats()
-      const shellID = text(message.shellID)
-      if (shellID) {
-        const output = object(message.output)
-        const shellOutput = text(output?.output)
-        const shellTiming = factTiming({
-          createdAt: timedEndpoint(
-            messageTime?.created,
-            "recovery",
-            "retained-shell-message.time.created",
-            "Retained shell message creation; not process start",
-          ),
-          completedAt: timedEndpoint(
-            messageTime?.completed,
-            "recovery",
-            "retained-shell-message.time.completed",
-            "Retained shell completion time",
-          ),
-        })
+      if (part.type === "text" && typeof part.text === "string") {
         this.appendIn(db, assignment, {
           source: "recovery",
-          sourceType: "retained-shell-message",
-          kind: "shell",
-          dedupeKey: `shell:${sessionID}:${shellID}`,
+          sourceType: "retained-assistant-message.text",
+          kind: "visible-text",
+          dedupeKey: `text:${sessionID}:${messageID}:${index}`,
           at,
           messageID,
-          payload: {
-            shellID,
-            status: text(message.status) ?? "unknown",
-            ...(text(message.command) ? { command: safeText(text(message.command)!, stats) } : {}),
-            ...(number(message.exit) !== undefined ? { exit: number(message.exit) } : {}),
-            ...(shellOutput ? { output: safeText(shellOutput, stats) } : {}),
-            ...(output?.truncated === true ? { truncated: true } : {}),
-            ...(shellTiming ? { timing: shellTiming } : {}),
-          },
+          payload: { text: safeText(part.text, stats) },
         })
+      } else if (part.type === "tool") {
+        this.recordRecoveredToolIn(db, assignment, messageID, part, at)
       }
-      return
     }
-    if (message.type === "idle") {
-      const outcome = text(message.outcome)
-      const error = errorView(message.error, privacyStats())
+    this.reconcileAssistantStepIn(retained)
+    this.reconcileAssistantRetryIn(retained)
+    if (message.error) {
       this.appendIn(db, assignment, {
         source: "recovery",
-        sourceType: "retained-session-idle-message",
+        sourceType: "retained-assistant-message.error",
         kind: "execution-outcome",
-        dedupeKey: `turn:${sessionID}:${messageID}`,
+        dedupeKey: `assistant-error:${sessionID}:${messageID}`,
         at,
         messageID,
-        payload: {
-          outcome:
-            outcome && ["succeeded", "failed", "interrupted"].includes(outcome)
-              ? outcome
-              : "unknown",
-          ...(error !== undefined ? { error } : {}),
-          basis: "retained-session-turn-marker",
-        },
+        payload: { outcome: "failed", error: errorView(message.error, privacyStats()) },
       })
+    }
+  }
+
+  private reconcileAssistantStepIn({
+    db,
+    assignment,
+    message,
+    messageID,
+    messageTime,
+    messageCreatedAt,
+    at,
+  }: RetainedMessage) {
+    const tokens = object(message.tokens)
+    const messageCost = number(message.cost)
+    const streamedAt = dateMillis(messageTime?.streamed)
+    const completedAt = dateMillis(messageTime?.completed)
+    const status = message.error
+      ? "failed"
+      : completedAt !== undefined
+        ? "ended"
+        : streamedAt !== undefined
+          ? "streamed"
+          : messageCreatedAt !== undefined
+            ? "started"
+            : "unknown"
+    const assistantTiming = factTiming({
+      startedAt: timedEndpoint(
+        messageTime?.created,
+        "recovery",
+        "retained-assistant-message.time.created",
+        "Retained assistant message start time",
+      ),
+      streamedAt: timedEndpoint(
+        messageTime?.streamed,
+        "recovery",
+        "retained-assistant-message.time.streamed",
+        "Retained assistant provider response-body end before tool settlement",
+      ),
+      completedAt: timedEndpoint(
+        messageTime?.completed,
+        "recovery",
+        "retained-assistant-message.time.completed",
+        "Retained assistant completion after tool settlement",
+      ),
+    })
+    const routeEvidence = Object.hasOwn(message, "model")
+      ? routeEvidenceFromModel(message.model, privacyStats())
+      : undefined
+    const route = object(routeEvidence?.route)
+    if (!(assistantTiming || tokens || messageCost !== undefined || message.error || routeEvidence))
       return
-    }
-    if (message.type === "compaction") {
-      this.appendIn(db, assignment, {
-        source: "recovery",
-        sourceType: "retained-compaction-message",
-        kind: "gap",
-        dedupeKey: `compaction-gap:${sessionID}:${messageID}`,
-        at,
-        messageID,
-        payload: {
-          reason:
-            "Session compaction may omit earlier public messages; the private summary is not retained in progress facts.",
+    const payload: Record<string, unknown> = {
+      status,
+      ...(routeEvidence ? { routeEvidence } : {}),
+      ...(route ? { route } : {}),
+      ...(tokens || messageCost !== undefined
+        ? {
+            measurementBasis: "additive-step-measurement",
+            usage: measuredUsage(tokens, messageCost),
+          }
+        : {}),
+      observations: [
+        {
+          source: "recovery",
+          eventType: "retained-assistant-message",
+          at: messageCreatedAt ?? null,
+          unit: EPOCH_MILLIS,
+          meaning: "Retained assistant message creation when available; endpoints are separate",
+          status,
+          messageID,
+          ...(route ? { route } : {}),
+          ...(routeEvidence ? { routeEvidence } : {}),
         },
-      })
+      ],
+      ...(assistantTiming ? { timing: assistantTiming } : {}),
+      ...(message.error ? { error: errorView(message.error, privacyStats()) } : {}),
     }
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: "retained-assistant-message",
+      kind: "step",
+      dedupeKey: `step:${assignment.sessionID}:${messageID}`,
+      at,
+      messageID,
+      payload,
+    })
+  }
+
+  private reconcileAssistantRetryIn({ db, assignment, message, messageID, at }: RetainedMessage) {
+    const retry = object(message.retry)
+    if (!retry) return
+    const retryAttempt = number(retry.attempt)
+    const error = errorView(retry.error, privacyStats())
+    const retryAt = dateMillis(retry.at)
+    const retryTiming = factTiming({
+      scheduledAt: timedEndpoint(
+        retry.at,
+        "recovery",
+        "retained-assistant-message.retry.at",
+        "Retained provider retry scheduled time",
+      ),
+    })
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: "retained-assistant-message.retry",
+      kind: "provider-retry",
+      dedupeKey: `retry:${assignment.sessionID}:${messageID}:${retryAttempt ?? "unknown"}`,
+      at: retryAt ?? at,
+      messageID,
+      payload: {
+        ...(retryAttempt !== undefined ? { attempt: retryAttempt } : {}),
+        ...(error !== undefined ? { error } : {}),
+        ...(retryTiming ? { timing: retryTiming } : {}),
+      },
+    })
+  }
+
+  private reconcileShellIn({
+    db,
+    assignment,
+    message,
+    messageID,
+    messageTime,
+    at,
+  }: RetainedMessage) {
+    const stats = privacyStats()
+    const shellID = text(message.shellID)
+    if (!shellID) return
+    const output = object(message.output)
+    const shellOutput = text(output?.output)
+    const shellTiming = factTiming({
+      createdAt: timedEndpoint(
+        messageTime?.created,
+        "recovery",
+        "retained-shell-message.time.created",
+        "Retained shell message creation; not process start",
+      ),
+      completedAt: timedEndpoint(
+        messageTime?.completed,
+        "recovery",
+        "retained-shell-message.time.completed",
+        "Retained shell completion time",
+      ),
+    })
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: "retained-shell-message",
+      kind: "shell",
+      dedupeKey: `shell:${assignment.sessionID}:${shellID}`,
+      at,
+      messageID,
+      payload: {
+        shellID,
+        status: text(message.status) ?? "unknown",
+        ...(text(message.command) ? { command: safeText(text(message.command)!, stats) } : {}),
+        ...(number(message.exit) !== undefined ? { exit: number(message.exit) } : {}),
+        ...(shellOutput ? { output: safeText(shellOutput, stats) } : {}),
+        ...(output?.truncated === true ? { truncated: true } : {}),
+        ...(shellTiming ? { timing: shellTiming } : {}),
+      },
+    })
+  }
+
+  private reconcileIdleIn({ db, assignment, message, messageID, at }: RetainedMessage) {
+    const outcome = text(message.outcome)
+    const error = errorView(message.error, privacyStats())
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: "retained-session-idle-message",
+      kind: "execution-outcome",
+      dedupeKey: `turn:${assignment.sessionID}:${messageID}`,
+      at,
+      messageID,
+      payload: {
+        outcome:
+          outcome && ["succeeded", "failed", "interrupted"].includes(outcome) ? outcome : "unknown",
+        ...(error !== undefined ? { error } : {}),
+        basis: "retained-session-turn-marker",
+      },
+    })
+  }
+
+  private reconcileCompactionIn({ db, assignment, messageID, at }: RetainedMessage) {
+    this.appendIn(db, assignment, {
+      source: "recovery",
+      sourceType: "retained-compaction-message",
+      kind: "gap",
+      dedupeKey: `compaction-gap:${assignment.sessionID}:${messageID}`,
+      at,
+      messageID,
+      payload: {
+        reason:
+          "Session compaction may omit earlier public messages; the private summary is not retained in progress facts.",
+      },
+    })
   }
 
   private recordRecoveredToolIn(
