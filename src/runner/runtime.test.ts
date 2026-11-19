@@ -65,6 +65,7 @@ class TaskRuntime extends ProductionTaskRuntime {
     const [store, host, projectID, progress, options = {}] = args
     super(store, host, projectID, progress, {
       fallowReviewRun: async () => cleanFallowResult,
+      fallowPlanReviewRun: async () => cleanFallowResult,
       ...options,
     })
   }
@@ -112,6 +113,7 @@ function fixture(
     useProjectVerificationDefaults?: boolean
     fallowReview?: "on" | "off"
     fallowReviewRun?: FallowReview
+    fallowPlanReviewRun?: FallowReview
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -431,6 +433,7 @@ function fixture(
     autoResumeInterrupted: options.autoResume ?? false,
     ...(options.fallowReview ? { fallowReview: options.fallowReview } : {}),
     ...(options.fallowReviewRun ? { fallowReviewRun: options.fallowReviewRun } : {}),
+    ...(options.fallowPlanReviewRun ? { fallowPlanReviewRun: options.fallowPlanReviewRun } : {}),
     architectPromptHook: options.architectPromptHook,
     wakeScheduler: options.wakeScheduler,
     ...(options.verificationTimeoutDefaults === undefined
@@ -5184,6 +5187,116 @@ test("concerns alone accept without a repair and reach the Architect", async () 
   expect(outcomes[0]!.fallow).toMatchObject({ introduced: [], concerns: [{ file: "src/c.ts" }] })
   const text = outcomeText(JSON.stringify(outcomes[0]))
   expect(text).toContain("Fallow concerns (1):\n- complexity src/c.ts:5 cloned block")
+})
+
+function planAcceptedOutcomes(f: ReturnType<typeof fixture>) {
+  return (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload) as Record<string, unknown>)
+    .filter((payload) => payload.status === "accepted")
+}
+
+function planLevelRecords(f: ReturnType<typeof fixture>, event: string) {
+  return f.store.read((db) =>
+    db
+      .query<{ payload: string }, [string, string]>(
+        "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event=?",
+      )
+      .all(f.receipt.planID, event),
+  )
+}
+
+const planFallowEffects = (f: ReturnType<typeof fixture>) =>
+  f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "graph-verify:lazers-fallow")
+
+test("plan-level findings never hold the plan and reach the accepted outcome with their task", async () => {
+  const concern = { ...fallowFinding("a.txt", 3), check: "cycle" as const }
+  const review = scriptedReview({
+    ...cleanFallowResult,
+    status: "findings",
+    introduced: [fallowFinding("a.txt", 1)],
+    concerns: [concern],
+  })
+  const f = fixture({ taskFiles: singleTask, fallowPlanReviewRun: review.run })
+  const planID = f.receipt.planID
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  expect(review.calls).toHaveLength(1)
+  expect(review.bases).toEqual([f.base])
+  expect(planFallowEffects(f)).toHaveLength(1)
+  const [outcome] = planAcceptedOutcomes(f)
+  const taskID = f.tasks[0]!.id
+  expect(outcome!.fallow).toMatchObject({
+    introduced: [{ file: "a.txt", line: 1, taskID }],
+    concerns: [{ check: "cycle", taskID }],
+  })
+  // The review's receipt is not evidence: only the authored checks are.
+  expect((outcome!.evidence as { id: string }[]).map((check) => check.id)).toEqual(["combined"])
+  const record = planLevelRecords(f, "PLAN_ACCEPTED")
+  expect(JSON.parse(record[0]!.payload).fallow.introduced).toHaveLength(1)
+  const text = outcomeText(JSON.stringify(outcome))
+  expect(text).toContain("Fallow findings on the combined plan (2):")
+  expect(text).toContain(`- duplication a.txt:1 cloned block (task ${taskID})`)
+  expect(f.store.effects(planID).every((effect) => effect.state === "completed")).toBe(true)
+})
+
+test("a clean plan review accepts without a fallow field", async () => {
+  const f = fixture({ taskFiles: singleTask })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(planFallowEffects(f)).toHaveLength(1)
+  expect("fallow" in planAcceptedOutcomes(f)[0]!).toBe(false)
+})
+
+test("a throwing plan review accepts and records FALLOW_UNAVAILABLE once for the plan", async () => {
+  const f = fixture({
+    taskFiles: singleTask,
+    fallowPlanReviewRun: async () => {
+      throw new Error("plan analyzer crashed")
+    },
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const records = planLevelRecords(f, "FALLOW_UNAVAILABLE")
+  expect(records).toHaveLength(1)
+  expect(records[0]!.payload).toContain("plan analyzer crashed")
+  expect("fallow" in planAcceptedOutcomes(f)[0]!).toBe(false)
+})
+
+test("fallowReview off records no plan review effect", async () => {
+  const review = scriptedReview(introducedResult(fallowFinding("a.txt", 1)))
+  const f = fixture({
+    taskFiles: singleTask,
+    fallowReview: "off",
+    fallowPlanReviewRun: review.run,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(review.calls).toHaveLength(0)
+  expect(planFallowEffects(f)).toHaveLength(0)
+})
+
+test("a failing authored combined check still holds and the plan review never runs", async () => {
+  const review = scriptedReview(introducedResult(fallowFinding("a.txt", 1)))
+  const f = fixture({
+    taskFiles: singleTask,
+    combinedCheckCommand: "exit 1",
+    fallowPlanReviewRun: review.run,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)?.reason).toBe("Combined artifact verification failed")
+  expect(review.calls).toHaveLength(0)
+  expect(planAcceptedOutcomes(f)).toHaveLength(0)
 })
 
 test("a plan reconcile over 30 seconds records PLAN_STEP_SLOW naming the slow call; a fast one records none", async () => {
@@ -13536,7 +13649,9 @@ test("project timing configuration overrides legacy task and combined timeout me
 
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
   const receipts = f.store.effects(f.receipt.planID).flatMap((effect) => {
-    if (!authoredVerifyEffect(effect) && !effect.kind.startsWith("graph-verify:")) return []
+    const authoredCombined =
+      effect.kind.startsWith("graph-verify:") && effect.kind !== "graph-verify:lazers-fallow"
+    if (!authoredVerifyEffect(effect) && !authoredCombined) return []
     if (!effect.receipt) return []
     const envelope = JSON.parse(effect.receipt) as { check?: CheckReceipt }
     return envelope.check ? [{ kind: effect.kind, check: envelope.check }] : []

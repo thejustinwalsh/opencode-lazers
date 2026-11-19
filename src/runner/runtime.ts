@@ -72,6 +72,8 @@ import {
   FALLOW_CHECK_COMMAND,
   FALLOW_CHECK_ID,
   FALLOW_EFFECT_KIND,
+  FALLOW_PLAN_EFFECT_KIND,
+  defaultFallowPlanReview,
   defaultFallowReview,
   fallowCheckReceipt,
   fallowOutcome,
@@ -80,6 +82,7 @@ import {
   type FallowReview,
 } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
+import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attribution.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
   architectCacheWindowMs,
@@ -253,6 +256,8 @@ export type TaskRuntimeOptions = {
   fallowReview?: "on" | "off"
   /** The review itself; defaults to the Fallow analyzer. Tests inject a stub. */
   fallowReviewRun?: FallowReview
+  /** The combined-artifact review; defaults to the Fallow analyzer. Tests inject a stub. */
+  fallowPlanReviewRun?: FallowReview
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
   architectPromptHook?: boolean
@@ -431,6 +436,14 @@ type CleanupAuditDiagnostics = {
   >
 }
 
+type PlanFallowContext = {
+  workspace: string
+  artifact: string
+  baseCommit: string
+  sourceGeneration: string | undefined
+  verificationEpoch: number
+}
+
 /** The `task-accepted` outcome's Fallow field: only when something remains to report. */
 function fallowAcceptance(review: FallowReviewResult | undefined) {
   const fallow = fallowOutcome(review)
@@ -542,6 +555,7 @@ export class TaskRuntime {
   private reconcileTiming: Map<string, number> | undefined
   private readonly slowRecorded = new Set<string>()
   private readonly fallowReviewRun: FallowReview
+  private readonly fallowPlanReviewRun: FallowReview
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
   private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
@@ -568,6 +582,7 @@ export class TaskRuntime {
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
     this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
+    this.fallowPlanReviewRun = options.fallowPlanReviewRun ?? defaultFallowPlanReview
     this.workerNoProgressWindowMs = options.workerNoProgressWindowMs ?? 30 * 60_000
     this.cancelIdleWaitMs = options.cancelIdleWaitMs ?? 30_000
     this.architectRouting = {
@@ -10468,6 +10483,132 @@ export class TaskRuntime {
   }
 
   /**
+   * The Fallow review of the combined artifact: "pending" while journaled or running, undefined
+   * when review is off. It is advisory: a lost or failed run reads as unavailable, never a hold.
+   */
+  private async planFallowReview(
+    plan: PlanRow,
+    ctx: PlanFallowContext,
+    fence: number,
+  ): Promise<FallowReviewResult | "pending" | undefined> {
+    if (!this.fallowReviewEnabled) return undefined
+    const known = this.store
+      .effects(plan.id)
+      .toReversed()
+      .find((e) => {
+        if (e.kind !== FALLOW_PLAN_EFFECT_KIND || effectSuperseded(e)) return false
+        const payload = JSON.parse(e.payload) as Record<string, unknown>
+        return (
+          payload.artifact === ctx.artifact &&
+          payload.workspace === ctx.workspace &&
+          (payload.sourceGeneration ?? undefined) === ctx.sourceGeneration &&
+          (e.state === "completed" || (payload.verificationEpoch ?? 0) === ctx.verificationEpoch)
+        )
+      })
+    if (known?.state === "completed")
+      return this.recordPlanFallowOutcome(plan, actualCheckResultFromEffect(known)?.fallow)
+    if (known) {
+      const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
+      if (activity?.state === "running" || activity?.state === "completed") return "pending"
+      return this.recordPlanFallowOutcome(
+        plan,
+        unavailableFallowResult("Fallow plan review did not complete"),
+      )
+    }
+    const receiptPath = join(
+      this.dataDirectory,
+      "receipts",
+      plan.id,
+      `${FALLOW_CHECK_ID}-${ctx.artifact}${ctx.sourceGeneration ? `-${ctx.sourceGeneration}` : ""}${ctx.verificationEpoch ? `-${ctx.verificationEpoch}` : ""}.json`,
+    )
+    const effect = this.effect(
+      plan.id,
+      null,
+      null,
+      FALLOW_PLAN_EFFECT_KIND,
+      {
+        check: { id: FALLOW_CHECK_ID, command: FALLOW_CHECK_COMMAND },
+        workspace: ctx.workspace,
+        artifact: ctx.artifact,
+        identity: ctx.artifact,
+        receiptPath,
+        ...(ctx.sourceGeneration ? { sourceGeneration: ctx.sourceGeneration } : {}),
+        ...(ctx.verificationEpoch ? { verificationEpoch: ctx.verificationEpoch } : {}),
+      },
+      fence,
+    )
+    this.startCheckActivity({
+      id: effect.id,
+      identity: { effectID: effect.id, payload: effect.payload },
+      metadata: {
+        kind: "effect",
+        projectDirectory: this.directory,
+        planID: plan.id,
+        effectID: effect.id,
+        receiptPath,
+      },
+      run: (signal) => this.runPlanFallowReview(plan, ctx, receiptPath, signal),
+    })
+    return "pending"
+  }
+
+  /** Records the plan-level `FALLOW_UNAVAILABLE` once and passes the result through. */
+  private recordPlanFallowOutcome(
+    plan: PlanRow,
+    review: FallowReviewResult | undefined,
+  ): FallowReviewResult | undefined {
+    if (review?.status === "unavailable")
+      this.store.recordOnce(plan.id, null, "FALLOW_UNAVAILABLE", {
+        reason: review.reason ?? "Fallow review unavailable",
+      })
+    return review
+  }
+
+  private async runPlanFallowReview(
+    plan: PlanRow,
+    ctx: PlanFallowContext,
+    receiptPath: string,
+    signal: AbortSignal,
+  ): Promise<CheckReceipt> {
+    const startedAt = Date.now()
+    const result = await this.fallowPlanReviewRun({
+      workspace: ctx.workspace,
+      baseCommit: ctx.baseCommit,
+      artifact: ctx.artifact,
+      repository: this.store.repository,
+      signal,
+    })
+      .then((review) => attributeFindingsToTasks(ctx.workspace, this.planTaskDiffs(plan), review))
+      .catch((error: unknown) => unavailableFallowResult(errorText(error)))
+    const receipt = fallowCheckReceipt({
+      id: FALLOW_CHECK_ID,
+      workspace: ctx.workspace,
+      artifact: ctx.artifact,
+      inputIdentity: ctx.artifact,
+      environmentIdentity: verificationEnvironmentIdentity(),
+      startedAt,
+      endedAt: Date.now(),
+      result,
+      advisory: true,
+    })
+    await writeCheckReceipt(receiptPath, receipt)
+    return receipt
+  }
+
+  /** Each integrated task's own change: its accepted artifact measured from its chain base. */
+  private planTaskDiffs(plan: PlanRow): PlanTaskDiff[] {
+    const attempts = this.store.attempts(plan.id)
+    return this.store.nodes(plan.id).flatMap((node) => {
+      const attempt = attempts.findLast(
+        (candidate) => candidate.task_id === node.task_id && candidate.artifact === node.artifact,
+      )
+      return node.artifact && attempt
+        ? [{ taskID: node.task_id, base: this.taskChainBase(attempt), artifact: node.artifact }]
+        : []
+    })
+  }
+
+  /**
    * The commit a task's own change is measured from: the `base_commit` of the first attempt in
    * this attempt's continuation chain. A repair or resume starts from the previous attempt's
    * artifact (`dispatch()` sets `base` to it), so its own `base_commit` already contains the
@@ -10780,6 +10921,12 @@ export class TaskRuntime {
       this.hold(plan, "Combined artifact verification failed")
       return
     }
+    const planFallow = await this.planFallowReview(
+      plan,
+      { workspace, artifact, baseCommit: input.baseCommit, sourceGeneration, verificationEpoch },
+      fence,
+    )
+    if (planFallow === "pending") return
     if (!(await artifactUnchanged(workspace, artifact))) {
       this.hold(plan, "Combined candidate changed after verification")
       return
@@ -10794,10 +10941,20 @@ export class TaskRuntime {
       db.query(
         "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),artifact=?,version=version+1 WHERE id=?",
       ).run(artifact, plan.id)
-      this.store.record(plan.id, null, "PLAN_ACCEPTED", { artifact, checks: receipts })
+      this.store.record(plan.id, null, "PLAN_ACCEPTED", {
+        artifact,
+        checks: receipts,
+        ...fallowAcceptance(planFallow),
+      })
       this.outcome(
         plan.id,
-        { status: "accepted", artifact, evidence: receipts, taskIDs: input.integrationOrder },
+        {
+          status: "accepted",
+          artifact,
+          evidence: receipts,
+          taskIDs: input.integrationOrder,
+          ...fallowAcceptance(planFallow),
+        },
         true,
       )
     })
