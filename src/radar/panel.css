@@ -295,17 +295,17 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.lazers-radar-detail dl {
+.lazers-radar-detail dl:not([class*="lazers-kit"]) {
   display: grid;
   grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
   gap: 6px 12px;
   margin: 12px 0;
   font-size: 12.5px;
 }
-.lazers-radar-detail dt {
+.lazers-radar-detail dl:not([class*="lazers-kit"]) > dt {
   color: var(--text-weak);
 }
-.lazers-radar-detail dd {
+.lazers-radar-detail dl:not([class*="lazers-kit"]) > dd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
@@ -1317,9 +1317,9 @@
 .lazers-radar-monitor-inspector {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
-.lazers-radar-monitor-inspector > * {
+.lazers-radar-detail.lazers-radar-monitor-inspector > * {
   margin: 0;
   min-width: 0;
 }
