@@ -1,0 +1,35 @@
+[package]
+name = "fallow-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+# Own workspace root: the vendored upstream crates keep their own workspace for
+# inherited dependency versions, and this crate's lockfile is seeded from the
+# upstream Cargo.lock so every shared dependency resolves to the same version.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fallow-extract = { path = "../../vendor/fallow/crates/extract" }
+fallow-config = { path = "../../vendor/fallow/crates/config" }
+fallow-core = { path = "../../vendor/fallow/crates/core" }
+fallow-engine = { path = "../../vendor/fallow/crates/engine" }
+fallow-types = { path = "../../vendor/fallow/crates/types" }
+globset = "0.4"
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "=0.2.130"
+getrandom_03 = { package = "getrandom", version = "0.3" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = "debuginfo"

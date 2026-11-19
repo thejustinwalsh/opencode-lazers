@@ -1,0 +1,2 @@
+# Vendored upstream source keeps its own formatting; the patch queue applies to it verbatim.
+vendor/

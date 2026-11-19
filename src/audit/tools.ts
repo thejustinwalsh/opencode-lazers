@@ -19,7 +19,7 @@ import { resolve } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { AuditHistory } from "./history.ts"
 import { fallowReport, importAudit } from "./report.ts"
-import { nativeFallowAnalyzer } from "./analyzer.ts"
+import { defaultFallowAnalyzer } from "./wasm-analyzer.ts"
 import {
   cleanupResolvedFallowConfig,
   getLatestFallowConfig,
@@ -307,7 +307,7 @@ export function registerAuditTools(
               Effect.tryPromise({
                 try: async () =>
                   withEffectiveConfig(ctx, repository, async (resolved) => {
-                    const report = await nativeFallowAnalyzer.duplication({
+                    const report = await defaultFallowAnalyzer.duplication({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
                       files: input.paths,
@@ -351,7 +351,7 @@ export function registerAuditTools(
               Effect.tryPromise({
                 try: async () =>
                   withEffectiveConfig(ctx, repository, async (resolved) => {
-                    const report = await nativeFallowAnalyzer.complexity({
+                    const report = await defaultFallowAnalyzer.complexity({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
                       files: input.paths,
@@ -400,7 +400,7 @@ export function registerAuditTools(
                         message:
                           "dead-code-disabled: no usable Fallow config has entry points. Set one with lz-fallow-config.",
                       })
-                    const report = await nativeFallowAnalyzer.deadCode({
+                    const report = await defaultFallowAnalyzer.deadCode({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
                       files: input.paths,

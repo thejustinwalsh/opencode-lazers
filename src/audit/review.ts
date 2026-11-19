@@ -10,7 +10,8 @@ import {
   type DuplicationInstance,
   type LineRange,
 } from "./attribution.ts"
-import { nativeFallowAnalyzer, type FallowAnalyzer } from "./analyzer.ts"
+import type { FallowAnalyzer } from "./analyzer.ts"
+import { defaultFallowAnalyzer } from "./wasm-analyzer.ts"
 import {
   cleanupResolvedFallowConfig,
   resolveFallowConfig,
@@ -265,7 +266,7 @@ async function runAnalysis(
  * as `unavailable`, never thrown.
  */
 export async function fallowReview(input: FallowReviewInput): Promise<FallowReviewResult> {
-  const analyzer = input.analyzer ?? nativeFallowAnalyzer
+  const analyzer = input.analyzer ?? defaultFallowAnalyzer
   let resolved: ResolvedFallowConfig | undefined
   try {
     resolved = await resolveFallowConfig({

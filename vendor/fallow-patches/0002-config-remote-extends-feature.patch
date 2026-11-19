@@ -1,0 +1,87 @@
+diff --git a/crates/config/Cargo.toml b/crates/config/Cargo.toml
+index 8ec720f..6a8631d 100644
+--- a/crates/config/Cargo.toml
++++ b/crates/config/Cargo.toml
+@@ -35,10 +35,13 @@ regex = { workspace = true }
+ rustc-hash = { workspace = true }
+ tempfile = { workspace = true }
+ tracing = { workspace = true }
+-ureq = { workspace = true }
++ureq = { workspace = true, optional = true }
+ xxhash-rust = { workspace = true }
+ 
+ [features]
++# HTTPS `extends` over `ureq` (rustls, ring). Off for WebAssembly and any embedding
++# without a network stack; binaries that load remote configs turn it on.
++remote-extends = ["dep:ureq"]
+ # Test-only hook that permutes the discovery lists with the seed in
+ # FALLOW_PERMUTATION_SEED. See src/permutation.rs. Release builds leave it off.
+ permutation-hook = []
+diff --git a/crates/config/src/config/parsing.rs b/crates/config/src/config/parsing.rs
+index 8cf05fa..5b4e903 100644
+--- a/crates/config/src/config/parsing.rs
++++ b/crates/config/src/config/parsing.rs
+@@ -34,6 +34,7 @@ const HTTPS_PREFIX: &str = "https://";
+ const HTTP_PREFIX: &str = "http://";
+ 
+ /// Default timeout for fetching remote configs via URL extends.
++#[cfg_attr(not(feature = "remote-extends"), allow(dead_code))]
+ const DEFAULT_URL_TIMEOUT_SECS: u64 = 5;
+ 
+ /// Host-controlled trust policy for loading a fallow config.
+@@ -391,6 +392,7 @@ fn remote_config_display(location: &str) -> String {
+ }
+ 
+ /// Format a fetch error without trusting the HTTP client's URL rendering.
++#[cfg(feature = "remote-extends")]
+ fn remote_fetch_error_display(error: &ureq::Error, _url: &str) -> String {
+     match error {
+         ureq::Error::RequireHttpsOnly(redirect_target) => format!(
+@@ -411,6 +413,7 @@ fn starts_with_url_prefix(value: &str, prefix: &str) -> bool {
+ }
+ 
+ /// Read the `FALLOW_EXTENDS_TIMEOUT_SECS` env var, falling back to [`DEFAULT_URL_TIMEOUT_SECS`].
++#[cfg(feature = "remote-extends")]
+ fn url_timeout() -> Duration {
+     url_timeout_from(std::env::var("FALLOW_EXTENDS_TIMEOUT_SECS").ok().as_deref())
+ }
+@@ -418,6 +421,7 @@ fn url_timeout() -> Duration {
+ /// Parse a raw `FALLOW_EXTENDS_TIMEOUT_SECS` value into a timeout, falling back
+ /// to [`DEFAULT_URL_TIMEOUT_SECS`] for absent, zero, or non-numeric input. Pure
+ /// so the parsing branches stay testable without mutating the process env.
++#[cfg_attr(not(feature = "remote-extends"), allow(dead_code))]
+ fn url_timeout_from(raw: Option<&str>) -> Duration {
+     raw.and_then(|v| v.parse::<u64>().ok().filter(|&n| n > 0))
+         .map_or(
+@@ -427,9 +431,11 @@ fn url_timeout_from(raw: Option<&str>) -> Duration {
+ }
+ 
+ /// Maximum response body size for fetched config files.
++#[cfg(feature = "remote-extends")]
+ const MAX_URL_CONFIG_BYTES: u64 = 1024 * 1024;
+ 
+ /// Fetch a remote JSON config from an HTTPS URL.
++#[cfg(feature = "remote-extends")]
+ fn fetch_url_config(url: &str, source: &str) -> Result<serde_json::Value, miette::Report> {
+     let url_display = remote_config_display(url);
+     let source_display = remote_config_display(source);
+@@ -478,7 +484,18 @@ struct NetworkRemoteConfigFetcher;
+ 
+ impl RemoteConfigFetcher for NetworkRemoteConfigFetcher {
+     fn fetch(&mut self, url: &str, source: &str) -> Result<serde_json::Value, miette::Report> {
+-        fetch_url_config(url, source)
++        #[cfg(feature = "remote-extends")]
++        {
++            fetch_url_config(url, source)
++        }
++        #[cfg(not(feature = "remote-extends"))]
++        {
++            Err(miette::miette!(
++                "remote-extends-unsupported: this build cannot fetch {} (referenced from {})",
++                remote_config_display(url),
++                remote_config_display(source)
++            ))
++        }
+     }
+ }
+ 

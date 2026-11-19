@@ -1,0 +1,202 @@
+diff --git a/crates/engine/src/instant.rs b/crates/engine/src/instant.rs
+new file mode 100644
+index 0000000..28d8a80
+--- /dev/null
++++ b/crates/engine/src/instant.rs
+@@ -0,0 +1,23 @@
++//! `Instant` for step timing that also works where the target has no clock.
++//!
++//! `std::time::Instant::now()` panics on `wasm32-unknown-unknown`. The timings
++//! it feeds are trace output only, so those targets report zero elapsed time.
++
++#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
++pub(crate) use std::time::Instant;
++
++/// A clockless stand-in: every elapsed time is zero.
++#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
++#[derive(Clone, Copy)]
++pub(crate) struct Instant;
++
++#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
++impl Instant {
++    pub(crate) fn now() -> Self {
++        Self
++    }
++
++    pub(crate) fn elapsed(&self) -> std::time::Duration {
++        std::time::Duration::ZERO
++    }
++}
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index 501e867..78b823b 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -53,6 +53,7 @@ pub mod diff_source;
+ pub mod discover;
+ pub mod duplicates;
+ mod effective_severity;
++mod instant;
+ pub mod entry_weight;
+ pub mod error_severity;
+ mod feature_flags;
+diff --git a/crates/engine/src/duplication_detector/detect/mod.rs b/crates/engine/src/duplication_detector/detect/mod.rs
+index 6759adf..eedfcb5 100644
+--- a/crates/engine/src/duplication_detector/detect/mod.rs
++++ b/crates/engine/src/duplication_detector/detect/mod.rs
+@@ -155,7 +155,7 @@ impl CloneDetector {
+         let (raw_groups, sa_time, lcp_time, extract_time) =
+             self.extract_raw_groups(&text, &file_of, &file_offsets, files, focus_file_ids);
+ 
+-        let t0 = std::time::Instant::now();
++        let t0 = crate::instant::Instant::now();
+         let clone_groups =
+             filtering::build_groups(raw_groups, files, self.min_lines, self.skip_local);
+         let build_time = t0.elapsed();
+@@ -165,7 +165,7 @@ impl CloneDetector {
+             "step6_build_groups"
+         );
+ 
+-        let t0 = std::time::Instant::now();
++        let t0 = crate::instant::Instant::now();
+         let stats =
+             statistics::compute_stats(&clone_groups, totals.files, totals.lines, totals.tokens);
+         let stats_time = t0.elapsed();
+@@ -209,7 +209,7 @@ impl CloneDetector {
+         std::time::Duration,
+         std::time::Duration,
+     ) {
+-        let t0 = std::time::Instant::now();
++        let t0 = crate::instant::Instant::now();
+         let sa = suffix_array::build_suffix_array(text);
+         let sa_time = t0.elapsed();
+         tracing::debug!(
+@@ -218,12 +218,12 @@ impl CloneDetector {
+             "step3_suffix_array"
+         );
+ 
+-        let t0 = std::time::Instant::now();
++        let t0 = crate::instant::Instant::now();
+         let lcp_arr = lcp::build_lcp(text, &sa);
+         let lcp_time = t0.elapsed();
+         tracing::debug!(elapsed_us = lcp_time.as_micros(), "step4_lcp_array");
+ 
+-        let t0 = std::time::Instant::now();
++        let t0 = crate::instant::Instant::now();
+         let raw_groups = extraction::extract_clone_groups(&extraction::CloneGroupExtractionInput {
+             sa: &sa,
+             lcp: &lcp_arr,
+@@ -289,7 +289,7 @@ fn rank_and_concatenate(
+     std::time::Duration,
+     std::time::Duration,
+ ) {
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let ranked_files = ranking::rank_reduce(files);
+     let rank_time = t0.elapsed();
+     let unique_ranks: usize = ranked_files
+@@ -304,7 +304,7 @@ fn rank_and_concatenate(
+         "step1_rank_reduce"
+     );
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let (mut text, file_of, file_offsets) =
+         concatenation::concatenate_with_sentinels(&ranked_files);
+     if files_may_have_boundaries(files) {
+diff --git a/crates/engine/src/duplication_detector/detect/rolling.rs b/crates/engine/src/duplication_detector/detect/rolling.rs
+index 48723b3..8d5e87f 100644
+--- a/crates/engine/src/duplication_detector/detect/rolling.rs
++++ b/crates/engine/src/duplication_detector/detect/rolling.rs
+@@ -130,11 +130,11 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
+         totals,
+         may_have_boundaries,
+     } = input;
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let ranked_files = ranking::rank_reduce(files);
+     let rank_time = t0.elapsed();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let (boundary_prefixes, has_boundaries) =
+         boundary_prefixes_for_detection(files, may_have_boundaries);
+     let seed_buckets = build_seed_buckets(
+@@ -145,7 +145,7 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
+     );
+     let seed_time = t0.elapsed();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let (raw_groups, seed_class_count) = build_raw_groups(
+         &ranked_files,
+         &boundary_prefixes,
+@@ -161,11 +161,11 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
+         "rolling_step3_raw_groups"
+     );
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let clone_groups = filtering::build_groups(raw_groups, files, min_lines, skip_local);
+     let build_time = t0.elapsed();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let stats = statistics::compute_stats(&clone_groups, totals.files, totals.lines, totals.tokens);
+     let stats_time = t0.elapsed();
+ 
+diff --git a/crates/engine/src/duplication_detector/detect/filtering.rs b/crates/engine/src/duplication_detector/detect/filtering.rs
+index 913f468..1efa367 100644
+--- a/crates/engine/src/duplication_detector/detect/filtering.rs
++++ b/crates/engine/src/duplication_detector/detect/filtering.rs
+@@ -332,15 +332,15 @@ pub(super) fn build_groups(
+ 
+     let raw_count = raw_groups.len();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let surviving = remove_token_subsets(raw_groups, files.len());
+     let token_subset_us = t0.elapsed().as_micros();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let line_tables = build_line_tables(files);
+     let line_tables_us = t0.elapsed().as_micros();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let mut clone_groups: Vec<CloneGroup> = surviving
+         .iter()
+         .filter(|rg| !is_atomic_invocation_group(rg, files))
+@@ -348,7 +348,7 @@ pub(super) fn build_groups(
+         .collect();
+     let build_clone_us = t0.elapsed().as_micros();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     clone_groups.sort_by(|a, b| {
+         b.token_count
+             .cmp(&a.token_count)
+@@ -356,7 +356,7 @@ pub(super) fn build_groups(
+     });
+     let sort_us = t0.elapsed().as_micros();
+ 
+-    let t0 = std::time::Instant::now();
++    let t0 = crate::instant::Instant::now();
+     let kept = remove_line_subsets(clone_groups);
+     let line_subset_us = t0.elapsed().as_micros();
+ 
+diff --git a/crates/types/src/source_fingerprint.rs b/crates/types/src/source_fingerprint.rs
+index 442eef4..77bf941 100644
+--- a/crates/types/src/source_fingerprint.rs
++++ b/crates/types/src/source_fingerprint.rs
+@@ -148,6 +148,10 @@ pub const TIMESTAMP_SETTLE_WINDOW_NS: u64 = 3_000_000_000;
+ /// A `0` makes each fingerprint unsettled, which is the safe direction.
+ #[must_use]
+ pub fn now_ns() -> u64 {
++    // `wasm32-unknown-unknown` has no clock and `SystemTime::now` panics there.
++    if cfg!(all(target_arch = "wasm32", target_os = "unknown")) {
++        return 0;
++    }
+     SystemTime::now()
+         .duration_since(SystemTime::UNIX_EPOCH)
+         .ok()

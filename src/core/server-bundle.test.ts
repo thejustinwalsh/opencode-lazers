@@ -25,7 +25,13 @@ beforeAll(async () => {
 
 test("build emits one server file plus its workers, and the bundle exports the same plugin", async () => {
   expect(readdirSync(dist).filter((file) => file.endsWith(".js"))).toEqual(
-    expect.arrayContaining(["server.js", "processor.js", "repo-worker.js", "decision-worker.js"]),
+    expect.arrayContaining([
+      "server.js",
+      "processor.js",
+      "repo-worker.js",
+      "decision-worker.js",
+      "fallow-worker.js",
+    ]),
   )
   const built = (await import(`${dist}server.js`)) as { default: typeof sourcePlugin }
   expect(Object.keys(built)).toEqual(["default"])
@@ -102,3 +108,33 @@ test("worker URLs resolve beside the bundle and fall back to source", () => {
     "file:///x/src/models/decision-worker.ts",
   )
 })
+
+test("the bundled fallow worker finds dist/fallow.wasm and answers a complexity request", async () => {
+  const worker = new Worker(pathToFileURL(`${dist}fallow-worker.js`))
+  try {
+    const response = await new Promise<{
+      id?: number
+      ok?: boolean
+      report?: { functions: { file: string }[] }
+      error?: unknown
+    }>((resolve, reject) => {
+      worker.on("error", reject)
+      worker.on("message", (message: { ready?: true; id?: number }) => {
+        if (message.ready)
+          worker.postMessage({
+            id: 1,
+            kind: "complexity",
+            root: fileURLToPath(new URL("../..", import.meta.url)),
+            files: ["src/audit/history.ts"],
+          })
+        else resolve(message)
+      })
+    })
+    expect(response.error).toBeUndefined()
+    expect(response.ok).toBe(true)
+    expect(response.report?.functions.length).toBeGreaterThan(0)
+    expect(response.report?.functions.every((f) => f.file === "src/audit/history.ts")).toBe(true)
+  } finally {
+    await worker.terminate()
+  }
+}, 60_000)

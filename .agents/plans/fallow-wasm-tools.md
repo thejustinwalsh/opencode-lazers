@@ -701,6 +701,91 @@ into this plan against the budgets; a failed budget is reported, not hidden.
 Stop and return to the owner when: duplication cannot be built without
 rewriting the detector.
 
+#### Phase 1 (measured results, 2026-11-19)
+
+Pin `v3.43.2` (`b6a3e048dc88`), native `@fallow-cli/fallow-node` 3.43.2,
+rustc 1.98.1 (the pin declares `rust-version = "1.97"`, so no toolchain change),
+`wasm-bindgen` 0.2.130, `wasm-opt` 129. Build: `bun scripts/build-fallow-wasm.ts`.
+
+What builds for `wasm32-unknown-unknown`: `fallow-types`, `-config`, `-extract`,
+`-graph`, `-core`, `-engine` (the whole engine, not only the detector), `-security`,
+`-output`, `-mutation`, `-process`. The detector did not need rewriting or a copy
+into the binding crate.
+
+Patch queue (`vendor/fallow-patches/`, changed lines excluding context):
+
+| Patch                                              | Lines | Why                                                                                           |
+| -------------------------------------------------- | ----- | --------------------------------------------------------------------------------------------- |
+| 0001 extract cache size assertions on 64-bit only  | 1     | `CachedModule` and friends are asserted at 64-bit sizes                                       |
+| 0002 `fallow-config` `remote-extends` feature      | 24    | `ureq`, `rustls`, `ring` behind an off-by-default feature; remote fetch returns an error      |
+| 0003 drop `[[bench]]` targets from core and engine | 21    | benches are not imported; cargo validates them for path dependencies                          |
+| 0004 engine on targets without unix or windows     | 35    | git path bytes, churn cache paths, `file://` URLs, dependency symlinks                        |
+| 0005 duplication from in-memory sources            | 67    | `detect_duplicates_in_memory` and `find_duplicates_in_memory`: no read, no metadata, no cache |
+| 0006 step timing without a clock                   | 58    | `Instant::now()` and `SystemTime::now()` panic on this target                                 |
+
+Total 206 changed lines. The spike's "JavaScript entropy" patch is not needed.
+
+- **`getrandom`:** a fixed-seed custom backend (`crates/fallow-wasm/src/entropy.rs`,
+  `--cfg getrandom_backend="custom"` in `crates/fallow-wasm/.cargo/config.toml`).
+  Only `getrandom` 0.3 is in the tree for this target. Entropy only seeds
+  `ahash` hash maps, so the module is deterministic and needs no host import.
+- **Imports declared** (`WebAssembly.Module.imports`): three, all
+  wasm-bindgen glue and none a capability: `__wbindgen_string_get` (reads the
+  string arrays the host passes in), `__wbindgen_throw`,
+  `__wbindgen_init_externref_table`. The test pins this list. Panics are recorded
+  in a buffer the host reads with `lastPanic()` after the resulting trap.
+- **Rayon** runs on the calling thread on this target; no thread is spawned.
+- **Surface** (`Project` in `crates/fallow-wasm/src/project.rs`): constructor
+  `(root, paths, contents, configName, configText)`; `duplication(changed, optionsJson)`,
+  `complexity(paths)`, `featureFlags(paths)`; every call returns `{ok:true,...}` or
+  `{error:{code,message}}`. Codes: `remote-extends-unsupported`, `extends-unsupported`
+  (local or `npm:` extends: the host must inline it), `config-invalid`, `options-invalid`.
+  The adapter applies source extensions, `ignorePatterns` and discovery's hidden-directory
+  rule. Per-file `parse` and `complexity` exports remain.
+- **Not done: dead code and architecture (cycles).** They compile, but cannot run:
+  they need `oxc_resolver` module resolution, plugin and `package.json`/`tsconfig`
+  discovery over a real filesystem (about 2,200 `std::fs` call sites across core,
+  graph, config and engine). A virtual filesystem under the resolver is a separate
+  piece of work, well past the patch budget. Feature flags need none of that and are
+  exposed.
+
+Parity against native 3.43.2 (`src/audit/wasm/fallow-parity.test.ts`, all passing):
+
+| Check                              | This repository (371 analysed files)                      | Fixture (4 files)   |
+| ---------------------------------- | --------------------------------------------------------- | ------------------- |
+| Clone groups, file and line ranges | 187 of 187 identical; token and line counts identical     | identical           |
+| Duplication stats                  | files, lines, duplicated lines, group count identical     | n/a                 |
+| Complexity findings                | 377 of 377 identical (cyclomatic, cognitive, name, line)  | identical           |
+| Feature flags                      | none in this repository                                   | identical (2 flags) |
+| Changed-file run                   | equals the full run filtered to groups touching the files | n/a                 |
+| Dead-code finding keys             | not available                                             | not available       |
+
+Differences, all explained:
+
+1. **CRAP-only complexity findings** (358 of native's 735 here) are absent: they need
+   the coverage model. The module lists cyclomatic and cognitive findings only.
+2. **File set.** Native walks the disk; the module takes the host's list. They agree
+   when the host passes `git ls-files`; untracked, unignored files are the host's call.
+3. **Remote and local `extends`** return an error; native follows local ones.
+
+Measurements, this repository, Apple silicon, Bun 1.4.4, module run in a `Worker`
+(a 10-iteration loop after one warm-up; p95 over those 10):
+
+| Budget                             | Limit   | Measured                                                                                                                                       | Result |
+| ---------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `fallow.wasm` after `wasm-opt -Oz` | 8 MB    | 4.86 MB (4,859,933 bytes)                                                                                                                      | pass   |
+| Worker start to module ready       | 300 ms  | 15 ms (first call 5 ms)                                                                                                                        | pass   |
+| Changed-file check, 10 files       | 2 s p95 | 235 ms p50, 370 to 465 ms p95 for complexity and duplication; with reading 647 files and building the `Project`, 255 ms p50, 410 to 500 ms p95 | pass   |
+| Whole-repository duplication       | 15 s    | 221 ms p50, 225 to 238 ms p95; whole-repository complexity 1.4 s                                                                               | pass   |
+| Worker memory (recorded, no limit) | n/a     | wasm linear memory 98.6 MB; worker RSS about 220 MB after the run                                                                              | n/a    |
+
+The module is built for size (`opt-level = "z"`, fat LTO). At `opt-level = 3` it was
+8.83 MB (over the 8 MB budget) and about twice as fast (changed check 175 ms p50,
+whole-repository duplication 165 ms). The size-optimised build is committed because every
+budget holds with it; the speed build is one line in `crates/fallow-wasm/Cargo.toml`.
+A changed-file check re-tokenizes the whole corpus (the cost is the corpus, not the 10
+files), so it is about as slow as a full run; a token cache across calls would remove that.
+
 ### Phase 2: worker and tools
 
 1. `src/audit/fallow-worker.ts`, `FallowClient`, `wasmURL`; entries in
@@ -808,3 +893,37 @@ Still open:
   `decision-worker.js` but not `transition-indexes-worker.js`, which
   `scripts/build-server.ts` builds and `src/runner/transition-indexes.ts`
   spawns.
+
+#### Phase 2 (results)
+
+The review and the three exploration tools now default to `defaultFallowAnalyzer`
+(`src/audit/wasm-analyzer.ts`), which is `wasmFallowAnalyzer`.
+
+- **In WASM:** `complexity` and `duplication`, served by `src/audit/fallow-worker.ts`
+  (one worker thread, spawned lazily through `workerURL`, one request at a time). The
+  worker lists files (`git ls-files -z --cached --others --exclude-standard`, else a walk
+  that skips dot-directories and `node_modules`), reads them, refuses any path whose
+  realpath leaves the root, and passes paths and contents to the module. A trap returns
+  `analyzer-panic` with `lastPanic()`. Abort or the 60 s timeout terminates the worker; the
+  next request spawns a new one.
+- **Stays native:** `deadCode` (needs module resolution and plugin discovery over a real
+  filesystem, see Phase 1), `lz-fallow-report` (the durable five-section scan), and any
+  call whose config has a local or `npm:` `extends` (`extends-unsupported`: the call
+  falls back to native when it loads, otherwise the error surfaces).
+- **Protocol:** request `{ id, kind, root, files?, changed?, configName?, configText?, options? }`,
+  response `{ id, ok: true, report }` or `{ id, error: { code, message } }`; the worker posts
+  `{ ready: true }` once the module is instantiated.
+- **Fields WASM does not produce** (filled with 0 or a fixed value, none read by the review
+  or the tools): `col`, `param_count`, `crap`, `coverage_pct`, `actions` on findings;
+  `start_col`, `end_col`, `spread` on clones; `files_with_clones`, `total_tokens`,
+  `duplicated_tokens` in stats. CRAP-only findings are absent.
+- **Native ignores `files`** for health and duplication, so the native review always
+  analysed the whole root. WASM honours it: complexity reads only the changed files;
+  duplication keeps the whole root as corpus and reports groups touching the changed files.
+- **Shipping:** `dist/fallow-worker.js` and `dist/fallow.wasm` are built by `build:server`
+  and found through `wasmURL`; the release package now also carries
+  `dist/transition-indexes-worker.js`, which was built and spawned but never packaged.
+- **Measured:** a 10-file changed check through the worker (complexity and duplication
+  requests, queued) on this repository: 488 ms for the first call including worker spawn and
+  module instantiation, 278 to 302 ms afterwards. It is bounded by tokenizing the whole
+  corpus for duplication (Phase 1), not by the 10 files.

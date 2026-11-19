@@ -1,0 +1,44 @@
+diff --git a/crates/engine/Cargo.toml b/crates/engine/Cargo.toml
+index 87f3eb2..5529765 100644
+--- a/crates/engine/Cargo.toml
++++ b/crates/engine/Cargo.toml
+@@ -69,15 +69,3 @@ tracing-subscriber = { workspace = true }
+ 
+ [lints]
+ workspace = true
+-
+-[[bench]]
+-name = "dupes_detect"
+-harness = false
+-
+-[[bench]]
+-name = "dupes_pipeline"
+-harness = false
+-
+-[[bench]]
+-name = "similar_code"
+-harness = false
+diff --git a/crates/core/Cargo.toml b/crates/core/Cargo.toml
+index d333bef..8fc9739 100644
+--- a/crates/core/Cargo.toml
++++ b/crates/core/Cargo.toml
+@@ -68,19 +68,3 @@ tempfile = { workspace = true }
+ 
+ [lints]
+ workspace = true
+-
+-[[bench]]
+-name = "analysis"
+-harness = false
+-
+-[[bench]]
+-name = "entry_point_discovery"
+-harness = false
+-
+-[[bench]]
+-name = "large_analysis"
+-harness = false
+-
+-[[bench]]
+-name = "scaling_analysis"
+-harness = false
