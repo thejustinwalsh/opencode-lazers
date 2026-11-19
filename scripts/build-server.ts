@@ -1,4 +1,4 @@
-import { watch } from "node:fs"
+import { copyFileSync, watch } from "node:fs"
 import { fileURLToPath } from "node:url"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
@@ -15,6 +15,7 @@ const entries = [
   ["src/context/repo-worker.ts", "repo-worker.js"],
   ["src/models/decision-worker.ts", "decision-worker.js"],
   ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
+  ["src/audit/fallow-worker.ts", "fallow-worker.js"],
 ] as const
 
 export async function buildServer() {
@@ -30,6 +31,8 @@ export async function buildServer() {
     })
     if (!result.success) throw new AggregateError(result.logs, `Server build failed: ${entry}`)
   }
+  // The fallow worker loads this module beside itself through wasmURL.
+  copyFileSync(`${root}src/audit/wasm/fallow.wasm`, `${root}dist/fallow.wasm`)
 }
 
 if (import.meta.main) {

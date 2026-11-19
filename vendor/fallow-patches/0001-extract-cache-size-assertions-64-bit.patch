@@ -1,0 +1,12 @@
+diff --git a/crates/extract/src/cache/types.rs b/crates/extract/src/cache/types.rs
+index 2781c96..914f395 100644
+--- a/crates/extract/src/cache/types.rs
++++ b/crates/extract/src/cache/types.rs
+@@ -46,6 +46,7 @@ pub(super) const IMPORT_KIND_SIDE_EFFECT: u8 = 3;
+ 
+ macro_rules! assert_cached_type_size {
+     ($ty:ty, $size:expr) => {
++        #[cfg(target_pointer_width = "64")]
+         const _: () = assert!(
+             std::mem::size_of::<$ty>() == $size,
+             concat!(

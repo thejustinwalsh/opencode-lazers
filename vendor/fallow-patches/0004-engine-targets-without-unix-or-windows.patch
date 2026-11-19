@@ -1,0 +1,110 @@
+diff --git a/crates/engine/src/changed_files.rs b/crates/engine/src/changed_files.rs
+index d13afca..ef0b73d 100644
+--- a/crates/engine/src/changed_files.rs
++++ b/crates/engine/src/changed_files.rs
+@@ -679,6 +679,13 @@ pub(crate) fn git_path_from_bytes(path: &[u8]) -> PathBuf {
+     PathBuf::from(String::from_utf8_lossy(path).replace('/', "\\"))
+ }
+ 
++/// Platforms without a byte-oriented `OsString` or Windows paths (`wasm32`):
++/// decode lossily, keeping `/` separators.
++#[cfg(not(any(unix, windows)))]
++pub(crate) fn git_path_from_bytes(path: &[u8]) -> PathBuf {
++    PathBuf::from(String::from_utf8_lossy(path).into_owned())
++}
++
+ fn git_command(cwd: &Path, args: &[&str]) -> Command {
+     let mut command = crate::git_env::git_command(cwd);
+     command.args(args);
+diff --git a/crates/engine/src/churn.rs b/crates/engine/src/churn.rs
+index 7a8885a..c01eaf5 100644
+--- a/crates/engine/src/churn.rs
++++ b/crates/engine/src/churn.rs
+@@ -931,6 +931,16 @@ fn path_from_cache_bytes(path: &[u8]) -> Option<PathBuf> {
+     Some(PathBuf::from(OsStr::from_bytes(path)))
+ }
+ 
++#[cfg(not(any(unix, windows)))]
++fn path_to_cache_bytes(path: &Path) -> Vec<u8> {
++    path.to_string_lossy().into_owned().into_bytes()
++}
++
++#[cfg(not(any(unix, windows)))]
++fn path_from_cache_bytes(path: &[u8]) -> Option<PathBuf> {
++    String::from_utf8(path.to_vec()).ok().map(PathBuf::from)
++}
++
+ #[cfg(windows)]
+ fn path_to_cache_bytes(path: &Path) -> Vec<u8> {
+     use std::os::windows::ffi::OsStrExt;
+diff --git a/crates/engine/src/repo_refs.rs b/crates/engine/src/repo_refs.rs
+index 40008a0..7530adc 100644
+--- a/crates/engine/src/repo_refs.rs
++++ b/crates/engine/src/repo_refs.rs
+@@ -516,6 +516,11 @@ fn symlink_dependency_dir(source: &Path, destination: &Path) -> std::io::Result<
+     std::os::windows::fs::symlink_dir(source, destination)
+ }
+ 
++#[cfg(not(any(unix, windows)))]
++fn symlink_dependency_dir(_source: &Path, _destination: &Path) -> std::io::Result<()> {
++    Err(std::io::ErrorKind::Unsupported.into())
++}
++
+ /// Register a detached worktree without checking files out, then materialize
+ /// the committed tree directly from Git objects.
+ ///
+diff --git a/crates/engine/src/health/coverage_v8/mod.rs b/crates/engine/src/health/coverage_v8/mod.rs
+index 8072307..62a15cc 100644
+--- a/crates/engine/src/health/coverage_v8/mod.rs
++++ b/crates/engine/src/health/coverage_v8/mod.rs
+@@ -201,6 +201,19 @@ enum ScriptView {
+     },
+ }
+ 
++/// The file path of a `file://` URL. Targets without a filesystem path model
++/// (`wasm32-unknown-unknown`) have none.
++#[cfg(any(unix, windows))]
++pub(crate) fn url_to_file_path(url: &url::Url) -> Option<PathBuf> {
++    url.to_file_path().ok()
++}
++
++/// Targets without a filesystem path model have no `file://` path.
++#[cfg(not(any(unix, windows)))]
++pub(crate) fn url_to_file_path(_url: &url::Url) -> Option<PathBuf> {
++    None
++}
++
+ /// The path of a `file://` script URL, or `None` for Node internals and
+ /// remote URLs.
+ fn file_url_path(url: &str) -> Option<PathBuf> {
+@@ -208,7 +221,7 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
+     if parsed.scheme() != "file" {
+         return None;
+     }
+-    parsed.to_file_path().ok()
++    url_to_file_path(&parsed)
+ }
+ 
+ /// Map a recorded path onto a canonical project source, or `None` for
+diff --git a/crates/engine/src/health/coverage_v8/mapped.rs b/crates/engine/src/health/coverage_v8/mapped.rs
+index faecc78..4b8876c 100644
+--- a/crates/engine/src/health/coverage_v8/mapped.rs
++++ b/crates/engine/src/health/coverage_v8/mapped.rs
+@@ -60,7 +60,7 @@ impl GeneratedScript {
+     pub(super) fn source_paths(&self, script_url: &str) -> Vec<(u32, PathBuf)> {
+         let script_dir = url::Url::parse(script_url)
+             .ok()
+-            .and_then(|url| url.to_file_path().ok())
++            .and_then(|url| super::url_to_file_path(&url))
+             .and_then(|path| path.parent().map(Path::to_path_buf));
+         self.map
+             .sources
+@@ -177,7 +177,7 @@ fn contains(location: &Location, position: &Position) -> bool {
+ fn source_path(source: &str, script_dir: Option<&Path>) -> Option<PathBuf> {
+     if let Ok(url) = url::Url::parse(source) {
+         return match url.scheme() {
+-            "file" => url.to_file_path().ok(),
++            "file" => super::url_to_file_path(&url),
+             "webpack" | "vite" => resolve_virtual_source(&url, script_dir?),
+             _ if fallow_types::path_util::looks_like_windows_absolute_path(source) => {
+                 Some(PathBuf::from(source))

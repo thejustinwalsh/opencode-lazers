@@ -9,7 +9,14 @@ if (!tag || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag) || !d
   throw Error("Usage: bun run package:release vMAJOR.MINOR.PATCH OUTPUT_DIRECTORY")
 const output = resolve(destination)
 const version = tag.slice(1)
-const runtimeScripts = ["dist/processor.js", "dist/repo-worker.js", "dist/decision-worker.js"]
+const runtimeScripts = [
+  "dist/processor.js",
+  "dist/repo-worker.js",
+  "dist/decision-worker.js",
+  "dist/transition-indexes-worker.js",
+  "dist/fallow-worker.js",
+  "dist/fallow.wasm",
+]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
   const process = Bun.spawn(command, { cwd, stdio: ["ignore", "inherit", "inherit"] })
@@ -39,6 +46,9 @@ try {
       "processor.js",
       "repo-worker.js",
       "decision-worker.js",
+      "transition-indexes-worker.js",
+      "fallow-worker.js",
+      "fallow.wasm",
     ].map((file) => cp(join(root, "dist", file), join(pkg, "dist", file))),
     writeFile(
       join(consumer, "package.json"),
