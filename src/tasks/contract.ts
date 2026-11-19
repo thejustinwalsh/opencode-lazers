@@ -1,3 +1,4 @@
+import { FallowConfigRequired } from "../audit/fallow-refusal.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { TaskReferenceSchema, TaskSpecSchema, TaskSourcePlanSchema } from "../task.ts"
@@ -152,13 +153,16 @@ const StartInput = z.strictObject({
   revision: z.literal(1),
   sessionID: z.string().min(1).max(200),
 })
-const StartOutput = z.strictObject({
+const StartedOutput = z.strictObject({
   status: z.enum(["started", "existing"]),
   planID: z.uuid(),
   state: TaskState,
 })
+/** A start either runs, or is refused with the typed Fallow-config result (nothing queued). */
+const StartOutput = z.union([StartedOutput, FallowConfigRequired])
 export type StartTaskInput = z.infer<typeof StartInput>
-export type StartTaskResult = z.infer<typeof StartOutput>
+export type StartTaskResult = z.infer<typeof StartedOutput>
+export type StartTaskReply = z.infer<typeof StartOutput>
 export const Changed = z.strictObject({
   projectDirectory: z.string(),
   version: z.int().nonnegative(),

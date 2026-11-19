@@ -59,13 +59,25 @@ Exploration tools need no durable run: `lz-fallow-dupes`, `lz-fallow-health`
 and `lz-fallow-dead-code` page duplication, complexity and dead-code findings
 directly against the current worktree, worst first, with no source fragments.
 `lz-fallow-config` reads the effective config (repo file, else the stored
-LAZERS project config, else defaults) and can propose a draft; only
-`lz-fallow-config-set`, which stores a new LAZERS config revision, is denied
-to worker agents. `lz-fallow-check` previews the introduced-only review the
-runtime runs when an attempt finishes; the Implementor's instance of it is
-denied, since that preview is Auditor- and Architect-facing. Findings from
-every one of these tools are feedback, never a rejection: only what a change
-introduces or worsens is ever reported, and older findings are never counted.
+LAZERS project config with who set it and why; none means `resolved: false`).
+`lz-fallow-config` mode `suggest` proposes a config with evidence per part,
+mode `dry-run` evaluates an unsaved candidate on the whole
+repository (counts and a sample per class), and `lz-fallow-config-set`, which
+stores a new LAZERS config revision with a reason, is denied to worker agents.
+Every project needs a config before work is submitted. `lz-fallow-audit`
+returns, for the working tree, the same typed package the runtime's
+`verify:fallow-audit` step produces when an attempt finishes (the runtime runs
+that step itself; no one has to call the tool). The Implementor may call it on its own working tree; it records no receipt or effect. Findings are feedback,
+never a rejection: errors are fix-these, warnings are consider-fixing, and
+findings already in the touched files are context.
+
+`lz-fallow-health` (view `score`) is the whole-repository health run an Auditor (or the
+Architect, for an Auditor task) asks for: one engine run of dead code,
+duplication and health (duplication computed once and folded into the score),
+stored as an audit run with the score, grade, every penalty, the worst findings
+behind each penalised metric, and a comparison with the baseline run (score and
+per-penalty deltas). A project too large for the duplication index still gets a
+score with `duplicationIncluded: false`. Not an acceptance gate.
 
 All five tools are available in Code Mode with native permissions. Task details
 include a compact history locator. JSON exports live in `audits/<runID>.json`

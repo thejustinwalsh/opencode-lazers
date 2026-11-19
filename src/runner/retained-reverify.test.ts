@@ -1,4 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import {
   existsSync,
   mkdirSync,
@@ -450,7 +451,7 @@ function fixture(
     notify: async () => {},
     interrupt: async () => {},
   }
-  const runtime = new TaskRuntime(store, host, "project", undefined, {
+  const runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
     ...(options.requestTick === undefined ? {} : { requestTick: options.requestTick }),
     ...(options.verificationTimeoutDefaults === undefined
       ? {}
@@ -1149,9 +1150,15 @@ test("registered verify-retained checks a blocked verifying candidate without se
   f.store.repository.close()
   const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-    verificationTimeoutDefaults: { inactivityTimeoutMs: 25_000, hardTimeoutMs: 50_000 },
-  })
+  const reopenedRuntime = new TaskRuntime(
+    withFallowConfig(reopenedStore),
+    f.host,
+    "project",
+    undefined,
+    {
+      verificationTimeoutDefaults: { inactivityTimeoutMs: 25_000, hardTimeoutMs: 50_000 },
+    },
+  )
   observeRetainedCheckStarts(reopenedRuntime)
   cleanups.push(async () => {
     await reopenedRuntime.stop()
@@ -1236,7 +1243,7 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
   f.store.repository.close()
   const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
   const reopenedStore = new RunnerStore(reopenedRepository)
-  const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project")
+  const reopenedRuntime = new TaskRuntime(withFallowConfig(reopenedStore), f.host, "project")
   cleanups.push(async () => {
     await reopenedRuntime.stop()
     reopenedRepository.close()
@@ -2293,7 +2300,7 @@ for (const action of ["cancel"] as const)
       const repository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
       const store = new RunnerStore(repository)
       store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-      const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+      const runtime = new TaskRuntime(withFallowConfig(store), f.host, "project", undefined, {
         requestTick: async () => {},
       })
       cleanups.unshift(async () => {
@@ -2442,7 +2449,7 @@ test.each([false, true])(
           reopened = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
           store = new RunnerStore(reopened)
           store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
-          runtime = new TaskRuntime(store, f.host, "project", undefined, {
+          runtime = new TaskRuntime(withFallowConfig(store), f.host, "project", undefined, {
             requestTick: async () => {},
           })
         }
@@ -2613,7 +2620,11 @@ test.each(["cancel"] as const)(
     delayed.store.repository.close()
     const reopenedRepository = new TaskRepository(join(delayed.state, "tasks.sqlite"), delayed.root)
     const reopenedStore = new RunnerStore(reopenedRepository)
-    const reopenedRuntime = new TaskRuntime(reopenedStore, delayed.host, "project")
+    const reopenedRuntime = new TaskRuntime(
+      withFallowConfig(reopenedStore),
+      delayed.host,
+      "project",
+    )
     await waitForFixtureCondition(
       delayed,
       "cancelled retained operation after reopen",
@@ -3050,9 +3061,15 @@ test.each([false, true])(
       const reopenedRepository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
       cleanups.push(() => reopenedRepository.close())
       const reopenedStore = new RunnerStore(reopenedRepository)
-      const reopenedRuntime = new TaskRuntime(reopenedStore, f.host, "project", undefined, {
-        requestTick: async () => {},
-      })
+      const reopenedRuntime = new TaskRuntime(
+        withFallowConfig(reopenedStore),
+        f.host,
+        "project",
+        undefined,
+        {
+          requestTick: async () => {},
+        },
+      )
       await reopenedRuntime.tick()
 
       const reconciled = reopenedStore.atomic((db) =>

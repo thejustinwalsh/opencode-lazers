@@ -612,7 +612,7 @@ export type CheckReceipt = {
   /** Legacy diagnostic only; never establishes or invalidates a check. */
   unchanged?: boolean
   isolation?: unknown
-  /** Structured result of the Fallow review; present only on the `lazers-fallow` receipt. */
+  /** Structured result of the Fallow review; present only on the `fallow-audit` receipt (`lazers-fallow` before the rename). */
   fallow?: FallowReviewResult
 }
 

@@ -24,6 +24,12 @@ export type FallowWorkerKind =
   | "duplicationReport"
   | "architecture"
   | "featureFlagReport"
+  /** The changed-code audit: head against `baseRoot`, the tree of the `base` commit. */
+  | "audit"
+  /** Plugins, entry points and workspaces the engine detects; needs no config. */
+  | "projectInfo"
+  /** Dead code, duplication and health in one run, sharing the duplication report. */
+  | "combined"
 
 export type FallowWorkerRequest = {
   id: number
@@ -42,6 +48,9 @@ export type FallowWorkerRequest = {
   cache?: boolean
   cacheSeed?: string
   cachePublish?: string
+  /** Audit: the base commit, and a directory holding its tree (read-only to the module). */
+  base?: string
+  baseRoot?: string
 }
 
 export type FallowWorkerResponse =
@@ -119,10 +128,15 @@ type Envelope = { ok?: boolean; report?: Record<string, unknown> } & {
 
 /** Directories to preopen besides the root: the config's, when it lives outside the root. */
 function extraRoots(request: FallowWorkerRequest): string[] {
+  const roots: string[] = []
   const config = request.configPath
-  if (!config) return []
-  const directory = dirname(config)
-  return directory === request.root || directory.startsWith(request.root + sep) ? [] : [directory]
+  if (config) {
+    const directory = dirname(config)
+    if (directory !== request.root && !directory.startsWith(request.root + sep))
+      roots.push(directory)
+  }
+  if (request.baseRoot) roots.push(request.baseRoot)
+  return roots
 }
 
 const load = async (name: string) =>
@@ -145,7 +159,13 @@ async function resolved(request: FallowWorkerRequest): Promise<FallowWorkerReque
   const configPath = request.configPath
     ? await realpath(request.configPath).catch(() => request.configPath)
     : undefined
-  return { ...request, root, ...(configPath ? { configPath } : {}) }
+  const baseRoot = request.baseRoot ? await realpath(request.baseRoot) : undefined
+  return {
+    ...request,
+    root,
+    ...(configPath ? { configPath } : {}),
+    ...(baseRoot ? { baseRoot } : {}),
+  }
 }
 
 async function run(
@@ -168,7 +188,11 @@ async function run(
     configPath: request.configPath ?? "",
     ...(paths ? { paths } : {}),
     files: files ?? [],
-    options: { ...request.options, files: request.files ?? [] },
+    options: {
+      ...request.options,
+      files: request.files ?? [],
+      ...(request.kind === "audit" ? { base: request.base, baseRoot: request.baseRoot } : {}),
+    },
   }
   let executed
   let cached = false
@@ -180,6 +204,8 @@ async function run(
       (await enumerate(request.root)).length <= CACHE_MAX_FILES
     const cache = cached
     if (cache && request.cacheSeed) await seedCache(request.root, request.cacheSeed).catch(() => 0)
+    // The base tree starts from the candidate's cache: nearly every file is the same.
+    if (cache && request.baseRoot) await seedCache(request.baseRoot, request.root).catch(() => 0)
     executed = await modules.execute(request.threads ?? "on", (module, threads) =>
       runFallowModule(
         module,

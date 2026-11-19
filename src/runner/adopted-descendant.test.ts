@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import {
   existsSync,
   mkdirSync,
@@ -316,7 +317,7 @@ function fixture(
     host,
     planID: submitted.planID,
     planInput,
-    runtime: new TaskRuntime(store, host, "project", undefined, runtimeOptions()),
+    runtime: new TaskRuntime(withFallowConfig(store), host, "project", undefined, runtimeOptions()),
     get loseNextWorktreeResponse() {
       return loseNextWorktreeResponse
     },

@@ -66,6 +66,8 @@ export function registerTaskTools(
   repository: TaskRepository,
   index?: Pick<ProjectIndex, "taskContext">,
   timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
+  /** Refuses submission while the Fallow review is on and the project has no Fallow config. */
+  fallowGate?: () => Promise<unknown>,
 ) {
   // The host may retain an admitted tool callback while a plugin reload closes
   // its setup-scoped connection. Each execution owns its connection; never
@@ -110,6 +112,8 @@ export function registerTaskTools(
                         })),
                       }),
                     }
+                  const refused = await fallowGate?.()
+                  if (refused) return { content: JSON.stringify(refused) }
                   // Observed before the transaction: Git must not run inside it.
                   // A failure is deferred to the provenance callback: replayed receipts never need it.
                   const startingRevision = await observeStartingRevision(

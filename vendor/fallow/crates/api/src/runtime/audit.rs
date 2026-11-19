@@ -157,6 +157,22 @@ pub fn run_audit(options: &AuditOptions) -> ProgrammaticResult<AuditProgrammatic
     })
 }
 
+/// The base checkout of the typed audit: a temporary Git worktree, or the tree
+/// the caller supplied in [`AuditOptions::base_root`].
+enum AuditBaseCheckout {
+    Worktree(TemporaryBaseWorktree),
+    Provided(PathBuf),
+}
+
+impl crate::audit_run::BaseCheckout for AuditBaseCheckout {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Worktree(worktree) => worktree.path(),
+            Self::Provided(path) => path,
+        }
+    }
+}
+
 /// The typed runners of the programmatic audit.
 struct ProgrammaticAuditBackend<'a> {
     options: &'a AuditOptions,
@@ -167,7 +183,7 @@ struct ProgrammaticAuditBackend<'a> {
 
 impl<'a> AuditBackend for ProgrammaticAuditBackend<'a> {
     type Analyses = ProgrammaticAuditAnalyses<'a>;
-    type Checkout = TemporaryBaseWorktree;
+    type Checkout = AuditBaseCheckout;
     type CacheKey = ();
     type Error = ProgrammaticError;
 
@@ -192,12 +208,16 @@ impl<'a> AuditBackend for ProgrammaticAuditBackend<'a> {
         &self,
         base_ref: &str,
         _base_sha: Option<&str>,
-    ) -> ProgrammaticResult<TemporaryBaseWorktree> {
+    ) -> ProgrammaticResult<AuditBaseCheckout> {
+        if let Some(base_root) = self.options.base_root.as_ref() {
+            return Ok(AuditBaseCheckout::Provided(base_root.clone()));
+        }
         TemporaryBaseWorktree::create(
             self.resolved.root(),
             base_ref,
             &self.config.workspace_patterns,
         )
+        .map(AuditBaseCheckout::Worktree)
         .map_err(|err| {
             ProgrammaticError::new(err.to_string(), 2)
                 .with_code("FALLOW_AUDIT_BASE_WORKTREE_FAILED")

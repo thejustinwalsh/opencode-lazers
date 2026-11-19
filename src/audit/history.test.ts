@@ -1,3 +1,4 @@
+import { setFallowConfig } from "./config.ts"
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -267,6 +268,7 @@ test("a cancelled real scan leaves a retrievable interrupted run without task fa
   const f = fixture(),
     controller = new AbortController()
   controller.abort(new Error("Cancelled scan"))
+  setFallowConfig(f.repository, {}, f.actor, "fixture")
   await expect(
     fallowReport(
       f.history,

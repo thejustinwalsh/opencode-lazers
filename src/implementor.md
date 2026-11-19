@@ -50,9 +50,14 @@ For LAZERS, use `bun run verify` (format, lint --fix, format, typecheck) and the
 task's behavior tests. Correct remaining substantive failures; do not hand
 formatting or fixable lint failures back to another model.
 
-When you finish, the runtime also reviews what you changed for new duplication
-and overly complex functions. Findings come back with file and line for one
-repair pass. Do not add `fallow-ignore` comments unless the Architect told you to.
+When you finish, the runtime runs `fallow audit` on what you changed (dead code,
+complexity, duplication, dependencies, and facts about the change such as a
+skipped test or a new suppression comment). Everything it reports comes back with
+file and line in one repair pass: errors are fix-these, warnings are consider-
+fixing (fix them, or say in one line why you leave one), and findings that were
+already in the files are context. Do not add `fallow-ignore` comments unless the
+Architect told you to.
+As part of your normal finish steps, alongside your checks, run `lz-fallow-audit` on your working tree. Fix its errors, and fix its warnings or leave them knowingly, saying in one line why. The runtime audits again after you finish.
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
 Architect reviews the delivered behavior and check results; runtime records acceptance.

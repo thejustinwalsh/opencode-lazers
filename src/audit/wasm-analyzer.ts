@@ -2,7 +2,7 @@ import { isAbsolute, relative } from "node:path"
 import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import { Effect } from "effect"
-import type { AnalyzerScope, FallowAnalyzer } from "./analyzer.ts"
+import type { AnalyzerScope, AuditScope, FallowAnalyzer } from "./analyzer.ts"
 import type { FallowThreads } from "./fallow-threads.ts"
 import type {
   FallowWorkerKind,
@@ -262,6 +262,7 @@ async function call(
   kind: FallowWorkerKind,
   scope: AnalyzerScope,
   options: Record<string, unknown> = {},
+  audit?: Pick<AuditScope, "base" | "baseRoot">,
 ): Promise<Record<string, unknown>> {
   const files = scope.files ? relativePaths(scope.root, scope.files) : undefined
   const response = await client.request(
@@ -275,6 +276,7 @@ async function call(
       cache: cacheEnabled,
       ...(scope.cacheSeed ? { cacheSeed: scope.cacheSeed } : {}),
       ...(scope.cachePublish ? { cachePublish: scope.cachePublish } : {}),
+      ...(audit ? { base: audit.base, baseRoot: audit.baseRoot } : {}),
     },
     scope.signal,
     scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
@@ -303,6 +305,22 @@ export function fallowSection(
   return call(SECTION_KIND[section], scope, { explain: true, css: true })
 }
 
+/** Dead code, duplication and health from one run that shares the duplication report. */
+export async function fallowCombined(scope: AnalyzerScope): Promise<{
+  deadCode: Record<string, unknown>
+  duplication: Record<string, unknown>
+  health: Record<string, unknown>
+}> {
+  return (await call("combined", scope, { explain: true, css: true })) as never
+}
+
+/** Health with duplication left out of the score, for a project too large to index for duplication. */
+export function fallowHealthWithoutDuplication(
+  scope: AnalyzerScope,
+): Promise<Record<string, unknown>> {
+  return call("health", scope, { explain: true, css: true, skipDuplication: true })
+}
+
 /** Every analysis runs in the WebAssembly worker; no native binding is loaded. */
 export const wasmFallowAnalyzer: FallowAnalyzer = {
   async complexity(scope) {
@@ -316,6 +334,12 @@ export const wasmFallowAnalyzer: FallowAnalyzer = {
   },
   async cycles(scope) {
     return (await call("cycles", scope)) as unknown as DeadCodeReport
+  },
+  async projectInfo(scope) {
+    return await call("projectInfo", scope)
+  },
+  async audit(scope) {
+    return await call("audit", scope, {}, scope)
   },
 }
 

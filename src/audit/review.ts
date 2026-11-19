@@ -1,16 +1,7 @@
-import type { DeadCodeReport, DuplicationReport, HealthReport } from "./fallow-types.ts"
 import type { TaskRepository } from "../storage.ts"
-import {
-  attributeComplexity,
-  attributeDeadCode,
-  attributeDuplication,
-  type ComplexityAttribution,
-  type ComplexityPoint,
-  type DeadCodeKey,
-  type DuplicationAttribution,
-  type DuplicationInstance,
-  type LineRange,
-} from "./attribution.ts"
+import { buildPackage, DEFAULT_MAX_CRAP, notChecked } from "./audit-findings.ts"
+import type { FallowPackage, FallowReviewOutput } from "./contract.ts"
+import { parseEngineAudit, type EngineAudit } from "./engine-audit.ts"
 import type { FallowAnalyzer } from "./analyzer.ts"
 import { defaultFallowAnalyzer } from "./wasm-analyzer.ts"
 import {
@@ -19,57 +10,23 @@ import {
   thresholdsFrom,
   type ResolvedFallowConfig,
 } from "./config.ts"
-import { addedRangesForFiles, changedAnalysableFiles, materialiseBaseTree } from "./review-git.ts"
+import { addedRangesForFiles, changedAuditFiles, materialiseBaseArchive } from "./review-git.ts"
 
-const TIMEOUT_MS = 60_000
+/** Two whole-project analyses (head and base) share one call; a large repository needs the time. */
+const AUDIT_TIMEOUT_MS = 180_000
 
-export type ComplexityMeasure = {
-  metric: "cyclomatic" | "cognitive"
-  measured: number
-  limit: number
-  before?: number
-}
-
-export type Finding = {
-  id: string
-  check: "duplication" | "complexity" | "dead-code" | "cycle"
-  status: "introduced" | "worsened"
-  file: string
-  line: number
-  endLine?: number
-  subject: string
-  /** The over-limit metric (cognitive when it is the one over, else cyclomatic). Complexity only. */
-  measured?: number
-  limit?: number
-  before?: number
-  /** Every metric this complexity finding is over, cognitive first. Absent for other checks. */
-  measures?: ComplexityMeasure[]
-  others?: { file: string; line: number; endLine: number }[]
-  /** Plan review only: the task whose own change touched this finding's file(s), when exactly one. */
-  taskID?: string
-  /** Plan review only: every task that touched the finding's file(s), when several did. */
-  taskIDs?: string[]
-  fix: string
-}
-
-export type FallowReviewResult = {
-  status: "clean" | "findings" | "unavailable"
-  introduced: Finding[]
-  concerns: Finding[]
-  thresholds: { cyclomatic: number; cognitive: number }
-  configSource: "repo" | "lazers" | "defaults"
-  reason?: string
-}
+/** The typed review result: status, and the one `FallowPackage` of the audit (see contract.ts). */
+export type FallowReviewResult = FallowReviewOutput
 
 export type FallowReviewInput = {
+  /** The checkout holding the candidate: its working tree is what is audited. */
   workspace: string
   baseCommit: string
+  /** The candidate's commit. The audit reads the workspace, which holds exactly this tree. */
   artifact: string
   repository: TaskRepository
   analyzer?: FallowAnalyzer
   signal?: AbortSignal
-  /** False skips the changed-file dead-code pass (the plan review runs its own, whole-tree). */
-  deadCode?: boolean
 }
 
 export async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise<T> {
@@ -84,215 +41,67 @@ export async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise
   }
 }
 
-function toComplexityPoints(report: HealthReport): ComplexityPoint[] {
-  return report.findings.map((f) => ({
-    path: f.path,
-    name: f.name,
-    cyclomatic: f.cyclomatic,
-    cognitive: f.cognitive,
-    line: f.line,
-  }))
+function maxCrapFrom(config: object | null): number {
+  const health = (config as { health?: Record<string, unknown> } | null)?.health
+  return typeof health?.maxCrap === "number" ? health.maxCrap : DEFAULT_MAX_CRAP
 }
 
-/** Every metric over its limit, cognitive first, matching the order the guidance reads them in. */
-function complexityMeasures(
-  attr: ComplexityAttribution,
-  thresholds: { cyclomatic: number; cognitive: number },
-): ComplexityMeasure[] {
-  const measures: ComplexityMeasure[] = []
-  if (attr.cognitive > thresholds.cognitive)
-    measures.push({
-      metric: "cognitive",
-      measured: attr.cognitive,
-      limit: thresholds.cognitive,
-      before: attr.before?.cognitive,
-    })
-  if (attr.cyclomatic > thresholds.cyclomatic)
-    measures.push({
-      metric: "cyclomatic",
-      measured: attr.cyclomatic,
-      limit: thresholds.cyclomatic,
-      before: attr.before?.cyclomatic,
-    })
-  return measures
-}
-
-function complexityFinding(
-  attr: ComplexityAttribution,
-  thresholds: { cyclomatic: number; cognitive: number },
-): Finding {
-  const measures = complexityMeasures(attr, thresholds)
-  const primary = measures[0]!
-  return {
-    id: `complexity:${attr.path}:${attr.line ?? 0}:${attr.name}`,
-    check: "complexity",
-    status: attr.status,
-    file: attr.path,
-    line: attr.line ?? 0,
-    subject: attr.name,
-    measured: primary.measured,
-    limit: primary.limit,
-    before: primary.before,
-    measures,
-    fix: "Split it into smaller named functions.",
-  }
-}
-
-function duplicationInstanceSummary(instance: DuplicationInstance) {
-  return { file: instance.file, line: instance.startLine, endLine: instance.endLine }
-}
-
-function duplicationFinding(attr: DuplicationAttribution): Finding {
-  const { anchor, others } = attr
-  const lines = anchor.endLine - anchor.startLine + 1
-  return {
-    id: `duplication:${anchor.file}:${anchor.startLine}`,
-    check: "duplication",
-    status: "introduced",
-    file: anchor.file,
-    line: anchor.startLine,
-    endLine: anchor.endLine,
-    subject: `${lines} lines`,
-    others: others.slice(0, 3).map(duplicationInstanceSummary),
-    fix: "Keep one implementation and import it instead of copying it.",
-  }
-}
-
-function newDuplicationFindings(
-  report: DuplicationReport,
-  addedRanges: ReadonlyMap<string, readonly LineRange[]>,
-): Finding[] {
-  const groups = report.clone_groups.map((group) => ({
-    instances: group.instances.map((i) => ({
-      file: i.file,
-      startLine: i.start_line,
-      endLine: i.end_line,
-    })),
-  }))
-  return attributeDuplication(groups, addedRanges).map(duplicationFinding)
-}
-
-const DEAD_CODE_FIX: Record<string, string> = {
-  export:
-    "Remove the unused export only if the value is still used in the file, otherwise delete it.",
-  type: "Remove the unused type if nothing else in the file still needs it.",
-  file: "Delete the file if it is not an entry point reached by configuration or a dynamic path.",
-}
-
-function deadCodeFinding(key: DeadCodeKey, line: number): Finding {
-  return {
-    id: `dead-code:${key.kind}:${key.path}:${key.name}`,
-    check: "dead-code",
-    status: "introduced",
-    file: key.path,
-    line,
-    subject: `${key.kind} \`${key.name}\``,
-    fix: DEAD_CODE_FIX[key.kind] ?? "Remove the unused code if nothing else references it.",
-  }
-}
-
-type DeadCodeRecord = DeadCodeKey & { line: number }
-
-function deadCodeRecords(report: DeadCodeReport): DeadCodeRecord[] {
-  const exports = report.unused_exports.map((f) => ({
-    kind: "export",
-    path: f.path,
-    name: f.export_name,
-    line: f.line,
-  }))
-  const types = report.unused_types.map((f) => ({
-    kind: "type",
-    path: f.path,
-    name: f.export_name,
-    line: f.line,
-  }))
-  const files = report.unused_files.map((f) => ({
-    kind: "file",
-    path: f.path,
-    name: f.path,
-    line: 1,
-  }))
-  return [...exports, ...types, ...files]
-}
-
-function deadCodeKeyString(key: DeadCodeKey): string {
-  return `${key.kind}\u0000${key.path}\u0000${key.name}`
-}
-
-export function newDeadCodeFindings(base: DeadCodeReport, candidate: DeadCodeReport): Finding[] {
-  const candidateRecords = deadCodeRecords(candidate)
-  const introducedKeys = new Set(
-    attributeDeadCode(deadCodeRecords(base), candidateRecords).map(deadCodeKeyString),
-  )
-  return candidateRecords
-    .filter((record) => introducedKeys.has(deadCodeKeyString(record)))
-    .map((record) => deadCodeFinding(record, record.line))
-}
-
-type AnalysisPass = {
-  candidateComplexity: HealthReport
-  candidateDuplication: DuplicationReport
-  baseComplexity: HealthReport
-  deadCode?: [candidate: DeadCodeReport, base: DeadCodeReport]
-  addedRanges: Map<string, LineRange[]>
-}
-
-async function runAnalysis(
+async function auditReport(
+  input: FallowReviewInput,
   analyzer: FallowAnalyzer,
-  workspace: string,
-  baseCommit: string,
-  artifact: string,
   resolved: ResolvedFallowConfig,
-  changed: string[],
-  signal: AbortSignal | undefined,
-  projectDirectory: string,
-): Promise<AnalysisPass> {
-  const addedRanges = await withTimeout(
-    () => addedRangesForFiles(workspace, baseCommit, artifact, changed),
-    TIMEOUT_MS,
-  )
-  const base = await materialiseBaseTree(workspace, baseCommit, changed)
+): Promise<EngineAudit> {
+  const base = await materialiseBaseArchive(input.workspace, input.baseCommit)
   try {
-    // The candidate starts from the project's cache and leaves its own there; the base tree
-    // starts from the candidate's, because most of its files are the same.
-    const scope = (root: string) => ({
-      root,
-      configPath: resolved.configPath,
-      files: changed,
-      signal,
-      ...(root === workspace
-        ? { cacheSeed: projectDirectory, cachePublish: projectDirectory }
-        : { cacheSeed: workspace }),
-    })
-    const [candidateComplexity, candidateDuplication, baseComplexity] = await withTimeout(
+    const raw = await withTimeout(
       () =>
-        Promise.all([
-          analyzer.complexity(scope(workspace)),
-          analyzer.duplication(scope(workspace)),
-          analyzer.complexity(scope(base.directory)),
-        ]),
-      TIMEOUT_MS,
+        analyzer.audit({
+          root: input.workspace,
+          configPath: resolved.configPath,
+          base: input.baseCommit,
+          baseRoot: base.directory,
+          signal: input.signal,
+          timeoutMs: AUDIT_TIMEOUT_MS,
+          // The candidate starts from the project's cache and leaves its own there; the base tree
+          // starts from the candidate's, because nearly every file is the same.
+          cacheSeed: input.repository.projectDirectory,
+          cachePublish: input.repository.projectDirectory,
+        }),
+      AUDIT_TIMEOUT_MS + 5_000,
     )
-    const deadCode = resolved.deadCodeEnabled
-      ? await withTimeout(
-          () =>
-            Promise.all([
-              analyzer.deadCode(scope(workspace)),
-              analyzer.deadCode(scope(base.directory)),
-            ]),
-          TIMEOUT_MS,
-        )
-      : undefined
-    return { candidateComplexity, candidateDuplication, baseComplexity, deadCode, addedRanges }
+    return parseEngineAudit(raw)
   } finally {
     await base.cleanup()
   }
 }
 
+function configOf(resolved: ResolvedFallowConfig): FallowPackage["config"] {
+  return {
+    source: resolved.source,
+    ...(resolved.sha256 ? { sha256: resolved.sha256 } : {}),
+    classesNotChecked: [],
+  }
+}
+
+/** A change that touches no file the audit reads: nothing to compare. */
+function untouchedPackage(resolved: ResolvedFallowConfig, base: string): FallowPackage {
+  return {
+    verdict: "pass",
+    base,
+    config: configOf(resolved),
+    thresholds: thresholdsFrom(resolved.config),
+    findings: [],
+    summary: { errors: 0, warnings: 0, inherited: 0 },
+    timings: { elapsedMs: 0 },
+  }
+}
+
 /**
- * Fallow review of a candidate against its base commit. Only findings the change introduces or
- * worsens are reported; older findings are never surfaced. Any analyzer or git error is reported
- * as `unavailable`, never thrown.
+ * The per-pull-request check of Fallow, `fallow audit`, on a candidate against its base commit.
+ * The engine runs the audit itself, in the WebAssembly module: changed files only, the dead code,
+ * complexity, duplication and diff-risk analyses, each finding attributed introduced, worsened or
+ * inherited against the base tree. The result is one validated `FallowPackage`. Any analyzer, git
+ * or schema error is reported as `unavailable`, never thrown.
  */
 export async function fallowReview(input: FallowReviewInput): Promise<FallowReviewResult> {
   const analyzer = input.analyzer ?? defaultFallowAnalyzer
@@ -303,123 +112,29 @@ export async function fallowReview(input: FallowReviewInput): Promise<FallowRevi
       baseCommit: input.baseCommit,
       repository: input.repository,
     })
-    const thresholds = thresholdsFrom(resolved.config)
-    const changed = await changedAnalysableFiles(input.workspace, input.baseCommit, input.artifact)
+    const changed = await changedAuditFiles(input.workspace, input.baseCommit)
     if (changed.length === 0)
-      return {
-        status: "clean",
-        introduced: [],
-        concerns: [],
-        thresholds,
-        configSource: resolved.source,
-      }
-    const { candidateComplexity, candidateDuplication, baseComplexity, deadCode, addedRanges } =
-      await runAnalysis(
-        analyzer,
-        input.workspace,
-        input.baseCommit,
-        input.artifact,
-        input.deadCode === false ? { ...resolved, deadCodeEnabled: false } : resolved,
-        changed,
-        input.signal,
-        input.repository.projectDirectory,
-      )
-    const complexityAttrs = attributeComplexity(
-      toComplexityPoints(baseComplexity),
-      toComplexityPoints(candidateComplexity),
-      thresholds,
-    )
-    const introduced: Finding[] = [
-      ...complexityAttrs
-        .filter((a) => a.status === "introduced")
-        .map((a) => complexityFinding(a, thresholds)),
-      ...newDuplicationFindings(candidateDuplication, addedRanges),
-    ]
-    const concerns: Finding[] = [
-      ...complexityAttrs
-        .filter((a) => a.status === "worsened")
-        .map((a) => complexityFinding(a, thresholds)),
-      ...(deadCode ? newDeadCodeFindings(deadCode[1], deadCode[0]) : []),
-    ]
+      return { status: "clean", package: untouchedPackage(resolved, input.baseCommit) }
+    const [report, added] = await Promise.all([
+      auditReport(input, analyzer, resolved),
+      addedRangesForFiles(input.workspace, input.baseCommit, changed),
+    ])
+    const config = configOf(resolved)
+    config.classesNotChecked.push(...notChecked(report))
+    const pkg = buildPackage(report, {
+      thresholds: thresholdsFrom(resolved.config),
+      maxCrap: maxCrapFrom(resolved.config),
+      changed: new Set(changed),
+      added,
+      config,
+    })
     return {
-      status: introduced.length + concerns.length === 0 ? "clean" : "findings",
-      introduced,
-      concerns,
-      thresholds,
-      configSource: resolved.source,
+      status: pkg.summary.errors + pkg.summary.warnings === 0 ? "clean" : "findings",
+      package: pkg,
     }
   } catch (error) {
-    return {
-      status: "unavailable",
-      introduced: [],
-      concerns: [],
-      thresholds: thresholdsFrom(resolved?.config ?? null),
-      configSource: resolved?.source ?? "defaults",
-      reason: error instanceof Error ? error.message : String(error),
-    }
+    return { status: "unavailable", reason: error instanceof Error ? error.message : String(error) }
   } finally {
     if (resolved) await cleanupResolvedFallowConfig(resolved)
   }
-}
-
-const GUIDANCE_CHECK_LABEL: Record<Finding["check"], string> = {
-  complexity: "complexity",
-  duplication: "duplication",
-  "dead-code": "dead-code",
-  cycle: "cycle",
-}
-
-function findingLocation(finding: Finding): string {
-  return finding.endLine
-    ? `${finding.file}:${finding.line}-${finding.endLine}`
-    : `${finding.file}:${finding.line}`
-}
-
-function measureText(measure: ComplexityMeasure): string {
-  const base = `${measure.metric} ${measure.measured} (limit ${measure.limit})`
-  return measure.before !== undefined ? `${base}, was ${measure.before}` : base
-}
-
-/** `1. complexity file:line \`name\` cognitive N (limit L), cyclomatic N (limit L).` */
-function complexityGuidanceLine(finding: Finding, index: number): string {
-  const measures = (finding.measures ?? []).map(measureText).join(", ")
-  const header = `${index + 1}. complexity ${findingLocation(finding)} \`${finding.subject}\` ${measures}.`
-  return `${header}\n   ${finding.fix}`
-}
-
-/** `2. duplication file:a-b repeats other:c-d[ and N more locations] (subject).` */
-function duplicationGuidanceLine(finding: Finding, index: number): string {
-  const others = finding.others ?? []
-  const [primary, ...rest] = others
-  const primaryLocation = primary
-    ? `${primary.file}:${primary.line}-${primary.endLine}`
-    : "another location"
-  const tail =
-    rest.length > 0 ? ` and ${rest.length} more location${rest.length > 1 ? "s" : ""}` : ""
-  const header = `${index + 1}. duplication ${findingLocation(finding)} repeats ${primaryLocation}${tail} (${finding.subject}).`
-  return `${header}\n   ${finding.fix}`
-}
-
-/** The fallback shape (dead code, cycles): `N. check file:line \`subject\`[ measured, limit L].` */
-function genericGuidanceLine(finding: Finding, index: number): string {
-  const measure =
-    finding.measured === undefined ? "" : ` ${finding.measured}, limit ${finding.limit ?? "n/a"}.`
-  const header = `${index + 1}. ${GUIDANCE_CHECK_LABEL[finding.check]} ${findingLocation(finding)} \`${finding.subject}\`${measure}`
-  return `${header}\n   ${finding.fix}`
-}
-
-function guidanceLine(finding: Finding, index: number): string {
-  if (finding.check === "complexity") return complexityGuidanceLine(finding, index)
-  if (finding.check === "duplication") return duplicationGuidanceLine(finding, index)
-  return genericGuidanceLine(finding, index)
-}
-
-/** Plain-text guidance from fixed templates: at most ten findings, 1,500 characters, deterministic. */
-export function fallowGuidance(result: FallowReviewResult): string {
-  const findings = result.introduced.slice(0, 10)
-  const header = `Fallow review: ${result.introduced.length} findings introduced by this task. Older findings are not counted.`
-  const lines = findings.map((f, i) => guidanceLine(f, i))
-  const closing = "Fix these inside your write scope. Do not add fallow-ignore comments."
-  const guidance = [header, ...lines, closing].join("\n")
-  return guidance.length > 1500 ? `${guidance.slice(0, 1497)}...` : guidance
 }

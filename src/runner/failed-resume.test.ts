@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -168,7 +169,7 @@ function fixture() {
       }
     },
   }
-  const runtime = new TaskRuntime(store, host, "project", undefined, {
+  const runtime = new TaskRuntime(withFallowConfig(store), host, "project", undefined, {
     autoResumeInterrupted: false,
     requestTick: async () => {},
   })

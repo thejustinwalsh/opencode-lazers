@@ -1,13 +1,23 @@
-import { fallowGuidance } from "../audit/review.ts"
-import type { Finding, FallowReviewInput, FallowReviewResult } from "../audit/review.ts"
+import { needsRepair } from "../audit/audit-findings.ts"
+import type { FallowAcceptance, FallowDisposition, FallowPackage } from "../audit/contract.ts"
+import { renderRepair } from "../audit/fallow-render.ts"
+import type { FallowReviewInput, FallowReviewResult } from "../audit/review.ts"
+import { FALLOW_CHECK_ID } from "../task.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 
 /** Reserved verification ID: authored checks cannot use it. */
 export { FALLOW_CHECK_ID } from "../task.ts"
-export const FALLOW_CHECK_COMMAND = "lazers:fallow-review"
-export const FALLOW_EFFECT_KIND = "verify:lazers-fallow"
+export const FALLOW_CHECK_COMMAND = "lazers:fallow-audit"
+/** The runtime-run verify step: mechanical fix, authored checks, then `verify:fallow-audit`. */
+export const FALLOW_EFFECT_KIND = "verify:fallow-audit"
 /** The plan-level review of the combined artifact; never holds or fails the plan. */
-export const FALLOW_PLAN_EFFECT_KIND = "graph-verify:lazers-fallow"
+export const FALLOW_PLAN_EFFECT_KIND = "graph-verify:fallow-audit"
+
+/** Effect kinds recorded before the rename stay recognised; nothing rewrites them. */
+export const isFallowEffectKind = (kind: string, current: string): boolean =>
+  kind === current ||
+  kind === (current === FALLOW_EFFECT_KIND ? "verify:lazers-fallow" : "graph-verify:lazers-fallow")
+
 const OUTCOME_ITEM_LIMIT = 10
 
 export type FallowReview = (input: FallowReviewInput) => Promise<FallowReviewResult>
@@ -20,11 +30,24 @@ export const defaultFallowPlanReview: FallowReview = async (input) =>
 export const defaultFallowReview: FallowReview = async (input) =>
   (await import("../audit/review.ts")).fallowReview(input)
 
-export function fallowReasonText(introduced: number): string {
-  return `Verification lazers-fallow found ${introduced} introduced findings`
+/** The package of a review that ran; undefined when it was unavailable. */
+export const packageOf = (result: FallowReviewResult | undefined): FallowPackage | undefined =>
+  result?.package
+
+/** Findings the change introduced or worsened (what the worker is asked about). */
+export function liveFindingCount(result: FallowReviewResult | undefined): number {
+  const pkg = packageOf(result)
+  return pkg ? pkg.summary.errors + pkg.summary.warnings : 0
 }
 
-/** The review as a check receipt: exit 1 only when the task introduced findings. */
+export function fallowReasonText(pkg: FallowPackage): string {
+  return `Verification ${FALLOW_CHECK_ID} ${pkg.verdict}: ${pkg.summary.errors} errors, ${pkg.summary.warnings} warnings`
+}
+
+/**
+ * The review as a check receipt. Exit 1 when the audit warns or fails on the change, with the
+ * rendered package as the output the one repair is given.
+ */
 export function fallowCheckReceipt(input: {
   id: string
   workspace: string
@@ -37,7 +60,8 @@ export function fallowCheckReceipt(input: {
   /** The plan-level review reports but never fails: exit 0 whatever it found. */
   advisory?: boolean
 }): CheckReceipt {
-  const failing = !input.advisory && input.result.introduced.length > 0
+  const pkg = packageOf(input.result)
+  const failing = !input.advisory && needsRepair(pkg)
   return {
     id: input.id,
     command: FALLOW_CHECK_COMMAND,
@@ -49,30 +73,26 @@ export function fallowCheckReceipt(input: {
     endedAt: input.endedAt,
     exitCode: failing ? 1 : 0,
     timedOut: false,
-    stdout: failing ? fallowGuidance(input.result) : "",
+    stdout: failing && pkg ? renderRepair(pkg) : "",
     stderr: "",
     fallow: input.result,
   }
 }
 
 export function unavailableFallowResult(reason: string): FallowReviewResult {
-  return {
-    status: "unavailable",
-    introduced: [],
-    concerns: [],
-    thresholds: { cyclomatic: 20, cognitive: 15 },
-    configSource: "defaults",
-    reason,
-  }
+  return { status: "unavailable", reason }
 }
 
-/** What an accepted task reports to the Architect; absent when nothing remains. */
+/** What an accepted task reports to the Architect; absent when nothing remains to say. */
 export function fallowOutcome(
   result: FallowReviewResult | undefined,
-): { introduced: Finding[]; concerns: Finding[] } | undefined {
-  if (!result || result.introduced.length + result.concerns.length === 0) return undefined
+  dispositions?: FallowDisposition[],
+): FallowAcceptance | undefined {
+  const pkg = packageOf(result)
+  if (!pkg || (liveFindingCount(result) === 0 && !dispositions?.length)) return undefined
+  const live = pkg.findings.filter((f) => f.attribution !== "inherited")
   return {
-    introduced: result.introduced.slice(0, OUTCOME_ITEM_LIMIT),
-    concerns: result.concerns.slice(0, OUTCOME_ITEM_LIMIT),
+    package: { ...pkg, findings: live.slice(0, OUTCOME_ITEM_LIMIT) },
+    ...(dispositions?.length ? { dispositions } : {}),
   }
 }

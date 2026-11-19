@@ -56,6 +56,16 @@ struct ApiOptions {
     cache: bool,
     threads: Option<usize>,
     files: Vec<String>,
+    /// Audit: the base commit the change is measured against.
+    base: String,
+    /// Audit: a tree of that commit the host materialised (read-only preopen).
+    base_root: String,
+    /// Audit: `Some(false)` skips the dead-code domain.
+    dead_code: Option<bool>,
+    /// Health: leave duplication out of the score (the project is too large to index).
+    skip_duplication: bool,
+    /// Audit: `Some(false)` skips styling analysis.
+    css_audit: Option<bool>,
 }
 
 fn api_failure(error: api::ProgrammaticError) -> Failure {
@@ -134,6 +144,80 @@ fn health_report(request: &Request, options: &ApiOptions) -> Outcome {
     let output =
         api::run_health_with_runner(&options, &api::EngineHealthRunner).map_err(api_failure)?;
     api::serialize_health_programmatic_json(output).map_err(api_failure)
+}
+
+/// The changed-code audit of `fallow audit`: the engine's own attribution, tiers, exemptions and
+/// diff-risk rules. The base snapshot is the tree the host materialised (`baseRoot`), because
+/// `git worktree add` cannot run here; `base` is still the commit git reads base files from.
+fn audit(request: &Request, options: &ApiOptions) -> Outcome {
+    if options.base.is_empty() {
+        return Err(failure("options-invalid", "audit needs a base commit"));
+    }
+    let audit_options = api::AuditOptions {
+        analysis: analysis(request, options),
+        base: Some(options.base.clone()),
+        base_root: (!options.base_root.is_empty()).then(|| PathBuf::from(&options.base_root)),
+        dead_code: options.dead_code,
+        css: options.css_audit,
+        ..api::AuditOptions::default()
+    };
+    let output = api::run_audit(&audit_options).map_err(api_failure)?;
+    api::serialize_audit_programmatic_json(output).map_err(api_failure)
+}
+
+/// What the engine detects in a project with no config: plugins, entry points and workspaces. The
+/// Architect's config suggestion is built on it.
+fn project_info(request: &Request, options: &ApiOptions) -> Outcome {
+    let info = api::ProjectInfoOptions {
+        analysis: analysis(request, options),
+        entry_points: true,
+        files: false,
+        plugins: true,
+        boundaries: false,
+    };
+    let output = api::run_project_info(&info).map_err(api_failure)?;
+    api::serialize_project_info_programmatic_json(output).map_err(api_failure)
+}
+
+/// Dead code, duplication and health in one run. The engine shares what the three need (the
+/// parsed project, the module graph, and the duplication report that health folds into its
+/// score), so duplication is computed once, not once for its own section and once more inside
+/// health. Each section is serialized exactly as its own op serializes it.
+fn combined(request: &Request, options: &ApiOptions) -> Outcome {
+    let combined = api::CombinedOptions {
+        analysis: analysis(request, options),
+        duplication_options: api::DuplicationOptions {
+            analysis: analysis(request, options),
+            ..api::DuplicationOptions::default()
+        },
+        health_options: api::ComplexityOptions {
+            analysis: analysis(request, options),
+            css: options.css,
+            ..api::ComplexityOptions::default()
+        },
+        ..api::CombinedOptions::default()
+    };
+    let output = api::run_combined(&combined).map_err(api_failure)?;
+    let mut sections = serde_json::Map::new();
+    if let Some(dead_code) = output.dead_code {
+        sections.insert(
+            "deadCode".to_owned(),
+            api::serialize_dead_code_programmatic_json(dead_code).map_err(api_failure)?,
+        );
+    }
+    if let Some(duplication) = output.duplication {
+        sections.insert(
+            "duplication".to_owned(),
+            api::serialize_duplication_programmatic_json(duplication).map_err(api_failure)?,
+        );
+    }
+    if let Some(health) = output.health {
+        sections.insert(
+            "health".to_owned(),
+            api::serialize_health_programmatic_json(health).map_err(api_failure)?,
+        );
+    }
+    Ok(serde_json::Value::Object(sections))
 }
 
 fn io_result<T>(result: std::io::Result<T>) -> serde_json::Value {
@@ -248,6 +332,7 @@ fn run(request: &Request) -> Outcome {
     let security = security_rules_on(request);
     fallow_extract::set_retain_security_facts(security);
     options.cache = options.cache && !security;
+    fallow_engine::health::set_skip_duplication(options.skip_duplication);
     match request.op.as_str() {
         "complexity" | "duplication" | "featureFlags" => {
             let project =
@@ -264,6 +349,9 @@ fn run(request: &Request) -> Outcome {
         "featureFlagReport" => feature_flags_report(request, &options),
         "duplicationReport" => duplication_report(request, &options),
         "health" => health_report(request, &options),
+        "audit" => audit(request, &options),
+        "projectInfo" => project_info(request, &options),
+        "combined" => combined(request, &options),
         "fsProbe" | "gitProbe" => probe(request),
         #[cfg(feature = "memstats")]
         "retentionProbe" => retention_probe(request),

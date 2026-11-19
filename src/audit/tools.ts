@@ -7,9 +7,12 @@ import {
   FallowCheckOutput,
   FallowConfigOutput,
   FallowConfigSetOutput,
+  FallowConfigSuggestOutput,
+  FallowDryRunOutput,
   FallowDeadCodeOutput,
   FallowDupesOutput,
   FallowHealthOutput,
+  FallowHealthRunOutput,
 } from "./contract.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Tool } from "@opencode/schema/tool"
@@ -19,6 +22,7 @@ import { resolve } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { AuditHistory } from "./history.ts"
 import { fallowReport, importAudit } from "./report.ts"
+import { fallowHealthRun, healthRunOutput } from "./health.ts"
 import { defaultFallowAnalyzer } from "./wasm-analyzer.ts"
 import {
   cleanupResolvedFallowConfig,
@@ -39,8 +43,10 @@ import {
   type DeadCodeFindingKind,
   type HealthSort,
 } from "./fallow-tools-support.ts"
-import { fallowReview } from "./review.ts"
+import { fallowReview, type FallowReviewResult } from "./review.ts"
 import { resolvePreviewBaseCommit } from "./review-git.ts"
+import { dryRunFallowConfig, suggestFallowConfig } from "./fallow-config-tools.ts"
+import { missingConfigText } from "./fallow-gate.ts"
 
 const text = z.string().min(1)
 const paging = { offset: z.int().nonnegative().default(0), limit: z.int().positive().default(50) }
@@ -74,13 +80,15 @@ async function withEffectiveConfig<T>(
 export function registerAuditTools(
   ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
   repository: TaskRepository,
+  /** The base commit the runtime's audit of this session's attempt would use, when it is a worker's. */
+  attemptBase?: (sessionID: string) => string | undefined,
 ) {
   const history = new AuditHistory(repository)
   return ctx.tool.transform((editor) => {
     editor.add({
       name: "lz-fallow-report",
       description:
-        "Run bundled Fallow and save durable task-associated audit history in LAZERS SQLite. Worker task/plan/attempt/session come from the runtime assignment. The first scan defaults to baseline; later scans link to it as follow-ups. Saves each analysis as it finishes, including errors. Returns runID, reportPath outside the worktree, timestamps and summaries. Use lz-get-audit to retrieve findings. Fallow findings are feedback, never a rejection; older findings are never counted. Optional local-model semantic analysis is not started.",
+        "Run the full Fallow report and save it in audit history. Returns the run ID, report path and a summary per section.",
       input: z.strictObject(runOptions),
       output: AuditScanOutput,
       options: { codemode: true, permission: "lz-fallow-report" },
@@ -244,18 +252,18 @@ export function registerAuditTools(
       },
     })
     editor.add({
-      name: "lz-fallow-check",
+      name: "lz-fallow-audit",
       description:
-        "Read-only preview of the Fallow review the runtime will run when this attempt finishes: changed files against the merge-base with the default branch (or HEAD~1), optionally narrowed to given files or directories. Findings are feedback, never a rejection. Older findings are not counted.",
+        "Fallow audit of your changed files against the task base. Returns a verdict and findings (errors, warnings, inherited) with file, line and fix.",
       input: z.strictObject(pathsInput),
       output: FallowCheckOutput,
-      options: { codemode: true, permission: "lz-fallow-check" },
+      options: { codemode: true, permission: "lz-fallow-audit" },
       execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
             agent: call.agent,
-            action: "lz-fallow-check",
+            action: "lz-fallow-audit",
             resources: [ctx.location.directory],
           })
           .pipe(
@@ -264,28 +272,14 @@ export function registerAuditTools(
                 try: async () => {
                   const workspace = ctx.location.directory
                   const resolvedPaths = await resolveToolPaths(workspace, input.paths)
-                  const baseCommit = await resolvePreviewBaseCommit(workspace)
-                  const result = resolvedPaths.empty
-                    ? {
-                        status: "clean" as const,
-                        introduced: [],
-                        concerns: [],
-                        thresholds: undefined,
-                      }
+                  // A worker's own call measures from the attempt's chain base, exactly as the
+                  // runtime's audit will; anyone else from the merge-base with the default branch.
+                  const baseCommit =
+                    attemptBase?.(call.sessionID) ?? (await resolvePreviewBaseCommit(workspace))
+                  const result: FallowReviewResult = resolvedPaths.empty
+                    ? { status: "clean" }
                     : await fallowReview({ workspace, baseCommit, artifact: "HEAD", repository })
-                  const introduced = filterByResolvedPaths(result.introduced, resolvedPaths)
-                  const concerns = filterByResolvedPaths(result.concerns, resolvedPaths)
-                  const output = {
-                    status:
-                      result.status === "unavailable"
-                        ? result.status
-                        : introduced.length + concerns.length === 0
-                          ? ("clean" as const)
-                          : ("findings" as const),
-                    introduced,
-                    concerns,
-                    thresholds: result.thresholds ?? { cyclomatic: 20, cognitive: 15 },
-                  }
+                  const output = narrowReview(result, resolvedPaths)
                   return { content: JSON.stringify(output), output }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),
@@ -296,7 +290,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-dupes",
       description:
-        "Duplicate code groups from Fallow's duplication analysis, ranked worst first by token count and paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). No source fragments; each instance carries only file and line range.",
+        "List duplicate-code groups, largest first. Returns each group's size and instances with file and line range.",
       input: z.strictObject({
         ...pathsInput,
         ...boundedPaging,
@@ -348,13 +342,19 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-health",
       description:
-        "Functions over Fallow's complexity limits, ranked worst first by the requested metric and paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). No source fragments.",
+        "Fallow health of the whole repository, or its over-limit functions (view functions). Returns score, grade, penalties, worst findings and change since the baseline run.",
       input: z.strictObject({
+        view: z
+          .enum(["score", "functions"])
+          .default("score")
+          .describe("score runs the whole repository"),
+        ...runOptions,
+        read: z.uuid().optional().describe("return a stored run, no scan"),
         ...pathsInput,
         ...boundedPaging,
         sort: z.enum(["cognitive", "cyclomatic", "lines"]).default("cognitive"),
       }),
-      output: FallowHealthOutput,
+      output: z.union([FallowHealthRunOutput, FallowHealthOutput]),
       options: { codemode: true, permission: "lz-fallow-health" },
       execute: (input, call) =>
         ctx.permission
@@ -367,7 +367,24 @@ export function registerAuditTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () => {
+                try: async (signal) => {
+                  if (input.view === "score") {
+                    const output = input.read
+                      ? healthRunOutput(history, input.read, input.baselineRunID)
+                      : await fallowHealthRun(
+                          history,
+                          {
+                            requestID: input.requestID ?? call.id,
+                            workspace: ctx.location.directory,
+                            ...(input.taskID ? { taskID: input.taskID } : {}),
+                            ...(input.phase ? { phase: input.phase } : {}),
+                            ...(input.baselineRunID ? { baselineRunID: input.baselineRunID } : {}),
+                          },
+                          { sessionID: call.sessionID, agent: call.agent },
+                          signal,
+                        )
+                    return { content: JSON.stringify(output), output }
+                  }
                   const resolvedPaths = await resolveToolPaths(ctx.location.directory, input.paths)
                   if (resolvedPaths.empty) {
                     const output = {
@@ -403,7 +420,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-dead-code",
       description:
-        "Dead-code candidates in this project: unused files, exports, types and dependencies, paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). Unused class members are left out unless the project's Fallow config turns that rule on. Disabled with no usable config; use lz-fallow-config to see what is missing.",
+        "List unused files, exports, types and dependencies. Returns kind, file, line and name for each.",
       input: z.strictObject({
         ...pathsInput,
         ...boundedPaging,
@@ -429,11 +446,6 @@ export function registerAuditTools(
                     return { content: JSON.stringify(output), output }
                   }
                   return withEffectiveConfig(ctx, repository, async (resolved) => {
-                    if (!resolved.deadCodeEnabled)
-                      throw new Tool.Error({
-                        message:
-                          "dead-code-disabled: no usable Fallow config has entry points. Set one with lz-fallow-config.",
-                      })
                     const report = await defaultFallowAnalyzer.deadCode({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
@@ -458,9 +470,12 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-config",
       description:
-        "The effective Fallow config: a repository config file at the base commit, else the stored LAZERS project config, else defaults. draft=true proposes entry points and rules without storing anything. Stores nothing; use lz-fallow-config-set to change the LAZERS config.",
-      input: z.strictObject({ draft: z.boolean().default(false) }),
-      output: FallowConfigOutput,
+        "Show, suggest or dry-run this project's Fallow config. Returns the effective config, a proposed one with evidence, or finding counts per class.",
+      input: z.strictObject({
+        mode: z.enum(["show", "suggest", "dry-run"]).default("show"),
+        config: z.record(z.string(), z.unknown()).optional().describe("candidate for dry-run"),
+      }),
+      output: z.union([FallowConfigOutput, FallowConfigSuggestOutput, FallowDryRunOutput]),
       options: { codemode: true, permission: "lz-fallow-config" },
       execute: (input, call) =>
         ctx.permission
@@ -473,28 +488,56 @@ export function registerAuditTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () =>
-                  withEffectiveConfig(ctx, repository, async (resolved) => {
-                    const stored = getLatestFallowConfig(repository)
-                    const shadowedLazersConfig = resolved.source === "repo" && stored !== undefined
-                    const missing =
-                      resolved.source === "defaults"
-                        ? ["No Fallow config: dead-code checks are off."]
-                        : []
-                    const draft = input.draft
-                      ? draftFallowConfig(await detectEntryPoints(ctx.location.directory))
-                      : undefined
-                    const output = {
-                      source: resolved.source,
-                      sha256: resolved.sha256,
-                      config: resolved.config,
-                      deadCodeEnabled: resolved.deadCodeEnabled,
-                      shadowedLazersConfig,
-                      missing,
-                      draft,
-                    }
+                try: async () => {
+                  const project = repository.projectDirectory
+                  const workspace = ctx.location.directory
+                  if (input.mode === "suggest") {
+                    const output = await suggestFallowConfig(
+                      workspace,
+                      project,
+                      defaultFallowAnalyzer,
+                    )
                     return { content: JSON.stringify(output), output }
-                  }),
+                  }
+                  const found = await withEffectiveConfig(ctx, repository, async (r) => r).catch(
+                    () => undefined,
+                  )
+                  if (input.mode === "dry-run") {
+                    const candidate = input.config ?? found?.config ?? {}
+                    const output = await dryRunFallowConfig(
+                      workspace,
+                      project,
+                      candidate,
+                      defaultFallowAnalyzer,
+                    )
+                    return { content: JSON.stringify(output), output }
+                  }
+                  const stored = getLatestFallowConfig(repository)
+                  const output = found
+                    ? {
+                        resolved: true,
+                        source: found.source,
+                        sha256: found.sha256,
+                        config: found.config,
+                        ...(found.source === "lazers" && stored
+                          ? {
+                              setBy: {
+                                agent: stored.agent,
+                                sessionID: stored.sessionID,
+                                at: stored.createdAt,
+                                ...(stored.reason ? { reason: stored.reason } : {}),
+                              },
+                            }
+                          : {}),
+                        shadowedLazersConfig: found.source === "repo" && stored !== undefined,
+                      }
+                    : {
+                        resolved: false,
+                        config: null,
+                        missing: [missingConfigText(project)],
+                      }
+                  return { content: JSON.stringify(output), output }
+                },
                 catch: (error) => new Tool.Error({ message: String(error) }),
               }),
             ),
@@ -503,8 +546,8 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-config-set",
       description:
-        "Validates and stores a new append-only revision of the LAZERS project config (never a repository write). A repo config file still wins when the repository has one.",
-      input: z.strictObject({ set: z.record(z.string(), z.unknown()) }),
+        "Save a new Fallow config for this project, with a reason. Returns the stored config and its hash.",
+      input: z.strictObject({ set: z.record(z.string(), z.unknown()), reason: text }),
       output: FallowConfigSetOutput,
       options: { codemode: true, permission: "lz-fallow-config-set" },
       execute: (input, call) =>
@@ -519,14 +562,17 @@ export function registerAuditTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const revision = setFallowConfig(repository, input.set, {
-                    sessionID: call.sessionID,
-                    agent: call.agent,
-                  })
+                  const revision = setFallowConfig(
+                    repository,
+                    input.set,
+                    { sessionID: call.sessionID, agent: call.agent },
+                    input.reason,
+                  )
                   const output = {
                     sha256: revision.sha256,
                     config: revision.config,
                     createdAt: revision.createdAt,
+                    reason: input.reason,
                   }
                   return { content: JSON.stringify(output), output }
                 },
@@ -536,4 +582,26 @@ export function registerAuditTools(
           ),
     })
   })
+}
+
+/** Filters a review to the paths the caller asked about, recounting the summary. */
+function narrowReview(
+  result: FallowReviewResult,
+  resolvedPaths: Awaited<ReturnType<typeof resolveToolPaths>>,
+): FallowReviewResult {
+  const pkg = result.package
+  if (!pkg || !resolvedPaths.files) return result
+  const findings = filterByResolvedPaths(pkg.findings, resolvedPaths)
+  const live = findings.filter((f) => f.attribution !== "inherited")
+  const errors = live.filter((f) => f.severity === "error").length
+  const warnings = live.length - errors
+  return {
+    ...result,
+    status: errors + warnings === 0 ? "clean" : "findings",
+    package: {
+      ...pkg,
+      findings,
+      summary: { errors, warnings, inherited: findings.length - live.length },
+    },
+  }
 }

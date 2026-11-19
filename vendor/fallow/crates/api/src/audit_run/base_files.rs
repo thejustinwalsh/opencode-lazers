@@ -1,6 +1,7 @@
 //! Base-side file reads, and the check that lets an audit reuse the head run
 //! as its base snapshot.
 
+#[cfg(not(target_os = "wasi"))]
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -136,6 +137,7 @@ pub fn export_names_at_base(
 /// The child is a [`fallow_process::ScopedChild`], so an interrupt
 /// (SIGINT/SIGTERM) during a large read loop kills the `cat-file` process
 /// through the signal registry instead of leaving it orphaned.
+#[cfg(not(target_os = "wasi"))]
 pub struct BaseFileReader {
     /// The registered `cat-file --batch` child. `Drop` takes it and calls the
     /// consuming wait after it closes stdin, which reaps the child and
@@ -154,9 +156,39 @@ impl BaseFileReader {
     /// available. The caller then treats the files as not reusable.
     #[must_use]
     #[cfg(target_os = "wasi")]
-    pub fn spawn(_root: &Path) -> Option<Self> {
-        // A long-lived piped child cannot exist without processes.
-        None
+    pub fn spawn(root: &Path) -> Option<Self> {
+        // A long-lived piped child cannot exist without processes: each read is one host call.
+        Some(Self {
+            root: root.to_path_buf(),
+        })
+    }
+
+    /// Read the base version of the repository-relative path `relative` at `base_ref`.
+    ///
+    /// A path that the object database does not hold is [`BaseRead::Missing`]; any other
+    /// failure is [`BaseRead::Error`].
+    #[cfg(target_os = "wasi")]
+    pub fn read(&mut self, base_ref: &str, relative: &Path) -> BaseRead {
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        if relative.contains('\n') {
+            return BaseRead::Error;
+        }
+        let mut command = fallow_engine::changed_files::git_command_in(&self.root);
+        command
+            .args(["cat-file", "blob"])
+            .arg(format!("{base_ref}:{relative}"));
+        let Ok(output) = fallow_engine::git_process::output(&mut command) else {
+            return BaseRead::Error;
+        };
+        if output.status.success() {
+            return BaseRead::Content(String::from_utf8_lossy(&output.stdout).into_owned());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("does not exist") || stderr.contains("exists on disk, but not in") {
+            BaseRead::Missing
+        } else {
+            BaseRead::Error
+        }
     }
 
     /// Spawn one `git cat-file --batch` process in `root`.
@@ -186,6 +218,7 @@ impl BaseFileReader {
     /// exactly one response. A ` missing` header yields [`BaseRead::Missing`].
     /// A parse or IO error, or a path with a newline (which would corrupt the
     /// request stream), yields [`BaseRead::Error`].
+    #[cfg(not(target_os = "wasi"))]
     pub fn read(&mut self, base_ref: &str, relative: &Path) -> BaseRead {
         use std::io::{BufRead, Read};
 
@@ -233,6 +266,13 @@ impl BaseFileReader {
     }
 }
 
+/// Reads the base version of a file with one host `git cat-file blob` call each,
+/// since a module without processes cannot keep a `cat-file --batch` child.
+#[cfg(target_os = "wasi")]
+pub struct BaseFileReader {
+    root: PathBuf,
+}
+
 /// Outcome of one batched base-file read. "The object does not exist at base"
 /// and "the pipe or parse failed" stay apart, so a transient `git cat-file`
 /// failure never reads as an empty base file.
@@ -248,6 +288,7 @@ pub enum BaseRead {
     Error,
 }
 
+#[cfg(not(target_os = "wasi"))]
 impl Drop for BaseFileReader {
     fn drop(&mut self) {
         // Close stdin so the child sees EOF and exits, then reap it through the
@@ -331,7 +372,7 @@ pub(super) fn js_ts_tokens_equivalent(path: &Path, current: &str, base: &str) ->
     fallow_engine::duplicates::source_token_kinds_equivalent(path, current, base, false)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "wasi")))]
 mod tests {
     use super::*;
 

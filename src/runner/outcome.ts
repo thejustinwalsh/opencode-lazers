@@ -1,3 +1,5 @@
+import { FallowAcceptance } from "../audit/contract.ts"
+import { findingLine, renderNotice } from "../audit/fallow-render.ts"
 import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
 
 /** Human action beside durable machine identity, without replaying full check logs. */
@@ -103,22 +105,10 @@ export function coalescedOutcomeText(entries: ReadonlyArray<{ planID: string; pa
   ].join("\n\n")
 }
 
-const FALLOW_NOTICE_LIMIT = 10
-
-/** Remaining Fallow findings of an accepted task, one `check file:line subject` per line. */
-function fallowNotice(fallow: { introduced?: unknown; concerns?: unknown }): string {
-  const section = (title: string, items: unknown) => {
-    if (!Array.isArray(items) || !items.length) return []
-    const lines = items
-      .slice(0, FALLOW_NOTICE_LIMIT)
-      .map((item) => `- ${item.check} ${item.file}:${item.line} ${item.subject}`)
-    return [`${title} (${items.length}):`, ...lines]
-  }
-  const lines = [
-    ...section("Fallow findings the repair attempt did not resolve", fallow.introduced),
-    ...section("Fallow concerns", fallow.concerns),
-  ]
-  return lines.length ? `\n${lines.join("\n")}` : ""
+/** Remaining Fallow findings of an accepted task and what the repair did, from the typed package. */
+function fallowNotice(fallow: unknown): string {
+  const parsed = FallowAcceptance.safeParse(fallow)
+  return parsed.success ? `\n${renderNotice(parsed.data.package, parsed.data.dispositions)}` : ""
 }
 
 /** The task(s) a plan-level finding is attributed to, for the Architect to send it back to. */
@@ -132,15 +122,13 @@ function taskReference(item: { taskID?: unknown; taskIDs?: unknown }): string {
 }
 
 /** Findings only the combined plan shows, such as two tasks that each added the same helper. */
-function planFallowNotice(fallow: { introduced?: unknown; concerns?: unknown }): string {
-  const items = [fallow.introduced, fallow.concerns].flatMap((list) =>
-    Array.isArray(list) ? list : [],
-  )
-  if (!items.length) return ""
-  const lines = items
-    .slice(0, FALLOW_NOTICE_LIMIT)
-    .map(
-      (item) => `- ${item.check} ${item.file}:${item.line} ${item.subject}${taskReference(item)}`,
-    )
-  return `\nFallow findings on the combined plan (${items.length}):\n${lines.join("\n")}\nThe plan is accepted. Send a finding back to the named task, submit a cleanup task, or accept it.`
+function planFallowNotice(fallow: unknown): string {
+  const parsed = FallowAcceptance.safeParse(fallow)
+  if (!parsed.success) return ""
+  const live = parsed.data.package.findings.filter((f) => f.attribution !== "inherited")
+  if (!live.length) return ""
+  const lines = live
+    .slice(0, 10)
+    .map((item) => `- ${item.severity} ${findingLine(item)}${taskReference(item)}`)
+  return `\nFallow audit of the combined plan, verdict ${parsed.data.package.verdict} (${live.length} findings):\n${lines.join("\n")}\nThe plan is accepted. Send a finding back to the named task, submit a cleanup task, or accept it.`
 }
