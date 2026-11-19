@@ -5,14 +5,17 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { ModelMappingStore } from "../models/mapping-store.ts"
 import { git } from "./artifacts.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { TaskRuntime } from "./runtime.ts"
+import type { ModelPolicy } from "./schema.ts"
 import { RunnerStore } from "./store.ts"
+import type { AttemptRow } from "./store.ts"
 
 const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup()
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
 type FixtureOptions = {
@@ -21,6 +24,8 @@ type FixtureOptions = {
   ambiguousRepair?: boolean
   repairRace?: boolean
   repairOwnerAdmissionRace?: boolean
+  mappedRoute?: ModelPolicy
+  configuredModel?: ModelPolicy | null
   wakeScheduler?: () => void
 }
 
@@ -37,6 +42,8 @@ function fixture(options: FixtureOptions = {}) {
   const repository = new TaskRepository(join(state, "tasks.sqlite"), root)
   const store = new RunnerStore(repository)
   const model = { providerID: "openai", id: "repair-test-model", variant: "high" }
+  const configuredModel =
+    options.configuredModel === undefined ? model : (options.configuredModel ?? undefined)
   const taskCount = options.dependent ? 2 : 1
   const tasks = Array.from({ length: taskCount }, (_, index) => {
     const path = `result-${index}.txt`
@@ -74,13 +81,26 @@ function fixture(options: FixtureOptions = {}) {
       proposal,
     })
   })
+  const mappingStore = new ModelMappingStore(repository)
+  if (options.mappedRoute)
+    for (const task of tasks)
+      mappingStore.update({
+        target: { scope: "task", taskID: task.id },
+        persona: "systems",
+        expectedRevision: 0,
+        route: options.mappedRoute,
+      })
   const plan = store.submit(
     {
       requestID: "retained-repair-plan",
       objective: "Build and verify the retained repair fixture",
       workspaceMode: "isolated",
       baseCommit: base,
-      nodes: tasks.map((task) => ({ taskID: task.id, revision: 1 as const })),
+      nodes: tasks.map((task) => ({
+        taskID: task.id,
+        revision: 1 as const,
+        ...(options.mappedRoute ? { persona: "systems" as const } : {}),
+      })),
       dependencies: options.dependent
         ? [{ prerequisite: tasks[0]!.id, successor: tasks[1]!.id }]
         : [],
@@ -127,7 +147,7 @@ function fixture(options: FixtureOptions = {}) {
   let waitObserved = false
   let ownerReadDuringWait = false
   const host: RunnerHost = {
-    workerModel: () => Promise.resolve(model),
+    workerModel: () => Promise.resolve(configuredModel),
     worktree: ({ directory, base: source }) => {
       mkdirSync(dirname(directory), { recursive: true })
       git(root, ["worktree", "add", "--detach", directory, source])
@@ -251,6 +271,7 @@ function fixture(options: FixtureOptions = {}) {
     state,
     base,
     tasks,
+    mappingStore,
     planID: plan.planID,
     store,
     runtime,
@@ -275,6 +296,23 @@ async function accept(f: ReturnType<typeof fixture>) {
   await start(f)
   await settleVerification(f.runtime)
   await settleVerification(f.runtime)
+}
+
+async function reopen(f: ReturnType<typeof fixture>) {
+  await f.runtime.stop()
+  const repository = new TaskRepository(join(f.state, "tasks.sqlite"), f.root)
+  const store = new RunnerStore(repository)
+  store.atomic((db) => db.query("UPDATE runner_leases SET expires_at=0").run())
+  const runtime = new TaskRuntime(store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+    requestTick: async () => {},
+  })
+  cleanups.push(async () => {
+    await runtime.stop()
+    repository.close()
+  })
+  f.store = store
+  f.runtime = runtime
 }
 
 async function integrateTaskSource(f: ReturnType<typeof fixture>, taskID: string) {
@@ -492,6 +530,274 @@ test("explicit retained repair preserves accepted history and usage and re-verif
     "Escaped delimiters are parsed incorrectly.",
   )
   expect(f.prompts).toHaveLength(2)
+})
+
+test.each([
+  {
+    label: "a different plan fallback",
+    configuredModel: { providerID: "fallback-provider", id: "fallback-model", variant: "high" },
+  },
+  { label: "no plan fallback", configuredModel: null },
+])(
+  "mapped retained repair keeps its route through reopen with $label",
+  async ({ configuredModel }) => {
+    const mappedRoute = {
+      providerID: "mapped-provider",
+      id: "mapped-model",
+      variant: "future/effort-v1",
+    }
+    const updatedMapping = { ...mappedRoute, variant: "future/effort-v2" }
+    const updatedFallback = {
+      providerID: "later-fallback-provider",
+      id: "later-fallback-model",
+      variant: "low",
+    }
+    const f = fixture({ mappedRoute, configuredModel })
+    await accept(f)
+    const prior = f.store.attempts(f.planID)[0]!
+    const originalPolicy = prior.policy
+    const originalDecision = JSON.parse(originalPolicy).routeDecision
+    expect(JSON.parse(originalPolicy)).toMatchObject({
+      model: mappedRoute,
+      routeDecision: {
+        status: "resolved",
+        source: "task-mapping",
+        route: mappedRoute,
+        provenance: {
+          target: { scope: "task", projectDirectory: f.root, taskID: f.tasks[0]!.id },
+          revision: 1,
+        },
+      },
+    })
+    expect(f.store.plan(f.planID)?.model).toBe(
+      configuredModel ? JSON.stringify(configuredModel) : null,
+    )
+
+    expect(
+      f.mappingStore.update({
+        target: { scope: "task", taskID: f.tasks[0]!.id },
+        persona: "systems",
+        expectedRevision: 1,
+        route: updatedMapping,
+      }).status,
+    ).toBe("updated")
+    f.host.workerModel = () => Promise.resolve(updatedFallback)
+
+    const requested = await f.runtime.command(retainedRepairCommand(f), "owner")
+    expect(requested).toMatchObject({ status: "retained-repair-requested", attemptID: prior.id })
+    expect(f.store.attempts(f.planID)[0]?.policy).toBe(originalPolicy)
+    expect(
+      f.store.latestRetainedRepair<{ route: unknown }>(f.planID, f.tasks[0]!.id)?.route,
+    ).toEqual(mappedRoute)
+
+    await f.runtime.tick()
+    const repaired = f.store.attempts(f.planID)[0]!
+    const worker = f.sessions.get(prior.session_id)!
+    const repairMessageID = repaired.message_id
+    expect(repaired.policy).toBe(originalPolicy)
+    expect(worker.model).toEqual(mappedRoute)
+    worker.outcome = "interrupted"
+    worker.turn = { inputID: repairMessageID, state: "interrupted" }
+    await f.runtime.tick()
+    expect(f.store.plan(f.planID)?.state).toBe("blocked")
+
+    await reopen(f)
+    const resume = {
+      requestID: "resume-mapped-retained-repair-after-reopen",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "resume" as const,
+      taskID: f.tasks[0]!.id,
+      attemptID: prior.id,
+      reason: "Continue the original mapped route after reopening the runtime.",
+    }
+    expect(await f.runtime.command(resume, "owner")).toMatchObject({ status: "resuming" })
+    await f.runtime.tick()
+
+    const continued = f.store.attempts(f.planID)[0]!
+    expect(continued).toMatchObject({
+      id: prior.id,
+      session_id: prior.session_id,
+      workspace: prior.workspace,
+      policy: originalPolicy,
+    })
+    expect(JSON.parse(continued.policy).routeDecision).toEqual(originalDecision)
+    expect(f.sessions.get(prior.session_id)?.model).toEqual(mappedRoute)
+    expect(f.prompts).toHaveLength(3)
+  },
+)
+
+test("authorized interrupted-repair recovery uses the original mapped route and provenance", async () => {
+  const mappedRoute = {
+    providerID: "recovery-mapped-provider",
+    id: "recovery-mapped-model",
+    variant: "future/recovery-v1",
+  }
+  const f = fixture({
+    mappedRoute,
+    configuredModel: { providerID: "recovery-fallback", id: "recovery-fallback-model" },
+  })
+  await accept(f)
+  const attempt = f.store.attempts(f.planID)[0]!
+  const originalPolicy = attempt.policy
+  expect(
+    f.mappingStore.update({
+      target: { scope: "task", taskID: f.tasks[0]!.id },
+      persona: "systems",
+      expectedRevision: 1,
+      route: { ...mappedRoute, variant: "future/recovery-v2" },
+    }).status,
+  ).toBe("updated")
+  f.host.workerModel = () =>
+    Promise.resolve({ providerID: "later-recovery-fallback", id: "later-fallback-model" })
+
+  await f.runtime.command(retainedRepairCommand(f), "owner")
+  await f.runtime.tick()
+  const repairAttempt = f.store.attempts(f.planID)[0]!
+  const repairMessageID = repairAttempt.message_id
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: repairMessageID, state: "interrupted" }
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+
+  await reopen(f)
+  const firstResume = {
+    requestID: "resume-mapped-repair-before-fence-recovery",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "resume" as const,
+    taskID: f.tasks[0]!.id,
+    attemptID: attempt.id,
+    reason: "Continue the exact interrupted retained repair.",
+  }
+  await f.runtime.command(firstResume, "owner")
+  const reserved = f.store.attempts(f.planID)[0]!
+  expect(reserved).toMatchObject({ state: "preparing", policy: originalPolicy })
+  const firstResumeEvent = f.store
+    .activity(f.planID, f.tasks[0]!.id)
+    .filter((entry) => entry.event === "ATTEMPT_RESUMED")
+    .at(-1)!
+  const legacyPayload = JSON.parse(firstResumeEvent.payload) as Record<string, unknown>
+  delete legacyPayload.retainedRepairContinuation
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+      .run(JSON.stringify(legacyPayload), firstResumeEvent.id),
+  )
+
+  const internals = f.runtime as unknown as {
+    retainedRepairForAttempt: (candidate: AttemptRow) => { repairMessageID?: unknown } | undefined
+  }
+  const currentLookup = internals.retainedRepairForAttempt
+  internals.retainedRepairForAttempt = (candidate) => {
+    const repair = currentLookup.call(f.runtime, candidate)
+    return repair?.repairMessageID === candidate.message_id ? repair : undefined
+  }
+  try {
+    await f.runtime.tick()
+    await f.runtime.tick()
+  } finally {
+    internals.retainedRepairForAttempt = currentLookup
+  }
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    state: "cancelled",
+    policy: originalPolicy,
+  })
+  expect(f.prompts).toHaveLength(2)
+
+  const recovery = {
+    requestID: "recover-mapped-retained-repair-fence",
+    planID: f.planID,
+    expectedVersion: f.store.plan(f.planID)!.version,
+    action: "resume" as const,
+    taskID: f.tasks[0]!.id,
+    attemptID: attempt.id,
+    reason: "Recover only the original interrupted mapped repair.",
+  }
+  expect(await f.runtime.command(recovery, "owner")).toMatchObject({
+    status: "retained-repair-recovered",
+    attemptID: attempt.id,
+  })
+  expect(f.store.attempts(f.planID)[0]?.policy).toBe(originalPolicy)
+  await f.runtime.tick()
+
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: attempt.id,
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+    policy: originalPolicy,
+  })
+  expect(worker.model).toEqual(mappedRoute)
+  expect(JSON.parse(f.store.attempts(f.planID)[0]!.policy).routeDecision).toMatchObject({
+    source: "task-mapping",
+    route: mappedRoute,
+    provenance: { revision: 1 },
+  })
+  expect(f.prompts).toHaveLength(3)
+})
+
+test("a changed attempt route and changed retained-repair route never continue", async () => {
+  const mappedRoute = {
+    providerID: "route-fence-provider",
+    id: "route-fence-model",
+    variant: "effort-v1",
+  }
+  const changedRoute = { ...mappedRoute, variant: "effort-v2" }
+  const f = fixture({
+    mappedRoute,
+    configuredModel: { providerID: "route-fallback", id: "route-fallback-model" },
+  })
+  await accept(f)
+  const originalAttempt = f.store.attempts(f.planID)[0]!
+  const beforePlan = f.store.plan(f.planID)
+  const beforeNode = f.store.nodes(f.planID)[0]
+  f.store.atomic((db) =>
+    db
+      .query("UPDATE runner_attempts SET policy=? WHERE id=?")
+      .run(
+        JSON.stringify({ ...JSON.parse(originalAttempt.policy), model: changedRoute }),
+        originalAttempt.id,
+      ),
+  )
+  const changedAttempt = f.store.attempts(f.planID)[0]!
+  await expect(f.runtime.command(retainedRepairCommand(f), "owner")).rejects.toThrow()
+  expect(f.store.plan(f.planID)).toEqual(beforePlan)
+  expect(f.store.nodes(f.planID)[0]).toEqual(beforeNode)
+  expect(f.store.attempts(f.planID)[0]).toEqual(changedAttempt)
+  expect(f.prompts).toHaveLength(1)
+
+  const repair = fixture({
+    mappedRoute,
+    configuredModel: { providerID: "route-fallback", id: "route-fallback-model" },
+  })
+  await accept(repair)
+  const prior = repair.store.attempts(repair.planID)[0]!
+  await repair.runtime.command(retainedRepairCommand(repair), "owner")
+  const transition = repair.store.atomic((db) =>
+    db
+      .query<{ id: number; payload: string }, [string, string]>(
+        "SELECT id,payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+      )
+      .get(repair.planID, repair.tasks[0]!.id),
+  )!
+  const payload = JSON.parse(transition.payload) as Record<string, unknown>
+  payload.route = changedRoute
+  repair.store.atomic((db) =>
+    db
+      .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+      .run(JSON.stringify(payload), transition.id),
+  )
+  await repair.runtime.tick()
+  await repair.runtime.tick()
+  expect(repair.store.attempts(repair.planID)).toHaveLength(1)
+  expect(repair.store.attempts(repair.planID)[0]).toMatchObject({
+    id: prior.id,
+    policy: prior.policy,
+  })
+  expect(repair.prompts).toHaveLength(1)
 })
 
 test.each(["reassignment", "renewal"] as const)(
