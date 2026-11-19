@@ -207,6 +207,11 @@ const port = parentPort
 if (!port) throw new Error("fallow-worker must run in a worker thread")
 let queue: Promise<unknown> = Promise.resolve()
 port.on("message", (request: FallowWorkerRequest) => {
-  queue = queue.then(async () => port.postMessage(await handle(request)))
+  queue = queue.then(async () => {
+    port.postMessage(await handle(request))
+    // A finished run leaves its linear memory (100 to 250 MB on this repository, gigabytes on a
+    // large one) for the collector; do not let several accumulate between collections.
+    Bun.gc(true)
+  })
 })
 port.postMessage({ ready: true })
