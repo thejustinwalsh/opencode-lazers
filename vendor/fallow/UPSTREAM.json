@@ -17,6 +17,7 @@
     "crates/security",
     "crates/output",
     "crates/report-protocol",
-    "crates/process"
+    "crates/process",
+    "crates/api"
   ]
 }

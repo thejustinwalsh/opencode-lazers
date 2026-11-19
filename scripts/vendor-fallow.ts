@@ -31,6 +31,7 @@ export const importedCrates = [
   "output",
   "report-protocol",
   "process",
+  "api",
 ] as const
 const rootFiles = ["Cargo.toml", "Cargo.lock", "LICENSE"] as const
 /** Directories inside a crate that only serve upstream's own tests and benchmarks. */
