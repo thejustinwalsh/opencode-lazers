@@ -34,6 +34,10 @@ module); if the threaded module is unavailable or traps, that call and every lat
 one run on the single-threaded module and the reason is logged once. There is no
 renderer scan, daemon, recurring timer or local inference model.
 
+Whole-project analyses (up to 12,000 source files) use Fallow's own cache in `<root>/.fallow`,
+the only place the module may write; it ignores itself, so `git status` stays clean. A review's
+worktrees seed it from the project's canonical checkout and publish back to it.
+
 The task SQLite database stores each run and its complete report sections,
 linked to project, task, plan, attempt and session. Worker association comes from
 the runtime assignment, not model claims. Start, section capture, finish and

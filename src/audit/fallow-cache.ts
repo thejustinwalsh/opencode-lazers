@@ -9,8 +9,13 @@ import { FALLOW_CACHE_MAX_MB } from "./fallow-wasi.ts"
  * and a corrupt file is discarded by Fallow, never an error.
  */
 
-/** Projects with more source files than this run without the cache. Its cost is memory, see the plan. */
-export const CACHE_MAX_FILES = 3000
+/**
+ * Projects with more source files than this run without the cache. A cold run that writes the
+ * cache holds it decoded and encoded on top of the analysis: at 10,000 files a dead-code run
+ * peaked at 1.27 GB with the cache against 0.51 GB without (a warm run: 0.70 GB in a tenth of
+ * the time). The ceiling is 4 GiB, so the bound keeps a cold run well inside it.
+ */
+export const CACHE_MAX_FILES = 12_000
 
 const CACHE_FILES = ["cache.bin", "churn.bin", "graph-cache.bin"]
 const MAX_BYTES = FALLOW_CACHE_MAX_MB * 1024 * 1024 * 2
