@@ -244,7 +244,7 @@ async function planSourceDecision(
   return prove(prerequisites, rows, head)
 }
 
-async function buildSnapshot(input: {
+type SnapshotBuildInput = {
   store: RunnerStore
   facts: SchedulingFactSnapshot
   scope: SchedulingScope
@@ -261,345 +261,400 @@ async function buildSnapshot(input: {
     rows: SchedulingFactSnapshot["taskIntegrations"],
     head: string,
   ) => Promise<ProofResult<IntegrationDecision>>
-}): Promise<BuiltProjection> {
-  const { store, facts, scope, observedAt, branch, provePlan, proveTask } = input
-  const directory = store.repository.projectDirectory
-  const sessionPlanIDs =
-    scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
-  let cacheable = true
-  const projected: ProjectedPlan[] = await Promise.all(
-    facts.plans.map(async (plan, planOrder) => {
-      let raw: unknown
-      try {
-        raw = JSON.parse(plan.body) as unknown
-      } catch {
-        raw = undefined
-      }
-      const parsed = PlanInput.safeParse(raw)
-      const planNodes = facts.nodes.filter((node) => node.plan_id === plan.id)
-      const nodes: SchedulingNode[] = planNodes.map((node) => {
-        let task: TaskSpec | undefined
-        try {
-          const result = TaskSpecSchema.safeParse(JSON.parse(node.task_body))
-          if (result.success) task = result.data
-        } catch {
-          task = undefined
-        }
-        const decision: SchedulingDecision = ["queued", "ready"].includes(node.state)
-          ? "waiting"
-          : "not-applicable"
-        const direct = taskPrerequisites(
-          node.task_id,
-          facts.dependencies.filter((edge) => edge.plan_id === plan.id),
-        )
-        return {
-          taskID: node.task_id,
-          ...(node.reference ? { reference: node.reference } : {}),
-          title: task?.proposal.objective.slice(0, 120) ?? `Task ${node.task_id.slice(0, 8)}`,
-          objective: task?.proposal.objective.slice(0, 400) ?? "Task specification is unavailable.",
-          ordinal: node.ordinal,
-          order: node.ordinal,
-          lifecycle: node.state,
-          decision,
-          reason: task ? null : "Task specification facts are unavailable.",
-          prerequisites: direct,
-          waitingOn: [],
-          reservationTaskIDs: [],
-        }
-      })
-      const attemptPolicy = (() => {
-        try {
-          const policy: unknown = JSON.parse(plan.last_attempt_policy ?? "null")
-          if (typeof policy !== "object" || policy === null || !("workspaceMode" in policy))
-            return undefined
-          return policy.workspaceMode === "isolated" || policy.workspaceMode === "shared"
-            ? policy.workspaceMode
-            : undefined
-        } catch {
-          return undefined
-        }
-      })()
-      const rawMode =
-        typeof raw === "object" && raw !== null && "workspaceMode" in raw
-          ? raw.workspaceMode
-          : undefined
-      const workspaceMode =
-        rawMode === "isolated" || rawMode === "shared" ? rawMode : (attemptPolicy ?? "shared")
-      let planDecision: SchedulingPlan["decision"] = "waiting"
-      let reason = safeReason(plan.reason)
-      let unknown = false
-      let waitingPlanIDs = parsed.success ? (parsed.data.afterPlans ?? []) : []
-      if (!parsed.success) {
-        planDecision = "unknown"
-        reason = "Plan scheduling facts are unavailable."
-        unknown = true
-      } else if (plan.state === "running") {
-        const prerequisite = await planSourceDecision(
-          parsed.data.afterPlans ?? [],
-          facts,
-          branch?.head,
-          provePlan,
-        )
-        cacheable &&= prerequisite.cacheable
-        planDecision =
-          prerequisite.value.decision === "ready" ? "eligible" : prerequisite.value.decision
-        reason = prerequisite.value.reason
-        unknown = prerequisite.value.decision === "unknown"
-        if (planDecision === "eligible" && plan.pause_reason !== null) {
-          const untilPlans = JSON.parse(plan.pause_until_plans ?? "[]") as string[]
-          const resume = await planSourceDecision(untilPlans, facts, branch?.head, provePlan)
-          cacheable &&= resume.cacheable
-          if (resume.value.decision === "unknown") {
-            planDecision = "unknown"
-            reason = resume.value.reason
-            unknown = true
-          } else if (!untilPlans.length || resume.value.decision === "waiting") {
-            planDecision = "waiting"
-            reason = safeReason(plan.pause_reason) ?? "Dispatch is paused."
-            waitingPlanIDs = untilPlans
-          }
-        }
-      } else {
-        reason = reason ?? (plan.state === "blocked" ? "Plan is on hold." : null)
-      }
-      const scopedAfterPlans = (parsed.success ? (parsed.data.afterPlans ?? []) : []).filter(
-        (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
-      )
-      const schedule: SchedulingPlan = {
-        planID: plan.id,
-        planVersion: plan.version,
-        planOrder,
-        priority: parsed.success ? (parsed.data.priority ?? 0) : plan.priority,
-        title: parsed.success
-          ? (safeReason(parsed.data.title ?? parsed.data.objective.slice(0, 120)) ??
-            `Plan ${plan.id.slice(0, 8)}`)
-          : `Plan ${plan.id.slice(0, 8)}`,
-        lifecycle: plan.state,
-        decision: planDecision,
-        reason,
-        afterPlans: scopedAfterPlans.slice(0, MAX_SCHEDULING_AFTER_PLAN_REFERENCES),
-        afterPlansCount: scopedAfterPlans.length,
-        afterPlansComplete: scopedAfterPlans.length <= MAX_SCHEDULING_AFTER_PLAN_REFERENCES,
-        nodes,
-        nodesComplete: plan.node_count === planNodes.length,
-      }
-      if (!schedule.nodesComplete) unknown = true
-      return {
-        schedule,
-        facts: plan,
-        input: parsed.success ? parsed.data : undefined,
-        nodes,
-        rawNodes: planNodes,
-        waitingPlanIDs,
-        workspaceMode,
-        unknown,
-      }
-    }),
+}
+
+/** What the plan-by-plan selection learns as it walks the plans in priority order. */
+type SelectionState = {
+  cacheable: boolean
+  prefixKnown: boolean
+  firstCandidateKnown: boolean
+  selectionComplete: boolean
+  firstUnknownReason: string | undefined
+  selectedTaskIDs: string[]
+  previouslySelectedReservations: SchedulingReservation[]
+}
+
+/** A higher-priority fact is unknown: later selections can no longer be trusted as the prefix. */
+function markSelectionUnknown(state: SelectionState, reason: string | null | undefined) {
+  state.prefixKnown = false
+  state.selectionComplete = false
+  state.firstUnknownReason ??= reason ?? undefined
+}
+
+function schedulingNodeView(
+  node: SchedulingFactSnapshot["nodes"][number],
+  facts: SchedulingFactSnapshot,
+): SchedulingNode {
+  let task: TaskSpec | undefined
+  try {
+    const result = TaskSpecSchema.safeParse(JSON.parse(node.task_body))
+    if (result.success) task = result.data
+  } catch {
+    task = undefined
+  }
+  const decision: SchedulingDecision = ["queued", "ready"].includes(node.state)
+    ? "waiting"
+    : "not-applicable"
+  const direct = taskPrerequisites(
+    node.task_id,
+    facts.dependencies.filter((edge) => edge.plan_id === node.plan_id),
   )
+  return {
+    taskID: node.task_id,
+    ...(node.reference ? { reference: node.reference } : {}),
+    title: task?.proposal.objective.slice(0, 120) ?? `Task ${node.task_id.slice(0, 8)}`,
+    objective: task?.proposal.objective.slice(0, 400) ?? "Task specification is unavailable.",
+    ordinal: node.ordinal,
+    order: node.ordinal,
+    lifecycle: node.state,
+    decision,
+    reason: task ? null : "Task specification facts are unavailable.",
+    prerequisites: direct,
+    waitingOn: [],
+    reservationTaskIDs: [],
+  }
+}
 
-  const adoptionReservations = facts.adoptions.map((adoption) => ({
-    shared: false,
-    scopes: store.effectiveWriteScope(adoption.task_id),
-    taskID: adoption.task_id,
-  }))
-  const reservationFactsComplete = facts.reservationsComplete && facts.adoptionsComplete
-  const sessionTaskIDs =
-    scope.kind === "session" ? new Set(facts.sessionAssociations?.taskIDs ?? []) : undefined
-  const reservationDetails = (taskIDs: readonly string[], completeFacts: boolean) => {
-    const uniqueTaskIDs = [...new Set(taskIDs)]
-    const scopedTaskIDs = sessionTaskIDs
-      ? uniqueTaskIDs.filter((taskID) => sessionTaskIDs.has(taskID))
-      : uniqueTaskIDs
-    return {
-      reservationTaskIDs: scopedTaskIDs.slice(0, MAX_SCHEDULING_RESERVATION_REFERENCES),
-      reservationTaskCount: scopedTaskIDs.length,
-      reservationTaskIDsComplete:
-        completeFacts && scopedTaskIDs.length <= MAX_SCHEDULING_RESERVATION_REFERENCES,
-      reservationTaskIDsScopeLimited: scopedTaskIDs.length < uniqueTaskIDs.length,
+function planWorkspaceMode(
+  plan: SchedulingFactSnapshot["plans"][number],
+  raw: unknown,
+): "shared" | "isolated" {
+  const attemptPolicy = (() => {
+    try {
+      const policy: unknown = JSON.parse(plan.last_attempt_policy ?? "null")
+      if (typeof policy !== "object" || policy === null || !("workspaceMode" in policy))
+        return undefined
+      return policy.workspaceMode === "isolated" || policy.workspaceMode === "shared"
+        ? policy.workspaceMode
+        : undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const rawMode =
+    typeof raw === "object" && raw !== null && "workspaceMode" in raw
+      ? raw.workspaceMode
+      : undefined
+  return rawMode === "isolated" || rawMode === "shared" ? rawMode : (attemptPolicy ?? "shared")
+}
+
+/** Whether a running plan may dispatch, given its prerequisite plans and any pause. */
+async function runningPlanDecision(
+  input: SnapshotBuildInput,
+  plan: SchedulingFactSnapshot["plans"][number],
+  afterPlans: string[],
+  state: SelectionState,
+) {
+  const { facts, branch, provePlan } = input
+  const prerequisite = await planSourceDecision(afterPlans, facts, branch?.head, provePlan)
+  state.cacheable &&= prerequisite.cacheable
+  let planDecision: SchedulingPlan["decision"] =
+    prerequisite.value.decision === "ready" ? "eligible" : prerequisite.value.decision
+  let reason = prerequisite.value.reason
+  let unknown = prerequisite.value.decision === "unknown"
+  let waitingPlanIDs = afterPlans
+  if (planDecision === "eligible" && plan.pause_reason !== null) {
+    const untilPlans = JSON.parse(plan.pause_until_plans ?? "[]") as string[]
+    const resume = await planSourceDecision(untilPlans, facts, branch?.head, provePlan)
+    state.cacheable &&= resume.cacheable
+    if (resume.value.decision === "unknown") {
+      planDecision = "unknown"
+      reason = resume.value.reason
+      unknown = true
+    } else if (!untilPlans.length || resume.value.decision === "waiting") {
+      planDecision = "waiting"
+      reason = safeReason(plan.pause_reason) ?? "Dispatch is paused."
+      waitingPlanIDs = untilPlans
     }
   }
-  const previouslySelectedReservations: SchedulingReservation[] = []
-  const selectedTaskIDs: string[] = []
-  let prefixKnown = true
-  let firstCandidateKnown = false
-  let selectionComplete =
-    facts.plansComplete &&
-    facts.nodesComplete &&
-    facts.reservationsComplete &&
-    facts.adoptionsComplete &&
-    facts.planIntegrationsComplete
-  let firstUnknownReason: string | undefined
+  return { planDecision, reason, unknown, waitingPlanIDs }
+}
 
-  for (const plan of projected) {
-    if (
-      !plan.input ||
-      plan.schedule.lifecycle !== "running" ||
-      plan.schedule.decision === "unknown"
-    ) {
-      if (plan.schedule.lifecycle === "running" && plan.schedule.decision === "unknown") {
-        prefixKnown = false
-        selectionComplete = false
-        firstUnknownReason ??=
-          plan.schedule.reason ?? "Higher-priority scheduling facts are unavailable."
-      }
-      continue
-    }
-    if (plan.schedule.decision === "waiting") {
-      for (const node of plan.nodes) {
-        if (["queued", "ready"].includes(node.lifecycle)) {
-          node.reason = plan.schedule.reason
-          if (plan.waitingPlanIDs.length) {
-            const waitingPlanIDs = [...new Set(plan.waitingPlanIDs)].filter(
-              (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
-            )
-            if (waitingPlanIDs.length) {
-              node.waitingOnPlans = waitingPlanIDs.slice(0, MAX_SCHEDULING_PLAN_REFERENCES)
-              node.waitingOnPlansCount = waitingPlanIDs.length
-              node.waitingOnPlansComplete = waitingPlanIDs.length <= MAX_SCHEDULING_PLAN_REFERENCES
-            }
-          }
-        }
-      }
-      continue
-    }
-    const planEdges = facts.dependencies.filter((edge) => edge.plan_id === plan.schedule.planID)
-    const candidateNodes: SchedulingNode[] = []
-    for (const node of plan.rawNodes) {
-      const view = plan.nodes.find((candidate) => candidate.taskID === node.task_id)!
-      if (view.reason) {
-        view.decision = "unknown"
-        plan.unknown = true
-        prefixKnown = false
-        selectionComplete = false
-        firstUnknownReason ??= view.reason
-        continue
-      }
-      if (!["queued", "ready"].includes(node.state)) continue
-      const ancestors = taskAncestors(node.task_id, planEdges)
-      if (ancestors.length) {
-        if (!branch) {
-          cacheable = false
-          view.decision = "unknown"
-          view.reason = "Task source ancestry is unavailable."
-          plan.unknown = true
-          prefixKnown = false
-          selectionComplete = false
-          firstUnknownReason ??= view.reason
-          continue
-        }
-        const integrations = facts.taskIntegrations.filter(
-          (row) => row.plan_id === plan.schedule.planID && ancestors.includes(row.task_id),
-        )
-        const proofResult = await proveTask(branch.branch, ancestors, integrations, branch.head)
-        cacheable &&= proofResult.cacheable
-        const proof = proofResult.value
-        if (proof.status !== "ready") {
-          view.decision = proof.status === "unknown" ? "unknown" : "waiting"
-          view.reason = proof.reason
-          view.waitingOn = taskPrerequisites(node.task_id, planEdges)
-          if (proof.status === "unknown") {
-            plan.unknown = true
-            prefixKnown = false
-            selectionComplete = false
-            firstUnknownReason ??= proof.reason
-          }
-          continue
-        }
-      }
-      view.decision = "eligible"
-      view.reason = null
-      candidateNodes.push(view)
-    }
+async function projectPlan(
+  input: SnapshotBuildInput,
+  plan: SchedulingFactSnapshot["plans"][number],
+  planOrder: number,
+  sessionPlanIDs: Set<string> | undefined,
+  state: SelectionState,
+): Promise<ProjectedPlan> {
+  const { facts } = input
+  let raw: unknown
+  try {
+    raw = JSON.parse(plan.body) as unknown
+  } catch {
+    raw = undefined
+  }
+  const parsed = PlanInput.safeParse(raw)
+  const planNodes = facts.nodes.filter((node) => node.plan_id === plan.id)
+  const nodes: SchedulingNode[] = planNodes.map((node) => schedulingNodeView(node, facts))
+  const workspaceMode = planWorkspaceMode(plan, raw)
+  const afterPlans = parsed.success ? (parsed.data.afterPlans ?? []) : []
+  let planDecision: SchedulingPlan["decision"] = "waiting"
+  let reason = safeReason(plan.reason)
+  let unknown = false
+  let waitingPlanIDs = afterPlans
+  if (!parsed.success) {
+    planDecision = "unknown"
+    reason = "Plan scheduling facts are unavailable."
+    unknown = true
+  } else if (plan.state === "running") {
+    ;({ planDecision, reason, unknown, waitingPlanIDs } = await runningPlanDecision(
+      input,
+      plan,
+      afterPlans,
+      state,
+    ))
+  } else {
+    reason = reason ?? (plan.state === "blocked" ? "Plan is on hold." : null)
+  }
+  const scopedAfterPlans = afterPlans.filter(
+    (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
+  )
+  const schedule: SchedulingPlan = {
+    planID: plan.id,
+    planVersion: plan.version,
+    planOrder,
+    priority: parsed.success ? (parsed.data.priority ?? 0) : plan.priority,
+    title: parsed.success
+      ? (safeReason(parsed.data.title ?? parsed.data.objective.slice(0, 120)) ??
+        `Plan ${plan.id.slice(0, 8)}`)
+      : `Plan ${plan.id.slice(0, 8)}`,
+    lifecycle: plan.state,
+    decision: planDecision,
+    reason,
+    afterPlans: scopedAfterPlans.slice(0, MAX_SCHEDULING_AFTER_PLAN_REFERENCES),
+    afterPlansCount: scopedAfterPlans.length,
+    afterPlansComplete: scopedAfterPlans.length <= MAX_SCHEDULING_AFTER_PLAN_REFERENCES,
+    nodes,
+    nodesComplete: plan.node_count === planNodes.length,
+  }
+  if (!schedule.nodesComplete) unknown = true
+  return {
+    schedule,
+    facts: plan,
+    input: parsed.success ? parsed.data : undefined,
+    nodes,
+    rawNodes: planNodes,
+    waitingPlanIDs,
+    workspaceMode,
+    unknown,
+  }
+}
 
-    const activeReservations = facts.reservations.map((attempt) => ({
-      shared: attempt.workspace === directory,
-      scopes: store.effectiveWriteScope(attempt.task_id),
-      taskID: attempt.task_id,
-    }))
-    const knownReservationTaskIDs = new Set([
-      ...activeReservations.map((reservation) => reservation.taskID),
-      ...adoptionReservations.map((reservation) => reservation.taskID),
-    ])
-    const scopedReservations: SchedulingReservation[] = [
-      ...activeReservations,
-      ...adoptionReservations,
-      ...previouslySelectedReservations,
-    ]
-    const selection = selectSchedulingCandidates(
-      plan.workspaceMode,
-      candidateNodes.map((node) => ({
-        taskID: node.taskID,
-        scopes: store.effectiveWriteScope(node.taskID),
-      })),
-      scopedReservations,
+function reservationDetails(
+  sessionTaskIDs: Set<string> | undefined,
+  taskIDs: readonly string[],
+  completeFacts: boolean,
+) {
+  const uniqueTaskIDs = [...new Set(taskIDs)]
+  const scopedTaskIDs = sessionTaskIDs
+    ? uniqueTaskIDs.filter((taskID) => sessionTaskIDs.has(taskID))
+    : uniqueTaskIDs
+  return {
+    reservationTaskIDs: scopedTaskIDs.slice(0, MAX_SCHEDULING_RESERVATION_REFERENCES),
+    reservationTaskCount: scopedTaskIDs.length,
+    reservationTaskIDsComplete:
+      completeFacts && scopedTaskIDs.length <= MAX_SCHEDULING_RESERVATION_REFERENCES,
+    reservationTaskIDsScopeLimited: scopedTaskIDs.length < uniqueTaskIDs.length,
+  }
+}
+
+/** A plan that is not dispatching explains to its waiting tasks why, and on which plans. */
+function holdWaitingPlanNodes(plan: ProjectedPlan, sessionPlanIDs: Set<string> | undefined) {
+  for (const node of plan.nodes) {
+    if (!["queued", "ready"].includes(node.lifecycle)) continue
+    node.reason = plan.schedule.reason
+    if (!plan.waitingPlanIDs.length) continue
+    const waitingPlanIDs = [...new Set(plan.waitingPlanIDs)].filter(
+      (planID) => !sessionPlanIDs || sessionPlanIDs.has(planID),
     )
-    let reservationUnknown = false
-    if (reservationFactsComplete) selectedTaskIDs.push(...selection.selectedTaskIDs)
-    for (const node of candidateNodes) {
-      const hold = selection.holds.get(node.taskID)
-      if (reservationFactsComplete) {
-        if (!hold) continue
-        node.decision = "waiting"
-        node.reason = hold.reason
-        Object.assign(node, reservationDetails(hold.reservationTaskIDs, true))
-        continue
-      }
+    if (!waitingPlanIDs.length) continue
+    node.waitingOnPlans = waitingPlanIDs.slice(0, MAX_SCHEDULING_PLAN_REFERENCES)
+    node.waitingOnPlansCount = waitingPlanIDs.length
+    node.waitingOnPlansComplete = waitingPlanIDs.length <= MAX_SCHEDULING_PLAN_REFERENCES
+  }
+}
 
-      const knownBlockers = (hold?.reservationTaskIDs ?? []).filter((taskID) =>
-        knownReservationTaskIDs.has(taskID),
-      )
-      if (knownBlockers.length) {
-        node.decision = "waiting"
-        node.reason = hold?.reason ?? "A captured active reservation blocks this task."
-        Object.assign(node, reservationDetails(knownBlockers, false))
-      } else {
-        node.decision = "unknown"
-        node.reason =
-          "Active reservation coverage is incomplete; task eligibility cannot be established."
-        Object.assign(node, reservationDetails([], false))
-        reservationUnknown = true
+/** The plan's node view when its task is a dispatch candidate; undefined when it is not. */
+async function candidateNodeView(
+  input: SnapshotBuildInput,
+  plan: ProjectedPlan,
+  node: SchedulingNodeFact,
+  planEdges: SchedulingFactSnapshot["dependencies"],
+  state: SelectionState,
+): Promise<SchedulingNode | undefined> {
+  const { facts, branch, proveTask } = input
+  const view = plan.nodes.find((candidate) => candidate.taskID === node.task_id)!
+  if (view.reason) {
+    view.decision = "unknown"
+    plan.unknown = true
+    markSelectionUnknown(state, view.reason)
+    return undefined
+  }
+  if (!["queued", "ready"].includes(node.state)) return undefined
+  const ancestors = taskAncestors(node.task_id, planEdges)
+  if (ancestors.length) {
+    if (!branch) {
+      state.cacheable = false
+      view.decision = "unknown"
+      view.reason = "Task source ancestry is unavailable."
+      plan.unknown = true
+      markSelectionUnknown(state, view.reason)
+      return undefined
+    }
+    const integrations = facts.taskIntegrations.filter(
+      (row) => row.plan_id === plan.schedule.planID && ancestors.includes(row.task_id),
+    )
+    const proofResult = await proveTask(branch.branch, ancestors, integrations, branch.head)
+    state.cacheable &&= proofResult.cacheable
+    const proof = proofResult.value
+    if (proof.status !== "ready") {
+      view.decision = proof.status === "unknown" ? "unknown" : "waiting"
+      view.reason = proof.reason
+      view.waitingOn = taskPrerequisites(node.task_id, planEdges)
+      if (proof.status === "unknown") {
         plan.unknown = true
-        prefixKnown = false
-        selectionComplete = false
-        firstUnknownReason ??= node.reason
+        markSelectionUnknown(state, proof.reason)
       }
-    }
-    if (selection.selectedTaskIDs.length && reservationFactsComplete) {
-      for (const taskID of selection.selectedTaskIDs)
-        previouslySelectedReservations.push({
-          shared: plan.workspaceMode === "shared",
-          scopes: store.effectiveWriteScope(taskID),
-          taskID,
-        })
-      plan.schedule.decision = "eligible"
-    } else if ((!candidateNodes.length || reservationUnknown) && plan.unknown) {
-      plan.schedule.decision = "unknown"
-      plan.schedule.reason = firstUnknownReason ?? "Scheduling facts are unavailable."
-    } else if (!candidateNodes.length) {
-      plan.schedule.decision = "waiting"
-      plan.schedule.reason = plan.schedule.reason ?? "No task is currently dispatchable."
-    } else {
-      plan.schedule.decision = "waiting"
-      plan.schedule.reason = "Eligible task scopes are reserved by active work."
-    }
-    if (!firstCandidateKnown && selection.selectedTaskIDs.length && prefixKnown) {
-      firstCandidateKnown = true
-    }
-    if (!plan.schedule.nodesComplete && selection.selectedTaskIDs.length === 0) {
-      prefixKnown = false
-      selectionComplete = false
-      plan.schedule.decision = "unknown"
-      plan.schedule.reason = "Task coverage is incomplete for this higher-priority plan."
-      firstUnknownReason ??= plan.schedule.reason
+      return undefined
     }
   }
+  view.decision = "eligible"
+  view.reason = null
+  return view
+}
 
+/** Holds the candidates whose scopes are reserved; returns true when a candidate's hold is unknowable. */
+function applyReservationHolds(
+  candidateNodes: SchedulingNode[],
+  selection: ReturnType<typeof selectSchedulingCandidates>,
+  plan: ProjectedPlan,
+  reservationFactsComplete: boolean,
+  knownReservationTaskIDs: Set<string | undefined>,
+  sessionTaskIDs: Set<string> | undefined,
+  state: SelectionState,
+) {
+  let reservationUnknown = false
+  for (const node of candidateNodes) {
+    const hold = selection.holds.get(node.taskID)
+    if (reservationFactsComplete) {
+      if (!hold) continue
+      node.decision = "waiting"
+      node.reason = hold.reason
+      Object.assign(node, reservationDetails(sessionTaskIDs, hold.reservationTaskIDs, true))
+      continue
+    }
+
+    const knownBlockers = (hold?.reservationTaskIDs ?? []).filter((taskID) =>
+      knownReservationTaskIDs.has(taskID),
+    )
+    if (knownBlockers.length) {
+      node.decision = "waiting"
+      node.reason = hold?.reason ?? "A captured active reservation blocks this task."
+      Object.assign(node, reservationDetails(sessionTaskIDs, knownBlockers, false))
+    } else {
+      node.decision = "unknown"
+      node.reason =
+        "Active reservation coverage is incomplete; task eligibility cannot be established."
+      Object.assign(node, reservationDetails(sessionTaskIDs, [], false))
+      reservationUnknown = true
+      plan.unknown = true
+      markSelectionUnknown(state, node.reason)
+    }
+  }
+  return reservationUnknown
+}
+
+/** Chooses the plan's dispatchable tasks against active, adoption and earlier-selected reservations. */
+async function selectPlanCandidates(
+  input: SnapshotBuildInput,
+  plan: ProjectedPlan,
+  adoptionReservations: SchedulingReservation[],
+  sessionTaskIDs: Set<string> | undefined,
+  state: SelectionState,
+) {
+  const { store, facts } = input
+  const directory = store.repository.projectDirectory
+  const reservationFactsComplete = facts.reservationsComplete && facts.adoptionsComplete
+  const planEdges = facts.dependencies.filter((edge) => edge.plan_id === plan.schedule.planID)
+  const candidateNodes: SchedulingNode[] = []
+  for (const node of plan.rawNodes) {
+    const view = await candidateNodeView(input, plan, node, planEdges, state)
+    if (view) candidateNodes.push(view)
+  }
+
+  const activeReservations = facts.reservations.map((attempt) => ({
+    shared: attempt.workspace === directory,
+    scopes: store.effectiveWriteScope(attempt.task_id),
+    taskID: attempt.task_id,
+  }))
+  const knownReservationTaskIDs = new Set([
+    ...activeReservations.map((reservation) => reservation.taskID),
+    ...adoptionReservations.map((reservation) => reservation.taskID),
+  ])
+  const scopedReservations: SchedulingReservation[] = [
+    ...activeReservations,
+    ...adoptionReservations,
+    ...state.previouslySelectedReservations,
+  ]
+  const selection = selectSchedulingCandidates(
+    plan.workspaceMode,
+    candidateNodes.map((node) => ({
+      taskID: node.taskID,
+      scopes: store.effectiveWriteScope(node.taskID),
+    })),
+    scopedReservations,
+  )
+  if (reservationFactsComplete) state.selectedTaskIDs.push(...selection.selectedTaskIDs)
+  const reservationUnknown = applyReservationHolds(
+    candidateNodes,
+    selection,
+    plan,
+    reservationFactsComplete,
+    knownReservationTaskIDs,
+    sessionTaskIDs,
+    state,
+  )
+  if (selection.selectedTaskIDs.length && reservationFactsComplete) {
+    for (const taskID of selection.selectedTaskIDs)
+      state.previouslySelectedReservations.push({
+        shared: plan.workspaceMode === "shared",
+        scopes: store.effectiveWriteScope(taskID),
+        taskID,
+      })
+    plan.schedule.decision = "eligible"
+  } else if ((!candidateNodes.length || reservationUnknown) && plan.unknown) {
+    plan.schedule.decision = "unknown"
+    plan.schedule.reason = state.firstUnknownReason ?? "Scheduling facts are unavailable."
+  } else if (!candidateNodes.length) {
+    plan.schedule.decision = "waiting"
+    plan.schedule.reason = plan.schedule.reason ?? "No task is currently dispatchable."
+  } else {
+    plan.schedule.decision = "waiting"
+    plan.schedule.reason = "Eligible task scopes are reserved by active work."
+  }
+  if (!state.firstCandidateKnown && selection.selectedTaskIDs.length && state.prefixKnown)
+    state.firstCandidateKnown = true
+  if (!plan.schedule.nodesComplete && selection.selectedTaskIDs.length === 0) {
+    state.prefixKnown = false
+    state.selectionComplete = false
+    plan.schedule.decision = "unknown"
+    plan.schedule.reason = "Task coverage is incomplete for this higher-priority plan."
+    state.firstUnknownReason ??= plan.schedule.reason
+  }
+}
+
+function nextSchedulingCandidate(
+  facts: SchedulingFactSnapshot,
+  projected: ProjectedPlan[],
+  state: SelectionState,
+): SchedulingSnapshot["next"] {
+  const { selectedTaskIDs, firstUnknownReason } = state
   const allPlans = projected.map((plan) => plan.schedule)
   const nextCandidateID = selectedTaskIDs[0]
-  let next: SchedulingSnapshot["next"]
   if (
     nextCandidateID &&
-    firstCandidateKnown &&
+    state.firstCandidateKnown &&
     facts.reservationsComplete &&
     facts.adoptionsComplete
   ) {
@@ -607,7 +662,7 @@ async function buildSnapshot(input: {
       candidate.nodes.some((node) => node.taskID === nextCandidateID),
     )!
     const node = plan.nodes.find((candidate) => candidate.taskID === nextCandidateID)!
-    next = {
+    return {
       status: "known",
       candidate: {
         planID: plan.planID,
@@ -620,30 +675,30 @@ async function buildSnapshot(input: {
         order: selectedTaskIDs.indexOf(node.taskID),
       },
     }
-  } else if (
+  }
+  if (
     selectedTaskIDs.length === 0 &&
     facts.plansComplete &&
     facts.nodesComplete &&
     facts.reservationsComplete &&
     facts.adoptionsComplete &&
     facts.planIntegrationsComplete &&
-    selectionComplete &&
+    state.selectionComplete &&
     !projected.some((plan) => plan.unknown)
-  ) {
-    next = { status: "none" }
-  } else {
-    next = {
-      status: "unknown",
-      reason:
-        firstUnknownReason ??
-        (facts.plansComplete
-          ? "Scheduling facts are incomplete; refresh to establish the next task."
-          : "Higher-priority plan coverage is incomplete; refresh to establish the next task."),
-    }
+  )
+    return { status: "none" }
+  return {
+    status: "unknown",
+    reason:
+      firstUnknownReason ??
+      (facts.plansComplete
+        ? "Scheduling facts are incomplete; refresh to establish the next task."
+        : "Higher-priority plan coverage is incomplete; refresh to establish the next task."),
   }
-  const coveredNodeCount = facts.nodes.length
-  if (selectedTaskIDs.length > 5_000) selectionComplete = false
-  const reasons = [
+}
+
+function coverageReasons(facts: SchedulingFactSnapshot, projected: ProjectedPlan[]) {
+  return [
     !facts.plansComplete ? "Plan coverage is bounded." : null,
     !facts.nodesComplete ? "Task coverage is bounded." : null,
     !facts.reservationsComplete ? "Active reservation coverage is incomplete." : null,
@@ -653,6 +708,64 @@ async function buildSnapshot(input: {
       ? "Prerequisite plan references are bounded."
       : null,
   ].filter((reason): reason is string => reason !== null)
+}
+
+async function buildSnapshot(input: SnapshotBuildInput): Promise<BuiltProjection> {
+  const { store, facts, scope, observedAt } = input
+  const sessionPlanIDs =
+    scope.kind === "session" ? new Set(facts.sessionAssociations?.planIDs ?? []) : undefined
+  const state: SelectionState = {
+    cacheable: true,
+    prefixKnown: true,
+    firstCandidateKnown: false,
+    selectionComplete:
+      facts.plansComplete &&
+      facts.nodesComplete &&
+      facts.reservationsComplete &&
+      facts.adoptionsComplete &&
+      facts.planIntegrationsComplete,
+    firstUnknownReason: undefined,
+    selectedTaskIDs: [],
+    previouslySelectedReservations: [],
+  }
+  const projected: ProjectedPlan[] = await Promise.all(
+    facts.plans.map((plan, planOrder) =>
+      projectPlan(input, plan, planOrder, sessionPlanIDs, state),
+    ),
+  )
+
+  const adoptionReservations = facts.adoptions.map((adoption) => ({
+    shared: false,
+    scopes: store.effectiveWriteScope(adoption.task_id),
+    taskID: adoption.task_id,
+  }))
+  const sessionTaskIDs =
+    scope.kind === "session" ? new Set(facts.sessionAssociations?.taskIDs ?? []) : undefined
+
+  for (const plan of projected) {
+    if (
+      !plan.input ||
+      plan.schedule.lifecycle !== "running" ||
+      plan.schedule.decision === "unknown"
+    ) {
+      if (plan.schedule.lifecycle === "running" && plan.schedule.decision === "unknown")
+        markSelectionUnknown(
+          state,
+          plan.schedule.reason ?? "Higher-priority scheduling facts are unavailable.",
+        )
+      continue
+    }
+    if (plan.schedule.decision === "waiting") {
+      holdWaitingPlanNodes(plan, sessionPlanIDs)
+      continue
+    }
+    await selectPlanCandidates(input, plan, adoptionReservations, sessionTaskIDs, state)
+  }
+
+  const allPlans = projected.map((plan) => plan.schedule)
+  const next = nextSchedulingCandidate(facts, projected, state)
+  if (state.selectedTaskIDs.length > 5_000) state.selectionComplete = false
+  const reasons = coverageReasons(facts, projected)
   const snapshot = {
     schemaVersion: 1 as const,
     snapshotID: randomUUID(),
@@ -664,20 +777,20 @@ async function buildSnapshot(input: {
       planCount: facts.totalPlanCount,
       coveredPlanCount: facts.plans.length,
       nodeCount: facts.totalNodeCount,
-      coveredNodeCount,
+      coveredNodeCount: facts.nodes.length,
       activeReservationCount: facts.totalReservationCount + facts.totalAdoptionCount,
       reservationsComplete: facts.reservationsComplete && facts.adoptionsComplete,
       reason: reasons.join(" ") || null,
     },
     next,
-    selectedTaskIDs: selectedTaskIDs.slice(0, 5_000),
-    selectionComplete,
+    selectedTaskIDs: state.selectedTaskIDs.slice(0, 5_000),
+    selectionComplete: state.selectionComplete,
     plans: allPlans,
   }
   const validated = SchedulingSnapshotSchema.parse(snapshot)
   return {
     snapshot: scope.kind === "session" ? scopeSessionSnapshot(validated, facts) : validated,
-    cacheable,
+    cacheable: state.cacheable,
   }
 }
 
