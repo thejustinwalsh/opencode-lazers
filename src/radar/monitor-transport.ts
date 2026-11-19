@@ -1,5 +1,7 @@
 import { RadarLocationNotLoadedError } from "./project.ts"
 import type {
+  LiveAttemptResponse,
+  LiveGroupResponse,
   LiveHistoryResponse,
   LiveRadarResponse,
   ObservationChange,
@@ -17,6 +19,14 @@ export type RadarMonitorRPC = {
     input: { scope: ObservationScope; sessionID: string; limit: number; cursor?: string },
     options: RPCOptions,
   ): Promise<LiveHistoryResponse>
+  liveAttempt(
+    input: { scope: ObservationScope; sessionID: string },
+    options: RPCOptions,
+  ): Promise<LiveAttemptResponse>
+  liveGroup(
+    input: { scope: ObservationScope; group: "needs-you" | "failed" | "queued" },
+    options: RPCOptions,
+  ): Promise<LiveGroupResponse>
   events: {
     subscribe(
       name: "changed",
@@ -37,6 +47,17 @@ export type RadarMonitorTransport = {
     cursor: string | undefined,
     signal: AbortSignal,
   ): Promise<LiveHistoryResponse>
+  /** The selected worker's call count, model and tick summary. Absent on older transports. */
+  liveAttempt?(
+    scope: ObservationScope,
+    sessionID: string,
+    signal: AbortSignal,
+  ): Promise<LiveAttemptResponse>
+  liveGroup?(
+    scope: ObservationScope,
+    group: "needs-you" | "failed" | "queued",
+    signal: AbortSignal,
+  ): Promise<LiveGroupResponse>
   changes(signal: AbortSignal): AsyncIterable<ObservationChange>
   online(): boolean
 }
@@ -67,6 +88,14 @@ export function createRadarMonitorTransport(
         { scope, sessionID, limit: 20, ...(cursor ? { cursor } : {}) },
         { location: { directory }, signal },
       )
+    },
+    liveAttempt: async (scope, sessionID, signal) => {
+      await requireLoaded()
+      return rpc().liveAttempt({ scope, sessionID }, { location: { directory }, signal })
+    },
+    liveGroup: async (scope, group, signal) => {
+      await requireLoaded()
+      return rpc().liveGroup({ scope, group }, { location: { directory }, signal })
     },
     changes: (signal) =>
       (async function* () {

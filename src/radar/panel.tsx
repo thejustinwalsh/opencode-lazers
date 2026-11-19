@@ -32,6 +32,8 @@ import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
 import { RadarHeader } from "./radar-header.tsx"
 import type { RadarScopeChoice, RadarViewChoice } from "./radar-header.tsx"
 import { connectionChip } from "./monitor-model.ts"
+import { Callout, Disclosure, Identifiers, StatRow } from "../details/index.ts"
+import { humanize, transitionName, translateRuntimeWords } from "../trajectory-panel/event-names.ts"
 
 const View = Schema.Struct({
   scope: Schema.Literals(["session", "project"]),
@@ -106,12 +108,6 @@ function timeLabel(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return ""
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString()
-}
-
-function timeValue(value: number | null | undefined) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return undefined
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
 type RadarLocation = ReturnType<typeof createRadarLocation>
@@ -402,12 +398,21 @@ function RadarDiagnosticsPanel(
   /** The selected state or transition, on one line; also the collapsed pane. */
   const detailsHeader = () => {
     const transition = chosenTransition()
-    if (transition) return <strong>{transition.event}</strong>
+    if (transition) return <strong>{transitionName(transition.event)}</strong>
     const machineState = chosenState()
-    return machineState ? <strong>{machineState.id}</strong> : undefined
+    return machineState ? <strong>{humanize(machineState.id)}</strong> : undefined
   }
   const currentPlanTransitions = () => transitions()
   const flowNode = () => node()
+  /** The one note about the persisted snapshot: missing, or disagreeing with the task's state. */
+  const snapshotNote = () => {
+    const value = flowNode()
+    if (!value) return undefined
+    if (!value.snapshotMatchesState)
+      return "The saved machine snapshot disagrees with the task's recorded state, so no current state is highlighted."
+    if (value.snapshot === null) return "The saved machine snapshot is unavailable."
+    return undefined
+  }
   const flowActiveState = () => {
     const currentSnapshot = snapshot()
     const currentNode = flowNode()
@@ -562,18 +567,15 @@ function RadarDiagnosticsPanel(
                                 </div>
                               }
                             >
-                              <Show when={flowNode()!.snapshotMatchesState}>
-                                <Show when={flowNode()!.snapshot === null}>
-                                  <div class="lazers-radar-note">
-                                    The persisted machine snapshot is unavailable.
-                                  </div>
-                                </Show>
-                              </Show>
-                              <Show when={!flowNode()!.snapshotMatchesState}>
-                                <div class="lazers-radar-note">
-                                  The persisted snapshot disagrees with the recorded task state; no
-                                  current state is highlighted.
-                                </div>
+                              <Show when={snapshotNote()}>
+                                {(note) => (
+                                  <Callout
+                                    class="lazers-radar-callout"
+                                    iconTone="warning"
+                                    icon={<Ui.Icon name="circle-exclamation" size="small" />}
+                                    text={note()}
+                                  />
+                                )}
                               </Show>
                               <Show when={flowGraph()}>
                                 {(graph) => (
@@ -755,7 +757,9 @@ function RadarDiagnosticsPanel(
       >
         <Show
           when={chosenTransition() || chosenState() || missingSelection()}
-          fallback={<p class="lazers-radar-note">No state selected</p>}
+          fallback={
+            <p class="lazers-radar-note">Select a state or a recorded transition in the diagram.</p>
+          }
         >
           <>
             <Show when={prefs().view !== "map"}>
@@ -770,45 +774,39 @@ function RadarDiagnosticsPanel(
                 <Show when={chosenTransition()}>
                   {(transition) => (
                     <>
-                      <h3>{transition().event}</h3>
-                      <p class="lazers-radar-facts-line">
-                        <Show when={transition().from || transition().to}>
-                          <span>
-                            {transition().from ?? ""} → {transition().to ?? ""}
-                          </span>
-                        </Show>
-                        <Show when={timeLabel(transition().recordedAt)}>
-                          <span>
-                            <em>recorded</em>{" "}
-                            <time dateTime={timeValue(transition().recordedAt)}>
-                              {timeLabel(transition().recordedAt)}
-                            </time>
-                          </span>
-                        </Show>
-                        <span>{transition().kind}</span>
-                      </p>
+                      <StatRow
+                        stats={[
+                          {
+                            label: "From",
+                            value: transition().from ? humanize(transition().from!) : undefined,
+                          },
+                          {
+                            label: "To",
+                            value: transition().to ? humanize(transition().to!) : undefined,
+                          },
+                          {
+                            label: "Recorded",
+                            value: timeLabel(transition().recordedAt) || undefined,
+                          },
+                          {
+                            label: "Kind",
+                            value: transition().kind ? humanize(transition().kind) : undefined,
+                          },
+                        ]}
+                      />
                       <Show when={transition().reason}>
-                        <p>{transition().reason}</p>
+                        {(reason) => <p>{translateRuntimeWords(reason())}</p>}
                       </Show>
-                      <details class="lazers-radar-disclosure lazers-radar-identifiers">
-                        <summary>Identifiers</summary>
-                        <dl>
-                          <dt>Sequence</dt>
-                          <dd>{transition().sequence}</dd>
-                          <Show when={transition().taskID}>
-                            <dt>Task</dt>
-                            <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                              {transition().taskID}
-                            </dd>
-                          </Show>
-                          <Show when={transition().attemptID}>
-                            <dt>Attempt</dt>
-                            <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                              {transition().attemptID}
-                            </dd>
-                          </Show>
-                        </dl>
-                      </details>
+                      <Disclosure label="Identifiers">
+                        <Identifiers
+                          items={[
+                            { label: "Event", value: transition().event },
+                            { label: "Sequence", value: String(transition().sequence) },
+                            { label: "Task", value: transition().taskID ?? undefined },
+                            { label: "Attempt", value: transition().attemptID ?? undefined },
+                          ]}
+                        />
+                      </Disclosure>
                     </>
                   )}
                 </Show>
@@ -821,42 +819,38 @@ function RadarDiagnosticsPanel(
                     )
                     return (
                       <>
-                        <h3>{machineState().id}</h3>
-                        <p class="lazers-radar-facts-line">
-                          <span>{machineState().type}</span>
-                          <Show when={inspector().initial === "Yes"}>
-                            <span>initial</span>
-                          </Show>
-                          <Show when={inspector().current === "Yes"}>
-                            <span>current</span>
-                          </Show>
-                          <Show
-                            when={
-                              inspector().current &&
-                              inspector().current !== "Yes" &&
-                              inspector().current !== "No"
-                            }
-                          >
-                            <span>{inspector().current}</span>
-                          </Show>
-                          <Show when={inspector().machine}>
-                            <span>{inspector().machine}</span>
-                          </Show>
-                        </p>
+                        <StatRow
+                          stats={[
+                            { label: "Type", value: humanize(machineState().type) },
+                            { label: "Machine", value: inspector().machine },
+                            ...(inspector().current === "Yes"
+                              ? [
+                                  {
+                                    label: "Status",
+                                    note: { text: "current", tone: "interactive" as const },
+                                  },
+                                ]
+                              : inspector().initial === "Yes"
+                                ? [
+                                    {
+                                      label: "Status",
+                                      note: { text: "initial", tone: "neutral" as const },
+                                    },
+                                  ]
+                                : []),
+                          ]}
+                        />
                         <Show when={inspector().matchesRecordedState && inspector().reason}>
-                          <p>{inspector().reason}</p>
+                          {(reason) => <p>{translateRuntimeWords(reason())}</p>}
                         </Show>
-                        <Show when={inspector().taskID}>
-                          <details class="lazers-radar-disclosure lazers-radar-identifiers">
-                            <summary>Identifiers</summary>
-                            <dl>
-                              <dt>Task</dt>
-                              <dd style={{ "font-family": ctx.appearance.font("mono") }}>
-                                {inspector().taskID}
-                              </dd>
-                            </dl>
-                          </details>
-                        </Show>
+                        <Disclosure label="Identifiers">
+                          <Identifiers
+                            items={[
+                              { label: "State", value: machineState().id },
+                              { label: "Task", value: inspector().taskID },
+                            ]}
+                          />
+                        </Disclosure>
                       </>
                     )
                   }}
@@ -921,6 +915,7 @@ function RadarLiveMonitorPanel(
     saveRadarView(ctx, props.session, projectKey(), change)
   onCleanup(() => state.close())
 
+  let transportRef: ReturnType<typeof createRadarMonitorTransport> | undefined
   createKeyed(
     radarKeyedSource(
       current,
@@ -936,6 +931,7 @@ function RadarLiveMonitorPanel(
         value.projectID,
         radarLocationGuard(value.client, value.directory, () => props.session.directory),
       )
+      transportRef = transport
       state.connect(
         key,
         value.projectID,
@@ -1016,6 +1012,8 @@ function RadarLiveMonitorPanel(
         }}
         onRefresh={() => state.refreshNow()}
         onLoadMoreHistory={() => state.loadMoreHistory()}
+        readAttempt={(sessionID, signal) => transportRef!.liveAttempt!(scope(), sessionID, signal)}
+        readGroup={(group, signal) => transportRef!.liveGroup!(scope(), group, signal)}
         showIdle={prefs().showIdle === true}
         onShowIdleChange={(showIdle) => save({ showIdle })}
         onView={props.onView}

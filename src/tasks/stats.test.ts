@@ -50,3 +50,14 @@ test("the lane is relative to the attempt and absent without ticks", () => {
   expect(attemptLane({ ...attempt, summary: { ticks: [] } }, 0)).toBeUndefined()
   expect(attemptLane(undefined, 0)).toBeUndefined()
 })
+
+test("a held attempt still recorded as running stops its runtime at the last activity", () => {
+  const held = taskStats({ createdAt: 0, now: 44 * HOUR, attempt, working: false })
+  expect(values(held).Age).toBe("1d 20h")
+  expect(values(held).Runtime).toBe("48m")
+  expect(values(taskStats({ createdAt: 0, now: 44 * HOUR, attempt, working: true })).Runtime).toBe(
+    "1d 19h",
+  )
+  // The lane still spans to now, so the quiet stretch collapses to an idle span before "now".
+  expect(attemptLane(attempt, 44 * HOUR)!.durationMs).toBe(44 * HOUR - attempt.startedAt)
+})

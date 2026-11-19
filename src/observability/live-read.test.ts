@@ -612,3 +612,68 @@ test("S8-6 a large project read cannot leave later session reads truncated or wi
     fixture.close()
   }
 })
+
+test("the live attempt read carries the call count, model and tick summary of one session's attempt", async () => {
+  const fixture = makeFixture()
+  try {
+    const secret = new Uint8Array(32).fill(83)
+    const reads = new ObservationReads(fixture.store, fixture.host, "project", secret)
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET tool_count=3,policy=? WHERE id=?").run(
+        JSON.stringify({ model: { providerID: "openai", id: "gpt-6-luna", variant: "max" } }),
+        firstAttemptID,
+      )
+      db.query(
+        `INSERT INTO runner_progress
+           (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,source,sources_json,kind,event_ids_json,call_id,dedupe_key,payload)
+         SELECT p.project_directory,'project',a.plan_id,a.task_id,a.id,a.session_id,5000,'native','[]','tool','[]','call-a','dedupe-a',?
+           FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=?`,
+      ).run(
+        JSON.stringify({ status: "failed", fileTargets: { operation: "edit", paths: ["a.ts"] } }),
+        firstAttemptID,
+      )
+    })
+    const attempt = fixture.store.atomic(
+      (db) =>
+        db
+          .query<{ session_id: string }, [string]>(
+            "SELECT session_id FROM runner_attempts WHERE id=?",
+          )
+          .get(firstAttemptID)!.session_id,
+    )
+    const response = reads.liveAttempt(
+      { scope: { kind: "project", sessionID: "anchor" }, sessionID: attempt },
+      new AbortController().signal,
+    )
+    expect(response.attempt).toMatchObject({
+      id: firstAttemptID,
+      toolCount: 3,
+      model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
+      summary: { lastActivityAt: 5000, ticks: [{ at: 5000, failed: true }], files: 1 },
+      task: { state: expect.any(String), planState: expect.any(String) },
+    })
+    for (const group of ["needs-you", "failed", "queued"] as const) {
+      const listed = reads.liveGroup(
+        { scope: { kind: "project", sessionID: "anchor" }, group },
+        new AbortController().signal,
+      )
+      expect(listed.group).toBe(group)
+      expect(listed.tasks.length).toBeLessThanOrEqual(listed.total)
+      for (const task of listed.tasks) expect(task.title).not.toBe("")
+    }
+    expect(
+      reads.liveAttempt(
+        { scope: { kind: "project", sessionID: "anchor" }, sessionID: "no-such-session" },
+        new AbortController().signal,
+      ).attempt,
+    ).toBeNull()
+    expect(() =>
+      reads.liveAttempt(
+        { scope: { kind: "session", sessionID: attempt }, sessionID: "another-session" },
+        new AbortController().signal,
+      ),
+    ).toThrow()
+  } finally {
+    fixture.close()
+  }
+})

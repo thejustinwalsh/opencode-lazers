@@ -1,3 +1,4 @@
+import { AttemptModel, AttemptSummary } from "../tasks/attempt-summary.ts"
 import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState, DispatchPause } from "../runner/schema.ts"
@@ -713,6 +714,60 @@ export const LiveHistoryOutput = z.strictObject({
     responseBytes: z.int().nonnegative(),
   }),
 })
+export const LiveAttemptInput = z.strictObject({
+  scope: ObservationScope,
+  sessionID: z.string().min(1).max(200),
+})
+/**
+ * The worker pane's counts and lane for one session: its attempt's call count, model and the
+ * compact tick summary Tasks also reads. `attempt` is null for a session with no runner attempt.
+ */
+export const LiveAttemptOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  projectID: z.string().min(1).max(200),
+  sessionID: z.string().min(1).max(200),
+  attempt: z
+    .strictObject({
+      id: z.uuid(),
+      number: z.int().positive(),
+      state: z.string().min(1).max(40),
+      startedAt: z.number().finite(),
+      toolCount: z.int().nonnegative(),
+      model: AttemptModel.optional(),
+      summary: AttemptSummary,
+      /** The task node and plan the attempt belongs to, so the pane names the task's own state. */
+      task: z
+        .strictObject({
+          state: z.string().min(1).max(40),
+          reason: z.string().max(600).nullable(),
+          planState: z.string().min(1).max(40),
+          planReason: z.string().max(600).nullable(),
+        })
+        .optional(),
+    })
+    .nullable(),
+})
+export const LIVE_GROUP_TASKS = 25
+export const LiveGroupInput = z.strictObject({
+  scope: ObservationScope,
+  group: z.enum(["needs-you", "failed", "queued"]),
+})
+/** The tasks behind one Map group node: at most `LIVE_GROUP_TASKS`, newest first, and the total. */
+export const LiveGroupOutput = z.strictObject({
+  schemaVersion: z.literal(1),
+  projectID: z.string().min(1).max(200),
+  group: z.enum(["needs-you", "failed", "queued"]),
+  total: z.int().nonnegative(),
+  tasks: z
+    .array(
+      z.strictObject({
+        taskID: z.uuid(),
+        reference: z.string().max(40).nullable(),
+        title: z.string().max(200),
+      }),
+    )
+    .max(LIVE_GROUP_TASKS),
+})
 const LiveHistoryErrorData = z.strictObject({
   reason: z.enum(["invalid-cursor", "session-unavailable", "changed-during-read"]),
   recovery: z.literal("restart"),
@@ -807,6 +862,12 @@ export const Observability = Rpc.define({
       },
     },
     liveRadar: { input: LiveRadarInput, output: LiveRadarOutput },
+    liveGroup: { input: LiveGroupInput, output: LiveGroupOutput },
+    liveAttempt: {
+      input: LiveAttemptInput,
+      output: LiveAttemptOutput,
+      errors: { live_history_unavailable: LiveHistoryErrorData },
+    },
     liveHistory: {
       input: LiveHistoryInput,
       output: LiveHistoryOutput,
@@ -831,6 +892,11 @@ export type RadarRequestInput = z.input<typeof RadarInput>
 export type RadarResponse = z.infer<typeof RadarOutput>
 export type LiveRadarRequestInput = z.input<typeof LiveRadarInput>
 export type LiveRadarResponse = z.infer<typeof LiveRadarOutput>
+export type LiveGroupRequestInput = z.input<typeof LiveGroupInput>
+export type LiveGroupResponse = z.infer<typeof LiveGroupOutput>
+export type LiveAttemptRequest = z.infer<typeof LiveAttemptInput>
+export type LiveAttemptRequestInput = z.input<typeof LiveAttemptInput>
+export type LiveAttemptResponse = z.infer<typeof LiveAttemptOutput>
 export type LiveHistoryRequest = z.infer<typeof LiveHistoryInput>
 export type LiveHistoryRequestInput = z.input<typeof LiveHistoryInput>
 export type LiveHistoryResponse = z.infer<typeof LiveHistoryOutput>

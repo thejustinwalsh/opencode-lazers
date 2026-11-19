@@ -1,10 +1,33 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import type { Ui } from "@opencode/plugin/gui"
 import type { ObservationScope } from "../observability/contract.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
 import { TaskRing } from "../tasks/state-glyph.tsx"
+import { isRingGlyph } from "../tasks/row-presentation.ts"
+import {
+  ActivityLane,
+  Disclosure,
+  Identifiers,
+  Label,
+  Rows,
+  Row,
+  Section,
+  StatRow,
+} from "../details/index.ts"
+import type { LiveAttemptResponse, LiveGroupResponse } from "../observability/contract.ts"
+import {
+  callTarget,
+  idleText,
+  lastCall,
+  recentCalls,
+  toolName,
+  workerLane,
+  workerState,
+  workerStats,
+} from "./worker-pane.ts"
+import type { WorkerAttempt } from "./worker-pane.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import type { DetailsState } from "../details-pane.ts"
 import { RadarFlowActions, RadarFlowBody, RadarFlowCanvas, RadarFlowTabs } from "./flow-view.tsx"
@@ -65,14 +88,19 @@ type Props = {
   onOpenWorker?: (sessionID: string) => void
   onOpenTask?: (taskID: string) => void
   onOpenTrajectory?: (taskID: string, reference?: string) => void
+  /** The selected worker's call count, model and tick summary; absent on an older server. */
+  readAttempt?: (sessionID: string, signal: AbortSignal) => Promise<LiveAttemptResponse>
+  /** The tasks behind a Map group node; absent on an older server. */
+  readGroup?: (
+    group: "needs-you" | "failed" | "queued",
+    signal: AbortSignal,
+  ) => Promise<LiveGroupResponse>
   /** The task lifecycle statechart, kept behind the ⋯ menu. */
   onOpenLifecycle?: () => void
   /** Idle sessions are hidden by default; the choice is stored with the view state. */
   showIdle: boolean
   onShowIdleChange: (show: boolean) => void
 }
-
-type InspectorTab = "calls" | "files" | "messages"
 
 export function RadarMonitorView(props: Props) {
   const Ui = props.ui
@@ -85,7 +113,6 @@ export function RadarMonitorView(props: Props) {
   /** The inspector opens only once the user picks something; nothing is selected at first. */
   const [inspecting, setInspecting] = createSignal(false)
   const [mapSelectedID, setMapSelectedID] = createSignal<string | null>(null)
-  const [tab, setTab] = createSignal<InspectorTab>("calls")
 
   const live = () => props.data().live
   const status = createPanelStatus(() => ({
@@ -529,39 +556,6 @@ export function RadarMonitorView(props: Props) {
     </div>
   )
 
-  /** One facts line; each segment appears only when the read has it. */
-  const Facts = (local: { session: LiveSession }) => {
-    const model = () => (live() ? sessionModel(live()!, local.session) : undefined)
-    const started = () =>
-      local.session.assignment ? clockMinutes(local.session.assignment.startedAt) : ""
-    const last = () => {
-      const at = activity().get(local.session.sessionID)?.lastActivityAt ?? null
-      return at === null ? "" : formatAge(now() - at)
-    }
-    return (
-      <p class="lazers-radar-facts-line">
-        <Show when={model()}>{(item) => <span>{item().label}</span>}</Show>
-        <Show when={local.session.assignment?.attemptNumber}>
-          {(attempt) => (
-            <span>
-              <em>attempt</em> {attempt()}
-            </span>
-          )}
-        </Show>
-        <Show when={started()}>
-          <span>
-            <em>started</em> {started()}
-          </span>
-        </Show>
-        <Show when={last()}>
-          <span>
-            <em>last activity</em> {last()}
-          </span>
-        </Show>
-      </p>
-    )
-  }
-
   const sessionCalls = () => callsBySession().get(selectedSessionID() ?? "") ?? []
   const sessionFiles = createMemo(() => [
     ...new Set(
@@ -578,6 +572,63 @@ export function RadarMonitorView(props: Props) {
     (live()?.flow ?? [])
       .filter((item) => item.sessionID === selectedSessionID() && item.kind !== "tool-phase")
       .toSorted((left, right) => right.observedAt - left.observedAt),
+  )
+
+  const paneAttempt = () => {
+    const session = paneSession()
+    return session ? attemptOf(session) : undefined
+  }
+  const calls = createMemo(() => recentCalls(sessionCalls()))
+  const lastCallLine = () => lastCall(sessionCalls())
+  const idle = () => {
+    const session = paneSession()
+    if (!session) return undefined
+    return idleText(
+      activity().get(session.sessionID)?.lastActivityAt ?? null,
+      now(),
+      sessionCalls().some((line) => line.current),
+    )
+  }
+  const stats = () => {
+    const session = paneSession()
+    return session && live()
+      ? workerStats({
+          live: live()!,
+          session,
+          attempt: paneAttempt(),
+          now: now(),
+          lastActivityAt: activity().get(session.sessionID)?.lastActivityAt ?? null,
+        })
+      : []
+  }
+  const lane = () => workerLane(paneAttempt(), now())
+  const startedClock = () => {
+    const at = paneSession()?.assignment?.startedAt
+    return at === undefined ? undefined : clockMinutes(at)
+  }
+  /** Older runner-progress calls that precede every call the live read already lists. */
+  const olderCalls = () => {
+    const oldest = Math.min(...sessionCalls().map((line) => line.startedAt ?? Infinity))
+    return (props.data().history?.items ?? []).filter(
+      (item) => item.tool !== null && item.at < oldest,
+    )
+  }
+  const earlierCount = () => calls().earlier.length + olderCalls().length
+  /** One call row: tool, target, duration, time. Target is never blank. */
+  const renderCallRow = (line: ActivityLine) => (
+    <Row onSelect={() => chooseLine(line)}>
+      <span>{toolName(line.tool)}</span>
+      <code
+        class="lazers-radar-row-target"
+        data-failed={line.status === "failed"}
+        style={{ "font-family": props.monoFont }}
+        title={callTarget(line)}
+      >
+        {line.status === "failed" ? (line.error ?? callTarget(line)) : callTarget(line)}
+      </code>
+      <span>{callElapsed(line)}</span>
+      <span>{clockMinutes(line.startedAt)}</span>
+    </Row>
   )
 
   /** Flow's line leaves out the queue: it is about what is moving. */
@@ -632,6 +683,89 @@ export function RadarMonitorView(props: Props) {
         : undefined
   const paneNode = () =>
     props.view === "map" && mapSelection()?.sessionID === undefined ? mapSelection() : undefined
+  /** The selected worker's attempt read, refreshed at most every ten seconds of live updates. */
+  const [attemptRead, setAttemptRead] = createSignal<{
+    sessionID: string
+    attempt: WorkerAttempt | null
+  }>()
+  createEffect(() => {
+    const session = paneSession()
+    void Math.floor((live()?.observedAt ?? 0) / 10_000)
+    const read = props.readAttempt
+    if (!read || !session?.assignment) return
+    const sessionID = session.sessionID
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    read(sessionID, controller.signal).then(
+      (response) => {
+        if (!controller.signal.aborted) setAttemptRead({ sessionID, attempt: response.attempt })
+      },
+      () => {},
+    )
+  })
+  const attemptOf = (session: LiveSession) => {
+    const read = attemptRead()
+    return read?.sessionID === session.sessionID ? read.attempt : undefined
+  }
+  /** One state word per session; a worker's task word is the one Tasks shows. */
+  const stateOf = (session: LiveSession) => workerState(session, attemptOf(session))
+  const groupOf = (node: { id: string; kind: string; parent: string | null }) => {
+    const id = node.kind === "more" ? (node.parent ?? "") : node.id
+    return id === "item:needs-you"
+      ? ("needs-you" as const)
+      : id === "item:failed"
+        ? ("failed" as const)
+        : id === "group:queue"
+          ? ("queued" as const)
+          : undefined
+  }
+  const [groupRead, setGroupRead] = createSignal<
+    { group: string; read: LiveGroupResponse } | undefined
+  >()
+  createEffect(() => {
+    const node = paneNode()
+    const workload = live()?.workload
+    void workload?.queued
+    void workload?.needsYou
+    void workload?.failed
+    const group = node ? groupOf(node) : undefined
+    const read = props.readGroup
+    if (!read || !group) return
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    read(group, controller.signal).then(
+      (response) => {
+        if (!controller.signal.aborted) setGroupRead({ group, read: response })
+      },
+      () => {},
+    )
+  })
+  const groupTasks = (node: { id: string; kind: string; parent: string | null }) => {
+    const read = groupRead()
+    return read && read.group === groupOf(node) ? read.read : undefined
+  }
+  /** The workers under a Runtime or Checks node. */
+  const groupSessions = (nodeID: string) =>
+    (map()?.nodes ?? [])
+      .filter((node) => node.parent === nodeID && node.kind === "session" && node.sessionID)
+      .flatMap((node) => {
+        const session = sessionByID().get(node.sessionID!)
+        return session ? [{ node, session }] : []
+      })
+  const renderStateGlyph = (session: LiveSession) => {
+    const task = stateOf(session).task
+    if (task)
+      return isRingGlyph(task.icon) ? (
+        <TaskRing glyph={task.icon} />
+      ) : (
+        <Ui.Icon name={task.icon} size="small" />
+      )
+    return session.isCurrentArchitect === true ? (
+      <Ui.Icon name={sessionRole(session).icon} size="small" />
+    ) : (
+      <TaskRing glyph={sessionGlyph(session)} />
+    )
+  }
   const paneEmpty = () => (props.view === "flow" ? "Nothing is flowing" : "No session selected")
   /** One line saying what is selected; it is also the collapsed pane. */
   const paneHeader = () => {
@@ -651,16 +785,15 @@ export function RadarMonitorView(props: Props) {
     if (session)
       return (
         <>
-          <span class="lazers-radar-inspector-state" data-tone={sessionTone(session)}>
+          <span
+            class="lazers-radar-inspector-state"
+            data-tone={sessionTone(session)}
+            data-lazers-tone={stateOf(session).tone}
+          >
             <span class="lazers-radar-inspector-glyph" aria-hidden="true">
-              <Show
-                when={session.isCurrentArchitect === true}
-                fallback={<TaskRing glyph={sessionGlyph(session)} />}
-              >
-                <Ui.Icon name={sessionRole(session).icon} size="small" />
-              </Show>
+              {renderStateGlyph(session)}
             </span>
-            <span class="lazers-radar-inspector-word">{sessionState(session)}</span>
+            <span class="lazers-radar-inspector-word">{stateOf(session).word}</span>
             <Show when={session.assignment?.taskReference}>
               {(reference) => (
                 <code class="lazers-radar-session-ref" style={{ "font-family": props.monoFont }}>
@@ -924,29 +1057,67 @@ export function RadarMonitorView(props: Props) {
             fallback={
               <Show
                 when={paneNode()}
-                fallback={<p class="lazers-radar-note">No session selected</p>}
+                fallback={
+                  <p class="lazers-radar-note">
+                    {props.view === "map"
+                      ? "Select a node on the map."
+                      : "Select a session to see what it is doing."}
+                  </p>
+                }
               >
                 {(node) => (
                   <>
-                    <h3 class="lazers-radar-inspector-title">{node().title}</h3>
-                    <Show when={node().sub}>
-                      <p class="lazers-radar-facts-line">
-                        <span>{node().sub}</span>
-                      </p>
+                    <StatRow
+                      stats={(live() ? mapFacts(live()!, node()) : [])
+                        .filter((fact) => ["Scheduler", "Participants"].includes(fact.label))
+                        .map((fact) => ({ label: fact.label, value: fact.value }))}
+                    />
+                    <Show when={groupOf(node())}>
+                      <Show when={groupTasks(node())}>
+                        {(group) => (
+                          <>
+                            <Rows columns="72px minmax(0, 1fr)" label="Tasks" items={group().tasks}>
+                              {(task) => (
+                                <Row onSelect={() => props.onOpenTask?.(task.taskID)}>
+                                  <code style={{ "font-family": props.monoFont }}>
+                                    {task.reference ?? task.taskID.slice(0, 8)}
+                                  </code>
+                                  <span class="lazers-radar-row-title">{task.title}</span>
+                                </Row>
+                              )}
+                            </Rows>
+                            <Show when={group().total > group().tasks.length}>
+                              <p class="lazers-radar-note">
+                                {group().total - group().tasks.length} more are in Tasks.
+                              </p>
+                            </Show>
+                          </>
+                        )}
+                      </Show>
                     </Show>
-                    <Show when={live() ? mapFacts(live()!, node()) : []}>
-                      {(facts) => (
-                        <dl class="lazers-radar-facts">
-                          <For each={facts()}>
-                            {(fact) => (
-                              <>
-                                <dt>{fact.label}</dt>
-                                <dd>{fact.value}</dd>
-                              </>
-                            )}
-                          </For>
-                        </dl>
-                      )}
+                    <Show when={node().id === "group:runtime" || node().id === "group:checks"}>
+                      <Rows
+                        columns="72px minmax(0, 1fr) auto"
+                        label="Workers"
+                        items={groupSessions(node().id)}
+                      >
+                        {(item) => (
+                          <Row onSelect={() => chooseNode(item.node.id)}>
+                            <code style={{ "font-family": props.monoFont }}>
+                              {item.session.assignment?.taskReference ?? ""}
+                            </code>
+                            <span class="lazers-radar-row-title">
+                              {sessionRole(item.session).label}
+                            </span>
+                            <span class="lazers-radar-row-state">{stateOf(item.session).word}</span>
+                          </Row>
+                        )}
+                      </Rows>
+                    </Show>
+                    <Show when={node().kind === "you"}>
+                      <p class="lazers-radar-note">
+                        Your session. Select the Architect or a worker to inspect it.
+                      </p>
                     </Show>
                   </>
                 )}
@@ -955,62 +1126,62 @@ export function RadarMonitorView(props: Props) {
           >
             {(session) => (
               <>
-                <h3 class="lazers-radar-inspector-title">{sessionHeading(session())}</h3>
-                <Facts session={session()} />
+                <Show when={lastCallLine()}>
+                  {(call) => (
+                    <p class="lazers-radar-last-call">
+                      <span class="lazers-radar-last-call-label">Last call</span>
+                      <strong>{toolName(call().tool)}</strong>
+                      <code style={{ "font-family": props.monoFont }} title={callTarget(call())}>
+                        {callTarget(call())}
+                      </code>
+                      <Show when={idle()}>{(text) => <Label tone="neutral">{text()}</Label>}</Show>
+                    </p>
+                  )}
+                </Show>
+                <StatRow stats={stats()} />
+                <Show when={lane()}>
+                  {(shown) => (
+                    <Section label="Activity">
+                      <ActivityLane
+                        label="Tool calls of the latest attempt"
+                        ticks={shown().ticks}
+                        durationMs={shown().durationMs}
+                        start={startedClock()}
+                        end={shown().live ? "now" : undefined}
+                      />
+                    </Section>
+                  )}
+                </Show>
+                <Show when={calls().recent.length > 0}>
+                  <Section label="Recent calls">
+                    <Rows
+                      columns="64px minmax(0, 1fr) 56px 64px"
+                      header={["Tool", "Target", "Duration", "Time"]}
+                      items={calls().recent}
+                      label="Recent calls"
+                    >
+                      {(line) => renderCallRow(line)}
+                    </Rows>
+                    <Show when={selectedLine()}>
+                      {(selected) => <CallDetail line={selected()} />}
+                    </Show>
+                  </Section>
+                </Show>
 
-                <div class="lazers-radar-inspector-tabs" role="tablist" aria-label="Session detail">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab() === "calls"}
-                    onClick={() => setTab("calls")}
+                <div class="lazers-radar-disclosures">
+                  <Disclosure
+                    label="Calls"
+                    count={earlierCount() > 0 ? earlierCount() : undefined}
+                    when={earlierCount() > 0 || Boolean(props.data().history?.nextCursor)}
                   >
-                    Calls <span>{sessionCalls().length}</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab() === "files"}
-                    onClick={() => setTab("files")}
-                  >
-                    Files <span>{sessionFiles().length}</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={tab() === "messages"}
-                    onClick={() => setTab("messages")}
-                  >
-                    Messages <span>{sessionMessages().length}</span>
-                  </button>
-                </div>
-
-                <Show when={tab() === "calls"}>
-                  <ul class="lazers-radar-inspector-list" aria-label="Calls">
-                    <For each={sessionCalls()}>
-                      {(line) => (
-                        <li data-selected={selectedLine()?.id === line.id}>
-                          <CallRow id={line.id} detailed />
-                          <Show when={selectedLine()?.id === line.id ? selectedLine() : undefined}>
-                            {(selected) => <CallDetail line={selected()} />}
-                          </Show>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                  <details class="lazers-radar-disclosure lazers-radar-monitor-history">
-                    <summary>
-                      Earlier calls
-                      <Show when={props.data().history}>
-                        {(history) => (
-                          <span class="lazers-radar-inspector-muted">
-                            {" "}
-                            · {history().items.length}
-                            {history().coverage.hasMore ? "+" : ""}
-                          </span>
-                        )}
-                      </Show>
-                    </summary>
+                    <Rows
+                      columns="64px minmax(0, 1fr) 56px 64px"
+                      header={["Tool", "Target", "Duration", "Time"]}
+                      items={calls().earlier}
+                      label="Earlier calls"
+                    >
+                      {(line) => renderCallRow(line)}
+                    </Rows>
                     <Show when={props.data().historyLoading}>
                       <p class="lazers-radar-note lazers-radar-loading">
                         <Ui.Loader size="small" />
@@ -1022,36 +1193,30 @@ export function RadarMonitorView(props: Props) {
                         Couldn't load history.
                       </p>
                     </Show>
-                    <Show when={props.data().history}>
-                      {(history) => (
-                        <ol class="lazers-radar-history">
-                          <For each={history().items}>
-                            {(item) => (
-                              <li>
-                                <time style={{ "font-family": props.monoFont }}>
-                                  {clockTime(item.at)}
-                                </time>
-                                <span>
-                                  {item.tool ?? item.kind}
-                                  {item.status ? ` ${item.status}` : ""}
-                                </span>
-                                <Show
-                                  when={
-                                    item.fileTargets?.coverage === "observed" &&
-                                    item.fileTargets.paths.length > 0
-                                  }
-                                >
-                                  <Mono>{item.fileTargets!.paths.join(", ")}</Mono>
-                                </Show>
-                                <Show when={item.error}>
-                                  <span class="lazers-radar-inspector-error">{item.error}</span>
-                                </Show>
-                              </li>
-                            )}
-                          </For>
-                        </ol>
+                    <Rows
+                      columns="64px minmax(0, 1fr) 64px"
+                      header={["Tool", "Target", "Time"]}
+                      items={olderCalls()}
+                      label="Older calls"
+                    >
+                      {(item) => (
+                        <Row>
+                          <span>{toolName(item.tool ?? "")}</span>
+                          <code
+                            class="lazers-radar-row-target"
+                            data-failed={item.status === "failed"}
+                            style={{ "font-family": props.monoFont }}
+                          >
+                            {item.error ??
+                              (item.fileTargets?.coverage === "observed" &&
+                              item.fileTargets.paths.length > 0
+                                ? item.fileTargets.paths.join(", ")
+                                : (item.status ?? "—"))}
+                          </code>
+                          <span>{clockMinutes(item.at)}</span>
+                        </Row>
                       )}
-                    </Show>
+                    </Rows>
                     <Show when={props.data().history?.nextCursor}>
                       <button
                         type="button"
@@ -1062,59 +1227,35 @@ export function RadarMonitorView(props: Props) {
                         Load older
                       </button>
                     </Show>
-                  </details>
-                </Show>
-                <Show when={tab() === "files"}>
-                  <ul class="lazers-radar-inspector-paths" aria-label="Files">
-                    <For each={sessionFiles()}>
-                      {(path) => (
-                        <li>
-                          <Ui.Icon name="file-document" size="small" />
-                          <Mono>{path}</Mono>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </Show>
-                <Show when={tab() === "messages"}>
-                  <ol class="lazers-radar-messages" aria-label="Messages">
-                    <For each={sessionMessages()}>{(item) => <FlowRow id={item.id} />}</For>
-                  </ol>
-                </Show>
-
-                <details class="lazers-radar-disclosure lazers-radar-identifiers">
-                  <summary>Identifiers</summary>
-                  <dl class="lazers-radar-facts">
-                    <dt>Session</dt>
-                    <dd>
-                      <Mono>{session().sessionID}</Mono>
-                    </dd>
-                    <Show when={session().assignment}>
-                      {(assignment) => (
-                        <>
-                          <dt>Task</dt>
-                          <dd>
-                            <Mono>{assignment().taskID}</Mono>
-                          </dd>
-                          <dt>Attempt</dt>
-                          <dd>
-                            <Mono>{assignment().attemptID}</Mono>
-                          </dd>
-                        </>
-                      )}
-                    </Show>
-                    <Show when={selectedLine()}>
-                      {(line) => (
-                        <>
-                          <dt>Call</dt>
-                          <dd>
-                            <Mono>{line().callID}</Mono>
-                          </dd>
-                        </>
-                      )}
-                    </Show>
-                  </dl>
-                </details>
+                  </Disclosure>
+                  <Disclosure label="Files" count={sessionFiles().length}>
+                    <ul class="lazers-radar-inspector-paths" aria-label="Files">
+                      <For each={sessionFiles()}>
+                        {(path) => (
+                          <li>
+                            <Ui.Icon name="file-document" size="small" />
+                            <Mono>{path}</Mono>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Disclosure>
+                  <Disclosure label="Messages" count={sessionMessages().length}>
+                    <ol class="lazers-radar-messages" aria-label="Messages">
+                      <For each={sessionMessages()}>{(item) => <FlowRow id={item.id} />}</For>
+                    </ol>
+                  </Disclosure>
+                  <Disclosure label="Identifiers">
+                    <Identifiers
+                      items={[
+                        { label: "Session", value: session().sessionID },
+                        { label: "Task", value: session().assignment?.taskID },
+                        { label: "Attempt", value: session().assignment?.attemptID },
+                        { label: "Call", value: selectedLine()?.callID },
+                      ]}
+                    />
+                  </Disclosure>
+                </div>
               </>
             )}
           </Show>

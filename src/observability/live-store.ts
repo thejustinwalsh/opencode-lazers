@@ -1,11 +1,21 @@
 import type { Database } from "bun:sqlite"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { z } from "zod"
-import type { LiveHistoryRequest } from "./contract.ts"
+import { LIVE_GROUP_TASKS } from "./contract.ts"
+import type { LiveHistoryRequest, ObservationScope } from "./contract.ts"
+import { AttemptModel, readAttemptSummary } from "../tasks/attempt-summary.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
+
+function safeJSON(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
 
 /** Recent native calls read per session that has no runner assignment. */
 const NATIVE_CALLS_PER_SESSION = 17
@@ -785,6 +795,112 @@ export class LiveReadStore {
 
       signal.throwIfAborted()
       return { ...source, ...metrics }
+    } finally {
+      connection.close()
+    }
+  }
+
+  /**
+   * One session's latest-attempt summary: the attempt row and the compact `runner_progress` read
+   * Tasks uses, so the worker pane and the task pane draw the same lane. Null without an attempt.
+   */
+  readAttempt(input: { scope: ObservationScope; sessionID: string }, signal: AbortSignal) {
+    if (input.scope.kind === "session" && input.sessionID !== input.scope.sessionID)
+      throw new LiveHistoryUnavailableError("session-unavailable")
+    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
+    try {
+      return connection.store.read((db) => {
+        signal.throwIfAborted()
+        const row = db
+          .query<
+            {
+              id: string
+              number: number
+              state: string
+              started_at: number
+              tool_count: number
+              model: string | null
+              node_state: string | null
+              node_reason: string | null
+              plan_state: string
+              plan_reason: string | null
+            },
+            [string, string]
+          >(
+            `SELECT a.id,a.number,a.state,a.started_at,a.tool_count,
+                    json_extract(a.policy,'$.model') AS model,
+                    n.state AS node_state,substr(n.reason,1,600) AS node_reason,
+                    p.state AS plan_state,substr(p.reason,1,600) AS plan_reason
+               FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+               LEFT JOIN runner_nodes n ON n.plan_id=a.plan_id AND n.task_id=a.task_id
+              WHERE a.session_id=? AND p.project_directory=? LIMIT 1`,
+          )
+          .get(input.sessionID, this.projectDirectory)
+        if (!row) return null
+        const model = AttemptModel.safeParse(row.model ? safeJSON(row.model) : undefined)
+        return {
+          id: row.id,
+          number: row.number,
+          state: row.state,
+          startedAt: row.started_at,
+          toolCount: row.tool_count,
+          ...(model.success ? { model: model.data } : {}),
+          summary: readAttemptSummary(db, this.projectDirectory, row.id),
+          ...(row.node_state
+            ? {
+                task: {
+                  state: row.node_state,
+                  reason: row.node_reason,
+                  planState: row.plan_state,
+                  planReason: row.plan_reason,
+                },
+              }
+            : {}),
+        }
+      })
+    } finally {
+      connection.close()
+    }
+  }
+
+  /**
+   * The tasks behind a Map group: the same state predicates the workload counts use, bounded to
+   * `LIVE_GROUP_TASKS` newest rows plus the total.
+   */
+  readGroupTasks(group: "needs-you" | "failed" | "queued", signal: AbortSignal) {
+    const predicate = taskStatePredicate(
+      group === "needs-you" ? "blocked" : group === "failed" ? "failed" : "queued",
+      "tasks",
+    )
+    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
+    try {
+      return connection.store.read((db) => {
+        signal.throwIfAborted()
+        const where = `tasks.project_directory=?
+            AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
+            AND ${predicate}`
+        const total =
+          db
+            .query<{ n: number }, [string]>(`SELECT COUNT(*) AS n FROM tasks WHERE ${where}`)
+            .get(this.projectDirectory)?.n ?? 0
+        const rows = db
+          .query<{ id: string; title: string | null; reference: string | null }, [string, number]>(
+            `SELECT tasks.id AS id,substr(json_extract(tasks.body,'$.proposal.objective'),1,600) AS title,
+                    substr(r.reference,1,40) AS reference
+               FROM tasks
+               LEFT JOIN task_references r ON r.project_directory=tasks.project_directory AND r.task_id=tasks.id
+              WHERE ${where} ORDER BY tasks.rowid DESC LIMIT ?`,
+          )
+          .all(this.projectDirectory, LIVE_GROUP_TASKS)
+        return {
+          total,
+          tasks: rows.map((row) => ({
+            taskID: row.id,
+            reference: row.reference,
+            title: taskTitle(row.title ?? ""),
+          })),
+        }
+      })
     } finally {
       connection.close()
     }

@@ -204,6 +204,45 @@ export function registerObservability(
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
+      liveGroup: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveGroup(input, signal)
+          },
+          catch: (error) => new Error(safeError(error, privacyStats())),
+        }).pipe(Effect.orDie),
+      liveAttempt: (input, context) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            await authorize(
+              ctx,
+              input.scope,
+              projectID,
+              reads.store.repository.projectDirectory,
+              "read",
+            )
+            return reads.liveAttempt(input, signal)
+          },
+          catch: (error) => error,
+        }).pipe(
+          Effect.catch((error) =>
+            error instanceof LiveHistoryUnavailableError
+              ? Effect.fail(
+                  context.error("live_history_unavailable", error.message, {
+                    reason: error.reason,
+                    recovery: "restart",
+                  }),
+                )
+              : Effect.die(new Error(safeError(error, privacyStats()))),
+          ),
+        ),
       liveHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
