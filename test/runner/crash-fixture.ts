@@ -146,10 +146,7 @@ const host: RunnerHost = {
 const runtime = new TaskRuntime(store, host, "fixture")
 process.env.LAZERS_TEST_RUNNER_PID = String(process.pid)
 if (store.plan(config.planID)!.state === "draft")
-  await runtime.command(
-    { requestID: "run", planID: config.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
+  await runtime.command({ requestID: "run", planID: config.planID, action: "run" }, "owner")
 for (let n = 0; n < 12; n++) {
   await settleVerification(runtime)
   if (config.scopeUpdate) {
@@ -162,7 +159,6 @@ for (let n = 0; n < 12; n++) {
         {
           requestID: "authorize-dependency",
           planID: config.planID,
-          expectedVersion: store.plan(config.planID)!.version,
           action: "amend-scope",
           taskID: attempt.task_id,
           scopeAdditions: ["dependency.test.ts"],

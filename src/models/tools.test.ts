@@ -96,7 +96,6 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
         {
           target: { scope: "shared" },
           persona: "ui",
-          expectedRevision: 0,
           route: { providerID: "private", id: "private-model", variant: "xhigh" },
         },
         context("architect"),
@@ -112,7 +111,6 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
         {
           target: { scope: "shared" },
           persona: "ui",
-          expectedRevision: 0,
           route: { providerID: "private", id: "private-model", variant: "xhigh" },
         },
         context("implementor"),
@@ -125,7 +123,6 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
   const input = {
     target: { scope: "shared" },
     persona: "ui",
-    expectedRevision: 0,
     route: {
       providerID: "provider-not-catalogued",
       id: "model-not-catalogued",
@@ -147,18 +144,23 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
     resolution: { status: "assigned", route: input.route },
   })
 
+  // No revision is supplied: the same write lands on the current mapping (last write wins).
   const replay = await Effect.runPromise(configure.execute(input, context("architect")))
   expect(replay.output).toMatchObject({
-    status: "conflict",
-    expectedRevision: 0,
-    currentRevision: 1,
-    current: { revision: 1, route: input.route },
+    status: "updated",
+    mapping: { revision: 2, route: input.route },
   })
+  // An earlier prompt's expectedRevision is ignored: neither enforced nor an error.
+  const legacy = await Effect.runPromise(
+    configure.execute({ ...input, expectedRevision: 0 }, context("architect")),
+  )
+  expect(legacy.output).toMatchObject({ status: "updated", mapping: { revision: 3 } })
   expect(actions).toEqual([
     "lz-configure-models",
     "lz-configure-models",
     "lz-configure-models",
     "lz-get-model-settings",
+    "lz-configure-models",
     "lz-configure-models",
   ])
 })

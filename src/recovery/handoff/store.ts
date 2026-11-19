@@ -39,6 +39,7 @@ import {
   RecoveryCheckpointResponseRecord,
   RecoveryConcernInput,
   RecoveryConcernRecord,
+  ignoreLegacyVersion,
   RecoveryDispositionInput,
   RecoveryDispositionRecord,
   RecoverySource,
@@ -1125,7 +1126,7 @@ export class HandoffStore {
 
   /** Append an Architect interpretation; it neither changes task state nor answers for a user. */
   recordDisposition(input: unknown, callerInput: unknown): Receipt<HandoffDispositionRecordType> {
-    const parsed = HandoffDispositionInput.parse(input)
+    const parsed = ignoreLegacyVersion(HandoffDispositionInput).parse(input)
     const caller = HandoffActor.parse(callerInput)
     return this.repository.atomic((db) => {
       const request = this.requireRequest(db, parsed.requestID)
@@ -1155,11 +1156,9 @@ export class HandoffStore {
         .get(this.repository.projectDirectory, parsed.dispositionID)
       if (existing) {
         const record = HandoffDispositionRecord.parse(JSON.parse(existing.payload))
-        const expected = parsed.expectedVersion ?? record.expectedVersion ?? currentVersion
         const same =
           record.requestID === parsed.requestID &&
-          canonical(this.dispositionInput(record)) ===
-            canonical({ ...parsed, expectedVersion: expected }) &&
+          canonical(this.dispositionInput(record)) === canonical(parsed) &&
           canonical(record.recordedBy) === canonical(caller)
         return same
           ? { status: "replayed" as const, record }
@@ -1168,10 +1167,6 @@ export class HandoffStore {
               message: "dispositionID already identifies different content",
             }
       }
-      if (parsed.expectedVersion !== undefined && parsed.expectedVersion !== currentVersion)
-        throw new Error(
-          `Handoff disposition version conflict: expected ${parsed.expectedVersion}, current ${currentVersion}`,
-        )
       if (parsed.relatedTaskIDs.length) {
         const placeholders = parsed.relatedTaskIDs.map(() => "?").join(",")
         const found = db
@@ -1184,7 +1179,7 @@ export class HandoffStore {
       }
       const record = HandoffDispositionRecord.parse({
         ...parsed,
-        expectedVersion: parsed.expectedVersion ?? currentVersion,
+        expectedVersion: currentVersion,
         version: currentVersion + 1,
         source: request.source,
         recordedBy: caller,
@@ -1220,7 +1215,7 @@ export class HandoffStore {
 
   /** Append a bounded Architect concern against the exact task and attempt. */
   recordConcern(input: unknown, callerInput: unknown): Receipt<RecoveryConcernRecordType> {
-    const parsed = RecoveryConcernInput.parse(input)
+    const parsed = ignoreLegacyVersion(RecoveryConcernInput).parse(input)
     const caller = HandoffActor.parse(callerInput)
     if (caller.role !== "architect")
       throw new Error("Only the source plan's Architect may attach a recovery concern")
@@ -1240,7 +1235,6 @@ export class HandoffStore {
         const record = RecoveryConcernRecord.parse(JSON.parse(existing.payload))
         const same =
           record.concernID === parsed.concernID &&
-          record.expectedVersion === parsed.expectedVersion &&
           record.ruleID === parsed.ruleID &&
           record.reason === parsed.reason &&
           canonical(record.evidenceBoundary) === canonical(parsed.evidenceBoundary) &&
@@ -1260,10 +1254,6 @@ export class HandoffStore {
         ? RecoveryConcernRecord.parse(JSON.parse(latestRow.payload))
         : undefined
       const currentVersion = latest?.version ?? 0
-      if (parsed.expectedVersion !== currentVersion)
-        throw new Error(
-          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${currentVersion}`,
-        )
       if (latest && canonical(latest.source) !== canonical(source))
         throw new Error("A recovery concern cannot move to another source task or attempt")
       if (
@@ -1276,7 +1266,7 @@ export class HandoffStore {
         requestID: parsed.requestID,
         concernID: parsed.concernID,
         version: currentVersion + 1,
-        expectedVersion: parsed.expectedVersion,
+        expectedVersion: currentVersion,
         source,
         ruleID: parsed.ruleID,
         reason: parsed.reason,
@@ -1391,7 +1381,7 @@ export class HandoffStore {
     input: unknown,
     callerInput: unknown,
   ): Receipt<RecoveryDispositionRecordType> {
-    const parsed = RecoveryDispositionInput.parse(input)
+    const parsed = ignoreLegacyVersion(RecoveryDispositionInput).parse(input)
     const caller = HandoffActor.parse(callerInput)
     if (caller.role !== "architect")
       throw new Error("Only the source plan's Architect may disposition a recovery concern")
@@ -1417,28 +1407,10 @@ export class HandoffStore {
               message: "requestID already identifies a different disposition",
             }
       }
-      const concernRow = db
-        .query<RecoveryPayloadRow, [string, string, number]>(
-          `SELECT payload FROM recovery_concern_versions
-           WHERE project_directory=? AND concern_id=? AND version=?`,
-        )
-        .get(this.repository.projectDirectory, parsed.concernID, parsed.expectedVersion)
-      if (!concernRow) {
-        const latest = this.latestConcernRow(db, parsed.concernID)
-        const current = latest ? RecoveryConcernRecord.parse(JSON.parse(latest.payload)).version : 0
-        throw new Error(
-          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${current}`,
-        )
-      }
-      const concern = RecoveryConcernRecord.parse(JSON.parse(concernRow.payload))
-      const latest = this.latestConcernRow(db, parsed.concernID)
-      const latestConcern = latest
-        ? RecoveryConcernRecord.parse(JSON.parse(latest.payload))
-        : undefined
-      if (latestConcern?.version !== parsed.expectedVersion)
-        throw new Error(
-          `Recovery concern version conflict: expected ${parsed.expectedVersion}, current ${latestConcern?.version ?? 0}`,
-        )
+      // A decision covers the concern's latest recorded version.
+      const latestRow = this.latestConcernRow(db, parsed.concernID)
+      if (!latestRow) throw new Error("Recovery concern does not exist in this project")
+      const concern = RecoveryConcernRecord.parse(JSON.parse(latestRow.payload))
       if (
         parsed.evidenceBoundary.fromSequence < concern.evidenceBoundary.fromSequence ||
         parsed.evidenceBoundary.throughSequence > concern.evidenceBoundary.throughSequence
@@ -1446,7 +1418,8 @@ export class HandoffStore {
         throw new Error("Disposition evidence must be contained in the recorded concern boundary")
       const record = RecoveryDispositionRecord.parse({
         ...parsed,
-        version: parsed.expectedVersion,
+        expectedVersion: concern.version,
+        version: concern.version,
         source: concern.source,
         recordedBy: caller,
         createdAt: this.timestamp(),
@@ -1479,7 +1452,7 @@ export class HandoffStore {
 
   /** Prepare one durable, idempotent checkpoint before attempting native steering. */
   prepareCheckpoint(input: unknown, callerInput: unknown): Receipt<RecoveryCheckpointRecordType> {
-    const parsed = RecoveryCheckpointInput.parse(input)
+    const parsed = ignoreLegacyVersion(RecoveryCheckpointInput).parse(input)
     const caller = HandoffActor.parse(callerInput)
     if (caller.role !== "architect")
       throw new Error("Only the current Architect may request a checkpoint")
@@ -1489,12 +1462,8 @@ export class HandoffStore {
           `SELECT payload FROM recovery_checkpoint_commands WHERE project_directory=? AND request_id=?`,
         )
         .get(this.repository.projectDirectory, parsed.requestID)
-      const concernRow = db
-        .query<RecoveryPayloadRow, [string, string, number]>(
-          `SELECT payload FROM recovery_concern_versions WHERE project_directory=? AND concern_id=? AND version=?`,
-        )
-        .get(this.repository.projectDirectory, parsed.concernID, parsed.expectedVersion)
-      if (!concernRow) throw new Error("Checkpoint concern version is not attached to this project")
+      const concernRow = this.latestConcernRow(db, parsed.concernID)
+      if (!concernRow) throw new Error("Checkpoint concern is not attached to this project")
       const concern = RecoveryConcernRecord.parse(JSON.parse(concernRow.payload))
       if (concern.source.attemptID !== parsed.attemptID)
         throw new Error("Checkpoint concern does not belong to the requested source attempt")
@@ -1509,7 +1478,6 @@ export class HandoffStore {
         const same =
           record.concernID === parsed.concernID &&
           record.attemptID === parsed.attemptID &&
-          record.expectedVersion === parsed.expectedVersion &&
           canonical(record.evidenceBoundary) === canonical(parsed.evidenceBoundary) &&
           record.guidance === parsed.guidance &&
           canonical(record.source) === canonical(source) &&
@@ -1530,6 +1498,7 @@ export class HandoffStore {
         throw new Error("Checkpoint evidence boundary must be within the selected concern version")
       const record = RecoveryCheckpointRecord.parse({
         ...parsed,
+        expectedVersion: concern.version,
         messageID: SessionMessage.ID.create(),
         source,
         requestedBy: caller,
@@ -2194,7 +2163,6 @@ export class HandoffStore {
       requestID: record.requestID,
       dispositionID: record.dispositionID,
       concernID: record.concernID,
-      expectedVersion: record.expectedVersion,
       decision: record.decision,
       reason: record.reason,
       evidenceBoundary: record.evidenceBoundary,
@@ -2652,7 +2620,6 @@ export class HandoffStore {
       dispositionID: record.dispositionID,
       requestID: record.requestID,
       reportID: record.reportID,
-      ...(record.expectedVersion !== undefined ? { expectedVersion: record.expectedVersion } : {}),
       decision: record.decision,
       correction: record.correction,
       reason: record.reason,

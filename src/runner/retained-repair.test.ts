@@ -264,10 +264,7 @@ function fixture(options: FixtureOptions = {}) {
 }
 
 async function start(f: ReturnType<typeof fixture>) {
-  await f.runtime.command(
-    { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "run", planID: f.planID, action: "run" }, "owner")
   await f.runtime.tick()
 }
 
@@ -292,7 +289,6 @@ async function integrateTaskSource(f: ReturnType<typeof fixture>, taskID: string
     {
       requestID: `land-retained-repair-task-${taskID}`,
       planID: f.planID,
-      expectedVersion: plan.version,
       action: "integrated",
       taskID,
       artifact: node.artifact,
@@ -313,7 +309,6 @@ function retainedRepairCommand(
   return {
     requestID: "repair-accepted-candidate",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "retained-repair" as const,
     taskID: f.tasks[0]!.id,
     attemptID: attempt.id,
@@ -510,7 +505,6 @@ test.each(["reassignment", "renewal"] as const)(
         {
           requestID: "reassign-before-retained-repair",
           planID: f.planID,
-          expectedVersion: f.store.plan(f.planID)!.version,
           action: "reassign",
           targetSessionID: successor.id,
           reason: "Transfer retained repair authority without renewing the Architect.",
@@ -598,7 +592,6 @@ test("retained repair follows multiple continuations before reassignment without
     {
       requestID: "reassign-after-retained-repair-renewals",
       planID: f.planID,
-      expectedVersion: f.store.plan(f.planID)!.version,
       action: "reassign",
       targetSessionID: currentOwner.id,
       reason: "Reassign retained repair authority after successive supported continuations.",
@@ -645,20 +638,21 @@ test("retained repair follows multiple continuations before reassignment without
   expect(f.prompts).toHaveLength(2)
 })
 
-test("A to B to A during retained-repair admission rejects before reservation", async () => {
+test("A to B to A during retained-repair admission re-reads the plan and applies once", async () => {
   const f = fixture({ repairOwnerAdmissionRace: true })
   await accept(f)
-  const beforeNode = f.store.nodes(f.planID)[0]
-  const beforeAttempt = f.store.attempts(f.planID)[0]
+  const versionBefore = f.store.plan(f.planID)!.version
 
-  await expect(f.runtime.command(retainedRepairCommand(f), "owner")).rejects.toThrow()
+  // The owner round-trip moves the plan version between the runtime's read and
+  // its transaction. The runtime re-reads, re-evaluates against the machine and
+  // admits the same command once; the caller supplied no version to go stale.
+  await expect(f.runtime.command(retainedRepairCommand(f), "owner")).resolves.toMatchObject({
+    status: "retained-repair-requested",
+  })
 
-  expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", owner: "owner" })
-  expect(f.store.nodes(f.planID)[0]).toEqual(beforeNode)
-  expect(f.store.attempts(f.planID)[0]).toEqual(beforeAttempt)
-  expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeUndefined()
-  expect(f.store.effects(f.planID).filter((effect) => effect.kind === "prompt")).toHaveLength(1)
-  expect(f.prompts).toHaveLength(1)
+  expect(f.store.plan(f.planID)).toMatchObject({ state: "running", owner: "owner" })
+  expect(f.store.plan(f.planID)!.version).toBeGreaterThan(versionBefore)
+  expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeDefined()
 })
 
 type RepairRejectionCase =
@@ -701,7 +695,6 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
         .run(beforeAttempt!.id),
     )
   }
-  if (rejected === "stale") command.expectedVersion--
   const caller = rejected === "foreign" ? "foreign-owner" : "owner"
 
   await expect(f.runtime.command(command, caller)).rejects.toThrow()
@@ -712,8 +705,8 @@ async function verifyRepairRejection(rejected: RepairRejectionCase) {
   expect(f.store.latestRetainedRepair(f.planID, f.tasks[0]!.id)).toBeUndefined()
 }
 
-test("stale caller and version reject without lifecycle changes", async () => {
-  for (const rejected of ["stale", "foreign"] as const) await verifyRepairRejection(rejected)
+test("foreign caller rejects without lifecycle changes", async () => {
+  for (const rejected of ["foreign"] as const) await verifyRepairRejection(rejected)
 })
 
 test("wrong artifacts and changed routes reject without lifecycle changes", async () => {

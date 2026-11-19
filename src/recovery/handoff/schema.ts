@@ -187,7 +187,6 @@ export const RecoveryConcernInput = z.strictObject({
   requestID: identifier,
   concernID: z.uuid(),
   sourceAttemptID: z.uuid(),
-  expectedVersion: z.int().nonnegative(),
   ruleID: identifier,
   reason: text,
   evidenceBoundary: RecoveryEvidenceBoundary,
@@ -222,7 +221,6 @@ export const RecoveryDispositionInput = z
     requestID: identifier,
     dispositionID: z.uuid(),
     concernID: z.uuid(),
-    expectedVersion: z.int().positive(),
     decision: z.enum(["acknowledge", "follow-up"]),
     reason: text,
     evidenceBoundary: RecoveryEvidenceBoundary,
@@ -246,6 +244,8 @@ export type RecoveryDispositionInput = z.infer<typeof RecoveryDispositionInput>
 
 export const RecoveryDispositionRecord = z.strictObject({
   ...RecoveryDispositionInput.shape,
+  /** The concern version this decision covers; the store reads it, the caller never supplies it. */
+  expectedVersion: z.int().positive(),
   version: z.int().positive(),
   source: RecoverySource,
   recordedBy: HandoffActor,
@@ -269,7 +269,6 @@ export const RecoveryCheckpointInput = z.strictObject({
   requestID: identifier,
   attemptID: z.uuid(),
   concernID: z.uuid(),
-  expectedVersion: z.int().positive(),
   evidenceBoundary: RecoveryEvidenceBoundary,
   guidance: text.optional(),
 })
@@ -277,6 +276,8 @@ export type RecoveryCheckpointInput = z.infer<typeof RecoveryCheckpointInput>
 
 export const RecoveryCheckpointRecord = z.strictObject({
   ...RecoveryCheckpointInput.shape,
+  /** The concern version this checkpoint covers; the store reads it, the caller never supplies it. */
+  expectedVersion: z.int().positive(),
   messageID: identifier,
   source: RecoverySource,
   requestedBy: HandoffActor,
@@ -531,7 +532,6 @@ export const HandoffDispositionInput = z
     dispositionID: z.uuid(),
     requestID: identifier,
     reportID: z.uuid(),
-    expectedVersion: z.int().nonnegative().optional(),
     decision: z.enum(["correct", "redirect", "clarify", "continue", "hold", "reject"]),
     correction: HandoffKnowledge,
     reason: text,
@@ -570,6 +570,7 @@ export type HandoffDispositionInput = z.infer<typeof HandoffDispositionInput>
 
 export const HandoffDispositionRecord = z.strictObject({
   ...HandoffDispositionInput.shape,
+  expectedVersion: z.int().nonnegative().optional(),
   version: z.int().positive().default(1),
   source: HandoffSource,
   recordedBy: HandoffActor,
@@ -615,4 +616,19 @@ export type HandoffHistoryPage = {
   request: HandoffRequestRecord
   events: HandoffEventRecord[]
   nextCursor: string | null
+}
+
+/**
+ * Earlier prompts sent a caller-supplied `expectedVersion` (and the first
+ * concern version as `0`). The store now reads the current version inside its
+ * own transaction, so the field is dropped before validation: an in-flight
+ * Architect session whose prompt still names it does not start failing.
+ */
+export function ignoreLegacyVersion<T extends z.ZodType>(schema: T) {
+  return z.preprocess((input) => {
+    if (input === null || typeof input !== "object" || Array.isArray(input)) return input
+    if (!Object.hasOwn(input, "expectedVersion")) return input
+    const { expectedVersion: _legacy, ...rest } = input as Record<string, unknown>
+    return rest
+  }, schema)
 }

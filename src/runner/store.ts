@@ -2978,7 +2978,8 @@ export class RunnerStore {
         )
         .get(this.repository.projectDirectory, requestID)
       if (previous) {
-        if (previous.fingerprint !== hash) throw new Error("Request identity conflict")
+        if (!this.sameRequest(previous.fingerprint, hash, input))
+          throw new Error("Request identity conflict")
         return JSON.parse(previous.receipt) as T
       }
       const result = run(db)
@@ -3001,9 +3002,28 @@ export class RunnerStore {
         )
         .get(this.repository.projectDirectory, requestID)
       if (!previous) return undefined
-      if (previous.fingerprint !== fingerprint(input)) throw new Error("Request identity conflict")
+      if (!this.sameRequest(previous.fingerprint, fingerprint(input), input))
+        throw new Error("Request identity conflict")
       return JSON.parse(previous.receipt) as T
     })
+  }
+
+  /**
+   * Plan commands recorded before the caller-supplied version was removed were
+   * fingerprinted with their `expectedVersion`. A replay without it still
+   * matches: the recorded version was some plan version no greater than the
+   * current one, so the legacy fingerprint is reconstructed and compared.
+   */
+  private sameRequest(stored: string, current: string, input: unknown): boolean {
+    if (stored === current) return true
+    const wrapper = input as { command?: { planID?: unknown } } | null
+    const command = wrapper?.command
+    if (!command || typeof command.planID !== "string") return false
+    const ceiling = this.plan(command.planID)?.version ?? 0
+    for (let version = 1; version <= ceiling; version++)
+      if (stored === fingerprint({ ...wrapper, command: { ...command, expectedVersion: version } }))
+        return true
+    return false
   }
 
   renew(owner: string, fence: number, now = Date.now()) {

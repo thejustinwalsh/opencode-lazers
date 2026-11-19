@@ -140,7 +140,6 @@ test("running a draft after reviewed fulfillment cannot reserve a worker or bypa
     {
       requestID: "admit-after-reviewed-fulfillment",
       planID: f.plan.planID,
-      expectedVersion: f.store.plan(f.plan.planID)!.version,
       action: "run",
     },
     "architect-session",
@@ -208,7 +207,6 @@ test("reviewed fulfillment prevents the unstarted retry from requeueing a cancel
       {
         requestID: "retry-after-reviewed-fulfillment",
         planID: f.plan.planID,
-        expectedVersion: f.store.plan(f.plan.planID)!.version,
         action: "retry",
         taskID: f.task.id,
         reason: "Attempting an unstarted retry must not bypass the disposition.",

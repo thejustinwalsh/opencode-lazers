@@ -6,6 +6,7 @@ import type { TaskRepository } from "../storage.ts"
 import {
   ModelMappingRecordSchema,
   ModelMappingTargetInputSchema,
+  ModelMappingToolInput,
   ModelMappingUpdateSchema,
 } from "./mapping-schema.ts"
 import type { ModelMappingRecord, ModelMappingTargetInput } from "./mapping-schema.ts"
@@ -95,18 +96,33 @@ function currentIn(db: Database, key: MappingKey): ModelMappingRecord | null {
 export class ModelMappingStore {
   constructor(readonly repository: TaskRepository) {}
 
+  /** GUI path: guarded by the revision the editor last read. */
   update(input: unknown): ModelMappingWrite {
     const update = ModelMappingUpdateSchema.parse(input)
+    return this.write(update, update.expectedRevision)
+  }
+
+  /** Model-tool path: writes against whatever is current; last write wins and history keeps both. */
+  overwrite(input: unknown): ModelMappingWrite {
+    const update = ModelMappingToolInput.parse(input)
+    // The guard is absent, so the placeholder revision is never compared.
+    return this.write({ ...update, expectedRevision: 0 }, undefined)
+  }
+
+  private write(
+    update: ReturnType<typeof ModelMappingUpdateSchema.parse>,
+    guard: number | undefined,
+  ): ModelMappingWrite {
     const key = keyFor(update.target, this.repository.projectDirectory, update.persona)
 
     return this.repository.atomic((db) => {
       ensureTables(db)
       const current = currentIn(db, key)
       const currentRevision = current?.revision ?? 0
-      if (currentRevision !== update.expectedRevision)
+      if (guard !== undefined && currentRevision !== guard)
         return {
           status: "conflict" as const,
-          expectedRevision: update.expectedRevision,
+          expectedRevision: guard!,
           currentRevision,
           current,
         }

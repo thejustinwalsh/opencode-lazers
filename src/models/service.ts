@@ -2,7 +2,7 @@ import { workerPersonaLabels } from "../personas/index.ts"
 import { ModelMappingResolver } from "./mapping-resolver.ts"
 import { ModelMappingStore } from "./mapping-store.ts"
 import type { ModelMappingUpdate } from "./mapping-schema.ts"
-import { ModelMappingUpdateSchema } from "./mapping-schema.ts"
+import { ModelMappingToolInput, ModelMappingUpdateSchema } from "./mapping-schema.ts"
 import { ModelSettingsInputSchema, ModelSettingsOutputSchema } from "./contract.ts"
 import type { ModelSettingsInput, ModelSettingsOutput } from "./contract.ts"
 import type { TaskRepository } from "../storage.ts"
@@ -53,11 +53,22 @@ export class ModelSettingsService {
 
   configure(input: unknown) {
     const update: ModelMappingUpdate = ModelMappingUpdateSchema.parse(input)
+    this.assertTarget(update)
+    return this.mappings.update(update)
+  }
+
+  /** Model tool: no revision supplied; writes against the current mapping. */
+  configureCurrent(input: unknown) {
+    const update = ModelMappingToolInput.parse(input)
+    this.assertTarget(update)
+    return this.mappings.overwrite(update)
+  }
+
+  private assertTarget(update: Pick<ModelMappingUpdate, "target" | "persona">) {
     if (update.target.scope === "task") {
       // An agent is the same agent in every task; only personas can be overridden per task.
       if (isAgentSubject(update.persona)) throw new Error("An agent route is not task-scoped")
       this.ensureTask(update.target.taskID)
     }
-    return this.mappings.update(update)
   }
 }

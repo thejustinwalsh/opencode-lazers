@@ -99,6 +99,12 @@ import {
   WorkerPersona,
 } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
+import {
+  PLAN_MOVED_RETRIES,
+  PlanMovedDuringCommand,
+  planCommandProblem,
+  withoutLegacyVersion,
+} from "./plan-commands.ts"
 import type {
   PlanRow,
   NodeRow,
@@ -2486,8 +2492,7 @@ export class TaskRuntime {
           confirmedBackgroundProblem ??
           "Retained worker input or ownership changed during repair admission",
       )
-    if (this.store.plan(plan.id)?.version !== command.expectedVersion)
-      throw new Error("Retained repair plan changed during native observation")
+    if (this.store.plan(plan.id)?.version !== plan.version) throw new PlanMovedDuringCommand()
     return {
       taskID: task.id,
       attemptID: attempt.id,
@@ -2561,7 +2566,7 @@ export class TaskRuntime {
       reviewInputID: command.reviewInputID,
       ownerSessionID: plan.owner,
       commandRequestID: command.requestID,
-      expectedPlanVersion: command.expectedVersion,
+      expectedPlanVersion: plan.version,
       model,
     }
     const worker = await this.host.session(latest.session_id, { messages: true })
@@ -3448,25 +3453,46 @@ export class TaskRuntime {
    * admitted when it is submitted or started, whoever submitted it.
    */
   private admitPlan(plan: PlanRow, requestID: string) {
-    return this.runCommand(
-      { requestID, planID: plan.id, expectedVersion: plan.version, action: "run" },
-      plan.owner,
-      true,
-    )
+    return this.runCommand({ requestID, planID: plan.id, action: "run" }, plan.owner, true)
   }
 
   private async runCommand(input: unknown, caller: string, admission: boolean): Promise<unknown> {
-    const command = CommandInput.parse(input)
+    const command = CommandInput.parse(withoutLegacyVersion(input))
     if (admission && command.action !== "run")
       throw new Error("Only admission runs without an Architect caller")
+    // The runtime samples host and Git facts asynchronously, then commits only
+    // against the plan version it read first. A scheduler tick that moved the
+    // plan in between sends the command back through the machine, bounded.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.runCommandOnce(command, caller, admission)
+      } catch (error) {
+        if (!(error instanceof PlanMovedDuringCommand)) throw error
+        if (attempt < PLAN_MOVED_RETRIES) continue
+        const current = this.store.plan(command.planID)
+        throw new Error(
+          `Plan ${current?.state ?? "unknown"} changed repeatedly while ${command.action} was applied. ${
+            current ? (planCommandProblem(current.state, command) ?? "Retry the command.") : ""
+          }`.trim(),
+          { cause: error },
+        )
+      }
+    }
+  }
+
+  private async runCommandOnce(
+    command: PlanCommand,
+    caller: string,
+    admission: boolean,
+  ): Promise<unknown> {
     const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
     if (prior !== undefined) return prior
-    // Resolve host facts before the transaction, then recheck durable versions within it.
+    // Resolve host facts before the transaction, then recheck against the version read here.
     let old = this.store.plan(command.planID)
     if (!old) throw new Error("Plan not found")
-    // Reject stale requests before any asynchronous owner recovery effect.
-    if (old.version !== command.expectedVersion)
-      throw new Error(`Stale plan version; current ${old.version}`)
+    // The recorded state decides legality; reject before any asynchronous owner recovery effect.
+    const unavailable = planCommandProblem(old.state, command)
+    if (unavailable) throw new Error(unavailable)
     // The owner is advisory. Any live Architect of this project may command the
     // plan and is adopted as its owner; reading (audit) needs no Architect.
     if (command.action !== "audit" && !admission) {
@@ -3475,6 +3501,7 @@ export class TaskRuntime {
       if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
         old = this.store.plan(command.planID)!
     }
+    const baseVersion = old.version
     let continuedOwner: string | undefined
     const configuredWorker =
       command.action === "run" && !JSON.parse(old.body).workerModel
@@ -3678,8 +3705,9 @@ export class TaskRuntime {
       const attempt = this.store
         .attempts(old.id)
         .find((candidate) => candidate.id === retainedRepair.attemptID)
-      if (!attempt || this.store.plan(old.id)?.version !== command.expectedVersion)
-        throw new Error("Retained repair plan or attempt changed before final native revalidation")
+      if (!attempt)
+        throw new Error("Retained repair attempt changed before final native revalidation")
+      if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
       const observedOwner = await this.host.session(old.owner)
       if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
         throw new Error("Retained repair owner changed before final admission")
@@ -3717,12 +3745,12 @@ export class TaskRuntime {
         confirmedWorker,
         retainedRepair.nativeInputID,
       )
+      if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
       if (
         confirmedProblem ||
         confirmedBackgroundProblem ||
         !confirmedWorker ||
         this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
-        this.store.plan(old.id)?.version !== command.expectedVersion ||
         !this.preparationAllowed(attempt)
       )
         throw new Error(
@@ -3762,8 +3790,9 @@ export class TaskRuntime {
       () =>
         this.store.command(command.requestID, { command, caller }, (db) => {
           const plan = this.store.plan(command.planID)!
-          if (plan.version !== command.expectedVersion)
-            throw new Error(`Stale plan version; current ${plan.version}`)
+          if (plan.version !== baseVersion) throw new PlanMovedDuringCommand()
+          const unavailableNow = planCommandProblem(plan.state, command)
+          if (unavailableNow) throw new Error(unavailableNow)
           // Commit owner adoption with the original request receipt. If native
           // creation succeeds but this command fails, exact replay can recover it
           // without granting an old owner authority over a reassigned plan.
@@ -3886,14 +3915,14 @@ export class TaskRuntime {
               .query(
                 "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
               )
-              .run(plan.id, command.expectedVersion + 1).changes
+              .run(plan.id, baseVersion + 1).changes
             if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
               throw new Error("Retained repair authorization changed during atomic admission")
             this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
               operationID: retainedRepair.operationID,
               requestID: command.requestID,
               owner: caller,
-              expectedVersion: command.expectedVersion,
+              expectedVersion: baseVersion,
               attemptID: attempt.id,
               previousMessageID: retainedRepair.previousMessageID,
               nativeInputID: retainedRepair.nativeInputID,
@@ -4252,7 +4281,7 @@ export class TaskRuntime {
                 plan.id,
                 this.store.repository.projectDirectory,
                 caller,
-                command.expectedVersion,
+                baseVersion,
               ).changes
             if (changed !== 1) throw new Error("Plan changed before startup settlement")
             this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
@@ -4372,7 +4401,7 @@ export class TaskRuntime {
                   `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
                WHERE id=? AND version=? AND state='blocked' AND artifact IS NULL`,
                 )
-                .run(plan.id, command.expectedVersion).changes
+                .run(plan.id, baseVersion).changes
               if (changedPlan !== 1) throw new Error("Combined verification plan changed")
               const resumed = this.store.plan(plan.id)!
               this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
@@ -4820,7 +4849,7 @@ export class TaskRuntime {
                 !this.validArchitect(ownerSession) ||
                 ownerSession.id !== binding.ownerSessionID ||
                 binding.planID !== plan.id ||
-                binding.expectedPlanVersion !== command.expectedVersion ||
+                binding.expectedPlanVersion !== baseVersion ||
                 binding.commandRequestID !== command.requestID ||
                 !["running", "blocked"].includes(plan.state)
               )
@@ -7077,7 +7106,6 @@ export class TaskRuntime {
           {
             requestID: `resume-settled-check:${pending.id}:${plan.version}`,
             planID: plan.id,
-            expectedVersion: plan.version,
             action: "resume",
             taskID: attempt.task_id,
             attemptID: attempt.id,
@@ -9413,7 +9441,6 @@ export class TaskRuntime {
         {
           requestID: `auto-resume:${attempt.id}:${attempt.message_id}`,
           planID,
-          expectedVersion: plan.version,
           action: "resume",
           taskID: attempt.task_id,
           attemptID: attempt.id,

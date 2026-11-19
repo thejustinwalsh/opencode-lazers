@@ -10,7 +10,7 @@ state, and writer authority.
 1. Inspect an exact source attempt with `lz-inspect-recovery`.
 2. Attach or update a concern with `lz-record-recovery-concern`. Supply a stable
    `concernID`, an idempotent `requestID` (or let the native call ID identify the
-   request), the current `expectedVersion`, a bounded evidence list, and the
+   request), a bounded evidence list, and the
    inclusive sequence boundary that evidence covers.
 3. Record an Architect decision with `lz-disposition-recovery-concern`. An
    acknowledgement names the reviewed boundary; a follow-up names either an ISO
@@ -85,7 +85,7 @@ progress criteria.
 3. The worker calls `lz-submit-handoff` with those returned identifiers and a
    stable `finalizationID`. It finalizes that exact reviewed version and preserves
    the durable report. There is no separate public draft-submission or third
-   finalization tool. The current Architect can then record an expected-version
+   finalization tool. The current Architect can then record an appended
    correction with `lz-disposition-handoff`.
 4. `lz-read-handoff` retrieves the attached request, bounded drafts/reports,
    corrections, and paged history for the current plan Architect or exact source
@@ -105,7 +105,7 @@ Use runtime tools for execution transitions and task acceptance.
 
 ## Evidence and limitations
 
-The registered-tool behavior tests exercise persistence, version conflicts,
+The registered-tool behavior tests exercise persistence, append order,
 idempotent replay, source ownership, native admission, context association, and
 handoff review/read paths using fixtures and a fake native host. In production,
 matching synthetic response IDs and native context ordering are observed facts;

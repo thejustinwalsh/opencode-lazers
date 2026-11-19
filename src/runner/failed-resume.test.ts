@@ -192,10 +192,7 @@ function fixture() {
 }
 
 async function leaveFailedAttempt(f: ReturnType<typeof fixture>) {
-  await f.runtime.command(
-    { requestID: "run", planID: f.planID, expectedVersion: 1, action: "run" },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "run", planID: f.planID, action: "run" }, "owner")
   await f.runtime.tick()
   expect(f.prompted).toHaveLength(1)
   await settleVerification(f.runtime)
@@ -229,7 +226,6 @@ test("explicit resume continues a stopped failed attempt with its history and re
   const command = {
     requestID: "resume-failed",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "resume",
     taskID: original.task_id,
     reason: "Continue the failed attempt in its retained workspace",
@@ -297,7 +293,6 @@ test("failed-attempt resume preserves authorization, live-Architect, and uncerta
   const command = {
     requestID: "resume-guard",
     planID: f.planID,
-    expectedVersion: version,
     action: "resume",
     taskID: attempt.task_id,
     reason: "Continue only after guards pass",
@@ -306,12 +301,6 @@ test("failed-attempt resume preserves authorization, live-Architect, and uncerta
   await expect(f.runtime.command(command, "other")).rejects.toThrow(
     "A live Architect session of this project must command the plan",
   )
-  await expect(
-    f.runtime.command(
-      { ...command, requestID: "resume-stale", expectedVersion: version - 1 },
-      "owner",
-    ),
-  ).rejects.toThrow("Stale plan version")
 
   f.sessions.get("owner")!.archived = true
   await expect(
@@ -346,7 +335,6 @@ test("RETRY after failure still starts a distinct retained attempt", async () =>
   const retryCommand = {
     requestID: "retry-failed",
     planID: f.planID,
-    expectedVersion: f.store.plan(f.planID)!.version,
     action: "retry",
     taskID: original.task_id,
     reason: "Start a fresh attempt after reviewing the failed result",
