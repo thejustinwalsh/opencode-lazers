@@ -638,6 +638,15 @@ function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
   }
 }
 
+/** What the pass over one running attempt carries from step to step. */
+type AdvanceContext = {
+  plan: PlanRow
+  attempt: AttemptRow
+  fence: number
+  observation: WorkerObservationFence
+  session: HostSession
+}
+
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly worktreeCleanup: WorktreeCleanup
@@ -7668,119 +7677,125 @@ export class TaskRuntime {
             .at(-1)?.id === attempt.id),
     )
     let waiting = false
-    for (const attempt of active) {
-      let session = await this.host.session(attempt.session_id)
-      if (!session) {
-        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
-        continue
-      }
-      if (session.archived && !session.busy) {
-        // An archived session can never run again: it counts as stopped.
-        this.store.fenced(this.owner, fence, () =>
-          this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
-            attemptID: attempt.id,
-            sessionID: attempt.session_id,
-            workspace: attempt.workspace,
-            retainedWorkPreserved: true,
-          }),
-        )
-        if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
-        continue
-      }
-      const promptCompleted = this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            JSON.parse(effect.payload).messageID === attempt.message_id &&
-            effect.state === "completed",
-        )
-      this.observeUsage(attempt, session, fence)
-      const backgroundReason = this.backgroundBlockReason(session)
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-        this.approvalWait(plan, attempt, session, fence)
-      if (session.busy) {
-        if (await this.interruptForCancel(plan, attempt, fence)) {
-          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
-          continue
-        }
-        if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        waiting = true
-        continue
-      }
-      const blocked = this.cancelBlock(session)
-      if (blocked) {
-        if (!this.cancelWait(plan, attempt, fence, blocked)) waiting = true
-        continue
-      }
-      if (backgroundReason) {
-        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
-          waiting = true
-        continue
-      }
-      session = await this.host.session(attempt.session_id, { messages: true })
-      if (!session) {
-        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
-        continue
-      }
-      this.observeUsage(attempt, session, fence)
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-        this.approvalWait(plan, attempt, session, fence)
-      if (session.busy) {
-        if (await this.interruptForCancel(plan, attempt, fence)) {
-          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
-          continue
-        }
-        waiting = true
-        continue
-      }
-      const detailedBlocked = this.cancelBlock(session)
-      if (detailedBlocked) {
-        if (!this.cancelWait(plan, attempt, fence, detailedBlocked)) waiting = true
-        continue
-      }
-      const detailedBackgroundReason = this.backgroundBlockReason(session)
-      if (detailedBackgroundReason) {
-        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
-          waiting = true
-        continue
-      }
-      if (
-        promptCompleted &&
-        (!session.turn ||
-          !this.matchesWorkerInput(attempt, session.turn.inputID) ||
-          (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
-      ) {
-        if (
-          !this.cancelWait(plan, attempt, fence, {
-            cause: "turn-input-mismatch",
-            bounded: true,
-            detail: {
-              turnInputID: session.turn?.inputID ?? null,
-              turnState: session.turn?.state ?? null,
-            },
-          })
-        )
-          waiting = true
-        continue
-      }
-      if (promptCompleted) {
-        this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
-        this.workerEvent(
-          plan,
-          attempt,
-          "WORKER_STOPPED",
-          fence,
-          session.outcome ?? "cancelled",
-          session.turn?.inputID,
-        )
-      }
-      if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
-    }
+    for (const attempt of active)
+      if (await this.cancelAttemptWorker(plan, attempt, fence)) waiting = true
     if (!allowPlanSettlement || waiting) return
+    this.settleCancelledPlan(plan, fence)
+  }
+
+  /** Stops one attempt's worker for a cancel. True while the attempt still has to be waited on. */
+  private async cancelAttemptWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+  ): Promise<boolean> {
+    let session = await this.host.session(attempt.session_id)
+    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
+    if (session.archived && !session.busy) {
+      // An archived session can never run again: it counts as stopped.
+      this.store.fenced(this.owner, fence, () =>
+        this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          retainedWorkPreserved: true,
+        }),
+      )
+      return !this.settleCancelledAttempt(plan, attempt, fence, false)
+    }
+    const promptCompleted = this.store
+      .effects(plan.id)
+      .some(
+        (effect) =>
+          effect.attempt_id === attempt.id &&
+          effect.kind === "prompt" &&
+          JSON.parse(effect.payload).messageID === attempt.message_id &&
+          effect.state === "completed",
+      )
+    this.observeUsage(attempt, session, fence)
+    const backgroundReason = this.backgroundBlockReason(session)
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+      this.approvalWait(plan, attempt, session, fence)
+    if (session.busy) {
+      const busySession = session
+      return this.cancelBusyWorker(plan, attempt, fence, () => {
+        if (backgroundReason)
+          this.backgroundWait(plan, attempt, busySession, backgroundReason, fence)
+      })
+    }
+    const blocked = this.cancelBlock(session)
+    if (blocked) return !this.cancelWait(plan, attempt, fence, blocked)
+    if (backgroundReason) {
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
+    }
+    session = await this.host.session(attempt.session_id, { messages: true })
+    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
+    this.observeUsage(attempt, session, fence)
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+      this.approvalWait(plan, attempt, session, fence)
+    if (session.busy) return this.cancelBusyWorker(plan, attempt, fence)
+    const detailedBlocked = this.cancelBlock(session)
+    if (detailedBlocked) return !this.cancelWait(plan, attempt, fence, detailedBlocked)
+    const detailedBackgroundReason = this.backgroundBlockReason(session)
+    if (detailedBackgroundReason) {
+      this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
+      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
+    }
+    return this.settleStoppedWorker(plan, attempt, fence, session, promptCompleted)
+  }
+
+  /** A busy worker is interrupted; true (still waiting) unless the bounded wait already elapsed. */
+  private async cancelBusyWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    whileWaiting?: () => void,
+  ) {
+    if (await this.interruptForCancel(plan, attempt, fence))
+      return !this.settleCancelledAttempt(plan, attempt, fence, true)
+    whileWaiting?.()
+    return true
+  }
+
+  /** An idle worker: record its stop when its prompt ran, then settle the attempt as cancelled. */
+  private settleStoppedWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    session: HostSession,
+    promptCompleted: boolean,
+  ) {
+    if (
+      promptCompleted &&
+      (!session.turn ||
+        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
+        (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
+    )
+      return !this.cancelWait(plan, attempt, fence, {
+        cause: "turn-input-mismatch",
+        bounded: true,
+        detail: {
+          turnInputID: session.turn?.inputID ?? null,
+          turnState: session.turn?.state ?? null,
+        },
+      })
+    if (promptCompleted) {
+      this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+      this.workerEvent(
+        plan,
+        attempt,
+        "WORKER_STOPPED",
+        fence,
+        session.outcome ?? "cancelled",
+        session.turn?.inputID,
+      )
+    }
+    return !this.settleCancelledAttempt(plan, attempt, fence, false)
+  }
+
+  /** Every attempt has settled: supersede stuck effects (after a bounded wait) and cancel the plan. */
+  private settleCancelledPlan(plan: PlanRow, fence: number) {
     const stuck = this.store
       .effects(plan.id)
       .filter((effect) => ["intended", "uncertain"].includes(effect.state))
@@ -9756,16 +9771,30 @@ export class TaskRuntime {
       return
     }
     if (!new Set(["running", "blocked"]).has(plan.state)) return
-    let observation = this.workerObservationFence(plan, attempt)
+    const observation = this.workerObservationFence(plan, attempt)
     if (!observation) return
+    const session = await this.observeAdvancedSession(plan, attempt, fence, observation)
+    if (!session) return
+    const ctx: AdvanceContext = { plan, attempt, fence, observation, session }
+    if (await this.holdWorkerWaits(ctx)) return
+    if (await this.settleIdleWorker(ctx)) return
+    await this.finishWorkerTurn(ctx)
+  }
+
+  /** The worker's session as the runtime now sees it, or undefined when the pass should stop. */
+  private async observeAdvancedSession(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    observation: WorkerObservationFence,
+  ): Promise<HostSession | undefined> {
     let session = await this.host.session(attempt.session_id)
     if (session) this.observeUsage(attempt, session, fence)
-    if (!this.workerObservationCurrent(observation)) return
+    if (!this.workerObservationCurrent(observation)) return undefined
     if (!session) {
       this.failMissingWorker(plan, attempt, fence, observation)
-      return
+      return undefined
     }
-    const task = this.store.repository.get(attempt.task_id)!
     if (
       plan.state === "blocked" &&
       this.approvalWaitReason(plan.reason) &&
@@ -9777,35 +9806,30 @@ export class TaskRuntime {
     ) {
       const detailed = await this.host.session(attempt.session_id, { messages: true })
       if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return
-      if (!detailed) return
+      if (!this.workerObservationCurrent(observation)) return undefined
+      if (!detailed) return undefined
       session = detailed
     }
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-      this.holdApprovalObservation(plan, attempt, session, observation, fence)
-      return
-    }
-    if (plan.state === "blocked" && this.approvalWaitReason(plan.reason)) {
-      if (session.outcome === undefined) {
-        this.resumeTransientObservationWait(plan, attempt, session, observation, fence, true)
-        return
-      }
-    }
-    if (
+    return session
+  }
+
+  /** The turn belongs to an earlier continuation input, not the one this attempt is waiting on. */
+  private staleContinuationTurn(attempt: AttemptRow, session: HostSession) {
+    return Boolean(
       session.turn &&
       !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-      this.isPriorContinuationInput(attempt, session.turn.inputID)
+      this.isPriorContinuationInput(attempt, session.turn.inputID),
     )
-      return
-    if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
-    else this.workerProgress.delete(session.id)
-    const backgroundReason = this.backgroundBlockReason(session)
+  }
+
+  /** The plan is already held on this exact terminal worker observation. */
+  private terminalHoldUnchanged(plan: PlanRow, attempt: AttemptRow, session: HostSession) {
     const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
       plan.id,
       null,
       "BLOCKED",
     )?.workerObservation
-    const unchangedTerminal =
+    const unchanged =
       (session.outcome === "failed" || session.outcome === "succeeded") &&
       (session.outcome === "succeeded" ||
         (typeof session.idleAt === "number" && Number.isFinite(session.idleAt))) &&
@@ -9818,6 +9842,29 @@ export class TaskRuntime {
       (!session.turn ||
         (previousHold.inputID === session.turn.inputID &&
           previousHold.turnState === session.turn.state))
+    return { previousHold, unchanged }
+  }
+
+  /** Holds the plan while the worker waits on approvals, input or background work. True when held. */
+  private async holdWorkerWaits(ctx: AdvanceContext): Promise<boolean> {
+    const { plan, attempt, fence, observation, session } = ctx
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
+      this.holdApprovalObservation(plan, attempt, session, observation, fence)
+      return true
+    }
+    if (
+      plan.state === "blocked" &&
+      this.approvalWaitReason(plan.reason) &&
+      session.outcome === undefined
+    ) {
+      this.resumeTransientObservationWait(plan, attempt, session, observation, fence, true)
+      return true
+    }
+    if (this.staleContinuationTurn(attempt, session)) return true
+    if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
+    else this.workerProgress.delete(session.id)
+    const backgroundReason = this.backgroundBlockReason(session)
+    const { previousHold, unchanged } = this.terminalHoldUnchanged(plan, attempt, session)
     if (
       !session.busy &&
       !session.pendingInput &&
@@ -9825,7 +9872,7 @@ export class TaskRuntime {
       backgroundReason &&
       session.outcome !== "interrupted" &&
       ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
-        unchangedTerminal ||
+        unchanged ||
         session.archived ||
         session.outcome === "succeeded")
     ) {
@@ -9833,125 +9880,116 @@ export class TaskRuntime {
         plan,
         backgroundReason,
         ["audit", "reconcile", "cancel"],
-        unchangedTerminal ? previousHold : undefined,
+        unchanged ? previousHold : undefined,
         observation,
       )
       this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      return
+      return true
     }
-    if (!session.busy && !session.pendingInput && !session.observationUnstable && session.outcome) {
+    return false
+  }
+
+  /**
+   * An idle worker with an outcome is read again with its messages before the outcome is trusted.
+   * True when the pass is settled (held, failed or still unstable); false to go on to the outcome.
+   */
+  private async settleIdleWorker(ctx: AdvanceContext): Promise<boolean> {
+    const { plan, attempt, fence, observation } = ctx
+    if (
+      !ctx.session.busy &&
+      !ctx.session.pendingInput &&
+      !ctx.session.observationUnstable &&
+      ctx.session.outcome
+    ) {
       const detailed = await this.host.session(attempt.session_id, { messages: true })
       if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return
+      if (!this.workerObservationCurrent(observation)) return true
       if (!detailed) {
         this.failMissingWorker(plan, attempt, fence, observation)
-        return
+        return true
       }
-      session = detailed
+      ctx.session = detailed
+      const session = detailed
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
         this.holdApprovalObservation(plan, attempt, session, observation, fence)
-        return
+        return true
       }
-      if (session.busy || session.pendingInput || session.observationUnstable) return
-      if (
-        session.turn &&
-        !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-        this.isPriorContinuationInput(attempt, session.turn.inputID)
-      )
-        return
+      if (session.busy || session.pendingInput || session.observationUnstable) return true
+      if (this.staleContinuationTurn(attempt, session)) return true
       const detailedBackgroundReason = this.backgroundBlockReason(session)
       if (session.outcome === "interrupted") {
-        this.workerEvent(
-          plan,
-          attempt,
-          "WORKER_STOPPED",
-          fence,
-          "interrupted",
-          session.turn?.inputID,
-        )
-        const reason = detailedBackgroundReason
-          ? `Worker execution was interrupted; ${detailedBackgroundReason}`
-          : "Worker execution was interrupted; the runtime could not resume it"
-        if (detailedBackgroundReason)
-          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-        this.hold(
-          plan,
-          reason,
-          ["audit", "reconcile", "cancel"],
-          this.terminalWorkerObservation(attempt, session),
-          observation,
-        )
-        if (!detailedBackgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
-        return
+        await this.holdInterruptedWorker(ctx, detailedBackgroundReason)
+        return true
       }
       if (detailedBackgroundReason) {
-        if (session.outcome === "failed" || session.outcome === "succeeded") {
-          this.workerEvent(
-            plan,
-            attempt,
-            "WORKER_STOPPED",
-            fence,
-            session.outcome,
-            session.turn?.inputID,
-          )
-          this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-          this.hold(
-            plan,
-            `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${detailedBackgroundReason}`,
-            ["audit", "reconcile", "cancel"],
-            this.terminalWorkerObservation(attempt, session),
-            observation,
-          )
-          return
-        }
-        this.hold(
-          plan,
-          detailedBackgroundReason,
-          ["audit", "reconcile", "cancel"],
-          undefined,
-          observation,
-        )
-        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-        return
+        this.holdDetailedBackground(ctx, detailedBackgroundReason)
+        return true
       }
     }
-    if (session.busy || session.pendingInput || session.observationUnstable || !session.outcome)
+    const { session } = ctx
+    return Boolean(
+      session.busy || session.pendingInput || session.observationUnstable || !session.outcome,
+    )
+  }
+
+  private async holdInterruptedWorker(ctx: AdvanceContext, backgroundReason: string | undefined) {
+    const { plan, attempt, fence, observation, session } = ctx
+    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "interrupted", session.turn?.inputID)
+    const reason = backgroundReason
+      ? `Worker execution was interrupted; ${backgroundReason}`
+      : "Worker execution was interrupted; the runtime could not resume it"
+    if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+    this.hold(
+      plan,
+      reason,
+      ["audit", "reconcile", "cancel"],
+      this.terminalWorkerObservation(attempt, session),
+      observation,
+    )
+    if (!backgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
+  }
+
+  /** A worker that ended (or is idle) while background work it started is still running. */
+  private holdDetailedBackground(ctx: AdvanceContext, backgroundReason: string) {
+    const { plan, attempt, fence, observation, session } = ctx
+    if (session.outcome === "failed" || session.outcome === "succeeded") {
+      this.workerEvent(
+        plan,
+        attempt,
+        "WORKER_STOPPED",
+        fence,
+        session.outcome,
+        session.turn?.inputID,
+      )
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      this.hold(
+        plan,
+        `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${backgroundReason}`,
+        ["audit", "reconcile", "cancel"],
+        this.terminalWorkerObservation(attempt, session),
+        observation,
+      )
       return
-    if (this.resumeTransientObservationWait(plan, attempt, session, observation, fence)) {
-      plan = this.store.plan(plan.id)!
-      observation = this.workerObservationFence(plan, attempt) ?? observation
     }
+    this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"], undefined, observation)
+    this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+  }
+
+  /** The worker is idle with an outcome: fail, hold, or move the attempt on to verification. */
+  private async finishWorkerTurn(ctx: AdvanceContext) {
+    const { attempt, fence, session } = ctx
+    if (this.resumeTransientObservationWait(ctx.plan, attempt, session, ctx.observation, fence)) {
+      ctx.plan = this.store.plan(ctx.plan.id)!
+      ctx.observation = this.workerObservationFence(ctx.plan, attempt) ?? ctx.observation
+    }
+    const { plan, observation } = ctx
     if (
       session.outcome === "succeeded" &&
       (!session.turn ||
         !this.matchesWorkerInput(attempt, session.turn.inputID) ||
         session.turn.state !== "completed")
     ) {
-      if (
-        session.turn &&
-        this.matchesWorkerInput(attempt, session.turn.inputID) &&
-        session.turn.state === "pending"
-      )
-        return
-      // A completed turn for a different input is a follow-up the Architect can bind
-      // (reconcile); say so and advertise it.
-      if (session.turn && !this.matchesWorkerInput(attempt, session.turn.inputID)) {
-        this.hold(
-          plan,
-          "Native worker success does not match a completed response to the current assigned input",
-          ["audit", "reconcile", "retry", "cancel"],
-          undefined,
-          observation,
-        )
-        return
-      }
-      // The worker went idle without a completed response to its assigned input:
-      // an observable failure of the attempt, retried through the normal path.
-      this.failAttempt(
-        plan,
-        attempt,
-        "Worker went idle without a completed response to the assigned input",
-      )
+      this.settleUnconfirmedSuccess(plan, attempt, session, observation)
       return
     }
     this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome, session.turn?.inputID)
@@ -9975,6 +10013,7 @@ export class TaskRuntime {
       )
       return
     }
+    const task = this.store.repository.get(attempt.task_id)!
     if (attempt.state === "running") {
       this.store.move(plan.id, task.id, "VERIFY")
       this.store.atomic((db) =>
@@ -9986,6 +10025,40 @@ export class TaskRuntime {
       )
     }
     await this.verify(plan, attempt, task.proposal, fence)
+  }
+
+  /** The worker reported success without a completed response to the assigned input. */
+  private settleUnconfirmedSuccess(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    session: HostSession,
+    observation: WorkerObservationFence,
+  ) {
+    if (
+      session.turn &&
+      this.matchesWorkerInput(attempt, session.turn.inputID) &&
+      session.turn.state === "pending"
+    )
+      return
+    // A completed turn for a different input is a follow-up the Architect can bind
+    // (reconcile); say so and advertise it.
+    if (session.turn && !this.matchesWorkerInput(attempt, session.turn.inputID)) {
+      this.hold(
+        plan,
+        "Native worker success does not match a completed response to the current assigned input",
+        ["audit", "reconcile", "retry", "cancel"],
+        undefined,
+        observation,
+      )
+      return
+    }
+    // The worker went idle without a completed response to its assigned input:
+    // an observable failure of the attempt, retried through the normal path.
+    this.failAttempt(
+      plan,
+      attempt,
+      "Worker went idle without a completed response to the assigned input",
+    )
   }
 
   /**

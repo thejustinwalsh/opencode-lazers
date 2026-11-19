@@ -122,137 +122,160 @@ export class RadarPanelState {
     do {
       run.pending = false
       run.retries++
-      if (!transport.online()) {
-        if (this.current(epoch, transport, signal) && generation === this.sync.generation) {
-          this.sync.stale = true
-          this.update({
-            loading: !this.data.radar,
-            stale: true,
-            resynchronizing: true,
-            error: this.data.radar
-              ? "Server disconnected; showing the last observation."
-              : "Server disconnected; observations are unavailable.",
-          })
-        }
-        break
-      }
-      try {
-        const scope = this.scope!
-        const [radarResult, snapshotResult] = await Promise.allSettled([
-          transport.radar(this.scope, this.includeUnmanagedSessions, signal),
-          transport.snapshot(this.scope, signal),
-        ])
-        if (!this.current(epoch, transport, signal) || generation !== this.sync.generation) break
-
-        const radar = radarResult.status === "fulfilled" ? radarResult.value : undefined
-        const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : undefined
-        const scopeMatches = (value: RadarResponse | SnapshotResponse) =>
-          value.projectID === this.sync.projectID &&
-          value.scope.kind === scope.kind &&
-          (scope.kind === "project" ||
-            (value.scope.kind === "session" && value.scope.sessionID === scope.sessionID))
-        const radarError =
-          radarResult.status === "rejected"
-            ? panelErrorMessage(radarResult.reason)
-            : radar && !scopeMatches(radar)
-              ? radar.projectID !== this.sync.projectID
-                ? "The operational observation belongs to another project."
-                : "The operational observation belongs to another scope."
-              : ""
-        const snapshotError =
-          snapshotResult.status === "rejected"
-            ? panelErrorMessage(snapshotResult.reason)
-            : snapshot && !scopeMatches(snapshot)
-              ? snapshot.projectID !== this.sync.projectID
-                ? "The lifecycle observation belongs to another project."
-                : "The lifecycle observation belongs to another scope."
-              : ""
-
-        let acceptedRadar = false
-        let acceptedSnapshot = false
-        if (radar && !radarError) {
-          acceptedRadar = this.sync.acceptRadar(generation, radar)
-        }
-        if (snapshot && !snapshotError) {
-          acceptedSnapshot = this.sync.acceptSnapshot(generation, snapshot)
-        }
-
-        const displayedRadar = acceptedRadar ? radar : this.data.radar
-        const displayedSnapshot = acceptedSnapshot ? snapshot : this.data.snapshot
-        const boundariesDiffer = Boolean(
-          displayedRadar &&
-          displayedSnapshot &&
-          !sameBoundary(displayedRadar.boundary, displayedSnapshot.boundary),
-        )
-        const liveSequence = this.sync.eventSequence
-        if (this.recoveryFence !== undefined)
-          this.recoveryBaselinePending = Boolean(
-            displayedRadar &&
-            displayedSnapshot &&
-            !boundariesDiffer &&
-            displayedRadar.boundary.eventSequence >= this.recoveryFence &&
-            displayedRadar.boundary.eventSequence >=
-              (liveSequence ?? displayedRadar.boundary.eventSequence),
-          )
-        const behindLiveChanges = Boolean(
-          liveSequence !== undefined &&
-          ((displayedRadar && displayedRadar.boundary.eventSequence < liveSequence) ||
-            (displayedSnapshot && displayedSnapshot.boundary.eventSequence < liveSequence)),
-        )
-        const needsResynchronization = boundariesDiffer || behindLiveChanges
-        if (needsResynchronization && run.retries < 3) run.pending = true
-        if (run.retries >= 3) run.pending = false
-        const freshnessError = boundariesDiffer
-          ? "Operational and lifecycle observations have different read boundaries; refreshing."
-          : behindLiveChanges
-            ? "Observation reads lag behind live changes; refreshing."
-            : ""
-
-        if (acceptedRadar || acceptedSnapshot) {
-          if (!needsResynchronization) run.retries = 0
-          this.sync.stale = !acceptedRadar || needsResynchronization
-          this.update({
-            ...(acceptedRadar ? { radar } : {}),
-            ...(acceptedSnapshot ? { snapshot } : {}),
-            loading: false,
-            stale: !acceptedRadar || needsResynchronization,
-            resynchronizing: !acceptedRadar || this.recoveryFence !== undefined,
-            error: radarError || freshnessError,
-            snapshotError,
-          })
-        } else {
-          this.sync.stale = true
-          this.update({
-            loading: false,
-            stale: true,
-            resynchronizing: true,
-            error: radarError || freshnessError || "Operational observation is not current.",
-            snapshotError,
-          })
-          if (!run.pending) break
-          if (run.retries >= 3) {
-            run.pending = false
-            break
-          }
-        }
-      } catch (error) {
-        if (!this.current(epoch, transport, signal) || generation !== this.sync.generation) break
-        this.sync.stale = true
-        this.update({
-          loading: false,
-          stale: true,
-          resynchronizing: true,
-          error: this.data.snapshot
-            ? `Refresh failed; showing the last observation. ${panelErrorMessage(error)}`
-            : `Observation is unavailable. ${panelErrorMessage(error)}`,
-        })
-      }
+      if (await this.refreshPass(epoch, generation, transport, signal, run)) break
     } while (
       run.pending &&
       this.current(epoch, transport, signal) &&
       generation === this.sync.generation
     )
     if (this.snapshotRuns.get(generation) === run) this.snapshotRuns.delete(generation)
+  }
+
+  /** One read of both observations. Returns true when the refresh loop should stop. */
+  private async refreshPass(
+    epoch: number,
+    generation: number,
+    transport: RadarTransport,
+    signal: AbortSignal,
+    run: { pending: boolean; retries: number },
+  ): Promise<boolean> {
+    if (!transport.online()) {
+      if (this.current(epoch, transport, signal) && generation === this.sync.generation) {
+        this.sync.stale = true
+        this.update({
+          loading: !this.data.radar,
+          stale: true,
+          resynchronizing: true,
+          error: this.data.radar
+            ? "Server disconnected; showing the last observation."
+            : "Server disconnected; observations are unavailable.",
+        })
+      }
+      return true
+    }
+    try {
+      const scope = this.scope!
+      const [radarResult, snapshotResult] = await Promise.allSettled([
+        transport.radar(scope, this.includeUnmanagedSessions, signal),
+        transport.snapshot(scope, signal),
+      ])
+      if (!this.current(epoch, transport, signal) || generation !== this.sync.generation)
+        return true
+
+      const radar = radarResult.status === "fulfilled" ? radarResult.value : undefined
+      const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : undefined
+      const radarError = this.observationProblem(radarResult, scope, "operational")
+      const snapshotError = this.observationProblem(snapshotResult, scope, "lifecycle")
+
+      const acceptedRadar =
+        Boolean(radar && !radarError) && this.sync.acceptRadar(generation, radar!)
+      const acceptedSnapshot =
+        Boolean(snapshot && !snapshotError) && this.sync.acceptSnapshot(generation, snapshot!)
+
+      const displayedRadar = acceptedRadar ? radar : this.data.radar
+      const displayedSnapshot = acceptedSnapshot ? snapshot : this.data.snapshot
+      const { boundariesDiffer, behindLiveChanges } = this.assessFreshness(
+        displayedRadar,
+        displayedSnapshot,
+      )
+      const needsResynchronization = boundariesDiffer || behindLiveChanges
+      if (needsResynchronization && run.retries < 3) run.pending = true
+      if (run.retries >= 3) run.pending = false
+      const freshnessError = boundariesDiffer
+        ? "Operational and lifecycle observations have different read boundaries; refreshing."
+        : behindLiveChanges
+          ? "Observation reads lag behind live changes; refreshing."
+          : ""
+
+      if (acceptedRadar || acceptedSnapshot) {
+        if (!needsResynchronization) run.retries = 0
+        this.sync.stale = !acceptedRadar || needsResynchronization
+        this.update({
+          ...(acceptedRadar ? { radar } : {}),
+          ...(acceptedSnapshot ? { snapshot } : {}),
+          loading: false,
+          stale: !acceptedRadar || needsResynchronization,
+          resynchronizing: !acceptedRadar || this.recoveryFence !== undefined,
+          error: radarError || freshnessError,
+          snapshotError,
+        })
+        return false
+      }
+      this.sync.stale = true
+      this.update({
+        loading: false,
+        stale: true,
+        resynchronizing: true,
+        error: radarError || freshnessError || "Operational observation is not current.",
+        snapshotError,
+      })
+      if (!run.pending) return true
+      if (run.retries >= 3) {
+        run.pending = false
+        return true
+      }
+      return false
+    } catch (error) {
+      if (!this.current(epoch, transport, signal) || generation !== this.sync.generation)
+        return true
+      this.sync.stale = true
+      this.update({
+        loading: false,
+        stale: true,
+        resynchronizing: true,
+        error: this.data.snapshot
+          ? `Refresh failed; showing the last observation. ${panelErrorMessage(error)}`
+          : `Observation is unavailable. ${panelErrorMessage(error)}`,
+      })
+      return false
+    }
+  }
+
+  /** Compares what is shown with itself and with live changes; also tracks the recovery baseline. */
+  private assessFreshness(
+    displayedRadar: RadarResponse | undefined,
+    displayedSnapshot: SnapshotResponse | undefined,
+  ) {
+    const boundariesDiffer = Boolean(
+      displayedRadar &&
+      displayedSnapshot &&
+      !sameBoundary(displayedRadar.boundary, displayedSnapshot.boundary),
+    )
+    const liveSequence = this.sync.eventSequence
+    if (this.recoveryFence !== undefined)
+      this.recoveryBaselinePending = Boolean(
+        displayedRadar &&
+        displayedSnapshot &&
+        !boundariesDiffer &&
+        displayedRadar.boundary.eventSequence >= this.recoveryFence &&
+        displayedRadar.boundary.eventSequence >=
+          (liveSequence ?? displayedRadar.boundary.eventSequence),
+      )
+    const behindLiveChanges = Boolean(
+      liveSequence !== undefined &&
+      ((displayedRadar && displayedRadar.boundary.eventSequence < liveSequence) ||
+        (displayedSnapshot && displayedSnapshot.boundary.eventSequence < liveSequence)),
+    )
+    return { boundariesDiffer, behindLiveChanges }
+  }
+
+  /** Why a settled observation read cannot be shown: it failed, or belongs to another project or scope. */
+  private observationProblem(
+    result: PromiseSettledResult<RadarResponse | SnapshotResponse>,
+    scope: ObservationScope,
+    noun: "operational" | "lifecycle",
+  ) {
+    if (result.status === "rejected") return panelErrorMessage(result.reason)
+    const value = result.value
+    const scopeMatches =
+      value.projectID === this.sync.projectID &&
+      value.scope.kind === scope.kind &&
+      (scope.kind === "project" ||
+        (value.scope.kind === "session" && value.scope.sessionID === scope.sessionID))
+    if (scopeMatches) return ""
+    return value.projectID !== this.sync.projectID
+      ? `The ${noun} observation belongs to another project.`
+      : `The ${noun} observation belongs to another scope.`
   }
 
   private async watch(

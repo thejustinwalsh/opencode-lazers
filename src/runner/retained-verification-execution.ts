@@ -11,7 +11,7 @@ import {
   artifactExists,
   checkResourcesSettled,
   gitAsync,
-  worktreeListPorcelain,
+  registeredWorktreePaths,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
@@ -1734,10 +1734,7 @@ export class RetainedVerificationExecution {
           await this.runtime.host.removeWorktree(recordedWorkspace)
         }
         const nativeAfterAbsent = await this.runtime.host.worktrees()
-        const gitAfterAbsent = (await worktreeListPorcelain(this.runtime.directory))
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => resolve(line.slice("worktree ".length)))
+        const gitAfterAbsent = await registeredWorktreePaths(this.runtime.directory)
         if (
           nativeAfterAbsent.some((item) =>
             candidates.some((candidate) => resolve(item) === resolve(candidate)),
@@ -1781,10 +1778,7 @@ export class RetainedVerificationExecution {
         await this.runtime.host.removeWorktree(owned)
       }
       const currentNative = await this.runtime.host.worktrees()
-      const currentGit = (await worktreeListPorcelain(this.runtime.directory))
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("worktree "))
-        .map((line) => resolve(line.slice("worktree ".length)))
+      const currentGit = await registeredWorktreePaths(this.runtime.directory)
       if (
         candidates.some((candidate) => existsSync(candidate)) ||
         currentGit.some((item) =>
@@ -1874,10 +1868,7 @@ export class RetainedVerificationExecution {
   }
 
   private async registeredGitWorktrees(): Promise<string[]> {
-    return (await worktreeListPorcelain(this.runtime.directory))
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("worktree "))
-      .map((line) => resolve(line.slice("worktree ".length)))
+    return registeredWorktreePaths(this.runtime.directory)
   }
 
   /** With no worktree inventory to judge by, remember already-clean operations so they are not rechecked at once. */

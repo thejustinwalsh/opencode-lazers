@@ -503,14 +503,22 @@ function boundedNotes(values: string[]) {
   ]
 }
 
-function readCapture(
+/** A bounded read found more rows than its limit: the capture stops, naming the limit. */
+class CaptureIncomplete extends Error {}
+
+function queryBounded<T>(
   db: Database,
-  projectDirectory: string,
-  options: { decision?: boolean; signal?: AbortSignal } = {},
-): CaptureResult {
-  options.signal?.throwIfAborted()
-  const statuses: SourceStatus[] = []
-  const notes: string[] = []
+  sql: string,
+  params: string[],
+  limit: number,
+  exceeded: string,
+): T[] {
+  const rows = db.query<T, (string | number)[]>(sql).all(...params, limit + 1)
+  if (rows.length > limit) throw new CaptureIncomplete(exceeded)
+  return rows
+}
+
+function captureStatuses(db: Database) {
   const tableInfo: Record<string, TableInfo> = {
     tasks: inspectTable(db, "tasks", TASK_COLUMNS),
     task_references: inspectTable(db, "task_references", [
@@ -527,7 +535,7 @@ function readCapture(
     runner_adoptions: inspectTable(db, "runner_adoptions", ADOPTION_COLUMNS),
     runner_progress: inspectTable(db, "runner_progress", PROGRESS_COLUMNS),
   }
-
+  const statuses: SourceStatus[] = []
   for (const name of ["tasks", "task_references", "task_classifications", "task_dispositions"])
     statuses.push(source(tableInfo[name]!, name !== "tasks"))
   for (const name of [
@@ -539,38 +547,27 @@ function readCapture(
     "runner_progress",
   ])
     statuses.push(source(tableInfo[name]!))
+  return { tableInfo, statuses }
+}
 
-  const taskTable = tableInfo.tasks!
-  if (taskTable.status !== "available")
-    return { status: "unavailable", reason: "task-table-missing", sources: statuses }
-
-  const tasks = db
-    .query<RawTask, [string, number]>(
-      "SELECT id,created_at,body FROM tasks WHERE project_directory=? ORDER BY created_at,id LIMIT ?",
-    )
-    .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.tasks + 1)
-  options.signal?.throwIfAborted()
-  if (tasks.length > OBSERVATION_LEDGER_LIMITS.tasks)
-    return incompleteResult(
-      `Task membership exceeds the ${OBSERVATION_LEDGER_LIMITS.tasks} task capture limit.`,
-      statuses,
-      notes,
-    )
-
+/** The task tables: membership, references, dispositions and classification history. */
+function readTaskRows(
+  db: Database,
+  projectDirectory: string,
+  tableInfo: Record<string, TableInfo>,
+  tasks: RawTask[],
+  notes: string[],
+) {
   let references: RawReference[] = []
   const referenceInfo = tableInfo.task_references!
   if (referenceInfo.status === "available") {
-    references = db
-      .query<RawReference, [string, number]>(
-        "SELECT task_id,reference FROM task_references WHERE project_directory=? ORDER BY task_id LIMIT ?",
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.tasks + 1)
-    if (references.length > OBSERVATION_LEDGER_LIMITS.tasks)
-      return incompleteResult(
-        "Task reference capture exceeds its bounded task limit.",
-        statuses,
-        notes,
-      )
+    references = queryBounded<RawReference>(
+      db,
+      "SELECT task_id,reference FROM task_references WHERE project_directory=? ORDER BY task_id LIMIT ?",
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.tasks,
+      "Task reference capture exceeds its bounded task limit.",
+    )
   } else if (referenceInfo.status === "legacy-absent" || referenceInfo.status === "missing-table") {
     notes.push("Task references are unavailable because the task_references table is absent.")
   }
@@ -578,36 +575,28 @@ function readCapture(
   let dispositions: RawDisposition[] = []
   const dispositionInfo = tableInfo.task_dispositions!
   if (dispositionInfo.status === "available") {
-    dispositions = db
-      .query<RawDisposition, [string, number]>(
-        `SELECT id,task_id,request_id,disposition,reason,evidence,related_task_ids,
+    dispositions = queryBounded<RawDisposition>(
+      db,
+      `SELECT id,task_id,request_id,disposition,reason,evidence,related_task_ids,
                 session_id,agent,created_at
          FROM task_dispositions WHERE project_directory=? ORDER BY id LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.dispositions + 1)
-    if (dispositions.length > OBSERVATION_LEDGER_LIMITS.dispositions)
-      return incompleteResult(
-        `Disposition history exceeds the ${OBSERVATION_LEDGER_LIMITS.dispositions} row capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.dispositions,
+      `Disposition history exceeds the ${OBSERVATION_LEDGER_LIMITS.dispositions} row capture limit.`,
+    )
   } else notes.push("Disposition history is unavailable in this database schema.")
 
   let classifications: Array<Record<string, unknown>> = []
   const classificationInfo = tableInfo.task_classifications!
   if (classificationInfo.status === "available") {
-    classifications = db
-      .query<Record<string, unknown>, [string, number]>(
-        `SELECT id,task_id,request_id,revision,classification,reason,session_id,agent,created_at
+    classifications = queryBounded<Record<string, unknown>>(
+      db,
+      `SELECT id,task_id,request_id,revision,classification,reason,session_id,agent,created_at
          FROM task_classifications WHERE project_directory=? ORDER BY task_id,revision LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.classifications + 1)
-    if (classifications.length > OBSERVATION_LEDGER_LIMITS.classifications)
-      return incompleteResult(
-        `Classification history exceeds the ${OBSERVATION_LEDGER_LIMITS.classifications} row capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.classifications,
+      `Classification history exceeds the ${OBSERVATION_LEDGER_LIMITS.classifications} row capture limit.`,
+    )
   } else if (
     classificationInfo.status === "legacy-absent" ||
     classificationInfo.status === "missing-table"
@@ -616,7 +605,17 @@ function readCapture(
       "Classification corrections are unavailable; only explicit embedded or legacy classification is used.",
     )
   }
+  return { references, dispositions, classifications }
+}
 
+/** The runner tables, each only when the plans they hang from are readable. */
+function readRunnerRows(
+  db: Database,
+  projectDirectory: string,
+  statuses: SourceStatus[],
+  options: { decision?: boolean; signal?: AbortSignal },
+  notes: string[],
+) {
   let plans: PlanRow[] = []
   let nodes: RawNode[] = []
   let attempts: AttemptRow[] = []
@@ -628,18 +627,14 @@ function readCapture(
 
   const plansAvailable = sourceAvailable(statuses, "runner_plans")
   if (plansAvailable) {
-    plans = db
-      .query<PlanRow, [string, number]>(
-        `SELECT id,owner,revision,version,state,body,model,reason,artifact
+    plans = queryBounded<PlanRow>(
+      db,
+      `SELECT id,owner,revision,version,state,body,model,reason,artifact
          FROM runner_plans WHERE project_directory=? ORDER BY rowid LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.plans + 1)
-    if (plans.length > OBSERVATION_LEDGER_LIMITS.plans)
-      return incompleteResult(
-        `Execution plans exceed the ${OBSERVATION_LEDGER_LIMITS.plans} plan capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.plans,
+      `Execution plans exceed the ${OBSERVATION_LEDGER_LIMITS.plans} plan capture limit.`,
+    )
   } else
     notes.push(
       "Execution plans are unavailable; task outcomes and routes cannot be inferred from current plan state.",
@@ -647,75 +642,59 @@ function readCapture(
 
   const taskNodesAvailable = plansAvailable && sourceAvailable(statuses, "runner_nodes")
   if (taskNodesAvailable) {
-    nodes = db
-      .query<RawNode, [string, number]>(
-        `SELECT n.plan_id,n.task_id,n.state,n.artifact
+    nodes = queryBounded<RawNode>(
+      db,
+      `SELECT n.plan_id,n.task_id,n.state,n.artifact
          FROM runner_nodes n
          JOIN runner_plans p ON p.id=n.plan_id
          JOIN tasks t ON t.id=n.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY p.rowid,n.ordinal LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.attempts + 1)
-    if (nodes.length > OBSERVATION_LEDGER_LIMITS.attempts)
-      return incompleteResult(
-        "Execution-node capture exceeds its bounded attempt-derived limit.",
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.attempts,
+      "Execution-node capture exceeds its bounded attempt-derived limit.",
+    )
   } else notes.push("Task execution-node history is unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_attempts")) {
-    attempts = db
-      .query<AttemptRow, [string, number]>(
-        `SELECT a.id,a.plan_id,a.task_id,a.number,a.session_id,a.message_id,a.workspace,a.base_commit,
+    attempts = queryBounded<AttemptRow>(
+      db,
+      `SELECT a.id,a.plan_id,a.task_id,a.number,a.session_id,a.message_id,a.workspace,a.base_commit,
                 a.artifact,a.policy,a.state,a.started_at,a.token_count,a.tool_count,a.retry_count,a.cost
          FROM runner_attempts a
          JOIN runner_plans p ON p.id=a.plan_id
          JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY a.started_at,a.number,a.id LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.attempts + 1)
-    if (attempts.length > OBSERVATION_LEDGER_LIMITS.attempts)
-      return incompleteResult(
-        `Attempts exceed the ${OBSERVATION_LEDGER_LIMITS.attempts} attempt capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.attempts,
+      `Attempts exceed the ${OBSERVATION_LEDGER_LIMITS.attempts} attempt capture limit.`,
+    )
   } else notes.push("Worker attempts are unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_transitions")) {
-    transitions = db
-      .query<RawTransition, [string, number]>(
-        `SELECT r.id,r.plan_id,r.task_id,r.version,r.event,r.payload,r.created_at
+    transitions = queryBounded<RawTransition>(
+      db,
+      `SELECT r.id,r.plan_id,r.task_id,r.version,r.event,r.payload,r.created_at
          FROM runner_transitions r
          JOIN runner_plans p ON p.id=r.plan_id
          JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY r.id LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.transitions + 1)
-    if (transitions.length > OBSERVATION_LEDGER_LIMITS.transitions)
-      return incompleteResult(
-        `Task transition history exceeds the ${OBSERVATION_LEDGER_LIMITS.transitions} row capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.transitions,
+      `Task transition history exceeds the ${OBSERVATION_LEDGER_LIMITS.transitions} row capture limit.`,
+    )
   } else notes.push("Task transition history is unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_adoptions")) {
-    adoptions = db
-      .query<AdoptionRow, [string, number]>(
-        `SELECT a.* FROM runner_adoptions a
+    adoptions = queryBounded<AdoptionRow>(
+      db,
+      `SELECT a.* FROM runner_adoptions a
          JOIN runner_plans p ON p.id=a.plan_id
          JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY a.created_at,a.id LIMIT ?`,
-      )
-      .all(projectDirectory, OBSERVATION_LEDGER_LIMITS.adoptions + 1)
-    if (adoptions.length > OBSERVATION_LEDGER_LIMITS.adoptions)
-      return incompleteResult(
-        `Adoption history exceeds the ${OBSERVATION_LEDGER_LIMITS.adoptions} row capture limit.`,
-        statuses,
-        notes,
-      )
+      [projectDirectory],
+      OBSERVATION_LEDGER_LIMITS.adoptions,
+      `Adoption history exceeds the ${OBSERVATION_LEDGER_LIMITS.adoptions} row capture limit.`,
+    )
   } else notes.push("Descendant-adoption history is unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_progress")) {
@@ -729,47 +708,39 @@ function readCapture(
           `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
         )
     } else {
-      progress = db
-        .query<RawProgress, [string, string, number]>(
-          `SELECT r.* FROM runner_progress r
+      progress = queryBounded<RawProgress>(
+        db,
+        `SELECT r.* FROM runner_progress r
            JOIN runner_plans p ON p.id=r.plan_id
            JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
            WHERE r.project_directory=? AND p.project_directory=?
            ORDER BY r.seq LIMIT ?`,
-        )
-        .all(projectDirectory, projectDirectory, OBSERVATION_LEDGER_LIMITS.progressFacts + 1)
-      if (progress.length > OBSERVATION_LEDGER_LIMITS.progressFacts)
-        return incompleteResult(
-          `Retained progress exceeds the ${OBSERVATION_LEDGER_LIMITS.progressFacts} fact capture limit.`,
-          statuses,
-          notes,
-        )
+        [projectDirectory, projectDirectory],
+        OBSERVATION_LEDGER_LIMITS.progressFacts,
+        `Retained progress exceeds the ${OBSERVATION_LEDGER_LIMITS.progressFacts} fact capture limit.`,
+      )
     }
   } else notes.push("Retained progress observations are unavailable in this database schema.")
 
-  options.signal?.throwIfAborted()
-
-  const sourceData = {
-    projectDirectory,
-    sources: statuses,
-    tasks,
-    references,
-    dispositions,
-    classifications,
+  return {
     plans,
     nodes,
     attempts,
     transitions,
     adoptions,
     progress,
-    ...(options.decision
-      ? {
-          decisionProgressFingerprint,
-          decisionProgressCount: decisionProgressFacts.length,
-        }
-      : {}),
+    decisionProgressFacts,
+    decisionProgressFingerprint,
   }
+}
 
+/** The effective classification of every task whose immutable body is readable. */
+function readClassificationSnapshots(
+  db: Database,
+  projectDirectory: string,
+  tasks: RawTask[],
+  notes: string[],
+) {
   const snapshots = new Map<string, TaskClassificationSnapshot | null>()
   for (const row of tasks) {
     let parsed: TaskSpec | null = null
@@ -799,66 +770,54 @@ function readCapture(
       notes.push(`Task ${row.id} classification history is invalid or unavailable.`)
     }
   }
+  return snapshots
+}
 
-  options.signal?.throwIfAborted()
-  const { fingerprint, bytes } = fingerprintAndSize({
-    ...sourceData,
-    effectiveClassifications: [...snapshots.entries()],
-  })
-  if (bytes > OBSERVATION_LEDGER_LIMITS.captureBytes)
-    return incompleteResult(
-      `Retained observation capture is ${bytes} serialized bytes, above the ${OBSERVATION_LEDGER_LIMITS.captureBytes} byte bound.`,
-      statuses,
-      notes,
-    )
+function noteProgressProblems(progress: RawProgress[], decision: boolean, notes: string[]) {
+  for (const row of progress) {
+    const payload = parseObject(row.payload)
+    if (!payload) notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
+    if (!decision) noteObservationProjection(row, payload, notes)
+    if (!parseArray(row.sources_json))
+      notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
+    if (!parseArray(row.event_ids_json))
+      notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
+  }
+}
 
-  if (options.decision) {
-    for (const row of progress) {
-      if (!parseObject(row.payload))
-        notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
-      if (!parseArray(row.sources_json))
-        notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
-      if (!parseArray(row.event_ids_json))
-        notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
-    }
-  } else
-    for (const row of progress) {
-      const payload = parseObject(row.payload)
-      if (!payload) notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
-      const rawObservations = payload?.observations
-      if (rawObservations !== undefined && !Array.isArray(rawObservations))
-        notes.push(`Progress fact progress:${row.seq} has a non-array observation collection.`)
-      if (Array.isArray(rawObservations)) {
-        const candidates = rawObservations
-          .slice(-OBSERVATION_LEDGER_LIMITS.observationsPerFact)
-          .filter((raw) => {
-            const observation = object(raw)
-            return (
-              observation &&
-              (observation.source === "native-event" || observation.source === "recovery") &&
-              typeof observation.eventType === "string"
-            )
-          }).length
-        const omitted = rawObservations.length - candidates
-        if (omitted > 0)
-          notes.push(
-            `Progress fact progress:${row.seq} omits ${omitted} observations beyond the retained projection.`,
-          )
-      }
-      const projected = projectProgressFact(row)
-      for (const key of ["sources", "eventIDs"] as const) {
-        const values = list(projected[key])
-        if (values.length > 100)
-          notes.push(
-            `Progress fact progress:${row.seq} omits ${values.length - 100} ${key} beyond the output bound.`,
-          )
-      }
-      if (!parseArray(row.sources_json))
-        notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
-      if (!parseArray(row.event_ids_json))
-        notes.push(`Progress fact progress:${row.seq} has unreadable event lineage.`)
-    }
+/** What the retained projection of one progress fact leaves out. */
+function noteObservationProjection(row: RawProgress, payload: JsonObject | null, notes: string[]) {
+  const rawObservations = payload?.observations
+  if (rawObservations !== undefined && !Array.isArray(rawObservations))
+    notes.push(`Progress fact progress:${row.seq} has a non-array observation collection.`)
+  if (Array.isArray(rawObservations)) {
+    const candidates = rawObservations
+      .slice(-OBSERVATION_LEDGER_LIMITS.observationsPerFact)
+      .filter((raw) => {
+        const observation = object(raw)
+        return (
+          observation &&
+          (observation.source === "native-event" || observation.source === "recovery") &&
+          typeof observation.eventType === "string"
+        )
+      }).length
+    const omitted = rawObservations.length - candidates
+    if (omitted > 0)
+      notes.push(
+        `Progress fact progress:${row.seq} omits ${omitted} observations beyond the retained projection.`,
+      )
+  }
+  const projected = projectProgressFact(row)
+  for (const key of ["sources", "eventIDs"] as const) {
+    const values = list(projected[key])
+    if (values.length > 100)
+      notes.push(
+        `Progress fact progress:${row.seq} omits ${values.length - 100} ${key} beyond the output bound.`,
+      )
+  }
+}
 
+function noteDispositionProblems(dispositions: RawDisposition[], notes: string[]) {
   for (const row of dispositions) {
     for (const [field, raw, maximum] of [
       ["evidence", row.evidence, 20],
@@ -872,6 +831,91 @@ function readCapture(
         )
     }
   }
+}
+
+function readCapture(
+  db: Database,
+  projectDirectory: string,
+  options: { decision?: boolean; signal?: AbortSignal } = {},
+): CaptureResult {
+  options.signal?.throwIfAborted()
+  const notes: string[] = []
+  const { tableInfo, statuses } = captureStatuses(db)
+  try {
+    return readCaptureBounded(db, projectDirectory, options, tableInfo, statuses, notes)
+  } catch (error) {
+    if (error instanceof CaptureIncomplete) return incompleteResult(error.message, statuses, notes)
+    throw error
+  }
+}
+
+function readCaptureBounded(
+  db: Database,
+  projectDirectory: string,
+  options: { decision?: boolean; signal?: AbortSignal },
+  tableInfo: Record<string, TableInfo>,
+  statuses: SourceStatus[],
+  notes: string[],
+): CaptureResult {
+  if (tableInfo.tasks!.status !== "available")
+    return { status: "unavailable", reason: "task-table-missing", sources: statuses }
+
+  const tasks = queryBounded<RawTask>(
+    db,
+    "SELECT id,created_at,body FROM tasks WHERE project_directory=? ORDER BY created_at,id LIMIT ?",
+    [projectDirectory],
+    OBSERVATION_LEDGER_LIMITS.tasks,
+    `Task membership exceeds the ${OBSERVATION_LEDGER_LIMITS.tasks} task capture limit.`,
+  )
+  options.signal?.throwIfAborted()
+  const { references, dispositions, classifications } = readTaskRows(
+    db,
+    projectDirectory,
+    tableInfo,
+    tasks,
+    notes,
+  )
+  const runner = readRunnerRows(db, projectDirectory, statuses, options, notes)
+  const { decisionProgressFacts, decisionProgressFingerprint, ...runnerRows } = runner
+  options.signal?.throwIfAborted()
+
+  const sourceData = {
+    projectDirectory,
+    sources: statuses,
+    tasks,
+    references,
+    dispositions,
+    classifications,
+    plans: runnerRows.plans,
+    nodes: runnerRows.nodes,
+    attempts: runnerRows.attempts,
+    transitions: runnerRows.transitions,
+    adoptions: runnerRows.adoptions,
+    progress: runnerRows.progress,
+    ...(options.decision
+      ? {
+          decisionProgressFingerprint,
+          decisionProgressCount: decisionProgressFacts.length,
+        }
+      : {}),
+  }
+
+  const snapshots = readClassificationSnapshots(db, projectDirectory, tasks, notes)
+
+  options.signal?.throwIfAborted()
+  const { fingerprint, bytes } = fingerprintAndSize({
+    ...sourceData,
+    effectiveClassifications: [...snapshots.entries()],
+  })
+  if (bytes > OBSERVATION_LEDGER_LIMITS.captureBytes)
+    return incompleteResult(
+      `Retained observation capture is ${bytes} serialized bytes, above the ${OBSERVATION_LEDGER_LIMITS.captureBytes} byte bound.`,
+      statuses,
+      notes,
+    )
+
+  noteProgressProblems(runnerRows.progress, Boolean(options.decision), notes)
+  noteDispositionProblems(dispositions, notes)
 
   return {
     status: "captured",

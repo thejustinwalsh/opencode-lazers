@@ -1006,6 +1006,219 @@ function unavailableScenario(input: {
   })
 }
 
+type RateSchedule = ReturnType<typeof rateSets>["schedules"]
+type TierAttribution = z.infer<typeof TierAttributionSchema>
+
+function promptThresholdSemantics(promptThresholds: number[]) {
+  return promptThresholds.length > 0
+    ? "override applies when per-call prompt tokens are greater than minPromptTokens"
+    : null
+}
+
+function unresolvedTierAttribution(
+  schedules: RateSchedule,
+  promptThresholds: number[],
+): TierAttribution {
+  return {
+    status: "unresolved",
+    basis: "aggregate-tier-envelope",
+    callCount: 0,
+    selectedTierIDs: schedules.map(({ tierID }) => tierID),
+    promptThresholds,
+    thresholdSemantics: promptThresholdSemantics(promptThresholds),
+  }
+}
+
+/**
+ * Prices every call against its own published tier. Undefined when a call has no tier or a
+ * missing rate, in which case the categories that lack a rate are added to `missingRates`.
+ */
+function pricePerCall(
+  perCallUsage: readonly KnownUsagePerCall[],
+  schedules: RateSchedule,
+  missingRates: Set<UsageCategory>,
+) {
+  const amounts: number[] = []
+  const selectedTierIDs: string[] = []
+  for (const call of perCallUsage) {
+    const selected = selectedSchedule(call, schedules)
+    if (!selected) return undefined
+    const amount = amountForCall(call, selected)
+    if (amount === null) {
+      for (const category of applicableMissingRates(
+        Object.fromEntries(
+          CATEGORIES.map((category) => [
+            category,
+            { tokens: call.categories[category], status: "observed" },
+          ]),
+        ) as UsageCategories,
+        selected,
+      ))
+        missingRates.add(category)
+      return undefined
+    }
+    amounts.push(amount)
+    selectedTierIDs.push(selected.tierID)
+  }
+  let total: Decimal = { coefficient: 0n, scale: 0 }
+  for (const amount of amounts) total = addDecimal(total, decimal(amount)!)
+  return { valueUSD: decimalNumber(total), selectedTierIDs }
+}
+
+/** How the scenario's tier is chosen, and the exact value when each call could be priced alone. */
+function resolveTierAttribution(input: {
+  schedules: RateSchedule
+  promptThresholds: number[]
+  unsupported: boolean
+  usePerCall: boolean
+  tiered: boolean
+  perCallUsage: readonly KnownUsagePerCall[]
+  missingRates: Set<UsageCategory>
+}): { tierAttribution: TierAttribution; valueUSD: number | null } {
+  const { schedules, promptThresholds } = input
+  if (input.unsupported)
+    return {
+      tierAttribution: {
+        status: "unsupported",
+        basis: "unavailable",
+        callCount: 0,
+        selectedTierIDs: [],
+        promptThresholds,
+        thresholdSemantics: null,
+      },
+      valueUSD: null,
+    }
+  if (input.usePerCall) {
+    const priced = pricePerCall(input.perCallUsage, schedules, input.missingRates)
+    if (!priced)
+      return {
+        tierAttribution: unresolvedTierAttribution(schedules, promptThresholds),
+        valueUSD: null,
+      }
+    return {
+      tierAttribution: {
+        status: "resolved-per-call",
+        basis: "complete-per-call-prompt-usage",
+        callCount: input.perCallUsage.length,
+        selectedTierIDs: [...new Set(priced.selectedTierIDs)],
+        promptThresholds,
+        thresholdSemantics: promptThresholdSemantics(promptThresholds),
+      },
+      valueUSD: priced.valueUSD,
+    }
+  }
+  if (input.tiered)
+    return {
+      tierAttribution: unresolvedTierAttribution(schedules, promptThresholds),
+      valueUSD: null,
+    }
+  return {
+    tierAttribution: {
+      status: "not-required",
+      basis: "single-published-rate-scenario",
+      callCount: 0,
+      selectedTierIDs: schedules.map(({ tierID }) => tierID),
+      promptThresholds: [],
+      thresholdSemantics: null,
+    },
+    valueUSD: null,
+  }
+}
+
+/** The exact value, the range across tiers, or the known subtotal, whichever the usage supports. */
+function scenarioAmounts(input: {
+  categoryUsage: UsageCategories
+  schedules: RateSchedule
+  tierAttribution: TierAttribution
+  valueUSD: number | null
+  categoriesComplete: boolean
+  retryComplete: boolean
+}) {
+  const { categoryUsage, schedules, tierAttribution } = input
+  let valueUSD = input.valueUSD
+  let rangeUSD: { minimum: number; maximum: number } | null = null
+  let knownSubtotalUSD: { minimum: number; maximum: number } | null = null
+  const fullAmounts = schedules.map((schedule) => amountForSet(categoryUsage, schedule))
+  if (
+    valueUSD === null &&
+    input.categoriesComplete &&
+    input.retryComplete &&
+    tierAttribution.status !== "unsupported"
+  ) {
+    if (tierAttribution.status === "resolved-per-call") {
+      // `valueUSD` above prices each attributable call against its own published tier.
+    } else if (fullAmounts.every((amount): amount is number => amount !== null)) {
+      const minimum = Math.min(...fullAmounts)
+      const maximum = Math.max(...fullAmounts)
+      if (tierAttribution.status === "unresolved") rangeUSD = { minimum, maximum }
+      else valueUSD = minimum
+    }
+  }
+
+  if (valueUSD === null && rangeUSD === null && hasKnownPositiveUsage(categoryUsage)) {
+    const pricedSubtotals = schedules.map((schedule) =>
+      knownSubtotalForSet(categoryUsage, schedule),
+    )
+    if (pricedSubtotals.every((amount): amount is number => amount !== null))
+      knownSubtotalUSD = {
+        minimum: Math.min(...pricedSubtotals),
+        maximum: Math.max(...pricedSubtotals),
+      }
+  }
+  return { valueUSD, rangeUSD, knownSubtotalUSD }
+}
+
+function scenarioCacheWriteEvidence(
+  scheduleResult: { documentation: ReturnType<typeof rateSets>["documentation"] | null },
+  publishedSchedule: KnownUsageMarketPublishedSchedule | undefined,
+  schedules: RateSchedule,
+  cacheWriteTokens: UsageCategories["cacheWrite"],
+) {
+  const cacheWriteRateRequired =
+    cacheWriteTokens.status !== "observed" ||
+    cacheWriteTokens.tokens === null ||
+    cacheWriteTokens.tokens > 0
+  const docs = scheduleResult.documentation
+  const cacheWriteRateExists = schedules.some(
+    (schedule) => rateNumber(schedule.cacheWrite) !== null,
+  )
+  return {
+    basis: docs
+      ? ("scoped-documentation" as const)
+      : publishedSchedule?.source === "native-catalog"
+        ? ("published-native-quote" as const)
+        : publishedSchedule
+          ? ("published-model-rate" as const)
+          : cacheWriteRateExists
+            ? ("endpoint-rate" as const)
+            : cacheWriteRateRequired
+              ? ("missing" as const)
+              : ("zero-usage-rate-not-required" as const),
+    policyID: docs?.policyID ?? null,
+    sourceURL: docs?.sourceURL ?? null,
+    retrievedAt: docs?.retrievedAt ?? null,
+  }
+}
+
+function scenarioReason(input: {
+  status: KnownUsageMarketScenario["status"]
+  retryComplete: boolean
+  categoriesComplete: boolean
+  missingRateCount: number
+  tierAttribution: TierAttribution
+}) {
+  if (input.status === "exact" || input.status === "range") return null
+  if (!input.retryComplete)
+    return "Retained retry usage or route attribution is incomplete; any amount is only a known-usage subtotal."
+  if (!input.categoriesComplete)
+    return "One or more measured token categories are missing or partial; no total or finite bound is reported."
+  if (input.missingRateCount)
+    return "A required endpoint rate is missing for nonzero or unknown token usage."
+  if (input.tierAttribution.status === "unsupported")
+    return "The retained endpoint tier selector is not supported by attributable usage evidence."
+  return "No complete compatible endpoint-scenario value or range is available."
+}
+
 function calculateScenario(input: {
   route: MarketRangeRoute
   endpointPricing: EndpointPricingRead | undefined
@@ -1071,138 +1284,35 @@ function calculateScenario(input: {
     scheduleResult.overridesUnknown ||
     schedules.some((schedule) => schedule.contextTierTokens !== null) ||
     schedules.some((schedule) => schedule.utcStart !== null || schedule.utcEnd !== null)
+  const retryComplete = usageCoverage.retries.status === "complete"
   const usePerCall = canSelectPerCallTiers({
     route: input.route,
     categories: categoryUsage,
     schedules,
     perCallUsage: input.perCallUsage,
     perCallCoverageComplete: input.perCallCoverageComplete,
-    retryCoverageComplete: usageCoverage.retries.status === "complete",
+    retryCoverageComplete: retryComplete,
     overridesUnknown: scheduleResult.overridesUnknown,
   })
   const missingRates = new Set<UsageCategory>()
-  let valueUSD: number | null = null
-  let rangeUSD: { minimum: number; maximum: number } | null = null
-  let knownSubtotalUSD: { minimum: number; maximum: number } | null = null
-  let tierAttribution: z.infer<typeof TierAttributionSchema>
   const categoriesComplete = isCompleteUsage(categoryUsage)
-  const retryComplete = usageCoverage.retries.status === "complete"
-
-  if (scheduleResult.overridesUnknown || (hasUnknownTier && !input.publishedSchedule)) {
-    tierAttribution = {
-      status: "unsupported",
-      basis: "unavailable",
-      callCount: 0,
-      selectedTierIDs: [],
-      promptThresholds,
-      thresholdSemantics: null,
-    }
-  } else if (usePerCall) {
-    const amounts: number[] = []
-    const selectedTierIDs: string[] = []
-    let valid = true
-    for (const call of input.perCallUsage) {
-      const selected = selectedSchedule(call, schedules)
-      if (!selected) {
-        valid = false
-        break
-      }
-      const amount = amountForCall(call, selected)
-      if (amount === null) {
-        for (const category of applicableMissingRates(
-          Object.fromEntries(
-            CATEGORIES.map((category) => [
-              category,
-              { tokens: call.categories[category], status: "observed" },
-            ]),
-          ) as UsageCategories,
-          selected,
-        ))
-          missingRates.add(category)
-        valid = false
-        break
-      }
-      amounts.push(amount)
-      selectedTierIDs.push(selected.tierID)
-    }
-    if (valid) {
-      let total: Decimal = { coefficient: 0n, scale: 0 }
-      for (const amount of amounts) total = addDecimal(total, decimal(amount)!)
-      valueUSD = decimalNumber(total)
-      tierAttribution = {
-        status: "resolved-per-call",
-        basis: "complete-per-call-prompt-usage",
-        callCount: input.perCallUsage.length,
-        selectedTierIDs: [...new Set(selectedTierIDs)],
-        promptThresholds,
-        thresholdSemantics:
-          promptThresholds.length > 0
-            ? "override applies when per-call prompt tokens are greater than minPromptTokens"
-            : null,
-      }
-    } else {
-      tierAttribution = {
-        status: "unresolved",
-        basis: "aggregate-tier-envelope",
-        callCount: 0,
-        selectedTierIDs: schedules.map(({ tierID }) => tierID),
-        promptThresholds,
-        thresholdSemantics:
-          promptThresholds.length > 0
-            ? "override applies when per-call prompt tokens are greater than minPromptTokens"
-            : null,
-      }
-    }
-  } else if (tiered) {
-    tierAttribution = {
-      status: "unresolved",
-      basis: "aggregate-tier-envelope",
-      callCount: 0,
-      selectedTierIDs: schedules.map(({ tierID }) => tierID),
-      promptThresholds,
-      thresholdSemantics:
-        promptThresholds.length > 0
-          ? "override applies when per-call prompt tokens are greater than minPromptTokens"
-          : null,
-    }
-  } else {
-    tierAttribution = {
-      status: "not-required",
-      basis: "single-published-rate-scenario",
-      callCount: 0,
-      selectedTierIDs: schedules.map(({ tierID }) => tierID),
-      promptThresholds: [],
-      thresholdSemantics: null,
-    }
-  }
-
-  const fullAmounts = schedules.map((schedule) => amountForSet(categoryUsage, schedule))
-  if (
-    valueUSD === null &&
-    categoriesComplete &&
-    retryComplete &&
-    tierAttribution.status !== "unsupported"
-  ) {
-    if (tierAttribution.status === "resolved-per-call") {
-      // `valueUSD` above prices each attributable call against its own published tier.
-    } else if (fullAmounts.every((amount): amount is number => amount !== null)) {
-      const minimum = Math.min(...fullAmounts)
-      const maximum = Math.max(...fullAmounts)
-      if (tierAttribution.status === "unresolved") rangeUSD = { minimum, maximum }
-      else valueUSD = minimum
-    }
-  }
-
-  if (valueUSD === null && rangeUSD === null && hasKnownPositiveUsage(categoryUsage)) {
-    const pricedSubtotals = schedules.map((schedule) =>
-      knownSubtotalForSet(categoryUsage, schedule),
-    )
-    if (pricedSubtotals.every((amount): amount is number => amount !== null))
-      knownSubtotalUSD = {
-        minimum: Math.min(...pricedSubtotals),
-        maximum: Math.max(...pricedSubtotals),
-      }
-  }
+  const { tierAttribution, valueUSD: perCallValueUSD } = resolveTierAttribution({
+    schedules,
+    promptThresholds,
+    unsupported: scheduleResult.overridesUnknown || (hasUnknownTier && !input.publishedSchedule),
+    usePerCall,
+    tiered,
+    perCallUsage: input.perCallUsage,
+    missingRates,
+  })
+  const { valueUSD, rangeUSD, knownSubtotalUSD } = scenarioAmounts({
+    categoryUsage,
+    schedules,
+    tierAttribution,
+    valueUSD: perCallValueUSD,
+    categoriesComplete,
+    retryComplete,
+  })
 
   if (tierAttribution.status !== "resolved-per-call")
     for (const schedule of schedules)
@@ -1211,31 +1321,12 @@ function calculateScenario(input: {
 
   const marketStatus: KnownUsageMarketScenario["status"] =
     valueUSD !== null ? "exact" : rangeUSD !== null ? "range" : "partial"
-  const cacheWriteTokens = categoryUsage.cacheWrite
-  const cacheWriteRateRequired =
-    cacheWriteTokens.status !== "observed" ||
-    cacheWriteTokens.tokens === null ||
-    cacheWriteTokens.tokens > 0
-  const docs = scheduleResult.documentation
-  const cacheWriteRateExists = schedules.some(
-    (schedule) => rateNumber(schedule.cacheWrite) !== null,
+  const cacheWriteEvidence = scenarioCacheWriteEvidence(
+    scheduleResult,
+    input.publishedSchedule,
+    schedules,
+    categoryUsage.cacheWrite,
   )
-  const cacheWriteEvidence = {
-    basis: docs
-      ? ("scoped-documentation" as const)
-      : input.publishedSchedule?.source === "native-catalog"
-        ? ("published-native-quote" as const)
-        : input.publishedSchedule
-          ? ("published-model-rate" as const)
-          : cacheWriteRateExists
-            ? ("endpoint-rate" as const)
-            : cacheWriteRateRequired
-              ? ("missing" as const)
-              : ("zero-usage-rate-not-required" as const),
-    policyID: docs?.policyID ?? null,
-    sourceURL: docs?.sourceURL ?? null,
-    retrievedAt: docs?.retrievedAt ?? null,
-  }
   const rateCoverage =
     tierAttribution.status === "resolved-per-call"
       ? [...missingRates]
@@ -1266,18 +1357,13 @@ function calculateScenario(input: {
       input.publishedSchedule?.provenance ??
       provenance(input.endpointPricing, input.standard, endpoint, recordIndex),
     coverage: usageCoverage,
-    reason:
-      status === "exact" || status === "range"
-        ? null
-        : !retryComplete
-          ? "Retained retry usage or route attribution is incomplete; any amount is only a known-usage subtotal."
-          : !categoriesComplete
-            ? "One or more measured token categories are missing or partial; no total or finite bound is reported."
-            : uniqueMissingRates.length
-              ? "A required endpoint rate is missing for nonzero or unknown token usage."
-              : tierAttribution.status === "unsupported"
-                ? "The retained endpoint tier selector is not supported by attributable usage evidence."
-                : "No complete compatible endpoint-scenario value or range is available.",
+    reason: scenarioReason({
+      status,
+      retryComplete,
+      categoriesComplete,
+      missingRateCount: uniqueMissingRates.length,
+      tierAttribution,
+    }),
   })
 }
 

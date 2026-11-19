@@ -2,7 +2,7 @@ import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
-import { gitAsync, worktreeListPorcelain } from "./artifacts.ts"
+import { gitAsync, registeredWorktreePaths } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
@@ -18,6 +18,28 @@ import type { AdoptionExecution } from "./adoption-execution.ts"
 import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 
 /** A cleanup blocker that the host can observe directly, so a short poll re-checks it. */
+const WORKTREE_CREATION_KINDS = [
+  "worktree",
+  "worktree-recovery",
+  "graph-worktree",
+  "adoption-task-worktree",
+  "adoption-combined-worktree",
+]
+
+/** What one owned worktree's removal carries between its steps and into its failure record. */
+type WorktreeCleanupRun = {
+  plan: PlanRow
+  fence: number
+  mode: "integration" | "cancellation"
+  workspace: string
+  effect: EffectRow
+  previous: EffectRow | undefined
+  cleanupCurrent: () => boolean
+  removalStarted: boolean
+  retryFacts: string | undefined
+  source: EffectRow | undefined
+}
+
 class LiveActivityBlockedError extends Error {}
 
 export class WorktreeCleanup {
@@ -350,14 +372,7 @@ export class WorktreeCleanup {
       if (!cleanupCurrent()) return "superseded"
       if (native.some((directory) => resolve(directory) === target))
         return "native-resource-present"
-      const gitWorktrees = (
-        await this.runtime.timed("cleanup:git.worktreeList", () =>
-          worktreeListPorcelain(this.runtime.directory),
-        )
-      )
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("worktree "))
-        .map((line) => resolve(line.slice("worktree ".length)))
+      const gitWorktrees = await this.gitWorktreePaths()
       if (gitWorktrees.includes(target)) return "git-resource-present"
       try {
         lstatSync(target)
@@ -553,13 +568,7 @@ export class WorktreeCleanup {
           .effects(plan.id)
           .filter(
             (effect) =>
-              [
-                "worktree",
-                "worktree-recovery",
-                "graph-worktree",
-                "adoption-task-worktree",
-                "adoption-combined-worktree",
-              ].includes(effect.kind) && effect.state === "completed",
+              WORKTREE_CREATION_KINDS.includes(effect.kind) && effect.state === "completed",
           )
           .map((effect) => JSON.parse(effect.receipt!).workspace as string),
       ),
@@ -577,309 +586,310 @@ export class WorktreeCleanup {
         previous ??
         this.runtime.effect(plan.id, null, null, "worktree-remove", { workspace }, fence)
       if (effect.state === "completed") continue
-      let removalStarted = false
-      const beginCleanup = () => {
-        if (!removalStarted && effect.state === "held")
-          this.runtime.store.fenced(this.runtime.owner, fence, (db) =>
-            db
-              .query(
-                "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'intended') WHERE id=? AND state='held'",
-              )
-              .run(effect.id),
-          )
-        removalStarted = true
+      const run: WorktreeCleanupRun = {
+        plan,
+        fence,
+        mode,
+        workspace,
+        effect,
+        previous,
+        cleanupCurrent,
+        removalStarted: false,
+        retryFacts: undefined,
+        source: undefined,
       }
-      let retryFacts: string | undefined
-      let sourceEffectForCleanup: EffectRow | undefined
       try {
-        const sourceEffect = this.runtime.store.effects(plan.id).find((entry) => {
-          if (
-            ![
-              "worktree",
-              "worktree-recovery",
-              "graph-worktree",
-              "adoption-task-worktree",
-              "adoption-combined-worktree",
-            ].includes(entry.kind) ||
-            entry.state !== "completed"
-          )
-            return false
-          try {
-            return JSON.parse(entry.receipt ?? "{}").workspace === workspace
-          } catch {
-            return false
-          }
-        })
-        sourceEffectForCleanup = sourceEffect
-        if (!sourceEffect)
-          throw new Error("Owned worktree has no completed creation receipt; preserve it")
-        try {
-          retryFacts = this.worktreeCleanupRetryFacts(plan, sourceEffect, workspace)
-        } catch {
-          retryFacts = fingerprint({
-            planID: plan.id,
-            sourceID: sourceEffect.id,
-            workspace: resolve(workspace),
-            workspaceExists: existsSync(workspace),
-            retryFactsUnavailable: true,
-          })
-        }
-        const listed = await this.runtime.timed("cleanup:host.worktrees", () =>
-          this.runtime.host.worktrees(),
-        )
-        if (!cleanupCurrent()) {
-          this.abandonCleanupEffect(effect, fence)
-          return
-        }
-        const target = resolve(workspace)
-        const listedWorkspace = listed.some((entry) => resolve(entry) === target)
-        const gitWorktrees = (
-          await this.runtime.timed("cleanup:git.worktreeList", () =>
-            worktreeListPorcelain(this.runtime.directory),
-          )
-        )
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => resolve(line.slice("worktree ".length)))
-        const gitRegistered = gitWorktrees.includes(target)
-        if (listedWorkspace && existsSync(workspace)) {
-          if (
-            await this.runtime.timed("cleanup:git.status", () =>
-              gitAsync(workspace, ["status", "--porcelain"]),
-            )
-          )
-            throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
-          if (!cleanupCurrent()) {
-            this.abandonCleanupEffect(effect, fence)
-            return
-          }
-          const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
-          await this.runtime.timed("cleanup:assertHeadMerged", () =>
-            this.assertHeadMerged(workspace, head),
-          )
-          for (const attempt of this.runtime.store
-            .attempts(plan.id)
-            .filter((candidate) => candidate.workspace === workspace && candidate.artifact))
-            if (mode === "integration" && attempt.state === "accepted")
-              await this.runtime.timed("cleanup:assertArtifactIntegrated", () =>
-                this.assertArtifactIntegrated(attempt),
-              )
-          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
-            this.assertWorktreeQuiescent(
-              plan,
-              sourceEffect,
-              workspace,
-              mode === "cancellation",
-              true,
-            ),
-          )
-          if (!cleanupCurrent()) {
-            this.abandonCleanupEffect(effect, fence)
-            return
-          }
-          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
-            this.assertWorktreeQuiescent(
-              plan,
-              sourceEffect,
-              workspace,
-              mode === "cancellation",
-              true,
-            ),
-          )
-          if (!cleanupCurrent()) {
-            this.abandonCleanupEffect(effect, fence)
-            return
-          }
-          if (
-            await this.runtime.timed("cleanup:git.status", () =>
-              gitAsync(workspace, ["status", "--porcelain"]),
-            )
-          )
-            throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
-          const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
-          await this.runtime.timed("cleanup:assertHeadMerged", () =>
-            this.assertHeadMerged(workspace, finalHead),
-          )
-          const finalNative = await this.runtime.timed("cleanup:host.worktrees", () =>
-            this.runtime.host.worktrees(),
-          )
-          if (!cleanupCurrent()) {
-            this.abandonCleanupEffect(effect, fence)
-            return
-          }
-          const finalGitWorktrees = (
-            await this.runtime.timed("cleanup:git.worktreeList", () =>
-              worktreeListPorcelain(this.runtime.directory),
-            )
-          )
-            .split(/\r?\n/)
-            .filter((line) => line.startsWith("worktree "))
-            .map((line) => resolve(line.slice("worktree ".length)))
-          if (
-            !finalNative.some((entry) => resolve(entry) === target) ||
-            !finalGitWorktrees.includes(target)
-          )
-            throw new Error("Exact owned worktree registration changed before removal; preserve it")
-          if (!cleanupCurrent()) return
-          beginCleanup()
-          await this.runtime.timed("cleanup:removeWorktree", () =>
-            this.runtime.host.removeWorktree(workspace),
-          )
-        } else if (listedWorkspace || gitRegistered) {
-          // A disappeared directory can still have a native/Git registration.
-          // Ask the recorded native strategy to retire that exact owned path;
-          // never substitute filesystem deletion or force removal.
-          await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
-            this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation"),
-          )
-          beginCleanup()
-          await this.runtime.timed("cleanup:removeWorktree", () =>
-            this.runtime.host.removeWorktree(workspace),
-          )
-        } else if (existsSync(workspace))
-          throw new Error(
-            "Owned directory is not registered with OpenCode; preserve it for reconciliation",
-          )
-        const remainingNative = await this.runtime.timed("cleanup:host.worktrees", () =>
-          this.runtime.host.worktrees(),
-        )
-        const remainingGit = (
-          await this.runtime.timed("cleanup:git.worktreeList", () =>
-            worktreeListPorcelain(this.runtime.directory),
-          )
-        )
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => resolve(line.slice("worktree ".length)))
-        if (
-          remainingNative.some((entry) => resolve(entry) === target) ||
-          remainingGit.includes(target) ||
-          existsSync(workspace)
-        )
-          throw new Error(`Native worktree removal is not confirmed absent: ${workspace}`)
-        if (this.runtime.host.retireWorktreeLocation) beginCleanup()
-        const cacheRetirement = await this.runtime.timed("cleanup:retireWorktreeLocation", () =>
-          this.retireCleanedWorktreeLocation(plan, workspace, cleanupCurrent),
-        )
-        if (!cleanupCurrent()) return
-        if (!(["unsupported", "not-loaded", "evicted"] as string[]).includes(cacheRetirement))
-          throw new Error(`Native worktree location retirement is ${cacheRetirement}`)
-        this.completeWorktreeRemoval(
-          effect,
-          { workspace, removed: true, native: true, cacheRetirement },
-          fence,
-        )
-        if (!cleanupCurrent()) return
+        if ((await this.removeOwnedWorktree(run)) === "stop") return
       } catch (error) {
-        const reason = errorText(error)
-        if (!retryFacts && sourceEffectForCleanup) {
-          try {
-            retryFacts = this.worktreeCleanupRetryFacts(plan, sourceEffectForCleanup, workspace)
-          } catch {
-            retryFacts = fingerprint({
-              planID: plan.id,
-              sourceID: sourceEffectForCleanup.id,
-              workspace: resolve(workspace),
-              workspaceExists: existsSync(workspace),
-              retryFactsUnavailable: true,
-            })
-          }
-        }
-        if (!cleanupCurrent() && !removalStarted) {
-          this.abandonCleanupEffect(effect, fence)
-          return
-        }
-        let blocked = false
-        this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
-          const held = !removalStarted && (!previous || previous.state === "held")
-          const current = db
-            .query<{ receipt: string | null }, [string]>(
-              "SELECT receipt FROM runner_effects WHERE id=? AND state IN ('held','intended','uncertain')",
-            )
-            .get(effect.id)
-          if (!current)
-            throw new Error("Native cleanup effect changed before uncertainty was recorded")
-          let previousError: string | undefined
-          try {
-            const previous = JSON.parse(current.receipt ?? "{}") as unknown
-            if (isRecord(previous) && typeof previous.error === "string")
-              previousError = previous.error
-          } catch {
-            // Keep malformed legacy receipt bytes in the append-only history below.
-          }
-          const checkedAt = this.runtime.now()
-          const live = error instanceof LiveActivityBlockedError
-          let priorReceipt: Record<string, unknown> | undefined
-          try {
-            const parsed = JSON.parse(current.receipt ?? "null") as unknown
-            if (isRecord(parsed)) priorReceipt = parsed
-          } catch {
-            priorReceipt = undefined
-          }
-          const last = Array.isArray(priorReceipt?.history)
-            ? priorReceipt.history.at(-1)
-            : undefined
-          // The same blocker observed again is not new history; only the check time moves.
-          const unchanged =
-            isRecord(last) && last.error === reason && Boolean(last.notSent) === held
-          const base =
-            unchanged && priorReceipt
-              ? priorReceipt
-              : (JSON.parse(
-                  appendRunnerEffectReceipt(current.receipt, {
-                    schema: "lazers-worktree-cleanup-observation/v1",
-                    error: reason,
-                    ...(held ? { notSent: true } : {}),
-                    ...(retryFacts ? { retryFacts } : {}),
-                    retryCheckedAt: checkedAt,
-                  }),
-                ) as Record<string, unknown>)
-          const receipt = JSON.stringify({
-            ...base,
-            error: previousError ?? reason,
-            ...(held ? { notSent: true } : {}),
-            ...(retryFacts ? { retryFacts } : {}),
-            retryCheckedAt: checkedAt,
-            liveBlocker: live,
-          })
-          const recorded = db
-            .query(
-              "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=? AND state IN ('held','intended','uncertain')",
-            )
-            .run(held ? "held" : "uncertain", receipt, effect.id).changes
-          if (recorded !== 1)
-            throw new Error("Native cleanup uncertainty lost its durable effect row")
-          blocked =
-            db
-              .query(
-                mode === "integration"
-                  ? "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cleanup-blocked'),reason=?,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked') AND (state<>'cleanup-blocked' OR reason IS NOT ?)"
-                  : "UPDATE runner_plans SET reason=?,version=version+1 WHERE id=? AND state='cancelled' AND (reason IS NULL OR reason<>?)",
-              )
-              .run(reason, plan.id, reason).changes === 1
-          if (blocked)
-            this.runtime.store.record(
-              plan.id,
-              null,
-              mode === "integration" ? "CLEANUP_BLOCKED" : "CANCELLATION_CLEANUP_HELD",
-              { workspace, reason },
-            )
-        })
-        if (!blocked) return
-        if (mode === "integration")
-          this.runtime.outcome(
-            plan.id,
-            {
-              status: "cleanup-blocked",
-              reason,
-              artifact: plan.artifact,
-              allowedActions: ["integrated", "cancel"],
-            },
-            true,
-          )
+        await this.recordCleanupFailure(run, error)
         return
       }
     }
+    this.settleCleanedPlan(plan, fence, mode, owned)
+  }
+
+  private beginCleanup(run: WorktreeCleanupRun) {
+    const { effect, fence } = run
+    if (!run.removalStarted && effect.state === "held")
+      this.runtime.store.fenced(this.runtime.owner, fence, (db) =>
+        db
+          .query(
+            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'intended') WHERE id=? AND state='held'",
+          )
+          .run(effect.id),
+      )
+    run.removalStarted = true
+  }
+
+  /** True (after abandoning the removal effect) when the plan moved on while cleanup was running. */
+  private abandonIfStale(run: WorktreeCleanupRun) {
+    if (run.cleanupCurrent()) return false
+    this.abandonCleanupEffect(run.effect, run.fence)
+    return true
+  }
+
+  private gitWorktreePaths() {
+    return this.runtime.timed("cleanup:git.worktreeList", () =>
+      registeredWorktreePaths(this.runtime.directory),
+    )
+  }
+
+  /** The retry facts for a blocked cleanup; when they cannot be read, a fingerprint says so. */
+  private retryFactsOrUnavailable(plan: PlanRow, source: EffectRow, workspace: string) {
+    try {
+      return this.worktreeCleanupRetryFacts(plan, source, workspace)
+    } catch {
+      return fingerprint({
+        planID: plan.id,
+        sourceID: source.id,
+        workspace: resolve(workspace),
+        workspaceExists: existsSync(workspace),
+        retryFactsUnavailable: true,
+      })
+    }
+  }
+
+  /** Removes one owned worktree after proving it clean and merged. "stop" ends the whole cleanup. */
+  private async removeOwnedWorktree(run: WorktreeCleanupRun): Promise<"stop" | "done"> {
+    const { plan, mode, workspace } = run
+    const sourceEffect = this.runtime.store.effects(plan.id).find((entry) => {
+      if (!WORKTREE_CREATION_KINDS.includes(entry.kind) || entry.state !== "completed") return false
+      try {
+        return JSON.parse(entry.receipt ?? "{}").workspace === workspace
+      } catch {
+        return false
+      }
+    })
+    run.source = sourceEffect
+    if (!sourceEffect)
+      throw new Error("Owned worktree has no completed creation receipt; preserve it")
+    run.retryFacts = this.retryFactsOrUnavailable(plan, sourceEffect, workspace)
+    const listed = await this.runtime.timed("cleanup:host.worktrees", () =>
+      this.runtime.host.worktrees(),
+    )
+    if (this.abandonIfStale(run)) return "stop"
+    const target = resolve(workspace)
+    const listedWorkspace = listed.some((entry) => resolve(entry) === target)
+    const gitRegistered = (await this.gitWorktreePaths()).includes(target)
+    if (listedWorkspace && existsSync(workspace)) {
+      if ((await this.verifyOwnedWorktreeRemovable(run, sourceEffect, target)) === "stop")
+        return "stop"
+      if (!run.cleanupCurrent()) return "stop"
+      this.beginCleanup(run)
+      await this.runtime.timed("cleanup:removeWorktree", () =>
+        this.runtime.host.removeWorktree(workspace),
+      )
+    } else if (listedWorkspace || gitRegistered) {
+      // A disappeared directory can still have a native/Git registration.
+      // Ask the recorded native strategy to retire that exact owned path;
+      // never substitute filesystem deletion or force removal.
+      await this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+        this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation"),
+      )
+      this.beginCleanup(run)
+      await this.runtime.timed("cleanup:removeWorktree", () =>
+        this.runtime.host.removeWorktree(workspace),
+      )
+    } else if (existsSync(workspace))
+      throw new Error(
+        "Owned directory is not registered with OpenCode; preserve it for reconciliation",
+      )
+    return this.confirmWorktreeRemoved(run, target)
+  }
+
+  /** Clean, merged, quiescent and still registered: the proofs a registered directory needs. */
+  private async verifyOwnedWorktreeRemovable(
+    run: WorktreeCleanupRun,
+    sourceEffect: EffectRow,
+    target: string,
+  ): Promise<"stop" | "ready"> {
+    const { plan, mode, workspace } = run
+    const status = () =>
+      this.runtime.timed("cleanup:git.status", () => gitAsync(workspace, ["status", "--porcelain"]))
+    const quiescent = () =>
+      this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+        this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation", true),
+      )
+    if (await status()) throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
+    if (this.abandonIfStale(run)) return "stop"
+    const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
+    await this.runtime.timed("cleanup:assertHeadMerged", () =>
+      this.assertHeadMerged(workspace, head),
+    )
+    for (const attempt of this.runtime.store
+      .attempts(plan.id)
+      .filter((candidate) => candidate.workspace === workspace && candidate.artifact))
+      if (mode === "integration" && attempt.state === "accepted")
+        await this.runtime.timed("cleanup:assertArtifactIntegrated", () =>
+          this.assertArtifactIntegrated(attempt),
+        )
+    await quiescent()
+    if (this.abandonIfStale(run)) return "stop"
+    await quiescent()
+    if (this.abandonIfStale(run)) return "stop"
+    if (await status())
+      throw new Error(`Owned worktree became dirty before removal; preserve ${workspace}`)
+    const finalHead = await gitAsync(workspace, ["rev-parse", "HEAD"])
+    await this.runtime.timed("cleanup:assertHeadMerged", () =>
+      this.assertHeadMerged(workspace, finalHead),
+    )
+    const finalNative = await this.runtime.timed("cleanup:host.worktrees", () =>
+      this.runtime.host.worktrees(),
+    )
+    if (this.abandonIfStale(run)) return "stop"
+    const finalGitWorktrees = await this.gitWorktreePaths()
+    if (
+      !finalNative.some((entry) => resolve(entry) === target) ||
+      !finalGitWorktrees.includes(target)
+    )
+      throw new Error("Exact owned worktree registration changed before removal; preserve it")
+    return "ready"
+  }
+
+  /** Native and Git both report the worktree gone: retire its location and complete the effect. */
+  private async confirmWorktreeRemoved(
+    run: WorktreeCleanupRun,
+    target: string,
+  ): Promise<"stop" | "done"> {
+    const { plan, workspace, effect, fence, cleanupCurrent } = run
+    const remainingNative = await this.runtime.timed("cleanup:host.worktrees", () =>
+      this.runtime.host.worktrees(),
+    )
+    const remainingGit = await this.gitWorktreePaths()
+    if (
+      remainingNative.some((entry) => resolve(entry) === target) ||
+      remainingGit.includes(target) ||
+      existsSync(workspace)
+    )
+      throw new Error(`Native worktree removal is not confirmed absent: ${workspace}`)
+    if (this.runtime.host.retireWorktreeLocation) this.beginCleanup(run)
+    const cacheRetirement = await this.runtime.timed("cleanup:retireWorktreeLocation", () =>
+      this.retireCleanedWorktreeLocation(plan, workspace, cleanupCurrent),
+    )
+    if (!cleanupCurrent()) return "stop"
+    if (!(["unsupported", "not-loaded", "evicted"] as string[]).includes(cacheRetirement))
+      throw new Error(`Native worktree location retirement is ${cacheRetirement}`)
+    this.completeWorktreeRemoval(
+      effect,
+      { workspace, removed: true, native: true, cacheRetirement },
+      fence,
+    )
+    return cleanupCurrent() ? "done" : "stop"
+  }
+
+  /** A removal that could not be proven safe: record why, and block or hold the plan. */
+  private async recordCleanupFailure(run: WorktreeCleanupRun, error: unknown) {
+    const { plan, fence, mode, workspace, effect } = run
+    const reason = errorText(error)
+    if (!run.retryFacts && run.source)
+      run.retryFacts = this.retryFactsOrUnavailable(plan, run.source, workspace)
+    if (!run.cleanupCurrent() && !run.removalStarted) {
+      this.abandonCleanupEffect(effect, fence)
+      return
+    }
+    let blocked = false
+    this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
+      const held = !run.removalStarted && (!run.previous || run.previous.state === "held")
+      const current = db
+        .query<{ receipt: string | null }, [string]>(
+          "SELECT receipt FROM runner_effects WHERE id=? AND state IN ('held','intended','uncertain')",
+        )
+        .get(effect.id)
+      if (!current) throw new Error("Native cleanup effect changed before uncertainty was recorded")
+      const receipt = this.cleanupObservationReceipt(current.receipt, reason, held, run, error)
+      const recorded = db
+        .query(
+          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=? AND state IN ('held','intended','uncertain')",
+        )
+        .run(held ? "held" : "uncertain", receipt, effect.id).changes
+      if (recorded !== 1) throw new Error("Native cleanup uncertainty lost its durable effect row")
+      blocked =
+        db
+          .query(
+            mode === "integration"
+              ? "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cleanup-blocked'),reason=?,version=version+1 WHERE id=? AND state IN ('cleaning','cleanup-blocked') AND (state<>'cleanup-blocked' OR reason IS NOT ?)"
+              : "UPDATE runner_plans SET reason=?,version=version+1 WHERE id=? AND state='cancelled' AND (reason IS NULL OR reason<>?)",
+          )
+          .run(reason, plan.id, reason).changes === 1
+      if (blocked)
+        this.runtime.store.record(
+          plan.id,
+          null,
+          mode === "integration" ? "CLEANUP_BLOCKED" : "CANCELLATION_CLEANUP_HELD",
+          { workspace, reason },
+        )
+    })
+    if (!blocked) return
+    if (mode === "integration")
+      this.runtime.outcome(
+        plan.id,
+        {
+          status: "cleanup-blocked",
+          reason,
+          artifact: plan.artifact,
+          allowedActions: ["integrated", "cancel"],
+        },
+        true,
+      )
+  }
+
+  /** The effect receipt after one more observed blocker; a repeat of the last one only moves the check time. */
+  private cleanupObservationReceipt(
+    currentReceipt: string | null,
+    reason: string,
+    held: boolean,
+    run: WorktreeCleanupRun,
+    error: unknown,
+  ) {
+    let previousError: string | undefined
+    try {
+      const previous = JSON.parse(currentReceipt ?? "{}") as unknown
+      if (isRecord(previous) && typeof previous.error === "string") previousError = previous.error
+    } catch {
+      // Keep malformed legacy receipt bytes in the append-only history below.
+    }
+    const checkedAt = this.runtime.now()
+    const live = error instanceof LiveActivityBlockedError
+    let priorReceipt: Record<string, unknown> | undefined
+    try {
+      const parsed = JSON.parse(currentReceipt ?? "null") as unknown
+      if (isRecord(parsed)) priorReceipt = parsed
+    } catch {
+      priorReceipt = undefined
+    }
+    const last = Array.isArray(priorReceipt?.history) ? priorReceipt.history.at(-1) : undefined
+    // The same blocker observed again is not new history; only the check time moves.
+    const unchanged = isRecord(last) && last.error === reason && Boolean(last.notSent) === held
+    const { retryFacts } = run
+    const base =
+      unchanged && priorReceipt
+        ? priorReceipt
+        : (JSON.parse(
+            appendRunnerEffectReceipt(currentReceipt, {
+              schema: "lazers-worktree-cleanup-observation/v1",
+              error: reason,
+              ...(held ? { notSent: true } : {}),
+              ...(retryFacts ? { retryFacts } : {}),
+              retryCheckedAt: checkedAt,
+            }),
+          ) as Record<string, unknown>)
+    return JSON.stringify({
+      ...base,
+      error: previousError ?? reason,
+      ...(held ? { notSent: true } : {}),
+      ...(retryFacts ? { retryFacts } : {}),
+      retryCheckedAt: checkedAt,
+      liveBlocker: live,
+    })
+  }
+
+  /** Every owned worktree is gone: close out the plan (cancelled or integrated). */
+  private settleCleanedPlan(
+    plan: PlanRow,
+    fence: number,
+    mode: "integration" | "cancellation",
+    owned: string[],
+  ) {
     if (mode === "cancellation") {
       this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
         db.query(

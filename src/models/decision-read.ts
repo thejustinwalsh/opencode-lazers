@@ -948,15 +948,25 @@ function makeContributors(input: {
     )
 }
 
-function buildSnapshotData(
-  input: ModelDecisionReadInput,
+type Cohort = {
+  route: ModelDecisionRoute
+  taskIDs: Set<string>
+  acceptedTaskIDs: Set<string>
+  terminalTaskIDs: Set<string>
+  sessions: Map<string, SessionData>
+  attemptIDs: Set<string>
+  failedAttemptCount: number
+  retryAttemptCount: number
+  missingAttribution: boolean
+  unknownRouteTaskIDs: Set<string>
+  unattributedSessionIDs: Set<string>
+}
+
+function classifyTasks(
+  baseTasks: ObservationLedgerDecisionTask[],
+  selectedTasks: ObservationLedgerDecisionTask[],
   capture: ObservationLedgerDecisionCapture,
-  priceState: ModelDecisionPriceState,
-  routes: CurrentPriceApplicability[],
-  signal?: AbortSignal,
-): DecisionSnapshot {
-  signal?.throwIfAborted()
-  const { baseTasks, selectedTasks } = filteredTasks(capture, input)
+) {
   const classifiedTaskCount = baseTasks.filter(
     (task) => task.classification.status === "available" && task.classification.kind !== null,
   ).length
@@ -966,76 +976,27 @@ function buildSnapshotData(
   const unavailableTaskCount = baseTasks.filter(
     (task) => task.classification.status === "unavailable",
   ).length
-  const excludedTaskCount = baseTasks.length - selectedTasks.length
   const allSourcesAvailable = capture.sources.every((source) => source.status === "available")
-  const classStatus =
+  const status =
     unavailableTaskCount || unclassifiedTaskCount || !allSourcesAvailable ? "partial" : "complete"
   const classification: ModelDecisionContext["classification"] = {
-    status: classStatus,
+    status,
     classifiedTaskCount,
     unclassifiedTaskCount,
-    excludedTaskCount,
+    excludedTaskCount: baseTasks.length - selectedTasks.length,
     totalTaskCount: baseTasks.length,
   }
-  const inputFingerprint = fingerprint({
-    projectDirectory: input.scope.projectDirectory,
-    filters: input.filters,
-  })
-  const attempts = selectedTasks.flatMap((task) =>
-    task.attempts.map((attempt) => attempt.accounting),
-  )
-  const valuationRequest = {
-    attempts,
-    progressFacts: capture.progressFacts,
-    progressTruncated: false,
-    truncatedContextSessionIDs: [],
-  }
-  const valuation = projectTaskValuation({ ...valuationRequest, currentIndex: priceState.index })
-  const bySession = buildSessionData(capture, valuation, selectedTasks)
-  const sessionsByTask = taskSessions(selectedTasks, bySession)
-  const selectedTaskByID = taskByID(capture)
-  const hasUnknownRoute = [...bySession.values()].some(
-    (session) => session.selectedTaskIDs.length > 0 && session.routeKey === null,
-  )
-  const snapshotID = `models-decision-v2:${randomUUID()}`
-  const unresolvedAcceptance = selectedTasks.some(
-    (task) =>
-      task.acceptance.accepted && task.acceptance.evidence.some((evidence) => !evidence.attemptID),
-  )
-  const availability =
-    classStatus !== "complete" ||
-    capture.notes.length > 0 ||
-    unresolvedAcceptance ||
-    !priceState.index.pins.length ||
-    hasUnknownRoute
-      ? "partial"
-      : "ready"
-  const context = contextFor({
-    projectDirectory: input.scope.projectDirectory,
-    filters: input.filters,
-    snapshotID,
-    producedAt: new Date().toISOString(),
-    classification,
-    availability,
-    freshness: priceState.freshness,
-    unavailableReason: null,
-    priceState,
-    sourceRevision: capture.sourceRevision,
-  })
+  return { classification, status }
+}
 
-  type Cohort = {
-    route: ModelDecisionRoute
-    taskIDs: Set<string>
-    acceptedTaskIDs: Set<string>
-    terminalTaskIDs: Set<string>
-    sessions: Map<string, SessionData>
-    attemptIDs: Set<string>
-    failedAttemptCount: number
-    retryAttemptCount: number
-    missingAttribution: boolean
-    unknownRouteTaskIDs: Set<string>
-    unattributedSessionIDs: Set<string>
-  }
+/** Groups the selected tasks' sessions into one cohort per exact route. */
+function buildCohorts(
+  selectedTasks: ObservationLedgerDecisionTask[],
+  bySession: Map<string, SessionData>,
+  sessionsByTask: Map<string, SessionData[]>,
+  selectedTaskByID: Map<string, ObservationLedgerDecisionTask>,
+  signal: AbortSignal | undefined,
+) {
   const cohorts = new Map<string, Cohort>()
   const cohortFor = (route: ModelDecisionRoute) => {
     const id = routeID(route)!
@@ -1106,208 +1067,197 @@ function buildSnapshotData(
       }
     }
   }
+  return cohorts
+}
 
-  const pinsByRoute = new Map(
-    priceState.index.pins.flatMap((pin) => {
-      const route = exactRoute(pin.route)
-      return route ? [[routeID(route)!, pin] as const] : []
-    }),
+function cohortEfficiency(cohort: Cohort): ModelDecisionRow["efficiency"] {
+  const acceptedTaskCount = cohort.acceptedTaskIDs.size
+  const sessions = [...cohort.sessions.values()]
+  const tokens = sumValues(sessions.map((session) => session.tokens))
+  const tokensComplete = sessions.every(
+    (session) => session.tokensComplete && session.tokens !== null,
   )
-  const rows: ModelDecisionRow[] = []
-  const contributors = new Map<string, ModelDecisionContributor[]>()
-  const medianAcceptedDurationMs = new Map<string, number>()
-  const estimates = new Map<string, ModelDecisionEstimate>()
-  const knownUsageMarkets = new Map<string, KnownUsageMarket>()
-  for (const [key, cohort] of cohorts) {
-    signal?.throwIfAborted()
-    const acceptedTaskCount = cohort.acceptedTaskIDs.size
-    const tokens = sumValues([...cohort.sessions.values()].map((session) => session.tokens))
-    const tokensComplete = [...cohort.sessions.values()].every(
-      (session) => session.tokensComplete && session.tokens !== null,
-    )
-    const shared = [...cohort.sessions.values()].some((session) => session.shared)
-    const marketSessionsComplete =
-      cohort.sessions.size > 0 &&
-      [...cohort.sessions.values()].every(
-        (session) => session.marketComplete && session.marketUSD !== null,
-      )
-    const marketSubtotal = marketSessionsComplete
-      ? sumValues([...cohort.sessions.values()].map((session) => session.marketUSD))
-      : null
-    const marketValueComplete = marketSessionsComplete && marketSubtotal !== null
-    const marketAttributionComplete = !cohort.missingAttribution && !shared
-    const marketComplete = marketValueComplete && marketAttributionComplete
-    const market = marketComplete ? marketSubtotal : null
-    const missing = new Set<"tokens" | "current-price" | "attribution">()
-    if (!tokensComplete) missing.add("tokens")
-    if (!marketValueComplete) missing.add("current-price")
-    if (cohort.missingAttribution || shared) missing.add("attribution")
-    const efficiency =
-      acceptedTaskCount === 0
-        ? {
-            status: "zero-accepted" as const,
-            tokensPerAcceptedTask: null,
-            currentMarketUSDPerAcceptedTask: null,
-            observationCount: 0,
-          }
-        : missing.size
-          ? {
-              status: "partial" as const,
-              tokensPerAcceptedTask: tokens === null ? null : tokens / acceptedTaskCount,
-              currentMarketUSDPerAcceptedTask: market === null ? null : market / acceptedTaskCount,
-              observationCount: acceptedTaskCount,
-              missing: [...missing],
-            }
-          : acceptedTaskCount === 1
-            ? {
-                status: "single-observation" as const,
-                tokensPerAcceptedTask: tokens! / acceptedTaskCount,
-                currentMarketUSDPerAcceptedTask: market! / acceptedTaskCount,
-                observationCount: 1 as const,
-              }
-            : {
-                status: "available" as const,
-                tokensPerAcceptedTask: tokens! / acceptedTaskCount,
-                currentMarketUSDPerAcceptedTask: market! / acceptedTaskCount,
-                observationCount: acceptedTaskCount,
-              }
-    const nativeValues = [...cohort.sessions.values()].map((session) => session.nativeUSD)
-    const nativeComplete =
-      cohort.sessions.size > 0 &&
-      [...cohort.sessions.values()].every(
-        (session) => session.nativeComplete && session.nativeUSD !== null,
-      )
-    const nativeReportedCost = {
-      status:
-        cohort.sessions.size > 0 &&
-        [...cohort.sessions.values()].every((session) => session.nativeUnmetered)
-          ? ("unmetered" as const)
-          : nativeComplete
-            ? ("available" as const)
-            : nativeValues.some((value) => value !== null)
-              ? ("partial" as const)
-              : ("unknown" as const),
-      totalUSD: nativeComplete ? sumValues(nativeValues) : null,
-      source: "native-reported" as const,
-      note: "Retained native/session-reported charges are diagnostic and are not market-equivalent prices.",
+  const shared = sessions.some((session) => session.shared)
+  const marketSessionsComplete =
+    sessions.length > 0 &&
+    sessions.every((session) => session.marketComplete && session.marketUSD !== null)
+  const marketSubtotal = marketSessionsComplete
+    ? sumValues(sessions.map((session) => session.marketUSD))
+    : null
+  const marketValueComplete = marketSessionsComplete && marketSubtotal !== null
+  const marketAttributionComplete = !cohort.missingAttribution && !shared
+  const marketComplete = marketValueComplete && marketAttributionComplete
+  const market = marketComplete ? marketSubtotal : null
+  const missing = new Set<"tokens" | "current-price" | "attribution">()
+  if (!tokensComplete) missing.add("tokens")
+  if (!marketValueComplete) missing.add("current-price")
+  if (cohort.missingAttribution || shared) missing.add("attribution")
+  if (acceptedTaskCount === 0)
+    return {
+      status: "zero-accepted" as const,
+      tokensPerAcceptedTask: null,
+      currentMarketUSDPerAcceptedTask: null,
+      observationCount: 0,
     }
-    const configuration = configurationFromRoute(
-      cohort.route,
-      pinsByRoute.get(key),
-      calculateModelDecisionReferenceEstimate({
-        route: cohort.route,
-        acceptedTaskCount,
-        relatedTaskCount: cohort.taskIDs.size,
-        unknownRouteTaskCount: cohort.unknownRouteTaskIDs.size,
-        relatedSessions: (() => {
-          const related = new Map<string, SessionData>()
-          for (const taskID of cohort.taskIDs)
-            for (const session of sessionsByTask.get(taskID) ?? [])
-              related.set(session.sessionID, session)
-          for (const session of cohort.sessions.values()) related.set(session.sessionID, session)
-          return [...related.values()].map((session): ReferenceEstimateSession => {
-            const attemptsByID = new Map<
-              string,
-              ObservationLedgerDecisionTask["attempts"][number]
-            >()
-            for (const taskID of cohort.taskIDs)
-              for (const attempt of session.attemptsByTask.get(taskID) ?? [])
-                attemptsByID.set(attempt.accounting.id, attempt)
-            return {
-              sessionID: session.sessionID,
-              route: session.route,
-              routeStatus: session.routeStatus,
-              shared: session.shared,
-              attributable: [...session.attemptsByTask.keys()].some((taskID) =>
-                cohort.taskIDs.has(taskID),
-              ),
-              categories: session.usageCategories,
-              attempts: [...attemptsByID.values()].map((attempt) => ({
-                id: attempt.accounting.id,
-                state: attempt.accounting.state,
-                retry: attempt.number > 1 || attempt.retryCount > 0,
-              })),
-            }
-          })
-        })(),
-        unattributedSessionCount: cohort.unattributedSessionIDs.size,
-        missingAttribution: cohort.missingAttribution,
-        settings: priceState.settings,
-        identityCatalogSource: priceState.identityCatalogSource,
-        identityNativeSource: priceState.identityNativeSource,
-      }),
-      priceState.settings.policy.revision,
-      priceState.freshness,
-    )
-    const referenceEstimate = configuration.referenceEstimate!
-    const row: ModelDecisionRow = {
-      configuration,
-      cohort: {
-        logicalTaskCount: cohort.taskIDs.size,
-        classifiedTaskCount: [...cohort.taskIDs].filter(
-          (taskID) => selectedTaskByID.get(taskID)?.classification.kind !== null,
-        ).length,
-        unclassifiedTaskCount: [...cohort.taskIDs].filter(
-          (taskID) => selectedTaskByID.get(taskID)?.classification.kind === null,
-        ).length,
-        acceptedTaskCount,
-        terminalTaskCount: cohort.terminalTaskIDs.size,
-        attemptCount: cohort.attemptIDs.size,
-        failedAttemptCount: cohort.failedAttemptCount,
-        retryAttemptCount: cohort.retryAttemptCount,
-      },
-      efficiency,
-      nativeReportedCost,
-      referenceEstimate,
+  if (missing.size)
+    return {
+      status: "partial" as const,
+      tokensPerAcceptedTask: tokens === null ? null : tokens / acceptedTaskCount,
+      currentMarketUSDPerAcceptedTask: market === null ? null : market / acceptedTaskCount,
+      observationCount: acceptedTaskCount,
+      missing: [...missing],
     }
-    rows.push(row)
-    const knownUsageSessions = knownUsageSessionsForTasks(cohort.taskIDs, sessionsByTask)
-    const knownUsageMarket = priceState.sources
-      ? (() => {
-          const perCall = taskValuationPerCallUsage(valuationRequest, cohort.route)
-          return calculateConfiguredKnownUsageMarket({
-            route: cohort.route,
-            identity: resolveMarketIdentity(cohort.route, priceState),
-            settings: priceState.settings,
-            sources: priceState.sources,
-            sessions: knownUsageSessions,
-            perCallUsage: perCall.calls,
-            perCallCoverageComplete: perCall.complete,
-          })
-        })()
-      : calculateKnownUsageMarket({
-          route: cohort.route,
-          identity: resolveMarketIdentity(cohort.route, priceState),
-          endpointPricing: priceState.endpointPricing,
-          sessions: knownUsageSessions,
-        })
-    knownUsageMarkets.set(key, knownUsageMarket)
-    const acceptedHistories = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
-      const task = selectedTaskByID.get(taskID)
-      if (!task) return []
-      return [acceptedHistoryForTask(task, sessionsByTask.get(taskID) ?? [], key)]
-    })
-    estimates.set(key, estimateForHistories(acceptedHistories, acceptedTaskCount))
-    const durations = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
-      const task = selectedTaskByID.get(taskID)
-      const duration = task ? acceptedDurationMs(task) : null
-      return duration === null ? [] : [duration]
-    })
-    if (durations.length) medianAcceptedDurationMs.set(key, median(durations))
-    contributors.set(
-      key,
-      makeContributors({
-        configurationID: key,
-        acceptedTaskIDs: cohort.acceptedTaskIDs,
-        tasks: selectedTasks,
-        sessionsByTask,
-        selectedTaskID: null,
-      }),
-    )
+  if (acceptedTaskCount === 1)
+    return {
+      status: "single-observation" as const,
+      tokensPerAcceptedTask: tokens! / acceptedTaskCount,
+      currentMarketUSDPerAcceptedTask: market! / acceptedTaskCount,
+      observationCount: 1 as const,
+    }
+  return {
+    status: "available" as const,
+    tokensPerAcceptedTask: tokens! / acceptedTaskCount,
+    currentMarketUSDPerAcceptedTask: market! / acceptedTaskCount,
+    observationCount: acceptedTaskCount,
   }
-  rows.sort((left, right) =>
-    left.configuration.configurationID.localeCompare(right.configuration.configurationID),
+}
+
+function cohortNativeReportedCost(cohort: Cohort): ModelDecisionRow["nativeReportedCost"] {
+  const sessions = [...cohort.sessions.values()]
+  const nativeValues = sessions.map((session) => session.nativeUSD)
+  const nativeComplete =
+    sessions.length > 0 &&
+    sessions.every((session) => session.nativeComplete && session.nativeUSD !== null)
+  return {
+    status:
+      sessions.length > 0 && sessions.every((session) => session.nativeUnmetered)
+        ? ("unmetered" as const)
+        : nativeComplete
+          ? ("available" as const)
+          : nativeValues.some((value) => value !== null)
+            ? ("partial" as const)
+            : ("unknown" as const),
+    totalUSD: nativeComplete ? sumValues(nativeValues) : null,
+    source: "native-reported" as const,
+    note: "Retained native/session-reported charges are diagnostic and are not market-equivalent prices.",
+  }
+}
+
+/** Every session the cohort's tasks touched, with the attempts that belong to those tasks. */
+function relatedEstimateSessions(
+  cohort: Cohort,
+  sessionsByTask: Map<string, SessionData[]>,
+): ReferenceEstimateSession[] {
+  const related = new Map<string, SessionData>()
+  for (const taskID of cohort.taskIDs)
+    for (const session of sessionsByTask.get(taskID) ?? []) related.set(session.sessionID, session)
+  for (const session of cohort.sessions.values()) related.set(session.sessionID, session)
+  return [...related.values()].map((session): ReferenceEstimateSession => {
+    const attemptsByID = new Map<string, ObservationLedgerDecisionTask["attempts"][number]>()
+    for (const taskID of cohort.taskIDs)
+      for (const attempt of session.attemptsByTask.get(taskID) ?? [])
+        attemptsByID.set(attempt.accounting.id, attempt)
+    return {
+      sessionID: session.sessionID,
+      route: session.route,
+      routeStatus: session.routeStatus,
+      shared: session.shared,
+      attributable: [...session.attemptsByTask.keys()].some((taskID) => cohort.taskIDs.has(taskID)),
+      categories: session.usageCategories,
+      attempts: [...attemptsByID.values()].map((attempt) => ({
+        id: attempt.accounting.id,
+        state: attempt.accounting.state,
+        retry: attempt.number > 1 || attempt.retryCount > 0,
+      })),
+    }
+  })
+}
+
+type CohortContext = {
+  priceState: ModelDecisionPriceState
+  pinsByRoute: Map<string, ModelDecisionPriceState["index"]["pins"][number]>
+  sessionsByTask: Map<string, SessionData[]>
+  selectedTaskByID: Map<string, ObservationLedgerDecisionTask>
+  selectedTasks: ObservationLedgerDecisionTask[]
+  valuationRequest: Parameters<typeof taskValuationPerCallUsage>[0]
+}
+
+function cohortRow(ctx: CohortContext, key: string, cohort: Cohort): ModelDecisionRow {
+  const { priceState, sessionsByTask, selectedTaskByID } = ctx
+  const acceptedTaskCount = cohort.acceptedTaskIDs.size
+  const efficiency = cohortEfficiency(cohort)
+  const nativeReportedCost = cohortNativeReportedCost(cohort)
+  const configuration = configurationFromRoute(
+    cohort.route,
+    ctx.pinsByRoute.get(key),
+    calculateModelDecisionReferenceEstimate({
+      route: cohort.route,
+      acceptedTaskCount,
+      relatedTaskCount: cohort.taskIDs.size,
+      unknownRouteTaskCount: cohort.unknownRouteTaskIDs.size,
+      relatedSessions: relatedEstimateSessions(cohort, sessionsByTask),
+      unattributedSessionCount: cohort.unattributedSessionIDs.size,
+      missingAttribution: cohort.missingAttribution,
+      settings: priceState.settings,
+      identityCatalogSource: priceState.identityCatalogSource,
+      identityNativeSource: priceState.identityNativeSource,
+    }),
+    priceState.settings.policy.revision,
+    priceState.freshness,
   )
+  return {
+    configuration,
+    cohort: {
+      logicalTaskCount: cohort.taskIDs.size,
+      classifiedTaskCount: [...cohort.taskIDs].filter(
+        (taskID) => selectedTaskByID.get(taskID)?.classification.kind !== null,
+      ).length,
+      unclassifiedTaskCount: [...cohort.taskIDs].filter(
+        (taskID) => selectedTaskByID.get(taskID)?.classification.kind === null,
+      ).length,
+      acceptedTaskCount,
+      terminalTaskCount: cohort.terminalTaskIDs.size,
+      attemptCount: cohort.attemptIDs.size,
+      failedAttemptCount: cohort.failedAttemptCount,
+      retryAttemptCount: cohort.retryAttemptCount,
+    },
+    efficiency,
+    nativeReportedCost,
+    referenceEstimate: configuration.referenceEstimate!,
+  }
+}
+
+function cohortKnownUsageMarket(ctx: CohortContext, cohort: Cohort): KnownUsageMarket {
+  const { priceState } = ctx
+  const knownUsageSessions = knownUsageSessionsForTasks(cohort.taskIDs, ctx.sessionsByTask)
+  if (!priceState.sources)
+    return calculateKnownUsageMarket({
+      route: cohort.route,
+      identity: resolveMarketIdentity(cohort.route, priceState),
+      endpointPricing: priceState.endpointPricing,
+      sessions: knownUsageSessions,
+    })
+  const perCall = taskValuationPerCallUsage(ctx.valuationRequest, cohort.route)
+  return calculateConfiguredKnownUsageMarket({
+    route: cohort.route,
+    identity: resolveMarketIdentity(cohort.route, priceState),
+    settings: priceState.settings,
+    sources: priceState.sources,
+    sessions: knownUsageSessions,
+    perCallUsage: perCall.calls,
+    perCallCoverageComplete: perCall.complete,
+  })
+}
+
+function acceptedTaskDurations(ctx: CohortContext, cohort: Cohort) {
+  return [...cohort.acceptedTaskIDs].flatMap((taskID) => {
+    const task = ctx.selectedTaskByID.get(taskID)
+    const duration = task ? acceptedDurationMs(task) : null
+    return duration === null ? [] : [duration]
+  })
+}
+
+function decisionGraph(rows: ModelDecisionRow[]): DecisionSnapshot["graph"] {
   const points = rows.flatMap((row) => {
     const efficiency = row.efficiency
     if (
@@ -1343,6 +1293,123 @@ function buildSnapshotData(
       ),
   )
   return {
+    scope: "global-filtered-snapshot",
+    points,
+    frontierConfigurationIDs: frontier
+      .map((point) => point.configurationID)
+      .sort((left, right) => left.localeCompare(right)),
+    referenceEstimates: rows.map((row) => ({
+      configurationID: row.configuration.configurationID,
+      label: row.configuration.label,
+      tokensPerAcceptedTask: row.efficiency.tokensPerAcceptedTask,
+      estimate: row.referenceEstimate!,
+    })),
+  }
+}
+
+function buildSnapshotData(
+  input: ModelDecisionReadInput,
+  capture: ObservationLedgerDecisionCapture,
+  priceState: ModelDecisionPriceState,
+  routes: CurrentPriceApplicability[],
+  signal?: AbortSignal,
+): DecisionSnapshot {
+  signal?.throwIfAborted()
+  const { baseTasks, selectedTasks } = filteredTasks(capture, input)
+  const { classification, status: classStatus } = classifyTasks(baseTasks, selectedTasks, capture)
+  const inputFingerprint = fingerprint({
+    projectDirectory: input.scope.projectDirectory,
+    filters: input.filters,
+  })
+  const attempts = selectedTasks.flatMap((task) =>
+    task.attempts.map((attempt) => attempt.accounting),
+  )
+  const valuationRequest = {
+    attempts,
+    progressFacts: capture.progressFacts,
+    progressTruncated: false,
+    truncatedContextSessionIDs: [],
+  }
+  const valuation = projectTaskValuation({ ...valuationRequest, currentIndex: priceState.index })
+  const bySession = buildSessionData(capture, valuation, selectedTasks)
+  const sessionsByTask = taskSessions(selectedTasks, bySession)
+  const selectedTaskByID = taskByID(capture)
+  const hasUnknownRoute = [...bySession.values()].some(
+    (session) => session.selectedTaskIDs.length > 0 && session.routeKey === null,
+  )
+  const snapshotID = `models-decision-v2:${randomUUID()}`
+  const unresolvedAcceptance = selectedTasks.some(
+    (task) =>
+      task.acceptance.accepted && task.acceptance.evidence.some((evidence) => !evidence.attemptID),
+  )
+  const availability =
+    classStatus !== "complete" ||
+    capture.notes.length > 0 ||
+    unresolvedAcceptance ||
+    !priceState.index.pins.length ||
+    hasUnknownRoute
+      ? "partial"
+      : "ready"
+  const context = contextFor({
+    projectDirectory: input.scope.projectDirectory,
+    filters: input.filters,
+    snapshotID,
+    producedAt: new Date().toISOString(),
+    classification,
+    availability,
+    freshness: priceState.freshness,
+    unavailableReason: null,
+    priceState,
+    sourceRevision: capture.sourceRevision,
+  })
+
+  const cohorts = buildCohorts(selectedTasks, bySession, sessionsByTask, selectedTaskByID, signal)
+  const pinsByRoute = new Map(
+    priceState.index.pins.flatMap((pin) => {
+      const route = exactRoute(pin.route)
+      return route ? [[routeID(route)!, pin] as const] : []
+    }),
+  )
+  const ctx: CohortContext = {
+    priceState,
+    pinsByRoute,
+    sessionsByTask,
+    selectedTaskByID,
+    selectedTasks,
+    valuationRequest,
+  }
+  const rows: ModelDecisionRow[] = []
+  const contributors = new Map<string, ModelDecisionContributor[]>()
+  const medianAcceptedDurationMs = new Map<string, number>()
+  const estimates = new Map<string, ModelDecisionEstimate>()
+  const knownUsageMarkets = new Map<string, KnownUsageMarket>()
+  for (const [key, cohort] of cohorts) {
+    signal?.throwIfAborted()
+    rows.push(cohortRow(ctx, key, cohort))
+    knownUsageMarkets.set(key, cohortKnownUsageMarket(ctx, cohort))
+    const acceptedHistories = [...cohort.acceptedTaskIDs].flatMap((taskID) => {
+      const task = selectedTaskByID.get(taskID)
+      if (!task) return []
+      return [acceptedHistoryForTask(task, sessionsByTask.get(taskID) ?? [], key)]
+    })
+    estimates.set(key, estimateForHistories(acceptedHistories, cohort.acceptedTaskIDs.size))
+    const durations = acceptedTaskDurations(ctx, cohort)
+    if (durations.length) medianAcceptedDurationMs.set(key, median(durations))
+    contributors.set(
+      key,
+      makeContributors({
+        configurationID: key,
+        acceptedTaskIDs: cohort.acceptedTaskIDs,
+        tasks: selectedTasks,
+        sessionsByTask,
+        selectedTaskID: null,
+      }),
+    )
+  }
+  rows.sort((left, right) =>
+    left.configuration.configurationID.localeCompare(right.configuration.configurationID),
+  )
+  return {
     context,
     sourceRevision: capture.sourceRevision,
     routes,
@@ -1350,19 +1417,7 @@ function buildSnapshotData(
     inputFingerprint,
     rows,
     configurations: rows.map((row) => row.configuration),
-    graph: {
-      scope: "global-filtered-snapshot",
-      points,
-      frontierConfigurationIDs: frontier
-        .map((point) => point.configurationID)
-        .sort((left, right) => left.localeCompare(right)),
-      referenceEstimates: rows.map((row) => ({
-        configurationID: row.configuration.configurationID,
-        label: row.configuration.label,
-        tokensPerAcceptedTask: row.efficiency.tokensPerAcceptedTask,
-        estimate: row.referenceEstimate!,
-      })),
-    },
+    graph: decisionGraph(rows),
     contributors,
     estimates,
     medianAcceptedDurationMs,
