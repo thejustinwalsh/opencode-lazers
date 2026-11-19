@@ -110,6 +110,8 @@ export function taskSubmissionSummary(
     doneWhen: proposal.acceptance.map(({ id, assertion }) => ({ id, assertion })),
     boundaries: {
       writeScope: proposal.writeScope,
+      ...(proposal.createScope?.length ? { createScope: proposal.createScope } : {}),
+      ...(proposal.protectedScope?.length ? { protectedScope: proposal.protectedScope } : {}),
       exclusions: proposal.exclusions,
       constraints: proposal.constraints,
       assumptions: proposal.assumptions,

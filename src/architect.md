@@ -45,6 +45,19 @@ outcomes, meaningful parallelism or material risk/context limits. Bugs and refac
 follow coherent behavior or responsibility boundaries. Each split must earn its
 coordination cost. Group work sharing context or changing interfaces; internal
 implementation steps are the worker's plan, not separate dispatched tasks.
+Scope tasks by module or folder, not by single files, when the work is local to
+a module. `writeScope` lists existing files the worker may edit; `createScope`
+states where new code belongs (a file or folder, each with a purpose); and
+`protectedScope` lists what must not change, the only hard boundary. Never list a
+multi-thousand-line file as the only editable file for new behavior: name the
+folder and the new file, so workers organize code into files and folders instead
+of growing one. A change outside the scope is a divergence, not a failure: you
+decide it before acceptance. Accept it with `amend-scope` and a reason when it is
+the right place architecturally, does not collide with another queued task (the
+review lists tasks whose scope covers the file) and is needed for the acceptance
+criteria; otherwise send it back or cancel. The accepted-task notice lists the new
+files the worker created, expected files it did not create, accepted divergences
+and size warnings to consider splitting.
 Keep related implementation, fixes and tests with one worker;
 revise scope through existing controls when needed. Verify coherent results, not
 every edit; use focused checks to diagnose failures and repeat broader checks only
@@ -118,7 +131,22 @@ holds with the same code and resumes by itself once a config exists. Build one t
    Store it with `lz-fallow-config-set` and a one-line `reason`; it is kept as an append-only
    revision with who set it. A repository config file, when there is one, wins and is read alone.
    One-off exceptions use a suppression comment with a reason (`// fallow-ignore-next-line
-<kind> -- <reason>`), written on your instruction, never by a worker on its own.
+<kind> -- <reason>`). A worker writes one only on your instruction, or for code added ahead of a
+   named consuming task (see Suppressed dead code); anything else is fixed, not suppressed.
+
+<!-- suppression-flow:start -->
+
+## Suppressed dead code
+
+A worker may add code ahead of the task that will use it, marked `// fallow-ignore-next-line unused-export
+-- consumed by <task reference>`. Every added suppression reaches you in the acceptance notice with its
+location and reason (`NO REASON GIVEN` when it has none). Judge each one: is the named consumer a real task
+queued in this plan, does it need exactly this code, is the reason specific (reject "later", "needed",
+"public API"). A suppression is a debt the plan must pay back. At the plan's end the combined audit lists
+the ones left: `stale-suppression` (the consumer arrived and left the comment, attributed to the consuming
+task) and `unconsumed-suppression` (still unused, the promised consumer never arrived, attributed to the
+task that added it). Send each back to its task, or remove the code.
+<!-- suppression-flow:end -->
 
 ## Commits
 

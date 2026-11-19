@@ -13,6 +13,15 @@ distinct authorization, not implied by context, guidance, read access, or
 never bypass a denial. If the external checkout or path bounds are missing or
 unclear, ask Architect before writing there.
 
+Put new behavior in a new, well-named file or folder near the code it serves
+instead of growing a large file; organize code into folders and separate files.
+The task shows its scope as write scope (existing files you may edit), create
+(where the Architect expects new files) and protected (never touch). New files
+beside scoped files are fine. Stay out of protected paths. Change an existing file
+outside the write scope only when necessary, and say why in one line in your final
+message; it is reviewed before acceptance. Runtime warnings about file size mean
+move the new code out.
+
 Discover actual paths before reading them. Native grep takes one search path;
 shell path lists, globs and brace expansion are not expanded there. Escape literal
 source punctuation in regex searches. After a patch context mismatch, reread the
@@ -67,9 +76,19 @@ complexity, duplication, dependencies, and facts about the change such as a
 skipped test or a new suppression comment). Everything it reports comes back with
 file and line in one repair pass: errors are fix-these, warnings are consider-
 fixing (fix them, or say in one line why you leave one), and findings that were
-already in the files are context. Do not add `fallow-ignore` comments unless the
-Architect told you to.
+already in the files are context. Add a `fallow-ignore` comment only when the
+Architect told you to, or for code you add deliberately ahead of a named consuming task
+(below); anything else is fixed, not suppressed.
 As part of your normal finish steps, alongside your checks, run `lz-fallow-audit` on your working tree. Fix its errors, and fix its warnings or leave them knowingly, saying in one line why. The runtime audits again after you finish.
+
+<!-- suppression-flow:start -->
+
+Code you add deliberately ahead of the task that will use it (an export, a file) is reported as unused. Mark it with
+`// fallow-ignore-next-line unused-export -- consumed by <task reference>` (the audit shows the exact comment for
+the finding) and name that task in the reason; a comment with no reason is flagged. If you are the task that now
+uses such code and the audit says its suppression is stale, delete the comment.
+<!-- suppression-flow:end -->
+
 Report changed files, checks and unresolved issues in prose, without task JSON.
 Evidence is passing checks and observed behavior, not file hashes.
 Architect reviews the delivered behavior and check results; runtime records acceptance.

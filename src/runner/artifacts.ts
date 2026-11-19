@@ -21,6 +21,7 @@ import {
   DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
 } from "./verification-timeout.ts"
 import type { VerificationDeadlineReceipt } from "./verification-timeout.ts"
+import { protectedPaths, type ScopeGuard } from "./scope.ts"
 import type { TaskProposal } from "../task.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
 
@@ -363,16 +364,6 @@ export async function workingTreeIdentity(directory: string, base: string): Prom
   return hash.digest("hex")
 }
 
-export function scopeViolations(paths: string[], scope: string[]): string[] {
-  const patterns = scope.map((pattern) => new Bun.Glob(pattern))
-  return paths.filter(
-    (path) =>
-      isAbsolute(path) ||
-      path.split("/").includes("..") ||
-      !patterns.some((pattern) => pattern.match(path)),
-  )
-}
-
 type WorkspaceStatus = { head: string | undefined; changed: boolean; untracked: string[] }
 
 /** One `git status` replaces `diff --quiet`, `diff --cached` and `ls-files --others`. */
@@ -417,7 +408,7 @@ export async function artifactUnchanged(
 
 export class ArtifactScopeViolation extends Error {
   constructor(readonly paths: string[]) {
-    super(`Out-of-scope changes: ${paths.slice(0, 20).join(", ")}`)
+    super(`Out-of-scope changes to protected paths: ${paths.slice(0, 20).join(", ")}`)
   }
 }
 
@@ -477,7 +468,7 @@ export async function reviewedScopeBase(
 export async function commitArtifact(
   directory: string,
   base: string,
-  scope: string[],
+  guard: ScopeGuard,
   snapshot = true,
   reviewedHead?: string,
 ): Promise<{ commit: string; paths: string[]; identity: string; scopeBase: string }> {
@@ -490,7 +481,8 @@ export async function commitArtifact(
     snapshot ? reviewedHead : undefined,
   )
   const paths = await changedPaths(directory, scopeBase)
-  const violations = scopeViolations(paths, scope)
+  // Only the hard boundary stops the candidate here; a divergence is reviewed after the checks.
+  const violations = protectedPaths(paths, guard)
   if (violations.length) throw new ArtifactScopeViolation(violations)
   if ((await changedPaths(directory)).length === 0)
     return { commit: head, paths, identity: head, scopeBase }

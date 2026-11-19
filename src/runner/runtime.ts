@@ -67,13 +67,23 @@ import {
   reviewedScopeBase,
   runDeclaredCheck,
   runCheck,
-  scopeViolations,
   scopePatternsConflict,
   verificationEnvironmentIdentity,
   workingTreeIdentity,
   writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
+import {
+  buildScopeReport,
+  classifyChanges,
+  divergenceReason,
+  protectedPaths,
+  scopeReportEmpty,
+  scopeRepairText,
+  type ScopeReport,
+  type ScopeOwner,
+} from "./scope.ts"
+import { collectScopeChanges, sizeWarnings } from "./scope-git.ts"
 import {
   FALLOW_CHECK_COMMAND,
   FALLOW_CHECK_ID,
@@ -467,6 +477,19 @@ type PlanFallowContext = {
   verificationEpoch: number
 }
 
+/** The scope review in the `task-accepted` outcome, bounded so a large change stays readable. */
+function boundedScopeReport(report: ScopeReport): ScopeReport {
+  const limit = 30
+  return {
+    ...report,
+    created: report.created.slice(0, limit),
+    missingExpected: report.missingExpected.slice(0, limit),
+    divergences: report.divergences.slice(0, limit),
+    accepted: report.accepted.slice(0, limit),
+    warnings: report.warnings.slice(0, limit),
+  }
+}
+
 /** The `task-accepted` outcome's Fallow field: only when something remains to report. */
 function fallowAcceptance(
   review: FallowReviewResult | undefined,
@@ -696,6 +719,7 @@ export class TaskRuntime {
   private readonly architectRouting: ArchitectRoutingOptions
   private readonly autoResumeInterrupted: boolean
   private readonly fallowReviewEnabled: boolean
+  private readonly scopeReports = new Map<string, ScopeReport>()
   private reconcileTiming: Map<string, number> | undefined
   private readonly slowRecorded = new Set<string>()
   private readonly fallowReviewRun: FallowReview
@@ -1455,14 +1479,14 @@ export class TaskRuntime {
   }
 
   private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
-    const scope = this.store.effectiveWriteScope(taskID)
+    const scope = this.store.effectiveReservationScope(taskID)
     return this.store
       .activeProjectAttempts()
       .find(
         (attempt) =>
           ["preparing", "running", "verifying"].includes(attempt.state) &&
           (attempt.workspace === this.directory ||
-            scopePatternsConflict(scope, this.store.effectiveWriteScope(attempt.task_id))),
+            scopePatternsConflict(scope, this.store.effectiveReservationScope(attempt.task_id))),
       )
   }
 
@@ -1536,7 +1560,7 @@ export class TaskRuntime {
     )
       .split("\0")
       .filter(Boolean)
-    return scopeViolations(paths, this.store.effectiveWriteScope(attempt.task_id))
+    return protectedPaths(paths, this.store.effectiveScope(attempt.task_id))
   }
 
   private adoptionWorkerIdle(attempt: AttemptRow, worker: HostSession): boolean {
@@ -1619,12 +1643,12 @@ export class TaskRuntime {
 
     if (this.conflictingActiveAttempt(command.taskID))
       throw new Error("A conflicting worker prevents descendant adoption")
-    const scopes = this.store.effectiveWriteScope(command.taskID)
+    const scopes = this.store.effectiveReservationScope(command.taskID)
     if (
       this.store
         .activeAdoptions()
         .some((adoption) =>
-          scopePatternsConflict(scopes, this.store.effectiveWriteScope(adoption.task_id)),
+          scopePatternsConflict(scopes, this.store.effectiveReservationScope(adoption.task_id)),
         )
     )
       throw new Error("An active descendant reservation conflicts with this task scope")
@@ -1973,10 +1997,10 @@ export class TaskRuntime {
     )
       .split("\0")
       .filter(Boolean)
-    const violations = scopeViolations(changed, this.store.effectiveWriteScope(task.id))
+    const violations = protectedPaths(changed, this.store.effectiveScope(task.id))
     if (violations.length)
       throw new Error(
-        `Retained candidate contains out-of-scope changes: ${violations.slice(0, 20).join(", ")}`,
+        `Retained candidate changes protected paths: ${violations.slice(0, 20).join(", ")}`,
       )
 
     const environmentIdentity = retainedVerificationEnvironmentIdentity()
@@ -3816,7 +3840,7 @@ export class TaskRuntime {
         ? await this.prepareRetainedVerification(old, command, caller, ownerSession)
         : undefined
     const retainedRepair =
-      command.action === "retained-repair"
+      command.action === "retained-repair" && !this.divergenceHold(old, command.taskID)
         ? await this.prepareRetainedRepair(old, command, caller, ownerSession)
         : undefined
     const reviewInput = await this.prepareReviewInputReconciliation(
@@ -4196,7 +4220,10 @@ export class TaskRuntime {
 
   private dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
     const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
-    if (command.action === "retained-repair") return this.commandRetainedRepair(db, ctx, plan)
+    if (command.action === "retained-repair")
+      return this.divergenceHold(plan, command.taskID)
+        ? this.commandSendBackDivergence(db, ctx, plan)
+        : this.commandRetainedRepair(db, ctx, plan)
     if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
     if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
     if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
@@ -4406,7 +4433,7 @@ export class TaskRuntime {
         if (
           other.task_id !== node.task_id &&
           active.includes(other.state) &&
-          scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+          scopePatternsConflict(writeScope, this.store.effectiveReservationScope(other.task_id))
         )
           throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
     }
@@ -4469,12 +4496,120 @@ export class TaskRuntime {
       instructionUpdates.push(id)
     }
     db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+    const continued = this.continueAfterDivergenceDecision(db, plan, node.task_id, caller)
     return {
       status: "scope-amended",
-      version: plan.version + 1,
+      version: plan.version + 1 + (continued ? 1 : 0),
       writeScope,
       instructionUpdates,
+      ...(continued ? { continued: true } : {}),
     }
+  }
+
+  /** The undecided divergence this plan is held on for the task, if any. */
+  private divergenceHold(plan: PlanRow, taskID: string | undefined) {
+    if (!taskID || plan.state !== "blocked") return undefined
+    const wait = this.store.latestTransition<{ kind?: string; reason: string; attemptID: string }>(
+      plan.id,
+      taskID,
+      "SCOPE_DECISION_REQUIRED",
+    )
+    return wait?.kind === "divergence" && wait.reason === plan.reason ? wait : undefined
+  }
+
+  /**
+   * The Architect sends a held, verified divergence back (`retained-repair`): the attempt moves to
+   * the task's one repair, whose prompt carries the out-of-scope paths and the Architect's reason.
+   * With no repair left it is refused; amend-scope or cancel remain the exits.
+   */
+  private commandSendBackDivergence(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, ownerSession } = ctx
+    const wait = this.divergenceHold(plan, command.taskID)
+    if (!wait || !ownerSession || !this.validArchitect(ownerSession) || caller !== plan.owner)
+      throw new Error("Sending back a divergence requires the current Architect owner")
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((item) => item.task_id === command.taskID)
+      .at(-1)
+    if (
+      !attempt ||
+      attempt.id !== wait.attemptID ||
+      attempt.id !== command.attemptID ||
+      attempt.state !== "verifying" ||
+      attempt.artifact !== command.artifact ||
+      !command.reason?.trim()
+    )
+      throw new Error("Send-back must name the held attempt, its exact artifact and a reason")
+    if (!this.repairAvailable(attempt))
+      throw new Error(
+        "The task's one repair is spent; accept the divergence with amend-scope or cancel",
+      )
+    const reason = `Scope divergence sent back by the Architect: ${command.reason}`
+    db.query(
+      "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
+    ).run(attempt.id)
+    // REPAIR must stay the task's newest transition: it marks the next attempt as the repair.
+    this.store.record(plan.id, attempt.task_id, "SCOPE_SENT_BACK", {
+      attemptID: attempt.id,
+      reason: command.reason,
+      caller,
+    })
+    this.store.move(plan.id, attempt.task_id, "REPAIR", reason)
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    return { status: "scope-sent-back", attemptID: attempt.id, version: plan.version + 1 }
+  }
+
+  /**
+   * An amendment that covers every path of an undecided divergence is the decision: the held,
+   * already-verified candidate continues to acceptance without a separate reconcile. Anything else
+   * outstanding (protected hold, uncovered paths, pending effects) still waits for reconcile.
+   */
+  private continueAfterDivergenceDecision(
+    db: Database,
+    plan: PlanRow,
+    taskID: string,
+    caller: string,
+  ): boolean {
+    const current = this.store.plan(plan.id)!
+    const wait = this.store.latestTransition<{
+      kind?: string
+      reason: string
+      divergences?: { path: string; status: "added" | "modified" | "deleted" }[]
+    }>(plan.id, taskID, "SCOPE_DECISION_REQUIRED")
+    if (
+      current.state !== "blocked" ||
+      wait?.kind !== "divergence" ||
+      wait.reason !== current.reason ||
+      !wait.divergences?.length
+    )
+      return false
+    const model = this.store.effectiveScope(taskID)
+    const open = classifyChanges(wait.divergences, model).some(
+      (change) => change.class === "divergence" || change.class === "protected",
+    )
+    if (open) return false
+    if (
+      this.store
+        .effects(plan.id)
+        .some(
+          (e) =>
+            ["intended", "uncertain"].includes(e.state) &&
+            !isRerunnableEffect(e.kind) &&
+            e.kind !== "scope-instruction",
+        )
+    )
+      return false
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+      caller,
+      verificationEpoch: this.store.plan(plan.id)!.version,
+      cause: "scope-divergence-decision",
+    })
+    return true
   }
 
   private commandAdoptDescendant(ctx: CommandContext, plan: PlanRow) {
@@ -4488,7 +4623,7 @@ export class TaskRuntime {
       id: adoptionID,
       planID: plan.id,
       taskID: adoptionSeed.taskID,
-      writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
+      writeScope: this.store.effectiveReservationScope(adoptionSeed.taskID),
       requestID: command.requestID,
       owner: plan.owner,
       expectedVersion: plan.version,
@@ -7833,7 +7968,7 @@ export class TaskRuntime {
       input.workspaceMode,
       ready.map((node) => ({
         taskID: node.task_id,
-        scopes: this.store.effectiveWriteScope(node.task_id),
+        scopes: this.store.effectiveReservationScope(node.task_id),
       })),
       occupied as SchedulingReservation[],
     )
@@ -7884,7 +8019,10 @@ export class TaskRuntime {
             input.workspaceMode === "shared" ||
             entry.shared ||
             ready.some((node) =>
-              scopePatternsConflict(entry.scopes, this.store.effectiveWriteScope(node.task_id)),
+              scopePatternsConflict(
+                entry.scopes,
+                this.store.effectiveReservationScope(node.task_id),
+              ),
             ),
         )
         .map((entry) => entry.taskID)
@@ -9027,8 +9165,8 @@ export class TaskRuntime {
           .activeAdoptions()
           .some((adoption) =>
             scopePatternsConflict(
-              this.store.effectiveWriteScope(task.id),
-              this.store.effectiveWriteScope(adoption.task_id),
+              this.store.effectiveReservationScope(task.id),
+              this.store.effectiveReservationScope(adoption.task_id),
             ),
           )
       )
@@ -9086,14 +9224,14 @@ export class TaskRuntime {
   }
   /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
   private preparationAllowed(attempt: AttemptRow) {
-    const scope = this.store.effectiveWriteScope(attempt.task_id)
+    const scope = this.store.effectiveReservationScope(attempt.task_id)
     if (
       this.store
         .activeAdoptions()
         .some(
           (adoption) =>
             attempt.workspace === this.directory ||
-            scopePatternsConflict(scope, this.store.effectiveWriteScope(adoption.task_id)),
+            scopePatternsConflict(scope, this.store.effectiveReservationScope(adoption.task_id)),
         )
     )
       return false
@@ -9121,7 +9259,7 @@ export class TaskRuntime {
       if (
         attempt.workspace === this.directory ||
         other.workspace === this.directory ||
-        scopePatternsConflict(scope, this.store.effectiveWriteScope(other.task_id))
+        scopePatternsConflict(scope, this.store.effectiveReservationScope(other.task_id))
       )
         return false
     }
@@ -9214,8 +9352,8 @@ export class TaskRuntime {
         if ((treeHead !== currentAttempt.base_commit || taskChanges.length > 0) && !admittedPrompt)
           return false
         if (
-          scopeViolations(taskChanges, this.store.effectiveWriteScope(currentAttempt.task_id))
-            .length > 0 ||
+          protectedPaths(taskChanges, this.store.effectiveScope(currentAttempt.task_id)).length >
+            0 ||
           (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"]))
         )
           return false
@@ -9255,7 +9393,7 @@ export class TaskRuntime {
       if ((head !== baseline || changed.length > 0) && !retainedPrompt) return false
       await gitAsync(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
       if (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
-      if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
+      if (protectedPaths(changed, this.store.effectiveScope(currentAttempt.task_id)).length)
         return false
       return (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
     } catch {
@@ -10392,7 +10530,7 @@ export class TaskRuntime {
       return "ready"
     const scope = this.store.effectiveWriteScope(attempt.task_id)
     const paths = await changedPaths(attempt.workspace, attempt.base_commit)
-    if (scopeViolations(paths, scope).length) return "ready"
+    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return "ready"
     const formatterExtensions = new Set([
       ".css",
       ".htm",
@@ -10727,7 +10865,7 @@ export class TaskRuntime {
       const artifact = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
-        this.store.effectiveWriteScope(attempt.task_id),
+        this.store.effectiveScope(attempt.task_id),
         attempt.workspace !== this.directory || retainFixes,
         attempt.workspace !== this.directory
           ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
@@ -10757,6 +10895,7 @@ export class TaskRuntime {
             attemptID: attempt.id,
             workspace: attempt.workspace,
             baseCommit: attempt.base_commit,
+            kind: "protected",
             paths: error.paths,
             reason: error.message,
           })
@@ -11012,7 +11151,7 @@ export class TaskRuntime {
       const updated = await commitArtifact(
         attempt.workspace,
         attempt.base_commit,
-        this.store.effectiveWriteScope(attempt.task_id),
+        this.store.effectiveScope(attempt.task_id),
         true,
         attempt.workspace !== this.directory
           ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
@@ -11038,6 +11177,7 @@ export class TaskRuntime {
     repairID: string | undefined,
     fence: number,
     verificationCurrent: () => boolean,
+    scope: ScopeReport,
   ) {
     this.store.fenced(this.owner, fence, (db) => {
       if (!verificationCurrent()) return
@@ -11058,6 +11198,7 @@ export class TaskRuntime {
           artifact: artifact.commit,
           evidence: receipts.map((r) => r.id),
           ...fallowAcceptance(review, this.fallowDispositions(attempt, review)),
+          ...(scopeReportEmpty(scope) ? {} : { scope: boundedScopeReport(scope) }),
         },
         true,
       )
@@ -11112,6 +11253,7 @@ export class TaskRuntime {
       verificationCurrent,
     )
     if (!artifact) return
+    const scope = await this.reviewScope(plan, attempt, artifact)
     this.recordAttemptArtifact(plan, attempt, artifact.commit, fence)
     await this.stampIdentity(true)
     try {
@@ -11138,7 +11280,9 @@ export class TaskRuntime {
     }
     const review = await this.fallowReviewResult(plan, attempt, artifact, repairID, fence)
     if (review === "pending") return
-    if (this.decideVerification(plan, attempt, failures, review)) return
+    if (this.decideVerification(plan, attempt, failures, review, scope)) return
+    // No repair is left to carry the divergence, so the Architect decides it before acceptance.
+    if (scope.divergences.length) return this.holdScopeDivergence(plan, attempt, scope, fence)
     artifact = await this.captureAutomaticFixes(plan, attempt, artifact, fence, verificationCurrent)
     if (!artifact) return
     const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
@@ -11155,6 +11299,7 @@ export class TaskRuntime {
       repairID,
       fence,
       verificationCurrent,
+      scope,
     )
   }
   /**
@@ -11167,6 +11312,7 @@ export class TaskRuntime {
     attempt: AttemptRow,
     failures: CheckReceipt[],
     review: FallowReviewResult | undefined,
+    scope: ScopeReport,
   ): boolean {
     if (review?.status === "unavailable")
       this.store.recordOnce(plan.id, attempt.task_id, "FALLOW_UNAVAILABLE", {
@@ -11175,11 +11321,124 @@ export class TaskRuntime {
       })
     const reviewed = review?.package
     const reasons = failures.map(checkFailureReason)
-    if (reviewed && needsRepair(reviewed) && (failures.length > 0 || this.repairAvailable(attempt)))
-      reasons.push(fallowReasonText(reviewed))
+    const repairs = failures.length > 0 || this.repairAvailable(attempt)
+    if (reviewed && needsRepair(reviewed) && repairs) reasons.push(fallowReasonText(reviewed))
+    // A divergence never spends the repair by itself: it rides only when checks or the audit already send the work back.
+    if (scope.divergences.length && reasons.length)
+      reasons.push(
+        `Scope divergence: ${scope.divergences.length} change(s) outside the task's scope`,
+      )
     if (!reasons.length) return false
     this.failAttempt(plan, attempt, reasons.join("; "))
     return true
+  }
+
+  /**
+   * Classifies every changed path against the task's scope, records the report for the repair and
+   * the acceptance notice, and measures the size signal. Cached per candidate and scope.
+   */
+  private async reviewScope(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    artifact: { commit: string; scopeBase: string },
+  ): Promise<ScopeReport> {
+    const model = this.store.effectiveScope(attempt.task_id)
+    const key = `${attempt.id}:${artifact.commit}:${fingerprint(model)}`
+    const cached = this.scopeReports.get(key)
+    if (cached) return cached
+    const base = await this.taskScopeBase(attempt, artifact)
+    const changes = await collectScopeChanges(attempt.workspace, base, artifact.commit)
+    const report = buildScopeReport({
+      attemptID: attempt.id,
+      model,
+      classified: classifyChanges(changes, model),
+      owners: this.scopeOwners(plan, attempt.task_id),
+      amendmentReasons: this.store
+        .activity(plan.id, attempt.task_id)
+        .filter((event) => event.event === "SCOPE_AMENDED")
+        .map((event) => String(JSON.parse(event.payload).reason ?? "")),
+      warnings: await sizeWarnings(attempt.workspace, base, artifact.commit, changes),
+    })
+    if (this.scopeReports.size >= 64) this.scopeReports.clear()
+    this.scopeReports.set(key, report)
+    if (!scopeReportEmpty(report))
+      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_REPORTED", report)
+    return report
+  }
+
+  /**
+   * Where the task's own change is measured from. A repair starts from the previous attempt's
+   * artifact, so its candidate base already holds the first attempt's divergence; the review must
+   * see the whole task change, from the first attempt's base.
+   */
+  private async taskScopeBase(
+    attempt: AttemptRow,
+    artifact: { commit: string; scopeBase: string },
+  ): Promise<string> {
+    const chain = this.taskChainBase(attempt)
+    if (chain === attempt.base_commit) return artifact.scopeBase
+    try {
+      return await reviewedScopeBase(
+        attempt.workspace,
+        chain,
+        artifact.commit,
+        attempt.workspace !== this.directory
+          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
+          : undefined,
+      )
+    } catch {
+      return chain
+    }
+  }
+
+  /** Other unfinished tasks and their reserved scopes, to show where a divergence could collide. */
+  private scopeOwners(plan: PlanRow, taskID: string): ScopeOwner[] {
+    const finished = new Set(["accepted", "incorporated", "cancelled", "failed", "exhausted"])
+    const ids = new Set<string>()
+    for (const node of this.store.nodes(plan.id))
+      if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
+    for (const active of this.store.activeProjectAttempts())
+      if (active.task_id !== taskID) ids.add(active.task_id)
+    return [...ids].map((id) => ({
+      taskID: id,
+      patterns: this.store.effectiveReservationScope(id),
+    }))
+  }
+
+  /** The worker's own final message, quoted as its stated reason; undefined when it gave none. */
+  private async workerFinalMessage(attempt: AttemptRow): Promise<string | undefined> {
+    try {
+      const worker = await this.host.session(attempt.session_id, { messages: true })
+      const last = worker?.messages.findLast(
+        (message) =>
+          message.id !== attempt.message_id && message.type !== "synthetic" && message.text.trim(),
+      )
+      return last?.text
+    } catch {
+      return undefined
+    }
+  }
+
+  /** The Architect decides: amend-scope to accept it with a reason, retained-repair, or cancel. */
+  private async holdScopeDivergence(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    report: ScopeReport,
+    fence: number,
+  ) {
+    const reason = divergenceReason(report, await this.workerFinalMessage(attempt))
+    this.store.fenced(this.owner, fence, () => {
+      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
+        attemptID: attempt.id,
+        workspace: attempt.workspace,
+        baseCommit: attempt.base_commit,
+        kind: "divergence",
+        paths: report.divergences.map((item) => item.path),
+        divergences: report.divergences,
+        reason,
+      })
+      this.hold(plan, reason, ["amend-scope", "retained-repair", "reconcile", "cancel"])
+    })
   }
 
   /** The Fallow review's result for this candidate; "pending" while it is journaled or running. */
@@ -11519,8 +11778,29 @@ export class TaskRuntime {
         (receipt) =>
           `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`,
       )
-    if (!sections.length) return ""
-    return `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
+    const reported = this.store.latestTransition<ScopeReport>(
+      attempt.plan_id,
+      attempt.task_id,
+      "SCOPE_REPORTED",
+    )
+    const sentBack = this.store.latestTransition<{ attemptID: string; reason: string }>(
+      attempt.plan_id,
+      attempt.task_id,
+      "SCOPE_SENT_BACK",
+    )
+    const scope =
+      reported?.attemptID === previous.id
+        ? [
+            scopeRepairText(reported),
+            sentBack?.attemptID === previous.id ? `Architect: ${sentBack.reason}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        : ""
+    const checks = sections.length
+      ? `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
+      : ""
+    return `${checks}${scope ? `\n\n${scope}` : ""}`
   }
   private failAttempt(
     plan: PlanRow,
@@ -12093,7 +12373,7 @@ export class TaskRuntime {
       JSON.stringify(scope) === JSON.stringify(payload.scope) &&
       preparation.resultingFingerprint ===
         (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
-      !scopeViolations(preparation.paths, scope).length
+      !protectedPaths(preparation.paths, this.store.effectiveScope(effect.task_id!)).length
     )
   }
 

@@ -280,6 +280,19 @@ test("stale held, failed, accepted, cleanup-blocked and cancelling work is colle
   expect(task.ageMs).toBeGreaterThanOrEqual(RECOVERY_STALE_MS)
 })
 
+test("an undecided scope divergence is a recoverable hold that recommends the scope decision", async () => {
+  const f = fixture()
+  const reason =
+    "Scope divergence needs a decision: 1 change(s) outside the task's scope: src/x.ts (existing file, modified +4 -1). Accept with amend-scope and a reason, send it back, or cancel."
+  const { planID } = f.plan({ state: "blocked", reason })
+  const items = await collect(f)
+  const item = items.find((candidate) => candidate.planID === planID)!
+  expect(item.holdFamily).toBe("scope-divergence")
+  expect(item.actions).toContain("amend-scope")
+  expect(item.actions).toContain("cancel")
+  expect(item.recommendation.action).toBe("amend-scope")
+})
+
 test("a hold that is only re-observed stays stale; an Architect action makes it fresh", async () => {
   const f = fixture()
   const { planID } = f.plan({ state: "blocked", reason: "Dispatch failed" })
@@ -361,6 +374,9 @@ test("the recommendation follows the recorded facts", () => {
   expect(recommend(facts({ reuse: { worker: "missing" } })).action).toBe("retry")
   expect(
     recommend(facts({ family: "scope-violation", actions: ["amend-scope", "cancel"] })).action,
+  ).toBe("amend-scope")
+  expect(
+    recommend(facts({ family: "scope-divergence", actions: ["amend-scope", "cancel"] })).action,
   ).toBe("amend-scope")
   expect(
     recommend(facts({ family: "uncertain-effect", actions: ["reconcile", "cancel"] })).action,

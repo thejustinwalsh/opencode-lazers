@@ -78,6 +78,14 @@ export function taskInstructions(detail: TaskDetail): string {
     ) +
     section("Write scope", proposal.writeScope) +
     section(
+      "Expected new files and folders (create)",
+      (proposal.createScope ?? []).map((entry) => `${entry.path} — ${entry.purpose}`),
+    ) +
+    section("Protected (do not touch)", proposal.protectedScope ?? []) +
+    (proposal.createScope?.length || proposal.protectedScope?.length || proposal.writeScope.length
+      ? "\n\nScope: Write scope lists the existing files you may edit. New files beside them, or in the expected folders above, are fine; put new behavior in a well-named new file instead of growing a large one. Protected paths are off limits. If you must change an existing file outside the write scope, do it only when necessary and say why in one line in your final message."
+      : "") +
+    section(
       "Authorized execution scope (additive amendment; specification unchanged)",
       amendedScope,
     ) +

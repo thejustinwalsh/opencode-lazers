@@ -1,9 +1,26 @@
 import { runGit } from "./config.ts"
+import { suppressedSymbol } from "./suppression-flow.ts"
 import type { FallowFinding } from "./contract.ts"
 import type { FallowReviewResult } from "./review.ts"
 
 /** One task's own change inside a plan: what it was measured from and what it delivered. */
 export type PlanTaskDiff = { taskID: string; base: string; artifact: string }
+
+/** Added lines of a task's own diff outside `exceptFile`. */
+async function addedLines(
+  workspace: string,
+  task: PlanTaskDiff,
+  exceptFile: string,
+): Promise<string[]> {
+  const text = (await runGit(workspace, "diff", "-U0", task.base, task.artifact)) ?? ""
+  const lines: string[] = []
+  let current = ""
+  for (const line of text.split("\n")) {
+    if (line.startsWith("+++ ")) current = line.replace(/^\+\+\+ (?:b\/)?/, "")
+    else if (line.startsWith("+") && current !== exceptFile) lines.push(line.slice(1))
+  }
+  return lines
+}
 
 async function touchedFiles(workspace: string, task: PlanTaskDiff): Promise<Set<string>> {
   const text = await runGit(workspace, "diff", "--name-only", task.base, task.artifact)
@@ -22,7 +39,25 @@ export async function attributeFindingsToTasks(
 ): Promise<FallowReviewResult> {
   const touched = new Map<string, Set<string>>()
   for (const task of tasks) touched.set(task.taskID, await touchedFiles(workspace, task))
+  // A stale suppression belongs to the task that used the code it covers, not the one that wrote it.
+  const consumers = new Map<string, string[]>()
+  for (const finding of result.package?.findings ?? []) {
+    if (finding.rule !== "stale-suppression") continue
+    const name = await suppressedSymbol(workspace, finding.file, finding.line)
+    if (!name) continue
+    const word = new RegExp(`\\b${name.replace(/\$/g, "\\$")}\\b`)
+    const using: string[] = []
+    for (const task of tasks)
+      if ((await addedLines(workspace, task, finding.file)).some((line) => word.test(line)))
+        using.push(task.taskID)
+    if (using.length) consumers.set(finding.id, using)
+  }
   const tag = (finding: FallowFinding): FallowFinding => {
+    const consumer = consumers.get(finding.id)
+    if (consumer)
+      return consumer.length === 1
+        ? { ...finding, taskID: consumer[0] }
+        : { ...finding, taskIDs: consumer }
     const files = [finding.file, ...(finding.relatedLocations ?? []).map((other) => other.file)]
     const ids = tasks
       .map((task) => task.taskID)

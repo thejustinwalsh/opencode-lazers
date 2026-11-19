@@ -77,6 +77,7 @@ function fixture(
     const proposal = validProposal()
     proposal.objective = "Verify an adopted committed descendant"
     proposal.writeScope = ["result.txt"]
+    proposal.protectedScope = ["unauthorized-worker.txt"]
     proposal.verification = [
       {
         id: "task-check",
@@ -1042,7 +1043,7 @@ test("adoption verifies reviewed main with independent work without widening wor
   )
 }, 15_000)
 
-test("adoption still rejects out-of-scope changes in the original worker artifact", async () => {
+test("adoption still rejects protected-path changes in the original worker artifact", async () => {
   const f = fixture("failed-task")
   const { node, attempt } = await strand(f)
   git(f.root, ["merge", "--ff-only", node.artifact!])
