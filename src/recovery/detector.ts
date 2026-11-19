@@ -215,7 +215,16 @@ export function evaluateRules(
       `The same hold (${facts.repeatedHold.family}) keeps recurring; lz-checkpoint-recovery-worker with what the hold requires.`,
       "BLOCKED transitions of one hold family",
     )
-  if (tail.outOfScope.length >= t.outOfScopePaths)
+  if (tail.protectedWrites.length)
+    add(
+      "out-of-scope-write",
+      `wrote protected paths: ${tail.protectedWrites.slice(0, 6).join(", ")}`,
+      tail.protectedWrites.length,
+      "steer",
+      "The worker wrote a protected path, the one hard scope boundary; lz-checkpoint-recovery-worker to stop it and revert, or take it over with lz-request-handoff.",
+      `paths: ${tail.protectedWrites.slice(0, 20).join(", ")}`,
+    )
+  else if (tail.outOfScope.length >= t.outOfScopePaths)
     add(
       "out-of-scope-write",
       `edited outside the write scope: ${tail.outOfScope.slice(0, 6).join(", ")}`,
@@ -393,7 +402,7 @@ export class RecoveryDetector {
         const attempt = attempts.filter((a) => a.task_id === node.task_id).at(-1)
         if (!attempt || !["preparing", "running", "verifying"].includes(attempt.state)) continue
         if (isTakeoverAttempt(attempt.policy)) continue
-        const scope = store.effectiveWriteScope(node.task_id)
+        const scope = store.effectiveScope(node.task_id)
         const { facts, tail } = store.read((db) => ({
           // Transitions are stamped with the wall clock, so open intervals end on it too.
           facts: readTrajectoryFacts(db, plan.id, node.task_id, Date.now()),

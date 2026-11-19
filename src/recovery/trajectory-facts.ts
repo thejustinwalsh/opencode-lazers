@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { holdFamily } from "../runner/hold-actions.ts"
-import { scopeViolations } from "../runner/artifacts.ts"
+import { classifyChange, type ScopeModel } from "../runner/scope.ts"
 
 /**
  * The recorded trajectory of one task, read-only. Two readers, both parameterized by "as of" so
@@ -36,8 +36,33 @@ export type TrajectoryTail = {
   callsWithoutFileChange: number
   /** Tokens the attempt's steps used since its last edit or patch. */
   tokensWithoutFileChange: number
-  /** Files edited or patched outside the write scope. */
+  /**
+   * Files written where the scope model puts no edit, no planned new file and no sibling of one
+   * (`divergence` whether the file was new or existing). The journal does not say which.
+   */
   outOfScope: string[]
+  /** Files written on a protected path: the one hard scope boundary. */
+  protectedWrites: string[]
+}
+
+/** A bare edit list is the scope of a task with no planned new files and nothing protected. */
+function scopeModel(scope: ScopeModel | readonly string[]): ScopeModel {
+  return Array.isArray(scope)
+    ? { edit: scope as readonly string[], create: [], protected: [] }
+    : (scope as ScopeModel)
+}
+
+function classifyWrites(paths: Iterable<string>, scope: ScopeModel | readonly string[]) {
+  const model = scopeModel(scope)
+  const outOfScope: string[] = []
+  const protectedWrites: string[] = []
+  for (const path of paths) {
+    const asNew = classifyChange({ path, status: "added" }, model).class
+    const asEdit = classifyChange({ path, status: "modified" }, model).class
+    if (asNew === "protected" || asEdit === "protected") protectedWrites.push(path)
+    else if (asNew === "divergence" && asEdit === "divergence") outOfScope.push(path)
+  }
+  return { outOfScope: outOfScope.toSorted(), protectedWrites: protectedWrites.toSorted() }
 }
 
 export function durationLabel(ms: number): string {
@@ -185,7 +210,7 @@ export function readTrajectoryTail(
   db: Database,
   projectDirectory: string,
   attemptID: string,
-  scope: string[],
+  scope: ScopeModel | readonly string[],
   throughSequence = Number.MAX_SAFE_INTEGER,
 ): TrajectoryTail {
   const last = db
@@ -255,7 +280,7 @@ export function readTrajectoryTail(
     trailingToolFailures,
     callsWithoutFileChange: since?.calls ?? 0,
     tokensWithoutFileChange: since?.tokens ?? 0,
-    outOfScope: scopeViolations([...edited], scope).toSorted(),
+    ...classifyWrites(edited, scope),
   }
 }
 

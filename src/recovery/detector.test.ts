@@ -27,6 +27,7 @@ const quiet: TrajectoryTail = {
   callsWithoutFileChange: 3,
   tokensWithoutFileChange: 400_000,
   outOfScope: [],
+  protectedWrites: [],
 }
 const evaluate = (
   facts: Partial<TrajectoryFacts>,
@@ -63,6 +64,8 @@ test("a median task and quiet tail raise nothing; each rule fires at its thresho
   ])
   expect(rules({}, { outOfScope: ["a.ts", "b.ts"] })).toEqual([])
   expect(rules({}, { outOfScope: ["a.ts", "b.ts", "c.ts"] })).toEqual(["out-of-scope-write"])
+  // One protected write is enough: it is the one hard scope boundary.
+  expect(rules({}, { protectedWrites: [".env"] })).toEqual(["out-of-scope-write"])
   expect(rules({}, { trailingToolFailures: t.trailingToolFailures })).toEqual([
     "tool-failures-repeated",
   ])
