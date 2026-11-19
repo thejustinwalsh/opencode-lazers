@@ -718,6 +718,13 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_adoptions_active
         ON runner_adoptions(plan_id,state,created_at);
+      CREATE TABLE IF NOT EXISTS runner_takeovers (
+        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+        task_id TEXT NOT NULL, attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+        architect_session_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_takeovers_open ON runner_takeovers(plan_id,state);
       CREATE TABLE IF NOT EXISTS runner_adoption_checks (
         adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), phase TEXT NOT NULL,
         check_id TEXT NOT NULL, check_json TEXT NOT NULL, workspace TEXT NOT NULL,
@@ -3155,6 +3162,30 @@ export class RunnerStore {
       const previous = this.latestTransition<unknown>(planID, taskID, event)
       if (previous !== undefined && canonical(previous) === canonical(payload)) return false
       this.record(planID, taskID, event, payload)
+      return true
+    })
+  }
+  /**
+   * Record an Architect source scan failure once per (source, cause). The plan-level
+   * `recordOnce` compares only the newest row of the anchor plan, so several sources
+   * sharing one anchor plan alternate and every process start re-recorded all of them.
+   */
+  recordSourceScanFailure(
+    planID: string,
+    payload: { renewalID: string; sourceSessionID: string; error: string },
+  ): boolean {
+    return this.atomic(() => {
+      const previous = this.read((db) =>
+        db
+          .query<{ payload: string }, [string, string]>(
+            `SELECT payload FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
+               AND json_extract(payload,'$.sourceSessionID')=? ORDER BY id DESC LIMIT 1`,
+          )
+          .get(planID, payload.sourceSessionID),
+      )
+      if (previous && canonical(JSON.parse(previous.payload)) === canonical(payload)) return false
+      this.record(planID, null, "ARCHITECT_SOURCE_SCAN_FAILED", payload)
       return true
     })
   }

@@ -6,8 +6,9 @@ import { taskReasonView, taskTitle } from "../tasks/presentation.ts"
 import { gitAsync } from "./artifacts.ts"
 import { holdFamily, holdActions, unblockingActions } from "./hold-actions.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
-import { planCommandProblem } from "./plan-commands.ts"
+import { availablePlanCommands, planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
+import { openConcerns } from "../recovery/detector.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -62,6 +63,8 @@ export const RecoveryKind = z.enum([
   "accepted-unintegrated",
   "cleanup-blocked",
   "stuck-cancelling",
+  /** A deterministic rule matched the trajectory of live work; the Architect decides its course. */
+  "worker-concern",
 ])
 export type RecoveryKind = z.infer<typeof RecoveryKind>
 
@@ -113,6 +116,19 @@ export const RecoveryItem = z.strictObject({
   actions: z.array(z.string()),
   reuse: RecoveryReuse,
   recommendation: RecoveryRecommendation,
+  /** The recorded concern behind a live item. */
+  concern: z
+    .strictObject({
+      concernID: z.string(),
+      version: z.number().int().positive(),
+      ruleID: z.string(),
+      line: z.string(),
+      boundary: z.strictObject({
+        fromSequence: z.number().int().nonnegative(),
+        throughSequence: z.number().int().nonnegative(),
+      }),
+    })
+    .optional(),
 })
 export type RecoveryItem = z.infer<typeof RecoveryItem>
 
@@ -422,13 +438,72 @@ export class RecoveryBundles {
     )
   }
 
+  /**
+   * Open worker concerns: the deterministic detector's findings that no Architect decision
+   * covers yet. They are live work, so they are listed whether or not the plan is idle.
+   */
+  private async concernItems(head: () => Promise<string | null>): Promise<RecoveryItem[]> {
+    const { store } = this.deps
+    const found: RecoveryItem[] = []
+    const concerns = store.read((db) => openConcerns(db, store.repository.projectDirectory))
+    for (const concern of concerns) {
+      const plan = store.plan(concern.planID)
+      const node = store.nodes(concern.planID).find((n) => n.task_id === concern.taskID)
+      const task = store.repository.get(concern.taskID)
+      if (!plan || !node || !task || store.repository.taskDisposition(concern.taskID)) continue
+      const attempt = store.attempts(plan.id).find((a) => a.id === concern.attemptID)
+      const reuse = await this.reuse(plan, node, attempt, head)
+      const title = taskTitle(task.proposal.objective)
+      const reference = store.repository.referenceFor(concern.taskID) ?? null
+      const shown = presentation({
+        taskID: concern.taskID,
+        title,
+        state: node.state,
+        reason: node.reason ?? null,
+        ...(reference ? { reference } : {}),
+      })
+      found.push({
+        // A new version of the concern is a new decision; the same version is one notice.
+        key: fingerprint({ concernID: concern.concernID, version: concern.version }),
+        kind: "worker-concern",
+        planID: plan.id,
+        taskID: concern.taskID,
+        reference,
+        title,
+        state: node.state,
+        stateLabel: shown.label,
+        explanation: null,
+        reason: node.reason ?? null,
+        holdFamily: null,
+        ageMs: 0,
+        actions: [
+          ...this.legalActions(plan, concern.taskID, null, ["cancel", "amend-scope"]),
+          // Finishing the task after a takeover, once the plan accepts that command.
+          ...((availablePlanCommands(plan.state) as string[]).includes("takeover-submit")
+            ? ["takeover-submit"]
+            : []),
+        ],
+        reuse,
+        recommendation: concernAdvice(concern),
+        concern: {
+          concernID: concern.concernID,
+          version: concern.version,
+          ruleID: concern.ruleID,
+          line: concern.reason,
+          boundary: concern.boundary,
+        },
+      })
+    }
+    return found
+  }
+
   /** Every item that needs an Architect decision now. Read-only. */
   async collect(): Promise<RecoveryItem[]> {
     const { store, directory } = this.deps
     // Git is only asked when a stale item needs it; an idle project runs no git at all.
     let landing: Promise<string | null> | undefined
     const head = () => (landing ??= this.git(directory, ["rev-parse", "HEAD"]).catch(() => null))
-    const items: RecoveryItem[] = []
+    const items: RecoveryItem[] = [...(await this.concernItems(head))]
     for (const plan of store.plans()) {
       const stuck = ["blocked", "failed", "accepted", "cleanup-blocked", "cancelling"].includes(
         plan.state,
@@ -802,6 +877,9 @@ export function recoveryBundleText(serialized: string): string {
     ].join("; ")
     return [
       `${index + 1}. ${ref} ${JSON.stringify(item.title)} - ${item.stateLabel} (${item.kind}${item.holdFamily ? `, ${item.holdFamily}` : ""}), idle ${ago(item.ageMs)}; plan ${item.planID}${item.taskID ? ` task ${item.taskID}` : ""}`,
+      ...(item.concern
+        ? [`   Concern ${item.concern.ruleID} (still running): ${item.concern.line}`]
+        : []),
       ...(item.explanation ? [`   Why: ${item.explanation}`] : []),
       ...(item.reason ? [`   Recorded: ${item.reason}`] : []),
       `   Reuse: ${reuse}`,
@@ -811,6 +889,11 @@ export function recoveryBundleText(serialized: string): string {
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
     "Work through all of it in this one pass. Verify each with lz-inspect-plan, then resolve it with lz-plan-command or lz-dispose-task. Reuse what exists before starting fresh: resume a live worker, verify-retained a committed result whose checks passed, retained-repair unfinished work; submit a new task only when the old approach is wrong, and then cancel and dispose what it supersedes. The recommendation is advice from recorded facts; you decide. Resolved items leave the next bundle.",
+    ...(bundle.items.some((item) => item.kind === "worker-concern")
+      ? [
+          'Items of kind worker-concern are still running: a deterministic rule matched their recorded trajectory, and an Escalated reason means you have not answered and the measure doubled. Read the evidence with lz-inspect-recovery, then choose one: (1) continue or follow up later: lz-disposition-recovery-concern acknowledge, or follow-up with a due time; (2) steer: lz-checkpoint-recovery-worker with what to change; (3) take over and finish it yourself: lz-request-handoff {attemptID, reason} tells the worker you are taking over, waits for its handoff, stops it and returns the handoff, then you finish the task in the same workspace and submit it with lz-plan-command {action: "takeover-submit", planID, taskID, reason}; (4) split or re-plan: submit the new tasks, then cancel this one; (5) cancel: lz-plan-command cancel. The Recommended action on each item is the rule\'s advice from the recorded facts. An out-of-scope write is reviewed before acceptance; amend-scope only if the write was right.',
+        ]
+      : []),
     ...(bundle.replaces ? ["This bundle replaces the earlier one; ignore the earlier list."] : []),
     "",
     ...lines,
@@ -821,4 +904,18 @@ export function recoveryBundleText(serialized: string): string {
       : []),
     `bundle ${bundle.generation} raised ${new Date(bundle.raisedAt).toISOString()}`,
   ].join("\n")
+}
+
+/** Advice from the rule that fired, as it recorded it; the Architect decides. */
+function concernAdvice(concern: {
+  advice: { action: string; because: string } | null
+}): z.infer<typeof RecoveryRecommendation> {
+  // A concern recorded before rules carried advice has none; steering is the safe default.
+  return (
+    concern.advice ?? {
+      action: "steer",
+      because:
+        "Check in with the worker (lz-checkpoint-recovery-worker), acknowledge to let it continue, or follow up later; if it keeps struggling after steering, request a handoff",
+    }
+  )
 }

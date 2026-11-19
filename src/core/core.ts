@@ -194,6 +194,10 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as
       number | undefined,
     fallowReview: info.options.fallowReview === "off" ? "off" : "on",
+    ...(typeof info.options.workerSpendCeilingTokens === "number" &&
+    info.options.workerSpendCeilingTokens > 0
+      ? { workerSpendCeilingTokens: info.options.workerSpendCeilingTokens }
+      : {}),
     // Deprecated alias of architectCacheWindowMs.
     architectIdleWindowMs: info.options.architectIdleWindowMs as number | undefined,
     verificationTimeoutDefaults: verificationDefaults,

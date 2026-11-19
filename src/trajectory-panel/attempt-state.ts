@@ -128,3 +128,29 @@ export function attemptDuration(
   if (stop === undefined || (working && asOf === null) || stop < start) return null
   return { ms: stop - start, open: working }
 }
+
+/** What marks an attempt beside its state word: an open concern and an Architect takeover. */
+export function attemptSignals(attempt: Pick<TrajectoryAttempt, "concern" | "takeover">) {
+  return {
+    ...(attempt.concern
+      ? {
+          concern: {
+            line: attempt.concern.line,
+            ...(attempt.concern.action
+              ? {
+                  recommendation: `Recommended: ${attempt.concern.action}${
+                    attempt.concern.because ? `. ${attempt.concern.because}` : ""
+                  }`,
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(attempt.takeover ? { takeover: true as const } : {}),
+  }
+}
+
+/** `Attempt 2`, or `Architect takeover` when the Architect, not a worker, ran the attempt. */
+export function attemptName(attempt: Pick<TrajectoryAttempt, "number" | "takeover">) {
+  return attempt.takeover ? "Architect takeover" : `Attempt ${attempt.number}`
+}

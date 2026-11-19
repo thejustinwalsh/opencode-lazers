@@ -80,6 +80,38 @@ export function workerState(session: LiveSession, attempt?: WorkerAttempt | null
   }
 }
 
+export type WorkerSignals = {
+  /** The raised concern: its line, and the rule's recommended action when it recorded one. */
+  concern?: { line: string; recommendation?: string }
+  /** The attempt is the Architect finishing the task itself. */
+  takeover?: true
+}
+
+/**
+ * What the worker pane shows beside the state word: a raised concern and an Architect takeover.
+ * Each is present only when the attempt read recorded it.
+ */
+export function workerSignals(attempt?: WorkerAttempt | null): WorkerSignals {
+  const concern = attempt?.concern
+  return {
+    ...(concern
+      ? {
+          concern: {
+            line: concern.line,
+            ...(concern.action
+              ? {
+                  recommendation: `Recommended: ${concern.action}${
+                    concern.because ? `. ${concern.because}` : ""
+                  }`,
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(attempt?.takeover ? { takeover: true as const } : {}),
+  }
+}
+
 /** `Nov 17 12:58 PM`, or `12:58 PM` for today. */
 export function startedText(at: number | null | undefined, now: number) {
   if (at === null || at === undefined || !Number.isFinite(at)) return undefined

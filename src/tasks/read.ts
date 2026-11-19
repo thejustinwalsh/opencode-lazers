@@ -6,7 +6,9 @@ import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
-import type { TaskPage, TaskSummary } from "./contract.ts"
+import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
+import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
+import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
@@ -170,6 +172,8 @@ export class TaskReads {
           !execution.dispatchPause
             ? this.startedAt(task.id, execution.planID)
             : {}),
+          ...(execution ? this.concern(task.id, execution.planID, execution.state) : {}),
+          ...(execution ? this.takeover(task.id, execution.planID, execution.state) : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),
@@ -340,6 +344,52 @@ export class TaskReads {
     } catch {
       return {}
     }
+  }
+
+  /** The open worker concern of one unsettled task with its totals, as `{ concern }`, or nothing. */
+  protected concern(
+    taskID: string,
+    planID: string,
+    state: string,
+  ): { concern: TaskConcern } | Record<string, never> {
+    if (!canStruggle(state)) return {}
+    return this.repository.read((db): { concern: TaskConcern } | Record<string, never> => {
+      const open = openConcerns(db, this.repository.projectDirectory, { taskID })
+      if (!open.length) return {}
+      const facts = readTrajectoryFacts(db, planID, taskID, Date.now())
+      return {
+        concern: {
+          line: open.map((item) => item.reason).join("; "),
+          reasons: open.map((item) => item.ruleID),
+          totals: {
+            attempts: facts.attempts,
+            verifyRounds: facts.verifyRounds,
+            attemptMs: facts.attemptMs,
+            tokens: facts.tokens,
+            toolCalls: facts.toolCalls,
+            costUSD: facts.costUSD,
+          },
+        },
+      }
+    })
+  }
+
+  /** `{ takeover: true }` while an unsettled task's latest attempt is the Architect's takeover. */
+  protected takeover(
+    taskID: string,
+    planID: string,
+    state: string,
+  ): { takeover: true } | Record<string, never> {
+    if (!canStruggle(state)) return {}
+    const policy = this.repository.read(
+      (db) =>
+        db
+          .query<{ policy: string }, [string, string]>(
+            "SELECT policy FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC LIMIT 1",
+          )
+          .get(planID, taskID)?.policy,
+    )
+    return policy !== undefined && isTakeoverAttempt(policy) ? { takeover: true } : {}
   }
 
   /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */

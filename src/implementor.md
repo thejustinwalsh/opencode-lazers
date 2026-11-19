@@ -43,6 +43,18 @@ Use `lz-report-progress` for concise, useful checkpoints or a final handoff
 when appropriate; do not repeat every tool result. Progress is an annotation,
 not verification evidence, acceptance, or permission to change task state.
 
+## Takeover notice
+
+A takeover notice means the Architect is taking your task over now. Stop
+starting new work. Commit your work in progress in this workspace (a WIP commit
+is fine; never discard or reset changes), then call `lz-verify-handoff` with the
+notice's requestID. A good handoff says what is done, what remains, the state of
+the workspace, what you tried and what you struggled with, and the files and
+commits involved; it states facts, says `unknown` where you do not know, and
+does not argue for more time. Then end your turn. If you do not answer within
+the notice's window you are stopped and the runtime writes the handoff from
+recorded facts.
+
 ## Commits
 
 Commit only as the workspace's configured git identity (the repo or global

@@ -20,6 +20,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                                                                                                                            |
 | Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt                                                                                                                                                |
 | Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                                                                                            |
+| Architect takeover    | `takeoverMachine`             | `lz_runner_transition('takeover', state, event)`        | Notify the worker, wait for its handoff, stop it, open the Architect's attempt; a plan cancellation cancels an open one                                                                                    |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
 `current.can()` and XState's pure `transition()` before returning the next state.
@@ -470,3 +471,45 @@ handover for plans owned by archived or cold sessions.
 
 Observable: the `RECOVERY_BUNDLE_RAISED` event (count, keys, session, replaced
 bundle) and `RecoveryBundles.status()` (items waiting, open bundle state and count).
+
+## Worker concerns and Architect takeover
+
+The recovery detector (`src/recovery/detector.ts`) reads each running task's recorded
+trajectory every tick and records a concern through the handoff store when a rule matches
+(repeated verify/repair cycles, reopened after acceptance, spend without file changes,
+failing tool loops, out-of-scope writes, an optional spend ceiling). It never holds,
+interrupts or stops a worker. Concerns travel in the recovery bundle as `worker-concern`
+items with a recommended action, only while Architect contact is enabled; an unanswered
+concern whose measure doubles is re-raised with escalated wording. Rules and thresholds come
+from `scripts/replay-concerns.ts`, which runs the same rule code over recorded history.
+
+A takeover is the Architect finishing a task itself. `lz-request-handoff {attemptID, reason,
+requestID?}` is one blocking call; its steps are transitions of `takeoverMachine`
+(table `runner_takeovers`, runner schema generation 13):
+
+```
+notifying --notice steered into the busy worker--> awaiting-handoff
+    | worker absent, archived or idle                  | worker draft saved, turn ended,
+    v                                                  | worker gone, 5-minute window passed
+stopping <---------------------------------------------+
+    | worker quiet, or 60 s after interrupt: WIP tree snapshot under
+    v refs/lazers/takeover/<id>, worker attempt -> cancelled, task and plan -> running
+taken-over      (cancelled: plan cancellation)
+```
+
+The notice is claimed in the row before it is sent and never resent. The scheduler advances
+open takeovers each tick and leaves their worker attempts alone, so a call cut short by a
+reload is finished by the next tick, which notifies the Architect (`takeover-ready`); repeating
+the call with the same `requestID` returns that result. The handoff is the worker's
+`lz-verify-handoff` draft, or one the runtime builds from recorded facts (commits, uncommitted
+paths, failing checks, open concerns) marked `author: "runtime"`.
+
+`taken-over` opens a new attempt for the task in the same workspace and base, with
+`policy.takeover = {takeoverID, architectSessionID, fromAttemptID}`, `agent: "architect"` and
+`repairAttempt: true`. Its session id is `lazers-takeover:<id>`, which the runtime's host view
+reads as an absent session, so no worker observation, usage or interrupt touches it; its
+token count stays unknown because the Architect session's spend is not separable. The
+scheduler skips it while `running`. `lz-plan-command takeover-submit` moves it and its task to
+`verifying` through the attempt and task machines, and the ordinary `verify()` runs: mechanical
+fix, authored checks, Fallow audit, scope. A failure fails the attempt with no automatic repair
+and holds the plan for the Architect, who can take over again from the failed task.

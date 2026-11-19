@@ -86,6 +86,11 @@ export type HostSession = {
     cacheWrite: number
     provenance: string
   }
+  /**
+   * Prompt size of the newest model request (input plus cache). Unlike `usage` and `tokens`,
+   * which are cumulative spend, this is how full the session's context window is now.
+   */
+  contextTokens?: number
   tokens: number | null
   tools: number
   cost: number | null
@@ -182,4 +187,15 @@ export interface RunnerHost {
     metadata?: OutcomeOwnership
   }): Promise<void>
   interrupt(id: string): Promise<void>
+  /**
+   * Steer one message into a running worker's current turn (consumed at its next step). Only the
+   * attempt's own worker session; never resumes an idle worker.
+   */
+  steerWorker?(input: {
+    sessionID: string
+    attemptID: string
+    directory: string
+    id: string
+    text: string
+  }): Promise<void>
 }
