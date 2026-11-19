@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { patchSetSha256 } from "./vendor-fallow.ts"
 
@@ -20,6 +21,7 @@ const root = fileURLToPath(new URL("..", import.meta.url))
 const crateDir = join(root, "crates/fallow-wasm")
 const targetDir = join(root, ".cache/fallow-wasm-target")
 const outDir = join(root, "src/audit/wasm")
+const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo")
 const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex")
 
 async function run(cmd: string[], cwd = root, env: Record<string, string> = {}) {
@@ -83,10 +85,22 @@ export async function buildFallowWasm() {
     )
   }
 
+  const sysroot = (await run(["rustc", "--print", "sysroot"])).trim()
   await run(
     ["cargo", "build", "--release", "--locked", "--target", "wasm32-unknown-unknown"],
     crateDir,
-    { CARGO_TARGET_DIR: targetDir },
+    {
+      CARGO_TARGET_DIR: targetDir,
+      // Replaces .cargo/config.toml rustflags, so the entropy cfg is repeated. The path remaps keep
+      // panic locations from embedding this checkout's or the user's cargo home path.
+      CARGO_ENCODED_RUSTFLAGS: [
+        "--cfg",
+        'getrandom_backend="custom"',
+        `--remap-path-prefix=${root.replace(/\/$/, "")}=/lazers`,
+        `--remap-path-prefix=${cargoHome}=/cargo`,
+        `--remap-path-prefix=${sysroot}=/rustc-sysroot`,
+      ].join("\x1f"),
+    },
   )
   const raw = join(targetDir, "wasm32-unknown-unknown/release/fallow_wasm.wasm")
   const stage = join(targetDir, "bindgen")

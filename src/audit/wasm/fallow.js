@@ -67,6 +67,27 @@ export class Project {
     }
   }
   /**
+   * Feature-flag uses the extractor recognises: environment variables with a
+   * flag prefix, SDK calls and config-object reads. `paths` limits the files
+   * (all files when empty).
+   * @param {string[]} paths
+   * @returns {string}
+   */
+  featureFlags(paths) {
+    let deferred2_0
+    let deferred2_1
+    try {
+      const ptr0 = passArrayJsValueToWasm0(paths, wasm.__wbindgen_malloc)
+      const len0 = WASM_VECTOR_LEN
+      const ret = wasm.project_featureFlags(this.__wbg_ptr, ptr0, len0)
+      deferred2_0 = ret[0]
+      deferred2_1 = ret[1]
+      return getStringFromWasm0(ret[0], ret[1])
+    } finally {
+      wasm.__wbindgen_free(deferred2_0, deferred2_1, 1)
+    }
+  }
+  /**
    * Number of analysable files after extension and ignore filtering.
    * @returns {number}
    */

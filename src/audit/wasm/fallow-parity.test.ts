@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -15,7 +15,8 @@ import { Project, initSync } from "./fallow.js"
  *  - CRAP-only complexity findings. Native also lists a function whose estimated CRAP score
  *    exceeds `maxCrap` with both complexities within limits. The module reports cyclomatic and
  *    cognitive findings only; CRAP needs the coverage model, which is not ported.
- *  - Dead code, architecture and feature flags are not exposed through the module yet.
+ *  - Dead code and architecture (import cycles) are not exposed: they need module resolution and
+ *    plugin discovery over a real filesystem, which the module does not have.
  */
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
 const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
@@ -208,6 +209,11 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
     "src/a.ts": block("alpha"),
     "src/b.ts": block("beta"),
     "src/c.ts": branchy,
+    "src/flags.ts": `export function mode(): number {
+  if (process.env.FEATURE_NEW_CHECKOUT) return 1
+  return process.env.ENABLE_BETA_PANEL ? 2 : 0
+}
+`,
     "src/view.vue": `<script setup lang="ts">\n${block("gamma")}\n</script>\n<template><div /></template>\n`,
   }
 
@@ -266,8 +272,28 @@ ${Array.from({ length: 12 }, (_, i) => `  if (a === ${i} && b > ${i} || c === "k
         .sort(),
     )
     expect(wasmHealth.functions.length).toBeGreaterThan(0)
-    rmSync(dir, { recursive: true, force: true })
   }, 60_000)
+
+  test("feature flags match native detectFeatureFlags", async () => {
+    const project = open(dir, paths, "fallow.toml", "")
+    const native = (await fallow.detectFeatureFlags({
+      root: dir,
+      noCache: true,
+      threads: 1,
+    })) as unknown as { feature_flags: { path: string; flag_name: string; line: number }[] }
+    const wasm = call<{ flags: { file: string; name: string; line: number }[] }>(
+      project.featureFlags([]),
+    )
+    const key = (file: string, name: string, line: number) => `${file}:${line}:${name}`
+    expect(native.feature_flags.length).toBeGreaterThan(0)
+    expect(wasm.flags.map((f) => key(f.file, f.name, f.line)).sort()).toEqual(
+      native.feature_flags.map((f) => key(f.path, f.flag_name, f.line)).sort(),
+    )
+  }, 60_000)
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 describe("config text", () => {

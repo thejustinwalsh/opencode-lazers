@@ -15,6 +15,12 @@ export class Project {
    */
   duplication(changed: string[], options_json: string): string
   /**
+   * Feature-flag uses the extractor recognises: environment variables with a
+   * flag prefix, SDK calls and config-object reads. `paths` limits the files
+   * (all files when empty).
+   */
+  featureFlags(paths: string[]): string
+  /**
    * Number of analysable files after extension and ignore filtering.
    */
   fileCount(): number
@@ -70,6 +76,7 @@ export interface InitOutput {
     d: number,
     e: number,
   ) => [number, number]
+  readonly project_featureFlags: (a: number, b: number, c: number) => [number, number]
   readonly project_fileCount: (a: number) => number
   readonly project_new: (
     a: number,

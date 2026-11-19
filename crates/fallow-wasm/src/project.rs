@@ -190,6 +190,14 @@ impl Project {
         envelope(self.run_duplication(&changed, options_json))
     }
 
+    /// Feature-flag uses the extractor recognises: environment variables with a
+    /// flag prefix, SDK calls and config-object reads. `paths` limits the files
+    /// (all files when empty).
+    #[wasm_bindgen(js_name = featureFlags)]
+    pub fn feature_flags(&self, paths: Vec<String>) -> String {
+        envelope(self.run_feature_flags(&paths))
+    }
+
     /// Functions over the configured complexity thresholds in `paths` (all files
     /// when empty), worst first.
     pub fn complexity(&self, paths: Vec<String>) -> String {
@@ -264,6 +272,33 @@ impl Project {
                 "duplicationPercentage": report.stats.duplication_percentage,
             },
         }))
+    }
+
+    fn run_feature_flags(&self, paths: &[String]) -> Outcome {
+        self.config()?;
+        let wanted: Option<std::collections::HashSet<PathBuf>> = (!paths.is_empty())
+            .then(|| paths.iter().map(|path| self.root.join(path)).collect());
+        let mut flags = Vec::new();
+        for file in &self.files {
+            if wanted.as_ref().is_some_and(|wanted| !wanted.contains(&file.path)) {
+                continue;
+            }
+            let Some(source) = self.sources.get(&file.path) else {
+                continue;
+            };
+            let info = fallow_extract::parse_from_content(file.id, &file.path, source);
+            let relative = self.relative(&file.path);
+            for flag in &info.flag_uses {
+                flags.push(serde_json::json!({
+                    "file": relative,
+                    "name": flag.flag_name,
+                    "kind": format!("{:?}", flag.kind),
+                    "line": flag.line,
+                    "sdk": flag.sdk_name,
+                }));
+            }
+        }
+        Ok(serde_json::json!({ "flags": flags }))
     }
 
     fn run_complexity(&self, paths: &[String]) -> Outcome {
