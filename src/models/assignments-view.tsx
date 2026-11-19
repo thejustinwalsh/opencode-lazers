@@ -6,7 +6,6 @@ import { routeLabel } from "./comparison-presentation.ts"
 import { agentModelText, agentSourceText, modelPersonaLabels } from "./panel-shared.ts"
 import { PanelStatus, createPanelStatus } from "../panel-status.tsx"
 import { Segmented, SplitPane, revealDetails } from "./panel-layout.tsx"
-import { Disclosure, Identifiers } from "../details/index.ts"
 
 const personaIcons = {
   ui: "window-cursor",
@@ -382,29 +381,24 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                       Reload current settings
                     </Ui.Button>
                   </Show>
-                  <Disclosure label="Details">
+                  <details class="lazers-models-assignment-write-details">
+                    <summary>Write details</summary>
                     <p>{write().message}</p>
-                    <Identifiers
-                      items={[
-                        { label: "Persona", value: modelPersonaLabels[write().persona] },
-                        { label: "Target", value: targetLabel() },
-                        { label: "Requested route", value: requestRouteLabel() },
-                        { label: "Expected revision", value: String(write().expectedRevision) },
-                        {
-                          label: "Observed revision",
-                          value:
-                            write().revision === null || write().revision === undefined
-                              ? undefined
-                              : String(write().revision),
-                        },
-                      ]}
-                    />
-                  </Disclosure>
+                    <p>
+                      {modelPersonaLabels[write().persona]} · {targetLabel()} · expected revision{" "}
+                      {write().expectedRevision}
+                      {write().revision == null ? "" : ` · observed revision ${write().revision}`}
+                    </p>
+                    <p>Requested route: {requestRouteLabel()}</p>
+                  </details>
                 </div>
               )
             }}
           </Show>
-          <Disclosure label="Other model ID">
+          <details class="lazers-models-disclosure lazers-models-assignment-manual-route">
+            <summary>
+              <span>Other model ID</span>
+            </summary>
             <p>Use exact IDs when a route is missing from the native catalog.</p>
             <div class="lazers-models-assignment-manual-fields">
               <div class="lazers-models-assignment-field">
@@ -435,8 +429,17 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 />
               </div>
             </div>
-          </Disclosure>
-          <Disclosure label="History" count={historyChanges(persona()) || undefined}>
+          </details>
+          <details class="lazers-models-disclosure lazers-models-assignment-layers">
+            <summary>
+              <span>History</span>
+              <Show when={historyChanges(persona()) > 0}>
+                <span class="lazers-models-disclosure-hint">
+                  {historyChanges(persona())}{" "}
+                  {historyChanges(persona()) === 1 ? "change" : "changes"}
+                </span>
+              </Show>
+            </summary>
             <p class="lazers-models-assignment-current">
               <strong>Current override:</strong>{" "}
               {assignmentLayer()?.route
@@ -462,7 +465,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
             >
               Remove override
             </Ui.Button>
-          </Disclosure>
+          </details>
         </section>
       )}
     </Show>
