@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { assertNoNativeBinaries } from "./native-binary-check.ts"
 
 const root = fileURLToPath(new URL("..", import.meta.url))
 const [tag, destination] = process.argv.slice(2)
@@ -55,6 +56,8 @@ try {
       JSON.stringify({ name: "lazers-install-smoke", private: true }),
     ),
   ])
+  // Analysis is WebAssembly; the archive must hold no native addon or executable.
+  await assertNoNativeBinaries(pkg)
   await run(pkg, "bun", "pm", "pack", "--destination", staging)
   const filename = `opencode-lazers-${version}.tgz`
   await run(consumer, "bun", "add", "--ignore-scripts", join(staging, filename))
