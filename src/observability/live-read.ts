@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto"
+import { homedir } from "node:os"
+import { relativize } from "../progress/tool-detail.ts"
+import type { PathScope } from "../progress/tool-detail.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import type { ProgressRow } from "../runner/store.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
@@ -764,6 +767,7 @@ function historyItem(row: LiveProgressRow, stats: ReturnType<typeof privacyStats
 export class LiveRadarReader {
   private readonly source: LiveReadStore
   private readonly schedulerKey: string
+  private readonly projectDirectory: string
 
   constructor(
     store: RunnerStore,
@@ -771,6 +775,7 @@ export class LiveRadarReader {
     private readonly projectID: string,
     private readonly secret: Uint8Array,
   ) {
+    this.projectDirectory = store.repository.projectDirectory
     this.schedulerKey = schedulerProjectKey(
       store.repository.path,
       store.repository.projectDirectory,
@@ -1293,23 +1298,76 @@ export class LiveRadarReader {
       return (right.updatedAt ?? 0) - (left.updatedAt ?? 0)
     })
 
-    // Calls and tool phases without their own summary take the one recorded for the same call.
+    // Paths read relative to where the session works: its workspace, else the project root.
+    const pathScope = (sessionID: string): PathScope => {
+      const workspace = source.assignments.get(sessionID)?.workspace
+      return {
+        roots: workspace ? [workspace, this.projectDirectory] : [this.projectDirectory],
+        worktreesBase: `${this.projectDirectory}.worktrees`,
+        home: homedir(),
+      }
+    }
+    const shorten = (sessionID: string, detail: string) =>
+      contractText(relativize(detail, pathScope(sessionID)), stats, 200)
+
+    // Sessions with no runner assignment (the Architect) have no progress rows: their calls come
+    // from the canonical per-call record.
+    const known = new Set(calls.map((call) => `${call.sessionID}\u0000${call.callID}`))
+    for (const row of this.source.nativeCalls(
+      sessionRows.filter((item) => item.assignment === null).map((item) => item.sessionID),
+      signal,
+    )) {
+      if (known.has(`${row.session_id}\u0000${row.call_id}`)) continue
+      if (calls.length >= 256) {
+        flags.callsTruncated = true
+        break
+      }
+      const finished = row.status === "succeeded" || row.status === "failed"
+      const status: LiveRadarResponse["calls"][number]["status"] = finished
+        ? (row.status as "succeeded" | "failed")
+        : observedAt - row.last_observed_at <= 600_000
+          ? "running"
+          : "unknown"
+      calls.push({
+        id: `call:${stableToken(`${row.session_id}:${row.call_id}`)}`,
+        sessionID: row.session_id,
+        attemptID: null,
+        messageID: text(row.message_id, 200, stats),
+        callID: text(row.call_id, 200, stats) ?? "call",
+        tool: text(row.tool, 160, stats),
+        status,
+        execution: null,
+        inputAt: row.first_observed_at,
+        calledAt: null,
+        completedAt: finished ? row.last_observed_at : null,
+        observedAt: row.last_observed_at,
+        sourceProgressSequence: null,
+        sourceEventID: null,
+        sourceEventType: null,
+        result: null,
+        error: text(row.error, 240, stats),
+        payloadAvailable: false,
+        ...(row.detail ? { detail: shorten(row.session_id, row.detail) } : {}),
+      })
+    }
+
+    // Stored summaries may carry absolute paths: shorten them here, and let calls and tool phases
+    // without their own summary take the one recorded for the same call.
     const details = this.source.toolDetails(
       sessionRows.map((row) => row.sessionID),
       signal,
     )
-    if (details.size > 0) {
-      for (const call of calls)
-        if (!call.detail) {
-          const detail = details.get(`${call.sessionID}\u0000${call.callID}`)
-          if (detail) call.detail = contractText(detail, stats, 200)
-        }
-      for (const item of flow)
-        if (item.kind === "tool-phase" && item.callID && !item.detail) {
-          const detail = details.get(`${item.sessionID}\u0000${item.callID}`)
-          if (detail) item.detail = contractText(detail, stats, 200)
-        }
+    for (const call of calls) {
+      const detail = call.detail ?? details.get(`${call.sessionID}\u0000${call.callID}`)
+      if (detail) call.detail = shorten(call.sessionID, detail)
     }
+    for (const item of flow)
+      if (item.kind === "tool-phase") {
+        const detail =
+          item.detail ??
+          (item.callID ? details.get(`${item.sessionID}\u0000${item.callID}`) : undefined)
+        if (detail) item.detail = shorten(item.sessionID, detail)
+      }
 
     const response = {
       schemaVersion: 1 as const,

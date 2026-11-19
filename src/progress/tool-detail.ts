@@ -33,6 +33,52 @@ export function redactCommand(command: string) {
     )
 }
 
+/** Where a call ran, so paths can be shown without the machine-specific prefix. */
+export type PathScope = {
+  /** Working directories: the session's workspace, the project root. Longest match wins. */
+  roots?: readonly string[]
+  /** Parent of per-task worktrees: `<project>.worktrees`; every child counts as a root. */
+  worktreesBase?: string
+  /** The person's home directory, shown as `~` for paths outside every root. */
+  home?: string
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+const trimSlash = (value: string) => value.replace(/\/+$/, "")
+
+function isRoot(path: string, scope: PathScope) {
+  const clean = trimSlash(path)
+  return (
+    (scope.roots ?? []).some((root) => trimSlash(root) === clean) ||
+    (scope.worktreesBase !== undefined &&
+      new RegExp(`^${escapeRegExp(trimSlash(scope.worktreesBase))}/[^/]+$`).test(clean))
+  )
+}
+
+/**
+ * Remove the workspace root wherever it appears (`/root/src/a.ts` becomes `src/a.ts`, a bare root
+ * becomes `.`), and show other paths under the home directory as `~/...`. Used when recording and
+ * again when reading, so rows stored with absolute paths read the same.
+ */
+export function relativize(value: string, scope: PathScope) {
+  let output = value
+  const prefixes = [
+    ...(scope.worktreesBase
+      ? [`${escapeRegExp(trimSlash(scope.worktreesBase))}/[^/\\s"'\`]+`]
+      : []),
+    ...(scope.roots ?? [])
+      .filter((root) => root.length > 1)
+      .map((root) => escapeRegExp(trimSlash(root))),
+  ].toSorted((left, right) => right.length - left.length)
+  for (const prefix of prefixes)
+    output = output
+      .replace(new RegExp(`${prefix}/`, "g"), "")
+      .replace(new RegExp(`${prefix}(?![\\w./-])`, "g"), ".")
+  if (scope.home && scope.home.length > 1)
+    output = output.replace(new RegExp(`${escapeRegExp(trimSlash(scope.home))}/`, "g"), "~/")
+  return output
+}
+
 function oneLine(value: string) {
   return value.replace(/\s+/g, " ").trim()
 }
@@ -63,19 +109,29 @@ function urlSummary(value: string) {
   }
 }
 
-/** Names of the project tools a code-mode script calls, in order of first appearance. */
+/**
+ * Tools a code-mode script calls, in order of first appearance: `tools.read(`, `tools["lz-x"](`,
+ * and bare hyphenated project tool names. When none is found the script's first non-empty line
+ * stands in, so an execute call is never blank.
+ */
 function scriptTools(source: string) {
   const names: string[] = []
   for (const match of source.matchAll(
-    /\b(lz-[a-z0-9][a-z0-9-]*|search|query|fetch|read|glob|grep)\b(?=\s*[([\s,])/g,
+    /\btools\s*\.\s*([A-Za-z_][\w-]*)\s*\(|\btools\s*\[\s*["'`]([^"'`]+)["'`]\s*\]\s*\(|\b(lz-[a-z0-9][a-z0-9-]*)\b/g,
   )) {
-    const name = match[1]!
-    if (!names.includes(name)) names.push(name)
+    const name = match[1] ?? match[2] ?? match[3]
+    if (name && !names.includes(name)) names.push(name)
   }
-  return names.slice(0, 5).join(" · ")
+  if (names.length > 0) return names.slice(0, 5).join(" · ")
+  return (
+    source
+      .split("\n")
+      .find((line) => line.trim().length > 0)
+      ?.trim() ?? ""
+  )
 }
 
-function raw(tool: string, input: unknown): string | undefined {
+function raw(tool: string, input: unknown, scope: PathScope): string | undefined {
   const value = args(input)
   const name = tool.toLowerCase()
   if (/^(bash|shell|sh|zsh|exec|run|command)$/.test(name)) {
@@ -92,12 +148,14 @@ function raw(tool: string, input: unknown): string | undefined {
     const pattern = first(value, "pattern", "query")
     if (pattern === undefined) return undefined
     const where = first(value, "path", "include")
-    return `"${pattern}"${where ? ` ${where}` : ""}`
+    return `"${pattern}"${where && !isRoot(where, scope) ? ` ${where}` : ""}`
   }
   if (name === "glob" || name === "list" || name === "ls") {
     const pattern = first(value, "pattern", "path")
     const where = name === "glob" ? first(value, "path") : undefined
-    return pattern === undefined ? undefined : `${pattern}${where ? ` ${where}` : ""}`
+    return pattern === undefined
+      ? undefined
+      : `${pattern}${where && !isRoot(where, scope) ? ` ${where}` : ""}`
   }
   if (name === "webfetch" || name === "fetch") {
     const url = first(value, "url")
@@ -116,15 +174,15 @@ function raw(tool: string, input: unknown): string | undefined {
  * A bounded single-line summary of one tool call, or null when the call carries nothing worth
  * showing. Redaction runs before truncation; whitespace is collapsed and newlines removed.
  */
-export function toolDetail(tool: string, input: unknown): string | null {
+export function toolDetail(tool: string, input: unknown, scope: PathScope = {}): string | null {
   let summary: string | undefined
   try {
-    summary = raw(tool, input)
+    summary = raw(tool, input, scope)
   } catch {
     return null
   }
   if (summary === undefined) return null
-  const line = oneLine(summary)
+  const line = oneLine(relativize(summary, scope))
   if (!line) return null
   return bounded(oneLine(safeText(line, privacyStats(), 4_000))) || null
 }

@@ -11,7 +11,7 @@ import { operationalReads } from "../../test/radar/operational.ts"
 
 type Handlers = {
   liveRadar(input: {
-    scope: { kind: "session"; sessionID: string }
+    scope: { kind: "session" | "project"; sessionID: string }
     includeUnmanagedSessions: boolean
   }): Effect.Effect<unknown>
 }
@@ -131,6 +131,78 @@ test("a session with no runner assignment still gets its call summaries", () => 
     expect(details.get("ses-architect\u0000call-execute")).toBe("lz-inspect-plan · lz-query-tasks")
     expect(details.get("ses-architect\u0000call-read")).toBe("DESIGN.md")
     expect([...details.keys()].some((key) => key.startsWith("ses-other"))).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("the Architect's native calls reach the live read with details and no runner assignment", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const scoped = (callID: string, tool: string, input: unknown) => ({
+      tool,
+      sessionID: "ses-owner",
+      agent: "architect",
+      messageID: `msg-${callID}`,
+      callID,
+      input,
+    })
+    recorder.recordToolBefore(
+      scoped("a1", "execute", { code: 'await tools["lz-query-tasks"]({})' }),
+    )
+    recorder.recordToolHook({
+      ...scoped("a1", "execute", { code: 'await tools["lz-query-tasks"]({})' }),
+      status: "completed",
+      result: { content: "ok" } as never,
+    })
+    recorder.recordToolBefore(scoped("a2", "read", { filePath: `${fixture.directory}/DESIGN.md` }))
+    const reads = operationalReads(fixture) as ObservationReads
+    let handlers: Handlers | undefined
+    const context = {
+      rpc: {
+        register: (_definition: unknown, methods: Handlers) => {
+          handlers = methods
+          return Effect.succeed({ dispose: Effect.void, events: { emit: () => Effect.void } })
+        },
+      },
+      permission: { assert: () => Effect.void },
+      session: {
+        get: ({ sessionID }: { sessionID: string }) =>
+          Effect.succeed({
+            id: sessionID,
+            projectID: "project",
+            agent: "architect",
+            time: { archived: undefined },
+          }),
+      },
+      event: { subscribe: () => Stream.empty },
+    } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerObservability(context, reads, "project")
+          const live = (yield* handlers!.liveRadar({
+            scope: { kind: "project", sessionID: "ses-owner" },
+            includeUnmanagedSessions: false,
+          } as never)) as LiveRadarResponse
+          const mine = live.calls.filter((call) => call.sessionID === "ses-owner")
+          const byCall = new Map(mine.map((call) => [call.callID, call]))
+          expect(byCall.get("a1")).toMatchObject({
+            tool: "execute",
+            status: "succeeded",
+            attemptID: null,
+            detail: "lz-query-tasks",
+          })
+          expect(byCall.get("a2")).toMatchObject({
+            tool: "read",
+            status: "running",
+            detail: "DESIGN.md",
+          })
+          expect(JSON.stringify(live)).not.toContain(fixture.directory)
+        }),
+      ),
+    )
   } finally {
     fixture.close()
   }

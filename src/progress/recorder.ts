@@ -11,6 +11,8 @@ import { publicProgressError, visibleProgressText } from "./privacy.ts"
 import { ProgressInput, type NativeLineageRejection } from "./schema.ts"
 import { observeFileTargets } from "./file-target.ts"
 import { toolDetail } from "./tool-detail.ts"
+import type { PathScope } from "./tool-detail.ts"
+import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 
@@ -93,8 +95,11 @@ type ToolCall = {
 }
 
 /** The bounded one-line summary of a call, or nothing when its input says nothing worth showing. */
-function detailField(call: { tool: string; input?: unknown }): { detail?: string } {
-  const detail = toolDetail(call.tool, call.input)
+function detailField(
+  call: { tool: string; input?: unknown },
+  scope: PathScope,
+): { detail?: string } {
+  const detail = toolDetail(call.tool, call.input, scope)
   return detail === null ? {} : { detail }
 }
 
@@ -1505,9 +1510,29 @@ export class ProgressRecorder {
     }
   }
 
+  /**
+   * Where a session works, for showing paths without the machine prefix: its assigned workspace
+   * when it has one, the project root, and the per-task worktrees beside the project.
+   */
+  private pathScope(sessionID: string): PathScope {
+    const project = this.store.repository.projectDirectory
+    let workspace: string | undefined
+    try {
+      workspace = this.assignmentForSession(sessionID)?.workspace
+    } catch {
+      workspace = undefined
+    }
+    return {
+      roots: workspace ? [workspace, project] : [project],
+      worktreesBase: `${project}.worktrees`,
+      home: homedir(),
+    }
+  }
+
   recordToolBefore(call: Omit<ToolCall, "status" | "result" | "error">): void {
     const at = Date.now()
     const stats = privacyStats()
+    const detail = detailField(call, this.pathScope(call.sessionID))
     this.store.atomic((db) =>
       this.appendToolCallIn(db, call.sessionID, {
         source: "tool-hook",
@@ -1520,7 +1545,7 @@ export class ProgressRecorder {
         payload: {
           tool: safeText(call.tool, stats, 160),
           agent: safeText(call.agent, stats, 200),
-          ...detailField(call),
+          ...detail,
           observations: [
             {
               source: "tool-hook",
@@ -1694,7 +1719,7 @@ export class ProgressRecorder {
       tool: safeText(call.tool, stats, 160),
       agent: safeText(call.agent, stats, 200),
       status: call.status === "error" ? "failed" : "succeeded",
-      ...detailField(call),
+      ...detailField(call, this.pathScope(call.sessionID)),
       observations: [
         {
           source: "tool-hook",
@@ -1757,7 +1782,7 @@ export class ProgressRecorder {
     const initial = this.assignmentForSession(call.sessionID)
     if (!initial || !activeAttempt(initial.attemptState)) return undefined
     const fileTargets = observeFileTargets(call.tool, call.input, initial.workspace)
-    const detail = toolDetail(call.tool, call.input)
+    const detail = toolDetail(call.tool, call.input, this.pathScope(call.sessionID))
     if (!fileTargets && detail === null) return undefined
 
     return this.store.atomic((db) => {

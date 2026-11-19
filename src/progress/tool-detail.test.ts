@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { TOOL_DETAIL_LIMIT, redactCommand, toolDetail } from "./tool-detail.ts"
+import { TOOL_DETAIL_LIMIT, redactCommand, relativize, toolDetail } from "./tool-detail.ts"
 
 test("each built-in tool names what it ran from its own input field", () => {
   expect(
@@ -30,13 +30,57 @@ test("each built-in tool names what it ran from its own input field", () => {
   ).toBe("src/p.ts, src/q.ts")
 })
 
-test("code mode execute lists the project tools its script calls", () => {
+test("code mode execute lists the tools its script calls, in every call form", () => {
   expect(
     toolDetail("execute", {
-      code: "const a = await lz-inspect-plan({ planID })\nawait lz-query-tasks({}); await lz-inspect-plan({})",
+      code: "const a = await tools[\"lz-inspect-plan\"]({ planID })\nawait tools.read({ filePath })\nawait tools['lz-query-tasks']({}); await tools.read({})",
     }),
-  ).toBe("lz-inspect-plan · lz-query-tasks")
-  expect(toolDetail("execute", { code: "const x = 1" })).toBeNull()
+  ).toBe("lz-inspect-plan · read · lz-query-tasks")
+  expect(toolDetail("execute", { code: "await tools[\"bash\"]({ command: 'ls' })" })).toBe("bash")
+  expect(toolDetail("execute", { code: "await lz-query-tasks({})" })).toBe("lz-query-tasks")
+  // No tool name: the first non-empty line stands in, so the row is never blank.
+  expect(toolDetail("execute", { code: "\n\n  const x = 1\nreturn x" })).toBe("const x = 1")
+  expect(toolDetail("execute", {})).toBeNull()
+})
+
+test("paths are shown relative to where the session works", () => {
+  const scope = {
+    roots: ["/Users/me/lazers.worktrees/abc-123", "/Users/me/lazers"],
+    worktreesBase: "/Users/me/lazers.worktrees",
+    home: "/Users/me",
+  }
+  expect(
+    toolDetail("read", { filePath: "/Users/me/lazers.worktrees/abc-123/src/a.ts" }, scope),
+  ).toBe("src/a.ts")
+  expect(toolDetail("read", { filePath: "/Users/me/lazers/docs/x.md" }, scope)).toBe("docs/x.md")
+  expect(toolDetail("read", { filePath: "/Users/me/.config/x.json" }, scope)).toBe(
+    "~/.config/x.json",
+  )
+  expect(
+    toolDetail(
+      "grep",
+      { pattern: "export", path: "/Users/me/lazers.worktrees/abc-123/src/a.ts" },
+      scope,
+    ),
+  ).toBe('"export" src/a.ts')
+  // A grep or glob over the workspace root shows just the pattern.
+  expect(
+    toolDetail(
+      "glob",
+      { pattern: "**/AGENTS.md", path: "/Users/me/lazers.worktrees/abc-123" },
+      scope,
+    ),
+  ).toBe("**/AGENTS.md")
+  expect(toolDetail("grep", { pattern: "x", path: "/Users/me/lazers" }, scope)).toBe('"x"')
+  // Inside a shell command, and for any other worktree of the project.
+  expect(
+    toolDetail(
+      "bash",
+      { command: "cd /Users/me/lazers.worktrees/other-9 && git diff /Users/me/lazers/src/b.ts" },
+      scope,
+    ),
+  ).toBe("cd . && git diff src/b.ts")
+  expect(relativize("/Users/me/lazers.worktrees/abc-123/src/a.ts", scope)).toBe("src/a.ts")
 })
 
 test("commands lose environment values, credential flags and secrets before truncation", () => {
