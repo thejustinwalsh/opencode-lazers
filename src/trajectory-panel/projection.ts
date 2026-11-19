@@ -198,7 +198,15 @@ const Report = z
       specification: z.object({ objective: z.string() }).strip(),
     }),
     plans: z.array(
-      z.object({ id: z.string(), state: z.string().optional(), checks: z.array(Check) }),
+      z.object({
+        id: z.string(),
+        state: z.string().optional(),
+        /** Why the plan is held, cancelled or failed; the same text Tasks reads. */
+        reason: z.string().nullable().optional(),
+        /** Why this task's node is held or failed. */
+        taskReason: z.string().nullable().optional(),
+        checks: z.array(Check),
+      }),
     ),
     attempts: z.array(
       z.object({

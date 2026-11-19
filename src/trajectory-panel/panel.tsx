@@ -32,7 +32,7 @@ import type { EventFilter } from "./event-names.ts"
 import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
 import { taskStatePresentation } from "./state-presentation.ts"
-import { attemptDuration, reportTaskView, taskReason } from "./attempt-state.ts"
+import { attemptDuration, lastWorkerActivity, reportTaskView, taskReason } from "./attempt-state.ts"
 import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
 import type { TaskGlyph } from "../tasks/row-presentation.ts"
@@ -925,13 +925,7 @@ function PanelView(
       : taskStatePresentation(taskStatus())
   }
   const isLatestAttempt = (attempt: { id: string }) => report()?.attempts.at(-1)?.id === attempt.id
-  const lastActivityOf = (attempt: { id: string }) => {
-    let last: number | null = null
-    for (const event of loadedEvents())
-      if (event.attemptID === attempt.id && typeof event.at === "number")
-        last = last === null ? event.at : Math.max(last, event.at)
-    return last
-  }
+  const lastActivityOf = (attempt: { id: string }) => lastWorkerActivity(loadedEvents(), attempt.id)
   /** Time a recorded-running attempt stops at when its task is not working. */
   const heldFor = (attempt: TrajectoryAttempt) =>
     isLatestAttempt(attempt) && taskView() && !taskView()!.working
@@ -1319,7 +1313,7 @@ function PanelView(
     const view = taskView()
     const explained =
       view && isLatestAttempt(attempt) && view.explained
-        ? taskReason(view, loadedEvents(), ended?.raw ?? ended?.text)
+        ? taskReason(view, line, loadedEvents(), ended?.raw ?? ended?.text)
         : undefined
     return {
       attempt,

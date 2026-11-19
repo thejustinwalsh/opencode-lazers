@@ -501,6 +501,7 @@ test("task reports include unsuccessful and accepted attempts, usage categories,
     expect(JSON.stringify(report.task.specification)).toContain("Reuse src/runner/store.ts")
     expect(JSON.stringify(report.task.specification)).not.toContain("fake-guidance-secret")
     expect(report.plans[0]?.taskState).toBe("accepted")
+    expect(report.plans[0]).toHaveProperty("taskReason", null)
     expect(report.plans[0]?.baseCommit).toBe("a".repeat(40))
     expect(report.plans[0]?.taskResultCommit).toBe("b".repeat(40))
     expect(report.effort.accepted).toBe(true)
