@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
+import { parseFallowThreads } from "../audit/fallow-threads.ts"
+import { setFallowThreads } from "../audit/wasm-analyzer.ts"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
@@ -186,6 +188,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   built("progress")
   const nativeRunnerHost = nativeHost(host, repository)
   let scheduler: ReturnType<typeof sharedScheduler.register> | undefined
+  setFallowThreads(parseFallowThreads(info.options.fallowThreads))
   const runtime: TaskRuntime = new TaskRuntime(runnerStore, nativeRunnerHost, projectID, progress, {
     architectCacheWindowMs: info.options.architectCacheWindowMs as number | undefined,
     architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as

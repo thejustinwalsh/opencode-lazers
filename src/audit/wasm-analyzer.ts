@@ -1,7 +1,9 @@
 import { isAbsolute, relative } from "node:path"
 import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
+import { Effect } from "effect"
 import type { AnalyzerScope, FallowAnalyzer } from "./analyzer.ts"
+import type { FallowThreads } from "./fallow-threads.ts"
 import type {
   FallowWorkerKind,
   FallowWorkerRequest,
@@ -221,6 +223,30 @@ class WorkerClient {
 
 const client = new WorkerClient()
 
+let threadsMode: FallowThreads = "on"
+let threadsFallback: string | undefined
+
+/** The `fallowThreads` option: set once when the plugin starts. Takes effect on the next call. */
+export function setFallowThreads(mode: FallowThreads): void {
+  threadsMode = mode
+}
+
+/** Why analysis runs single-threaded although `fallowThreads` is on, once that has happened. */
+export function fallowThreadsFallback(): string | undefined {
+  return threadsFallback
+}
+
+/** Record the first fallback and log it once; later calls stay on the single-threaded module. */
+function noteFallback(reason: string): void {
+  if (threadsFallback !== undefined) return
+  threadsFallback = reason
+  void Effect.runPromise(
+    Effect.logWarning("Fallow threaded analysis unavailable; using the single-threaded module", {
+      reason,
+    }),
+  ).catch(() => undefined)
+}
+
 function relativePaths(root: string, files: readonly string[]): string[] {
   return files.map((file) => (isAbsolute(file) ? relative(root, file) : file))
 }
@@ -238,11 +264,13 @@ async function call(
       ...(kind === "duplication" ? { changed: files } : { files }),
       ...(scope.configPath ? { configPath: scope.configPath } : {}),
       options,
+      threads: threadsFallback === undefined ? threadsMode : "off",
     },
     scope.signal,
     scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
   )
   if ("error" in response) throw new AnalyzerError(response.error.code, response.error.message)
+  if (response.fallback !== undefined) noteFallback(response.fallback)
   return response.report
 }
 

@@ -16,7 +16,9 @@ const runtimeScripts = [
   "dist/decision-worker.js",
   "dist/transition-indexes-worker.js",
   "dist/fallow-worker.js",
+  "dist/fallow-thread.js",
   "dist/fallow.wasm",
+  "dist/fallow-threads.wasm",
 ]
 const staging = await mkdtemp(join(tmpdir(), "lazers-release-"))
 const run = async (cwd: string, ...command: string[]) => {
@@ -49,7 +51,9 @@ try {
       "decision-worker.js",
       "transition-indexes-worker.js",
       "fallow-worker.js",
+      "fallow-thread.js",
       "fallow.wasm",
+      "fallow-threads.wasm",
     ].map((file) => cp(join(root, "dist", file), join(pkg, "dist", file))),
     writeFile(
       join(consumer, "package.json"),
