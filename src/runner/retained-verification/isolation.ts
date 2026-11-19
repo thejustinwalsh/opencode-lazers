@@ -1316,7 +1316,3 @@ export async function removeRetainedCheckContextFromWitness(
   await assertNoSymlinks(contextPath)
   await rm(contextPath, { recursive: true, force: false })
 }
-
-export function retainedResourcePaths(context: RetainedCheckContext): string[] {
-  return context.resources.map((resource) => resource.realPath)
-}

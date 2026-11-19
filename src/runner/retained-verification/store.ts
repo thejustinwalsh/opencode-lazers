@@ -289,26 +289,6 @@ function validateRetainedLifecycles(previous: RetainedVerification, next: Retain
     lifecycleTransition("workspace", previous[field] ?? "unallocated", next[field] ?? "unallocated")
 }
 
-export function updateRetainedVerification(
-  db: Database,
-  operation: RetainedVerification,
-  expectedStates: readonly RetainedVerification["state"][],
-): boolean {
-  ensureRetainedVerificationTables(db)
-  const current = retainedVerification(db, operation.id)
-  if (!current) return false
-  if (!expectedStates.includes(current.state)) return false
-  validateRetainedLifecycles(current, operation)
-  const states = expectedStates.map(() => "?").join(",")
-  const changed = db
-    .query(
-      `UPDATE runner_retained_verifications SET state=lz_runner_transition('retained',state,?),payload=?
-       WHERE id=? AND state IN (${states})`,
-    )
-    .run(operation.state, JSON.stringify(operation), operation.id, ...expectedStates).changes
-  return changed === 1
-}
-
 export function setRetainedVerificationWorkspace(
   db: Database,
   operation: RetainedVerification,
@@ -348,7 +328,7 @@ export function retainedVerificationChecks(
   return records
 }
 
-export function retainedVerificationCheckReceipts(
+function retainedVerificationCheckReceipts(
   db: Database,
   operationID: string,
   phase: "task" | "combined",
@@ -379,7 +359,7 @@ export function retainedVerificationCheckReceipts(
     .all(operationID, phase, checkID)
 }
 
-export function retainedVerificationCheckReceiptCount(
+function retainedVerificationCheckReceiptCount(
   db: Database,
   operationID: string,
   phase: "task" | "combined",

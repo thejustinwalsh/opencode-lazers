@@ -415,7 +415,7 @@ type CleanupAuditDiagnostics = {
 }
 
 /** Verification effects only read the candidate; a missing receipt means run the check again. */
-export function isRerunnableEffect(kind: string): boolean {
+function isRerunnableEffect(kind: string): boolean {
   return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
 }
 

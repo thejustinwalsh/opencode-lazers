@@ -11,7 +11,7 @@ export const NO_PRIORITY = 0
 export const MAX_PRIORITY = 2147483647
 
 /** Ascending sort key: 1 first, MAX_PRIORITY last, none after all. */
-export function priorityKey(priority: number | null | undefined): number {
+function priorityKey(priority: number | null | undefined): number {
   return typeof priority === "number" && Number.isFinite(priority) && priority > 0
     ? priority
     : Number.POSITIVE_INFINITY

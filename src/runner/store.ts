@@ -22,7 +22,7 @@ import {
   retireStaleHolds,
 } from "./retire-gates.ts"
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
-import { equivalentShas, installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
+import { installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
 import { canonical, fingerprint } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
@@ -143,16 +143,6 @@ export type AdoptionCheckRow = {
   receipt: string | null
   created_at: number
 }
-export type AdoptionEvidenceRow = {
-  id: string
-  adoption_id: string
-  task_id: string | null
-  phase: "task" | "combined" | "legacy"
-  assertion_id: string
-  artifact: string
-  body: string
-  created_at: number
-}
 export type ContinuationRow = {
   plan_id: string
   session_id: string
@@ -178,7 +168,7 @@ export type ArchitectRenewalRow = {
   continuity_json: string | null
   started_at: number
 }
-export type ArchitectContinuityRow = {
+type ArchitectContinuityRow = {
   project_directory: string
   session_id: string
   revision: number
@@ -186,12 +176,12 @@ export type ArchitectContinuityRow = {
   unresolved_questions: string
   updated_at: number
 }
-export type ArchitectRenewalPlanRow = {
+type ArchitectRenewalPlanRow = {
   renewal_id: string
   plan_id: string
   prior_continuation: string | null
 }
-export type ArchitectSourceResultRow = {
+type ArchitectSourceResultRow = {
   session_id: string
   renewal_id: string
   message_id: string
@@ -206,7 +196,7 @@ export type ArchitectSourceResultRow = {
   referenced_revision: number
   updated_at: number
 }
-export type ArchitectSourceRow = {
+type ArchitectSourceRow = {
   session_id: string
   renewal_id: string
   anchor_plan_id: string
@@ -631,7 +621,7 @@ function migrateConflictScanHistory(db: Database) {
   }
 }
 
-export const DETAIL_PAGE_LIMIT = 200
+const DETAIL_PAGE_LIMIT = 200
 export type DetailPage = {
   limit?: number
   activityBefore?: number
@@ -1098,12 +1088,6 @@ export class RunnerStore {
       registerLifecycleTransitions(db)
       return run(db)
     })
-  }
-  atomicAsync<T>(run: (db: Database) => T, options?: { deadlineMs?: number }): Promise<T> {
-    return this.repository.atomicAsync((db) => {
-      registerLifecycleTransitions(db)
-      return run(db)
-    }, options)
   }
   /** Pure reads: deferred snapshot, never waits on writers. */
   read<T>(run: (db: Database) => T): T {
@@ -1648,22 +1632,6 @@ export class RunnerStore {
   architectSourceJournalPage(planID: string, limit: number, cursor?: string): SourceJournalPage {
     return this.read((db) =>
       readSourceJournalPage(db, this.repository.projectDirectory, planID, limit, cursor),
-    )
-  }
-  retiredArchitectSourceForPlan(sessionID: string, planID: string) {
-    return this.read((db) =>
-      Boolean(
-        db
-          .query<{ present: number }, [string, string, string, string]>(
-            `SELECT 1 AS present FROM runner_architect_renewals r
-             JOIN runner_architect_renewal_plans p ON p.renewal_id=r.id
-             JOIN runner_plans current ON current.id=p.plan_id
-             JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
-             WHERE r.previous_session_id=? AND p.plan_id=? AND p.transferred=1
-               AND current.owner<>? AND anchor.project_directory=? LIMIT 1`,
-          )
-          .get(sessionID, planID, sessionID, this.repository.projectDirectory),
-      ),
     )
   }
   recordArchitectSourcePage(input: {
@@ -4080,10 +4048,6 @@ export class RunnerStore {
   /** Equal artifact SHAs, or SHAs recorded with the same tree OID. */
   sameArtifact(left: string | null | undefined, right: string | null | undefined): boolean {
     return this.repository.read((db) => sameArtifact(db, left, right))
-  }
-  /** Every artifact SHA known to carry the same tree as `artifact`, itself first. */
-  equivalentArtifacts(artifact: string): string[] {
-    return this.repository.read((db) => equivalentShas(db, artifact))
   }
   cancelAdoptions(planID: string, reason: string) {
     return this.atomic((db) => {

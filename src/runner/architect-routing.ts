@@ -18,8 +18,6 @@ export type ArchitectRoutingOptions = {
   architectReuseMaxContextTokens: number
 }
 
-export type ArchitectRouteReason = "warm" | "small-context" | "cold-large" | "missing"
-
 export type ArchitectRoute =
   | { action: "reuse" | "queue"; sessionID: string; reason: "warm" | "small-context" }
   | { action: "fresh"; sessionID: null; reason: "cold-large" | "missing" }

@@ -53,7 +53,7 @@ export function parseOutcomeOwnership(value: unknown): OutcomeOwnership | undefi
   return metadata as OutcomeOwnership
 }
 
-export function matchesOutcomeOwnership(actual: unknown, expected: OutcomeOwnership): boolean {
+function matchesOutcomeOwnership(actual: unknown, expected: OutcomeOwnership): boolean {
   const metadata = parseOutcomeOwnership(actual)
   return Boolean(metadata && ownershipKeys.every((key) => metadata[key] === expected[key]))
 }

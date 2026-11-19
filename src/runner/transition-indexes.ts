@@ -14,7 +14,7 @@ export const TRANSITION_INDEXES = [
 ] as const
 
 /** Tables at or below this many rows are indexed inline (well under 100ms). */
-export const INLINE_INDEX_ROW_LIMIT = 20_000
+const INLINE_INDEX_ROW_LIMIT = 20_000
 
 export function missingTransitionIndexes(db: Database) {
   const present = new Set(

@@ -56,7 +56,7 @@ const planStates = {
   integrated: { type: "final" },
 } as const
 
-export const planMachine = createMachine({
+const planMachine = createMachine({
   id: "runner-plan",
   initial: "draft",
   states: planStates,
@@ -90,7 +90,7 @@ const attemptStates = {
   exhausted: { on: { preparing: "preparing" } },
 } as const
 
-export const attemptMachine = createMachine({
+const attemptMachine = createMachine({
   id: "runner-attempt",
   initial: "preparing",
   states: attemptStates,
@@ -106,7 +106,7 @@ const effectStates = {
   failed: { type: "final" },
 } as const
 
-export const effectMachine = createMachine({
+const effectMachine = createMachine({
   id: "runner-effect",
   initial: "intended",
   states: effectStates,
@@ -130,12 +130,12 @@ function defineLifecycle(id: string, initial: string, edges: Record<string, read
  * A queued notice replaced by a newer outcome for the same plan, or one retired
  * before admission, ends superseded. Whether OpenCode later consumes it is not tracked.
  */
-export const outboxMachine = defineLifecycle("runner-outbox", "pending", {
+const outboxMachine = defineLifecycle("runner-outbox", "pending", {
   pending: ["delivered", "superseded"],
   delivered: [],
   superseded: [],
 })
-export const renewalMachine = defineLifecycle("runner-architect-renewal", "creating", {
+const renewalMachine = defineLifecycle("runner-architect-renewal", "creating", {
   creating: ["archiving", "deferred", "rolling-back"],
   archiving: ["committed", "recovering-input", "rolling-back", "deferred", "archive-failed"],
   "recovering-input": ["archiving", "rolling-back", "deferred", "archive-failed"],
@@ -144,7 +144,7 @@ export const renewalMachine = defineLifecycle("runner-architect-renewal", "creat
   deferred: ["creating"],
   "archive-failed": ["creating"],
 })
-export const adoptionMachine = defineLifecycle("runner-adoption", "pending", {
+const adoptionMachine = defineLifecycle("runner-adoption", "pending", {
   pending: ["task-checks", "combined-checks", "held", "accepted", "failed", "cancelled"],
   "task-checks": ["combined-checks", "held", "accepted", "failed", "cancelled"],
   "combined-checks": ["task-checks", "held", "accepted", "failed", "cancelled"],
@@ -154,43 +154,31 @@ export const adoptionMachine = defineLifecycle("runner-adoption", "pending", {
   cancelled: [],
 })
 /** One call: it passes (accepted), fails, or is cancelled with its plan. No hold, no resume. */
-export const retainedVerificationMachine = defineLifecycle(
-  "runner-retained-verification",
-  "pending",
-  {
-    pending: ["task-checks", "failed", "cancelled"],
-    "task-checks": ["accepted", "failed", "cancelled"],
-    accepted: [],
-    failed: [],
-    cancelled: [],
-  },
-)
-export const verificationResourceMachine = defineLifecycle(
-  "runner-verification-resource",
-  "creating",
-  {
-    creating: ["active", "uncertain", "removed"],
-    active: ["uncertain", "removed"],
-    uncertain: ["active", "removed"],
-    removed: ["creating"],
-  },
-)
-export const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
+const retainedVerificationMachine = defineLifecycle("runner-retained-verification", "pending", {
+  pending: ["task-checks", "failed", "cancelled"],
+  "task-checks": ["accepted", "failed", "cancelled"],
+  accepted: [],
+  failed: [],
+  cancelled: [],
+})
+const verificationResourceMachine = defineLifecycle("runner-verification-resource", "creating", {
+  creating: ["active", "uncertain", "removed"],
+  active: ["uncertain", "removed"],
+  uncertain: ["active", "removed"],
+  removed: ["creating"],
+})
+const verificationCheckMachine = defineLifecycle("runner-verification-check", "intended", {
   intended: ["completed", "uncertain"],
   uncertain: ["completed"],
   completed: ["uncertain"],
 })
-export const verificationCleanupMachine = defineLifecycle(
-  "runner-verification-cleanup",
-  "pending",
-  {
-    pending: ["complete", "failed"],
-    failed: ["complete"],
-    complete: ["pending"],
-  },
-)
+const verificationCleanupMachine = defineLifecycle("runner-verification-cleanup", "pending", {
+  pending: ["complete", "failed"],
+  failed: ["complete"],
+  complete: ["pending"],
+})
 
-export const workspaceMachine = defineLifecycle("runner-verification-workspace", "unallocated", {
+const workspaceMachine = defineLifecycle("runner-verification-workspace", "unallocated", {
   unallocated: ["reserved", "owned", "uncertain", "removed"],
   reserved: ["owned", "uncertain", "removed"],
   owned: ["uncertain", "removed"],
