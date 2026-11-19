@@ -352,3 +352,48 @@ test("legacy task bodies remain readable without creating a default classificati
   expect(decoded.proposal.classification).toBeUndefined()
   expect(JSON.stringify(decoded)).not.toContain("classification")
 })
+
+describe("scope model", () => {
+  test("writeScope alone stays valid; create and protected are optional additions", () => {
+    expect(TaskProposalSchema.safeParse(validProposal()).success).toBe(true)
+    const scoped = {
+      ...validProposal(),
+      createScope: [
+        { path: "src/runner/queue-limit.ts", purpose: "the queue limit rule" },
+        { path: "src/runner/queue/", purpose: "queue helpers" },
+      ],
+      protectedScope: ["src/audit/**"],
+    }
+    expect(TaskProposalSchema.parse(scoped)).toMatchObject({
+      createScope: scoped.createScope,
+      protectedScope: ["src/audit/**"],
+    })
+  })
+
+  test("create entries need a purpose and a repository-relative path; protected paths are relative", () => {
+    const base = validProposal()
+    for (const createScope of [
+      [{ path: "src/a.ts" }],
+      [{ path: "src/a.ts", purpose: "" }],
+      [{ path: "/abs/a.ts", purpose: "x" }],
+      [{ path: "../a.ts", purpose: "x" }],
+      [{ path: "src/a.ts", purpose: "x", extra: 1 }],
+    ])
+      expect(TaskProposalSchema.safeParse({ ...base, createScope }).success).toBe(false)
+    for (const protectedScope of [["/etc"], ["../x"], ["!src/**"], [""]])
+      expect(TaskProposalSchema.safeParse({ ...base, protectedScope }).success).toBe(false)
+    expect(
+      TaskProposalSchema.safeParse({
+        ...base,
+        createScope: Array(51).fill({ path: "a", purpose: "b" }),
+      }).success,
+    ).toBe(false)
+  })
+
+  test("the wire schema exposes the new fields", () => {
+    const schema = taskProposalJSONSchema as { properties: Record<string, unknown> }
+    expect(Object.keys(schema.properties)).toEqual(
+      expect.arrayContaining(["writeScope", "createScope", "protectedScope"]),
+    )
+  })
+})
