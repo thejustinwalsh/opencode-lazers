@@ -4847,16 +4847,23 @@ export class TaskRuntime {
         "takeover-submit needs the task's running takeover attempt; call lz-request-handoff first",
       )
     this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
-    this.store.atomic((db) =>
-      db
-        .query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
-        )
-        .run(attempt.id),
-    )
+    this.store.atomic((db) => {
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
+      ).run(attempt.id)
+      // A resubmission after a failed verification lifts its hold.
+      if (plan.state === "blocked")
+        db.query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+        ).run(plan.id)
+    })
+    const submissions = this.store
+      .activity(plan.id, attempt.task_id)
+      .filter((event) => event.event === "TAKEOVER_SUBMITTED").length
     this.store.record(plan.id, attempt.task_id, "TAKEOVER_SUBMITTED", {
       attemptID: attempt.id,
       reason: command.reason,
+      submission: submissions + 1,
     })
     this.tickRequested = true
     return { status: "takeover-submitted", attemptID: attempt.id, version: plan.version }
@@ -11813,6 +11820,8 @@ export class TaskRuntime {
     reason: string,
     workerObservation?: TerminalWorkerHold,
   ) {
+    if (isTakeoverAttempt(attempt.policy))
+      return this.returnTakeoverToArchitect(plan, attempt, reason)
     const task = this.store.repository.get(attempt.task_id)!
     this.store.atomic((db) => {
       db.query(
@@ -11829,6 +11838,38 @@ export class TaskRuntime {
     if (this.store.execution(task.id)?.state === "failed")
       this.hold(plan, reason, ["audit", "reconcile", "cancel"], workerObservation)
   }
+  /**
+   * The Architect's own result failed verification. It is not a worker to repair or retry: the
+   * same attempt goes back to the Architect (attempt and task back to running through their
+   * machines) and the plan holds with the failing checks and Fallow findings in its reason,
+   * advertising takeover-submit and cancel. The hold reaches the recovery bundle if unanswered.
+   */
+  private returnTakeoverToArchitect(plan: PlanRow, attempt: AttemptRow, reason: string) {
+    this.store.atomic((db) => {
+      const current = this.store.attempts(plan.id).find((item) => item.id === attempt.id)!
+      if (current.state === "verifying") {
+        db.query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing') WHERE id=?",
+        ).run(attempt.id)
+        db.query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),artifact=NULL WHERE id=?",
+        ).run(attempt.id)
+      }
+      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)!
+      if (node.state === "verifying") this.store.move(plan.id, attempt.task_id, "RESUME", reason)
+      this.store.record(plan.id, attempt.task_id, "TAKEOVER_VERIFY_FAILED", {
+        attemptID: attempt.id,
+        reason,
+      })
+    })
+    try {
+      this.progress.recordAttemptOutcome(attempt.id, "failed", reason)
+    } catch {
+      // Runtime transitions remain authoritative if annotation storage is unavailable.
+    }
+    this.hold(plan, `Takeover verification failed: ${reason}`, ["takeover-submit", "cancel"])
+  }
+
   private async finish(plan: PlanRow, fence: number) {
     if (this.store.plan(plan.id)?.state !== "running") return
     const verificationPlanVersion = this.store.plan(plan.id)!.version

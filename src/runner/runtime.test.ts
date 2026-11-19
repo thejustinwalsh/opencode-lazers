@@ -15786,3 +15786,48 @@ test("takeover: a worker handoff that does not fit the fields is kept verbatim a
     "No takeover is waiting",
   )
 })
+
+test("takeover: a failed verification goes back to the Architect on the same attempt, advertised and bundled, and a resubmission is accepted", async () => {
+  let offset = 0
+  const { f, worker } = await takeoverFixture({ now: () => Date.now() + offset })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const submit = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID: f.receipt.planID,
+        action: "takeover-submit",
+        taskID: worker.task_id,
+        reason: "Architect result",
+      },
+      "owner",
+    )
+  // The worker left "wrong" in a.txt; the first submission fails its check.
+  await submit("submit-wrong")
+  await drive(f.runtime, 8)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Takeover verification failed:")
+  const mine = f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!
+  expect(mine.state).toBe("running")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
+  const notice = f.notifications.findLast((n) => n.text.includes("Takeover verification failed"))
+  expect(notice?.text).toContain("takeover-submit")
+  // Left unanswered, the hold reaches the recovery bundle with its actions.
+  offset += RECOVERY_STALE_MS + 60_000
+  await drive(f.runtime, 3)
+  const bundle = f.notifications.findLast((n) => n.text.includes("LAZERS recovery bundle"))
+  expect(bundle?.text).toContain("takeover-submit")
+  // Fixed and submitted again on the same attempt: accepted.
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submit("submit-fixed")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(f.receipt.planID).find((a) => a.id === mine.id)!.state).toBe("accepted")
+  expect(
+    f.store
+      .activity(f.receipt.planID, worker.task_id)
+      .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
+  ).toHaveLength(2)
+})

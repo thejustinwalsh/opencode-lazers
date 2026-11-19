@@ -514,5 +514,8 @@ reads as an absent session, so no worker observation, usage or interrupt touches
 token count stays unknown because the Architect session's spend is not separable. The
 scheduler skips it while `running`. `lz-plan-command takeover-submit` moves it and its task to
 `verifying` through the attempt and task machines, and the ordinary `verify()` runs: mechanical
-fix, authored checks, Fallow audit, scope. A failure fails the attempt with no automatic repair
-and holds the plan for the Architect, who can take over again from the failed task.
+fix, authored checks, Fallow audit, scope. A failure returns the same attempt to the Architect: attempt
+`verifying -> preparing -> running`, task `RESUME`, and the plan holds with reason
+"Takeover verification failed: <checks and Fallow findings>" (hold family
+`takeover-verification`, actions `takeover-submit` and `cancel`), which the recovery bundle
+lists if unanswered. Each submission is recorded (`TAKEOVER_SUBMITTED` with its count).

@@ -132,6 +132,7 @@ export const runnerTransitions: Record<string, string> = {
   TAKEOVER_HANDOFF_RECEIVED: "Handoff received",
   TAKEOVER_WORKER_STOPPED: "Worker stopped",
   TAKEOVER_STARTED: "Takeover started",
+  TAKEOVER_VERIFY_FAILED: "Takeover check failed",
   TAKEOVER_CANCELLED: "Takeover cancelled",
   TAKEOVER_WORKER_INTERRUPTED: "Worker interrupted for takeover",
   CANCELLATION_CLEANUP: "Cancellation cleanup",
