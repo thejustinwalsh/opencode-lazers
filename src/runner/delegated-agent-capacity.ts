@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
 
 export const DEFAULT_DELEGATED_AGENT_LIMIT = 3
-const ACTIVE_ATTEMPT_STATES = ["preparing", "running", "verifying"] as const
+const ACTIVE_ATTEMPT_STATES = ["preparing", "running"] as const
 const MAX_SQLITE_INTEGER = 2_147_483_647
 
 export const DelegatedAgentLimit = z.number().int().min(1).max(MAX_SQLITE_INTEGER)
@@ -104,7 +104,7 @@ function canonicalDirectory(directory: string) {
 
 function activeRunnerStateSQL(alias = "") {
   const state = alias ? `${alias}.state` : "state"
-  return `${state} IN ('preparing','running','verifying')`
+  return `${state} IN (${ACTIVE_ATTEMPT_STATES.map((value) => `'${value}'`).join(",")})`
 }
 
 function settingsRow(db: Database, projectKey: string, projectDirectory: string) {
@@ -176,22 +176,29 @@ function releaseDeadNativeOwners(
   now: number,
 ) {
   const rows = db
-    .query<{ id: string; process_id: number | null }, [string]>(
-      `SELECT id,process_id FROM delegated_agent_admissions
-       WHERE project_key=? AND kind='native' AND state='admitted'`,
+    .query<{ id: string; state: AdmissionState; process_id: number | null }, [string]>(
+      `SELECT id,state,process_id FROM delegated_agent_admissions
+       WHERE project_key=? AND kind='native' AND state IN ('queued','admitted')`,
     )
     .all(projectKey)
   for (const row of rows) {
-    if (!row.process_id || row.process_id === currentPID) continue
+    if (!row.process_id) {
+      db.query(
+        `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+         WHERE id=? AND state=? AND process_id IS NULL`,
+      ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
+      continue
+    }
+    if (row.process_id === currentPID) continue
     try {
       process.kill(row.process_id, 0)
     } catch (error) {
       if (typeof error === "object" && error !== null && "code" in error && error.code === "EPERM")
         continue
       db.query(
-        `UPDATE delegated_agent_admissions SET state='released',updated_at=?
-         WHERE id=? AND state='admitted'`,
-      ).run(now, row.id)
+        `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+         WHERE id=? AND state=?`,
+      ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
     }
   }
 }
@@ -358,10 +365,11 @@ export class DelegatedAgentCapacity {
         `INSERT INTO lazers_projects(key,created_at,remote_url,root_commit)
          VALUES(?,?,NULL,NULL) ON CONFLICT(key) DO NOTHING`,
       ).run(projectKey, new Date(now).toISOString())
-      db.query(
-        `INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)
-         ON CONFLICT(path) DO UPDATE SET key=excluded.key,last_seen_at=excluded.last_seen_at`,
-      ).run(projectDirectory, projectKey, new Date(now).toISOString())
+      for (const path of new Set([this.repository.projectDirectory, projectDirectory]))
+        db.query(
+          `INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)
+           ON CONFLICT(path) DO UPDATE SET key=excluded.key,last_seen_at=excluded.last_seen_at`,
+        ).run(path, projectKey, new Date(now).toISOString())
       this.backfillActiveAttempts(db, projectKey, projectDirectory, now)
     })
     return projectKey
@@ -373,6 +381,12 @@ export class DelegatedAgentCapacity {
     projectDirectory: string,
     now: number,
   ) {
+    const projectPaths = new Set(
+      db
+        .query<{ path: string }, [string]>("SELECT path FROM lazers_project_paths WHERE key=?")
+        .all(projectKey)
+        .map((row) => canonicalDirectory(row.path)),
+    )
     const attempts = db
       .query<
         {
@@ -392,34 +406,116 @@ export class DelegatedAgentCapacity {
                 COALESCE(json_extract(p.body,'$.priority'),0) AS priority,
                 p.rowid AS plan_order,n.ordinal AS task_order,a.started_at
          FROM runner_attempts a
-         JOIN runner_plans p ON p.id=a.plan_id
-         JOIN runner_nodes n ON n.plan_id=a.plan_id AND n.task_id=a.task_id
-         WHERE a.project_directory IN (SELECT path FROM lazers_project_paths WHERE key=?)
-           AND a.state IN (${ACTIVE_ATTEMPT_STATES.map(() => "?").join(",")})`,
+          JOIN runner_plans p ON p.id=a.plan_id
+          JOIN runner_nodes n ON n.plan_id=a.plan_id AND n.task_id=a.task_id
+         WHERE a.state IN (${ACTIVE_ATTEMPT_STATES.map(() => "?").join(",")})`,
       )
-      .all(projectKey, ...ACTIVE_ATTEMPT_STATES)
+      .all(...ACTIVE_ATTEMPT_STATES)
     for (const attempt of attempts)
+      if (projectPaths.has(canonicalDirectory(attempt.project_directory)))
+        this.backfillAttemptAdmission(db, projectKey, projectDirectory, attempt, now)
+  }
+
+  private backfillAttemptAdmission(
+    db: Database,
+    projectKey: string,
+    projectDirectory: string,
+    attempt: {
+      id: string
+      project_directory: string
+      plan_id: string
+      task_id: string
+      number: number
+      priority: number
+      plan_order: number
+      task_order: number
+      started_at: number
+    },
+    now: number,
+  ) {
+    const requestKey = `runner:${attempt.plan_id}:${attempt.task_id}:${attempt.number}`
+    const canonical = db
+      .query<{ id: string; state: AdmissionState }, [string]>(
+        "SELECT id,state FROM delegated_agent_admissions WHERE request_key=?",
+      )
+      .get(requestKey)
+    const legacy = db
+      .query<{ id: string }, [string]>(
+        "SELECT id FROM delegated_agent_admissions WHERE request_key=?",
+      )
+      .get(`runner-existing:${attempt.id}`)
+    if (canonical) {
       db.query(
-        `INSERT OR IGNORE INTO delegated_agent_admissions
-         (id,project_key,project_directory,request_key,kind,state,agent,priority,plan_order,
-          task_order,queue_order,plan_id,task_id,attempt_number,attempt_id,created_at,updated_at)
-         VALUES(?,?,?,?,'runner','admitted','lazers-implementor',?,?,?,?,?,?,?,?,?,?)`,
+        `UPDATE delegated_agent_admissions
+         SET project_key=?,project_directory=?,attempt_id=?,agent='lazers-implementor',
+             priority=?,plan_order=?,task_order=?,plan_id=?,task_id=?,attempt_number=?,
+             state=CASE WHEN state IN ('released','cancelled') THEN 'admitted' ELSE state END,
+             updated_at=?
+         WHERE id=?`,
       ).run(
-        attempt.id,
         projectKey,
         attempt.project_directory || projectDirectory,
-        `runner-existing:${attempt.id}`,
+        attempt.id,
         attempt.priority,
         attempt.plan_order,
         attempt.task_order,
-        nextQueueOrder(db),
+        attempt.plan_id,
+        attempt.task_id,
+        attempt.number,
+        now,
+        canonical.id,
+      )
+      if (legacy && legacy.id !== canonical.id)
+        db.query(
+          `UPDATE delegated_agent_admissions SET state='released',updated_at=?
+           WHERE id=? AND state='admitted'`,
+        ).run(now, legacy.id)
+      return
+    }
+    if (legacy) {
+      db.query(
+        `UPDATE delegated_agent_admissions
+         SET request_key=?,project_key=?,project_directory=?,state='admitted',
+             agent='lazers-implementor',priority=?,plan_order=?,task_order=?,plan_id=?,task_id=?,
+             attempt_number=?,attempt_id=?,updated_at=?
+         WHERE id=?`,
+      ).run(
+        requestKey,
+        projectKey,
+        attempt.project_directory || projectDirectory,
+        attempt.priority,
+        attempt.plan_order,
+        attempt.task_order,
         attempt.plan_id,
         attempt.task_id,
         attempt.number,
         attempt.id,
-        attempt.started_at,
         now,
+        legacy.id,
       )
+      return
+    }
+    db.query(
+      `INSERT INTO delegated_agent_admissions
+       (id,project_key,project_directory,request_key,kind,state,agent,priority,plan_order,
+        task_order,queue_order,plan_id,task_id,attempt_number,attempt_id,created_at,updated_at)
+       VALUES(?,?,?,?,'runner','admitted','lazers-implementor',?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      attempt.id,
+      projectKey,
+      attempt.project_directory || projectDirectory,
+      requestKey,
+      attempt.priority,
+      attempt.plan_order,
+      attempt.task_order,
+      nextQueueOrder(db),
+      attempt.plan_id,
+      attempt.task_id,
+      attempt.number,
+      attempt.id,
+      attempt.started_at,
+      now,
+    )
   }
 
   async ready() {
@@ -521,71 +617,133 @@ export class DelegatedAgentCapacity {
 
   async ensureRunnerQueued(candidate: RunnerCandidate) {
     const projectKey = await this.projectKey()
-    const requestKey = `runner:${candidate.planID}:${candidate.taskID}:${candidate.attemptNumber}`
-    const now = this.clock.now()
     return this.repository.atomic((db) => {
-      const ordering = db
-        .query<
-          { project_directory: string; priority: number; plan_order: number; task_order: number },
-          [string, string, string]
-        >(
-          `SELECT p.project_directory,COALESCE(json_extract(p.body,'$.priority'),0) AS priority,
-                  p.rowid AS plan_order,n.ordinal AS task_order
-           FROM runner_plans p JOIN runner_nodes n ON n.plan_id=p.id
-           WHERE p.id=? AND n.task_id=? AND p.project_directory=?`,
-        )
-        .get(candidate.planID, candidate.taskID, this.repository.projectDirectory)
-      if (!ordering) throw new Error("Runner candidate is no longer available for admission")
+      this.settle(db, projectKey)
+      return this.ensureRunnerQueuedInTransaction(db, candidate, projectKey)
+    })
+  }
+
+  private ensureRunnerQueuedInTransaction(
+    db: Database,
+    candidate: RunnerCandidate,
+    projectKey: string,
+    options: { attemptID?: string; requeueAdmitted?: boolean } = {},
+  ) {
+    const ordering = db
+      .query<
+        { project_directory: string; priority: number; plan_order: number; task_order: number },
+        [string, string, string]
+      >(
+        `SELECT p.project_directory,COALESCE(json_extract(p.body,'$.priority'),0) AS priority,
+                p.rowid AS plan_order,n.ordinal AS task_order
+         FROM runner_plans p JOIN runner_nodes n ON n.plan_id=p.id
+         WHERE p.id=? AND n.task_id=? AND p.project_directory=?`,
+      )
+      .get(candidate.planID, candidate.taskID, this.repository.projectDirectory)
+    if (!ordering) throw new Error("Runner candidate is no longer available for admission")
+
+    const requestKey = `runner:${candidate.planID}:${candidate.taskID}:${candidate.attemptNumber}`
+    const existing = db
+      .query<{ id: string; state: AdmissionRow["state"] }, [string]>(
+        "SELECT id,state FROM delegated_agent_admissions WHERE request_key=?",
+      )
+      .get(requestKey)
+    if (existing?.state === "queued") {
+      if (options.attemptID)
+        db.query(
+          "UPDATE delegated_agent_admissions SET attempt_id=?,updated_at=? WHERE id=? AND state='queued'",
+        ).run(options.attemptID, this.clock.now(), existing.id)
+      return existing.id
+    }
+    if (existing?.state === "admitted" && !options.requeueAdmitted) return existing.id
+
+    const now = this.clock.now()
+    const id = existing?.id ?? crypto.randomUUID()
+    const attemptID = options.attemptID ?? null
+    if (existing) {
+      db.query(
+        `UPDATE delegated_agent_admissions
+         SET project_key=?,project_directory=?,state='queued',priority=?,plan_order=?,task_order=?,
+             queue_order=?,plan_id=?,task_id=?,attempt_number=?,attempt_id=?,process_id=NULL,
+             created_at=?,updated_at=?
+         WHERE id=?`,
+      ).run(
+        projectKey,
+        ordering.project_directory,
+        ordering.priority,
+        ordering.plan_order,
+        ordering.task_order,
+        nextQueueOrder(db),
+        candidate.planID,
+        candidate.taskID,
+        candidate.attemptNumber,
+        attemptID,
+        now,
+        now,
+        id,
+      )
+    } else {
+      db.query(
+        `INSERT INTO delegated_agent_admissions
+         (id,project_key,project_directory,request_key,kind,state,agent,priority,plan_order,
+          task_order,queue_order,plan_id,task_id,attempt_number,attempt_id,created_at,updated_at)
+         VALUES(?,?,?,?,'runner','queued','lazers-implementor',?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        id,
+        projectKey,
+        ordering.project_directory,
+        requestKey,
+        ordering.priority,
+        ordering.plan_order,
+        ordering.task_order,
+        nextQueueOrder(db),
+        candidate.planID,
+        candidate.taskID,
+        candidate.attemptNumber,
+        attemptID,
+        now,
+        now,
+      )
+    }
+    return id
+  }
+
+  /** Queue a reused attempt in the command transaction before it returns to preparing. */
+  requeueRunnerInTransaction(db: Database, candidate: RunnerCandidate, attemptID: string) {
+    const projectKey = this.resolvedProjectKey
+    if (!projectKey) throw new Error("Delegated-agent project identity is not ready")
+    this.settle(db, projectKey)
+    return this.ensureRunnerQueuedInTransaction(db, candidate, projectKey, {
+      attemptID,
+      requeueAdmitted: true,
+    })
+  }
+
+  /** Atomically reserves the reused attempt's slot immediately before native execution. */
+  async admitRunnerAttempt(candidate: RunnerCandidate, attemptID: string) {
+    const projectKey = await this.projectKey()
+    return this.repository.atomic((db) => {
+      this.settle(db, projectKey)
+      const requestID = this.ensureRunnerQueuedInTransaction(db, candidate, projectKey, {
+        attemptID,
+      })
       const existing = db
-        .query<{ id: string; state: AdmissionRow["state"] }, [string]>(
-          "SELECT id,state FROM delegated_agent_admissions WHERE request_key=?",
+        .query<{ state: AdmissionState; attempt_id: string | null }, [string]>(
+          "SELECT state,attempt_id FROM delegated_agent_admissions WHERE id=?",
         )
-        .get(requestKey)
-      if (existing?.state === "queued" || existing?.state === "admitted") return existing.id
-      const id = existing?.id ?? crypto.randomUUID()
-      if (existing) {
-        db.query(
-          `UPDATE delegated_agent_admissions
-           SET project_key=?,project_directory=?,state='queued',priority=?,plan_order=?,task_order=?,
-               queue_order=?,plan_id=?,task_id=?,attempt_number=?,attempt_id=NULL,created_at=?,updated_at=?
-           WHERE id=?`,
-        ).run(
+        .get(requestID)
+      if (existing?.state === "admitted") return existing.attempt_id === attemptID
+      return (
+        tryAdmitQueued(db, {
+          requestID,
           projectKey,
-          ordering.project_directory,
-          ordering.priority,
-          ordering.plan_order,
-          ordering.task_order,
-          nextQueueOrder(db),
-          candidate.planID,
-          candidate.taskID,
-          candidate.attemptNumber,
-          now,
-          now,
-          id,
-        )
-      } else {
-        db.query(
-          `INSERT INTO delegated_agent_admissions
-           (id,project_key,project_directory,request_key,kind,state,agent,priority,plan_order,
-            task_order,queue_order,plan_id,task_id,attempt_number,created_at,updated_at)
-           VALUES(?,?,?,?,'runner','queued','lazers-implementor',?,?,?,?,?,?,?,?,?)`,
-        ).run(
-          id,
-          projectKey,
-          ordering.project_directory,
-          requestKey,
-          ordering.priority,
-          ordering.plan_order,
-          ordering.task_order,
-          nextQueueOrder(db),
-          candidate.planID,
-          candidate.taskID,
-          candidate.attemptNumber,
-          now,
-          now,
-        )
-      }
-      return id
+          projectDirectory: this.repository.projectDirectory,
+          kind: "runner",
+          processID: this.processID(),
+          now: this.clock.now(),
+          attemptID,
+        }) === "admitted"
+      )
     })
   }
 
@@ -646,11 +804,11 @@ export class DelegatedAgentCapacity {
       let existing: { id: string; state: AdmissionRow["state"] } | null | undefined
       if (input.existingSessionID)
         existing = db
-          .query<{ id: string; state: AdmissionRow["state"] }, [string, string]>(
+          .query<{ id: string; state: AdmissionRow["state"] }, [string, string, string]>(
             `SELECT id,state FROM delegated_agent_admissions
-             WHERE project_key=? AND kind='native' AND session_id=?`,
+             WHERE project_key=? AND kind='native' AND session_id=? AND parent_session_id=?`,
           )
-          .get(projectKey, input.existingSessionID)
+          .get(projectKey, input.existingSessionID, input.parentSessionID)
       existing ??= db
         .query<{ id: string; state: AdmissionRow["state"] }, [string]>(
           `SELECT id,state FROM delegated_agent_admissions WHERE request_key=?`,
@@ -661,17 +819,26 @@ export class DelegatedAgentCapacity {
       if (existing?.state === "admitted") {
         db.query(
           `UPDATE delegated_agent_admissions
-           SET parent_session_id=?,tool_call_id=?,agent=?,description=?,updated_at=?
+           SET request_key=?,parent_session_id=?,tool_call_id=?,agent=?,description=?,process_id=?,updated_at=?
            WHERE id=?`,
-        ).run(input.parentSessionID, input.toolCallID, input.agent, input.description, now, id)
+        ).run(
+          requestKey,
+          input.parentSessionID,
+          input.toolCallID,
+          input.agent,
+          input.description,
+          this.processID(),
+          now,
+          id,
+        )
         return id
       }
       if (existing) {
         db.query(
           `UPDATE delegated_agent_admissions
-           SET request_key=?,project_key=?,project_directory=?,state='queued',agent=?,description=?,
-               priority=0,plan_order=?,task_order=?,queue_order=?,parent_session_id=?,tool_call_id=?,
-               session_id=?,process_id=NULL,created_at=?,updated_at=?
+            SET request_key=?,project_key=?,project_directory=?,state='queued',agent=?,description=?,
+                priority=0,plan_order=?,task_order=?,queue_order=?,parent_session_id=?,tool_call_id=?,
+                session_id=?,process_id=?,created_at=?,updated_at=?
            WHERE id=?`,
         ).run(
           requestKey,
@@ -685,6 +852,7 @@ export class DelegatedAgentCapacity {
           input.parentSessionID,
           input.toolCallID,
           input.existingSessionID ?? null,
+          this.processID(),
           now,
           now,
           id,
@@ -693,8 +861,9 @@ export class DelegatedAgentCapacity {
         db.query(
           `INSERT INTO delegated_agent_admissions
            (id,project_key,project_directory,request_key,kind,state,agent,description,priority,
-            plan_order,task_order,queue_order,parent_session_id,tool_call_id,session_id,created_at,updated_at)
-           VALUES(?,?,?,?,'native','queued',?,?,0,?,?,?,?,?,?,?,?)`,
+            plan_order,task_order,queue_order,parent_session_id,tool_call_id,session_id,process_id,
+            created_at,updated_at)
+           VALUES(?,?,?,?,'native','queued',?,?,0,?,?,?,?,?,?,?,?,?)`,
         ).run(
           id,
           projectKey,
@@ -708,6 +877,7 @@ export class DelegatedAgentCapacity {
           input.parentSessionID,
           input.toolCallID,
           input.existingSessionID ?? null,
+          this.processID(),
           now,
           now,
         )
@@ -732,6 +902,15 @@ export class DelegatedAgentCapacity {
             now: this.clock.now(),
           })
           if (result === "unavailable") throw new Error("Delegated-agent request is unavailable")
+          if (result === "waiting") {
+            const state = db
+              .query<{ state: AdmissionState }, [string]>(
+                "SELECT state FROM delegated_agent_admissions WHERE id=? AND kind='native'",
+              )
+              .get(requestID)?.state
+            if (state === "cancelled" || state === "released")
+              throw new Error("Delegated-agent request is no longer available")
+          }
           return result === "admitted" || result === "already-admitted"
         })
         if (admitted) return
@@ -778,16 +957,95 @@ export class DelegatedAgentCapacity {
     )
   }
 
+  async isLazersNativeParent(sessionID: string) {
+    const projectKey = await this.projectKey()
+    return this.repository.read((db) => {
+      const paths = new Set(
+        db
+          .query<{ path: string }, [string]>("SELECT path FROM lazers_project_paths WHERE key=?")
+          .all(projectKey)
+          .map((row) => canonicalDirectory(row.path)),
+      )
+      const attempts = db
+        .query<{ project_directory: string }, [string, ...string[]]>(
+          `SELECT COALESCE(a.project_directory,p.project_directory) AS project_directory
+           FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+           WHERE a.session_id=? AND a.state IN (${ACTIVE_ATTEMPT_STATES.map(() => "?").join(",")})`,
+        )
+        .all(sessionID, ...ACTIVE_ATTEMPT_STATES)
+      if (attempts.some((attempt) => paths.has(canonicalDirectory(attempt.project_directory))))
+        return true
+      const plans = db
+        .query<{ project_directory: string }, [string]>(
+          `SELECT project_directory FROM runner_plans
+           WHERE owner=? AND state NOT IN ('integrated','cancelled','failed')`,
+        )
+        .all(sessionID)
+      if (plans.some((plan) => paths.has(canonicalDirectory(plan.project_directory)))) return true
+      return Boolean(
+        db
+          .query<{ found: number }, [string, string]>(
+            `SELECT 1 AS found FROM delegated_agent_admissions
+             WHERE project_key=? AND kind='native' AND session_id=? AND state<>'cancelled'
+             LIMIT 1`,
+          )
+          .get(projectKey, sessionID),
+      )
+    })
+  }
+
+  async admittedNativeChildren() {
+    const projectKey = await this.projectKey()
+    return this.repository.read((db) =>
+      db
+        .query<{ session_id: string }, [string]>(
+          `SELECT DISTINCT session_id FROM delegated_agent_admissions
+           WHERE project_key=? AND kind='native' AND state='admitted' AND session_id IS NOT NULL`,
+        )
+        .all(projectKey)
+        .map((row) => row.session_id),
+    )
+  }
+
   async bindNativeChild(requestID: string, sessionID: string) {
     await this.projectKey()
-    this.repository.atomic((db) =>
-      db
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query(
+            `UPDATE delegated_agent_admissions SET session_id=?,updated_at=?
+           WHERE id=? AND kind='native' AND state='admitted'
+             AND (session_id IS NULL OR session_id=?)`,
+          )
+          .run(sessionID, this.clock.now(), requestID, sessionID).changes === 1,
+    )
+  }
+
+  async bindNativeChildFromCreatedSession(input: {
+    sessionID: string
+    parentSessionID: string
+    agent: string
+    description: string
+  }) {
+    const projectKey = await this.projectKey()
+    return this.repository.atomic((db) => {
+      const request = db
+        .query<{ id: string }, [string, string, string, string]>(
+          `SELECT id FROM delegated_agent_admissions
+           WHERE project_key=? AND kind='native' AND state='admitted'
+             AND parent_session_id=? AND agent=? AND description=? AND session_id IS NULL
+           ORDER BY queue_order LIMIT 1`,
+        )
+        .get(projectKey, input.parentSessionID, input.agent, input.description)
+      if (!request) return undefined
+      const changed = db
         .query(
           `UPDATE delegated_agent_admissions SET session_id=?,updated_at=?
-           WHERE id=? AND kind='native' AND state='admitted'`,
+           WHERE id=? AND state='admitted' AND session_id IS NULL`,
         )
-        .run(sessionID, this.clock.now(), requestID),
-    )
+        .run(input.sessionID, this.clock.now(), request.id).changes
+      return changed === 1 ? request.id : undefined
+    })
   }
 
   async observeNativeIdle(input: {
@@ -797,7 +1055,7 @@ export class DelegatedAgentCapacity {
     description: string
   }) {
     const projectKey = await this.projectKey()
-    this.repository.atomic((db) => {
+    return this.repository.atomic((db) => {
       const row = db
         .query<{ id: string }, [string, string, string, string, string]>(
           `SELECT id FROM delegated_agent_admissions
@@ -806,36 +1064,43 @@ export class DelegatedAgentCapacity {
              AND (session_id IS NULL OR session_id=?) ORDER BY queue_order LIMIT 1`,
         )
         .get(projectKey, input.parentSessionID, input.agent, input.description, input.sessionID)
-      if (!row) return
-      db.query(
-        `UPDATE delegated_agent_admissions SET session_id=?,state='released',updated_at=?
+      if (!row) return false
+      return (
+        db
+          .query(
+            `UPDATE delegated_agent_admissions SET session_id=?,state='released',updated_at=?
          WHERE id=? AND state='admitted'`,
-      ).run(input.sessionID, this.clock.now(), row.id)
+          )
+          .run(input.sessionID, this.clock.now(), row.id).changes === 1
+      )
     })
   }
 
   async releaseNativeRequest(requestID: string) {
     await this.projectKey()
-    this.repository.atomic((db) => {
-      transitionAdmission(db, {
-        id: requestID,
-        kind: "native",
-        from: ["queued", "admitted"],
-        to: "released",
-        now: this.clock.now(),
-      })
-    })
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query(
+            `UPDATE delegated_agent_admissions SET state='released',updated_at=?
+           WHERE id=? AND kind='native' AND state IN ('queued','admitted')`,
+          )
+          .run(this.clock.now(), requestID).changes === 1,
+    )
   }
 
-  async releaseNativeChild(sessionID: string) {
+  async releaseNativeChild(sessionID: string, observedAt?: number) {
     const projectKey = await this.projectKey()
-    this.repository.atomic((db) =>
-      db
-        .query(
-          `UPDATE delegated_agent_admissions SET state='released',updated_at=?
-           WHERE project_key=? AND kind='native' AND session_id=? AND state='admitted'`,
-        )
-        .run(this.clock.now(), projectKey, sessionID),
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query(
+            `UPDATE delegated_agent_admissions SET state='released',updated_at=?
+           WHERE project_key=? AND kind='native' AND session_id=? AND state='admitted'
+             AND (? IS NULL OR updated_at<=?)`,
+          )
+          .run(this.clock.now(), projectKey, sessionID, observedAt ?? null, observedAt ?? null)
+          .changes === 1,
     )
   }
 }

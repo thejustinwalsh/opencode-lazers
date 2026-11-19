@@ -2444,6 +2444,50 @@ test("retained repair carries an owned captured synthetic terminal input through
   expect(worker.messages.some((message) => message.id === nativeInputID)).toBe(true)
 })
 
+test("retained repair waits for a project-capacity slot before reusing its worker", async () => {
+  const { f, planID, task, original, artifact } = await acceptedAttemptFixture()
+  await f.runtime.delegatedAgentCapacity.configure({ expectedRevision: 0, limit: 1 })
+  const blocker = await f.runtime.delegatedAgentCapacity.ensureNativeQueued({
+    parentSessionID: "lazers-parent",
+    toolCallID: "retained-repair-capacity-blocker",
+    agent: "research",
+    description: "Hold the only project slot",
+  })
+  await f.runtime.delegatedAgentCapacity.waitForNative(blocker, new AbortController().signal)
+  const promptsBeforeRepair = f.events.filter((event) => event.startsWith("prompt:")).length
+
+  await f.runtime.command(
+    {
+      requestID: "retained-repair-capacity-queue",
+      planID,
+      action: "retained-repair",
+      taskID: task.id,
+      attemptID: original.id,
+      artifact,
+      reason: "Wait for the canonical-project slot before resuming this retained worker.",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: original.id, state: "preparing" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(promptsBeforeRepair)
+  const waitingStatus = await f.runtime.delegatedAgentCapacity.settings()
+  expect(waitingStatus).toMatchObject({
+    active: 1,
+    queued: 1,
+    limit: 1,
+  })
+
+  await f.runtime.delegatedAgentCapacity.releaseNativeRequest(blocker)
+  await f.runtime.tick()
+
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: original.id, state: "running" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(
+    promptsBeforeRepair + 1,
+  )
+})
+
 test.each(["uncaptured-synthetic", "foreign-user", "running-shell"] as const)(
   "retained repair rejects %s input evidence before reserving the attempt",
   async (invalidInput) => {
@@ -4426,6 +4470,7 @@ test("a retry that asks for an isolated workspace leaves the shared checkout", a
 
 test("shared resume waits for another plan's worker and cancellation retains final usage", async () => {
   const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await f.runtime.delegatedAgentCapacity.configure({ expectedRevision: 0, limit: 1 })
   await runPlan(f)
   await f.runtime.tick()
   const a = f.store.attempts(f.receipt.planID)[0]!
@@ -4463,6 +4508,11 @@ test("shared resume waits for another plan's worker and cancellation retains fin
     },
     "owner",
   )
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+    active: 1,
+    queued: 1,
+    limit: 1,
+  })
   const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
   await f.runtime.tick()
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)

@@ -168,6 +168,103 @@ test("runner slots are atomic and queued candidates refill by priority without p
   expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 0, limit: 1 })
 })
 
+test("verifying attempts no longer consume delegated-agent slots", async () => {
+  const f = fixture()
+  await f.capacity.configure({ expectedRevision: 0, limit: 1 })
+  const verifying = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const waiting = submitCandidate(f.store, f.repository, f.projectDirectory, 2)
+  const verifyingRequest = await f.capacity.ensureRunnerQueued({
+    ...verifying,
+    attemptNumber: 1,
+  })
+  const waitingRequest = await f.capacity.ensureRunnerQueued({ ...waiting, attemptNumber: 1 })
+  const verifyingAttempt = insertAdmittedAttempt(
+    f.repository,
+    f.capacity,
+    verifyingRequest,
+    verifying,
+  )
+  expect(typeof verifyingAttempt).toBe("string")
+
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_attempts SET state='verifying' WHERE id=?").run(verifyingAttempt),
+  )
+
+  expect(await f.capacity.settings()).toMatchObject({ active: 0, queued: 1, limit: 1 })
+  expect(typeof insertAdmittedAttempt(f.repository, f.capacity, waitingRequest, waiting)).toBe(
+    "string",
+  )
+  expect(await f.capacity.settings()).toMatchObject({ active: 1, queued: 0, limit: 1 })
+})
+
+test("startup backfill upgrades the existing attempt admission instead of duplicating it", async () => {
+  const f = fixture()
+  await f.capacity.ready()
+  const candidate = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
+  const attemptID = crypto.randomUUID()
+  const projectKey = "github.com/example/project"
+  const now = Date.now()
+  f.repository.atomic((db) => {
+    db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,
+        policy,state,started_at)
+       VALUES(?,?,?,?,1,?,?,?,?,?,'running',?)`,
+    ).run(
+      attemptID,
+      candidate.planID,
+      f.projectDirectory,
+      candidate.taskID,
+      `worker-${attemptID}`,
+      `message-${attemptID}`,
+      f.projectDirectory,
+      "b".repeat(40),
+      "{}",
+      now,
+    )
+    db.query(
+      `INSERT INTO delegated_agent_admissions
+       (id,project_key,project_directory,request_key,kind,state,agent,queue_order,plan_id,task_id,
+        attempt_number,attempt_id,created_at,updated_at)
+       VALUES(?,?,?,?,'runner','admitted','lazers-implementor',1,?,?,1,?,?,?)`,
+    ).run(
+      crypto.randomUUID(),
+      projectKey,
+      f.projectDirectory,
+      `runner-existing:${attemptID}`,
+      candidate.planID,
+      candidate.taskID,
+      attemptID,
+      now,
+      now,
+    )
+  })
+
+  const reopened = new DelegatedAgentCapacity(f.repository, projectKey)
+  await reopened.ready()
+  const canonicalKey = `runner:${candidate.planID}:${candidate.taskID}:1`
+  expect(
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM delegated_agent_admissions WHERE attempt_id=?",
+          )
+          .get(attemptID)!.count,
+    ),
+  ).toBe(1)
+  expect(
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ request_key: string }, [string]>(
+            "SELECT request_key FROM delegated_agent_admissions WHERE attempt_id=?",
+          )
+          .get(attemptID)?.request_key,
+    ),
+  ).toBe(canonicalKey)
+})
+
 test("scheduling and inspection snapshots do not settle admission rows", async () => {
   const f = fixture()
   const candidate = submitCandidate(f.store, f.repository, f.projectDirectory, 1)
@@ -193,6 +290,31 @@ test("scheduling and inspection snapshots do not settle admission rows", async (
           .get(requestID)?.state,
     ),
   ).toBe("admitted")
+})
+
+test("a dead native queue owner cannot leave an orphan head ahead of live helpers", async () => {
+  const f = fixture()
+  const projectKey = "github.com/example/project"
+  const abandoned = new DelegatedAgentCapacity(
+    f.repository,
+    projectKey,
+    undefined,
+    () => 2_147_483_647,
+  )
+  await abandoned.ready()
+  const orphan = await abandoned.ensureNativeQueued({
+    parentSessionID: "abandoned-parent",
+    toolCallID: "orphan-call",
+    agent: "research",
+    description: "orphan",
+  })
+
+  const live = new DelegatedAgentCapacity(f.repository, projectKey)
+  await live.ready()
+  await expect(live.waitForNative(orphan, new AbortController().signal)).rejects.toThrow(
+    "no longer available",
+  )
+  expect(await live.settings()).toMatchObject({ active: 0, queued: 0 })
 })
 
 test("native helper waiters share the same three slots and release on observed child completion", async () => {

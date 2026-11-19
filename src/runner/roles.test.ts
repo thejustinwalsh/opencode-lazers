@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import { Effect } from "effect"
+import { Effect, Queue, Stream } from "effect"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { delegationTool, registerWorker } from "./roles.ts"
+import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import type { RunnerStore } from "./store.ts"
 
 test("worker personas retain read-only catalog access but cannot delegate", async () => {
@@ -156,4 +157,164 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
       ),
     ).rejects.toThrow("Implementor requires an admitted runtime assignment")
   }
+})
+
+test("registered native helper hooks admit only LAZERS parents and bind failed children by identity", async () => {
+  const eventQueue = Effect.runSync(Queue.unbounded<unknown>())
+  const admitted: unknown[] = []
+  const createdBindings: unknown[] = []
+  const childBindings: Array<{ requestID: string; sessionID: string }> = []
+  const releasedChildren: string[] = []
+  let schedulerWakes = 0
+  let resolveCreatedBinding!: () => void
+  const createdBinding = new Promise<void>((resolve) => {
+    resolveCreatedBinding = resolve
+  })
+  let resolveChildWait!: () => void
+  const childWait = new Promise<void>((resolve) => {
+    resolveChildWait = resolve
+  })
+  let resolveChildRelease!: () => void
+  const childRelease = new Promise<void>((resolve) => {
+    resolveChildRelease = resolve
+  })
+  let resolveSchedulerWake!: () => void
+  const schedulerWake = new Promise<void>((resolve) => {
+    resolveSchedulerWake = resolve
+  })
+  let beforeHook: ((call: never) => Effect.Effect<void>) | undefined
+  let afterHook: ((call: never) => Effect.Effect<void>) | undefined
+  const capacity = {
+    admittedNativeChildren: async () => [],
+    isLazersNativeParent: async (sessionID: string) => sessionID === "lazers-parent",
+    ensureNativeQueued: async (input: unknown) => {
+      admitted.push(input)
+      return "native-admission"
+    },
+    waitForNative: async () => {},
+    bindNativeChildFromCreatedSession: async (input: unknown) => {
+      createdBindings.push(input)
+      resolveCreatedBinding()
+      return "native-admission"
+    },
+    nativeRequest: async () => ({ id: "native-admission" }),
+    bindNativeChild: async (requestID: string, sessionID: string) => {
+      childBindings.push({ requestID, sessionID })
+      return true
+    },
+    releaseNativeChild: async (sessionID: string) => {
+      if (releasedChildren.includes(sessionID)) return false
+      releasedChildren.push(sessionID)
+      resolveChildRelease()
+      return true
+    },
+    releaseNativeRequest: async () => false,
+  } as unknown as DelegatedAgentCapacity
+  const store = {
+    repository: { path: "/synthetic/roles-capacity.sqlite", projectDirectory: "/work" },
+    atomic: (run: (db: never) => unknown) =>
+      run({
+        query: () => ({ get: () => null }),
+      } as never),
+  } as unknown as RunnerStore
+  const ctx = {
+    agent: {
+      transform: (transform: (editor: unknown) => void) =>
+        Effect.sync(() =>
+          transform({
+            update: () => {},
+          }),
+        ),
+    },
+    event: {
+      subscribe: () => Stream.fromQueue(eventQueue),
+    },
+    session: {
+      hook: () => Effect.void,
+      wait: () => Effect.promise(() => childWait),
+    },
+    tool: {
+      hook: (name: string, callback: (call: never) => Effect.Effect<void>) => {
+        if (name === "execute.before") beforeHook = callback
+        if (name === "execute.after") afterHook = callback
+        return Effect.void
+      },
+    },
+  } as unknown as Plugin.Context
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerWorker(ctx, store, undefined, capacity, () => {
+          schedulerWakes++
+          resolveSchedulerWake()
+        })
+        yield* beforeHook!({
+          sessionID: "external-parent",
+          agent: Agent.ID.make("research"),
+          tool: "subagent",
+          id: "external-call",
+          input: { agent: "research", description: "external helper" },
+        } as never)
+        expect(admitted).toHaveLength(0)
+
+        yield* beforeHook!({
+          sessionID: "lazers-parent",
+          agent: Agent.ID.make("architect"),
+          tool: "subagent",
+          id: "native-call",
+          input: { agent: "research", description: "background helper", background: true },
+        } as never)
+        expect(admitted).toEqual([
+          {
+            parentSessionID: "lazers-parent",
+            toolCallID: "native-call",
+            agent: "research",
+            description: "background helper",
+          },
+        ])
+
+        yield* Queue.offer(eventQueue, {
+          type: "session.created",
+          data: {
+            sessionID: "child-helper",
+            parentID: "lazers-parent",
+            agent: "research",
+            title: "background helper",
+          },
+        })
+        yield* Effect.promise(() => createdBinding)
+        expect(createdBindings).toEqual([
+          {
+            sessionID: "child-helper",
+            parentSessionID: "lazers-parent",
+            agent: "research",
+            description: "background helper",
+          },
+        ])
+
+        yield* afterHook!({
+          sessionID: "lazers-parent",
+          agent: Agent.ID.make("architect"),
+          tool: "subagent",
+          id: "native-call",
+          input: { agent: "research", description: "background helper", background: true },
+          status: "error",
+          error: { message: "Subagent failed (sessionID: child-helper): helper failed" },
+        } as never)
+        expect(childBindings).toEqual([
+          { requestID: "native-admission", sessionID: "child-helper" },
+        ])
+        yield* Queue.offer(eventQueue, {
+          type: "session.execution.interrupted",
+          data: { sessionID: "child-helper" },
+        })
+        yield* Effect.promise(() => childRelease)
+        yield* Effect.promise(() => schedulerWake)
+        expect(releasedChildren).toEqual(["child-helper"])
+        expect(schedulerWakes).toBe(1)
+        resolveChildWait()
+      }),
+    ),
+  )
 })

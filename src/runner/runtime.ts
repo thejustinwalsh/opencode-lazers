@@ -4224,6 +4224,11 @@ export class TaskRuntime {
     )
       throw new Error("Retained artifact or effective scope reservation changed before admission")
 
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: task.id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
     const cleared = db
       .query(
@@ -4703,6 +4708,12 @@ export class TaskRuntime {
     if (settledStartupEffect)
       return this.commandAuthorizeStartupRecovery(db, ctx, plan, attempt, settledStartupEffect)
 
+    if (!retry)
+      this.delegatedAgentCapacity.requeueRunnerInTransaction(
+        db,
+        { planID: plan.id, taskID: node.task_id, attemptNumber: attempt.number },
+        attempt.id,
+      )
     if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
     else if (node.state !== "running")
       this.store.move(plan.id, node.task_id, "RESUME", command.reason)
@@ -4878,6 +4889,11 @@ export class TaskRuntime {
     )
       throw new Error("Retained repair recovery authorization changed before reservation")
     const resumedMessageID = messageID()
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
     const updatedAttempt = db
       .query(
@@ -5119,6 +5135,11 @@ export class TaskRuntime {
       base: attempt!.base_commit,
       policy: attempt!.policy,
     }
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     db.query(
       "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
     ).run(plan.id, plan.version)
@@ -7646,10 +7667,13 @@ export class TaskRuntime {
           }),
         )
       }
-      await this.delegatedAgentCapacity.cancelRunnerQueue(
-        plan.id,
-        selected.map((node) => node.task_id),
-      )
+      const activeTaskIDs = this.store
+        .attempts(plan.id)
+        .filter((attempt) => ["preparing", "running"].includes(attempt.state))
+        .map((attempt) => attempt.task_id)
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id, [
+        ...new Set([...selected.map((node) => node.task_id), ...activeTaskIDs]),
+      ])
       await Promise.all(
         selected.map(async (node) => {
           try {
@@ -7665,10 +7689,15 @@ export class TaskRuntime {
       )
       return
     }
-    await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
     const outstanding = this.store
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+    await this.delegatedAgentCapacity.cancelRunnerQueue(
+      plan.id,
+      outstanding
+        .filter((attempt) => ["preparing", "running"].includes(attempt.state))
+        .map((attempt) => attempt.task_id),
+    )
     if (outstanding.length) {
       if (!pause && nodes.some((node) => ["queued", "ready"].includes(node.state)))
         return {
@@ -9031,7 +9060,15 @@ export class TaskRuntime {
     }
 
     const prerequisites = input.afterPlans ?? []
-    if (!prerequisites.length) return true
+    if (!prerequisites.length)
+      return this.delegatedAgentCapacity.admitRunnerAttempt(
+        {
+          planID,
+          taskID: currentAttempt.task_id,
+          attemptNumber: currentAttempt.number,
+        },
+        currentAttempt.id,
+      )
 
     try {
       // The reservation base is immutable prerequisite proof. A later HEAD is
@@ -9063,7 +9100,19 @@ export class TaskRuntime {
       if (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
       if (scopeViolations(changed, this.store.effectiveWriteScope(currentAttempt.task_id)).length)
         return false
-      return (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
+      const eligible =
+        (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
+      return (
+        eligible &&
+        this.delegatedAgentCapacity.admitRunnerAttempt(
+          {
+            planID,
+            taskID: currentAttempt.task_id,
+            attemptNumber: currentAttempt.number,
+          },
+          currentAttempt.id,
+        )
+      )
     } catch {
       return false
     }

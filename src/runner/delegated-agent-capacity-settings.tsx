@@ -184,7 +184,9 @@ export function DelegatedAgentCapacitySettings(props: { context: SettingsContext
         <p class="lazers-settings-hint" role="status">
           {status()!.active > status()!.limit
             ? `The limit is ${status()!.limit}, but ${status()!.active} agents are already active; they will finish without preemption.`
-            : "No agents are waiting for capacity."}
+            : status()!.queued > 0
+              ? `${status()!.queued} ${status()!.queued === 1 ? "task or helper is" : "tasks or helpers are"} queued while other scheduling conditions are resolved.`
+              : "No agents are waiting for capacity."}
         </p>
       </Show>
       <Show when={!currentScope() && !error()}>
