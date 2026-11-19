@@ -1013,6 +1013,25 @@
 }
 .lazers-radar-flowcanvas {
   min-width: 0;
+  position: relative;
+}
+.lazers-radar-flow-pulses {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  contain: strict;
+}
+.lazers-radar-flow-pulses > .lazers-radar-flow-dot {
+  position: absolute;
+  left: -1.8px;
+  top: -1.8px;
+  width: 3.6px;
+  height: 3.6px;
+  border-radius: 50%;
+  background: var(--text-strong);
+  opacity: 0.9;
+  transform: translate3d(-20px, -20px, 0);
+  will-change: transform;
 }
 .lazers-radar-flowcanvas svg {
   display: block;
