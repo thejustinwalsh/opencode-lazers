@@ -1,6 +1,5 @@
 import type {
   ObservationScope,
-  ObservationScopeView,
   SnapshotResponse,
   TrajectoryHistoryResponse,
   TrajectoryResponse,
@@ -853,10 +852,6 @@ export function detailedChecks(report: TrajectoryReport) {
   return [...checks.values()]
 }
 
-export function allEvents(report: TrajectoryReport) {
-  return report.trajectory.events
-}
-
 export function sourceReferences(text: string) {
   const found = new Map<string, { path: string; line: number; column: number | null }>()
   const expression = /(?:^|[\s(])((?:\.{0,2}\/)?[\w@./-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?/gm
@@ -920,8 +915,6 @@ export function eventPayload(event: TrajectoryEvent) {
     if (event[key] !== undefined) payload[key] = event[key]
   return payload
 }
-
-export type ScopeView = ObservationScopeView
 
 /** The plain name of a timing source: "verification receipt"; its field path stays in the body. */
 export function sourceName(basis: string) {

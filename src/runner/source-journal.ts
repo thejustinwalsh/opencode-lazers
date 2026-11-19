@@ -18,7 +18,7 @@ const JournalCursor = z.strictObject({
   checksum: z.string().regex(/^[a-f0-9]{64}$/),
 })
 
-export type SourceJournalPosition = z.infer<typeof JournalPosition>
+type SourceJournalPosition = z.infer<typeof JournalPosition>
 type SourceJournalCursor = z.infer<typeof JournalCursor>
 
 type SourceContext = {

@@ -14,7 +14,7 @@ export type TasksLayout = {
   paneHeight: number
 }
 
-export const defaultTasksLayout: TasksLayout = {
+const defaultTasksLayout: TasksLayout = {
   viewportHeight: 320,
   headHeight: 80,
   itemHeights: { task: 32, plan: 40, note: 28, loader: 32 },

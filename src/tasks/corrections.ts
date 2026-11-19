@@ -172,7 +172,7 @@ export function readTaskCorrections(
     .deferred()
 }
 
-export function inspectTaskCorrections(
+function inspectTaskCorrections(
   snapshot: TaskCorrectionsSnapshotType,
   taskID: string,
 ): TaskCorrectionInspectionType {

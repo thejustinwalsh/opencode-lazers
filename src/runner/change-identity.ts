@@ -7,7 +7,7 @@
  */
 import { execFile } from "node:child_process"
 
-export const NOTES_REF = "refs/notes/lazers"
+const NOTES_REF = "refs/notes/lazers"
 const NOTES_NAME = "lazers"
 /** Bound the history window so a stale base cannot make containment checks unbounded. */
 const MAX_RANGE_COMMITS = 2000
@@ -142,7 +142,7 @@ export async function patchIdOf(
 
 export type ChangeNote = { changeId: string; taskId?: string; attemptId?: string }
 
-export function formatChangeNote(note: ChangeNote): string {
+function formatChangeNote(note: ChangeNote): string {
   return [
     `change: ${note.changeId}`,
     ...(note.taskId ? [`task: ${note.taskId}`] : []),
@@ -150,7 +150,7 @@ export function formatChangeNote(note: ChangeNote): string {
   ].join("\n")
 }
 
-export function parseChangeNote(body: string): ChangeNote | undefined {
+function parseChangeNote(body: string): ChangeNote | undefined {
   const field = (name: string) => new RegExp(`^${name}:\\s*(\\S+)\\s*$`, "m").exec(body)?.[1]
   const changeId = field("change")
   return changeId ? { changeId, taskId: field("task"), attemptId: field("attempt") } : undefined

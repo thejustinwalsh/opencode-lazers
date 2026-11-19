@@ -2,14 +2,14 @@ import { z } from "zod"
 
 const text = z.string().trim().min(1).max(2_000)
 
-export const TaskDispositionKind = z.enum(["superseded", "rejected", "duplicate", "fulfilled"])
-export type TaskDispositionKind = z.infer<typeof TaskDispositionKind>
+const TaskDispositionKind = z.enum(["superseded", "rejected", "duplicate", "fulfilled"])
+type TaskDispositionKind = z.infer<typeof TaskDispositionKind>
 
-export const TaskDispositionEvidence = z.strictObject({
+const TaskDispositionEvidence = z.strictObject({
   kind: z.enum(["verification", "artifact", "human"]),
   reference: text,
 })
-export type TaskDispositionEvidence = z.infer<typeof TaskDispositionEvidence>
+type TaskDispositionEvidence = z.infer<typeof TaskDispositionEvidence>
 
 /** The durable, caller-supplied part of a disposition. */
 export const TaskDispositionInput = z

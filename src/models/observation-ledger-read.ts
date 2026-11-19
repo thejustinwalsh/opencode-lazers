@@ -26,7 +26,7 @@ import type {
   ObservationLedgerReadInput,
 } from "./observation-ledger-schema.ts"
 
-export const OBSERVATION_LEDGER_LIMITS = {
+const OBSERVATION_LEDGER_LIMITS = {
   tasks: 10_000,
   plans: 10_000,
   attempts: 20_000,

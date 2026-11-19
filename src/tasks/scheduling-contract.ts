@@ -2,7 +2,7 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { TaskState } from "../runner/schema.ts"
 
-export const SchedulingScope = z.discriminatedUnion("kind", [
+const SchedulingScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
   z.strictObject({ kind: z.literal("project"), sessionID: z.string().min(1).max(200) }),
 ])
@@ -13,7 +13,7 @@ export const SchedulingInput = z.strictObject({
   limit: z.int().min(1).max(100).default(50),
 })
 
-export const SchedulingDecision = z.enum(["eligible", "waiting", "unknown", "not-applicable"])
+const SchedulingDecision = z.enum(["eligible", "waiting", "unknown", "not-applicable"])
 export const MAX_SCHEDULING_RESERVATION_REFERENCES = 100
 export const MAX_SCHEDULING_PLAN_REFERENCES = 100
 export const MAX_SCHEDULING_AFTER_PLAN_REFERENCES = 1_000
@@ -42,7 +42,7 @@ export const SchedulingNode = z.strictObject({
   reservationTaskIDsScopeLimited: z.boolean().optional(),
 })
 
-export const SchedulingPlan = z.strictObject({
+const SchedulingPlan = z.strictObject({
   planID: z.uuid(),
   planVersion: z.int().positive(),
   planOrder: z.int().nonnegative(),
@@ -60,7 +60,7 @@ export const SchedulingPlan = z.strictObject({
   nodesComplete: z.boolean(),
 })
 
-export const SchedulingCoverage = z.strictObject({
+const SchedulingCoverage = z.strictObject({
   status: z.enum(["complete", "partial"]),
   planCount: z.int().nonnegative(),
   coveredPlanCount: z.int().nonnegative(),
@@ -82,7 +82,7 @@ const SchedulingCandidate = z.strictObject({
   order: z.int().nonnegative(),
 })
 
-export const SchedulingNext = z.discriminatedUnion("status", [
+const SchedulingNext = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("known"), candidate: SchedulingCandidate }),
   z.strictObject({ status: z.literal("none") }),
   z.strictObject({ status: z.literal("unknown"), reason: z.string().max(400) }),
@@ -113,7 +113,7 @@ export type SchedulingInput = z.input<typeof SchedulingInput>
 export type SchedulingDecision = z.infer<typeof SchedulingDecision>
 export type SchedulingNode = z.infer<typeof SchedulingNode>
 export type SchedulingPlan = z.infer<typeof SchedulingPlan>
-export type SchedulingNext = z.infer<typeof SchedulingNext>
+type SchedulingNext = z.infer<typeof SchedulingNext>
 export type SchedulingSnapshot = z.infer<typeof SchedulingSnapshot>
 export type SchedulingPage = z.infer<typeof SchedulingOutput>
 

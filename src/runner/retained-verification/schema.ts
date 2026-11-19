@@ -1,20 +1,20 @@
 import { z } from "zod"
 
-export const RetainedVerificationPhase = z.enum(["task", "combined"])
-export type RetainedVerificationPhase = z.infer<typeof RetainedVerificationPhase>
+const RetainedVerificationPhase = z.enum(["task", "combined"])
+type RetainedVerificationPhase = z.infer<typeof RetainedVerificationPhase>
 
 /** One call: pending, then task checks, then a recorded pass (accepted) or fail. */
-export const RetainedVerificationState = z.enum([
+const RetainedVerificationState = z.enum([
   "pending",
   "task-checks",
   "accepted",
   "failed",
   "cancelled",
 ])
-export type RetainedVerificationState = z.infer<typeof RetainedVerificationState>
+type RetainedVerificationState = z.infer<typeof RetainedVerificationState>
 
-export const RetainedVerificationCleanupState = z.enum(["pending", "complete", "failed"])
-export type RetainedVerificationCleanupState = z.infer<typeof RetainedVerificationCleanupState>
+const RetainedVerificationCleanupState = z.enum(["pending", "complete", "failed"])
+type RetainedVerificationCleanupState = z.infer<typeof RetainedVerificationCleanupState>
 
 export const RetainedVerificationSchema = z.strictObject({
   schemaVersion: z.literal(1),

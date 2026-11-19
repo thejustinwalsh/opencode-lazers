@@ -33,7 +33,7 @@ const LegacyReviewIdleObservation = z.strictObject({
   kinds: z.strictObject({ shell: z.literal(0), subagent: z.literal(0), image: z.literal(0) }),
 })
 
-export const ReviewInputAlias = z.strictObject({
+const ReviewInputAlias = z.strictObject({
   schemaVersion: z.literal(1),
   kind: z.literal("owner-reviewed-native-input-alias"),
   source: z.literal("observed-native-review-input"),
@@ -65,7 +65,7 @@ export const ReviewInputAlias = z.strictObject({
     idle: LegacyReviewIdleObservation.optional(),
   }),
 })
-export type ReviewInputAlias = z.infer<typeof ReviewInputAlias>
+type ReviewInputAlias = z.infer<typeof ReviewInputAlias>
 
 export type ReviewInputBinding = {
   projectDirectory: string
@@ -85,7 +85,7 @@ export type ReviewInputBinding = {
 
 export type ReviewInputEvidence = ReturnType<typeof observeReviewInput>
 
-export function reviewMetadata(
+function reviewMetadata(
   message: HostMessage,
   binding: Pick<ReviewInputBinding, "taskID" | "attemptID">,
 ) {

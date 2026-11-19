@@ -5,7 +5,7 @@ import type { TaskRepository } from "./storage.ts"
 
 /** Stable LAZERS project identity: survives OpenCode project-id and history changes. */
 
-export type AliasKind = "opencode-project-id" | "remote" | "root-commit"
+type AliasKind = "opencode-project-id" | "remote" | "root-commit"
 
 const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
 
@@ -146,7 +146,7 @@ export function projectIdsJSON(id: string): string {
   return JSON.stringify(projectIdsFor(id))
 }
 
-export function hydrateProjectAliases(repository: TaskRepository): void {
+function hydrateProjectAliases(repository: TaskRepository): void {
   for (const row of repository.read((db) =>
     db
       .query<{ alias: string; key: string }, []>(
@@ -202,7 +202,7 @@ const yieldToEventLoop = () => Bun.sleep(0)
  * synchronous slice reads one rowid window (or the small tasks table) and then
  * yields, so a multi-gigabyte database never holds the event loop.
  */
-export async function recordedProjectIds(
+async function recordedProjectIds(
   repository: TaskRepository,
   directories: readonly string[],
 ): Promise<string[]> {

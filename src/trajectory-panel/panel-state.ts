@@ -177,7 +177,7 @@ export class TrajectoryViewCache {
 export const trajectoryViewCache = new TrajectoryViewCache()
 
 /** A first read that has not answered by now becomes a failure with Retry, not a spinner. */
-export const FIRST_READ_TIMEOUT_MS = 30_000
+const FIRST_READ_TIMEOUT_MS = 30_000
 
 function withDeadline<T>(read: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {

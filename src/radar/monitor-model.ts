@@ -38,10 +38,6 @@ export type SessionActivity = {
 const finite = (value: number | null | undefined): value is number =>
   value !== null && value !== undefined && Number.isFinite(value)
 
-export function shortID(value: string, length = 8) {
-  return value.length > length + 2 ? `${value.slice(0, length)}…` : value
-}
-
 function words(value: string) {
   return value
     .replace(/^lazers[-_]/i, "")
@@ -151,11 +147,6 @@ export function sessionModel(live: Live, session: LiveSession) {
       detail: `${configured.providerID} / ${modelLabel(configured)}`,
     }
   return undefined
-}
-
-export function routeDetail(live: Live, routeID: string | null) {
-  const route = routeID ? live.routes.find((candidate) => candidate.id === routeID) : undefined
-  return route ? `${route.providerID} / ${modelLabel(route)}` : null
 }
 
 function callStatus(status: string): Extract<ActivityLine, { kind: "call" }>["status"] {
@@ -422,7 +413,7 @@ export function flowSegments(live: Live): SummarySegment[] {
 }
 
 /** How recent a failure or a finished call must be for an otherwise idle session to count. */
-export const ACTIVE_WINDOW_MS = 120_000
+const ACTIVE_WINDOW_MS = 120_000
 
 /**
  * A session is active when it is running, checking, preparing or busy, has a call in progress
@@ -584,7 +575,7 @@ const TOOL_ICONS: Array<[RegExp, IconName]> = [
   [/task|agent/i, "task"],
 ]
 
-export function toolIcon(tool: string | null): IconName {
+function toolIcon(tool: string | null): IconName {
   if (!tool) return "settings-gear"
   return TOOL_ICONS.find(([pattern]) => pattern.test(tool))?.[1] ?? "settings-gear"
 }

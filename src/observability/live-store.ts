@@ -44,7 +44,7 @@ export const LIVE_LIMITS = {
   nativeInventoryReads: 1,
 } as const
 
-export const LIVE_HISTORY_LIMITS = {
+const LIVE_HISTORY_LIMITS = {
   sourceQueries: 10,
   sourceRows: 40,
   sourceBytes: 250_000,

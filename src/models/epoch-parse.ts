@@ -78,9 +78,6 @@ export const EPOCH_CODING_BENCHMARKS = [
   },
 ] as const
 
-/** The benchmark whose score ranks models; see the notes in the Models documentation. */
-export const EPOCH_PRIMARY_BENCHMARK = "swe-bench-verified"
-
 const finite = (text: string | undefined) => {
   if (text === undefined || text.trim() === "") return null
   const value = Number(text)

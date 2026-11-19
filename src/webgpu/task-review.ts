@@ -32,7 +32,7 @@ export interface ReviewStore {
   get(key: string): Promise<unknown>
   set(key: string, value: unknown): Promise<void>
 }
-export interface Finding extends ReviewCheck {
+interface Finding extends ReviewCheck {
   probability: number | null
   score: number | null
   disposition: ReviewDisposition

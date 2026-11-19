@@ -30,7 +30,6 @@ const ReviewInput = z.strictObject({
   evidence: z.array(HandoffEvidenceSchema).max(100).default([]),
   reviewID: z.uuid().optional(),
 })
-export type HandoffReviewInput = z.input<typeof ReviewInput>
 
 const FindingSchema = z.strictObject({
   id: z.string(),
@@ -42,7 +41,7 @@ const FindingSchema = z.strictObject({
   score: z.number().min(0).max(1).nullable(),
   disposition: z.enum(["resolved", "not_applicable", "non_regressed", "limit", "pending"]),
 })
-export interface HandoffReviewFinding extends HandoffReviewDefinition {
+interface HandoffReviewFinding extends HandoffReviewDefinition {
   probability: number | null
   score: number | null
   disposition: ReviewDisposition

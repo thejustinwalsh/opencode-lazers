@@ -1,4 +1,4 @@
-export const AUDIO_RATE = 16_000
+const AUDIO_RATE = 16_000
 export const MAX_AUDIO_SECONDS = 30
 const MAX_AUDIO_BYTES = AUDIO_RATE * MAX_AUDIO_SECONDS * 2
 

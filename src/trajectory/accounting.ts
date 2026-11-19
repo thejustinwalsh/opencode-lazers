@@ -10,7 +10,7 @@ export type AccountingRoute = {
   } | null
 }
 
-export type AccountingRouteSource = {
+type AccountingRouteSource = {
   attemptID: string | null
   source: string
   sourceType: string
@@ -19,7 +19,7 @@ export type AccountingRouteSource = {
   eventID: string | null
 }
 
-export type AccountingStepRoute = {
+type AccountingStepRoute = {
   sessionID: string
   messageID: string | null
   route: AccountingRoute

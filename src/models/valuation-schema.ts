@@ -15,7 +15,7 @@ export const ValuationRouteSchema = z.strictObject({
   variant: z.string().max(512).nullable(),
 })
 
-export const ValuationPriceProvenanceSchema = z.strictObject({
+const ValuationPriceProvenanceSchema = z.strictObject({
   source: z.enum(["native-catalog", "openrouter-models"]),
   snapshotID: z.uuid(),
   generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -27,7 +27,7 @@ export const ValuationPriceProvenanceSchema = z.strictObject({
 })
 
 /** A caller-resolved current product/tier pin; unresolved selectors are never guessed here. */
-export const CurrentPricePinSchema = z.strictObject({
+const CurrentPricePinSchema = z.strictObject({
   route: ValuationRouteSchema.nullable(),
   productID: NullableText,
   configurationID: NullableText,

@@ -438,7 +438,7 @@ export type Resolution<T> =
     }
 
 /** Reviewed renames the name rules cannot reconcile; keep it tiny. Folded name to folded name. */
-export const MODEL_ALIASES: Readonly<Record<string, string>> = {
+const MODEL_ALIASES: Readonly<Record<string, string>> = {
   "gpt-5.5-pre-release": "gpt-5.5",
 }
 

@@ -44,7 +44,6 @@ export const InspectPlanInput = z.union([
   SourceMessagesInspectPlanSchema,
 ])
 export type InspectPlanInput = z.infer<typeof InspectPlanInput>
-export type SourceMessagesInspectPlanInput = z.infer<typeof SourceMessagesInspectPlanSchema>
 
 export type CompactWaitingPlan = {
   planID: string

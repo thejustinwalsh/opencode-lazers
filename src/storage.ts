@@ -72,7 +72,7 @@ export function taskDatabasePath(dataDirectory?: string): string {
  */
 export const SQLITE_BUSY_TIMEOUT_MS = 250
 /** Default total budget for `atomicAsync` contention retries. */
-export const ATOMIC_ASYNC_DEADLINE_MS = 5_000
+const ATOMIC_ASYNC_DEADLINE_MS = 5_000
 
 /** Thrown by `atomicAsync` when a write lock could not be acquired before its deadline. */
 export class StorageBusyError extends Error {
@@ -86,7 +86,7 @@ export class StorageBusyError extends Error {
   }
 }
 
-export function isSqliteBusy(error: unknown): boolean {
+function isSqliteBusy(error: unknown): boolean {
   return error instanceof SQLiteError && /^SQLITE_(BUSY|LOCKED)/.test(error.code ?? "")
 }
 

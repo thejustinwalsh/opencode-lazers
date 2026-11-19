@@ -174,14 +174,13 @@ export const EpochBenchmarkRecordSchema = z.strictObject({
   releaseDate: NullableText,
 })
 
-export const ModelEvidenceRecordSchema = z.discriminatedUnion("kind", [
+const ModelEvidenceRecordSchema = z.discriminatedUnion("kind", [
   NativeModelEvidenceRecordSchema,
   OpenRouterModelEvidenceRecordSchema,
   OpenRouterBenchmarkEvidenceRecordSchema,
   ModelsDevModelRecordSchema,
   EpochBenchmarkRecordSchema,
 ])
-export type ModelEvidenceRecord = z.infer<typeof ModelEvidenceRecordSchema>
 
 const SnapshotFields = {
   snapshotID: z.uuid(),
@@ -303,7 +302,7 @@ export const ModelEvidenceRefreshStatusSchema = z.strictObject({
 })
 export type ModelEvidenceRefreshStatus = z.infer<typeof ModelEvidenceRefreshStatusSchema>
 
-export const ModelEvidencePageSchema = z.strictObject({
+const ModelEvidencePageSchema = z.strictObject({
   snapshot: ModelEvidenceSnapshotSummarySchema,
   records: z.array(ModelEvidenceRecordSchema).max(100),
   nextCursor: z
@@ -328,5 +327,4 @@ export const ModelEvidenceReadInputSchema = z.strictObject({
     .optional(),
   limit: z.number().int().min(1).max(100).default(50),
 })
-export type ModelEvidenceReadInput = z.infer<typeof ModelEvidenceReadInputSchema>
 export type ModelEvidenceErrorCode = z.infer<typeof ModelEvidenceErrorCodeSchema>

@@ -21,7 +21,7 @@ import {
 import { readIdentity, type IdentityRow } from "./identity-store.ts"
 
 /** Evidence computed from a live commit in the repository. */
-export async function evidenceForCommit(
+async function evidenceForCommit(
   directory: string,
   commit: string,
   base?: string | null,
@@ -42,7 +42,7 @@ export async function evidenceForCommit(
 }
 
 /** First identity row recorded for a commit SHA, preferring one that carries a patch-id. */
-export function identityBySha(db: Database, sha: string): IdentityRow | undefined {
+function identityBySha(db: Database, sha: string): IdentityRow | undefined {
   return (
     db
       .query<IdentityRow, [string]>(

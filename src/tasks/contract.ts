@@ -26,7 +26,7 @@ export const GetInput = z.strictObject({
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
-export const TaskSummary = z.strictObject({
+const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
   dispatchPause: DispatchPause.optional(),
@@ -60,7 +60,7 @@ export const QueryOutput = z.strictObject({
   serverTime: z.iso.datetime(),
 })
 export type TaskPage = z.infer<typeof QueryOutput>
-export const Execution = z.strictObject({
+const Execution = z.strictObject({
   dispatchPause: DispatchPause.optional(),
   planID: z.uuid(),
   taskID: z.uuid(),
@@ -69,14 +69,14 @@ export const Execution = z.strictObject({
   reason: z.string().nullable(),
   waitingOn: z.array(z.uuid()),
 })
-export const TaskActivity = z.strictObject({
+const TaskActivity = z.strictObject({
   id: z.int().positive(),
   taskID: z.string().nullable(),
   event: z.string(),
   payload: z.string(),
   createdAt: z.number(),
 })
-export const TaskAttempt = z.strictObject({
+const TaskAttempt = z.strictObject({
   id: z.uuid(),
   number: z.int().positive(),
   state: z.string(),
@@ -95,7 +95,7 @@ export const CurrentActivityInput = z
     if (new Set(input.taskIDs).size !== input.taskIDs.length)
       context.addIssue({ code: "custom", path: ["taskIDs"], message: "Task IDs must be unique" })
   })
-export const CurrentTaskActivity = z.strictObject({
+const CurrentTaskActivity = z.strictObject({
   taskID: z.uuid(),
   /** Authorized exact worker association used to scope native activity notifications. */
   workerSessionID: z.string().min(1).optional(),
@@ -115,7 +115,7 @@ export const CurrentTaskActivity = z.strictObject({
 export const CurrentActivityOutput = z.strictObject({
   activities: z.array(CurrentTaskActivity).max(40),
 })
-export type CurrentActivityInput = z.input<typeof CurrentActivityInput>
+type CurrentActivityInput = z.input<typeof CurrentActivityInput>
 export type CurrentActivityOutput = z.infer<typeof CurrentActivityOutput>
 export type CurrentTaskActivity = z.infer<typeof CurrentTaskActivity>
 export const GetOutput = z.discriminatedUnion("status", [
@@ -142,12 +142,12 @@ export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("revision_unavailable"), revision: z.literal(1) }),
 ])
 export type TaskDetail = z.infer<typeof GetOutput>
-export const StartInput = z.strictObject({
+const StartInput = z.strictObject({
   taskID: z.uuid(),
   revision: z.literal(1),
   sessionID: z.string().min(1).max(200),
 })
-export const StartOutput = z.strictObject({
+const StartOutput = z.strictObject({
   status: z.enum(["started", "existing"]),
   planID: z.uuid(),
   state: TaskState,

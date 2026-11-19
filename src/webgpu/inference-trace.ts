@@ -222,13 +222,9 @@ export class InferenceTraceBuffer {
   snapshot(): readonly InferenceTraceEvent[] {
     return structuredClone(this.#events)
   }
-
-  clear() {
-    this.#events.length = 0
-  }
 }
 
-export class InferenceTraceSpan {
+class InferenceTraceSpan {
   readonly #start: number
   #last: number
   #finished = false

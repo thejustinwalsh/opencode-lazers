@@ -5,7 +5,7 @@ export const DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS = 15 * 60_000
 export const DEFAULT_VERIFICATION_HARD_TIMEOUT_MS = 60 * 60_000
 export const VERIFICATION_TIMING_POLICY_VERSION = 2
 
-export const VerificationTimeoutDefaultsSchema = z.strictObject({
+const VerificationTimeoutDefaultsSchema = z.strictObject({
   inactivityTimeoutMs: z.int().positive().optional(),
   hardTimeoutMs: z.int().positive().optional(),
 })
@@ -44,8 +44,8 @@ export function invalidVerificationTimings(
   )
 }
 
-export const VerificationPhase = z.enum(["task", "combined"])
-export type VerificationPhase = z.infer<typeof VerificationPhase>
+const VerificationPhase = z.enum(["task", "combined"])
+type VerificationPhase = z.infer<typeof VerificationPhase>
 
 export const VerificationTimeoutAmendmentSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -125,7 +125,7 @@ export type VerificationDeadline = {
   historicalAmendmentIDs: string[]
 }
 
-export function verificationCommandFingerprint(command: string): string {
+function verificationCommandFingerprint(command: string): string {
   return fingerprint(command)
 }
 

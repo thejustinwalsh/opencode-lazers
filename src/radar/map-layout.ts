@@ -1,14 +1,14 @@
 import type { MapNode, MapTone, RadarMap } from "./map-model.ts"
 
-export const MAP_PAD = 12
+const MAP_PAD = 12
 const NODE_HEIGHT = 36
 const ROW_GAP = 30
 const COLUMN_GAP = 8
 const MAX_NODE_WIDTH = 100
 /** Nodes and type grow with the panel, from 1× at 360 px to this cap at 740 px. */
-export const MAP_MAX_SCALE = 1.4
+const MAP_MAX_SCALE = 1.4
 
-export function mapScale(width: number) {
+function mapScale(width: number) {
   return Math.min(
     MAP_MAX_SCALE,
     Math.max(1, 1 + ((width - 360) / (740 - 360)) * (MAP_MAX_SCALE - 1)),

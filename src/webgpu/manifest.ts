@@ -32,12 +32,8 @@ export const modelURL = (name: string) =>
 
 export const DECISION_REPOSITORY = "LiquidAI/d1-omni-600M"
 export const DECISION_REVISION = "02b55d7076f15129e59ab3f94783f32c4b088674"
-export const DECISION_WEIGHT_RELEASE =
+const DECISION_WEIGHT_RELEASE =
   "https://github.com/thejustinwalsh/runntime/releases/tag/lazers-d1-q8-02b55d7"
-export const MODEL_SHORT_NAMES = {
-  chat: "LFM3",
-  decision: "d1",
-} as const
 export const DECISION_FILES = [
   {
     id: "weights",

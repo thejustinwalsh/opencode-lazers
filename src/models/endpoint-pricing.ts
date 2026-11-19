@@ -35,7 +35,7 @@ const EndpointRate = z
   .regex(/^(?:-1|(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)$/)
 const OptionalEndpointRate = EndpointRate.nullable().optional()
 
-export const EndpointPricingCacheWriteDocumentationSchema = z.strictObject({
+const EndpointPricingCacheWriteDocumentationSchema = z.strictObject({
   field: z.literal("input_cache_write"),
   supportedRate: z.literal("0"),
   sourceURL: z.literal("https://openrouter.ai/docs/guides/best-practices/prompt-caching"),

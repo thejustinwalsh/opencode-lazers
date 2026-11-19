@@ -356,7 +356,7 @@ function blank(
 
 /** Coordinates bounded comparison reads and the selected task's actual observation. */
 /** Longest the first decision read waits for a source refresh before using saved prices. */
-export const SOURCE_WAIT_MS = 10_000
+const SOURCE_WAIT_MS = 10_000
 const BACKGROUND_POLL_MS = 3_000
 const BACKGROUND_POLLS = 20
 
@@ -398,13 +398,9 @@ export class ModelComparisonPanelState {
   private comparisonNeedsRefresh = false
   private decisionRequest = 0
   private decisionInspectionRequest = 0
-  private decisionRowsRequest = 0
-  private decisionConfigurationsRequest = 0
   private decisionContributorsRequest = 0
   private decisionPromise?: Promise<void>
   private decisionNeedsRefresh = false
-  private decisionRowsPromise?: Promise<void>
-  private decisionConfigurationsPromise?: Promise<void>
   private decisionContributorsPromise?: Promise<void>
 
   constructor(
@@ -637,12 +633,8 @@ export class ModelComparisonPanelState {
     this.inspectionController = new AbortController()
     this.decisionRequest++
     this.decisionInspectionRequest++
-    this.decisionRowsRequest++
-    this.decisionConfigurationsRequest++
     this.decisionContributorsRequest++
     this.decisionPromise = undefined
-    this.decisionRowsPromise = undefined
-    this.decisionConfigurationsPromise = undefined
     this.decisionContributorsPromise = undefined
     this.decisionNeedsRefresh = false
     if (
@@ -876,123 +868,6 @@ export class ModelComparisonPanelState {
       selectedConfigurationID: configurationID,
     })
     void this.loadDecisionInspection()
-  }
-
-  async moreDecisionRows() {
-    const cursor = this.data.decisionRowsNextCursor
-    const context = this.data.decisionContext
-    const transport = this.transport
-    if (!cursor || !context || !transport?.decisionRows || this.data.decisionRowsLoading) return
-    if (this.decisionRowsPromise) return this.decisionRowsPromise
-    const generation = this.generation
-    const request = ++this.decisionRowsRequest
-    const filters = this.data.decisionFilters
-    const signal = AbortSignal.any([this.controller.signal, this.decisionController.signal])
-    this.update({ decisionRowsLoading: true })
-    const operation = (async () => {
-      try {
-        const page = await transport.decisionRows!(filters, cursor, context.snapshotID, signal)
-        if (
-          generation !== this.generation ||
-          request !== this.decisionRowsRequest ||
-          signal.aborted
-        )
-          return
-        if (
-          !decisionContextMatches(page.context, filters, this.projectDirectory, context.snapshotID)
-        )
-          throw new Error("Model row page belongs to another project, filter, or snapshot.")
-        const rows = [...this.data.decisionRows]
-        const known = new Set(rows.map((row) => row.configuration.configurationID))
-        for (const row of page.rows)
-          if (!known.has(row.configuration.configurationID)) rows.push(row)
-        this.update({
-          decisionRows: rows,
-          decisionRowsNextCursor: page.nextCursor,
-          decisionRowsLoading: false,
-        })
-      } catch (error) {
-        if (
-          generation === this.generation &&
-          request === this.decisionRowsRequest &&
-          !signal.aborted
-        )
-          this.update({
-            decisionRowsLoading: false,
-            decisionStatus: this.data.decisionOverview ? "stale" : "error",
-            decisionError: errorMessage(error),
-          })
-      }
-    })()
-    this.decisionRowsPromise = operation
-    await operation
-    if (generation === this.generation && this.decisionRowsPromise === operation)
-      this.decisionRowsPromise = undefined
-  }
-
-  async moreDecisionConfigurations() {
-    const cursor = this.data.decisionConfigurationsNextCursor
-    const context = this.data.decisionContext
-    const transport = this.transport
-    if (
-      !cursor ||
-      !context ||
-      !transport?.decisionConfigurations ||
-      this.data.decisionConfigurationsLoading
-    )
-      return
-    if (this.decisionConfigurationsPromise) return this.decisionConfigurationsPromise
-    const generation = this.generation
-    const request = ++this.decisionConfigurationsRequest
-    const filters = this.data.decisionFilters
-    const signal = AbortSignal.any([this.controller.signal, this.decisionController.signal])
-    this.update({ decisionConfigurationsLoading: true })
-    const operation = (async () => {
-      try {
-        const page = await transport.decisionConfigurations!(
-          filters,
-          cursor,
-          context.snapshotID,
-          signal,
-        )
-        if (
-          generation !== this.generation ||
-          request !== this.decisionConfigurationsRequest ||
-          signal.aborted
-        )
-          return
-        if (
-          !decisionContextMatches(page.context, filters, this.projectDirectory, context.snapshotID)
-        )
-          throw new Error(
-            "Model configuration page belongs to another project, filter, or snapshot.",
-          )
-        const configurations = [...this.data.decisionConfigurations]
-        const known = new Set(configurations.map((item) => item.configurationID))
-        for (const configuration of page.configurations)
-          if (!known.has(configuration.configurationID)) configurations.push(configuration)
-        this.update({
-          decisionConfigurations: configurations,
-          decisionConfigurationsNextCursor: page.nextCursor,
-          decisionConfigurationsLoading: false,
-        })
-      } catch (error) {
-        if (
-          generation === this.generation &&
-          request === this.decisionConfigurationsRequest &&
-          !signal.aborted
-        )
-          this.update({
-            decisionConfigurationsLoading: false,
-            decisionStatus: this.data.decisionOverview ? "stale" : "error",
-            decisionError: errorMessage(error),
-          })
-      }
-    })()
-    this.decisionConfigurationsPromise = operation
-    await operation
-    if (generation === this.generation && this.decisionConfigurationsPromise === operation)
-      this.decisionConfigurationsPromise = undefined
   }
 
   private async loadDecisionInspection(contributorCursor?: string) {
@@ -1776,8 +1651,6 @@ export class ModelComparisonPanelState {
     this.comparisonNeedsRefresh = false
     this.decisionPromise = undefined
     this.decisionNeedsRefresh = false
-    this.decisionRowsPromise = undefined
-    this.decisionConfigurationsPromise = undefined
     this.decisionContributorsPromise = undefined
   }
 }

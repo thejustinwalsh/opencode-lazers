@@ -41,10 +41,6 @@ export class CapabilityHub<C extends object> {
     return this.providers.length
   }
 
-  directories() {
-    return this.providers.map((provider) => provider.directory)
-  }
-
   register(directory: string, ctx: C) {
     const provider: Provider<C> = { id: Symbol(directory), directory: canonical(directory), ctx }
     this.providers.push(provider)

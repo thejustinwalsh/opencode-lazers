@@ -7,7 +7,7 @@ import { dirname, join } from "node:path"
 export type AuditActor = { sessionID: string; agent: string }
 export type { AuditRun, AuditDecision } from "./contract.ts"
 import type { AuditRun, AuditDecision } from "./contract.ts"
-export type AuditFinding = {
+type AuditFinding = {
   findingID: string
   analysis: string
   category: string
@@ -21,7 +21,7 @@ function object(value: unknown): Record<string, unknown> | undefined {
     ? (value as Record<string, unknown>)
     : undefined
 }
-export function auditFindings(runID: string, analysis: string, report: unknown): AuditFinding[] {
+function auditFindings(runID: string, analysis: string, report: unknown): AuditFinding[] {
   const result: AuditFinding[] = []
   for (const [category, items] of Object.entries(object(report) ?? {})) {
     if (!Array.isArray(items)) continue

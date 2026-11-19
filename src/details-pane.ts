@@ -1,10 +1,10 @@
 /** Pure geometry for the shared details pane. All lengths are CSS pixels. */
 
-export const DETAILS_HEADER_HEIGHT = 32
-export const DETAILS_MIN_BODY = 72
-export const DETAILS_MIN_TOP = 120
+const DETAILS_HEADER_HEIGHT = 32
+const DETAILS_MIN_BODY = 72
+const DETAILS_MIN_TOP = 120
 export const DETAILS_DEFAULT_SIZE = 0.45
-export const DETAILS_KEY_STEP = 0.05
+const DETAILS_KEY_STEP = 0.05
 
 export interface DetailsState {
   open: boolean

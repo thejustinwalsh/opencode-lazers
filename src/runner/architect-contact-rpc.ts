@@ -17,7 +17,7 @@ const Setting = z.strictObject({
  * Call: `client.rpc(ArchitectContact).set({ state: "paused", reason }, { location: { directory } })`
  * and `.get({}, { location: { directory } })`.
  */
-export const ArchitectContact = Rpc.define({
+const ArchitectContact = Rpc.define({
   id: "lz.architect-contact",
   events: {},
   methods: {

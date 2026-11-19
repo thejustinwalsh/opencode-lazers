@@ -5,7 +5,7 @@ import type { ConnectionChip } from "./monitor-model.ts"
 export type RadarViewChoice = "monitor" | "map" | "flow"
 export type RadarScopeChoice = "session" | "project" | "project-all"
 
-export const SCOPE_LABEL: Record<RadarScopeChoice, string> = {
+const SCOPE_LABEL: Record<RadarScopeChoice, string> = {
   session: "This session",
   project: "Project",
   "project-all": "Project · all sessions",

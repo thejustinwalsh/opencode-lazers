@@ -42,12 +42,12 @@ function readySource(snapshot: ModelEvidenceSnapshot): ModelEvidenceComparisonSo
   }
 }
 
-export const lz137MarketSources = [
+const lz137MarketSources = [
   readySource(nativeSnapshot),
   readySource(openrouterSnapshot),
 ] satisfies readonly ModelEvidenceComparisonSourceRead[]
 
-export const lz137MarketSettings = ModelPriceSourceSettingsSchema.parse({
+const lz137MarketSettings = ModelPriceSourceSettingsSchema.parse({
   policy: defaultModelPriceSourcePolicy(),
   access: { openrouter: "configured", opencode: "configured" },
 })

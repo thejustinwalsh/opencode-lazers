@@ -26,7 +26,7 @@ export type RepositorySnapshotRequest = {
   exclude: string[]
 }
 
-export type RepositorySnapshotResponse = {
+type RepositorySnapshotResponse = {
   snapshotID: string
   snapshotFile: string
   repository: string

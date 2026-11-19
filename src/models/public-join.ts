@@ -40,10 +40,10 @@ export type EpochCoverage = {
 const first = <T>(items: readonly T[]) => items[0]
 
 /** Newest models taken per BYOK provider, and from the other vendors and OpenRouter. */
-export const EXTERNAL_PER_BYOK = 12
-export const EXTERNAL_TRENDING = 30
+const EXTERNAL_PER_BYOK = 12
+const EXTERNAL_TRENDING = 30
 /** The schema's cap on public-catalog items. */
-export const EXTERNAL_MAX = 200
+const EXTERNAL_MAX = 200
 
 /**
  * The public sources joined to the routes this install can run, through the name identity

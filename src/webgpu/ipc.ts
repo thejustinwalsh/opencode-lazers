@@ -165,7 +165,7 @@ export const InferenceTrace = Schema.Struct({
   outputShape: Schema.optionalKey(traceShape),
   error: Schema.optionalKey(TraceError),
 })
-export type InferenceTrace = InferenceTraceEvent
+type InferenceTrace = InferenceTraceEvent
 
 export const RendererCaptureStatus = Schema.Struct({
   state: Schema.Literals(["idle", "preparing", "waiting", "recording", "stopping", "complete"]),
@@ -234,9 +234,9 @@ export const RendererCaptureStatus = Schema.Struct({
   ),
   profilerCleanup: Schema.optionalKey(ProfilerCleanup),
 })
-export type RendererCaptureStatus = typeof RendererCaptureStatus.Type
+type RendererCaptureStatus = typeof RendererCaptureStatus.Type
 
-export const CacheStatus = Schema.Struct({
+const CacheStatus = Schema.Struct({
   phase: Schema.String,
   cachedBytes: Schema.Number,
   totalBytes: Schema.Number,

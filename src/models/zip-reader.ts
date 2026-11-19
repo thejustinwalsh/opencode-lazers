@@ -1,7 +1,7 @@
 import { inflateRawSync } from "node:zlib"
 
 /** Total bytes a single archive may expand to; a guard against decompression bombs. */
-export const MAX_UNZIPPED_BYTES = 64 * 1024 * 1024
+const MAX_UNZIPPED_BYTES = 64 * 1024 * 1024
 
 export class ZipError extends Error {}
 

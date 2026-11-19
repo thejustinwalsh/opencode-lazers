@@ -6,7 +6,7 @@ import type { ModelIndex } from "./name-identity.ts"
 
 export const MODEL_IDENTITY_RULE_VERSION = 1
 
-export const ModelIdentityEvidenceReferenceSchema = z.strictObject({
+const ModelIdentityEvidenceReferenceSchema = z.strictObject({
   source: z.enum(["native-catalog", "openrouter-models"]),
   snapshotID: z.uuid(),
   generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -15,7 +15,7 @@ export const ModelIdentityEvidenceReferenceSchema = z.strictObject({
 })
 export type ModelIdentityEvidenceReference = z.infer<typeof ModelIdentityEvidenceReferenceSchema>
 
-export const ModelIdentityRuleCitationSchema = z.strictObject({
+const ModelIdentityRuleCitationSchema = z.strictObject({
   url: z.url().max(2_048),
   retrievedOn: z.iso.date(),
   excerpt: z.string().min(1).max(512),

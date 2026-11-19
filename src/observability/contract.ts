@@ -3,12 +3,12 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { z } from "zod"
 
-export const ObservationScope = z.discriminatedUnion("kind", [
+const ObservationScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
   z.strictObject({ kind: z.literal("project"), sessionID: z.string().min(1).max(200) }),
 ])
 
-export const ObservationScopeView = z.discriminatedUnion("kind", [
+const ObservationScopeView = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
   z.strictObject({ kind: z.literal("project") }),
 ])
@@ -121,7 +121,7 @@ const TimelineCheck = z.strictObject({
   timingBasis: z.string(),
 })
 
-export const SnapshotInput = z.strictObject({ scope: ObservationScope })
+const SnapshotInput = z.strictObject({ scope: ObservationScope })
 export const SnapshotOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
@@ -150,7 +150,7 @@ export const SnapshotOutput = z.strictObject({
 })
 
 // Complete current recorded topology, independent of execution-history volume.
-export const TopologyInput = z.strictObject({ scope: ObservationScope })
+const TopologyInput = z.strictObject({ scope: ObservationScope })
 export const TopologyOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
@@ -161,7 +161,7 @@ export const TopologyOutput = z.strictObject({
   unplannedTasks: z.array(UnplannedTask).max(1000),
 })
 
-export const ProgressDiagnosticsInput = z.strictObject({ scope: ObservationScope })
+const ProgressDiagnosticsInput = z.strictObject({ scope: ObservationScope })
 const ProcessSchedulerTotals = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("available"),
@@ -180,7 +180,7 @@ const ProcessSchedulerTotals = z.discriminatedUnion("status", [
   }),
   z.strictObject({ status: z.literal("unavailable"), reason: z.literal("architect-only") }),
 ])
-export const ProgressDiagnosticsOutput = z.strictObject({
+const ProgressDiagnosticsOutput = z.strictObject({
   schemaVersion: z.literal(1),
   scope: z.strictObject({ kind: z.literal("project") }),
   observedAt: z.number().finite(),
@@ -713,12 +713,12 @@ export const LiveHistoryOutput = z.strictObject({
     responseBytes: z.int().nonnegative(),
   }),
 })
-export const LiveHistoryErrorData = z.strictObject({
+const LiveHistoryErrorData = z.strictObject({
   reason: z.enum(["invalid-cursor", "session-unavailable", "changed-during-read"]),
   recovery: z.literal("restart"),
 })
 
-export const TrajectoryInput = z
+const TrajectoryInput = z
   .strictObject({
     scope: ObservationScope,
     taskID: z.uuid().optional(),
@@ -751,13 +751,13 @@ export const TrajectoryOutput = z.strictObject({
     .optional(),
 })
 
-export const TrajectoryHistoryInput = z.strictObject({
+const TrajectoryHistoryInput = z.strictObject({
   scope: ObservationScope,
   taskID: z.uuid(),
   limit: z.int().min(1).max(50).default(20),
   cursor: z.string().min(1).max(4096).optional(),
 })
-export const TrajectoryHistoryOutput = z.strictObject({
+const TrajectoryHistoryOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
@@ -767,11 +767,11 @@ export const TrajectoryHistoryOutput = z.strictObject({
   eventIDs: z.array(z.string()).max(10_000).optional(),
   report: z.record(z.string(), z.unknown()),
 })
-export const TrajectoryHistoryErrorData = z.strictObject({
+const TrajectoryHistoryErrorData = z.strictObject({
   reason: z.enum(["expired", "evicted", "invalid-cursor"]),
   recovery: z.literal("recapture"),
 })
-export const TrajectoryStatusInput = z.strictObject({
+const TrajectoryStatusInput = z.strictObject({
   scope: ObservationScope,
   taskID: z.uuid(),
   live: z.strictObject({ cursor: z.uuid().optional() }).optional(),
@@ -826,20 +826,14 @@ export const Observability = Rpc.define({
 export type ObservationScope = z.infer<typeof ObservationScope>
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
 export type TopologyResponse = z.infer<typeof TopologyOutput>
-export type SnapshotRequest = z.infer<typeof SnapshotInput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>
-export type ProgressDiagnosticsRequest = z.infer<typeof ProgressDiagnosticsInput>
-export type ProgressDiagnosticsResponse = z.infer<typeof ProgressDiagnosticsOutput>
-export type RadarRequest = z.infer<typeof RadarInput>
 export type RadarRequestInput = z.input<typeof RadarInput>
 export type RadarResponse = z.infer<typeof RadarOutput>
-export type LiveRadarRequest = z.infer<typeof LiveRadarInput>
 export type LiveRadarRequestInput = z.input<typeof LiveRadarInput>
 export type LiveRadarResponse = z.infer<typeof LiveRadarOutput>
 export type LiveHistoryRequest = z.infer<typeof LiveHistoryInput>
 export type LiveHistoryRequestInput = z.input<typeof LiveHistoryInput>
 export type LiveHistoryResponse = z.infer<typeof LiveHistoryOutput>
-export type LiveHistoryErrorReason = z.infer<typeof LiveHistoryErrorData>["reason"]
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
 export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
 export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>

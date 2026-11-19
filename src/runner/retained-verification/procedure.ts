@@ -200,7 +200,7 @@ export function retainedProjectIdentity(
   return JSON.stringify({ projectDirectory, candidateWorkspace, candidateArtifact })
 }
 
-export function assertRetainedProcedureTargets(
+function assertRetainedProcedureTargets(
   plan: RetainedProcedurePlan,
   candidateWorkspace: string,
 ): void {

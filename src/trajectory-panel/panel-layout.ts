@@ -73,7 +73,7 @@ export function slowSeconds(line: string): number | null {
 /** Estimated width of one mono ruler character, in px. */
 export const LABEL_CHAR_PX = 6.5
 /** The widest mark hit target, centred on its time. */
-export const MARK_HIT_PX = 14
+const MARK_HIT_PX = 14
 
 /**
  * Room kept at the right end of the fitted timeline: half the widest tick label plus 8 px, so the

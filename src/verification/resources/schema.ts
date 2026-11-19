@@ -47,7 +47,7 @@ export const ResourceDescriptorSchema = z.strictObject({
 })
 export type ResourceDescriptor = z.infer<typeof ResourceDescriptorSchema>
 
-export const ResourceStateSchema = z.enum([
+const ResourceStateSchema = z.enum([
   "reserved",
   "creating",
   "active",
@@ -73,7 +73,7 @@ export const OwnedResourceSchema = z.strictObject({
 })
 export type OwnedResource = z.infer<typeof OwnedResourceSchema>
 
-export const ResourceExecutionPhaseSchema = z.enum([
+const ResourceExecutionPhaseSchema = z.enum([
   "registered",
   "preparing",
   "probing",
@@ -89,9 +89,8 @@ export const ResourceExecutionSchema = z.strictObject({
 })
 export type ResourceExecution = z.infer<typeof ResourceExecutionSchema>
 
-export const ResourceObservationSchema = z.strictObject({
-  state: z.enum(["absent", "owned", "foreign", "unknown"]),
-  authoritative: z.boolean(),
-  reason: z.string().max(500).optional(),
-})
-export type ResourceObservation = z.infer<typeof ResourceObservationSchema>
+export type ResourceObservation = {
+  state: "absent" | "owned" | "foreign" | "unknown"
+  authoritative: boolean
+  reason?: string | undefined
+}

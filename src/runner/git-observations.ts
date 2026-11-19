@@ -1,4 +1,4 @@
-import { commitIsAncestor, gitAsync, workspaceAtArtifact } from "./artifacts.ts"
+import { commitIsAncestor, gitAsync } from "./artifacts.ts"
 
 type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown }
 
@@ -39,10 +39,6 @@ export class GitObservations {
     return this.read(`ancestor\0${directory}\0${ancestor}\0${descendant}`, () =>
       commitIsAncestor(directory, ancestor, descendant),
     )
-  }
-
-  atArtifact(directory: string, commit: string): boolean {
-    return this.read(`at\0${directory}\0${commit}`, () => workspaceAtArtifact(directory, commit))
   }
 
   /** Run a synchronous body, resolving observations it requests between attempts. */

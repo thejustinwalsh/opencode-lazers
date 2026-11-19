@@ -175,7 +175,7 @@ function stableSnapshot(snapshot: {
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
 }
 
-export function nativeSnapshotMatches(
+function nativeSnapshotMatches(
   previousSnapshot: NativeSnapshot | undefined,
   previousDigest: string | undefined,
   operation: Extract<NativeOperation, { kind: "click" | "type" | "key" }>,
@@ -272,7 +272,7 @@ export function nativeAdapterFailureHint(error: unknown): string {
     .slice(0, 180)
 }
 
-export function dispatchNativeInput(
+function dispatchNativeInput(
   webContents: NativeWebContents,
   operation: Extract<NativeOperation, { kind: "click" | "type" | "key" }>,
   element?: NativeElement,

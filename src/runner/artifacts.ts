@@ -309,7 +309,7 @@ export async function changedPaths(directory: string, base = "HEAD"): Promise<st
 }
 
 /** Bounded-concurrency map so large sets never monopolize the event loop. */
-export async function mapBounded<T, R>(
+async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
   run: (item: T, index: number) => Promise<R>,
@@ -386,21 +386,6 @@ async function workspaceStatus(directory: string): Promise<WorkspaceStatus> {
     else if (/^[12u] /.test(token)) changed = true
   }
   return { head, changed, untracked }
-}
-
-/**
- * True when `HEAD` is exactly `commit` and the checkout has no tracked changes
- * and no untracked paths beyond `ownedUntrackedPaths`; one Git process.
- */
-export async function workspaceAtArtifact(
-  directory: string,
-  commit: string,
-  ownedUntrackedPaths: string[] = [],
-): Promise<boolean> {
-  const status = await workspaceStatus(directory)
-  if (status.head !== commit) return false
-  const allowed = new Set(ownedUntrackedPaths)
-  return !status.changed && status.untracked.every((path) => allowed.has(path))
 }
 
 export async function artifactUnchanged(

@@ -112,7 +112,6 @@ export const ModelGroupsOutputSchema = z.strictObject({
   totalGroups: z.number().int().nonnegative().max(200_000),
   nextCursor: z.string().max(8_192).nullable(),
 })
-export type ModelGroupsOutput = z.infer<typeof ModelGroupsOutputSchema>
 
 const NativeConfigurationSchema = z.strictObject({
   source: z.literal("native-catalog"),
@@ -178,4 +177,3 @@ export const ModelConfigurationsOutputSchema = z.strictObject({
   totalConfigurations: z.number().int().nonnegative().max(200_000),
   nextCursor: z.string().max(8_192).nullable(),
 })
-export type ModelConfigurationsOutput = z.infer<typeof ModelConfigurationsOutputSchema>

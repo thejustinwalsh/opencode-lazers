@@ -66,7 +66,7 @@ export const ModelPriceSourceConfigureRPCInputSchema = z.strictObject({
   ...ModelPriceSourceUpdateSchema.shape,
 })
 
-export const ModelPersonaSettingsSchema = z.strictObject({
+const ModelPersonaSettingsSchema = z.strictObject({
   /** A worker persona, or an agent id: both are routes in the one mapping store. */
   persona: ModelMappingSubject,
   personaLabel: z.string().min(1),

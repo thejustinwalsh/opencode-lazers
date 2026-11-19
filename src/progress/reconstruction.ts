@@ -102,7 +102,7 @@ const coordinators: CoordinatorRegistry = (coordinatorHost[coordinatorRegistryKe
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000
 const DEFAULT_TERMINAL_REFRESH_MS = 30_000
-export const DEFAULT_CHANGED_DEBOUNCE_MS = 1_500
+const DEFAULT_CHANGED_DEBOUNCE_MS = 1_500
 const MAX_RETRY_DELAY_MS = 60_000
 const ACTIVE_ATTEMPT_STATES = new Set(["preparing", "queued", "ready", "running", "verifying"])
 

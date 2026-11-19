@@ -459,7 +459,7 @@ function httpFailure(status: number): SourceFailure {
 export const PRICE_TTL_MS = 60 * 60 * 1000
 export const INFO_TTL_MS = 7 * 24 * 60 * 60 * 1000
 /** After a failed refresh, wait this long before trying that source again on its own. */
-export const FAILED_RETRY_MS = 5 * 60 * 1000
+const FAILED_RETRY_MS = 5 * 60 * 1000
 /** A refresh row still "refreshing" after this long belongs to a crashed process. */
 const STALE_REFRESHING_MS = 2 * 60 * 1000
 
@@ -529,7 +529,7 @@ const recordKey = (record: ModelEvidenceSnapshot["records"][number]) =>
  * response lists for the first time is added; one it no longer lists is kept until the next
  * info refresh. The snapshot keeps its previous info time.
  */
-export function mergePriceRefresh(
+function mergePriceRefresh(
   previous: ModelEvidenceSnapshot,
   fresh: ModelEvidenceSnapshot,
 ): ModelEvidenceSnapshot {

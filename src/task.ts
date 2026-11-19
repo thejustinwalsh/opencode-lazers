@@ -197,7 +197,7 @@ export const TaskSubmissionSchema = TaskProposalSchema.safeExtend({
   idempotencyKey: IdempotencyKeySchema,
 })
 
-export const StartingRevisionSchema = z.discriminatedUnion("kind", [
+const StartingRevisionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("git"),
     commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),

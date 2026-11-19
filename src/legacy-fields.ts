@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /** Drop named keys from a plain object input; anything else passes through untouched. */
-export function dropFields(input: unknown, fields: readonly string[]): unknown {
+function dropFields(input: unknown, fields: readonly string[]): unknown {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return input
   if (!fields.some((field) => Object.hasOwn(input, field))) return input
   return Object.fromEntries(Object.entries(input).filter(([key]) => !fields.includes(key)))

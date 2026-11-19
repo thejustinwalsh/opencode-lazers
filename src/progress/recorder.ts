@@ -16,10 +16,10 @@ import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 
-export type ProgressSource =
+type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
 
-export type ProgressKind =
+type ProgressKind =
   | "commentary"
   | "tool"
   | "visible-text"

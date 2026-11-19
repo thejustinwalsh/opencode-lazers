@@ -26,7 +26,7 @@ const Range = z
     message: "A known-usage range cannot have its minimum above its maximum",
   })
 
-export const MarketRangeRouteSchema = z.strictObject({
+const MarketRangeRouteSchema = z.strictObject({
   providerID: z.string().min(1).max(512),
   modelID: z.string().min(1).max(512),
   variant: z.string().max(512).nullable(),
@@ -516,7 +516,7 @@ export function resolveConfiguredMarketIdentity(
 }
 
 /** Resolve one whole-model cached source in configured order, without combining source rates. */
-export function selectConfiguredMarketSchedule(input: {
+function selectConfiguredMarketSchedule(input: {
   route: MarketRangeRoute
   settings: ModelPriceSourceSettings
   sources: readonly ModelEvidenceComparisonSourceRead[]

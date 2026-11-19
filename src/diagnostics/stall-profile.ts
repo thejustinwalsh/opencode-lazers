@@ -42,7 +42,7 @@ type Jsc = {
 }
 type Sample = { at: number; frames: string[] }
 
-export const PROFILE_MIN_STALL_MS = 2000
+const PROFILE_MIN_STALL_MS = 2000
 const DRAIN_MS = 1000
 const RING_SAMPLES = 30_000
 const MAX_FRAMES = 40
@@ -53,7 +53,7 @@ const INTERN_CAP = 8000
 const defaultKey = Symbol.for("lazers.stall-profiler.v1")
 
 /** Keep the package/file tail of a source URL. */
-export function shortenURL(url: string | undefined) {
+function shortenURL(url: string | undefined) {
   if (!url) return "native"
   const clean = url.replace(/^file:\/\//, "").replace(/[?#].*$/, "")
   const modules = clean.lastIndexOf("node_modules/")

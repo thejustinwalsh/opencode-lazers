@@ -89,7 +89,7 @@ export class ExclusiveModels<M extends Record<string, DisposableModel>> {
   }
 }
 
-export const recoverable = (error: unknown) =>
+const recoverable = (error: unknown) =>
   /device.{0,20}lost|GPU device|disconnect|transport|network|fetch failed|download failed: (429|5\d\d)/i.test(
     String(error),
   )
