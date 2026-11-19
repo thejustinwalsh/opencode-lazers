@@ -184,8 +184,8 @@ impl Project {
         self.files.len()
     }
 
-    /// Clone groups. With `changed` non-empty, only groups that touch a changed
-    /// path are reported; every file stays in the matching corpus.
+    /// Clone groups of the full run. With `changed` non-empty, only the groups that touch a
+    /// changed path are reported, exactly as the full run groups them.
     pub fn duplication(&self, changed: Vec<String>, options_json: &str) -> String {
         envelope(self.run_duplication(&changed, options_json))
     }
@@ -235,19 +235,24 @@ impl Project {
                 duplicates.min_lines = value;
             }
         }
-        let changed_paths: Vec<PathBuf> = changed.iter().map(|path| self.root.join(path)).collect();
-        let focus = (!changed_paths.is_empty()).then_some(changed_paths.as_slice());
+        let changed_paths: std::collections::HashSet<PathBuf> =
+            changed.iter().map(|path| self.root.join(path)).collect();
         let analysis = fallow_engine::duplicates::find_duplicates_in_memory(
             &self.root,
             &self.files,
             &self.sources,
             &duplicates,
-            focus,
         );
         let report = analysis.report;
         let groups: Vec<Group> = report
             .clone_groups
             .iter()
+            // The full report is the reference. Upstream's focused detection prunes the corpus
+            // and can group the same code differently, so the changed set only filters.
+            .filter(|group| {
+                changed_paths.is_empty()
+                    || group.instances.iter().any(|i| changed_paths.contains(&i.file))
+            })
             .map(|group| Group {
                 token_count: group.token_count,
                 line_count: group.line_count,

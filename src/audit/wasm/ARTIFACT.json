@@ -1,10 +1,10 @@
 {
   "upstreamTag": "v3.43.2",
   "upstreamCommit": "b6a3e048dc882bdf11c8269c73167223b9e32774",
-  "patchSetSha256": "323767ec2e55c6233d939d9d64c15bc09636844ad1d0ba7593542fbe9ff37652",
-  "bindingSha256": "f08d20d5d8d2a50d64079edee5e584cfb0a58541867e8a635aff2a471d1eefeb",
-  "wasmSha256": "ebaef07dc4ed4f6180f066230a42f86ba3c81da1296f5cb701d4fde3d4235cfa",
-  "bytes": 4859933,
+  "patchSetSha256": "b823e3b315d82b6dc916e65319a5fe792b77cf0122a175729a733ce6ead9fa15",
+  "bindingSha256": "ec24e78436ce1db9c9ac03a64cf4d687519ff48c44294465acc85159782ecebc",
+  "wasmSha256": "4fd95484e0ca7fa837a73d12164e135fededfaba548843e1ff4d3eafaf5830a9",
+  "bytes": 4852168,
   "toolchain": {
     "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
     "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",

@@ -32,8 +32,8 @@ export class Project {
     }
   }
   /**
-   * Clone groups. With `changed` non-empty, only groups that touch a changed
-   * path are reported; every file stays in the matching corpus.
+   * Clone groups of the full run. With `changed` non-empty, only the groups that touch a
+   * changed path are reported, exactly as the full run groups them.
    * @param {string[]} changed
    * @param {string} options_json
    * @returns {string}

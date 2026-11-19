@@ -1,5 +1,5 @@
 diff --git a/crates/engine/src/duplication_detector/mod.rs b/crates/engine/src/duplication_detector/mod.rs
-index cdd0e90..2e3e421 100644
+index cdd0e90..fc95b12 100644
 --- a/crates/engine/src/duplication_detector/mod.rs
 +++ b/crates/engine/src/duplication_detector/mod.rs
 @@ -99,7 +99,13 @@ impl IgnoreSet {
@@ -40,7 +40,7 @@ index cdd0e90..2e3e421 100644
              root: input.root,
              config,
              extra_ignores: input.extra_ignores,
-@@ -350,6 +359,31 @@ pub fn detect_duplicates(
+@@ -350,6 +359,32 @@ pub fn detect_duplicates(
      config: &DuplicatesConfig,
      focus_files: Option<&FxHashSet<PathBuf>>,
      cache_root: Option<&Path>,
@@ -52,14 +52,15 @@ index cdd0e90..2e3e421 100644
 +///
 +/// Like [`detect_duplicates`] with `sources` keyed by each file's path. A file
 +/// with no entry is skipped. Nothing is read from disk and no cache is used.
++/// There is no focus set: focused detection prunes the corpus and can group the
++/// same code differently, so callers filter the full report instead.
 +pub fn detect_duplicates_in_memory(
 +    root: &Path,
 +    files: &[DiscoveredFile],
 +    sources: &InMemorySources,
 +    config: &DuplicatesConfig,
-+    focus_files: Option<&FxHashSet<PathBuf>>,
 +) -> DuplicationAnalysis {
-+    detect_duplicates_with_sources(root, files, Some(sources), config, focus_files, None)
++    detect_duplicates_with_sources(root, files, Some(sources), config, None, None)
 +}
 +
 +fn detect_duplicates_with_sources(
@@ -72,7 +73,7 @@ index cdd0e90..2e3e421 100644
  ) -> DuplicationAnalysis {
      let _span = tracing::info_span!("find_duplicates").entered();
  
-@@ -364,6 +398,7 @@ pub fn detect_duplicates(
+@@ -364,6 +399,7 @@ pub fn detect_duplicates(
          .unwrap_or_default();
  
      let (file_data, corpus_totals) = tokenize_corpus_for_duplicates(TokenizeCorpusInput {
@@ -80,7 +81,7 @@ index cdd0e90..2e3e421 100644
          root,
          files,
          config,
-@@ -401,10 +436,15 @@ fn tokenize_duplication_file(
+@@ -401,10 +437,15 @@ fn tokenize_duplication_file(
          return None;
      }
  
@@ -100,7 +101,7 @@ index cdd0e90..2e3e421 100644
      let cache_hit = cached_entry.is_some();
      let (mut entry, suppressions) = duplication_token_cache_entry(file, ctx, cached_entry)?;
      if entry.file_tokens.tokens.is_empty() || entry.hashed_tokens.len() < ctx.config.min_tokens {
-@@ -415,7 +455,7 @@ fn tokenize_duplication_file(
+@@ -415,7 +456,7 @@ fn tokenize_duplication_file(
          path: file.path.clone(),
          hashed_tokens: std::mem::take(&mut entry.hashed_tokens),
          file_tokens: entry.file_tokens,
@@ -109,7 +110,7 @@ index cdd0e90..2e3e421 100644
          cache_hit,
          suppressions,
      })
-@@ -453,7 +493,10 @@ fn duplication_token_cache_entry(
+@@ -453,7 +494,10 @@ fn duplication_token_cache_entry(
          return Some((entry, suppressions));
      }
  
@@ -122,27 +123,25 @@ index cdd0e90..2e3e421 100644
      let suppressions = suppress::parse_suppressions_from_source(source).suppressions;
      if suppress::is_file_suppressed(&suppressions, IssueKind::CodeDuplication) {
 diff --git a/crates/engine/src/duplicates.rs b/crates/engine/src/duplicates.rs
-index ccc7843..a986704 100644
+index ccc7843..67655d7 100644
 --- a/crates/engine/src/duplicates.rs
 +++ b/crates/engine/src/duplicates.rs
-@@ -255,6 +255,22 @@ pub fn find_duplicates_touching_files_with_defaults(
+@@ -255,6 +255,20 @@ pub fn find_duplicates_touching_files_with_defaults(
      detector::detect_duplicates(root, files, config, Some(&changed_files), cache_dir)
  }
  
 +/// Run duplication detection over source text the caller supplies, with no
-+/// filesystem access. `changed_files`, when given, keeps only clone groups that
-+/// touch one of those files while every file stays in the matching corpus.
++/// filesystem access. Callers that want the groups touching some files filter
++/// this report; `find_duplicates_touching_files_with_defaults` prunes the corpus
++/// and can group the same code differently.
 +#[must_use]
 +pub fn find_duplicates_in_memory(
 +    root: &Path,
 +    files: &[DiscoveredFile],
 +    sources: &FxHashMap<PathBuf, String>,
 +    config: &DuplicatesConfig,
-+    changed_files: Option<&[PathBuf]>,
 +) -> DuplicationAnalysis {
-+    let changed_files =
-+        changed_files.map(|paths| paths.iter().cloned().collect::<FxHashSet<_>>());
-+    detector::detect_duplicates_in_memory(root, files, sources, config, changed_files.as_ref())
++    detector::detect_duplicates_in_memory(root, files, sources, config)
 +}
 +
  #[cfg(test)]
