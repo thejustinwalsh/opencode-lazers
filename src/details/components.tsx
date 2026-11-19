@@ -221,9 +221,17 @@ export function Disclosure(props: {
   count?: number
   when?: boolean
   defaultOpen?: boolean
+  /** Controls the open state from outside, e.g. a link that opens this row. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   children?: JSX.Element
 }): JSX.Element {
-  const [open, setOpen] = createSignal(props.defaultOpen ?? false)
+  const [inner, setInner] = createSignal(props.defaultOpen ?? false)
+  const open = () => props.open ?? inner()
+  const setOpen = (next: boolean) => {
+    setInner(next)
+    props.onOpenChange?.(next)
+  }
   const visible = () => props.when !== false && props.count !== 0
   return (
     <Show when={visible()}>
