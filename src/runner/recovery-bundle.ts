@@ -450,9 +450,8 @@ export class RecoveryBundles {
         .attempts(plan.id)
         .filter((a) => a.task_id === node.task_id)
         .at(-1)
-      const facts = store.read((db) =>
-        readStrugglingFacts(db, plan.id, node.task_id, this.deps.now()),
-      )
+      // Transitions are stamped with the wall clock, so open intervals end on it too.
+      const facts = store.read((db) => readStrugglingFacts(db, plan.id, node.task_id, Date.now()))
       const assessment = assessStruggling(facts)
       const drift =
         attempt && ["preparing", "running"].includes(attempt.state)
@@ -550,9 +549,7 @@ export class RecoveryBundles {
       if (plan.state !== "running") continue
       for (const node of store.nodes(plan.id)) {
         if (!canStruggle(node.state)) continue
-        const facts = store.read((db) =>
-          readStrugglingFacts(db, plan.id, node.task_id, this.deps.now()),
-        )
+        const facts = store.read((db) => readStrugglingFacts(db, plan.id, node.task_id, Date.now()))
         const assessment = assessStruggling(facts)
         if (!assessment.struggling) continue
         store.fenced(owner, fence, () => {
