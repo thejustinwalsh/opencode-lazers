@@ -1,0 +1,79 @@
+import { expect, test } from "bun:test"
+import type { CheckReceipt } from "./artifacts.ts"
+import type { EffectRow } from "./store.ts"
+import { TaskRuntime } from "./runtime.ts"
+
+type Settle = (
+  this: unknown,
+  effect: EffectRow,
+  check: CheckReceipt,
+  fence: number,
+  activityIdentity: unknown,
+) => boolean
+
+// `settleMatchedCheck` is private; the order of its effects is the contract under test.
+const settleMatchedCheck = Reflect.get(TaskRuntime.prototype, "settleMatchedCheck") as Settle
+
+function harness() {
+  const calls: string[] = []
+  const runtime = {
+    set tickRequested(value: boolean) {
+      calls.push(`tick:${value}`)
+    },
+    receipt: (_effect: EffectRow, receipt: { reconciled?: boolean }) =>
+      calls.push(`receipt:${receipt.reconciled}`),
+    uncertain: (_effect: EffectRow, error: unknown) =>
+      calls.push(error instanceof Error ? "uncertain:error" : `uncertain:${String(error)}`),
+    forgetCheckActivity: () => calls.push("forget"),
+    recordVerificationEvidence: () => calls.push("evidence"),
+  }
+  return {
+    calls,
+    settle: (effect: EffectRow, check: CheckReceipt) =>
+      settleMatchedCheck.call(runtime, effect, check, 1, {}),
+  }
+}
+
+const effect = (kind: string, owned = true) =>
+  ({
+    kind,
+    id: "effect-1",
+    attempt_id: owned ? "attempt-1" : null,
+    task_id: owned ? "task-1" : null,
+  }) as EffectRow
+
+const settled = {} as CheckReceipt
+const unsettled = { processCleanup: { state: "uncertain" } } as unknown as CheckReceipt
+const aborted = { aborted: true } as CheckReceipt
+
+test("a settled check records its receipt, requests a tick, then forgets the activity", () => {
+  for (const kind of ["mechanical-fix", "graph-verify:lint"]) {
+    const { calls, settle } = harness()
+    expect(settle(effect(kind), settled)).toBe(true)
+    expect(calls).toEqual(["receipt:true", "tick:true", "forget"])
+  }
+})
+
+test("a task verify check journals its evidence before the receipt", () => {
+  const { calls, settle } = harness()
+  settle(effect("verify:test"), settled)
+  expect(calls).toEqual(["evidence", "receipt:true", "tick:true", "forget"])
+})
+
+test("an aborted check is uncertain and forgotten without evidence or a receipt", () => {
+  for (const kind of ["mechanical-fix", "verify:test", "graph-verify:lint"]) {
+    const { calls, settle } = harness()
+    settle(effect(kind), aborted)
+    expect(calls).toEqual(["uncertain:Verification was interrupted before completion", "forget"])
+  }
+})
+
+test("unsettled subprocess cleanup is uncertain; only verification forgets the activity", () => {
+  const mechanical = harness()
+  mechanical.settle(effect("mechanical-fix"), unsettled)
+  expect(mechanical.calls).toEqual(["uncertain:error"])
+
+  const verify = harness()
+  verify.settle(effect("verify:test"), unsettled)
+  expect(verify.calls).toEqual(["evidence", "uncertain:error", "forget"])
+})
