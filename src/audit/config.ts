@@ -6,7 +6,8 @@ import type { TaskRepository } from "../storage.ts"
 
 const REPO_CONFIG_CANDIDATES = [".fallowrc.json", ".fallowrc.jsonc", "fallow.toml", ".fallow.toml"]
 
-async function git(directory: string, ...args: string[]): Promise<string | undefined> {
+/** Shared by review.ts: `undefined` means the command failed, never thrown. */
+export async function runGit(directory: string, ...args: string[]): Promise<string | undefined> {
   try {
     const proc = Bun.spawn(["git", "-C", directory, ...args], {
       stdout: "pipe",
@@ -26,7 +27,7 @@ async function readRepoConfigAtBase(
   baseCommit: string,
 ): Promise<{ path: string; content: string } | undefined> {
   for (const path of REPO_CONFIG_CANDIDATES) {
-    const content = await git(directory, "show", `${baseCommit}:${path}`)
+    const content = await runGit(directory, "show", `${baseCommit}:${path}`)
     if (content !== undefined) return { path, content }
   }
   return undefined
