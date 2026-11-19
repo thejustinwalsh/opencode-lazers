@@ -225,3 +225,17 @@ export function attributeDeadCode(
   const baseKeys = new Set(base.map((k) => `${k.kind}\u0000${k.path}\u0000${k.name}`))
   return candidate.filter((k) => !baseKeys.has(`${k.kind}\u0000${k.path}\u0000${k.name}`))
 }
+
+/** A cycle's identity: its sorted member set, so rotation and direction do not matter. */
+export function cycleKey(files: readonly string[]): string {
+  return [...new Set(files)].sort().join("\u0000")
+}
+
+/** Cycles whose member set is absent at base: those the change introduced. */
+export function attributeCycles(
+  base: readonly (readonly string[])[],
+  candidate: readonly (readonly string[])[],
+): string[][] {
+  const baseKeys = new Set(base.map(cycleKey))
+  return candidate.filter((files) => !baseKeys.has(cycleKey(files))).map((f) => [...f])
+}

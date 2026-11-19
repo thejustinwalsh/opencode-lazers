@@ -139,6 +139,7 @@ test("a broken analyzer yields unavailable, never a throw", async () => {
     complexity: () => Promise.reject(new Error("boom")),
     duplication: () => Promise.reject(new Error("boom")),
     deadCode: () => Promise.reject(new Error("boom")),
+    cycles: () => Promise.reject(new Error("boom")),
   }
   const result: FallowReviewResult = await fallowReview({
     workspace: dir,

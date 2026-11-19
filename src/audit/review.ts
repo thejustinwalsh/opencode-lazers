@@ -45,6 +45,10 @@ export type Finding = {
   /** Every metric this complexity finding is over, cognitive first. Absent for other checks. */
   measures?: ComplexityMeasure[]
   others?: { file: string; line: number; endLine: number }[]
+  /** Plan review only: the task whose own change touched this finding's file(s), when exactly one. */
+  taskID?: string
+  /** Plan review only: every task that touched the finding's file(s), when several did. */
+  taskIDs?: string[]
   fix: string
 }
 
@@ -64,9 +68,11 @@ export type FallowReviewInput = {
   repository: TaskRepository
   analyzer?: FallowAnalyzer
   signal?: AbortSignal
+  /** False skips the changed-file dead-code pass (the plan review runs its own, whole-tree). */
+  deadCode?: boolean
 }
 
-async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise<T> {
+export async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timeout: analyzer call exceeded ${ms}ms`)), ms)
@@ -213,7 +219,7 @@ function deadCodeKeyString(key: DeadCodeKey): string {
   return `${key.kind}\u0000${key.path}\u0000${key.name}`
 }
 
-function newDeadCodeFindings(base: DeadCodeReport, candidate: DeadCodeReport): Finding[] {
+export function newDeadCodeFindings(base: DeadCodeReport, candidate: DeadCodeReport): Finding[] {
   const candidateRecords = deadCodeRecords(candidate)
   const introducedKeys = new Set(
     attributeDeadCode(deadCodeRecords(base), candidateRecords).map(deadCodeKeyString),
@@ -307,7 +313,7 @@ export async function fallowReview(input: FallowReviewInput): Promise<FallowRevi
         input.workspace,
         input.baseCommit,
         input.artifact,
-        resolved,
+        input.deadCode === false ? { ...resolved, deadCodeEnabled: false } : resolved,
         changed,
         input.signal,
       )
