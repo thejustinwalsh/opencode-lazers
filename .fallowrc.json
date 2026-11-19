@@ -20,5 +20,11 @@
   ],
   "rules": {
     "unused-class-members": "off"
-  }
+  },
+  "ignoreExports": [
+    {
+      "file": "src/runner/architect-contact-rpc.ts",
+      "exports": ["ArchitectContact"]
+    }
+  ]
 }
