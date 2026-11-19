@@ -1164,6 +1164,209 @@ Limits found on the way, which matter more than threads:
 
 To retry the build from scratch: see the recipe in `crates/fallow-wasm/.cargo/config.toml`, patch 0009 and `src/audit/fallow-wasi.ts`.
 
+## Memory, streaming and the cache (2026-11-19)
+
+Branch `perf/fallow-memory`. Question from the owner: what eats the memory (about 1.1 GB on this
+~700-file repository, 5 to 6 GB at 10k to 30k files, hard ceiling 4 GiB), do we load files more
+than once, is the answer a cache, a narrower scope, streaming, islands? Everything below was
+measured; the probes (`memstats` feature: allocation counters exported to the host, a host call
+trace, and the retention probe op) are in `crates/fallow-wasm`.
+
+### Where the memory is
+
+The 1.1 GB is mostly not the analysis. For one process running the five report sections:
+
+| Part                                                                         | MB                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------- |
+| Compiled single-threaded module (JavaScriptCore code for 23 MB of wasm)      | 167 to 194 (134 for the size-optimised build) |
+| Compiled threaded module, when threads are on (instead of the single one)    | 107 more than the single, 300 with both       |
+| Linear memory of the run in flight (dead code 140 to 159, health 145 to 213) | 140 to 213                                    |
+| Linear memory of finished runs not yet collected (up to 3 of them)           | up to 450                                     |
+| Bun itself                                                                   | about 60                                      |
+
+Collecting between runs (`Bun.gc(true)` after each request in the worker) cut five whole-project
+runs in one process from 627 MB to 466 MB peak. `opt-level = "z"` has the same linear peak as 3
+(memory is data, not code) and compiles 60 MB smaller; speed stays the choice.
+
+Inside linear memory, one run on this repository (counting allocator, single-threaded):
+
+| Analysis                               | Linear peak | Peak live bytes | Files read                                                  | Notes                                                 |
+| -------------------------------------- | ----------- | --------------- | ----------------------------------------------------------- | ----------------------------------------------------- |
+| In-memory complexity                   | 137 MB      | 74 MB           | 750 once                                                    | per file, nothing kept but the answer                 |
+| In-memory duplication                  | 121 MB      | 100 MB          | 750 once                                                    | token index of the whole corpus                       |
+| Dead code, cycles, architecture, flags | 159 MB      | 88 MB           | 750 once, plus 186 `package.json`                           | live grows with files read, then the graph adds 14 MB |
+| Duplication report                     | 107 MB      | 86 MB           | 750 once                                                    |                                                       |
+| Health                                 | 213 MB      | 169 MB          | each source 5 to 8 times (69 MB read for 10.6 MB of source) | second structure on top of the dead-code parse        |
+
+Linear memory minus peak live is 17 MB of base (the 16 MiB stack) plus allocator high-water,
+about 55 MB here. The allocator is wasi-libc's dlmalloc; it never returns memory within a run,
+so linear memory is the high-water mark. Trying `talc` instead gave the identical peak, so the
+allocator is not the cost. Result envelopes are small (dead code 40 KB, health 1.7 MB) and
+built once. `node_modules` is not parsed: 186 opens are `package.json` files (dependency checks),
+not source.
+
+**Does Fallow stream? Yes, per file, and it holds the summaries.** `parse_all_files_with_mode`
+(`vendor/fallow/crates/extract/src/lib.rs:267`) runs a closure per file that reads, parses,
+extracts and returns a `ModuleInfo`; the source text and the syntax tree die inside that closure,
+and at most one file per pool thread is in flight. The `Vec<ParseFileResult>` it returns, and
+then the session's `ParsedModuleCache` (`engine/src/session.rs`, `modules: Arc<[ModuleInfo]>`),
+keep every `ModuleInfo` for the whole run; the graph is built from them (it adds only 14 MB).
+So memory grows with the size of the summaries, which is the observed linear growth, and the
+summaries were large: a retention probe parsing 711 files and dropping the source each time held
+
+| Per `ModuleInfo` field | MB (of 80.1) | Share |
+| ---------------------- | ------------ | ----- |
+| `member_accesses`      | 30.4         | 38%   |
+| `security_sinks`       | 24.0         | 30%   |
+| `semantic_facts`       | 6.5          | 8%    |
+| `complexity`           | 4.0          | 5%    |
+| `callee_uses`          | 1.9          | 2%    |
+| `line_offsets`         | 1.6          | 2%    |
+| everything else        | 11.7         | 15%   |
+
+that is 115 KB per file for 14 KB of source (8.0x), against a transient peak of 415 KB per file
+while it is parsed (worst file 63 MB, bounded by the thread count). Health holds a second
+structure on top (169 MB live against 88 MB for dead code on this repository; 257 KB per file
+against 120 KB at 10k files), which this branch did not locate. Duplication needs every file's
+hashed tokens at once (`TokenizedFile` per file, `engine/src/duplication_detector/mod.rs`),
+because clone detection is a global index; it cannot stream.
+
+### Repeated work across calls
+
+One task review makes five whole-tree runs (complexity twice, duplication once, dead code
+twice), each a fresh instance that re-reads and re-parses: about 4.0 s, 32 MB read, two
+dead-code parses of the whole repository. Health re-opens each source 5 to 8 times inside one
+run.
+
+### What was changed
+
+| Commit                                       | Change                                                                                                                      |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| analyzer-memory                              | A run that dies on a failed allocation is `analyzer-memory` ("the project is too large for analysis"), not `analyzer-panic` |
+| collect between runs                         | `Bun.gc(true)` after each request                                                                                           |
+| `.fallow` cache                              | Fallow's own cache in `<root>/.fallow`; the host confines writes to it; seeded across worktrees; see below                  |
+| compact modules (patch 0010)                 | Identical `object.member` pairs collapse and the security facts are dropped as each file is extracted                       |
+| warm cache reads nothing (patch 0011 + host) | Fingerprints become usable on WASI                                                                                          |
+
+**Compaction.** Patch 0010 (`extract/src/lib.rs`, `compact_module`) runs in the per-file closure.
+Identical pairs are one fact (the analyses ask whether a pair occurs; upstream already
+de-duplicates template accesses the same way) and the security facts (sinks, tainted bindings,
+sanitiser calls, controls, unresolved callees) are dropped unless the config turns a security
+rule on (`rules.security-sink` or `security-client-server-leak`, found by loading the config in
+`main.rs`); nothing this module reports reads them, and the cache stores modules without them,
+so such a config also runs without the cache. All eight analyses give byte-identical reports
+(`elapsed_ms` aside) on this repository before and after, and the fixture tests pass on both modules.
+
+Peak linear memory, single-threaded module, no cache, MB (before / after):
+
+| Corpus (files)                 | Dead code            | Health                        | Duplication report            | In-memory complexity |
+| ------------------------------ | -------------------- | ----------------------------- | ----------------------------- | -------------------- |
+| This repository (~700)         | 159 / 140            | 213 / 145                     | 107 / 107                     | 137 / 137            |
+| `src/` x 5 (3.0k)              | 496 / 225            | 896 / 580                     | 425 / 425                     | 171 / 171            |
+| `src/` x 17 (10.1k)            | 1589 / 514           | 2996 / 1921                   | 1394 / 1394                   | 282 / 282            |
+| small `src/` files x 124 (31k) | 760 / 532            | 1473 / 1226                   | 783 / 783                     | not run              |
+| `src/` x 51, full-size (30.4k) | out of memory / 1512 | out of memory / out of memory | out of memory / out of memory | not run              |
+| `effect` package (2.9k)        | 85 / 58              | out of memory (css) / same    | not run                       | not run              |
+
+So the 30k full-size corpus now fits for dead code, cycles, architecture and flags; the largest
+corpus that fits every analysis is about 10k full-size files (health 1.9 GB, duplication
+1.4 GB, both well inside 4 GiB; 20k is an estimate and was not run). Health and duplication at
+30k full-size files still exceed 4 GiB.
+
+**`effect` health is not a summary problem.** With `css: true` (the report sections pass it)
+health on the `effect` package dies on one 1,593,191,936 byte allocation made after the last file
+has been read, when live memory is 64 MB; it is identical before and after, and absent with
+`css: false`. It points at the CSS analysis (`engine/src/health/css_analytics`), a structure
+quadratic in something near 14,000 items. I did not find it.
+
+### The cache
+
+Fallow's cache (`cache.bin`, `graph-cache.bin`, `churn.bin`, `.gitignore` of `*`) is keyed by
+file content hash and by size and time, discards a corrupt or foreign file, evicts the least
+recently seen entries beyond its cap (128 MB here, passed as `FALLOW_CACHE_MAX_SIZE`), and ignores
+itself, so `git status` stays clean and `git worktree remove` needs no force. It is on for whole-
+project analyses up to 12,000 source files; above that it costs more memory than it is worth.
+Cold, warm and fresh-worktree numbers on this repository (dead code / health / duplication
+report / architecture / feature flags, seconds): no cache 1.7 / 3.8 / 0.32 / 1.4 / 1.4 (8.6 total); cold
+1.6 / 3.8 / 0.31 / 0.47 / 0.45 (6.7, the later sections hit the cache of the earlier ones); warm 0.48 / 1.3 / 0.30 /
+0.46 / 0.44 (3.0); a fresh clone, cold, same as no cache; a fresh clone seeded by copying
+another checkout's `.fallow` 0.62 / 1.3 / 0.31 / 0.49 / 0.43 (entries match by content, not by
+path or time).
+
+After compaction (peak linear MB and time, cold run writes the cache, warm run reads it):
+
+| Corpus (files)      | Analysis  | No cache       | Cold, cache on  | Warm          | Cache file |
+| ------------------- | --------- | -------------- | --------------- | ------------- | ---------- |
+| This repository     | dead code | 2.9 s, 140 MB  | 2.0 s, 140 MB   | 0.43 s, 63 MB | 9 MB       |
+|                     | health    | 4.6 s, 145 MB  | 4.4 s, 145 MB   | 1.0 s, 141 MB | 11 MB      |
+| `src/` x 5 (3.0k)   | dead code | 8.3 s, 225 MB  | 6.7 s, 382 MB   | 1.1 s, 217 MB | 40 MB      |
+|                     | health    | 16.6 s, 580 MB | 14.0 s, 580 MB  | 3.9 s, 567 MB | 46 MB      |
+| `src/` x 17 (10.1k) | dead code | 32.8 s, 514 MB | 29.5 s, 1266 MB | 3.1 s, 698 MB | 137 MB     |
+
+Warm runs are four to ten times faster. A cold run that writes the cache holds it decoded and
+encoded as well, which is why the bound is 12,000 files.
+
+Before the fingerprint fix a warm run read and hashed every source anyway: std exposes no change
+time on WASI, so `SourceFingerprint::is_trustworthy_without_content` was never true and the
+engine's "unchanged file contributes its cached summary without being read" path
+(`extract/src/lib.rs:488`) never ran. Bun also answers a stat by path in whole milliseconds
+(with float noise) and a stat of an open file in nanoseconds, so the two views of one file never
+matched. The host now reports the later of modification and change time as the modification time,
+rounded for a path stat and cut for an open file, to whole milliseconds; the module treats that as
+the change time (patch 0011). A warm run now reads no source file (tested: zero source bytes read
+on the second run). A file whose size and time are unchanged but whose content differs would be
+missed; the change time folded into the modification time and Fallow's three-second settle window
+guard against that as they do natively. A cache cannot be trusted across a config that turns the
+security rules on, so that config runs without it.
+
+**The review.** Candidate and base trees seed from each other and from the canonical checkout
+(`cacheSeed`, `cachePublish`); the canonical checkout receives the candidate's cache after a run,
+so later fresh worktrees start warm. Writing into the canonical checkout's `.fallow` is the one
+place outside the analysed tree that is written; it is the same ignored directory. One task review
+(complexity x2, changed-set duplication, dead code x2 on this repository), fresh worktree and a
+fresh base clone each time: cache off 4.1 s; cache on, first review 3.3 s (the base tree is seeded
+from the candidate); second and third review, fresh worktrees seeded from the canonical checkout
+2.2 s. Peak RSS equal. A literal single wasm run per review was not built: with the cache the
+repeated parses are cache hits, and the remaining cost per extra run is discovery, hashing and the
+graph pass (0.4 s each), against a bundle that would have to be written as a new vendored entry
+point.
+
+### Scoping per task, and what cannot be scoped
+
+| Analysis            | Needs                               | Scoped?                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Complexity          | the changed files only              | yes, already (in-memory op reads only the named files: 137 MB at 750 files because the config and project are loaded, 282 MB at 10k)                                                                                                                                                                                                 |
+| Duplication         | changed files against the corpus    | the corpus must be tokenised (global index); not scoped; 0.3 s at 700 files, 1.4 GB at 10k; the engine's token cache gave no measurable gain (1.89 s warm against 1.93 cold at 3k)                                                                                                                                                   |
+| Dead code, cycles   | the whole module graph              | not limited: an export is unused only if nothing anywhere imports it, and a cycle can close through any file; a "reachable component of the changed files" misses importers. Served instead from the cached graph and summaries, with only changed files re-extracted: that is what the cache above does (0.43 s warm against 2.9 s) |
+| Architecture, flags | the same graph / the same summaries | same                                                                                                                                                                                                                                                                                                                                 |
+| Health              | the same, plus churn and scores     | same; also reads each source repeatedly, which the cache removes                                                                                                                                                                                                                                                                     |
+
+### Islands
+
+Streaming made them optional for dead code (the 30k full-size case fits). They would still be
+needed for health and duplication beyond about 15k full-size files, and for any single analysis
+beyond 4 GiB. Design, not built: a workspace's packages (package.json `workspaces`,
+pnpm-workspace.yaml, tsconfig references) each run as a root of their own, in parallel up to the
+thread cap, each with its own 4 GiB and allocator. What can be merged soundly from independent
+runs: import cycles inside a package, unused and unlisted dependencies of a package, complexity,
+and duplication within a package. What cannot: an unused export, unused file or unresolved
+import that depends on another package (a package's export used only by a sibling would be
+reported unused). A stitch step needs each island's export and import summary; that is the
+engine's own graph input and is not exposed. The merged result would carry
+`cross_package_findings: "not-computed"` and list the finding kinds it left out, never a silent
+omission. A single huge package with no boundaries has no fallback beyond the memory error: it
+is reported as `analyzer-memory` once per review.
+
+### Not explained, not done
+
+- The extra structure health holds (about 140 KB per file at 10k files).
+- The 1.59 GB allocation in `effect` health with CSS.
+- Duplication's index (1.4 GB at 10k files) is not compacted: it needs a rewrite of the detector.
+- `member_accesses` is still 38% of what remains; interning the strings would shrink it further
+  but changes a type used across the crates.
+- Warm-run memory still includes decoding the whole cache file; the cache has no lazy
+  per-entry load.
+
 ## Open questions for the owner
 
 Decided on 2026-11-19 and folded into the design:

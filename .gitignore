@@ -9,3 +9,6 @@ coverage/
 !.env.example
 
 /release/
+
+# Fallow analysis cache (it also ignores itself)
+.fallow/

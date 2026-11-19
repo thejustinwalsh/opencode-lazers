@@ -223,6 +223,13 @@ class WorkerClient {
 
 const client = new WorkerClient()
 
+let cacheEnabled = true
+
+/** Fallow's own cache in `<root>/.fallow`, on by default. Off writes nothing into the tree. */
+export function setFallowCache(enabled: boolean): void {
+  cacheEnabled = enabled
+}
+
 let threadsMode: FallowThreads = "on"
 let threadsFallback: string | undefined
 
@@ -265,6 +272,9 @@ async function call(
       ...(scope.configPath ? { configPath: scope.configPath } : {}),
       options,
       threads: threadsFallback === undefined ? threadsMode : "off",
+      cache: cacheEnabled,
+      ...(scope.cacheSeed ? { cacheSeed: scope.cacheSeed } : {}),
+      ...(scope.cachePublish ? { cachePublish: scope.cachePublish } : {}),
     },
     scope.signal,
     scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
