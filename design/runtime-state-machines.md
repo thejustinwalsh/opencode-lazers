@@ -347,3 +347,14 @@ legacy `expectedVersion` still matches a replay without it. A stray `expectedVer
 `expectedRevision` from an older prompt is dropped before validation (plan command, recovery
 tools, `lz-configure-models`). The Desktop route editor keeps its own `expectedRevision` guard,
 because two open panels can edit one route.
+
+## Accepted plans can be cancelled
+
+`accepted` already reaches `cancelling` in `lifecycleMachines.plan`; two gates hid it.
+`PLAN_COMMANDS.cancel.from` now lists `accepted`, and `commandCancel` no longer carries its
+own `terminalPlanStates` guard, because `planCommandProblem` is the single legality check.
+`integrated` and `cleanup-blocked` stay uncancellable: integration is already recorded.
+Cancelling an accepted plan (`lz-plan-command` `{action:"cancel", planID, reason}` from its
+Architect) settles in `cancelled`, releases dispatch reservations, and the terminal cleanup
+tick removes owned worktrees non-forced; a worktree holding unmerged commits is preserved
+as a `held` `worktree-remove` effect.

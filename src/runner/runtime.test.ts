@@ -3266,6 +3266,35 @@ test("a real verification barrier does not block same-project dispatch, cancella
   expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
 })
 
+test("an accepted plan that will never be integrated can be cancelled and releases its workers' worktrees", async () => {
+  const f = fixture()
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await driveWithTaskSourceLandings(f)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const workspaces = f.store.attempts(f.receipt.planID).map((attempt) => attempt.workspace)
+  expect(workspaces.length).toBeGreaterThan(0)
+
+  expect(
+    await f.runtime.command(
+      { requestID: "cancel-accepted", planID: f.receipt.planID, action: "cancel" },
+      "owner",
+    ),
+  ).toMatchObject({ status: "cancelling" })
+  await drive(f.runtime, 6)
+
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(f.store.dispatchReservations()).toEqual([])
+  // Non-forced cleanup removes merged worktrees and preserves any holding unmerged commits.
+  const removals = f.store.effects(f.receipt.planID).filter((e) => e.kind === "worktree-remove")
+  expect(removals.length).toBe(workspaces.length)
+  for (const workspace of workspaces) {
+    const removal = removals.find((e) => JSON.parse(e.payload).workspace === workspace)!
+    expect(existsSync(workspace)).toBe(removal.state !== "completed")
+    expect(["completed", "held"]).toContain(removal.state)
+  }
+  expect(removals.some((e) => e.state === "completed")).toBe(true)
+})
+
 test("runtime stop aborts checks admitted by its draining tick before storage disposal", async () => {
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
   const f = fixture({

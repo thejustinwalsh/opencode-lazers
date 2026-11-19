@@ -18,7 +18,10 @@ const PLAN_COMMANDS: Readonly<
   Record<PlanAction, { event?: string; from: readonly PlanLifecycleState[] | "any" }>
 > = {
   run: { event: "running", from: ["draft", "blocked"] },
-  cancel: { event: "cancelling", from: ["draft", "running", "blocked", "cancelling", "cleaning"] },
+  cancel: {
+    event: "cancelling",
+    from: ["draft", "running", "blocked", "accepted", "cancelling", "cleaning"],
+  },
   pause: { from: ["draft", "running", "blocked"] },
   unpause: { from: ["draft", "running", "blocked"] },
   audit: { from: "any" },

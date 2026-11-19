@@ -4448,7 +4448,6 @@ export class TaskRuntime {
 
   private commandCancel(db: Database, ctx: CommandContext, plan: PlanRow) {
     const { command, caller } = ctx
-    if (terminal.has(plan.state)) throw new Error("Plan has ended")
     this.store.cancelAdoptions(plan.id, "Cancellation requested")
     for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
       saveRetainedVerification(db, {

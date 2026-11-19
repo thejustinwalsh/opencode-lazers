@@ -56,6 +56,7 @@ test("an unavailable action names the state and the actions that apply", () => {
 
 test("legal actions pass and every state has an exit or is final", () => {
   expect(planCommandProblem("blocked", { action: "cancel" })).toBeUndefined()
+  expect(planCommandProblem("accepted", { action: "cancel" })).toBeUndefined()
   expect(planCommandProblem("accepted", { action: "integrated" })).toBeUndefined()
   expect(planCommandProblem("blocked", { action: "resume" })).toBeUndefined()
   expect(planCommandProblem("running", { action: "resume" })).toContain("not available")
