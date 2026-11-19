@@ -15,8 +15,8 @@ Three changes fix that:
 1. Build Fallow's analysis to WebAssembly from vendored source and run it in a
    worker thread of the service. No native addon, no analyzer process.
 2. Run duplication and complexity as a runtime review when a worker finishes.
-   Findings go back to the same worker as specific fix guidance, for up to
-   three rounds.
+   Findings go back to a worker as specific fix guidance through the existing
+   repair path.
 3. Give agents a small set of bounded tools for exploration, where a
    deterministic check cannot decide.
 
@@ -439,7 +439,7 @@ That rule exists as `ReviewProgression` in `src/review/progression.ts`
 candidate ──▶ Fallow (changed files, introduced only) ──▶ ReviewProgression.evaluate
                                                              │
         completed ───────────────── accept ◀─────────────────┤
-        feedback ── findings to the same worker ── it edits ─┘  (round 1..3)
+        feedback ── REPAIR: a repair attempt gets the findings ─┘  (rounds = 1 + repair attempts)
         completed_with_concerns ─── accept, concerns to the Architect
         unavailable ─────────────── accept, recorded once
 ```
@@ -455,7 +455,7 @@ already runs `bun fmt` and `bun lint --fix` on changed files:
 ```
 worker finishes
   → format + lint --fix      runtime, automatic, fixes committed into the artifact
-  → Fallow review            runtime, up to 3 rounds, findings back to the worker
+  → Fallow review            runtime; feedback goes to a repair attempt with the findings
   → authored checks          runtime, tests and typecheck, once, on the reviewed code
   → outcome to the Architect
 ```
@@ -625,18 +625,20 @@ at the base commit. Phase 1 tests both.
 
 No new state. No new machine event. `lifecycleMachines` is unchanged.
 
-| Need                                      | Existing mechanism                                                                                                                                  |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Journal and run the review                | An effect in `effectMachine`, kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. Both prefixes are already re-runnable (`runtime.ts:413`) |
-| `feedback`                                | Task `verifying --RESUME--> running` (`src/runner/machine.ts`); the same attempt and session receive the guidance. No `REPAIR`, no new attempt      |
-| `completed`, with or without concerns     | The existing `ACCEPT` path in `verify()`                                                                                                            |
-| `unavailable` (analyzer error or timeout) | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                 |
-| Rounds                                    | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                    |
-| Worker never returns after feedback       | The existing idle and auto-resume handling for a running attempt; nothing new                                                                       |
-| Service restart mid-review                | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                           |
+| Need                                      | Existing mechanism                                                                                                                                                                                                                                                                           |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Journal and run the review                | An effect in `effectMachine`, kind `verify:lazers-fallow` or `graph-verify:lazers-fallow`. Both prefixes are already re-runnable (`runtime.ts:413`)                                                                                                                                          |
+| `feedback`                                | `failAttempt()` → task `verifying --REPAIR--> ready` (`src/runner/machine.ts`): a repair attempt in a new session, dispatched with `previousAttempt` evidence that carries the Fallow findings. Owner decision, 2026-11-19: the repair path is fine as long as the findings reach the worker |
+| `completed`, with or without concerns     | The existing `ACCEPT` path in `verify()`                                                                                                                                                                                                                                                     |
+| `unavailable` (analyzer error or timeout) | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                                                                                                                                                          |
+| Rounds                                    | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                                                                                                                                                             |
+| No repair attempt left                    | Accept with concerns. A Fallow result never moves a task to `failed` and never raises a hold                                                                                                                                                                                                 |
+| Service restart mid-review                | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                                                                                                                                                                    |
 
-Every path ends in `accepted` within three rounds, so the review adds no
-state that can stall.
+Rounds are `1 + maxRepairAttempts` (default 1, so two looks: the original
+attempt and its repair). The repair budget is shared with authored-check
+failures. Every path ends in `accepted`, so the review adds no state that can
+stall.
 
 The receipt is a `CheckReceipt` with `command: "lazers:fallow-check"`. It is
 recorded for the Trajectory but is not in the set `failAttempt()` reads, so a
@@ -644,17 +646,19 @@ Fallow result can never fail an attempt. `lazers-fallow` becomes a reserved
 check ID; `PlanInput` validation rejects an authored check with that ID
 (`src/runner/schema.ts:153`).
 
-How the runtime continues the same worker from `verifying` is to be confirmed
-in Phase 3 against the existing resume paths (`ATTEMPT_RESUMED`,
-`WORKER_AUTO_RESUMED`).
+Later optimisation, not planned work: send feedback to the same session
+instead (task `verifying --RESUME--> running`), which keeps the worker's
+context and prompt cache. It needs a runtime-initiated continuation from
+`verifying` that does not exist yet; today's resume paths are
+Architect-commanded or interruption-driven.
 
 ### Contract change
 
 `docs/reference/contributor-contracts.md:53`, `design/auditor.md` and the
 `lz-fallow-report` description say Fallow never gates. The new rule:
 
-> Fallow findings are feedback. A worker gets up to three rounds to resolve
-> what its task introduced. The runtime then accepts a result that is resolved
+> Fallow findings are feedback. A repair attempt gets them and may resolve
+> what the task introduced. The runtime then accepts a result that is resolved
 > or no worse and reports what remains to the Architect. Scores and older
 > findings never block.
 
@@ -714,15 +718,16 @@ the existing stall probe); each tool's output for this repository is under
    record, the fingerprint.
 3. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
    preparation and before the authored checks; receipt, guidance text,
-   continuation of the same attempt on `feedback`, `FALLOW_UNAVAILABLE`,
+   `REPAIR` with the findings in the repair attempt's input on `feedback`, `FALLOW_UNAVAILABLE`,
    reserved check ID, plugin option `fallowReview: "on" | "off"`.
 4. Three lines in `src/implementor.md`; contract wording in the three places
    named above.
 
-Accept when, in `runtime.test.ts`: a task that adds a clone gets the guidance
-in the same attempt and is accepted clean after it removes the clone; a task
-that never fixes it is accepted after three rounds with the concern in the
-`task-accepted` outcome; an unchanged tree replays without using a round; a
+Accept when, in `runtime.test.ts`: a task that adds a clone moves `REPAIR`,
+the repair attempt's dispatch input contains the guidance, and it is accepted
+clean after it removes the clone; a task whose repair attempt does not fix it
+is accepted with the concern in the `task-accepted` outcome and is never
+`failed` or held; an unchanged tree replays without using a round; a
 task that edits a file with an old over-limit function, without touching it,
 gets no feedback; an analyzer error accepts the task and records
 `FALLOW_UNAVAILABLE` once; a restart mid-review re-runs it;
