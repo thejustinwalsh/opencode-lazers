@@ -155,7 +155,7 @@ impl CloneDetector {
         let (raw_groups, sa_time, lcp_time, extract_time) =
             self.extract_raw_groups(&text, &file_of, &file_offsets, files, focus_file_ids);
 
-        let t0 = std::time::Instant::now();
+        let t0 = crate::instant::Instant::now();
         let clone_groups =
             filtering::build_groups(raw_groups, files, self.min_lines, self.skip_local);
         let build_time = t0.elapsed();
@@ -165,7 +165,7 @@ impl CloneDetector {
             "step6_build_groups"
         );
 
-        let t0 = std::time::Instant::now();
+        let t0 = crate::instant::Instant::now();
         let stats =
             statistics::compute_stats(&clone_groups, totals.files, totals.lines, totals.tokens);
         let stats_time = t0.elapsed();
@@ -209,7 +209,7 @@ impl CloneDetector {
         std::time::Duration,
         std::time::Duration,
     ) {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::instant::Instant::now();
         let sa = suffix_array::build_suffix_array(text);
         let sa_time = t0.elapsed();
         tracing::debug!(
@@ -218,12 +218,12 @@ impl CloneDetector {
             "step3_suffix_array"
         );
 
-        let t0 = std::time::Instant::now();
+        let t0 = crate::instant::Instant::now();
         let lcp_arr = lcp::build_lcp(text, &sa);
         let lcp_time = t0.elapsed();
         tracing::debug!(elapsed_us = lcp_time.as_micros(), "step4_lcp_array");
 
-        let t0 = std::time::Instant::now();
+        let t0 = crate::instant::Instant::now();
         let raw_groups = extraction::extract_clone_groups(&extraction::CloneGroupExtractionInput {
             sa: &sa,
             lcp: &lcp_arr,
@@ -289,7 +289,7 @@ fn rank_and_concatenate(
     std::time::Duration,
     std::time::Duration,
 ) {
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let ranked_files = ranking::rank_reduce(files);
     let rank_time = t0.elapsed();
     let unique_ranks: usize = ranked_files
@@ -304,7 +304,7 @@ fn rank_and_concatenate(
         "step1_rank_reduce"
     );
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let (mut text, file_of, file_offsets) =
         concatenation::concatenate_with_sentinels(&ranked_files);
     if files_may_have_boundaries(files) {

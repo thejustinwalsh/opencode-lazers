@@ -679,6 +679,13 @@ pub(crate) fn git_path_from_bytes(path: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(path).replace('/', "\\"))
 }
 
+/// Platforms without a byte-oriented `OsString` or Windows paths (`wasm32`):
+/// decode lossily, keeping `/` separators.
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn git_path_from_bytes(path: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(path).into_owned())
+}
+
 fn git_command(cwd: &Path, args: &[&str]) -> Command {
     let mut command = crate::git_env::git_command(cwd);
     command.args(args);

@@ -516,6 +516,11 @@ fn symlink_dependency_dir(source: &Path, destination: &Path) -> std::io::Result<
     std::os::windows::fs::symlink_dir(source, destination)
 }
 
+#[cfg(not(any(unix, windows)))]
+fn symlink_dependency_dir(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
 /// Register a detached worktree without checking files out, then materialize
 /// the committed tree directly from Git objects.
 ///

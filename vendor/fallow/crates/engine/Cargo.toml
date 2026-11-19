@@ -69,15 +69,3 @@ tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
-
-[[bench]]
-name = "dupes_detect"
-harness = false
-
-[[bench]]
-name = "dupes_pipeline"
-harness = false
-
-[[bench]]
-name = "similar_code"
-harness = false

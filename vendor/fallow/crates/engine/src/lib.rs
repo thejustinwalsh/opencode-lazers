@@ -53,6 +53,7 @@ pub mod diff_source;
 pub mod discover;
 pub mod duplicates;
 mod effective_severity;
+mod instant;
 pub mod entry_weight;
 pub mod error_severity;
 mod feature_flags;

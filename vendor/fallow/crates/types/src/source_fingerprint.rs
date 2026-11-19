@@ -148,6 +148,10 @@ pub const TIMESTAMP_SETTLE_WINDOW_NS: u64 = 3_000_000_000;
 /// A `0` makes each fingerprint unsettled, which is the safe direction.
 #[must_use]
 pub fn now_ns() -> u64 {
+    // `wasm32-unknown-unknown` has no clock and `SystemTime::now` panics there.
+    if cfg!(all(target_arch = "wasm32", target_os = "unknown")) {
+        return 0;
+    }
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()

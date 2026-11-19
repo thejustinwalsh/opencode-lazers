@@ -148,7 +148,10 @@ export async function vendorFallow(requestedTag?: string) {
 
   for (const name of await patchFiles()) {
     try {
-      await run(["git", "apply", "-p1", "--whitespace=nowarn", join(patchDir, name)], out)
+      await run(
+        ["patch", "-p1", "--fuzz=0", "--no-backup-if-mismatch", "-s", "-i", join(patchDir, name)],
+        out,
+      )
     } catch (error) {
       throw new Error(`Patch ${name} no longer applies to ${tag}: ${(error as Error).message}`)
     }

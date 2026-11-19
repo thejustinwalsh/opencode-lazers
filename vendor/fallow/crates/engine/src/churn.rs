@@ -931,6 +931,16 @@ fn path_from_cache_bytes(path: &[u8]) -> Option<PathBuf> {
     Some(PathBuf::from(OsStr::from_bytes(path)))
 }
 
+#[cfg(not(any(unix, windows)))]
+fn path_to_cache_bytes(path: &Path) -> Vec<u8> {
+    path.to_string_lossy().into_owned().into_bytes()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_from_cache_bytes(path: &[u8]) -> Option<PathBuf> {
+    String::from_utf8(path.to_vec()).ok().map(PathBuf::from)
+}
+
 #[cfg(windows)]
 fn path_to_cache_bytes(path: &Path) -> Vec<u8> {
     use std::os::windows::ffi::OsStrExt;

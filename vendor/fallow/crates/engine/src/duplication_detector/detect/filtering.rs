@@ -332,15 +332,15 @@ pub(super) fn build_groups(
 
     let raw_count = raw_groups.len();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let surviving = remove_token_subsets(raw_groups, files.len());
     let token_subset_us = t0.elapsed().as_micros();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let line_tables = build_line_tables(files);
     let line_tables_us = t0.elapsed().as_micros();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let mut clone_groups: Vec<CloneGroup> = surviving
         .iter()
         .filter(|rg| !is_atomic_invocation_group(rg, files))
@@ -348,7 +348,7 @@ pub(super) fn build_groups(
         .collect();
     let build_clone_us = t0.elapsed().as_micros();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     clone_groups.sort_by(|a, b| {
         b.token_count
             .cmp(&a.token_count)
@@ -356,7 +356,7 @@ pub(super) fn build_groups(
     });
     let sort_us = t0.elapsed().as_micros();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let kept = remove_line_subsets(clone_groups);
     let line_subset_us = t0.elapsed().as_micros();
 

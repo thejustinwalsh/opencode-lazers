@@ -255,6 +255,22 @@ pub fn find_duplicates_touching_files_with_defaults(
     detector::detect_duplicates(root, files, config, Some(&changed_files), cache_dir)
 }
 
+/// Run duplication detection over source text the caller supplies, with no
+/// filesystem access. `changed_files`, when given, keeps only clone groups that
+/// touch one of those files while every file stays in the matching corpus.
+#[must_use]
+pub fn find_duplicates_in_memory(
+    root: &Path,
+    files: &[DiscoveredFile],
+    sources: &FxHashMap<PathBuf, String>,
+    config: &DuplicatesConfig,
+    changed_files: Option<&[PathBuf]>,
+) -> DuplicationAnalysis {
+    let changed_files =
+        changed_files.map(|paths| paths.iter().cloned().collect::<FxHashSet<_>>());
+    detector::detect_duplicates_in_memory(root, files, sources, config, changed_files.as_ref())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

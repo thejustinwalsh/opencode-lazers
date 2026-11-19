@@ -46,6 +46,7 @@ pub(super) const IMPORT_KIND_SIDE_EFFECT: u8 = 3;
 
 macro_rules! assert_cached_type_size {
     ($ty:ty, $size:expr) => {
+        #[cfg(target_pointer_width = "64")]
         const _: () = assert!(
             std::mem::size_of::<$ty>() == $size,
             concat!(

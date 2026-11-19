@@ -60,7 +60,7 @@ impl GeneratedScript {
     pub(super) fn source_paths(&self, script_url: &str) -> Vec<(u32, PathBuf)> {
         let script_dir = url::Url::parse(script_url)
             .ok()
-            .and_then(|url| url.to_file_path().ok())
+            .and_then(|url| super::url_to_file_path(&url))
             .and_then(|path| path.parent().map(Path::to_path_buf));
         self.map
             .sources
@@ -177,7 +177,7 @@ fn contains(location: &Location, position: &Position) -> bool {
 fn source_path(source: &str, script_dir: Option<&Path>) -> Option<PathBuf> {
     if let Ok(url) = url::Url::parse(source) {
         return match url.scheme() {
-            "file" => url.to_file_path().ok(),
+            "file" => super::url_to_file_path(&url),
             "webpack" | "vite" => resolve_virtual_source(&url, script_dir?),
             _ if fallow_types::path_util::looks_like_windows_absolute_path(source) => {
                 Some(PathBuf::from(source))

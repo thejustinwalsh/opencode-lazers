@@ -35,10 +35,13 @@ regex = { workspace = true }
 rustc-hash = { workspace = true }
 tempfile = { workspace = true }
 tracing = { workspace = true }
-ureq = { workspace = true }
+ureq = { workspace = true, optional = true }
 xxhash-rust = { workspace = true }
 
 [features]
+# HTTPS `extends` over `ureq` (rustls, ring). Off for WebAssembly and any embedding
+# without a network stack; binaries that load remote configs turn it on.
+remote-extends = ["dep:ureq"]
 # Test-only hook that permutes the discovery lists with the seed in
 # FALLOW_PERMUTATION_SEED. See src/permutation.rs. Release builds leave it off.
 permutation-hook = []

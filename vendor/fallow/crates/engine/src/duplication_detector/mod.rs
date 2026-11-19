@@ -99,7 +99,13 @@ impl IgnoreSet {
     }
 }
 
+/// Source text the host already holds, keyed by the absolute `DiscoveredFile`
+/// path. With it the detector reads no file, takes no metadata and uses no
+/// token cache, so it runs where there is no filesystem.
+pub type InMemorySources = FxHashMap<PathBuf, String>;
+
 struct DuplicationTokenizeContext<'a> {
+    sources: Option<&'a InMemorySources>,
     root: &'a Path,
     config: &'a DuplicatesConfig,
     extra_ignores: Option<&'a IgnoreSet>,
@@ -113,6 +119,7 @@ struct DuplicationTokenizeContext<'a> {
 
 #[derive(Clone, Copy)]
 struct TokenizeCorpusInput<'a> {
+    sources: Option<&'a InMemorySources>,
     root: &'a Path,
     files: &'a [DiscoveredFile],
     config: &'a DuplicatesConfig,
@@ -157,6 +164,7 @@ fn tokenize_corpus_for_duplicates(
     let token_cache_mode = TokenCacheMode::new(normalization, strip_types, skip_imports);
     let cache_root = input
         .cache_root
+        .filter(|_| input.sources.is_none())
         .filter(|_| files.len() >= config.min_corpus_size_for_token_cache);
     let token_cache = cache_root.map(|cache_root| {
         TokenCache::load(
@@ -169,6 +177,7 @@ fn tokenize_corpus_for_duplicates(
     let file_data = tokenize_duplication_files(
         files,
         &DuplicationTokenizeContext {
+            sources: input.sources,
             root: input.root,
             config,
             extra_ignores: input.extra_ignores,
@@ -351,6 +360,31 @@ pub fn detect_duplicates(
     focus_files: Option<&FxHashSet<PathBuf>>,
     cache_root: Option<&Path>,
 ) -> DuplicationAnalysis {
+    detect_duplicates_with_sources(root, files, None, config, focus_files, cache_root)
+}
+
+/// Run duplication detection over source text the caller supplies.
+///
+/// Like [`detect_duplicates`] with `sources` keyed by each file's path. A file
+/// with no entry is skipped. Nothing is read from disk and no cache is used.
+pub fn detect_duplicates_in_memory(
+    root: &Path,
+    files: &[DiscoveredFile],
+    sources: &InMemorySources,
+    config: &DuplicatesConfig,
+    focus_files: Option<&FxHashSet<PathBuf>>,
+) -> DuplicationAnalysis {
+    detect_duplicates_with_sources(root, files, Some(sources), config, focus_files, None)
+}
+
+fn detect_duplicates_with_sources(
+    root: &Path,
+    files: &[DiscoveredFile],
+    sources: Option<&InMemorySources>,
+    config: &DuplicatesConfig,
+    focus_files: Option<&FxHashSet<PathBuf>>,
+    cache_root: Option<&Path>,
+) -> DuplicationAnalysis {
     let _span = tracing::info_span!("find_duplicates").entered();
 
     let extra_ignores = build_ignore_set(config);
@@ -364,6 +398,7 @@ pub fn detect_duplicates(
         .unwrap_or_default();
 
     let (file_data, corpus_totals) = tokenize_corpus_for_duplicates(TokenizeCorpusInput {
+        sources,
         root,
         files,
         config,
@@ -401,10 +436,15 @@ fn tokenize_duplication_file(
         return None;
     }
 
-    let metadata = std::fs::metadata(&file.path).ok()?;
-    let cached_entry = ctx
-        .token_cache
-        .and_then(|cache| cache.get(&file.path, &metadata, ctx.token_cache_mode));
+    let metadata = if ctx.sources.is_some() {
+        None
+    } else {
+        Some(std::fs::metadata(&file.path).ok()?)
+    };
+    let cached_entry = metadata.as_ref().and_then(|metadata| {
+        ctx.token_cache
+            .and_then(|cache| cache.get(&file.path, metadata, ctx.token_cache_mode))
+    });
     let cache_hit = cached_entry.is_some();
     let (mut entry, suppressions) = duplication_token_cache_entry(file, ctx, cached_entry)?;
     if entry.file_tokens.tokens.is_empty() || entry.hashed_tokens.len() < ctx.config.min_tokens {
@@ -415,7 +455,7 @@ fn tokenize_duplication_file(
         path: file.path.clone(),
         hashed_tokens: std::mem::take(&mut entry.hashed_tokens),
         file_tokens: entry.file_tokens,
-        metadata: Some(metadata),
+        metadata,
         cache_hit,
         suppressions,
     })
@@ -453,7 +493,10 @@ fn duplication_token_cache_entry(
         return Some((entry, suppressions));
     }
 
-    let raw = std::fs::read_to_string(&file.path).ok()?;
+    let raw = match ctx.sources {
+        Some(sources) => std::borrow::Cow::Borrowed(sources.get(&file.path)?.as_str()),
+        None => std::borrow::Cow::Owned(std::fs::read_to_string(&file.path).ok()?),
+    };
     let source = without_byte_order_mark(&raw);
     let suppressions = suppress::parse_suppressions_from_source(source).suppressions;
     if suppress::is_file_suppressed(&suppressions, IssueKind::CodeDuplication) {

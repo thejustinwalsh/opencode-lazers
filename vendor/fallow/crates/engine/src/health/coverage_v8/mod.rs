@@ -201,6 +201,19 @@ enum ScriptView {
     },
 }
 
+/// The file path of a `file://` URL. Targets without a filesystem path model
+/// (`wasm32-unknown-unknown`) have none.
+#[cfg(any(unix, windows))]
+pub(crate) fn url_to_file_path(url: &url::Url) -> Option<PathBuf> {
+    url.to_file_path().ok()
+}
+
+/// Targets without a filesystem path model have no `file://` path.
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn url_to_file_path(_url: &url::Url) -> Option<PathBuf> {
+    None
+}
+
 /// The path of a `file://` script URL, or `None` for Node internals and
 /// remote URLs.
 fn file_url_path(url: &str) -> Option<PathBuf> {
@@ -208,7 +221,7 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
     if parsed.scheme() != "file" {
         return None;
     }
-    parsed.to_file_path().ok()
+    url_to_file_path(&parsed)
 }
 
 /// Map a recorded path onto a canonical project source, or `None` for

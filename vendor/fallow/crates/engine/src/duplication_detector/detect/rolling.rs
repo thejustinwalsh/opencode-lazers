@@ -130,11 +130,11 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
         totals,
         may_have_boundaries,
     } = input;
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let ranked_files = ranking::rank_reduce(files);
     let rank_time = t0.elapsed();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let (boundary_prefixes, has_boundaries) =
         boundary_prefixes_for_detection(files, may_have_boundaries);
     let seed_buckets = build_seed_buckets(
@@ -145,7 +145,7 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
     );
     let seed_time = t0.elapsed();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let (raw_groups, seed_class_count) = build_raw_groups(
         &ranked_files,
         &boundary_prefixes,
@@ -161,11 +161,11 @@ pub(super) fn detect(input: RollingDetectInput<'_>) -> DuplicationReport {
         "rolling_step3_raw_groups"
     );
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let clone_groups = filtering::build_groups(raw_groups, files, min_lines, skip_local);
     let build_time = t0.elapsed();
 
-    let t0 = std::time::Instant::now();
+    let t0 = crate::instant::Instant::now();
     let stats = statistics::compute_stats(&clone_groups, totals.files, totals.lines, totals.tokens);
     let stats_time = t0.elapsed();
 
