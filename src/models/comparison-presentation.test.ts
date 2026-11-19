@@ -494,6 +494,7 @@ test("the selected-model facts are a rounded price range, counts and per-task av
   })
   expect(facts).toEqual({
     price: "$0.35 – 0.67",
+    priceRange: { minimum: 0.35, maximum: 0.67 },
     accepted: 9,
     terminal: 11,
     tokens: "6.2M",
