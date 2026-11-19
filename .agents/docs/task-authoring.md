@@ -51,12 +51,13 @@ execution outcome do not determine the kind. The task-kind/v1 catalog requires
 exactly one `primaryKind`; do not infer a default.
 
 Historical tasks without a stored classification remain visibly unclassified at
-revision 0. After reviewing one, use Architect-only `lz-classify-task` with its
-current classification revision, a stable requestID and a reason to append an
-explicit annotation; this leaves the task specification unchanged. Corrections
-use the latest classification revision and append another annotation. Exact
-request replay is safe; a stale revision conflicts and requires rereading before
-submitting a new request. Never silently backfill or infer historical kinds.
+revision 0. After reviewing one, use Architect-only `lz-classify-task` with a
+stable requestID and a reason to append an explicit annotation; this leaves the
+task specification unchanged. The tools take no revision: the runtime guards each
+write with the revision your session last read (`lz-get-task`,
+`lz-inspect-task-corrections`) or wrote. A write on an older view, or on a task
+you have not read, conflicts and writes nothing; reread, then submit a new
+requestID. Exact request replay is safe. Never silently backfill or infer historical kinds.
 
 Artifact evidence references are workspace-relative paths and may name either a
 file or a directory. A directory establishes presence only when it contains at

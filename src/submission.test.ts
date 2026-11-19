@@ -517,6 +517,8 @@ test("concurrent stale classification corrections serialize to one commit and on
       },
     },
   ])
+  // Neither session has inspected the task, so both write against revision 0; the write lock
+  // orders them and the loser sees the winner's revision (60ba2b5f dropped the model-supplied one).
   expect(results.map((result) => result.status).sort()).toEqual(["conflict", "recorded"])
   expect(results.find((result) => result.status === "conflict")).toMatchObject({
     expectedRevision: 0,
@@ -535,6 +537,51 @@ test("concurrent stale classification corrections serialize to one commit and on
           .get("/repo", task.id)!.count,
     ),
   ).toBe(1)
+}, 30_000)
+
+test("storage keeps compare-and-set for explicit stale classification and correction revisions", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const first = submitTask(repository, keyedProposal("cas-a"), provenance)
+  const second = submitTask(repository, keyedProposal("cas-b"), provenance)
+  if (first.status !== "submitted" || second.status !== "submitted")
+    throw new Error("Expected submitted tasks")
+  const actor = { sessionID: "cas", agent: "architect" }
+  const classify = (requestID: string, expectedRevision?: number) =>
+    repository.recordTaskClassification(
+      {
+        taskID: first.taskID,
+        requestID,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+        classification: { taxonomy: "task-kind/v1", primaryKind: "testing" },
+        reason: "CAS probe.",
+      },
+      actor,
+    )
+  const current = repository.taskClassification(first.taskID)!.current.revision
+  expect(classify("cas-1", current)).toMatchObject({ status: "recorded" })
+  expect(classify("cas-2", current)).toMatchObject({
+    status: "conflict",
+    expectedRevision: current,
+    currentRevision: current + 1,
+  })
+  const correct = (requestID: string, expectedRevision: number) =>
+    repository.recordTaskCorrection(
+      {
+        taskID: second.taskID,
+        originalTaskID: first.taskID,
+        requestID,
+        expectedRevision,
+        reason: "CAS probe.",
+      },
+      actor,
+    )
+  expect(correct("cas-c1", 0)).toMatchObject({ status: "recorded" })
+  expect(correct("cas-c2", 0)).toMatchObject({
+    status: "conflict",
+    expectedRevision: 0,
+    currentRevision: 1,
+  })
 }, 30_000)
 
 test("independent processes replay durable project-local correction receipts without rewriting provenance", async () => {

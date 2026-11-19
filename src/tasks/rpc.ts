@@ -16,6 +16,7 @@ import type { HostSession } from "../runner/host.ts"
 import { revisionPublishers } from "../database-events.ts"
 import { TaskAdviceToolInput, recordTaskAdvice } from "./advice.ts"
 import { tolerantJsonSchema } from "../legacy-fields.ts"
+import { guardedWrite } from "./observed-revisions.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null
@@ -338,7 +339,7 @@ export function registerTaskReads(
         editor.add({
           name: "lz-attach-task-advice",
           description:
-            "Architect-only: attach concise findings and implementation advice to an existing task without changing its specification. Supply a requestID; advice attaches to the task's current specification and appends to its advice history. Reuse requestID only for exact retries; changed content conflicts. Advice history is bounded and retained. Optional source/mini-skill references are links only and are never fetched.",
+            "Architect-only: attach concise findings and implementation advice to an existing task without changing its specification. Supply a requestID; advice attaches to the task's current specification and appends to its advice history. Read the task with lz-get-task first: a write on a view older than the current advice revision conflicts, writes nothing, and is retried with a new requestID after re-reading. Reuse requestID only for exact retries; changed content conflicts. Advice history is bounded and retained. Optional source/mini-skill references are links only and are never fetched.",
           input: tolerantJsonSchema(TaskAdviceToolInput),
           options: { codemode: true, permission: "lz-attach-task-advice" },
           execute: (input, context) =>
@@ -357,13 +358,21 @@ export function registerTaskReads(
                         throw new Tool.Error({
                           message: "Task advice attachment is restricted to Architect",
                         })
-                      const receipt = recordTaskAdvice(
+                      const parsed = TaskAdviceToolInput.parse(input)
+                      const receipt = guardedWrite(
                         reads.repository,
-                        TaskAdviceToolInput.parse(input),
                         {
                           sessionID: context.sessionID,
-                          agent: String(context.agent),
+                          taskID: parsed.taskID,
+                          kind: "advice",
+                          recordKey: "advice",
                         },
+                        (expectedRevision) =>
+                          recordTaskAdvice(
+                            reads.repository,
+                            { ...parsed, expectedRevision },
+                            { sessionID: context.sessionID, agent: String(context.agent) },
+                          ),
                       )
                       return { content: JSON.stringify(receipt) }
                     },

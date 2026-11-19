@@ -23,6 +23,7 @@ import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationToolInput } from "./task-classification.ts"
 import { tolerantJsonSchema } from "./legacy-fields.ts"
+import { guardedWrite, observeRevision } from "./tasks/observed-revisions.ts"
 import {
   TaskCorrectionToolInput,
   TaskCorrectionInspectionInput,
@@ -136,6 +137,14 @@ export function registerTaskTools(
                     if (submitted.status !== "submitted") return submitted
                     const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
                     if (detail.status !== "found") return submitted
+                    // The submitting session wrote this task, so it has seen its records.
+                    observeRevision(
+                      connection,
+                      context.sessionID,
+                      submitted.taskID,
+                      "classification",
+                      detail.classification.revision,
+                    )
                     return taskSubmissionSummary(
                       submitted,
                       detail.task,
@@ -191,7 +200,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-classify-task",
       description:
-        "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID and a reason. It appends to the task's current classification history (last write wins; earlier revisions stay).",
+        "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID and a reason. It appends to the task's classification history. Read the task with lz-get-task first: a write on a view older than the current revision conflicts, writes nothing, and is retried with a new requestID after re-reading.",
       input: tolerantJsonSchema(TaskClassificationToolInput),
       options: { codemode: true, permission: "lz-classify-task" },
       execute: (input, context) =>
@@ -214,10 +223,20 @@ export function registerTaskTools(
                     })
                   const parsed = TaskClassificationToolInput.parse(input)
                   const receipt = withRepository((connection) =>
-                    connection.recordTaskClassification(parsed, {
-                      sessionID: context.sessionID,
-                      agent: String(context.agent),
-                    }),
+                    guardedWrite(
+                      connection,
+                      {
+                        sessionID: context.sessionID,
+                        taskID: parsed.taskID,
+                        kind: "classification",
+                        recordKey: "annotation",
+                      },
+                      (expectedRevision) =>
+                        connection.recordTaskClassification(
+                          { ...parsed, expectedRevision },
+                          { sessionID: context.sessionID, agent: String(context.agent) },
+                        ),
+                    ),
                   )
                   return { content: JSON.stringify(receipt) }
                 },
@@ -234,7 +253,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-correct-task",
       description:
-        "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply a requestID; it appends to the task's current correction history (last write wins; earlier revisions stay). No relation is inferred from supplements, kind, ancestry, scope, or prose.",
+        "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply a requestID; it appends to the task's correction history. Inspect with lz-inspect-task-corrections first: a write on a view older than the current revision conflicts, writes nothing, and is retried with a new requestID after re-inspecting. No relation is inferred from supplements, kind, ancestry, scope, or prose.",
       input: tolerantJsonSchema(TaskCorrectionToolInput),
       options: { codemode: true, permission: "lz-correct-task" },
       execute: (input, context) =>
@@ -253,10 +272,20 @@ export function registerTaskTools(
                     throw new Tool.Error({ message: "Task correction is restricted to Architect" })
                   const parsed = TaskCorrectionToolInput.parse(input)
                   const receipt = withRepository((connection) =>
-                    connection.recordTaskCorrection(parsed, {
-                      sessionID: context.sessionID,
-                      agent: String(context.agent),
-                    }),
+                    guardedWrite(
+                      connection,
+                      {
+                        sessionID: context.sessionID,
+                        taskID: parsed.taskID,
+                        kind: "correction",
+                        recordKey: "correction",
+                      },
+                      (expectedRevision) =>
+                        connection.recordTaskCorrection(
+                          { ...parsed, expectedRevision },
+                          { sessionID: context.sessionID, agent: String(context.agent) },
+                        ),
+                    ),
                   )
                   return { content: JSON.stringify(receipt) }
                 },
@@ -301,6 +330,16 @@ export function registerTaskTools(
                   const reader = openReadOnlyTaskCorrections(path, projectDirectory)
                   try {
                     const output = reader.inspect(parsed.taskID)
+                    if (output.status === "found")
+                      withRepository((connection) =>
+                        observeRevision(
+                          connection,
+                          context.sessionID,
+                          parsed.taskID,
+                          "correction",
+                          output.task.revision,
+                        ),
+                      )
                     return { content: JSON.stringify(output), output }
                   } finally {
                     reader.close()
@@ -341,6 +380,23 @@ export function registerTaskTools(
                   const detail = withRepository((connection) =>
                     new TaskReads(connection).get(query),
                   )
+                  if (detail.status === "found" && detail.classification)
+                    withRepository((connection) => {
+                      observeRevision(
+                        connection,
+                        context.sessionID,
+                        detail.task.id,
+                        "classification",
+                        detail.classification.revision,
+                      )
+                      observeRevision(
+                        connection,
+                        context.sessionID,
+                        detail.task.id,
+                        "advice",
+                        detail.advice?.current.revision ?? 0,
+                      )
+                    })
                   if (
                     (format ?? (isWorkerAgent(context.agent) ? "instructions" : "structured")) ===
                     "structured"
