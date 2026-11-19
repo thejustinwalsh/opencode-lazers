@@ -826,32 +826,13 @@ export class TaskSchedulingRead {
   ): Promise<ProofResult<PlanSourceResult>> {
     const directory = this.store.repository.projectDirectory
     const key = proofBasisKey("plan", [directory, prerequisites, rows, head])
-    if (this.planProofs.has(key)) {
-      this.work.proofCacheHits++
-      return { value: this.planProofs.get(key)!, cacheable: true }
-    }
-    const inFlight = this.planProofInFlight.get(key)
-    if (inFlight) {
-      this.work.proofCoalesced++
-      return inFlight
-    }
-    this.work.proofEvaluations++
-    let cacheable = true
-    const git = async (path: string, args: string[]) => {
-      try {
-        return await this.proofGit(path, args)
-      } catch (error) {
-        if (!(
-          error instanceof SchedulingGitError &&
-          args[0] === "merge-base" &&
-          error.status === 1
-        ))
-          cacheable = false
-        throw error
-      }
-    }
+    const existing = this.existingProof(this.planProofs, this.planProofInFlight, key)
+    if (existing) return existing
+    const tracker = this.cacheableProofGit()
+    const git = tracker.git
     const promise = evaluatePrerequisiteIntegrationAsync(directory, prerequisites, rows, git, head)
       .then((baseline) => {
+        const cacheable = tracker.cacheable
         const value: PlanSourceResult = !cacheable
           ? { decision: "unknown", reason: "Integrated source ancestry is unavailable." }
           : baseline
@@ -871,6 +852,44 @@ export class TaskSchedulingRead {
     return promise
   }
 
+  private existingProof<V>(
+    cache: Map<string, V>,
+    inFlightProofs: Map<string, Promise<ProofResult<V>>>,
+    key: string,
+  ): ProofResult<V> | Promise<ProofResult<V>> | undefined {
+    if (cache.has(key)) {
+      this.work.proofCacheHits++
+      return { value: cache.get(key)!, cacheable: true }
+    }
+    const inFlight = inFlightProofs.get(key)
+    if (inFlight) {
+      this.work.proofCoalesced++
+      return inFlight
+    }
+    this.work.proofEvaluations++
+    return undefined
+  }
+
+  private cacheableProofGit() {
+    const tracker = {
+      cacheable: true,
+      git: async (path: string, args: string[]) => {
+        try {
+          return await this.proofGit(path, args)
+        } catch (error) {
+          if (!(
+            error instanceof SchedulingGitError &&
+            args[0] === "merge-base" &&
+            error.status === 1
+          ))
+            tracker.cacheable = false
+          throw error
+        }
+      },
+    }
+    return tracker
+  }
+
   private async taskProof(
     branch: string,
     prerequisites: readonly string[],
@@ -879,30 +898,10 @@ export class TaskSchedulingRead {
   ): Promise<ProofResult<IntegrationDecision>> {
     const directory = this.store.repository.projectDirectory
     const key = proofBasisKey("task", [directory, branch, prerequisites, rows, head])
-    if (this.taskProofs.has(key)) {
-      this.work.proofCacheHits++
-      return { value: this.taskProofs.get(key)!, cacheable: true }
-    }
-    const inFlight = this.taskProofInFlight.get(key)
-    if (inFlight) {
-      this.work.proofCoalesced++
-      return inFlight
-    }
-    this.work.proofEvaluations++
-    let cacheable = true
-    const git = async (path: string, args: string[]) => {
-      try {
-        return await this.proofGit(path, args)
-      } catch (error) {
-        if (!(
-          error instanceof SchedulingGitError &&
-          args[0] === "merge-base" &&
-          error.status === 1
-        ))
-          cacheable = false
-        throw error
-      }
-    }
+    const existing = this.existingProof(this.taskProofs, this.taskProofInFlight, key)
+    if (existing) return existing
+    const tracker = this.cacheableProofGit()
+    const git = tracker.git
     const promise = evaluateTaskPrerequisiteIntegrationAsync(
       directory,
       branch,
@@ -912,6 +911,7 @@ export class TaskSchedulingRead {
       head,
     )
       .then((value) => {
+        const cacheable = tracker.cacheable
         const decision = cacheable
           ? value
           : { status: "unknown" as const, reason: "Task source ancestry is unavailable." }
