@@ -12,9 +12,7 @@
       {
         "rule": "side-tab",
         "value": "*",
-        "files": [
-          "src/tasks/panel.css"
-        ],
+        "files": ["src/tasks/panel.css"],
         "createdAt": "2026-11-19T14:45:39.005Z",
         "reason": "agent decided: the 1px left border is the dependency tree's hairline guide rail (DESIGN.md: dependencies expand in place with a guide line), written 2026-11-16, not an accent tab"
       }

@@ -150,6 +150,8 @@ class WorkerClient {
     })
     worker.on("error", (error: Error) => this.fail(worker, error))
     worker.on("exit", () => this.fail(worker, new Error("worker exited")))
+    // An idle analyzer must not keep its process alive: a runtime that has stopped exits.
+    worker.unref()
     this.worker = worker
     return worker
   }
