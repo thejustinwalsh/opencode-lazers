@@ -1,0 +1,14 @@
+{
+  "entry": [
+    "src/context/processor.ts",
+    "src/context/repo-worker.ts",
+    "src/models/decision-worker.ts",
+    "src/runner/transition-indexes-worker.ts",
+    "src/**/*.fixture.ts",
+    "src/**/cli.ts",
+    "test/**/*.fixture.ts",
+    "test/**/*-probe.ts",
+    "test/budget-widget/visual.ts"
+  ],
+  "ignorePatterns": ["design/**", ".cache/**", ".claude/**", "contributions/**"]
+}
