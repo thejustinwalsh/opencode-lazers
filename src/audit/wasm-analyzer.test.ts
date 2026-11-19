@@ -35,7 +35,9 @@ describe("wasmFallowAnalyzer matches nativeFallowAnalyzer on this repository", (
     expect(expected.length).toBeGreaterThan(100)
 
     // The native binding ignores `files` for health, so a subset is the whole report filtered.
-    const files = ["src/runner/checks.ts", "src/audit/review.ts", "src/audit/history.ts"]
+    // Pick the subset from files that have findings today, so a later cleanup of any one
+    // file cannot empty it.
+    const files = [...new Set(expected.map((f) => f.path))].slice(0, 3)
     const wasmSub = await wasmFallowAnalyzer.complexity({ ...scope, files })
     expect(wasmSub.findings.map(complexKey).sort()).toEqual(
       expected
