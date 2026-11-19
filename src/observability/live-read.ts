@@ -1289,6 +1289,20 @@ function liveSessionAssignment(
     ...(assignment.taskReference
       ? { taskReference: contractText(assignment.taskReference, stats, 60) }
       : {}),
+    ...(assignment.task
+      ? {
+          task: {
+            state: assignment.task.state,
+            reason: assignment.task.reason
+              ? contractText(assignment.task.reason, stats, 600)
+              : null,
+            planState: assignment.task.planState,
+            planReason: assignment.task.planReason
+              ? contractText(assignment.task.planReason, stats, 600)
+              : null,
+          },
+        }
+      : {}),
   }
 }
 

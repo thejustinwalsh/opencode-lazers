@@ -28,6 +28,7 @@ import {
   workerStats,
 } from "./worker-pane.ts"
 import type { WorkerAttempt } from "./worker-pane.ts"
+import { isHeldWorker } from "./worker-hold.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import type { DetailsState } from "../details-pane.ts"
 import { RadarFlowActions, RadarFlowBody, RadarFlowCanvas, RadarFlowTabs } from "./flow-view.tsx"
@@ -403,7 +404,7 @@ export function RadarMonitorView(props: Props) {
               aria-pressed={selected()}
               aria-label={[
                 sessionTitle(value()),
-                sessionState(value()),
+                stateOf(value()).word.toLowerCase(),
                 model()?.label ? `model ${model()!.label}` : "",
                 age() ? `last activity ${age()}` : "",
               ]
@@ -459,7 +460,7 @@ export function RadarMonitorView(props: Props) {
                 )}
               </Show>
               <span class="lazers-radar-session-when">
-                <Show when={sessionState(value())}>
+                <Show when={stateOf(value()).word.toLowerCase()}>
                   {(word) => (
                     <span class="lazers-radar-session-state" data-tone={sessionTone(value())}>
                       {word()}
@@ -1095,7 +1096,9 @@ export function RadarMonitorView(props: Props) {
                         )}
                       </Show>
                     </Show>
-                    <Show when={node().id === "group:runtime" || node().id === "group:checks"}>
+                    <Show
+                      when={["group:runtime", "group:checks", "group:waiting"].includes(node().id)}
+                    >
                       <Rows
                         columns="72px minmax(0, 1fr) auto"
                         label="Workers"
@@ -1134,7 +1137,13 @@ export function RadarMonitorView(props: Props) {
                       <code style={{ "font-family": props.monoFont }} title={callTarget(call())}>
                         {callTarget(call())}
                       </code>
-                      <Show when={idle()}>{(text) => <Label tone="neutral">{text()}</Label>}</Show>
+                      <Show when={idle()}>
+                        {(text) => (
+                          <Label tone={isHeldWorker(session()) ? "warning" : "neutral"}>
+                            {text()}
+                          </Label>
+                        )}
+                      </Show>
                     </p>
                   )}
                 </Show>

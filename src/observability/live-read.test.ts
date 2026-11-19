@@ -204,6 +204,20 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
       taskTitle: "Inspect a worker attempt without disclosing private data",
     })
     expect(worker.assignment?.taskReference).toMatch(/\S/)
+    // The task node's and plan's own state ride with the assignment, so a held worker is not
+    // "running" in the list, the map or the counts.
+    expect(worker.assignment?.task).toMatchObject({ state: "queued", planState: "running" })
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_plans SET state='blocked',reason='held for review'").run()
+      db.query("UPDATE runner_nodes SET state='running'").run()
+    })
+    expect(
+      (await read()).sessions.find((item) => item.sessionID === "ses-failed")?.assignment?.task,
+    ).toMatchObject({ state: "running", planState: "blocked", planReason: "held for review" })
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_plans SET state='running',reason=NULL").run()
+      db.query("UPDATE runner_nodes SET state='queued'").run()
+    })
     // The workload is the Tasks panel's own definition: it must equal TaskRepository.stateCounts.
     const tasksCounts = () => {
       const counts = fixture.repository.readPage({

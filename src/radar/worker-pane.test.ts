@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
+import { monitorSegments } from "./monitor-model.ts"
 import type { ActivityLine, LiveSession } from "./monitor-model.ts"
+import { createRadarMap } from "./map-model.ts"
 import {
-  attemptTaskRow,
   callTarget,
   idleText,
   lastCall,
@@ -12,6 +13,7 @@ import {
   workerStats,
 } from "./worker-pane.ts"
 import type { WorkerAttempt } from "./worker-pane.ts"
+import { isHeldWorker, taskRowFor } from "./worker-hold.ts"
 
 const taskID = "8cb78231-c476-4c34-8792-0be761d64c87"
 const session = {
@@ -63,7 +65,7 @@ test("a worker whose task is held reads Waiting, the word Tasks shows, not runni
     planState: "blocked",
     planReason: "Worker execution was interrupted; the runtime could not resume it",
   })
-  expect(attemptTaskRow(held, taskID)).toMatchObject({ status: "running", waiting: true })
+  expect(taskRowFor(held.task!, taskID)).toMatchObject({ status: "running", waiting: true })
   expect(workerState(session, held)).toMatchObject({ word: "Waiting", tone: "warning" })
   const fine = attempt({ state: "running", reason: null, planState: "running", planReason: null })
   expect(workerState(session, fine).word).toBe("Running")
@@ -170,4 +172,45 @@ test("a held worker's runtime is working time, not time since it started", () =>
     planReason: null,
   })
   expect(runtime(working)).toBe("1d 19h")
+})
+
+test("a held worker is not running in the summary, the map or the list word", () => {
+  const heldTask: {
+    state: string
+    reason: string | null
+    planState: string
+    planReason: string | null
+  } = {
+    state: "running",
+    reason: null,
+    planState: "blocked",
+    planReason: "Worker execution was interrupted; the runtime could not resume it",
+  }
+  const worker = (task: typeof heldTask, id: string) =>
+    ({
+      ...session,
+      sessionID: id,
+      assignment: { ...session.assignment, taskID, taskReference: `LZ-${id}`, task },
+    }) as unknown as LiveSession
+  const held = worker(heldTask, "1")
+  const fine = worker({ ...heldTask, planState: "running", planReason: null }, "2")
+  expect(isHeldWorker(held)).toBe(true)
+  expect(isHeldWorker(fine)).toBe(false)
+  expect(workerState(held).word).toBe("Waiting")
+  const live = {
+    scope: { kind: "project", sessionID: "anchor" },
+    sessions: [held, fine],
+    routes: [],
+    workload: undefined,
+  } as unknown as Parameters<typeof monitorSegments>[0]
+  expect(monitorSegments(live)).toEqual([
+    { count: 1, word: "running" },
+    { count: 1, word: "waiting" },
+  ])
+  const map = createRadarMap(live, 0)
+  expect(map.nodeByID.get("group:runtime")?.sub).toBe("1 running")
+  expect(map.nodeByID.get("group:waiting")?.sub).toBe("1 held")
+  expect(map.nodeByID.get("session:1")?.sub).toBe("waiting")
+  expect(map.nodeByID.get("session:1")?.running).toBe(false)
+  expect(map.nodeByID.get("session:2")?.sub).toBe("running")
 })

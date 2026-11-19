@@ -1,8 +1,7 @@
 import type { LabelTone } from "../details/tone.ts"
 import { callsText, durationText } from "../details/format.ts"
 import type { LiveAttemptResponse } from "../observability/contract.ts"
-import type { ExecutionListRow } from "../tasks/execution-list.ts"
-import { taskStateView } from "../tasks/task-state.ts"
+import { assignedTaskView } from "./worker-hold.ts"
 import type { TaskStateView } from "../tasks/task-state.ts"
 import { attemptLane } from "../tasks/stats.ts"
 import {
@@ -18,8 +17,6 @@ import type { ActivityLine, LiveSession } from "./monitor-model.ts"
 
 type Live = Parameters<typeof sessionModel>[0]
 export type WorkerAttempt = NonNullable<LiveAttemptResponse["attempt"]>
-
-const terminalNodes = new Set(["accepted", "incorporated", "failed", "exhausted", "cancelled"])
 
 /** The tool name as a person reads it: `read` is Read, `grep` and `glob` are Search. */
 export function toolName(tool: string) {
@@ -53,29 +50,6 @@ export function callTarget(line: ActivityLine) {
   return "—"
 }
 
-/** The task row `taskStateView` reads, rebuilt from the attempt read's node and plan state. */
-export function attemptTaskRow(
-  attempt: WorkerAttempt,
-  taskID: string,
-): ExecutionListRow | undefined {
-  const task = attempt.task
-  if (!task) return undefined
-  const held =
-    task.state === "blocked" || (task.planState === "blocked" && !terminalNodes.has(task.state))
-  return {
-    taskID,
-    title: "",
-    status: task.state,
-    reason: task.reason,
-    waiting: held,
-    holdReason: held ? (task.reason ?? task.planReason) : null,
-    ordinal: 0,
-    contextOnly: false,
-    prerequisites: [],
-    successors: [],
-  }
-}
-
 export type WorkerState = {
   word: string
   tone: LabelTone
@@ -98,12 +72,8 @@ const capitalize = (text: string) => (text ? `${text[0]!.toUpperCase()}${text.sl
  * session keeps its own recorded state.
  */
 export function workerState(session: LiveSession, attempt?: WorkerAttempt | null): WorkerState {
-  const assignment = session.assignment
-  const row = attempt && assignment ? attemptTaskRow(attempt, assignment.taskID) : undefined
-  if (row) {
-    const task = taskStateView(row)
-    return { word: task.label, tone: task.labelTone, task }
-  }
+  const task = assignedTaskView(session, attempt?.task)
+  if (task) return { word: task.label, tone: task.labelTone, task }
   return {
     word: capitalize(sessionState(session) ?? ""),
     tone: sessionTones[sessionTone(session)],
@@ -145,7 +115,7 @@ export function idleText(
   quietMs = 60_000,
 ) {
   if (running || lastActivityAt === null || now - lastActivityAt < quietMs) return undefined
-  return `idle ${formatAge(now - lastActivityAt).replace(" ago", "")}`
+  return `idle ${durationText(now - lastActivityAt)}`
 }
 
 /**

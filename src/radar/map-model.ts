@@ -2,6 +2,7 @@ import type { LiveRadarResponse } from "../observability/contract.ts"
 import { formatAge, scopedWorkload, sessionState } from "./monitor-model.ts"
 import type { LiveSession } from "./monitor-model.ts"
 import { sessionRole } from "./monitor-model.ts"
+import { assignedTaskView, isHeldWorker } from "./worker-hold.ts"
 
 /**
  * The compact org tree: you, the Architect, the groups of work under it, and concrete items
@@ -51,7 +52,10 @@ export function createRadarMap(
       session.availability === "available" && (!visible || visible.has(session.sessionID)),
   )
   const architect = available.find((session) => session.isCurrentArchitect === true)
-  const working = available.filter((session) => session !== architect && session.assignment)
+  const assigned = available.filter((session) => session !== architect && session.assignment)
+  // A held, waiting or interrupted worker is not running: it sits in Waiting, not Runtime.
+  const held = assigned.filter(isHeldWorker)
+  const working = assigned.filter((session) => !isHeldWorker(session))
   const workers = working.filter((session) => session.assignment?.state !== "verifying")
   const verifiers = working.filter((session) => session.assignment?.state === "verifying")
   const workload = scopedWorkload(live)
@@ -128,20 +132,23 @@ export function createRadarMap(
     }
   }
   const sessionItem = (session: LiveSession): Item => {
-    const state = sessionState(session)
+    const heldView = isHeldWorker(session) ? assignedTaskView(session) : undefined
+    const state = heldView ? heldView.label.toLowerCase() : sessionState(session)
     return {
       id: `session:${session.sessionID}`,
       kind: "session",
       title: session.assignment?.taskReference ?? sessionRole(session).label,
       ...(state ? { sub: state } : {}),
-      tone: "active",
-      running: true,
+      tone: heldView ? "attention" : "active",
+      running: !heldView,
       sessionID: session.sessionID,
     }
   }
 
   if (workers.length > 0)
     group("group:runtime", "Runtime", `${workers.length} running`, workers.map(sessionItem), true)
+  if (held.length > 0)
+    group("group:waiting", "Waiting", `${held.length} held`, held.map(sessionItem), false)
   if (verifiers.length > 0)
     group("group:checks", "Checks", `${verifiers.length} running`, verifiers.map(sessionItem), true)
 

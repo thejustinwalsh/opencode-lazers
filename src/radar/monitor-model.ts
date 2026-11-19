@@ -2,6 +2,7 @@ import type { IconName } from "@opencode/plugin/gui"
 import type { LiveRadarResponse } from "../observability/contract.ts"
 import type { TaskRingGlyph } from "../tasks/row-presentation.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
+import { isHeldWorker } from "./worker-hold.ts"
 
 type Live = LiveRadarResponse
 export type LiveSession = Live["sessions"][number]
@@ -381,8 +382,10 @@ function runningCounts(live: Live) {
   const workers = live.sessions.filter(
     (session) => session.availability === "available" && session.assignment !== null,
   )
-  const verifying = workers.filter((session) => session.assignment?.state === "verifying").length
-  return { running: workers.length - verifying, verifying }
+  // A held, waiting or interrupted task is not running, whatever its attempt row still says.
+  const working = workers.filter((session) => !isHeldWorker(session))
+  const verifying = working.filter((session) => session.assignment?.state === "verifying").length
+  return { running: working.length - verifying, verifying, held: workers.length - working.length }
 }
 
 /**
@@ -392,10 +395,11 @@ function runningCounts(live: Live) {
  * it never appears. Data gaps are not a summary segment.
  */
 export function monitorSegments(live: Live): SummarySegment[] {
-  const { running, verifying } = runningCounts(live)
+  const { running, verifying, held } = runningCounts(live)
   const workload = scopedWorkload(live)
   return [
     { count: running + verifying, word: "running" },
+    { count: held, word: "waiting" },
     { count: workload?.needsYou ?? 0, word: "needs you" },
     { count: workload?.failed ?? 0, word: "failed" },
     { count: workload?.queued ?? 0, word: "queued" },
