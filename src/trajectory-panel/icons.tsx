@@ -5,6 +5,7 @@ import type { JSX } from "solid-js"
  * so they match the Tasks ring glyphs. Color is `currentColor`.
  */
 const paths = {
+  "chevron-left": <path d="M12 6l-4 4 4 4" />,
   "chevron-right": <path d="M8 6l4 4-4 4" />,
   "chevron-down": <path d="M6 8l4 4 4-4" />,
   "zoom-in": (

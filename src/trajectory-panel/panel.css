@@ -654,26 +654,15 @@
   background: var(--text-interactive-base, var(--text-base));
   transition: width 200ms ease;
 }
-.lazers-trajectory-gaps {
-  padding: 0 var(--trajectory-inset);
-  color: var(--text-weak);
-  font-size: 11.5px;
-}
-.lazers-trajectory-gaps ul {
-  margin: 4px 0 8px;
-  padding-left: 20px;
-  line-height: 1.5;
-}
-
-.lazers-trajectory button:focus-visible,
-.lazers-trajectory summary:focus-visible,
-.lazers-trajectory [role="option"]:focus-visible {
-  outline: 2px solid var(--border-selected);
-  outline-offset: -2px;
-}
 .lazers-trajectory .lazers-trajectory-mark:focus-visible,
 .lazers-trajectory .lazers-trajectory-check-marker:focus-visible {
   outline-offset: 2px;
+}
+
+.lazers-trajectory button:focus-visible,
+.lazers-trajectory [role="option"]:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: -2px;
 }
 
 /* Inspector */
@@ -682,9 +671,6 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px var(--trajectory-inset) 16px;
-}
-.lazers-trajectory-inspector > * {
-  flex: none;
 }
 /* The pane header is one line: outcome, kind, then the duration at the far end. */
 .lazers-trajectory-pane .lazers-details-header {
@@ -705,12 +691,6 @@
   min-width: 0;
   color: var(--text-weak);
   overflow-wrap: anywhere;
-}
-.lazers-trajectory-duration {
-  margin-left: auto;
-  color: var(--text-weak);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
 }
 .lazers-trajectory-outcome {
   flex: none;
@@ -742,24 +722,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.lazers-trajectory-facts {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 5px 10px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-}
-.lazers-trajectory-facts dt {
-  color: var(--text-weak);
-}
-.lazers-trajectory-facts dd {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-base);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
 .lazers-trajectory-source-links {
   display: flex;
   flex-wrap: wrap;
@@ -776,76 +738,6 @@
   text-decoration: underline;
   cursor: pointer;
 }
-
-/* Disclosure rows: hairline above, chevron, title, a muted note at the right. */
-.lazers-trajectory-disclosures {
-  display: flex;
-  flex-direction: column;
-}
-.lazers-trajectory-inspector summary,
-.lazers-trajectory-gaps summary,
-.lazers-trajectory-disclosure-static {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-base);
-  cursor: pointer;
-  list-style: none;
-}
-.lazers-trajectory-inspector summary > span:first-child {
-  flex: none;
-  white-space: nowrap;
-}
-.lazers-trajectory-inspector summary,
-.lazers-trajectory-disclosure-static {
-  height: 30px;
-  border-top: 1px solid var(--border-weak-base);
-  font-size: 12.5px;
-}
-.lazers-trajectory-gaps summary {
-  height: 24px;
-}
-.lazers-trajectory-disclosure-static {
-  padding-left: 20px;
-  cursor: default;
-}
-.lazers-trajectory-inspector summary::-webkit-details-marker,
-.lazers-trajectory-gaps summary::-webkit-details-marker {
-  display: none;
-}
-.lazers-trajectory-inspector summary::before,
-.lazers-trajectory-gaps summary::before {
-  content: "";
-  flex: none;
-  width: 14px;
-  height: 14px;
-  background: var(--icon-base, currentColor);
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 6l4 4-4 4'/%3E%3C/svg%3E")
-    center / contain no-repeat;
-  transition: transform 120ms ease;
-}
-.lazers-trajectory-inspector details[open] > summary::before,
-.lazers-trajectory-gaps[open] > summary::before {
-  transform: rotate(90deg);
-}
-.lazers-trajectory-disclosure-note {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--text-weak);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lazers-trajectory-disclosure-body,
-.lazers-trajectory-objective-text {
-  margin: 0 0 6px 20px;
-  color: var(--text-weak);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
 .lazers-trajectory-files {
   display: grid;
   gap: 2px;
@@ -858,71 +750,6 @@
   color: var(--text-base);
   overflow-wrap: anywhere;
 }
-.lazers-trajectory-payload pre {
-  max-height: 14rem;
-  margin: 4px 0 8px 20px;
-  overflow: auto;
-  color: var(--text-base);
-  font-family: var(--trajectory-mono);
-  font-size: 11.5px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.lazers-trajectory-valuation > :not(summary) {
-  margin-left: 20px;
-  color: var(--text-weak);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-.lazers-trajectory-valuation .lazers-trajectory-coverage {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  margin-top: 6px;
-}
-
-/* Usage: strong title, price source, then three stat cells. */
-.lazers-trajectory-usage {
-  border-top: 1px solid var(--border-weak-base);
-}
-.lazers-trajectory-usage-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 34px;
-}
-.lazers-trajectory-usage-head strong {
-  color: var(--text-strong);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-.lazers-trajectory-coverage {
-  color: var(--text-weak);
-  font-size: 11.5px;
-}
-.lazers-trajectory-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 2px 0 6px;
-}
-.lazers-trajectory-stat {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  color: var(--text-weak);
-  font-size: 11.5px;
-}
-.lazers-trajectory-stat > b,
-.lazers-trajectory-stat > output {
-  margin-bottom: 1px;
-  color: var(--text-strong);
-  font-family: var(--trajectory-mono);
-  font-size: 13px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
 .lazers-trajectory-activity-list {
   display: grid;
   gap: 2px;
@@ -934,15 +761,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 12px;
-  padding: 4px 0 8px 20px;
+  padding: 0 0 8px;
   color: var(--text-weak);
   font-size: 11.5px;
-}
-.lazers-trajectory-live-note {
-  margin: 0 0 8px 20px;
-  color: var(--text-weak);
-  font-size: 11.5px;
-  line-height: 1.5;
 }
 .lazers-trajectory-event {
   display: grid;
@@ -986,9 +807,6 @@
     gap: 4px;
     padding-right: 6px;
   }
-  .lazers-trajectory-facts {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
 }
 @container lazers-trajectory (min-width: 560px) {
   .lazers-trajectory {
@@ -1000,8 +818,157 @@
   .lazers-trajectory * {
     scroll-behavior: auto;
   }
-  .lazers-trajectory summary::before,
   .lazers-trajectory-progress > i {
     transition: none;
   }
+}
+
+/* Details pane body: the shared kit supplies stat rows, rows, disclosures, callouts and the lane. */
+.lazers-trajectory-pane-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.lazers-trajectory-pane-body > * {
+  flex: none;
+}
+.lazers-trajectory-callout .lazers-callout-icon[data-tone="failed"] {
+  color: var(--icon-critical-base);
+}
+.lazers-trajectory-callout .lazers-callout-icon[data-tone="cancelled"] {
+  color: var(--text-weak);
+}
+.lazers-trajectory-summary-label {
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.lazers-trajectory-summary-text {
+  color: var(--text-base);
+}
+.lazers-trajectory-summary-time {
+  color: var(--text-weak);
+  font-family: var(--trajectory-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.lazers-trajectory-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link-base, var(--text-interactive-base, var(--text-base)));
+  font: inherit;
+  cursor: pointer;
+}
+.lazers-trajectory-link:hover {
+  text-decoration: underline;
+}
+.lazers-trajectory-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+.lazers-trajectory-crumb > :last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lazers-trajectory-clamp {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-base);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.lazers-trajectory-note {
+  margin: 4px 0 0;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.lazers-trajectory-rates .lazers-kit-rows {
+  font-size: 12px;
+}
+.lazers-trajectory-pre {
+  max-height: 14rem;
+  margin: 0;
+  overflow: auto;
+  color: var(--text-base);
+  font-family: var(--trajectory-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lazers-trajectory-gap-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-base);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.lazers-trajectory-gap-list time {
+  color: var(--text-weak);
+}
+.lazers-trajectory-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  padding-bottom: 4px;
+}
+.lazers-trajectory-filter {
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lazers-trajectory-filter:hover,
+.lazers-trajectory-filter[aria-pressed="true"] {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
+.lazers-trajectory-position {
+  color: var(--text-weak);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.lazers-trajectory-step {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-base);
+  cursor: pointer;
+}
+.lazers-trajectory-step:hover:not(:disabled) {
+  background: var(--surface-base-hover);
+}
+.lazers-trajectory-step:disabled {
+  color: var(--text-weak);
+  opacity: 0.5;
+  cursor: default;
+}
+.lazers-trajectory-disclosures {
+  display: flex;
+  flex-direction: column;
 }
