@@ -31,7 +31,7 @@ const names: Readonly<Record<string, string>> = {
   CLEANUP_BLOCKED: "Cleanup held",
   CLEANUP_RETRY_SCHEDULED: "Cleanup retry scheduled",
   WORKTREES_RECONCILED: "Worktrees reconciled",
-  TASK_STRUGGLING: "Task struggling",
+  WORKER_CONCERN_RAISED: "Worker concern raised",
 }
 
 const dropped = new Set(["OUTCOME", "ARCHITECT", "EVENT"])

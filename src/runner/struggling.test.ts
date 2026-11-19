@@ -2,7 +2,6 @@ import { expect, test } from "bun:test"
 import {
   assessStruggling,
   canStruggle,
-  recommendStruggling,
   STRUGGLING_THRESHOLDS,
   type StrugglingFacts,
   type StrugglingReason,
@@ -51,15 +50,6 @@ test("terminal states cannot struggle", () => {
   for (const state of ["accepted", "cancelled", "failed"]) expect(canStruggle(state)).toBe(false)
   for (const state of ["running", "blocked", "ready", "verifying"])
     expect(canStruggle(state)).toBe(true)
-})
-
-test("the Architect is asked a decision that fits the facts", () => {
-  const scope = { ...calm, repeatedHold: { family: "scope-violation", count: 3 } }
-  expect(recommendStruggling(assessStruggling(scope), scope).action).toBe("re-scope")
-  const reloads = { ...calm, interruptions: 2 }
-  expect(recommendStruggling(assessStruggling(reloads), reloads).action).toBe("continue")
-  const grind = { ...calm, verifyRounds: 3, tokens: 90_000_000, attemptMs: 4 * 3_600_000 }
-  expect(recommendStruggling(assessStruggling(grind), grind).action).toBe("split")
 })
 
 test("facts are read from the journal and attempts, summed across attempts", async () => {

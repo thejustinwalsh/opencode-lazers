@@ -111,34 +111,6 @@ export function assessStruggling(facts: StrugglingFacts): StrugglingAssessment {
   }
 }
 
-/** What the Architect is asked to decide, from the facts alone. */
-export function recommendStruggling(
-  assessment: StrugglingAssessment,
-  facts: StrugglingFacts,
-): { action: "continue" | "re-scope" | "split" | "cancel"; because: string } {
-  const has = (reason: StrugglingReason) => assessment.reasons.includes(reason)
-  if (facts.repeatedHold?.family === "scope-violation" && has("repeated-hold"))
-    return {
-      action: "re-scope",
-      because: `Held ${facts.repeatedHold.count} times for writes outside the scope; widen the scope or narrow the task`,
-    }
-  if (assessment.reasons.length === 1 && has("interruptions"))
-    return {
-      action: "continue",
-      because: "Only interruptions tripped; the work itself is not failing, resume it",
-    }
-  if (assessment.reasons.length >= 3 || (has("tokens") && has("verify-rounds")))
-    return {
-      action: facts.verifyRounds >= 3 ? "split" : "cancel",
-      because:
-        "Several independent measures say this task is larger than its brief; split it into smaller tasks, or cancel and restate it",
-    }
-  return {
-    action: "continue",
-    because: "One measure tripped; check the last result, then let it continue or narrow it",
-  }
-}
-
 const REPAIR_EVENTS = ["REPAIR", "RESUME", "RETAINED_REPAIR", "RETRY_REQUESTED"]
 
 /** The recorded facts of one task. Read-only. */

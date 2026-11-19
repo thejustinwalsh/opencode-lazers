@@ -62,7 +62,7 @@ test("a held attempt still recorded as running stops its runtime at the last act
   expect(attemptLane(attempt, 44 * HOUR)!.durationMs).toBe(44 * HOUR - attempt.startedAt)
 })
 
-test("a struggling task adds its totals across attempts to the stat row", () => {
+test("a concern task adds its totals across attempts to the stat row", () => {
   const totals = {
     attempts: 2,
     verifyRounds: 3,
@@ -71,7 +71,7 @@ test("a struggling task adds its totals across attempts to the stat row", () => 
     toolCalls: 1009,
     costUSD: null,
   }
-  const stats = values(taskStats({ createdAt: 0, now: HOUR, struggling: totals }))
+  const stats = values(taskStats({ createdAt: 0, now: HOUR, concern: totals }))
   expect(stats).toMatchObject({
     "Total time": "4h 10m",
     "Total calls": "1009",

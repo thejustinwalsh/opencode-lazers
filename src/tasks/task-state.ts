@@ -1,5 +1,5 @@
 import type { LabelTone } from "../details/tone.ts"
-import type { CurrentTaskActivity, TaskStruggling } from "./contract.ts"
+import type { CurrentTaskActivity, TaskConcern } from "./contract.ts"
 import type { ExecutionListRow } from "./execution-list.ts"
 import { taskReasonView } from "./presentation.ts"
 import { taskRowPresentation } from "./row-presentation.ts"
@@ -17,7 +17,7 @@ export type TaskStateView = TaskRowPresentation & {
   /** The state asks for an explanation: waiting, paused, failed or needing the person. */
   explained: boolean
   /** The task keeps consuming effort without landing; shown beside the state word. */
-  struggling?: TaskStruggling
+  concern?: TaskConcern
 }
 
 const labelTones: Record<TaskTone, LabelTone> = {
@@ -46,7 +46,7 @@ export function taskStateView(
     ...presentation,
     labelTone: labelTones[presentation.tone],
     explained: explainedTones.has(presentation.tone),
-    ...(row.struggling ? { struggling: row.struggling } : {}),
+    ...(row.concern ? { concern: row.concern } : {}),
   }
 }
 

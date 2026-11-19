@@ -1,3 +1,5 @@
+import { RecoveryDetector } from "../recovery/detector.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -705,7 +707,7 @@ test("paused dispatch is durable, filterable and distinct from active worker lif
   expect(reopened.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
 })
 
-test("a running task that keeps consuming effort is reported struggling with totals across attempts", () => {
+test("a running task that trips a detector rule shows its open concern with totals across attempts", () => {
   const repository = fixture().open()
   const reads = new TaskReads(repository)
   const calm = insert(repository, "Calm task")
@@ -713,7 +715,7 @@ test("a running task that keeps consuming effort is reported struggling with tot
   const proposal = validProposal()
   const plan = reads.runner.submit(
     {
-      requestID: "struggling-plan",
+      requestID: "concern-plan",
       objective: grind.proposal.objective,
       baseCommit: "a".repeat(40),
       nodes: [
@@ -755,16 +757,24 @@ test("a running task that keeps consuming effort is reported struggling with tot
         )
     addAttempt(calm.id, 1, 1_000_000, "running")
     addAttempt(grind.id, 1, 40_000_000, "failed")
-    addAttempt(grind.id, 2, 50_000_000, "failed")
+    addAttempt(grind.id, 2, 50_000_000, "running")
     for (let round = 0; round < 3; round++)
       db.query(
         "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
       ).run(plan.planID, grind.id, round + 1)
   })
 
+  // Nothing is shown until the detector records a concern.
+  expect(reads.query({ state: "all" }).tasks.some((task) => task.concern)).toBe(false)
+  new RecoveryDetector({
+    store: reads.runner,
+    handoff: new HandoffStore(repository),
+    now: Date.now,
+  }).evaluate("owner", reads.runner.claim("owner", Date.now())!)
   const tasks = reads.query({ state: "all" }).tasks
-  expect(tasks.find((task) => task.taskID === calm.id)?.struggling).toBeUndefined()
-  const found = tasks.find((task) => task.taskID === grind.id)?.struggling
-  expect(found?.line).toBe("3 verification rounds, 90M tokens")
+  expect(tasks.find((task) => task.taskID === calm.id)?.concern).toBeUndefined()
+  const found = tasks.find((task) => task.taskID === grind.id)?.concern
+  expect(found?.reasons.toSorted()).toEqual(["token-spend-high", "verify-rounds-repeated"])
+  expect(found?.line).toContain("3 verification rounds")
   expect(found?.totals).toMatchObject({ attempts: 2, verifyRounds: 3, toolCalls: 200 })
 })

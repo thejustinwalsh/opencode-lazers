@@ -8,13 +8,7 @@ import { holdFamily, holdActions, unblockingActions } from "./hold-actions.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
-import { readScopeDrift } from "./scope-drift.ts"
-import {
-  assessStruggling,
-  canStruggle,
-  readStrugglingFacts,
-  recommendStruggling,
-} from "./struggling.ts"
+import { openConcerns } from "../recovery/detector.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -41,7 +35,6 @@ export const RECOVERY_TEXT_ITEMS = 60
 
 export const RECOVERY_BUNDLE_STATUS = "recovery-bundle"
 export const RECOVERY_BUNDLE_EVENT = "RECOVERY_BUNDLE_RAISED"
-export const STRUGGLING_EVENT = "TASK_STRUGGLING"
 
 /**
  * Events that record what the runtime observed or delivered, not what happened to the work. They
@@ -70,10 +63,8 @@ export const RecoveryKind = z.enum([
   "accepted-unintegrated",
   "cleanup-blocked",
   "stuck-cancelling",
-  /** Live work that keeps consuming effort without landing; the Architect decides its course. */
-  "struggling",
-  /** A running attempt has already edited outside its write scope. */
-  "scope-drift",
+  /** A deterministic rule matched the trajectory of live work; the Architect decides its course. */
+  "worker-concern",
 ])
 export type RecoveryKind = z.infer<typeof RecoveryKind>
 
@@ -125,8 +116,19 @@ export const RecoveryItem = z.strictObject({
   actions: z.array(z.string()),
   reuse: RecoveryReuse,
   recommendation: RecoveryRecommendation,
-  /** Why a live item is here: the recorded effort that tripped the rule. */
-  struggling: z.strictObject({ line: z.string(), reasons: z.array(z.string()) }).optional(),
+  /** The recorded concern behind a live item. */
+  concern: z
+    .strictObject({
+      concernID: z.string(),
+      version: z.number().int().positive(),
+      ruleID: z.string(),
+      line: z.string(),
+      boundary: z.strictObject({
+        fromSequence: z.number().int().nonnegative(),
+        throughSequence: z.number().int().nonnegative(),
+      }),
+    })
+    .optional(),
 })
 export type RecoveryItem = z.infer<typeof RecoveryItem>
 
@@ -432,52 +434,35 @@ export class RecoveryBundles {
   }
 
   /**
-   * Live items of one plan that need a decision before the work ends: a task whose recorded
-   * effort trips a struggling rule, and a running attempt that already edited outside its write
-   * scope. Read-only.
+   * Open worker concerns: the deterministic detector's findings that no Architect decision
+   * covers yet. They are live work, so they are listed whether or not the plan is idle.
    */
-  private async liveItems(
-    plan: PlanRow,
-    head: () => Promise<string | null>,
-  ): Promise<RecoveryItem[]> {
+  private async concernItems(head: () => Promise<string | null>): Promise<RecoveryItem[]> {
     const { store } = this.deps
     const found: RecoveryItem[] = []
-    for (const node of store.nodes(plan.id)) {
-      if (!canStruggle(node.state) || store.repository.taskDisposition(node.task_id)) continue
-      const task = store.repository.get(node.task_id)
-      if (!task) continue
-      const attempt = store
-        .attempts(plan.id)
-        .filter((a) => a.task_id === node.task_id)
-        .at(-1)
-      // Transitions are stamped with the wall clock, so open intervals end on it too.
-      const facts = store.read((db) => readStrugglingFacts(db, plan.id, node.task_id, Date.now()))
-      const assessment = assessStruggling(facts)
-      const drift =
-        attempt && ["preparing", "running"].includes(attempt.state)
-          ? store.read((db) =>
-              readScopeDrift(
-                db,
-                this.deps.directory,
-                attempt.id,
-                store.effectiveWriteScope(node.task_id),
-              ),
-            )
-          : []
-      if (!assessment.struggling && !drift.length) continue
+    const concerns = store.read((db) => openConcerns(db, store.repository.projectDirectory))
+    for (const concern of concerns) {
+      const plan = store.plan(concern.planID)
+      const node = store.nodes(concern.planID).find((n) => n.task_id === concern.taskID)
+      const task = store.repository.get(concern.taskID)
+      if (!plan || !node || !task || store.repository.taskDisposition(concern.taskID)) continue
+      const attempt = store.attempts(plan.id).find((a) => a.id === concern.attemptID)
       const reuse = await this.reuse(plan, node, attempt, head)
       const title = taskTitle(task.proposal.objective)
-      const reference = store.repository.referenceFor(node.task_id) ?? null
+      const reference = store.repository.referenceFor(concern.taskID) ?? null
       const shown = presentation({
-        taskID: node.task_id,
+        taskID: concern.taskID,
         title,
         state: node.state,
         reason: node.reason ?? null,
         ...(reference ? { reference } : {}),
       })
-      const base = {
+      found.push({
+        // A new version of the concern is a new decision; the same version is one notice.
+        key: fingerprint({ concernID: concern.concernID, version: concern.version }),
+        kind: "worker-concern",
         planID: plan.id,
-        taskID: node.task_id,
+        taskID: concern.taskID,
         reference,
         title,
         state: node.state,
@@ -486,83 +471,19 @@ export class RecoveryBundles {
         reason: node.reason ?? null,
         holdFamily: null,
         ageMs: 0,
+        actions: this.legalActions(plan, concern.taskID, null, ["cancel", "amend-scope"]),
         reuse,
-      }
-      if (assessment.struggling) {
-        const advice = recommendStruggling(assessment, facts)
-        found.push({
-          ...base,
-          // Stable while the same measures trip; a new measure is a new decision.
-          key: fingerprint({
-            planID: plan.id,
-            taskID: node.task_id,
-            kind: "struggling",
-            reasons: assessment.reasons,
-          }),
-          kind: "struggling",
-          actions: this.legalActions(plan, node.task_id, null, ["cancel", "amend-scope"]),
-          recommendation: {
-            action:
-              advice.action === "continue"
-                ? null
-                : advice.action === "re-scope"
-                  ? "amend-scope"
-                  : "cancel",
-            because: `${advice.action} - ${advice.because}`,
-          },
-          struggling: { line: assessment.line, reasons: assessment.reasons },
-        })
-      }
-      if (drift.length)
-        found.push({
-          ...base,
-          key: fingerprint({
-            planID: plan.id,
-            taskID: node.task_id,
-            kind: "scope-drift",
-            attemptID: attempt!.id,
-            paths: drift,
-          }),
-          kind: "scope-drift",
-          actions: this.legalActions(plan, node.task_id, null, ["amend-scope", "cancel"]),
-          recommendation: {
-            action: "amend-scope",
-            because: `The worker already edited ${drift.length} file(s) outside the write scope while it still runs: ${drift.slice(0, 6).join(", ")}. Amend the scope now to accept them, or tell the worker to revert; verification would only find this after the attempt ends`,
-          },
-          struggling: {
-            line: `edited outside the write scope: ${drift.slice(0, 6).join(", ")}`,
-            reasons: ["scope-drift"],
-          },
-        })
+        recommendation: concernAdvice(concern.ruleID),
+        concern: {
+          concernID: concern.concernID,
+          version: concern.version,
+          ruleID: concern.ruleID,
+          line: concern.reason,
+          boundary: concern.boundary,
+        },
+      })
     }
     return found
-  }
-
-  /**
-   * The record that a task became struggling: one `TASK_STRUGGLING` transition per task, written
-   * the first time the reading turns true. The reading itself stays derived, never stored.
-   */
-  journalStruggling(fence: number): number {
-    const { store, owner } = this.deps
-    let recorded = 0
-    for (const plan of store.plans()) {
-      if (plan.state !== "running") continue
-      for (const node of store.nodes(plan.id)) {
-        if (!canStruggle(node.state)) continue
-        const facts = store.read((db) => readStrugglingFacts(db, plan.id, node.task_id, Date.now()))
-        const assessment = assessStruggling(facts)
-        if (!assessment.struggling) continue
-        store.fenced(owner, fence, () => {
-          if (store.latestTransition(plan.id, node.task_id, STRUGGLING_EVENT) !== undefined) return
-          store.record(plan.id, node.task_id, STRUGGLING_EVENT, {
-            reasons: assessment.reasons,
-            line: assessment.line,
-          })
-          recorded += 1
-        })
-      }
-    }
-    return recorded
   }
 
   /** Every item that needs an Architect decision now. Read-only. */
@@ -571,15 +492,13 @@ export class RecoveryBundles {
     // Git is only asked when a stale item needs it; an idle project runs no git at all.
     let landing: Promise<string | null> | undefined
     const head = () => (landing ??= this.git(directory, ["rev-parse", "HEAD"]).catch(() => null))
-    const items: RecoveryItem[] = []
+    const items: RecoveryItem[] = [...(await this.concernItems(head))]
     for (const plan of store.plans()) {
       const stuck = ["blocked", "failed", "accepted", "cleanup-blocked", "cancelling"].includes(
         plan.state,
       )
       if (!stuck && !OPEN_PLAN_STATES.has(plan.state)) continue
       const idle = this.idleSince(plan.id)
-      // Live work that is struggling needs a decision whether or not it is idle.
-      if (plan.state === "running") items.push(...(await this.liveItems(plan, head)))
       if (idle < RECOVERY_STALE_MS) continue
       const nodes = store.nodes(plan.id)
       const attempts = store.attempts(plan.id)
@@ -947,7 +866,9 @@ export function recoveryBundleText(serialized: string): string {
     ].join("; ")
     return [
       `${index + 1}. ${ref} ${JSON.stringify(item.title)} - ${item.stateLabel} (${item.kind}${item.holdFamily ? `, ${item.holdFamily}` : ""}), idle ${ago(item.ageMs)}; plan ${item.planID}${item.taskID ? ` task ${item.taskID}` : ""}`,
-      ...(item.struggling ? [`   Still live - ${item.struggling.line}`] : []),
+      ...(item.concern
+        ? [`   Concern ${item.concern.ruleID} (still running): ${item.concern.line}`]
+        : []),
       ...(item.explanation ? [`   Why: ${item.explanation}`] : []),
       ...(item.reason ? [`   Recorded: ${item.reason}`] : []),
       `   Reuse: ${reuse}`,
@@ -957,9 +878,9 @@ export function recoveryBundleText(serialized: string): string {
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
     "Work through all of it in this one pass. Verify each with lz-inspect-plan, then resolve it with lz-plan-command or lz-dispose-task. Reuse what exists before starting fresh: resume a live worker, verify-retained a committed result whose checks passed, retained-repair unfinished work; submit a new task only when the old approach is wrong, and then cancel and dispose what it supersedes. The recommendation is advice from recorded facts; you decide. Resolved items leave the next bundle.",
-    ...(bundle.items.some((item) => item.kind === "struggling" || item.kind === "scope-drift")
+    ...(bundle.items.some((item) => item.kind === "worker-concern")
       ? [
-          "Items of kind struggling or scope-drift are still running. Struggling work keeps consuming effort without landing: continue, re-scope (amend-scope), split into smaller tasks, or cancel. Scope drift is a write outside the task scope that verification would only catch later: amend the scope or have the worker revert it.",
+          "Items of kind worker-concern are still running: a deterministic rule matched their recorded trajectory. Read the evidence with lz-inspect-recovery, then decide with lz-disposition-recovery-concern: acknowledge (let it continue) or follow up later with a due time, or check in with the worker (lz-checkpoint-recovery-worker). If it keeps struggling after steering, request a handoff (lz-request-handoff) or cancel and split the task. An out-of-scope write is reviewed before acceptance; amend-scope only if the write was right.",
         ]
       : []),
     ...(bundle.replaces ? ["This bundle replaces the earlier one; ignore the earlier list."] : []),
@@ -972,4 +893,25 @@ export function recoveryBundleText(serialized: string): string {
       : []),
     `bundle ${bundle.generation} raised ${new Date(bundle.raisedAt).toISOString()}`,
   ].join("\n")
+}
+
+/** Advice from the rule that fired; the Architect decides. */
+function concernAdvice(ruleID: string): z.infer<typeof RecoveryRecommendation> {
+  if (ruleID === "out-of-scope-write")
+    return {
+      action: null,
+      because:
+        "The worker diverged from the planned scope. Inspect the paths before acceptance; check in with the worker, and amend-scope only if the write was right",
+    }
+  if (ruleID === "interruptions-repeated")
+    return {
+      action: null,
+      because:
+        "Only interruptions repeated; the work itself may be fine. Acknowledge and let it continue",
+    }
+  return {
+    action: null,
+    because:
+      "Check in with the worker (lz-checkpoint-recovery-worker), acknowledge to let it continue, or follow up later; if it keeps struggling after steering, request a handoff",
+  }
 }

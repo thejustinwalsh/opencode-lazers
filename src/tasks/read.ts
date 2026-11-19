@@ -6,8 +6,9 @@ import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
-import type { TaskPage, TaskStruggling, TaskSummary } from "./contract.ts"
-import { assessStruggling, canStruggle, readStrugglingFacts } from "../runner/struggling.ts"
+import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
+import { canStruggle, readStrugglingFacts } from "../runner/struggling.ts"
+import { openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
@@ -171,7 +172,7 @@ export class TaskReads {
           !execution.dispatchPause
             ? this.startedAt(task.id, execution.planID)
             : {}),
-          ...(execution ? this.struggling(task.id, execution.planID, execution.state) : {}),
+          ...(execution ? this.concern(task.id, execution.planID, execution.state) : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),
@@ -344,30 +345,32 @@ export class TaskReads {
     }
   }
 
-  /** The struggling reading of one unsettled task, as `{ struggling }`, or nothing. */
-  protected struggling(
+  /** The open worker concern of one unsettled task with its totals, as `{ concern }`, or nothing. */
+  protected concern(
     taskID: string,
     planID: string,
     state: string,
-  ): { struggling: TaskStruggling } | Record<string, never> {
+  ): { concern: TaskConcern } | Record<string, never> {
     if (!canStruggle(state)) return {}
-    const facts = this.repository.read((db) => readStrugglingFacts(db, planID, taskID, Date.now()))
-    const assessment = assessStruggling(facts)
-    if (!assessment.struggling) return {}
-    return {
-      struggling: {
-        line: assessment.line,
-        reasons: assessment.reasons,
-        totals: {
-          attempts: facts.attempts,
-          verifyRounds: facts.verifyRounds,
-          attemptMs: facts.attemptMs,
-          tokens: facts.tokens,
-          toolCalls: facts.toolCalls,
-          costUSD: facts.costUSD,
+    return this.repository.read((db): { concern: TaskConcern } | Record<string, never> => {
+      const open = openConcerns(db, this.repository.projectDirectory, { taskID })
+      if (!open.length) return {}
+      const facts = readStrugglingFacts(db, planID, taskID, Date.now())
+      return {
+        concern: {
+          line: open.map((item) => item.reason).join("; "),
+          reasons: open.map((item) => item.ruleID),
+          totals: {
+            attempts: facts.attempts,
+            verifyRounds: facts.verifyRounds,
+            attemptMs: facts.attemptMs,
+            tokens: facts.tokens,
+            toolCalls: facts.toolCalls,
+            costUSD: facts.costUSD,
+          },
         },
-      },
-    }
+      }
+    })
   }
 
   /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */

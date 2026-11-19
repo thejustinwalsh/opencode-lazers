@@ -19,6 +19,8 @@ import {
   type RecoveryReuse,
 } from "./recovery-bundle.ts"
 import { RunnerStore } from "./store.ts"
+import { RecoveryDetector } from "../recovery/detector.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -541,58 +543,127 @@ test("the bundle text states what to do and lists each item with its advice", as
   )
 })
 
-test("a live task that keeps failing verification is raised as struggling even though it is fresh", async () => {
-  const f = fixture()
-  const grind = f.plan({ state: "running", node: "running" })
-  const calm = f.plan({ state: "running", node: "running" })
-  f.touch(grind.planID)
-  f.store.atomic((db) => {
-    for (const round of [1, 2, 3])
-      db.query(
-        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
-      ).run(grind.planID, grind.taskID, f.clock.at - round)
-    db.query(
-      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
-    ).run(calm.planID, calm.taskID, f.clock.at)
-  })
-  const items = await collect(f)
-  expect(items.map((item) => [item.kind, item.taskID])).toEqual([["struggling", grind.taskID]])
-  const item = items[0]!
-  expect(item.struggling?.line).toBe("3 verification rounds")
-  expect(item.recommendation.because).toStartWith("continue")
-  // The same measures do not raise a second bundle; a bundle is raised once for them.
-  const first = await f.reconciler("scheduler").bundles.reconcile(1)
-  expect(first?.items).toHaveLength(1)
-  expect(recoveryBundleText(JSON.stringify(first))).toContain("Still live - 3 verification rounds")
-  expect(await f.reconciler("scheduler").bundles.reconcile(1)).toBeUndefined()
-})
-
-test("the first time a task becomes struggling is journaled once", async () => {
-  const f = fixture()
-  const grind = f.plan({ state: "running", node: "running" })
-  const { bundles, fence } = f.reconciler("scheduler")
-  expect(bundles.journalStruggling(fence)).toBe(0)
-  f.store.atomic((db) => {
-    for (const round of [1, 2, 3])
-      db.query(
-        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
-      ).run(grind.planID, grind.taskID, f.clock.at - round)
-  })
-  expect(bundles.journalStruggling(fence)).toBe(1)
-  expect(bundles.journalStruggling(fence)).toBe(0)
-  expect(
-    f.store.latestTransition<{ reasons: string[] }>(grind.planID, grind.taskID, "TASK_STRUGGLING"),
-  ).toMatchObject({ reasons: ["verify-rounds"], line: "3 verification rounds" })
-})
-
-test("an edit outside the write scope is raised while the worker still runs", async () => {
-  const f = fixture()
+function runningTask(f: ReturnType<typeof fixture>, rounds: number) {
   const { planID, taskID } = f.plan({ state: "running", node: "running" })
+  const attemptID = crypto.randomUUID()
   f.store.atomic((db) => {
     db.query(
       `INSERT INTO runner_attempts(id,plan_id,project_directory,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at)
-       VALUES('a1',?,?,?,1,'worker-1','m1',?,?,NULL,'{}','running',?)`,
-    ).run(planID, f.root, taskID, f.root, f.base, Date.now())
+       VALUES(?,?,?,?,1,?,?,?,?,NULL,'{}','running',?)`,
+    ).run(
+      attemptID,
+      planID,
+      f.root,
+      taskID,
+      `worker-${attemptID}`,
+      `m-${attemptID}`,
+      f.root,
+      f.base,
+      Date.now(),
+    )
+    for (let round = 0; round < rounds; round++)
+      db.query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+      ).run(planID, taskID, f.clock.at - round)
+  })
+  f.sessions.set(`worker-${attemptID}`, {
+    ...architect(`worker-${attemptID}`),
+    agent: "worker",
+    busy: true,
+  })
+  return { planID, taskID, attemptID }
+}
+const detector = (f: ReturnType<typeof fixture>) =>
+  new RecoveryDetector({
+    store: f.store,
+    handoff: new HandoffStore(f.repository),
+    now: () => f.clock.at,
+  })
+
+test("the detector records one concern per rule, the bundle carries it once, and replay adds nothing", async () => {
+  const f = fixture()
+  const calm = runningTask(f, 1)
+  const grind = runningTask(f, 3)
+  const { fence } = f.reconciler("scheduler")
+  const first = detector(f).evaluate("scheduler", fence)
+  expect(first.map((c) => c.ruleID)).toEqual(["verify-rounds-repeated"])
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  expect(
+    f.store.latestTransition(grind.planID, grind.taskID, "WORKER_CONCERN_RAISED"),
+  ).toMatchObject({ ruleID: "verify-rounds-repeated", version: 1 })
+  expect(
+    f.store.latestTransition(calm.planID, calm.taskID, "WORKER_CONCERN_RAISED"),
+  ).toBeUndefined()
+
+  const items = await collect(f)
+  expect(items.map((item) => [item.kind, item.taskID])).toEqual([["worker-concern", grind.taskID]])
+  expect(items[0]!.concern).toMatchObject({ ruleID: "verify-rounds-repeated", version: 1 })
+  const bundle = await f.reconciler("scheduler").bundles.reconcile(fence)
+  expect(bundle?.items).toHaveLength(1)
+  expect(recoveryBundleText(JSON.stringify(bundle))).toContain("Concern verify-rounds-repeated")
+  expect(await f.reconciler("scheduler").bundles.reconcile(fence)).toBeUndefined()
+})
+
+test("an acknowledgement suppresses reviewed evidence; only materially new evidence or a due follow-up returns", async () => {
+  const f = fixture()
+  const grind = runningTask(f, 3)
+  const { fence } = f.reconciler("scheduler")
+  detector(f).evaluate("scheduler", fence)
+  const handoff = new HandoffStore(f.repository)
+  const concern = (await collect(f))[0]!.concern!
+  const decide = (requestID: string, input: object) =>
+    handoff.recordRecoveryDisposition(
+      {
+        requestID,
+        dispositionID: crypto.randomUUID(),
+        concernID: concern.concernID,
+        reason: "reviewed",
+        evidenceBoundary: concern.boundary,
+        ...input,
+      },
+      { sessionID: "architect-1", agent: "architect", role: "architect" },
+    )
+  expect(decide("ack-1", { decision: "acknowledge" }).status).toBe("recorded")
+  expect(await collect(f)).toEqual([])
+  // Three more rounds is not double the evidence the Architect reviewed ... six is.
+  const addRounds = (count: number) =>
+    f.store.atomic((db) => {
+      for (let round = 0; round < count; round++)
+        db.query(
+          "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
+        ).run(grind.planID, grind.taskID, f.clock.at)
+    })
+  addRounds(2)
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  addRounds(1)
+  expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
+  expect((await collect(f))[0]!.concern!.version).toBe(2)
+  // A deferred follow-up is honoured: nothing before it is due, a new version when it is.
+  const due = new Date(f.clock.at + HOUR).toISOString()
+  const latest = (await collect(f))[0]!.concern!
+  handoff.recordRecoveryDisposition(
+    {
+      requestID: "follow-1",
+      dispositionID: crypto.randomUUID(),
+      concernID: latest.concernID,
+      decision: "follow-up",
+      reason: "look again",
+      evidenceBoundary: latest.boundary,
+      followUp: { kind: "at", dueAt: due },
+    },
+    { sessionID: "architect-1", agent: "architect", role: "architect" },
+  )
+  expect(await collect(f)).toEqual([])
+  expect(detector(f).evaluate("scheduler", fence)).toEqual([])
+  f.clock.at += 2 * HOUR
+  expect(detector(f).evaluate("scheduler", fence)).toHaveLength(1)
+  expect((await collect(f))[0]!.concern!.version).toBe(3)
+})
+
+test("an edit outside the write scope is recorded as a concern with its paths, never a hold", async () => {
+  const f = fixture()
+  const { planID, taskID, attemptID } = runningTask(f, 0)
+  f.store.atomic((db) => {
     const tool = (seq: number, operation: string, path: string) =>
       db
         .query(
@@ -604,20 +675,20 @@ test("an edit outside the write scope is raised while the worker still runs", as
           "project",
           planID,
           taskID,
-          "a1",
-          "worker-1",
+          attemptID,
+          `worker-${attemptID}`,
           seq,
           `call-${seq}`,
           `k${seq}`,
           JSON.stringify({ status: "completed", fileTargets: { operation, paths: [path] } }),
         )
     tool(1, "patch", "out1.txt")
-    tool(2, "read", "src/anything.ts")
-    tool(3, "patch", "docs/outside.md")
+    tool(2, "patch", "docs/outside.md")
   })
-  f.sessions.set("worker-1", { ...architect("worker-1"), agent: "worker", busy: true })
-  const items = await collect(f)
-  expect(items.map((item) => item.kind)).toEqual(["scope-drift"])
-  expect(items[0]!.recommendation.action).toBe("amend-scope")
-  expect(items[0]!.struggling?.line).toBe("edited outside the write scope: docs/outside.md")
+  const { fence } = f.reconciler("scheduler")
+  const recorded = detector(f).evaluate("scheduler", fence)
+  expect(recorded.map((c) => c.ruleID)).toEqual(["out-of-scope-write"])
+  const item = (await collect(f))[0]!
+  expect(item.concern?.line).toBe("edited outside the write scope: docs/outside.md")
+  expect(f.store.plan(planID)!.state).toBe("running")
 })

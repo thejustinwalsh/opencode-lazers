@@ -27,9 +27,9 @@ export const GetInput = z.strictObject({
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
-/** A task that keeps consuming effort without landing; see `assessStruggling`. */
-export const TaskStruggling = z.strictObject({
-  /** "3 verification rounds, 4h 10m in attempts, 92M tokens". */
+/** A task that keeps consuming effort without landing; see `assessConcern`. */
+export const TaskConcern = z.strictObject({
+  /** The one-line reason(s), e.g. "3 verification rounds; 92M tokens across 2 attempt(s)". */
   line: z.string(),
   reasons: z.array(z.string()),
   /** Totals across every attempt, so a person can judge the cost. */
@@ -42,7 +42,7 @@ export const TaskStruggling = z.strictObject({
     costUSD: z.number().nonnegative().nullable(),
   }),
 })
-export type TaskStruggling = z.infer<typeof TaskStruggling>
+export type TaskConcern = z.infer<typeof TaskConcern>
 
 const TaskSummary = z.strictObject({
   taskID: z.uuid(),
@@ -57,8 +57,8 @@ const TaskSummary = z.strictObject({
   recordedState: TaskState.optional(),
   /** Epoch ms the current attempt started; present only while the task is running or verifying. */
   startedAt: z.number().finite().optional(),
-  /** Present only while the task is unsettled and its recorded facts trip a struggling rule. */
-  struggling: TaskStruggling.optional(),
+  /** Present only while the task is unsettled and its recorded facts trip a concern rule. */
+  concern: TaskConcern.optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,

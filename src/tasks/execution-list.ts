@@ -1,6 +1,6 @@
 import type { TopologyResponse } from "../observability/contract.ts"
 import { comparePriority } from "../runner/priority.ts"
-import type { TaskStruggling, TaskSummary } from "./contract.ts"
+import type { TaskConcern, TaskSummary } from "./contract.ts"
 import type { SchedulingNode, SchedulingPlan, SchedulingSnapshot } from "./scheduling-contract.ts"
 
 type Plan = TopologyResponse["plans"][number]
@@ -17,8 +17,8 @@ export type ExecutionListRow = {
   reference?: string
   /** Epoch ms the running task's current attempt began; absent unless the read supplied it. */
   startedAt?: number
-  /** Present when the task's recorded effort trips a struggling rule. */
-  struggling?: TaskStruggling
+  /** Present when the task's recorded effort trips a concern rule. */
+  concern?: TaskConcern
   sourcePlan?: TaskSummary["sourcePlan"]
   dispatchPause?: TaskSummary["dispatchPause"]
   dispatchPausePlanID?: string
@@ -130,7 +130,7 @@ function buildScheduledGroups(input: {
         ? { reference: summary?.reference ?? node.reference }
         : {}),
       ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
-      ...(summary?.struggling ? { struggling: summary.struggling } : {}),
+      ...(summary?.concern ? { concern: summary.concern } : {}),
       contextOnly,
       prerequisites: node.prerequisites,
       successors: successors.get(node.taskID) ?? [],
@@ -394,7 +394,7 @@ function row(
       ? { reference: summary?.reference ?? node.reference }
       : {}),
     ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
-    ...(summary?.struggling ? { struggling: summary.struggling } : {}),
+    ...(summary?.concern ? { concern: summary.concern } : {}),
     dependencyTasks,
     ...(["queued", "ready"].includes(node.state) && plan.dispatchPause
       ? { dispatchPause: plan.dispatchPause }
@@ -532,7 +532,7 @@ export function buildExecutionList(input: {
         ordinal,
         ...(summary?.reference ? { reference: summary.reference } : {}),
         ...(summary?.startedAt !== undefined ? { startedAt: summary.startedAt } : {}),
-        ...(summary?.struggling ? { struggling: summary.struggling } : {}),
+        ...(summary?.concern ? { concern: summary.concern } : {}),
         sourcePlan: summary?.sourcePlan,
         dispatchPause: summary?.dispatchPause,
         dispatchPausePlanID: summary?.dispatchPausePlanID,

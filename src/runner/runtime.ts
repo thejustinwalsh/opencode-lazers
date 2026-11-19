@@ -21,6 +21,8 @@ import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { RecoveryBundles } from "./recovery-bundle.ts"
+import { RecoveryDetector } from "../recovery/detector.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
@@ -651,6 +653,7 @@ type AdvanceContext = {
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
+  private readonly recoveryDetector: RecoveryDetector
   private readonly worktreeCleanup: WorktreeCleanup
   private readonly adoptionExecution: AdoptionExecution
   private readonly retainedVerificationExecution: RetainedVerificationExecution
@@ -734,6 +737,11 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+    })
+    this.recoveryDetector = new RecoveryDetector({
+      store: this.store,
+      handoff: new HandoffStore(this.store.repository),
+      now: this.now,
     })
     this.recoveryBundles = new RecoveryBundles({
       store: this.store,
@@ -7243,7 +7251,7 @@ export class TaskRuntime {
       // Stale failed or held work is handed to an Architect as one bundle, then delivered below.
       await sectionAsync("tick:recoveryBundle", async () => {
         try {
-          this.recoveryBundles.journalStruggling(fence)
+          this.recoveryDetector.evaluate(this.owner, fence)
           await this.recoveryBundles.reconcile(fence)
         } catch (error) {
           if (errorText(error).includes("Stale scheduler fence")) throw error

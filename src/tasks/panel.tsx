@@ -897,7 +897,7 @@ function TaskPanel(
           : []),
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
-        ...(taskRow().struggling ? [`struggling: ${taskRow().struggling!.line}`] : []),
+        ...(taskRow().concern ? [`concern: ${taskRow().concern!.line}`] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -926,7 +926,7 @@ function TaskPanel(
         <div
           class="lazers-tasks-row"
           data-tone={presentation().tone}
-          data-struggling={taskRow().struggling ? "true" : undefined}
+          data-concern={taskRow().concern ? "true" : undefined}
         >
           <Show
             when={expandable()}
@@ -964,10 +964,10 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
-            <Show when={taskRow().struggling}>
-              {(struggling) => (
-                <Label tone="warning" title={`Struggling: ${struggling().line}`}>
-                  Struggling
+            <Show when={taskRow().concern}>
+              {(concern) => (
+                <Label tone="warning" title={`Concern: ${concern().line}`}>
+                  Concern
                 </Label>
               )}
             </Show>
@@ -987,7 +987,7 @@ function TaskPanel(
                 data-state={taskRow().status}
                 data-waiting={waiting()}
                 data-tone={
-                  taskRow().struggling &&
+                  taskRow().concern &&
                   ["running", "ready", "scheduled"].includes(presentation().tone)
                     ? "attention"
                     : presentation().tone
@@ -1611,7 +1611,7 @@ function TaskPanel(
           now: minute(),
           attempt: latestAttempt(),
           working: selectedPresentation().tone === "running",
-          ...(selectedRow()?.struggling ? { struggling: selectedRow()!.struggling!.totals } : {}),
+          ...(selectedRow()?.concern ? { concern: selectedRow()!.concern!.totals } : {}),
         })
       : []
   }
