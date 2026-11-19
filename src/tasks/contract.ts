@@ -6,6 +6,7 @@ import { TaskDispositionRecord } from "../task-disposition.ts"
 import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
 import { TaskStateFilter } from "./state-filter.ts"
+import { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 
 export const QueryInput = z.strictObject({
   sort: z.enum(["recent", "schedule"]).default("recent"),
@@ -84,6 +85,10 @@ const TaskAttempt = z.strictObject({
   artifact: z.string().nullable(),
   tokenCount: z.number().nullable(),
   toolCount: z.int().nonnegative(),
+  /** The model the attempt was assigned, when its policy recorded one. */
+  model: AttemptModel.optional(),
+  /** Compact activity read; present on the task's latest attempt only. */
+  summary: AttemptSummary.optional(),
 })
 export const CurrentActivityInput = z
   .strictObject({
