@@ -68,6 +68,11 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?:
             { action: "lz-submit-plan", resource: "*", effect: "deny" },
             { action: "lz-plan-command", resource: "*", effect: "deny" },
             { action: "lz-submit-task", resource: "*", effect: "deny" },
+            // lz-fallow-config stays read/draft-only for workers; only the set effect is denied.
+            { action: "lz-fallow-config-set", resource: "*", effect: "deny" },
+            ...(id === "lazers-implementor"
+              ? [{ action: "lz-fallow-check", resource: "*", effect: "deny" } as const]
+              : []),
           ]
           agent.permissions = permissions.filter(
             (rule, index) =>

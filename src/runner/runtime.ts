@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
   changeDispatchPause,
@@ -460,6 +461,34 @@ type AdoptionFingerprintInput = {
   combinedArtifact: string
   reason: string
   environmentIdentity: string
+}
+
+type CommandContext = {
+  command: PlanCommand
+  caller: string
+  baseVersion: number
+  continuedOwner: string | undefined
+  configuredWorker: ModelPolicy | undefined
+  ownerSession: HostSession | null | undefined
+  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
+  terminalContinuation:
+    { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
+  terminalRepairContinuation: { operationID: string; owner: string } | undefined
+  retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+  adoptionSeed: AdoptionSeed | undefined
+  retainedVerificationSeed: RetainedVerificationSeed | undefined
+  retainedRepair: RetainedRepairSeed | undefined
+  reviewInput: { binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined
+  startupSettlement:
+    | {
+        attempt: AttemptRow
+        effect: EffectRow
+        failure: StartupWorktreeFailureEvidence
+        evidence: StartupAbsenceEvidence
+      }
+    | undefined
+  cleanupDiagnostics: CleanupAuditDiagnostics | undefined
+  obs: GitObservations
 }
 
 export class TaskRuntime {
@@ -3786,6 +3815,25 @@ export class TaskRuntime {
     const cleanupDiagnostics =
       command.action === "audit" ? await this.cleanupAuditDiagnostics(old) : undefined
     const obs = new GitObservations()
+    const ctx: CommandContext = {
+      command,
+      caller,
+      baseVersion,
+      continuedOwner,
+      configuredWorker,
+      ownerSession,
+      preflight,
+      terminalContinuation,
+      terminalRepairContinuation,
+      retainedRepairRecovery,
+      adoptionSeed,
+      retainedVerificationSeed,
+      retainedRepair,
+      reviewInput,
+      startupSettlement,
+      cleanupDiagnostics,
+      obs,
+    }
     const result = await obs.run(
       () =>
         this.store.command(command.requestID, { command, caller }, (db) => {
@@ -3805,409 +3853,10 @@ export class TaskRuntime {
             throw new Error(
               "A descendant adoption is pending; only its adoption or cancellation is allowed",
             )
-          if (command.action === "retained-repair") {
-            if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
-              throw new Error("Retained repair requires the current same-project Architect owner")
-            if (caller !== plan.owner || ownerSession.id !== plan.owner)
-              throw new Error("Retained repair owner changed before admission")
-            if (caller !== retainedRepair.owner || plan.owner !== retainedRepair.owner)
-              throw new Error(
-                "Retained repair owner/control authorization changed before admission",
-              )
-            if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
-              throw new Error(
-                "Retained repair requires a running, accepted or blocked, unintegrated plan",
-              )
-            const input = PlanInput.parse(JSON.parse(plan.body))
-            const task = this.store.repository.get(retainedRepair.taskID)
-            const node = this.store
-              .nodes(plan.id)
-              .find((item) => item.task_id === retainedRepair.taskID)
-            const attempt = this.store
-              .attempts(plan.id)
-              .filter((item) => item.task_id === retainedRepair.taskID)
-              .at(-1)
-            if (
-              !task ||
-              !node ||
-              !attempt ||
-              node.state !== "accepted" ||
-              attempt.id !== retainedRepair.attemptID ||
-              !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
-              attempt.message_id !== retainedRepair.previousMessageID ||
-              attempt.session_id !== retainedRepair.sessionID ||
-              attempt.workspace !== retainedRepair.workspace ||
-              node.artifact !== retainedRepair.artifact ||
-              attempt.artifact !== retainedRepair.artifact ||
-              input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
-              !sameProject(task.provenance.projectID, this.projectID) ||
-              task.provenance.projectDirectory !== this.directory ||
-              this.store.repository.taskDisposition(task.id)
-            )
-              throw new Error(
-                "Retained task, attempt, artifact, or assignment changed before admission",
-              )
-            const policy = JSON.parse(attempt.policy) as {
-              workspaceMode?: unknown
-              model?: unknown
-            }
-            const route = ModelPolicy.safeParse(policy.model)
-            const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-            if (
-              policy.workspaceMode !== "isolated" ||
-              !route.success ||
-              !planRoute?.success ||
-              !this.sameModel(route.data, retainedRepair.model) ||
-              !this.sameModel(planRoute.data, retainedRepair.model)
-            )
-              throw new Error("Retained task execution route changed before admission")
-            if (
-              this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
-              obs.isAncestor(
-                this.directory,
-                retainedRepair.artifact,
-                obs.git(this.directory, ["rev-parse", "HEAD"]),
-              )
-            )
-              throw new Error(
-                "Source-landed task work cannot be repaired in its retained workspace",
-              )
-            if (
-              this.store
-                .effects(plan.id)
-                .some((effect) => ["intended", "uncertain"].includes(effect.state))
-            )
-              throw new Error("Uncertain effects prevent retained repair")
-            this.assertNoDispatchedDependents(plan, task.id, input)
-            if (
-              !existsSync(attempt.workspace) ||
-              obs.git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
-              !this.preparationAllowed(attempt) ||
-              this.store
-                .activeProjectAttempts()
-                .some(
-                  (other) =>
-                    other.id !== attempt.id &&
-                    samePhysicalWorkspace(other.workspace, attempt.workspace),
-                )
-            )
-              throw new Error(
-                "Retained artifact or effective scope reservation changed before admission",
-              )
-
-            this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
-            const cleared = db
-              .query(
-                "UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=? AND state='ready' AND artifact=?",
-              )
-              .run(plan.id, task.id, retainedRepair.artifact).changes
-            const updatedAttempt = db
-              .query(
-                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
-              )
-              .run(
-                retainedRepair.messageID,
-                attempt.id,
-                attempt.state,
-                retainedRepair.previousMessageID,
-              ).changes
-            const updatedPlan = db
-              .query(
-                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
-              )
-              .run(plan.id, baseVersion + 1).changes
-            if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
-              throw new Error("Retained repair authorization changed during atomic admission")
-            this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
-              operationID: retainedRepair.operationID,
-              requestID: command.requestID,
-              owner: caller,
-              expectedVersion: baseVersion,
-              attemptID: attempt.id,
-              previousMessageID: retainedRepair.previousMessageID,
-              nativeInputID: retainedRepair.nativeInputID,
-              nativeAssignmentID: retainedRepair.previousMessageID,
-              previousAttemptState: attempt.state,
-              messageID: retainedRepair.messageID,
-              sessionID: attempt.session_id,
-              workspace: attempt.workspace,
-              route: retainedRepair.model,
-              artifact: retainedRepair.artifact,
-              defect: command.reason,
-              workerObservation: retainedRepair.workerObservation,
-              usageRetained: true,
-              sameAttempt: true,
-              sameSession: true,
-              sameWorkspace: true,
-              sameRoute: true,
-            })
-            return {
-              status: "retained-repair-requested",
-              operationID: retainedRepair.operationID,
-              taskID: task.id,
-              attemptID: attempt.id,
-              artifact: retainedRepair.artifact,
-              messageID: retainedRepair.messageID,
-              version: this.store.plan(plan.id)!.version,
-            }
-          }
-          if (command.action === "amend-scope") {
-            if (
-              !command.taskID ||
-              (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
-              !command.reason
-            )
-              throw new Error("Scope amendment requires task, changed paths and reason")
-            const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-            if (
-              !node ||
-              terminal.has(plan.state) ||
-              ["accepted", "incorporated"].includes(node.state)
-            )
-              throw new Error("Scope amendment requires unfinished work in this plan")
-            const previous = this.store.effectiveWriteScope(node.task_id)
-            const original = this.store.repository.get(node.task_id)!.proposal.writeScope
-            const requestedRemovals = new Set(command.scopeRemovals ?? [])
-            if (original.some((path) => requestedRemovals.has(path)))
-              throw new Error("Scope amendment cannot remove original task scope")
-            if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
-              throw new Error("Scope amendment cannot add and remove the same pattern")
-            const writeScope = [
-              ...new Set([
-                ...previous.filter((path) => !requestedRemovals.has(path)),
-                ...(command.scopeAdditions ?? []),
-              ]),
-            ]
-            if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
-            const additions = writeScope.filter((path) => !previous.includes(path))
-            const removals = previous.filter((path) => !writeScope.includes(path))
-            if (!additions.length && !removals.length)
-              return { status: "scope-unchanged", version: plan.version }
-            const active = ["preparing", "running", "verifying"]
-            const writers = this.store
-              .attempts(plan.id)
-              .filter((a) => a.task_id === node.task_id && active.includes(a.state))
-            if (removals.length && writers.length)
-              throw new Error("Scope removal requires stopped task writers")
-            if (writers.length) {
-              for (const other of this.store.activeProjectAttempts())
-                if (
-                  other.task_id !== node.task_id &&
-                  active.includes(other.state) &&
-                  scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
-                )
-                  throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
-            }
-            this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
-              additions,
-              ...(removals.length ? { removals } : {}),
-              writeScope,
-              reason: command.reason,
-              caller,
-              taskRevision: this.store.repository.get(node.task_id)!.revision,
-            })
-            const instructionUpdates: string[] = []
-            for (const attempt of this.store
-              .attempts(plan.id)
-              .filter(
-                (item) =>
-                  item.task_id === node.task_id &&
-                  (["running", "verifying"].includes(item.state) ||
-                    (item.state === "preparing" &&
-                      this.store
-                        .effects(plan.id)
-                        .some(
-                          (effect) =>
-                            effect.attempt_id === item.id &&
-                            effect.kind === "prompt" &&
-                            effect.state !== "failed",
-                        ))),
-              )) {
-              const payload: WorkerInstruction = {
-                sessionID: attempt.session_id,
-                attemptID: attempt.id,
-                projectID: this.projectID,
-                directory: attempt.workspace,
-                key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
-                text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
-              }
-              const kind = "scope-instruction"
-              const id = fingerprint({
-                planID: plan.id,
-                taskID: node.task_id,
-                attemptID: attempt.id,
-                kind,
-                payload,
-              })
-              // Command authorization and native-update intent commit atomically.
-              // The fenced runtime owns delivery and recovery, including lost replies.
-              db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
-                id,
-                plan.id,
-                node.task_id,
-                attempt.id,
-                kind,
-                JSON.stringify(payload),
-              )
-              this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
-                effectID: id,
-                kind,
-                attemptID: attempt.id,
-              })
-              instructionUpdates.push(id)
-            }
-            db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-            return {
-              status: "scope-amended",
-              version: plan.version + 1,
-              writeScope,
-              instructionUpdates,
-            }
-          }
-          if (command.action === "adopt-descendant") {
-            if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
-              throw new Error(
-                "Descendant adoption requires the current same-project Architect owner",
-              )
-            if (ownerSession.id !== plan.owner || caller !== plan.owner)
-              throw new Error("Descendant adoption owner changed")
-            const adoptionID = crypto.randomUUID()
-            const adoption = this.store.createAdoption({
-              id: adoptionID,
-              planID: plan.id,
-              taskID: adoptionSeed.taskID,
-              writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
-              requestID: command.requestID,
-              owner: plan.owner,
-              expectedVersion: plan.version,
-              taskRevision: adoptionSeed.taskRevision,
-              attemptID: adoptionSeed.attemptID,
-              nodeState: adoptionSeed.nodeState,
-              attemptState: adoptionSeed.attemptState,
-              oldArtifact: adoptionSeed.oldArtifact,
-              descendantCommit: adoptionSeed.descendantCommit,
-              targetBranch: adoptionSeed.targetBranch,
-              landingHead: adoptionSeed.landingHead,
-              reviewedBaseline: adoptionSeed.reviewedBaseline,
-              candidateTree: adoptionSeed.candidateTree,
-              inputFingerprint: adoptionSeed.inputFingerprint,
-              environmentIdentity: adoptionSeed.environmentIdentity,
-              reason: adoptionSeed.reason,
-              combinedArtifact: adoptionSeed.combinedArtifact,
-            })
-            return {
-              status: "descendant-adoption-requested",
-              adoptionID: adoption.id,
-              taskID: adoption.task_id,
-              artifact: adoption.descendant_commit,
-              combinedArtifact: adoption.combined_artifact,
-              version: plan.version + 1,
-            }
-          }
-          if (command.action === "verify-retained") {
-            const seed = retainedVerificationSeed
-            if (!seed || !ownerSession || !this.validArchitect(ownerSession))
-              throw new Error(
-                "Retained verification requires the current same-project Architect owner",
-              )
-            if (
-              plan.revision !== seed.planRevision ||
-              command.projectID !== this.projectID ||
-              command.taskID !== seed.taskID ||
-              command.taskRevision !== seed.taskRevision ||
-              command.attemptID !== seed.attemptID ||
-              command.artifact !== seed.artifact
-            )
-              throw new Error(
-                "Retained verification authorization or candidate changed before reservation",
-              )
-            const taskRow = db
-              .query<{ project_directory: string; body: string }, [string, string]>(
-                "SELECT project_directory,body FROM tasks WHERE project_directory=? AND id=?",
-              )
-              .get(this.directory, seed.taskID)
-            const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
-            const attemptRow = db
-              .query<
-                {
-                  id: string
-                  artifact: string | null
-                  session_id: string
-                  message_id: string
-                  workspace: string
-                },
-                [string, string]
-              >(
-                "SELECT id,artifact,session_id,message_id,workspace FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
-              )
-              .get(plan.id, seed.taskID)
-            const nodeRow = db
-              .query<{ state: string; artifact: string | null }, [string, string]>(
-                "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
-              )
-              .get(plan.id, seed.taskID)
-            if (
-              !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
-              !taskRow ||
-              taskRow.project_directory !== this.directory ||
-              reservedTask?.revision !== seed.taskRevision ||
-              reservedTask.provenance.projectID !== this.projectID ||
-              reservedTask.provenance.projectDirectory !== this.directory ||
-              this.store.repository.taskDisposition(seed.taskID) !== undefined ||
-              !attemptRow ||
-              attemptRow.id !== seed.attemptID ||
-              attemptRow.session_id !== seed.originalSessionID ||
-              attemptRow.message_id !== seed.originalMessageID ||
-              realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
-              (seed.repair
-                ? attemptRow.artifact !== seed.repair.previousArtifact ||
-                  nodeRow?.artifact !== null ||
-                  !this.retainedRepairCandidateCurrent(
-                    plan,
-                    this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
-                    seed.repair,
-                  ) ||
-                  obs.git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
-                : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
-                  (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
-            )
-              throw new Error(
-                "Original task, latest attempt or exact committed candidate changed before reservation",
-              )
-            this.assertRetainedVerificationScopeAvailable(
-              plan.id,
-              seed.taskID,
-              seed.attemptID,
-              this.retainedVerificationWorkspacePath(seed.id, "task"),
-            )
-            const operation = createRetainedVerification(db, this.directory, {
-              ...seed,
-              state: "pending",
-              failureReason: null,
-              cleanupState: "pending",
-              createdAt: this.now(),
-              updatedAt: this.now(),
-            })
-            this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_REQUESTED", {
-              operationID: operation.id,
-              taskRevision: operation.taskRevision,
-              attemptID: operation.attemptID,
-              artifact: operation.artifact,
-              owner: operation.owner,
-              requestID: command.requestID,
-              oldExecutionAndResourceHoldsPreserved: true,
-            })
-            return {
-              status: "retained-verification-requested",
-              operationID: operation.id,
-              taskID: operation.taskID,
-              attemptID: operation.attemptID,
-              artifact: operation.artifact,
-              retainedVerification: { operationID: operation.id },
-              probeBasis: { task: retainedVerificationProbeBasis(operation, "task") },
-              version: plan.version,
-            }
-          }
+          if (command.action === "retained-repair") return this.commandRetainedRepair(db, ctx, plan)
+          if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
+          if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
+          if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
           if (command.action === "integrated")
             return recordIntegration(
               this.store,
@@ -4242,818 +3891,13 @@ export class TaskRuntime {
               version: plan.version,
               ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
             }
-          if (command.action === "settle-startup") {
-            if (!startupSettlement || !command.taskID || !command.reason)
-              throw new Error("Startup settlement evidence is unavailable")
-            this.assertStartupSettlementCurrent(
-              plan,
-              startupSettlement.attempt,
-              startupSettlement.effect,
-              startupSettlement.failure,
-            )
-            const receipt = appendRunnerEffectReceipt(
-              startupSettlement.effect.receipt,
-              startupSettlement.evidence,
-            )
-            const settledEffect = db
-              .query(
-                `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
-             WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
-              )
-              .run(
-                receipt,
-                startupSettlement.effect.id,
-                plan.id,
-                command.taskID,
-                startupSettlement.attempt.id,
-              ).changes
-            if (settledEffect !== 1)
-              throw new Error("Original startup effect changed before settlement")
-            const reason =
-              "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
-            const changed = db
-              .query(
-                `UPDATE runner_plans SET reason=?,version=version+1
-             WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='blocked'`,
-              )
-              .run(
-                reason,
-                plan.id,
-                this.store.repository.projectDirectory,
-                caller,
-                baseVersion,
-              ).changes
-            if (changed !== 1) throw new Error("Plan changed before startup settlement")
-            this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
-              ...startupSettlement.evidence,
-              reason: command.reason,
-              caller,
-            })
-            return {
-              status: "startup-failure-settled-absent",
-              planID: plan.id,
-              taskID: command.taskID,
-              attemptID: startupSettlement.attempt.id,
-              effectID: startupSettlement.effect.id,
-              version: plan.version + 1,
-              evidence: startupSettlement.evidence,
-            }
-          }
-          if (command.action === "reassign") {
-            if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
-              throw new Error("Reassignment needs an unarchived same-project owner")
-            const retiredSource = db
-              .query<{ present: number }, [string, string, string]>(
-                `SELECT 1 AS present FROM runner_architect_renewals r
-             JOIN runner_architect_renewal_plans rp ON rp.renewal_id=r.id
-             WHERE r.previous_session_id=? AND rp.plan_id=? AND rp.transferred=1
-               AND EXISTS(SELECT 1 FROM runner_plans current WHERE current.id=rp.plan_id AND current.owner<>?)
-             LIMIT 1`,
-              )
-              .get(caller, plan.id, caller)
-            if (caller !== plan.owner && retiredSource)
-              throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
-            db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
-              ownerSession.id,
-              plan.id,
-            )
-            this.store.record(plan.id, null, "OWNER_REASSIGNED", {
-              from: plan.owner,
-              to: ownerSession.id,
-              reason: command.reason,
-            })
-            return { status: "reassigned", version: plan.version + 1 }
-          }
-          if (command.action === "cancel") {
-            if (terminal.has(plan.state)) throw new Error("Plan has ended")
-            this.store.cancelAdoptions(plan.id, "Cancellation requested")
-            for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
-              saveRetainedVerification(db, {
-                ...operation,
-                state: "cancelled",
-                failureReason: "Plan cancellation requested",
-                updatedAt: this.now(),
-              })
-              db.query(
-                `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
-             WHERE operation_id=? AND state IN ('creating','active')`,
-              ).run(this.now(), operation.id)
-              this.retainedVerificationAborts.get(operation.id)?.abort()
-              this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
-                operationID: operation.id,
-                source: "plan-cancellation",
-                previousState: operation.state,
-                previousFailureReason: operation.failureReason,
-                reason: "Plan cancellation requested",
-                oldExecutionAndResourceHoldsPreserved: true,
-              })
-            }
-            // Stop admission now. In-flight work remains running until interruption is proven.
-            db.query(
-              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
-            ).run(command.reason ?? "Cancellation requested", plan.id)
-            for (const node of this.store.nodes(plan.id))
-              if (
-                !terminal.has(node.state) &&
-                node.state !== "running" &&
-                node.state !== "verifying"
-              )
-                this.store.move(plan.id, node.task_id, "CANCEL")
-            this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
-            return { status: "cancelling", version: this.store.plan(plan.id)!.version }
-          }
-          if (command.action === "resume" || command.action === "retry") {
-            const retry = command.action === "retry"
-            if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-            if (!command.taskID) {
-              if (retry || !command.reason?.trim())
-                throw new Error("Resume requires an exact task attempt or a blocked combined check")
-              if (
-                plan.state !== "blocked" ||
-                plan.artifact !== null ||
-                !this.validArchitect(ownerSession)
-              )
-                throw new Error("Combined verification resume requires a blocked, unaccepted plan")
-              if (
-                verificationActivitiesForDatabase(this.store.repository.path).some(
-                  (activity) =>
-                    activity.metadata.planID === plan.id && activity.state === "running",
-                )
-              )
-                throw new Error(
-                  "A live verification activity prevents combined verification resume",
-                )
-              // A combined check without a conclusive receipt is simply re-run.
-              const superseded = this.store
-                .effects(plan.id)
-                .filter(
-                  (effect) =>
-                    effect.task_id === null &&
-                    effect.kind.startsWith("graph-verify:") &&
-                    ["intended", "uncertain"].includes(effect.state),
-                )
-              for (const effect of superseded)
-                db.query(
-                  "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state IN ('intended','uncertain')",
-                ).run(effect.id)
-              const changedPlan = db
-                .query(
-                  `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
-               WHERE id=? AND version=? AND state='blocked' AND artifact IS NULL`,
-                )
-                .run(plan.id, baseVersion).changes
-              if (changedPlan !== 1) throw new Error("Combined verification plan changed")
-              const resumed = this.store.plan(plan.id)!
-              this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-                caller,
-                verificationEpoch: resumed.version,
-                continuation: "combined-verification",
-                supersededEffectIDs: superseded.map((effect) => effect.id),
-              })
-              return {
-                status: "combined-verification-resumed",
-                planID: plan.id,
-                supersededEffectIDs: superseded.map((effect) => effect.id),
-                verificationEpoch: resumed.version,
-                version: resumed.version,
-              }
-            }
-            if (!command.taskID || !command.reason)
-              throw new Error("Resume requires taskID and reason")
-            const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
-            const attempt = this.store
-              .attempts(plan.id)
-              .filter((a) => a.task_id === command.taskID)
-              .at(-1)
-            if (command.attemptID && command.attemptID !== attempt?.id)
-              throw new Error("Command attemptID does not match the exact latest task attempt")
-            if (retainedRepairRecovery) {
-              const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
-              const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-                (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
-              )
-              if (
-                retry ||
-                !attempt ||
-                !node ||
-                retainedRepairRecovery.taskID !== command.taskID ||
-                retainedRepairRecovery.taskID !== attempt.task_id ||
-                retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
-                recoveryTask?.id !== retainedRepairRecovery.taskID ||
-                recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
-                recoveryTask.provenance.projectID !== this.projectID ||
-                recoveryTask.provenance.projectDirectory !== this.directory ||
-                this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !==
-                  undefined ||
-                command.taskID !== retainedRepairRecovery.taskID ||
-                command.attemptID !== retainedRepairRecovery.attemptID ||
-                !this.validArchitect(ownerSession) ||
-                !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
-              )
-                throw new Error("Retained repair recovery authorization changed before reservation")
-              const resumedMessageID = messageID()
-              this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
-              const updatedAttempt = db
-                .query(
-                  "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
-                )
-                .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
-              const updatedPlan = db
-                .query(
-                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
-                )
-                .run(
-                  plan.id,
-                  RETAINED_REPAIR_FENCE_FAILURE_REASON,
-                  retainedRepairRecovery.planVersion + 1,
-                ).changes
-              if (updatedAttempt !== 1 || updatedPlan !== 1)
-                throw new Error(
-                  "Retained repair recovery reservation changed during atomic admission",
-                )
-              this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
-                attemptID: attempt.id,
-                reason: command.reason,
-                usageRetained: true,
-                budget: null,
-                previousMessageID: retainedRepairRecovery.failedMessageID,
-                messageID: resumedMessageID,
-                terminalInputID: retainedRepairRecovery.interruptedInputID,
-                terminalOutcome: "interrupted",
-                interruptedInputID: retainedRepairRecovery.interruptedInputID,
-                retainedRepairRecovery: {
-                  schema: "lazers-retained-repair-recovery/v1",
-                  operationID: retainedRepairRecovery.operationID,
-                  failedMessageID: retainedRepairRecovery.failedMessageID,
-                  interruptedInputID: retainedRepairRecovery.interruptedInputID,
-                  owner: retainedRepairRecovery.owner,
-                  failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
-                  blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
-                  cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
-                },
-              })
-              return {
-                status: "retained-repair-recovered",
-                version: this.store.plan(plan.id)!.version,
-                taskID: attempt.task_id,
-                attemptID: attempt.id,
-                messageID: resumedMessageID,
-              }
-            }
-            if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
-              const interrupted = this.interruptedChecksFor(plan, attempt)
-              if (interrupted.length) {
-                if (
-                  plan.state !== "blocked" ||
-                  !this.validArchitect(ownerSession) ||
-                  command.attemptID !== attempt.id ||
-                  command.workspaceMode !== undefined ||
-                  command.baseCommit !== undefined
-                )
-                  throw new Error(
-                    "Interrupted verification resume requires its exact preserved attempt",
-                  )
-                const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
-                if (
-                  this.store
-                    .effects(plan.id)
-                    .some(
-                      (effect) =>
-                        ["intended", "uncertain"].includes(effect.state) &&
-                        !interruptedIDs.has(effect.id),
-                    )
-                )
-                  throw new Error("Reconcile other uncertain effects first")
-                for (const effect of interrupted)
-                  db.query(
-                    "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
-                  ).run(effect.id)
-                const verificationEpoch =
-                  (this.store.latestTransition<{ verificationEpoch: number }>(
-                    plan.id,
-                    attempt.task_id,
-                    "VERIFICATION_RESUMED",
-                  )?.verificationEpoch ?? 0) + 1
-                this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
-                  attemptID: attempt.id,
-                  interruptedEffectIDs: [...interruptedIDs],
-                  verificationEpoch,
-                  reason: command.reason,
-                })
-                db.query(
-                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-                ).run(plan.id)
-                return {
-                  status: "verification-resumed",
-                  version: this.store.plan(plan.id)!.version,
-                  attemptID: attempt.id,
-                }
-              }
-            }
-            const continuingTerminalWorker = Boolean(
-              !retry &&
-              terminalContinuation &&
-              attempt?.id === terminalContinuation.attemptID &&
-              attempt.message_id === terminalContinuation.messageID,
-            )
-            if (continuingTerminalWorker) {
-              const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
-              if (
-                (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
-                (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
-              )
-                throw new Error("Terminal continuation preserves its workspace and baseline")
-              const problem = this.terminalWorkerContinuationProblem(
-                plan,
-                command,
-                caller,
-                ownerSession,
-                terminalContinuation!.worker,
-              )
-              if (problem) throw new Error(problem)
-              if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
-                throw new Error("Native terminal observation changed before continuation admission")
-              const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-                plan.id,
-                attempt!.task_id,
-              )
-              const currentRepair = this.retainedRepairForAttempt(attempt!)
-              if (
-                (latestRepair?.attemptID === attempt!.id &&
-                  (!terminalRepairContinuation ||
-                    !currentRepair ||
-                    currentRepair.operationID !== terminalRepairContinuation.operationID)) ||
-                (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
-              )
-                throw new Error("Retained repair continuation authority changed before reservation")
-            }
-            if (retry && node?.state === "cancelled" && !attempt) {
-              if (
-                !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
-                plan.artifact !== null
-              )
-                throw new Error(
-                  "Only an admitted, nonintegrated plan can requeue an unstarted task",
-                )
-              if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
-                throw new Error("Foreign owner session")
-              if (
-                this.store
-                  .effects(plan.id)
-                  .some((effect) => ["intended", "uncertain"].includes(effect.state))
-              )
-                throw new Error("Reconcile uncertain effects first")
-
-              const input = PlanInput.parse(JSON.parse(plan.body))
-              if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
-                if (this.store.attempts(plan.id).length)
-                  throw new Error("A plan with prior attempts cannot change its unstarted baseline")
-                const baseCommit = obs.git(this.directory, [
-                  "rev-parse",
-                  `${command.baseCommit}^{commit}`,
-                ])
-                if (baseCommit !== command.baseCommit)
-                  throw new Error("An explicit baseline must identify a commit")
-                obs.git(this.directory, [
-                  "merge-base",
-                  "--is-ancestor",
-                  input.baseCommit,
-                  baseCommit,
-                ])
-                this.requireBaseReachable(preflight.bases, baseCommit)
-                this.store.revisePlan(
-                  plan,
-                  PlanInput.parse({ ...input, baseCommit }),
-                  "UNSTARTED_BASELINE_SELECTED",
-                  { from: input.baseCommit, baseCommit, caller, reason: command.reason },
-                )
-              }
-              this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-              if (plan.state !== "running")
-                db.query(
-                  "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-                ).run(plan.id)
-              this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
-                caller,
-                reason: command.reason,
-              })
-              return { status: "requeued", version: this.store.plan(plan.id)!.version }
-            }
-            if (
-              !["blocked", "cancelled", "failed"].includes(plan.state) ||
-              !node ||
-              !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
-                node.state,
-              ) ||
-              !attempt ||
-              (!continuingTerminalWorker &&
-                !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
-            )
-              throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
-            if (
-              this.store
-                .effects(plan.id)
-                .some((effect) => ["intended", "uncertain"].includes(effect.state))
-            )
-              throw new Error("Reconcile uncertain effects first")
-
-            const settledStartupEffect = attempt
-              ? this.settledStartupEffect(plan.id, attempt)
-              : undefined
-            if (settledStartupEffect) {
-              const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
-              if (
-                retry ||
-                !command.attemptID ||
-                command.attemptID !== attempt!.id ||
-                attempt!.state !== "preparing" ||
-                plan.state !== "blocked" ||
-                !this.validArchitect(ownerSession) ||
-                !settlement
-              )
-                throw new Error(
-                  "Startup recovery requires explicit resume of the exact settled attempt",
-                )
-              const workerEffects = this.store
-                .effects(plan.id)
-                .some(
-                  (effect) =>
-                    effect.attempt_id === attempt!.id &&
-                    (effect.kind === "session" ||
-                      effect.kind === "prompt" ||
-                      effect.kind.startsWith("verify:") ||
-                      effect.kind.startsWith("graph-verify:")),
-                )
-              if (
-                workerEffects ||
-                this.hasMeaningfulWorkerProgress(attempt!.id) ||
-                !this.preparationAllowed(attempt!)
-              )
-                throw new Error(
-                  "Startup recovery cannot continue after worker effects or conflicting ownership",
-                )
-
-              const recoveryID = crypto.randomUUID()
-              const authorization: StartupRecoveryAuthorization = {
-                schema: "lazers-worktree-startup-authorization/v1",
-                recoveryID,
-                sourceEffectID: settledStartupEffect.id,
-                settlementRequestID: settlement.requestID,
-                requestID: command.requestID,
-                owner: plan.owner,
-                planVersion: plan.version + 1,
-                planRevision: plan.revision,
-                taskID: attempt!.task_id,
-                attemptID: attempt!.id,
-                sessionID: attempt!.session_id,
-                messageID: attempt!.message_id,
-                workspace: attempt!.workspace,
-                base: attempt!.base_commit,
-                policy: attempt!.policy,
-              }
-              db.query(
-                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
-              ).run(plan.id, plan.version)
-              this.store.record(
-                plan.id,
-                attempt!.task_id,
-                "STARTUP_RECOVERY_AUTHORIZED",
-                authorization,
-              )
-              this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
-                attemptID: attempt!.id,
-                reason: command.reason,
-                usageRetained: true,
-                budget: null,
-                startupRecoveryID: recoveryID,
-                sourceEffectID: settledStartupEffect.id,
-              })
-              return {
-                status: "startup-recovery-authorized",
-                version: plan.version + 1,
-                attemptID: attempt!.id,
-                recoveryID,
-              }
-            }
-
-            if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-            else if (node.state !== "running")
-              this.store.move(plan.id, node.task_id, "RESUME", command.reason)
-            const planInput = PlanInput.parse(JSON.parse(plan.body))
-            const sharedMode =
-              command.workspaceMode === "shared" ||
-              (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
-            let selectedBaseline: string | null = null
-            if (
-              !continuingTerminalWorker &&
-              (command.workspaceMode === "shared" ||
-                (retry && sharedMode && command.baseCommit !== undefined))
-            ) {
-              const source = command.baseCommit ?? obs.git(this.directory, ["rev-parse", "HEAD"])
-              if (command.baseCommit !== undefined)
-                this.requireBaseReachable(preflight.bases, source)
-              if (!retry)
-                db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
-                  this.directory,
-                  source,
-                  attempt.id,
-                )
-              const revised = PlanInput.parse({
-                ...JSON.parse(plan.body),
-                workspaceMode: "shared",
-                baseCommit: source,
-              })
-              db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
-                JSON.stringify(revised),
-                plan.id,
-              )
-              db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
-                plan.id,
-                plan.revision + 1,
-                JSON.stringify(revised),
-                plan.owner,
-                Date.now(),
-              )
-              this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
-                attemptID: attempt.id,
-                from: attempt.workspace,
-                directory: this.directory,
-                source,
-                explicitBaseline: retry && command.baseCommit !== undefined,
-                mode: "shared",
-                reason: command.reason,
-              })
-              if (retry && command.baseCommit !== undefined) selectedBaseline = source
-            }
-            let resumedMessageID: string | undefined
-            if (retry)
-              db.query(
-                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
-              ).run(attempt.id)
-            else {
-              resumedMessageID = messageID()
-              db.query(
-                "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
-              ).run(resumedMessageID, attempt.id)
-            }
-            db.query(
-              "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-            ).run(plan.id)
-            this.store.record(
-              plan.id,
-              node.task_id,
-              retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED",
-              {
-                attemptID: attempt.id,
-                reason: command.reason,
-                usageRetained: true,
-                budget: null,
-                ...(resumedMessageID
-                  ? {
-                      previousMessageID: attempt.message_id,
-                      messageID: resumedMessageID,
-                    }
-                  : {}),
-                ...(continuingTerminalWorker
-                  ? {
-                      terminalInputID: terminalContinuation!.inputID,
-                      terminalOutcome: terminalContinuation!.worker.outcome,
-                      ...(terminalContinuation!.worker.outcome === "interrupted"
-                        ? { interruptedInputID: terminalContinuation!.inputID }
-                        : {}),
-                    }
-                  : {}),
-                ...(continuingTerminalWorker && terminalRepairContinuation
-                  ? {
-                      retainedRepairContinuation: {
-                        schema: "lazers-retained-repair-continuation/v1",
-                        operationID: terminalRepairContinuation.operationID,
-                        owner: terminalRepairContinuation.owner,
-                      },
-                    }
-                  : {}),
-                ...(retry ? { selectedBaseline } : {}),
-              },
-            )
-            return {
-              status: retry ? "retrying" : "resuming",
-              version: this.store.plan(plan.id)!.version,
-            }
-          }
-          if (command.action === "reconcile") {
-            if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-            let existingReviewInput = false
-            if (reviewInput) {
-              const { binding, evidence } = reviewInput
-              if (
-                !this.validArchitect(ownerSession) ||
-                ownerSession.id !== binding.ownerSessionID ||
-                binding.planID !== plan.id ||
-                binding.expectedPlanVersion !== baseVersion ||
-                binding.commandRequestID !== command.requestID ||
-                !["running", "blocked"].includes(plan.state)
-              )
-                throw new Error("Review input reconciliation authorization or plan version changed")
-
-              const latest = this.store
-                .attempts(plan.id)
-                .filter((attempt) => attempt.task_id === binding.taskID)
-                .at(-1)
-              const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
-              const task = this.store.repository.get(binding.taskID)
-              if (
-                !latest ||
-                latest.id !== binding.attemptID ||
-                !["running", "verifying"].includes(latest.state) ||
-                latest.session_id !== binding.sessionID ||
-                latest.workspace !== binding.workspace ||
-                latest.message_id !== binding.assignedMessageID ||
-                !node ||
-                node.state !== latest.state ||
-                !task ||
-                task.provenance.projectID !== binding.projectID ||
-                task.provenance.projectDirectory !== binding.projectDirectory ||
-                task.revision !==
-                  PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-                    (item) => item.taskID === binding.taskID,
-                  )?.revision
-              )
-                throw new Error("Review input worker assignment changed during native observation")
-
-              const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
-              if (
-                policy.providerID !== binding.model.providerID ||
-                policy.id !== binding.model.id ||
-                policy.variant !== binding.model.variant
-              )
-                throw new Error("Review input worker route changed during native observation")
-
-              const aliases = db
-                .query<{ id: number; payload: string }, [string, string]>(
-                  `SELECT id,payload FROM runner_transitions
-               WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
-               ORDER BY id`,
-                )
-                .all(plan.id, binding.taskID)
-              for (const row of aliases) {
-                let prior: ReturnType<typeof parseReviewInputAlias>
-                try {
-                  prior = parseReviewInputAlias(JSON.parse(row.payload))
-                } catch {
-                  prior = undefined
-                }
-                if (!prior || prior.attemptID !== binding.attemptID) continue
-                if (prior.reviewInputID !== binding.reviewInputID) continue
-                if (
-                  !matchesReviewInputAlias(prior, {
-                    projectDirectory: binding.projectDirectory,
-                    projectID: binding.projectID,
-                    planID: binding.planID,
-                    taskID: binding.taskID,
-                    attemptID: binding.attemptID,
-                    sessionID: binding.sessionID,
-                    workspace: binding.workspace,
-                    assignedMessageID: binding.assignedMessageID,
-                    reviewInputID: binding.reviewInputID,
-                  }) ||
-                  prior.reviewRequestID !== evidence.reviewRequestID
-                )
-                  throw new Error(
-                    "Review input already has a different durable lineage relationship",
-                  )
-                existingReviewInput = true
-                break
-              }
-            }
-            if (
-              this.store
-                .effects(plan.id)
-                .some(
-                  (e) => ["intended", "uncertain"].includes(e.state) && !isRerunnableEffect(e.kind),
-                )
-            )
-              return {
-                status: "blocked",
-                reason: "Uncertain effects require conclusive host/artifact evidence",
-                version: plan.version,
-              }
-            if (plan.state === "blocked") {
-              db.query(
-                "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-              ).run(plan.id)
-              for (const node of this.store.nodes(plan.id))
-                if (
-                  node.state === "blocked" &&
-                  !this.store.attempts(plan.id).some((a) => a.task_id === node.task_id)
-                )
-                  this.store.move(plan.id, node.task_id, "RECONCILE")
-            }
-            if (reviewInput && !existingReviewInput) {
-              const { binding, evidence } = reviewInput
-              this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
-                schemaVersion: 1,
-                kind: "owner-reviewed-native-input-alias",
-                source: "observed-native-review-input",
-                runtimeSentMessage: false,
-                projectDirectory: binding.projectDirectory,
-                projectID: binding.projectID,
-                planID: binding.planID,
-                taskID: binding.taskID,
-                attemptID: binding.attemptID,
-                sessionID: binding.sessionID,
-                workspace: binding.workspace,
-                assignedMessageID: binding.assignedMessageID,
-                reviewInputID: binding.reviewInputID,
-                reviewRequestID: evidence.reviewRequestID,
-                ownerSessionID: binding.ownerSessionID,
-                commandRequestID: binding.commandRequestID,
-                expectedPlanVersion: binding.expectedPlanVersion,
-                model: binding.model,
-                input: evidence.input,
-                observation: evidence.observation,
-              })
-            }
-            this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-              caller,
-              verificationEpoch: this.store.plan(plan.id)!.version,
-              ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
-            })
-            return {
-              status: "reconciling",
-              version: this.store.plan(plan.id)!.version,
-              ...(reviewInput
-                ? {
-                    reviewInputID: reviewInput.binding.reviewInputID,
-                    relationshipRecorded: !existingReviewInput,
-                  }
-                : {}),
-            }
-          }
-          if (plan.state !== "draft" && plan.state !== "blocked")
-            throw new Error("Execution already requested or ended")
-          if (this.store.attempts(plan.id).length)
-            throw new Error(
-              "Existing execution must be reconciled; admission cannot replace its policy",
-            )
-          if (!ownerSession || ownerSession.projectID !== this.projectID)
-            throw new Error("An Architect session of this project must command the plan")
-          const proposal = PlanInput.parse(JSON.parse(plan.body))
-          const selectedModel = proposal.workerModel ?? configuredWorker
-          const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
-          const nodeRouteDecisions = proposal.nodes.map((node) =>
-            node.persona && proposal.workerAgent !== "auditor"
-              ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
-              : null,
-          )
-          const everyNodeHasRoute = proposal.nodes.every((node, index) =>
-            node.persona && proposal.workerAgent !== "auditor"
-              ? nodeRouteDecisions[index]?.status === "resolved"
-              : selectedModel !== undefined,
-          )
-          if (!everyNodeHasRoute)
-            return this.hold(
-              plan,
-              "Select an implementor model in native OpenCode agent configuration",
-            )
-          const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
-          try {
-            if (
-              obs.git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
-              proposal.baseCommit
-            )
-              throw new Error("Base mismatch")
-          } catch (error) {
-            if (error instanceof ObservationRequired) throw error
-            return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
-          }
-          const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
-          const conflicts = audit.findings
-          if (conflicts.length)
-            return this.hold(
-              plan,
-              `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
-            )
-          db.query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
-          ).run(model ? JSON.stringify(model) : null, plan.id)
-          this.store.record(plan.id, null, "ADMITTED", {
-            model,
-            modelSource: proposal.workerModel
-              ? "explicit-plan-selection"
-              : configuredWorker
-                ? "native-agent-selection"
-                : "persona-mapping-selection",
-            auditWatermark: audit.watermark,
-            source: proposal.baseCommit,
-            enforcement: {
-              budget: "unconfigured; historical proposed limits are not execution policy",
-              tokens: "measured usage only",
-              cost: "API-equivalent price unavailable until resolved; never treated as zero",
-              tools: "measured usage only",
-              repairs: "one bounded verification repair by default",
-            },
-          })
-          return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
+          if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
+          if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
+          if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
+          if (command.action === "resume" || command.action === "retry")
+            return this.commandResumeOrRetry(db, ctx, plan)
+          if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
+          return this.commandRun(db, ctx, plan)
         }),
       () => this.assertSchedulerActive(),
     )
@@ -5070,7 +3914,8 @@ export class TaskRuntime {
       (command.action === "amend-scope" &&
         result?.status === "scope-amended" &&
         "instructionUpdates" in result &&
-        (result.instructionUpdates?.length ?? 0) > 0) ||
+        Array.isArray(result.instructionUpdates) &&
+        result.instructionUpdates.length > 0) ||
       (command.action === "retained-repair" && result?.status === "retained-repair-requested")
     )
       this.wakeScheduler?.()
@@ -5081,6 +3926,1226 @@ export class TaskRuntime {
     )
       await this.requestTick()
     return result
+  }
+
+  private commandRetainedRepair(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, baseVersion, ownerSession, retainedRepair, obs } = ctx
+    if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
+      throw new Error("Retained repair requires the current same-project Architect owner")
+    if (caller !== plan.owner || ownerSession.id !== plan.owner)
+      throw new Error("Retained repair owner changed before admission")
+    if (caller !== retainedRepair.owner || plan.owner !== retainedRepair.owner)
+      throw new Error("Retained repair owner/control authorization changed before admission")
+    if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
+      throw new Error("Retained repair requires a running, accepted or blocked, unintegrated plan")
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    const task = this.store.repository.get(retainedRepair.taskID)
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === retainedRepair.taskID)
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((item) => item.task_id === retainedRepair.taskID)
+      .at(-1)
+    if (
+      !task ||
+      !node ||
+      !attempt ||
+      node.state !== "accepted" ||
+      attempt.id !== retainedRepair.attemptID ||
+      !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
+      attempt.message_id !== retainedRepair.previousMessageID ||
+      attempt.session_id !== retainedRepair.sessionID ||
+      attempt.workspace !== retainedRepair.workspace ||
+      node.artifact !== retainedRepair.artifact ||
+      attempt.artifact !== retainedRepair.artifact ||
+      input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
+      !sameProject(task.provenance.projectID, this.projectID) ||
+      task.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(task.id)
+    )
+      throw new Error("Retained task, attempt, artifact, or assignment changed before admission")
+    const policy = JSON.parse(attempt.policy) as {
+      workspaceMode?: unknown
+      model?: unknown
+    }
+    const route = ModelPolicy.safeParse(policy.model)
+    const planRoute = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
+    if (
+      policy.workspaceMode !== "isolated" ||
+      !route.success ||
+      !planRoute?.success ||
+      !this.sameModel(route.data, retainedRepair.model) ||
+      !this.sameModel(planRoute.data, retainedRepair.model)
+    )
+      throw new Error("Retained task execution route changed before admission")
+    if (
+      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
+      obs.isAncestor(
+        this.directory,
+        retainedRepair.artifact,
+        obs.git(this.directory, ["rev-parse", "HEAD"]),
+      )
+    )
+      throw new Error("Source-landed task work cannot be repaired in its retained workspace")
+    if (
+      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
+      throw new Error("Uncertain effects prevent retained repair")
+    this.assertNoDispatchedDependents(plan, task.id, input)
+    if (
+      !existsSync(attempt.workspace) ||
+      obs.git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
+      !this.preparationAllowed(attempt) ||
+      this.store
+        .activeProjectAttempts()
+        .some(
+          (other) =>
+            other.id !== attempt.id && samePhysicalWorkspace(other.workspace, attempt.workspace),
+        )
+    )
+      throw new Error("Retained artifact or effective scope reservation changed before admission")
+
+    this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
+    const cleared = db
+      .query(
+        "UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=? AND state='ready' AND artifact=?",
+      )
+      .run(plan.id, task.id, retainedRepair.artifact).changes
+    const updatedAttempt = db
+      .query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
+      )
+      .run(
+        retainedRepair.messageID,
+        attempt.id,
+        attempt.state,
+        retainedRepair.previousMessageID,
+      ).changes
+    const updatedPlan = db
+      .query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
+      )
+      .run(plan.id, baseVersion + 1).changes
+    if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
+      throw new Error("Retained repair authorization changed during atomic admission")
+    this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
+      operationID: retainedRepair.operationID,
+      requestID: command.requestID,
+      owner: caller,
+      expectedVersion: baseVersion,
+      attemptID: attempt.id,
+      previousMessageID: retainedRepair.previousMessageID,
+      nativeInputID: retainedRepair.nativeInputID,
+      nativeAssignmentID: retainedRepair.previousMessageID,
+      previousAttemptState: attempt.state,
+      messageID: retainedRepair.messageID,
+      sessionID: attempt.session_id,
+      workspace: attempt.workspace,
+      route: retainedRepair.model,
+      artifact: retainedRepair.artifact,
+      defect: command.reason,
+      workerObservation: retainedRepair.workerObservation,
+      usageRetained: true,
+      sameAttempt: true,
+      sameSession: true,
+      sameWorkspace: true,
+      sameRoute: true,
+    })
+    return {
+      status: "retained-repair-requested",
+      operationID: retainedRepair.operationID,
+      taskID: task.id,
+      attemptID: attempt.id,
+      artifact: retainedRepair.artifact,
+      messageID: retainedRepair.messageID,
+      version: this.store.plan(plan.id)!.version,
+    }
+  }
+
+  private commandAmendScope(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller } = ctx
+    if (
+      !command.taskID ||
+      (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
+      !command.reason
+    )
+      throw new Error("Scope amendment requires task, changed paths and reason")
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
+    if (!node || terminal.has(plan.state) || ["accepted", "incorporated"].includes(node.state))
+      throw new Error("Scope amendment requires unfinished work in this plan")
+    const previous = this.store.effectiveWriteScope(node.task_id)
+    const original = this.store.repository.get(node.task_id)!.proposal.writeScope
+    const requestedRemovals = new Set(command.scopeRemovals ?? [])
+    if (original.some((path) => requestedRemovals.has(path)))
+      throw new Error("Scope amendment cannot remove original task scope")
+    if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
+      throw new Error("Scope amendment cannot add and remove the same pattern")
+    const writeScope = [
+      ...new Set([
+        ...previous.filter((path) => !requestedRemovals.has(path)),
+        ...(command.scopeAdditions ?? []),
+      ]),
+    ]
+    if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
+    const additions = writeScope.filter((path) => !previous.includes(path))
+    const removals = previous.filter((path) => !writeScope.includes(path))
+    if (!additions.length && !removals.length)
+      return { status: "scope-unchanged", version: plan.version }
+    const active = ["preparing", "running", "verifying"]
+    const writers = this.store
+      .attempts(plan.id)
+      .filter((a) => a.task_id === node.task_id && active.includes(a.state))
+    if (removals.length && writers.length)
+      throw new Error("Scope removal requires stopped task writers")
+    if (writers.length) {
+      for (const other of this.store.activeProjectAttempts())
+        if (
+          other.task_id !== node.task_id &&
+          active.includes(other.state) &&
+          scopePatternsConflict(writeScope, this.store.effectiveWriteScope(other.task_id))
+        )
+          throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
+    }
+    this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
+      additions,
+      ...(removals.length ? { removals } : {}),
+      writeScope,
+      reason: command.reason,
+      caller,
+      taskRevision: this.store.repository.get(node.task_id)!.revision,
+    })
+    const instructionUpdates: string[] = []
+    for (const attempt of this.store
+      .attempts(plan.id)
+      .filter(
+        (item) =>
+          item.task_id === node.task_id &&
+          (["running", "verifying"].includes(item.state) ||
+            (item.state === "preparing" &&
+              this.store
+                .effects(plan.id)
+                .some(
+                  (effect) =>
+                    effect.attempt_id === item.id &&
+                    effect.kind === "prompt" &&
+                    effect.state !== "failed",
+                ))),
+      )) {
+      const payload: WorkerInstruction = {
+        sessionID: attempt.session_id,
+        attemptID: attempt.id,
+        projectID: this.projectID,
+        directory: attempt.workspace,
+        key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
+        text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
+      }
+      const kind = "scope-instruction"
+      const id = fingerprint({
+        planID: plan.id,
+        taskID: node.task_id,
+        attemptID: attempt.id,
+        kind,
+        payload,
+      })
+      // Command authorization and native-update intent commit atomically.
+      // The fenced runtime owns delivery and recovery, including lost replies.
+      db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
+        id,
+        plan.id,
+        node.task_id,
+        attempt.id,
+        kind,
+        JSON.stringify(payload),
+      )
+      this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
+        effectID: id,
+        kind,
+        attemptID: attempt.id,
+      })
+      instructionUpdates.push(id)
+    }
+    db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
+    return {
+      status: "scope-amended",
+      version: plan.version + 1,
+      writeScope,
+      instructionUpdates,
+    }
+  }
+
+  private commandAdoptDescendant(ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, ownerSession, adoptionSeed } = ctx
+    if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
+      throw new Error("Descendant adoption requires the current same-project Architect owner")
+    if (ownerSession.id !== plan.owner || caller !== plan.owner)
+      throw new Error("Descendant adoption owner changed")
+    const adoptionID = crypto.randomUUID()
+    const adoption = this.store.createAdoption({
+      id: adoptionID,
+      planID: plan.id,
+      taskID: adoptionSeed.taskID,
+      writeScope: this.store.effectiveWriteScope(adoptionSeed.taskID),
+      requestID: command.requestID,
+      owner: plan.owner,
+      expectedVersion: plan.version,
+      taskRevision: adoptionSeed.taskRevision,
+      attemptID: adoptionSeed.attemptID,
+      nodeState: adoptionSeed.nodeState,
+      attemptState: adoptionSeed.attemptState,
+      oldArtifact: adoptionSeed.oldArtifact,
+      descendantCommit: adoptionSeed.descendantCommit,
+      targetBranch: adoptionSeed.targetBranch,
+      landingHead: adoptionSeed.landingHead,
+      reviewedBaseline: adoptionSeed.reviewedBaseline,
+      candidateTree: adoptionSeed.candidateTree,
+      inputFingerprint: adoptionSeed.inputFingerprint,
+      environmentIdentity: adoptionSeed.environmentIdentity,
+      reason: adoptionSeed.reason,
+      combinedArtifact: adoptionSeed.combinedArtifact,
+    })
+    return {
+      status: "descendant-adoption-requested",
+      adoptionID: adoption.id,
+      taskID: adoption.task_id,
+      artifact: adoption.descendant_commit,
+      combinedArtifact: adoption.combined_artifact,
+      version: plan.version + 1,
+    }
+  }
+
+  private commandVerifyRetained(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, ownerSession, retainedVerificationSeed, obs } = ctx
+    const seed = retainedVerificationSeed
+    if (!seed || !ownerSession || !this.validArchitect(ownerSession))
+      throw new Error("Retained verification requires the current same-project Architect owner")
+    if (
+      plan.revision !== seed.planRevision ||
+      command.projectID !== this.projectID ||
+      command.taskID !== seed.taskID ||
+      command.taskRevision !== seed.taskRevision ||
+      command.attemptID !== seed.attemptID ||
+      command.artifact !== seed.artifact
+    )
+      throw new Error("Retained verification authorization or candidate changed before reservation")
+    const taskRow = db
+      .query<{ project_directory: string; body: string }, [string, string]>(
+        "SELECT project_directory,body FROM tasks WHERE project_directory=? AND id=?",
+      )
+      .get(this.directory, seed.taskID)
+    const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
+    const attemptRow = db
+      .query<
+        {
+          id: string
+          artifact: string | null
+          session_id: string
+          message_id: string
+          workspace: string
+        },
+        [string, string]
+      >(
+        "SELECT id,artifact,session_id,message_id,workspace FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
+      )
+      .get(plan.id, seed.taskID)
+    const nodeRow = db
+      .query<{ state: string; artifact: string | null }, [string, string]>(
+        "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
+      )
+      .get(plan.id, seed.taskID)
+    if (
+      !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
+      !taskRow ||
+      taskRow.project_directory !== this.directory ||
+      reservedTask?.revision !== seed.taskRevision ||
+      reservedTask.provenance.projectID !== this.projectID ||
+      reservedTask.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(seed.taskID) !== undefined ||
+      !attemptRow ||
+      attemptRow.id !== seed.attemptID ||
+      attemptRow.session_id !== seed.originalSessionID ||
+      attemptRow.message_id !== seed.originalMessageID ||
+      realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
+      (seed.repair
+        ? attemptRow.artifact !== seed.repair.previousArtifact ||
+          nodeRow?.artifact !== null ||
+          !this.retainedRepairCandidateCurrent(
+            plan,
+            this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
+            seed.repair,
+          ) ||
+          obs.git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
+        : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
+          (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
+    )
+      throw new Error(
+        "Original task, latest attempt or exact committed candidate changed before reservation",
+      )
+    this.assertRetainedVerificationScopeAvailable(
+      plan.id,
+      seed.taskID,
+      seed.attemptID,
+      this.retainedVerificationWorkspacePath(seed.id, "task"),
+    )
+    const operation = createRetainedVerification(db, this.directory, {
+      ...seed,
+      state: "pending",
+      failureReason: null,
+      cleanupState: "pending",
+      createdAt: this.now(),
+      updatedAt: this.now(),
+    })
+    this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_REQUESTED", {
+      operationID: operation.id,
+      taskRevision: operation.taskRevision,
+      attemptID: operation.attemptID,
+      artifact: operation.artifact,
+      owner: operation.owner,
+      requestID: command.requestID,
+      oldExecutionAndResourceHoldsPreserved: true,
+    })
+    return {
+      status: "retained-verification-requested",
+      operationID: operation.id,
+      taskID: operation.taskID,
+      attemptID: operation.attemptID,
+      artifact: operation.artifact,
+      retainedVerification: { operationID: operation.id },
+      probeBasis: { task: retainedVerificationProbeBasis(operation, "task") },
+      version: plan.version,
+    }
+  }
+
+  private commandSettleStartup(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, baseVersion, startupSettlement } = ctx
+    if (!startupSettlement || !command.taskID || !command.reason)
+      throw new Error("Startup settlement evidence is unavailable")
+    this.assertStartupSettlementCurrent(
+      plan,
+      startupSettlement.attempt,
+      startupSettlement.effect,
+      startupSettlement.failure,
+    )
+    const receipt = appendRunnerEffectReceipt(
+      startupSettlement.effect.receipt,
+      startupSettlement.evidence,
+    )
+    const settledEffect = db
+      .query(
+        `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
+     WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
+      )
+      .run(
+        receipt,
+        startupSettlement.effect.id,
+        plan.id,
+        command.taskID,
+        startupSettlement.attempt.id,
+      ).changes
+    if (settledEffect !== 1) throw new Error("Original startup effect changed before settlement")
+    const reason =
+      "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
+    const changed = db
+      .query(
+        `UPDATE runner_plans SET reason=?,version=version+1
+     WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='blocked'`,
+      )
+      .run(reason, plan.id, this.store.repository.projectDirectory, caller, baseVersion).changes
+    if (changed !== 1) throw new Error("Plan changed before startup settlement")
+    this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
+      ...startupSettlement.evidence,
+      reason: command.reason,
+      caller,
+    })
+    return {
+      status: "startup-failure-settled-absent",
+      planID: plan.id,
+      taskID: command.taskID,
+      attemptID: startupSettlement.attempt.id,
+      effectID: startupSettlement.effect.id,
+      version: plan.version + 1,
+      evidence: startupSettlement.evidence,
+    }
+  }
+
+  private commandReassign(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, ownerSession } = ctx
+    if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
+      throw new Error("Reassignment needs an unarchived same-project owner")
+    const retiredSource = db
+      .query<{ present: number }, [string, string, string]>(
+        `SELECT 1 AS present FROM runner_architect_renewals r
+     JOIN runner_architect_renewal_plans rp ON rp.renewal_id=r.id
+     WHERE r.previous_session_id=? AND rp.plan_id=? AND rp.transferred=1
+       AND EXISTS(SELECT 1 FROM runner_plans current WHERE current.id=rp.plan_id AND current.owner<>?)
+     LIMIT 1`,
+      )
+      .get(caller, plan.id, caller)
+    if (caller !== plan.owner && retiredSource)
+      throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
+    db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
+      ownerSession.id,
+      plan.id,
+    )
+    this.store.record(plan.id, null, "OWNER_REASSIGNED", {
+      from: plan.owner,
+      to: ownerSession.id,
+      reason: command.reason,
+    })
+    return { status: "reassigned", version: plan.version + 1 }
+  }
+
+  private commandCancel(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller } = ctx
+    if (terminal.has(plan.state)) throw new Error("Plan has ended")
+    this.store.cancelAdoptions(plan.id, "Cancellation requested")
+    for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
+      saveRetainedVerification(db, {
+        ...operation,
+        state: "cancelled",
+        failureReason: "Plan cancellation requested",
+        updatedAt: this.now(),
+      })
+      db.query(
+        `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
+     WHERE operation_id=? AND state IN ('creating','active')`,
+      ).run(this.now(), operation.id)
+      this.retainedVerificationAborts.get(operation.id)?.abort()
+      this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
+        operationID: operation.id,
+        source: "plan-cancellation",
+        previousState: operation.state,
+        previousFailureReason: operation.failureReason,
+        reason: "Plan cancellation requested",
+        oldExecutionAndResourceHoldsPreserved: true,
+      })
+    }
+    // Stop admission now. In-flight work remains running until interruption is proven.
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
+    ).run(command.reason ?? "Cancellation requested", plan.id)
+    for (const node of this.store.nodes(plan.id))
+      if (!terminal.has(node.state) && node.state !== "running" && node.state !== "verifying")
+        this.store.move(plan.id, node.task_id, "CANCEL")
+    this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
+    return { status: "cancelling", version: this.store.plan(plan.id)!.version }
+  }
+
+  private commandResumeOrRetry(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const {
+      command,
+      ownerSession,
+      terminalContinuation,
+      terminalRepairContinuation,
+      retainedRepairRecovery,
+    } = ctx
+    const retry = command.action === "retry"
+    if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+    if (!command.taskID) return this.commandResumeCombinedVerification(db, ctx, plan)
+    if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
+    const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((a) => a.task_id === command.taskID)
+      .at(-1)
+    if (command.attemptID && command.attemptID !== attempt?.id)
+      throw new Error("Command attemptID does not match the exact latest task attempt")
+    if (retainedRepairRecovery)
+      return this.commandRecoverRetainedRepair(db, ctx, plan, node, attempt, retainedRepairRecovery)
+    if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
+      const interrupted = this.interruptedChecksFor(plan, attempt)
+      if (interrupted.length)
+        return this.commandResumeInterruptedVerification(db, ctx, plan, attempt, interrupted)
+    }
+    const continuingTerminalWorker = Boolean(
+      !retry &&
+      terminalContinuation &&
+      attempt?.id === terminalContinuation.attemptID &&
+      attempt.message_id === terminalContinuation.messageID,
+    )
+    if (continuingTerminalWorker) this.assertTerminalContinuation(ctx, plan, attempt)
+    if (retry && node?.state === "cancelled" && !attempt)
+      return this.commandRequeueUnstartedTask(db, ctx, plan, node, ownerSession)
+    if (
+      !["blocked", "cancelled", "failed"].includes(plan.state) ||
+      !node ||
+      !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
+        node.state,
+      ) ||
+      !attempt ||
+      (!continuingTerminalWorker &&
+        !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
+    )
+      throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
+    if (
+      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
+      throw new Error("Reconcile uncertain effects first")
+
+    const settledStartupEffect = attempt ? this.settledStartupEffect(plan.id, attempt) : undefined
+    if (settledStartupEffect)
+      return this.commandAuthorizeStartupRecovery(db, ctx, plan, attempt, settledStartupEffect)
+
+    if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+    else if (node.state !== "running")
+      this.store.move(plan.id, node.task_id, "RESUME", command.reason)
+    const planInput = PlanInput.parse(JSON.parse(plan.body))
+    const sharedMode =
+      command.workspaceMode === "shared" ||
+      (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
+    let selectedBaseline: string | null = null
+    if (
+      !continuingTerminalWorker &&
+      (command.workspaceMode === "shared" ||
+        (retry && sharedMode && command.baseCommit !== undefined))
+    )
+      selectedBaseline = this.selectSharedWorkspace(db, ctx, plan, node, attempt)
+    let resumedMessageID: string | undefined
+    if (retry)
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
+      ).run(attempt.id)
+    else {
+      resumedMessageID = messageID()
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
+      ).run(resumedMessageID, attempt.id)
+    }
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    this.store.record(plan.id, node.task_id, retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED", {
+      attemptID: attempt.id,
+      reason: command.reason,
+      usageRetained: true,
+      budget: null,
+      ...(resumedMessageID
+        ? {
+            previousMessageID: attempt.message_id,
+            messageID: resumedMessageID,
+          }
+        : {}),
+      ...(continuingTerminalWorker
+        ? {
+            terminalInputID: terminalContinuation!.inputID,
+            terminalOutcome: terminalContinuation!.worker.outcome,
+            ...(terminalContinuation!.worker.outcome === "interrupted"
+              ? { interruptedInputID: terminalContinuation!.inputID }
+              : {}),
+          }
+        : {}),
+      ...(continuingTerminalWorker && terminalRepairContinuation
+        ? {
+            retainedRepairContinuation: {
+              schema: "lazers-retained-repair-continuation/v1",
+              operationID: terminalRepairContinuation.operationID,
+              owner: terminalRepairContinuation.owner,
+            },
+          }
+        : {}),
+      ...(retry ? { selectedBaseline } : {}),
+    })
+    return {
+      status: retry ? "retrying" : "resuming",
+      version: this.store.plan(plan.id)!.version,
+    }
+  }
+
+  private commandResumeCombinedVerification(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, baseVersion, ownerSession } = ctx
+    const retry = command.action === "retry"
+    if (retry || !command.reason?.trim())
+      throw new Error("Resume requires an exact task attempt or a blocked combined check")
+    if (plan.state !== "blocked" || plan.artifact !== null || !this.validArchitect(ownerSession))
+      throw new Error("Combined verification resume requires a blocked, unaccepted plan")
+    if (
+      verificationActivitiesForDatabase(this.store.repository.path).some(
+        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
+      )
+    )
+      throw new Error("A live verification activity prevents combined verification resume")
+    // A combined check without a conclusive receipt is simply re-run.
+    const superseded = this.store
+      .effects(plan.id)
+      .filter(
+        (effect) =>
+          effect.task_id === null &&
+          effect.kind.startsWith("graph-verify:") &&
+          ["intended", "uncertain"].includes(effect.state),
+      )
+    for (const effect of superseded)
+      db.query(
+        "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state IN ('intended','uncertain')",
+      ).run(effect.id)
+    const changedPlan = db
+      .query(
+        `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
+     WHERE id=? AND version=? AND state='blocked' AND artifact IS NULL`,
+      )
+      .run(plan.id, baseVersion).changes
+    if (changedPlan !== 1) throw new Error("Combined verification plan changed")
+    const resumed = this.store.plan(plan.id)!
+    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+      caller,
+      verificationEpoch: resumed.version,
+      continuation: "combined-verification",
+      supersededEffectIDs: superseded.map((effect) => effect.id),
+    })
+    return {
+      status: "combined-verification-resumed",
+      planID: plan.id,
+      supersededEffectIDs: superseded.map((effect) => effect.id),
+      verificationEpoch: resumed.version,
+      version: resumed.version,
+    }
+  }
+
+  private commandRecoverRetainedRepair(
+    db: Database,
+    ctx: CommandContext,
+    plan: PlanRow,
+    node: NodeRow | undefined,
+    attempt: AttemptRow | undefined,
+    retainedRepairRecovery: RetainedRepairRecoverySeed,
+  ) {
+    const { command, ownerSession } = ctx
+    const retry = command.action === "retry"
+    const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
+    const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+      (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
+    )
+    if (
+      retry ||
+      !attempt ||
+      !node ||
+      retainedRepairRecovery.taskID !== command.taskID ||
+      retainedRepairRecovery.taskID !== attempt.task_id ||
+      retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
+      recoveryTask?.id !== retainedRepairRecovery.taskID ||
+      recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
+      recoveryTask.provenance.projectID !== this.projectID ||
+      recoveryTask.provenance.projectDirectory !== this.directory ||
+      this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !== undefined ||
+      command.taskID !== retainedRepairRecovery.taskID ||
+      command.attemptID !== retainedRepairRecovery.attemptID ||
+      !this.validArchitect(ownerSession) ||
+      !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
+    )
+      throw new Error("Retained repair recovery authorization changed before reservation")
+    const resumedMessageID = messageID()
+    this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
+    const updatedAttempt = db
+      .query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
+      )
+      .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
+    const updatedPlan = db
+      .query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
+      )
+      .run(
+        plan.id,
+        RETAINED_REPAIR_FENCE_FAILURE_REASON,
+        retainedRepairRecovery.planVersion + 1,
+      ).changes
+    if (updatedAttempt !== 1 || updatedPlan !== 1)
+      throw new Error("Retained repair recovery reservation changed during atomic admission")
+    this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
+      attemptID: attempt.id,
+      reason: command.reason,
+      usageRetained: true,
+      budget: null,
+      previousMessageID: retainedRepairRecovery.failedMessageID,
+      messageID: resumedMessageID,
+      terminalInputID: retainedRepairRecovery.interruptedInputID,
+      terminalOutcome: "interrupted",
+      interruptedInputID: retainedRepairRecovery.interruptedInputID,
+      retainedRepairRecovery: {
+        schema: "lazers-retained-repair-recovery/v1",
+        operationID: retainedRepairRecovery.operationID,
+        failedMessageID: retainedRepairRecovery.failedMessageID,
+        interruptedInputID: retainedRepairRecovery.interruptedInputID,
+        owner: retainedRepairRecovery.owner,
+        failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
+        blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
+        cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
+      },
+    })
+    return {
+      status: "retained-repair-recovered",
+      version: this.store.plan(plan.id)!.version,
+      taskID: attempt.task_id,
+      attemptID: attempt.id,
+      messageID: resumedMessageID,
+    }
+  }
+
+  private commandResumeInterruptedVerification(
+    db: Database,
+    ctx: CommandContext,
+    plan: PlanRow,
+    attempt: AttemptRow,
+    interrupted: EffectRow[],
+  ) {
+    const { command, ownerSession } = ctx
+    if (
+      plan.state !== "blocked" ||
+      !this.validArchitect(ownerSession) ||
+      command.attemptID !== attempt.id ||
+      command.workspaceMode !== undefined ||
+      command.baseCommit !== undefined
+    )
+      throw new Error("Interrupted verification resume requires its exact preserved attempt")
+    const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
+    if (
+      this.store
+        .effects(plan.id)
+        .some(
+          (effect) =>
+            ["intended", "uncertain"].includes(effect.state) && !interruptedIDs.has(effect.id),
+        )
+    )
+      throw new Error("Reconcile other uncertain effects first")
+    for (const effect of interrupted)
+      db.query(
+        "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
+      ).run(effect.id)
+    const verificationEpoch =
+      (this.store.latestTransition<{ verificationEpoch: number }>(
+        plan.id,
+        attempt.task_id,
+        "VERIFICATION_RESUMED",
+      )?.verificationEpoch ?? 0) + 1
+    this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
+      attemptID: attempt.id,
+      interruptedEffectIDs: [...interruptedIDs],
+      verificationEpoch,
+      reason: command.reason,
+    })
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+    ).run(plan.id)
+    return {
+      status: "verification-resumed",
+      version: this.store.plan(plan.id)!.version,
+      attemptID: attempt.id,
+    }
+  }
+
+  private assertTerminalContinuation(
+    ctx: CommandContext,
+    plan: PlanRow,
+    attempt: AttemptRow | undefined,
+  ) {
+    const { command, caller, ownerSession, terminalContinuation, terminalRepairContinuation } = ctx
+    const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
+    if (
+      (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
+      (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
+    )
+      throw new Error("Terminal continuation preserves its workspace and baseline")
+    const problem = this.terminalWorkerContinuationProblem(
+      plan,
+      command,
+      caller,
+      ownerSession,
+      terminalContinuation!.worker,
+    )
+    if (problem) throw new Error(problem)
+    if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
+      throw new Error("Native terminal observation changed before continuation admission")
+    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
+      plan.id,
+      attempt!.task_id,
+    )
+    const currentRepair = this.retainedRepairForAttempt(attempt!)
+    if (
+      (latestRepair?.attemptID === attempt!.id &&
+        (!terminalRepairContinuation ||
+          !currentRepair ||
+          currentRepair.operationID !== terminalRepairContinuation.operationID)) ||
+      (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
+    )
+      throw new Error("Retained repair continuation authority changed before reservation")
+  }
+
+  private commandRequeueUnstartedTask(
+    db: Database,
+    ctx: CommandContext,
+    plan: PlanRow,
+    node: NodeRow,
+    ownerSession: HostSession,
+  ) {
+    const { command, caller, preflight, obs } = ctx
+    if (
+      !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
+      plan.artifact !== null
+    )
+      throw new Error("Only an admitted, nonintegrated plan can requeue an unstarted task")
+    if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
+      throw new Error("Foreign owner session")
+    if (
+      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
+      throw new Error("Reconcile uncertain effects first")
+
+    const input = PlanInput.parse(JSON.parse(plan.body))
+    if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
+      if (this.store.attempts(plan.id).length)
+        throw new Error("A plan with prior attempts cannot change its unstarted baseline")
+      const baseCommit = obs.git(this.directory, ["rev-parse", `${command.baseCommit}^{commit}`])
+      if (baseCommit !== command.baseCommit)
+        throw new Error("An explicit baseline must identify a commit")
+      obs.git(this.directory, ["merge-base", "--is-ancestor", input.baseCommit, baseCommit])
+      this.requireBaseReachable(preflight.bases, baseCommit)
+      this.store.revisePlan(
+        plan,
+        PlanInput.parse({ ...input, baseCommit }),
+        "UNSTARTED_BASELINE_SELECTED",
+        { from: input.baseCommit, baseCommit, caller, reason: command.reason },
+      )
+    }
+    this.store.move(plan.id, node.task_id, "RETRY", command.reason)
+    if (plan.state !== "running")
+      db.query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+      ).run(plan.id)
+    this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
+      caller,
+      reason: command.reason,
+    })
+    return { status: "requeued", version: this.store.plan(plan.id)!.version }
+  }
+
+  private commandAuthorizeStartupRecovery(
+    db: Database,
+    ctx: CommandContext,
+    plan: PlanRow,
+    attempt: AttemptRow,
+    settledStartupEffect: EffectRow,
+  ) {
+    const { command, ownerSession } = ctx
+    const retry = command.action === "retry"
+    const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
+    if (
+      retry ||
+      !command.attemptID ||
+      command.attemptID !== attempt!.id ||
+      attempt!.state !== "preparing" ||
+      plan.state !== "blocked" ||
+      !this.validArchitect(ownerSession) ||
+      !settlement
+    )
+      throw new Error("Startup recovery requires explicit resume of the exact settled attempt")
+    const workerEffects = this.store
+      .effects(plan.id)
+      .some(
+        (effect) =>
+          effect.attempt_id === attempt!.id &&
+          (effect.kind === "session" ||
+            effect.kind === "prompt" ||
+            effect.kind.startsWith("verify:") ||
+            effect.kind.startsWith("graph-verify:")),
+      )
+    if (
+      workerEffects ||
+      this.hasMeaningfulWorkerProgress(attempt!.id) ||
+      !this.preparationAllowed(attempt!)
+    )
+      throw new Error(
+        "Startup recovery cannot continue after worker effects or conflicting ownership",
+      )
+
+    const recoveryID = crypto.randomUUID()
+    const authorization: StartupRecoveryAuthorization = {
+      schema: "lazers-worktree-startup-authorization/v1",
+      recoveryID,
+      sourceEffectID: settledStartupEffect.id,
+      settlementRequestID: settlement.requestID,
+      requestID: command.requestID,
+      owner: plan.owner,
+      planVersion: plan.version + 1,
+      planRevision: plan.revision,
+      taskID: attempt!.task_id,
+      attemptID: attempt!.id,
+      sessionID: attempt!.session_id,
+      messageID: attempt!.message_id,
+      workspace: attempt!.workspace,
+      base: attempt!.base_commit,
+      policy: attempt!.policy,
+    }
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
+    ).run(plan.id, plan.version)
+    this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_AUTHORIZED", authorization)
+    this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
+      attemptID: attempt!.id,
+      reason: command.reason,
+      usageRetained: true,
+      budget: null,
+      startupRecoveryID: recoveryID,
+      sourceEffectID: settledStartupEffect.id,
+    })
+    return {
+      status: "startup-recovery-authorized",
+      version: plan.version + 1,
+      attemptID: attempt!.id,
+      recoveryID,
+    }
+  }
+
+  private selectSharedWorkspace(
+    db: Database,
+    ctx: CommandContext,
+    plan: PlanRow,
+    node: NodeRow,
+    attempt: AttemptRow,
+  ) {
+    const { command, preflight, obs } = ctx
+    const retry = command.action === "retry"
+    const source = command.baseCommit ?? obs.git(this.directory, ["rev-parse", "HEAD"])
+    if (command.baseCommit !== undefined) this.requireBaseReachable(preflight.bases, source)
+    if (!retry)
+      db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
+        this.directory,
+        source,
+        attempt.id,
+      )
+    const revised = PlanInput.parse({
+      ...JSON.parse(plan.body),
+      workspaceMode: "shared",
+      baseCommit: source,
+    })
+    db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
+      JSON.stringify(revised),
+      plan.id,
+    )
+    db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
+      plan.id,
+      plan.revision + 1,
+      JSON.stringify(revised),
+      plan.owner,
+      Date.now(),
+    )
+    this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
+      attemptID: attempt.id,
+      from: attempt.workspace,
+      directory: this.directory,
+      source,
+      explicitBaseline: retry && command.baseCommit !== undefined,
+      mode: "shared",
+      reason: command.reason,
+    })
+    return retry && command.baseCommit !== undefined ? source : null
+  }
+
+  private commandReconcile(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { command, caller, baseVersion, ownerSession, reviewInput } = ctx
+    if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
+    let existingReviewInput = false
+    if (reviewInput) {
+      const { binding, evidence } = reviewInput
+      if (
+        !this.validArchitect(ownerSession) ||
+        ownerSession.id !== binding.ownerSessionID ||
+        binding.planID !== plan.id ||
+        binding.expectedPlanVersion !== baseVersion ||
+        binding.commandRequestID !== command.requestID ||
+        !["running", "blocked"].includes(plan.state)
+      )
+        throw new Error("Review input reconciliation authorization or plan version changed")
+
+      const latest = this.store
+        .attempts(plan.id)
+        .filter((attempt) => attempt.task_id === binding.taskID)
+        .at(-1)
+      const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
+      const task = this.store.repository.get(binding.taskID)
+      if (
+        !latest ||
+        latest.id !== binding.attemptID ||
+        !["running", "verifying"].includes(latest.state) ||
+        latest.session_id !== binding.sessionID ||
+        latest.workspace !== binding.workspace ||
+        latest.message_id !== binding.assignedMessageID ||
+        !node ||
+        node.state !== latest.state ||
+        !task ||
+        task.provenance.projectID !== binding.projectID ||
+        task.provenance.projectDirectory !== binding.projectDirectory ||
+        task.revision !==
+          PlanInput.parse(JSON.parse(plan.body)).nodes.find(
+            (item) => item.taskID === binding.taskID,
+          )?.revision
+      )
+        throw new Error("Review input worker assignment changed during native observation")
+
+      const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
+      if (
+        policy.providerID !== binding.model.providerID ||
+        policy.id !== binding.model.id ||
+        policy.variant !== binding.model.variant
+      )
+        throw new Error("Review input worker route changed during native observation")
+
+      const aliases = db
+        .query<{ id: number; payload: string }, [string, string]>(
+          `SELECT id,payload FROM runner_transitions
+       WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
+       ORDER BY id`,
+        )
+        .all(plan.id, binding.taskID)
+      for (const row of aliases) {
+        let prior: ReturnType<typeof parseReviewInputAlias>
+        try {
+          prior = parseReviewInputAlias(JSON.parse(row.payload))
+        } catch {
+          prior = undefined
+        }
+        if (!prior || prior.attemptID !== binding.attemptID) continue
+        if (prior.reviewInputID !== binding.reviewInputID) continue
+        if (
+          !matchesReviewInputAlias(prior, {
+            projectDirectory: binding.projectDirectory,
+            projectID: binding.projectID,
+            planID: binding.planID,
+            taskID: binding.taskID,
+            attemptID: binding.attemptID,
+            sessionID: binding.sessionID,
+            workspace: binding.workspace,
+            assignedMessageID: binding.assignedMessageID,
+            reviewInputID: binding.reviewInputID,
+          }) ||
+          prior.reviewRequestID !== evidence.reviewRequestID
+        )
+          throw new Error("Review input already has a different durable lineage relationship")
+        existingReviewInput = true
+        break
+      }
+    }
+    if (
+      this.store
+        .effects(plan.id)
+        .some((e) => ["intended", "uncertain"].includes(e.state) && !isRerunnableEffect(e.kind))
+    )
+      return {
+        status: "blocked",
+        reason: "Uncertain effects require conclusive host/artifact evidence",
+        version: plan.version,
+      }
+    if (plan.state === "blocked") {
+      db.query(
+        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+      ).run(plan.id)
+      for (const node of this.store.nodes(plan.id))
+        if (
+          node.state === "blocked" &&
+          !this.store.attempts(plan.id).some((a) => a.task_id === node.task_id)
+        )
+          this.store.move(plan.id, node.task_id, "RECONCILE")
+    }
+    if (reviewInput && !existingReviewInput) {
+      const { binding, evidence } = reviewInput
+      this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
+        schemaVersion: 1,
+        kind: "owner-reviewed-native-input-alias",
+        source: "observed-native-review-input",
+        runtimeSentMessage: false,
+        projectDirectory: binding.projectDirectory,
+        projectID: binding.projectID,
+        planID: binding.planID,
+        taskID: binding.taskID,
+        attemptID: binding.attemptID,
+        sessionID: binding.sessionID,
+        workspace: binding.workspace,
+        assignedMessageID: binding.assignedMessageID,
+        reviewInputID: binding.reviewInputID,
+        reviewRequestID: evidence.reviewRequestID,
+        ownerSessionID: binding.ownerSessionID,
+        commandRequestID: binding.commandRequestID,
+        expectedPlanVersion: binding.expectedPlanVersion,
+        model: binding.model,
+        input: evidence.input,
+        observation: evidence.observation,
+      })
+    }
+    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
+      caller,
+      verificationEpoch: this.store.plan(plan.id)!.version,
+      ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
+    })
+    return {
+      status: "reconciling",
+      version: this.store.plan(plan.id)!.version,
+      ...(reviewInput
+        ? {
+            reviewInputID: reviewInput.binding.reviewInputID,
+            relationshipRecorded: !existingReviewInput,
+          }
+        : {}),
+    }
+  }
+
+  private commandRun(db: Database, ctx: CommandContext, plan: PlanRow) {
+    const { configuredWorker, ownerSession, obs } = ctx
+    if (plan.state !== "draft" && plan.state !== "blocked")
+      throw new Error("Execution already requested or ended")
+    if (this.store.attempts(plan.id).length)
+      throw new Error("Existing execution must be reconciled; admission cannot replace its policy")
+    if (!ownerSession || ownerSession.projectID !== this.projectID)
+      throw new Error("An Architect session of this project must command the plan")
+    const proposal = PlanInput.parse(JSON.parse(plan.body))
+    const selectedModel = proposal.workerModel ?? configuredWorker
+    const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
+    const nodeRouteDecisions = proposal.nodes.map((node) =>
+      node.persona && proposal.workerAgent !== "auditor"
+        ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
+        : null,
+    )
+    const everyNodeHasRoute = proposal.nodes.every((node, index) =>
+      node.persona && proposal.workerAgent !== "auditor"
+        ? nodeRouteDecisions[index]?.status === "resolved"
+        : selectedModel !== undefined,
+    )
+    if (!everyNodeHasRoute)
+      return this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
+    const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
+    try {
+      if (
+        obs.git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
+        proposal.baseCommit
+      )
+        throw new Error("Base mismatch")
+    } catch (error) {
+      if (error instanceof ObservationRequired) throw error
+      return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
+    }
+    const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
+    const conflicts = audit.findings
+    if (conflicts.length)
+      return this.hold(
+        plan,
+        `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
+      )
+    db.query(
+      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
+    ).run(model ? JSON.stringify(model) : null, plan.id)
+    this.store.record(plan.id, null, "ADMITTED", {
+      model,
+      modelSource: proposal.workerModel
+        ? "explicit-plan-selection"
+        : configuredWorker
+          ? "native-agent-selection"
+          : "persona-mapping-selection",
+      auditWatermark: audit.watermark,
+      source: proposal.baseCommit,
+      enforcement: {
+        budget: "unconfigured; historical proposed limits are not execution policy",
+        tokens: "measured usage only",
+        cost: "API-equivalent price unavailable until resolved; never treated as zero",
+        tools: "measured usage only",
+        repairs: "one bounded verification repair by default",
+      },
+    })
+    return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
   }
 
   /**
@@ -9028,7 +9093,7 @@ export class TaskRuntime {
           ...(retainedRepair ? { moveIfNeeded: false } : {}),
           text: retainedRepair
             ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
-            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${personaGuidance}`,
+            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${this.repairFailureBrief(attempt)}${personaGuidance}`,
         })
         this.receipt(
           effect,
@@ -9966,18 +10031,16 @@ export class TaskRuntime {
         return
       }
     }
-    const failure = receipts.find((r) => !checkSucceeded(r))
-    if (failure) {
-      if (
-        failure.timedOut ||
-        failure.exitCode === 126 ||
-        failure.exitCode === 127 ||
-        !checkResourcesSettled(failure)
-      ) {
-        this.hold(plan, checkFailureReason(failure), ["reconcile", "resume", "audit", "cancel"])
+    const failures = receipts.filter((r) => !checkSucceeded(r))
+    if (failures.length) {
+      const held = failures.find(
+        (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
+      )
+      if (held) {
+        this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
         return
       }
-      this.failAttempt(plan, attempt, checkFailureReason(failure))
+      this.failAttempt(plan, attempt, failures.map(checkFailureReason).join("; "))
       return
     }
     try {
@@ -10065,6 +10128,38 @@ export class TaskRuntime {
     return missing
   }
 
+  /** Failing check output from the previous attempt, so a repair attempt sees every defect. */
+  private repairFailureBrief(attempt: AttemptRow): string {
+    if (!JSON.parse(attempt.policy).repairAttempt) return ""
+    const previous = this.store
+      .attempts(attempt.plan_id)
+      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
+      .at(-1)
+    if (!previous) return ""
+    const fenced = (label: string, text: string) => {
+      if (!text.trim()) return ""
+      let fence = "```"
+      for (const match of text.matchAll(/`+/g))
+        if (match[0].length >= fence.length) fence = "`".repeat(match[0].length + 1)
+      return `\n${label}:\n${fence}\n${text}\n${fence}`
+    }
+    const sections = this.store
+      .read((db) =>
+        db
+          .query<{ body: string }, [string]>(
+            "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid",
+          )
+          .all(previous.id),
+      )
+      .map((row) => JSON.parse(row.body) as CheckReceipt)
+      .filter((receipt) => !checkSucceeded(receipt))
+      .map(
+        (receipt) =>
+          `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`,
+      )
+    if (!sections.length) return ""
+    return `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
+  }
   private failAttempt(
     plan: PlanRow,
     attempt: AttemptRow,

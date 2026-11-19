@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises"
+import { mkdtemp, writeFile, readFile, rm, access } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { TaskRepository } from "../storage.ts"
@@ -34,6 +34,7 @@ test("bundled native Fallow saves all static reports and leaves source untouched
     expect(report.finishedAt).toBeGreaterThanOrEqual(report.startedAt)
     expect(history.detail(result.runID).totalFindings).toBeGreaterThan(0)
     expect(await readFile(join(root, "values.ts"), "utf8")).toBe(source)
+    await expect(access(join(root, ".fallow"))).rejects.toThrow()
   } finally {
     repository.close()
     await rm(root, { recursive: true, force: true })
