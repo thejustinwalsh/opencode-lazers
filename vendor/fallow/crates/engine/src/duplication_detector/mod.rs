@@ -367,14 +367,15 @@ pub fn detect_duplicates(
 ///
 /// Like [`detect_duplicates`] with `sources` keyed by each file's path. A file
 /// with no entry is skipped. Nothing is read from disk and no cache is used.
+/// There is no focus set: focused detection prunes the corpus and can group the
+/// same code differently, so callers filter the full report instead.
 pub fn detect_duplicates_in_memory(
     root: &Path,
     files: &[DiscoveredFile],
     sources: &InMemorySources,
     config: &DuplicatesConfig,
-    focus_files: Option<&FxHashSet<PathBuf>>,
 ) -> DuplicationAnalysis {
-    detect_duplicates_with_sources(root, files, Some(sources), config, focus_files, None)
+    detect_duplicates_with_sources(root, files, Some(sources), config, None, None)
 }
 
 fn detect_duplicates_with_sources(

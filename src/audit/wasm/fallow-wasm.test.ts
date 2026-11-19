@@ -7,14 +7,6 @@ import { complexity, initSync, parse } from "./fallow.js"
 const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
 
-/** Real files: the plan's named file plus a spread of shapes (class, JSX, async, regex-heavy). */
-const files = [
-  "src/runner/checks.ts",
-  "src/audit/history.ts",
-  "src/panel-status.tsx",
-  "src/worker-url.ts",
-]
-
 type Fn = { name: string; line: number; col: number; cyclomatic: number; cognitive: number }
 const key = (fn: Fn) => `${fn.line}:${fn.col}:${fn.name}`
 
@@ -40,22 +32,26 @@ beforeAll(async () => {
 })
 
 describe("fallow.wasm", () => {
-  for (const file of files) {
-    test(`complexity matches native computeComplexity: ${file}`, () => {
+  test("complexity matches native computeComplexity on files of this repository", () => {
+    // Whatever the repository holds now: a spread of files that native reports functions for.
+    const paths = [...native.keys()].sort()
+    const files = paths.filter(
+      (_, index) => index % Math.max(1, Math.floor(paths.length / 6)) === 0,
+    )
+    const project = (fns: Fn[]) =>
+      fns
+        .map((fn) => ({ k: key(fn), cyclomatic: fn.cyclomatic, cognitive: fn.cognitive }))
+        .sort((a, b) => a.k.localeCompare(b.k))
+    for (const file of files) {
       const content = readFileSync(`${repoRoot}${file}`, "utf8")
       const wasm = (JSON.parse(complexity(file, content)) as Fn[]).filter(
-        // Native lists a function only above the thresholds 1 and 0.
-        (fn) => fn.cyclomatic > 1 || fn.cognitive > 0,
+        // Native lists a function only above the thresholds 1 and 0, and never the synthetic
+        // module-scope unit, which is aggregate-only.
+        (fn) => fn.name !== "<module>" && (fn.cyclomatic > 1 || fn.cognitive > 0),
       )
-      const expected = native.get(file) ?? []
-      expect(expected.length).toBeGreaterThan(0)
-      const project = (fns: Fn[]) =>
-        fns
-          .map((fn) => ({ k: key(fn), cyclomatic: fn.cyclomatic, cognitive: fn.cognitive }))
-          .sort((a, b) => a.k.localeCompare(b.k))
-      expect(project(wasm)).toEqual(project(expected))
-    })
-  }
+      expect(project(wasm)).toEqual(project(native.get(file) ?? []))
+    }
+  })
 
   test("parse summarises imports and exports", () => {
     const summary = JSON.parse(
