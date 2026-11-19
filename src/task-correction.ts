@@ -1,14 +1,22 @@
 import { z } from "zod"
+import { ignoringLegacyFields } from "./legacy-fields.ts"
 
 /** A reviewed, directed relation from a correction task to its same-goal original. */
 export const TaskCorrectionInput = z.strictObject({
   taskID: z.uuid(),
   originalTaskID: z.uuid().nullable(),
   requestID: z.string().min(1).max(200).regex(/\S/, "requestID must contain non-whitespace text"),
-  expectedRevision: z.int().nonnegative(),
+  /** Compare-and-set guard for callers that read a revision; omitted writes against the current one. */
+  expectedRevision: z.int().nonnegative().optional(),
   reason: z.string().trim().min(1).max(2_000),
 })
 export type TaskCorrectionInput = z.infer<typeof TaskCorrectionInput>
+
+/** The model tool never supplies a revision; a legacy `expectedRevision` is ignored. */
+export const TaskCorrectionToolInput = ignoringLegacyFields(
+  TaskCorrectionInput.omit({ expectedRevision: true }),
+  ["expectedRevision"],
+)
 
 export const TaskCorrectionRecord = z.strictObject({
   id: z.int().positive(),

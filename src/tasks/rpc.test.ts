@@ -1255,9 +1255,11 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     const correction = await Effect.runPromise(
       attach.execute(
         {
-          ...original,
+          // No specRevision and no expectedRevision: advice attaches to the current
+          // specification and appends to the current advice history.
+          taskID: task.id,
           requestID: "native-advice-2",
-          expectedRevision: 1,
+          references: [],
           findings: ["The current advice supersedes the earlier note."],
           implementationAdvice: ["Read the effective advice before implementing."],
         },
@@ -1266,7 +1268,7 @@ test("native advice attachment is Architect-only, replay-safe, and returned thro
     )
     expect(JSON.parse(String(correction.content))).toMatchObject({
       status: "recorded",
-      advice: { revision: 2 },
+      advice: { revision: 2, specRevision: 1 },
     })
     const detail = await Effect.runPromise(rpcGet!({ taskID: task.id }))
     expect(detail).toMatchObject({

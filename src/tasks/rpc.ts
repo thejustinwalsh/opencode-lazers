@@ -14,7 +14,8 @@ import { SchedulingInput, SchedulingOutput, TasksScheduling } from "./scheduling
 import type { TaskRuntime } from "../runner/runtime.ts"
 import type { HostSession } from "../runner/host.ts"
 import { revisionPublishers } from "../database-events.ts"
-import { TaskAdviceInput, recordTaskAdvice } from "./advice.ts"
+import { TaskAdviceToolInput, recordTaskAdvice } from "./advice.ts"
+import { tolerantJsonSchema } from "../legacy-fields.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null
@@ -337,8 +338,8 @@ export function registerTaskReads(
         editor.add({
           name: "lz-attach-task-advice",
           description:
-            "Architect-only: attach concise findings and implementation advice to an existing task without changing its specification. Supply a requestID, the exact current advice expectedRevision (0 when absent), and the task specRevision. Reuse requestID only for exact retries; changed content conflicts. Advice history is bounded and retained. Optional source/mini-skill references are links only and are never fetched.",
-          input: z.toJSONSchema(TaskAdviceInput, { io: "input" }),
+            "Architect-only: attach concise findings and implementation advice to an existing task without changing its specification. Supply a requestID; advice attaches to the task's current specification and appends to its advice history. Reuse requestID only for exact retries; changed content conflicts. Advice history is bounded and retained. Optional source/mini-skill references are links only and are never fetched.",
+          input: tolerantJsonSchema(TaskAdviceToolInput),
           options: { codemode: true, permission: "lz-attach-task-advice" },
           execute: (input, context) =>
             ctx.permission
@@ -356,10 +357,14 @@ export function registerTaskReads(
                         throw new Tool.Error({
                           message: "Task advice attachment is restricted to Architect",
                         })
-                      const receipt = recordTaskAdvice(reads.repository, input, {
-                        sessionID: context.sessionID,
-                        agent: String(context.agent),
-                      })
+                      const receipt = recordTaskAdvice(
+                        reads.repository,
+                        TaskAdviceToolInput.parse(input),
+                        {
+                          sessionID: context.sessionID,
+                          agent: String(context.agent),
+                        },
+                      )
                       return { content: JSON.stringify(receipt) }
                     },
                     catch: (error) =>
