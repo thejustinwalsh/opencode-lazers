@@ -1111,7 +1111,8 @@ export function createModelsController(props: ModelsProps) {
         : "Choose model"
   }
   const assignmentVariantChoices = () => selectedCatalogModel()?.variants ?? []
-  const assignmentVariantLabel = () => assignmentRoute().variant || "No variant"
+  // No effort stored means none is sent, so the provider applies its own default effort.
+  const assignmentVariantLabel = () => assignmentRoute().variant || "Default"
   const assignmentEditorTitleID = () =>
     `lazers-models-assignment-editor-title-${encodeURIComponent(visible()?.key ?? "panel")}`
   const assignmentScopeLabel = (scope: ModelMappingTargetInput["scope"]) =>

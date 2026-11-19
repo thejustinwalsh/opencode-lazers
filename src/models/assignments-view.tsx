@@ -282,7 +282,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 icon="chevron-down"
                 disabled={assignmentBlocked() || !selectedCatalogModel()}
                 items={[
-                  { label: "No variant", onSelect: () => updateAssignmentRoute({ variant: "" }) },
+                  { label: "Default", onSelect: () => updateAssignmentRoute({ variant: "" }) },
                   ...assignmentVariantChoices().map((variant) => ({
                     label: variant,
                     onSelect: () => updateAssignmentRoute({ variant }),
