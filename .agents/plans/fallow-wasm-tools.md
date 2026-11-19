@@ -1,7 +1,7 @@
 # Fallow as in-process WebAssembly tools
 
-Status: Phases 0 to 3 are built, merged and verified live in OpenCode on
-2026-11-19 (see "Live verification"). Phase 4 is in progress. Line numbers are
+Status: Phases 0 to 4 are built, merged and verified live in OpenCode on
+2026-11-19 (see "Live verification"). Phase 5 was dropped by owner decision. Line numbers are
 as read on 2026-11-19 and will drift; function names are the stable reference.
 
 ## Problem
@@ -869,12 +869,13 @@ driver fixed is marked "driver".
 
 ### What ran
 
-| Run                                    | Plan       | Result                                                                                                                                                                                                                         |
-| -------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auditor task LZ-241, first base        | `2a6c1efd` | Review ran (`clean`). Two authored checks failed for reasons on `main`, one repair with both failures in its prompt, then fail and hold. Product                                                                               |
-| Same work, fresh plan                  | `9f85d801` | Dispatched in 3 minutes; `verify-run`, `test-audit`, `lazers-fallow` (clean, 1.9 s) passed; task and plan accepted; integrated as `e1363c59`. The callback in `src/audit/history.ts` went from cognitive 27 to 6. Product      |
-| Probe 1, intentional clone and nesting | `c959a3c6` | Review found 3 introduced findings; one `REPAIR`, guidance in the repair prompt; the repair worker asked which of task and review wins; accepted. Exposed the repair-base defect below                                         |
-| Probe 2, same, after fixes             | `7b7432f1` | First attempt: 2 findings, guidance as designed. Repair attempt: review again reported 2 introduced and 1 dead-code concern; task accepted, never failed or held; `task-accepted` carried all three for the Architect. Product |
+| Run                                    | Plan       | Result                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auditor task LZ-241, first base        | `2a6c1efd` | Review ran (`clean`). Two authored checks failed for reasons on `main`, one repair with both failures in its prompt, then fail and hold. Product                                                                                                                                                                      |
+| Same work, fresh plan                  | `9f85d801` | Dispatched in 3 minutes; `verify-run`, `test-audit`, `lazers-fallow` (clean, 1.9 s) passed; task and plan accepted; integrated as `e1363c59`. The callback in `src/audit/history.ts` went from cognitive 27 to 6. Product                                                                                             |
+| Probe 1, intentional clone and nesting | `c959a3c6` | Review found 3 introduced findings; one `REPAIR`, guidance in the repair prompt; the repair worker asked which of task and review wins; accepted. Exposed the repair-base defect below                                                                                                                                |
+| Probe 2, same, after fixes             | `7b7432f1` | First attempt: 2 findings, guidance as designed. Repair attempt: review again reported 2 introduced and 1 dead-code concern; task accepted, never failed or held; `task-accepted` carried all three for the Architect. Product                                                                                        |
+| Auditor task after Phase 4             | `f54b6582` | `projectProgressFact` in `src/progress/projection.ts` split. Task review clean (4.9 s); plan-level review `graph-verify:lazers-fallow` clean (7.0 s, includes native dead code and cycles); the runtime started the Auditor baseline (7.0 s) and the linked follow-up (7.8 s) itself; no `.fallow` directory. Product |
 
 Guidance the worker received in probe 2:
 
@@ -1003,3 +1004,8 @@ touch the changed files; the focus path was removed from patch 0005.
   are over cognitive 100.
 - Reproducible build of `fallow.wasm` from a second checkout is unconfirmed.
 - `src/submission.test.ts` has two failing tests that predate this work.
+- The plan-review implementer removed a clone from its own new file after a
+  WASM-versus-native clone parity test failed on it. The suite passes, but why
+  that clone shape made the two analyzers disagree is not explained.
+- The plan-level review found nothing live; cross-task clones, dead code and
+  cycles are covered by tests only.
