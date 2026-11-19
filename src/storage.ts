@@ -366,6 +366,21 @@ export function acquireSharedConnection(
   }
 }
 
+/**
+ * Annotation requests recorded before the model tools dropped their revision guard stored it in the
+ * request payload. A replay compares content only, so the guard never decides identity.
+ */
+function withoutRevisionGuard(stored: string): string {
+  try {
+    const value = JSON.parse(stored) as Record<string, unknown>
+    if (value === null || typeof value !== "object" || !("expectedRevision" in value)) return stored
+    const { expectedRevision: _guard, ...rest } = value
+    return canonical(rest)
+  } catch {
+    return stored
+  }
+}
+
 export class TaskRepository {
   private shared: SharedConnection | undefined
   private readonly listeners = new Set<() => void>()
@@ -846,7 +861,6 @@ export class TaskRepository {
     const receipt = this.atomic((db) => {
       const payload = canonical({
         taskID: parsed.taskID,
-        expectedRevision: parsed.expectedRevision,
         classification: parsed.classification,
         reason: parsed.reason,
       })
@@ -856,7 +870,7 @@ export class TaskRepository {
         )
         .get(this.projectDirectory, parsed.requestID)
       if (existing) {
-        if (existing.payload !== payload)
+        if (withoutRevisionGuard(existing.payload) !== payload)
           return TaskClassificationAnnotationReceipt.parse({
             status: "conflict",
             taskID: parsed.taskID,
@@ -876,7 +890,7 @@ export class TaskRepository {
       if (!taskRow) throw new Error("Task not found in this project")
       const task = TaskSpecSchema.parse(JSON.parse(taskRow.body))
       const current = taskClassificationFor(db, this.projectDirectory, task).current
-      if (parsed.expectedRevision !== current.revision)
+      if (parsed.expectedRevision !== undefined && parsed.expectedRevision !== current.revision)
         return TaskClassificationAnnotationReceipt.parse({
           status: "conflict",
           taskID: parsed.taskID,
@@ -928,7 +942,6 @@ export class TaskRepository {
       const payload = canonical({
         taskID: parsed.taskID,
         originalTaskID: parsed.originalTaskID,
-        expectedRevision: parsed.expectedRevision,
         reason: parsed.reason,
       })
       const existing = db
@@ -937,7 +950,7 @@ export class TaskRepository {
         )
         .get(this.projectDirectory, parsed.requestID)
       if (existing) {
-        if (existing.payload !== payload)
+        if (withoutRevisionGuard(existing.payload) !== payload)
           return TaskCorrectionReceipt.parse({
             status: "conflict",
             taskID: parsed.taskID,
@@ -968,7 +981,7 @@ export class TaskRepository {
           )
           .get(this.projectDirectory, parsed.taskID)?.revision ?? null
       const revision = currentRevision ?? 0
-      if (parsed.expectedRevision !== revision)
+      if (parsed.expectedRevision !== undefined && parsed.expectedRevision !== revision)
         return TaskCorrectionReceipt.parse({
           status: "conflict",
           taskID: parsed.taskID,

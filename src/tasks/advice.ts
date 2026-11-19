@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
+import { ignoringLegacyFields } from "../legacy-fields.ts"
 import { schemaModules } from "../database-schema.ts"
 import { canonical } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
@@ -36,12 +37,20 @@ const AdviceContent = {
 
 export const TaskAdviceInput = z.strictObject({
   taskID: z.uuid(),
-  specRevision: z.int().positive(),
+  /** Omitted: advice attaches to the task's current specification revision. */
+  specRevision: z.int().positive().optional(),
   requestID: z.string().min(1).max(200).regex(/\S/, "requestID must contain non-whitespace text"),
-  expectedRevision: z.int().nonnegative(),
+  /** Compare-and-set guard for callers that read a revision; omitted writes against the current one. */
+  expectedRevision: z.int().nonnegative().optional(),
   ...AdviceContent,
 })
 export type TaskAdviceInput = z.infer<typeof TaskAdviceInput>
+
+/** The model tool supplies neither revision; legacy `specRevision`/`expectedRevision` are ignored. */
+export const TaskAdviceToolInput = ignoringLegacyFields(
+  TaskAdviceInput.omit({ expectedRevision: true, specRevision: true }),
+  ["expectedRevision", "specRevision"],
+)
 
 export const TaskAdviceRecord = z.strictObject({
   projectDirectory: z.string().min(1),
@@ -184,14 +193,19 @@ export function recordTaskAdvice(
   actor: { sessionID: string; agent: string },
 ): TaskAdviceReceipt {
   const parsed = TaskAdviceInput.parse(input)
+  // Content identifies a request. Revisions are guards, and an absent guard is not content.
   const requestPayload = canonical({
     taskID: parsed.taskID,
-    specRevision: parsed.specRevision,
-    expectedRevision: parsed.expectedRevision,
     findings: parsed.findings,
     implementationAdvice: parsed.implementationAdvice,
     references: parsed.references,
+    ...(parsed.specRevision !== undefined ? { specRevision: parsed.specRevision } : {}),
   })
+  const sameRequest = (stored: string) => {
+    const { expectedRevision: _guard, ...rest } = JSON.parse(stored) as Record<string, unknown>
+    if (parsed.specRevision === undefined) delete rest.specRevision
+    return canonical(rest) === requestPayload
+  }
 
   return repository.atomic((db) => {
     const tableExists = hasAdviceTable(db)
@@ -203,7 +217,7 @@ export function recordTaskAdvice(
           .get(repository.projectDirectory, parsed.requestID)
       : undefined
     if (existing) {
-      if (existing.payload !== requestPayload)
+      if (!sameRequest(existing.payload))
         return TaskAdviceReceipt.parse({
           status: "conflict",
           taskID: parsed.taskID,
@@ -222,7 +236,8 @@ export function recordTaskAdvice(
       .get(repository.projectDirectory, parsed.taskID)
     if (!taskRow) throw new Error("Task not found in this project")
     const task = TaskSpecSchema.parse(JSON.parse(taskRow.body))
-    if (task.revision !== parsed.specRevision)
+    // The tool omits specRevision: advice attaches to the current specification and records it.
+    if (parsed.specRevision !== undefined && task.revision !== parsed.specRevision)
       return TaskAdviceReceipt.parse({
         status: "conflict",
         taskID: parsed.taskID,
@@ -236,7 +251,7 @@ export function recordTaskAdvice(
           )
           .get(repository.projectDirectory, parsed.taskID)?.revision ?? 0)
       : 0
-    if (parsed.expectedRevision !== currentRevision)
+    if (parsed.expectedRevision !== undefined && parsed.expectedRevision !== currentRevision)
       return TaskAdviceReceipt.parse({
         status: "conflict",
         taskID: parsed.taskID,
@@ -248,7 +263,7 @@ export function recordTaskAdvice(
     const advice = TaskAdviceRecord.parse({
       projectDirectory: repository.projectDirectory,
       taskID: parsed.taskID,
-      specRevision: parsed.specRevision,
+      specRevision: task.revision,
       requestID: parsed.requestID,
       revision: currentRevision + 1,
       findings: parsed.findings,

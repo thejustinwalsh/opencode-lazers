@@ -21,9 +21,10 @@ import { taskInstructions } from "./tasks/instructions.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
-import { TaskClassificationAnnotationInput } from "./task-classification.ts"
+import { TaskClassificationToolInput } from "./task-classification.ts"
+import { tolerantJsonSchema } from "./legacy-fields.ts"
 import {
-  TaskCorrectionInput,
+  TaskCorrectionToolInput,
   TaskCorrectionInspectionInput,
   TaskCorrectionInspection,
 } from "./task-correction.ts"
@@ -190,8 +191,8 @@ export function registerTaskTools(
     editor.add({
       name: "lz-classify-task",
       description:
-        "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID, the exact expected classification revision and a reason. Read lz-get-task first; stale corrections conflict and must not be automatically retried.",
-      input: z.toJSONSchema(TaskClassificationAnnotationInput, { io: "input" }),
+        "Architect-only append-only task-kind/v1 classification or correction. Supply one primaryKind, a requestID and a reason. It appends to the task's current classification history (last write wins; earlier revisions stay).",
+      input: tolerantJsonSchema(TaskClassificationToolInput),
       options: { codemode: true, permission: "lz-classify-task" },
       execute: (input, context) =>
         ctx.permission
@@ -211,7 +212,7 @@ export function registerTaskTools(
                     throw new Tool.Error({
                       message: "Task classification is restricted to Architect",
                     })
-                  const parsed = TaskClassificationAnnotationInput.parse(input)
+                  const parsed = TaskClassificationToolInput.parse(input)
                   const receipt = withRepository((connection) =>
                     connection.recordTaskClassification(parsed, {
                       sessionID: context.sessionID,
@@ -233,8 +234,8 @@ export function registerTaskTools(
     editor.add({
       name: "lz-correct-task",
       description:
-        "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply the current per-task correction revision and a requestID; inspect membership first and resolve stale conflicts manually. No relation is inferred from supplements, kind, ancestry, scope, or prose.",
-      input: z.toJSONSchema(TaskCorrectionInput, { io: "input" }),
+        "Architect-only explicit same-original-goal correction link. taskID is the correction task; originalTaskID is the task it corrects. Set originalTaskID to null to explicitly separate/retract the link. Supply a requestID; it appends to the task's current correction history (last write wins; earlier revisions stay). No relation is inferred from supplements, kind, ancestry, scope, or prose.",
+      input: tolerantJsonSchema(TaskCorrectionToolInput),
       options: { codemode: true, permission: "lz-correct-task" },
       execute: (input, context) =>
         ctx.permission
@@ -250,7 +251,7 @@ export function registerTaskTools(
                 try: async () => {
                   if (context.agent !== "architect")
                     throw new Tool.Error({ message: "Task correction is restricted to Architect" })
-                  const parsed = TaskCorrectionInput.parse(input)
+                  const parsed = TaskCorrectionToolInput.parse(input)
                   const receipt = withRepository((connection) =>
                     connection.recordTaskCorrection(parsed, {
                       sessionID: context.sessionID,
