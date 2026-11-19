@@ -4344,6 +4344,36 @@ test("completed shared plan verifies its exact artifact without touching an adva
   })
 })
 
+test("a retry that asks for an isolated workspace leaves the shared checkout", async () => {
+  const f = fixture({ shared: true, fail: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const task = f.tasks[0]!
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(first.session_id)
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).workspaceMode).toBe("shared")
+
+  await f.runtime.command(
+    {
+      requestID: "retry-isolated",
+      planID: f.receipt.planID,
+      action: "retry",
+      taskID: task.id,
+      workspaceMode: "isolated",
+      reason: "Do not queue behind other plans in the shared checkout",
+    },
+    "owner",
+  )
+  expect(JSON.parse(f.store.plan(f.receipt.planID)!.body).workspaceMode).toBe("isolated")
+  await f.runtime.tick()
+  const attempts = f.store.attempts(f.receipt.planID).filter((a) => a.task_id === task.id)
+  expect(attempts).toHaveLength(2)
+  expect(attempts[1]!.workspace).not.toBe(attempts[0]!.workspace)
+  expect(attempts[1]!.workspace).toContain(".worktrees")
+})
+
 test("shared resume waits for another plan's worker and cancellation retains final usage", async () => {
   const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   await runPlan(f)

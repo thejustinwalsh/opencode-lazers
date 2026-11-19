@@ -4550,6 +4550,34 @@ export class TaskRuntime {
         (retry && sharedMode && command.baseCommit !== undefined))
     )
       selectedBaseline = this.selectSharedWorkspace(db, ctx, plan, node, attempt)
+    // A retry may leave the shared checkout: the command's isolated mode is recorded on the plan
+    // body, the same way `selectSharedWorkspace` records a shared one, so the new attempt gets a
+    // native worktree instead of queueing behind every other plan's reservation.
+    if (retry && command.workspaceMode === "isolated" && !continuingTerminalWorker) {
+      const priorMode =
+        JSON.parse(plan.body).workspaceMode ??
+        (attempt.workspace === this.directory ? "shared" : "isolated")
+      if (priorMode !== "isolated") {
+        const revised = PlanInput.parse({ ...JSON.parse(plan.body), workspaceMode: "isolated" })
+        db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
+          JSON.stringify(revised),
+          plan.id,
+        )
+        db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
+          plan.id,
+          plan.revision + 1,
+          JSON.stringify(revised),
+          plan.owner,
+          Date.now(),
+        )
+        this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
+          attemptID: attempt.id,
+          from: attempt.workspace,
+          mode: "isolated",
+          reason: command.reason,
+        })
+      }
+    }
     let resumedMessageID: string | undefined
     if (retry)
       db.query(

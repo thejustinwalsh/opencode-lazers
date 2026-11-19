@@ -358,3 +358,12 @@ Cancelling an accepted plan (`lz-plan-command` `{action:"cancel", planID, reason
 Architect) settles in `cancelled`, releases dispatch reservations, and the terminal cleanup
 tick removes owned worktrees non-forced; a worktree holding unmerged commits is preserved
 as a `held` `worktree-remove` effect.
+
+## A retry can leave the shared checkout
+
+`PlanInput.workspaceMode` is fixed once an attempt exists (`changeSchedule` refuses it), and a
+shared task is scheduled in the project checkout behind every active dispatch reservation.
+`retry` with `workspaceMode: "isolated"` now revises the plan body the same way
+`selectSharedWorkspace` does for `shared` (a `runner_plan_revisions` row and a
+`WORKSPACE_SELECTED` event with `mode: "isolated"`), so the new attempt gets a native
+`.worktrees` workspace. The earlier attempt's workspace and receipts are untouched.
