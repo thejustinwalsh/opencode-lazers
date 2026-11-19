@@ -103,9 +103,13 @@ What this changes in the plan:
 - **The budget for the changed-file check is realistic.** The whole repository
   takes 1.3 s for health natively with threads; the review analyses changed
   files only.
-- **Clean up first.** A dead-code pass over this repository runs before
-  Phase 0, so parity tests compare against a tree we understand. It is tracked
-  on `chore/fallow-self-cleanup`, by lane, not in this plan.
+- **Clean up first.** This repository is cleaned before Fallow is dogfooded in
+  OpenCode (owner decision). Done means: zero dead-code findings or each one
+  dispositioned, the import cycle removed, no clone group over 20 lines
+  outside tests, and the three functions over cognitive 300 split. Tracked on
+  `chore/fallow-self-cleanup`. First wave, 2026-11-19: `src/models` and the
+  verification, recovery, webgpu and core lanes took dead-code findings from
+  380 to 200.
 
 ## Research: Fallow
 
@@ -245,9 +249,10 @@ scripts/build-fallow-wasm.ts   cargo build → wasm-bindgen → wasm-opt → art
 src/audit/wasm/                built fallow.wasm, JS glue, ARTIFACT.json
 ```
 
-- **Pin.** Exact tag and commit in `UPSTREAM.json`. Start at `v3.41.0`, the
-  version the spike and the installed native binding both use, so Phase 1 can
-  compare outputs like for like.
+- **Pin.** Exact tag and commit in `UPSTREAM.json`. Start at `v3.43.2`, the
+  latest tag (owner decision). The spike ran on `v3.41.0`, so its patches are
+  re-derived, and `@fallow-cli/fallow-node` is bumped to `3.43.2` first so
+  Phase 1 compares WASM and native output like for like.
 - **Import, not submodule.** A script copies an allowlist of crates
   (`types`, `config`, `extract`, `graph`, `core`, `engine`, `mutation`,
   `security`, `output`, `report-protocol`, `process` as the dependency edges
@@ -269,7 +274,7 @@ src/audit/wasm/                built fallow.wasm, JS glue, ARTIFACT.json
   build time). `crates/license` and anything that reads a licence key are not
   imported.
 - **From source vs prebuilt.** The `.wasm` is always built from the vendored
-  source. Whether the built file is committed is an owner decision (Question 2).
+  source. The built file is committed; CI rebuilds it and compares the hash.
 
 ### Build and shipping
 
@@ -412,7 +417,7 @@ That rule exists as `ReviewProgression` in `src/review/progression.ts`
 | --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Subject                     | A task proposal                           | A worker attempt's candidate                                                               |
 | Checks                      | D1 questions                              | `complexity`, `duplication` (task); plus `dead-code`, `cycles` (plan)                      |
-| Score, 0 to 1               | Direction-normalized P(good)              | `1 / (1 + introduced findings)` for that check (Question 3)                                |
+| Score, 0 to 1               | Direction-normalized P(good)              | `1 / (1 + introduced findings)` for that check                                             |
 | `resolved`                  | Score at or above 0.7                     | No introduced findings                                                                     |
 | `non_regressed`             | Focused check scored no lower than before | Focused check has no more introduced findings than the previous round                      |
 | `limit`                     | Three rounds used                         | Same                                                                                       |
@@ -445,7 +450,6 @@ Thresholds come from the effective Fallow config, else Fallow's defaults
 | Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                 | Runtime                                      | Same rounds                                                                | Same guidance. Finding-count delta goes to the Architect                                                                         |
 | Architect review                | None automatic                                                                                                                | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
 | Pre-integration, combined check | Complexity and duplication across all tasks; dead code and import cycles introduced since the plan base                       | Runtime, effect `graph-verify:lazers-fallow` | No rounds and no hold: no single worker owns the combined result           | Findings in the plan outcome. Catches two tasks that each added the same helper; the Architect submits a cleanup task or accepts |
-| After integration               | Full report on the default branch, stored as the project baseline                                                             | Runtime, on the integration event            | Never blocks                                                               | Architect is notified only when a section crosses a project limit                                                                |
 
 Decided (2026-11-19): complexity that was already over a limit and grew is a
 concern, not feedback that costs a round. A deliberate finding is waived with
@@ -632,7 +636,7 @@ Each phase is one or more atomic commits on a branch and ends with
 
 ### Phase 0: vendor and reproduce the spike
 
-1. `scripts/vendor-fallow.ts`, `vendor/fallow/` at `v3.41.0`,
+1. `scripts/vendor-fallow.ts`, `vendor/fallow/` at `v3.43.2`,
    `UPSTREAM.json`, the two spike patches.
 2. `crates/fallow-wasm/` exporting `parse` and `complexity` for one file.
 
@@ -711,13 +715,6 @@ outcome names both locations without holding the plan; an Auditor attempt has
 a baseline and a linked follow-up without the model calling
 `lz-fallow-report`.
 
-### Phase 5: after-integration baseline
-
-1. Full report on the default branch when a plan integrates, stored as the
-   project baseline; Architect notice when a section crosses a limit.
-
-Accept when: the notice fires once per crossing, not per integration.
-
 ### Agents
 
 | Phase | Lane                              | Agent              | Model  |
@@ -731,36 +728,32 @@ Phase 1 may need a step up for the engine patches; say so when it happens.
 
 ## Open questions for the owner
 
-Decided on 2026-11-19 and folded into the design: a repo Fallow config is
-honoured first, else the LAZERS project config; the Architect may set the
-LAZERS config; the contract changes; grown-but-already-over complexity is a
-concern only; a suppression comment with a reason is the waiver; Fallow is a
-three-round review that never rejects.
+Decided on 2026-11-19 and folded into the design:
 
-1. **Vendoring form.** Scripted allowlist import with a patch queue
-   (recommended, smaller, matches `contributions/runntime`), or a full
-   `git subtree` of the upstream repository?
-2. **Built artifact.** Commit `fallow.wasm` under `src/audit/wasm/` so
-   `bun run build:server` needs no Rust (recommended, with CI rebuilding and
-   comparing the hash), or build it on every server build?
-3. **Score.** `1 / (1 + introduced findings)` per check resolves only at zero
-   and counts every finding equally. Should overage weigh in (a function at
-   cognitive 60 scoring lower than one at 16)?
-4. **Clean first.** "Fix our repo before dogfooding": what is done? Proposed:
-   zero dead-code findings or each one dispositioned, the import cycle
-   removed, no clone group over 20 lines outside tests, and the three
-   functions over cognitive 300 split.
-5. **Dead code at task level.** Concern only, as planned, or feedback with an
-   exemption for exports another task in the plan consumes?
-6. **After-integration report.** Run on the integration event, as planned. Is
-   a time-based sweep wanted as well? `design/auditor.md` currently rules out
-   a recurring timer.
-7. **Upstreaming.** Offer the WASM patches to `fallow-rs/fallow`, or keep
-   them private to this repository?
-8. **Pin.** Start at `v3.41.0` for parity with the spike, then move to the
-   latest tag after Phase 1?
-9. **No config.** Dead code off until a config exists (recommended), or
-   report it with a caveat?
+| Topic                   | Decision                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Config source           | A repo Fallow config is honoured first and alone; else the LAZERS project config; the Architect may set it                                                                           |
+| Contract                | Changes, with the wording under "Contract change"                                                                                                                                    |
+| Shape of the check      | A three-round review on `ReviewProgression`; it never rejects a task                                                                                                                 |
+| Who fixes               | The agent that wrote the code, before its task is done. No time-based sweep and no after-integration report                                                                          |
+| Score                   | `1 / (1 + introduced findings)` per check                                                                                                                                            |
+| Worsened complexity     | A concern for the Architect, not feedback                                                                                                                                            |
+| Waiver                  | A Fallow suppression comment with a reason                                                                                                                                           |
+| Dead code at task level | A note for the Architect                                                                                                                                                             |
+| Vendoring               | Import script with an allowlist and a patch queue                                                                                                                                    |
+| Built artifact          | `fallow.wasm` is committed; CI rebuilds and compares the hash                                                                                                                        |
+| Upstreaming             | Patches stay private for now                                                                                                                                                         |
+| Pin                     | Latest tag, `v3.43.2`                                                                                                                                                                |
+| Clean first             | Before dogfooding: zero dead-code findings or each dispositioned, the import cycle removed, no clone group over 20 lines outside tests, the three functions over cognitive 300 split |
+
+Still open:
+
+1. **No config.** Dead code off until a config exists (planned), or report it
+   with a caveat?
+2. **Plan-level findings.** When the combined check finds a clone that two
+   tasks each added, the plan outcome names the task that added each
+   instance. Should the runtime send it back to that task's worker itself, or
+   leave that to the Architect (planned)?
 
 ## Follow-ups noticed, not part of this plan
 
