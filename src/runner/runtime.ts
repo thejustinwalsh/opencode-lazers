@@ -7477,6 +7477,19 @@ export class TaskRuntime {
         if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
         continue
       }
+      if (session.archived && !session.busy) {
+        // An archived session can never run again: it counts as stopped.
+        this.store.fenced(this.owner, fence, () =>
+          this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
+            attemptID: attempt.id,
+            sessionID: attempt.session_id,
+            workspace: attempt.workspace,
+            retainedWorkPreserved: true,
+          }),
+        )
+        if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
+        continue
+      }
       const promptCompleted = this.store
         .effects(plan.id)
         .some(
@@ -7499,18 +7512,15 @@ export class TaskRuntime {
         waiting = true
         continue
       }
-      if (
-        session.pendingInput ||
-        session.observationUnstable ||
-        (session.pendingPermissions ?? 0) > 0 ||
-        (session.pendingForms ?? 0) > 0
-      ) {
-        waiting = true
+      const blocked = this.cancelBlock(session)
+      if (blocked) {
+        if (!this.cancelWait(plan, attempt, fence, blocked)) waiting = true
         continue
       }
       if (backgroundReason) {
         this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        waiting = true
+        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
+          waiting = true
         continue
       }
       session = await this.host.session(attempt.session_id, { messages: true })
@@ -7521,24 +7531,24 @@ export class TaskRuntime {
       this.observeUsage(attempt, session, fence)
       if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
         this.approvalWait(plan, attempt, session, fence)
-      if (
-        session.busy ||
-        session.pendingInput ||
-        session.observationUnstable ||
-        (session.pendingPermissions ?? 0) > 0 ||
-        (session.pendingForms ?? 0) > 0
-      ) {
-        if (session.busy && (await this.interruptForCancel(plan, attempt, fence))) {
+      if (session.busy) {
+        if (await this.interruptForCancel(plan, attempt, fence)) {
           if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
           continue
         }
         waiting = true
         continue
       }
+      const detailedBlocked = this.cancelBlock(session)
+      if (detailedBlocked) {
+        if (!this.cancelWait(plan, attempt, fence, detailedBlocked)) waiting = true
+        continue
+      }
       const detailedBackgroundReason = this.backgroundBlockReason(session)
       if (detailedBackgroundReason) {
         this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-        waiting = true
+        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
+          waiting = true
         continue
       }
       if (
@@ -7547,7 +7557,17 @@ export class TaskRuntime {
           !this.matchesWorkerInput(attempt, session.turn.inputID) ||
           (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
       ) {
-        waiting = true
+        if (
+          !this.cancelWait(plan, attempt, fence, {
+            cause: "turn-input-mismatch",
+            bounded: true,
+            detail: {
+              turnInputID: session.turn?.inputID ?? null,
+              turnState: session.turn?.state ?? null,
+            },
+          })
+        )
+          waiting = true
         continue
       }
       if (promptCompleted) {
@@ -7563,12 +7583,24 @@ export class TaskRuntime {
       }
       if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
     }
-    if (
-      !allowPlanSettlement ||
-      waiting ||
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      return
+    if (!allowPlanSettlement || waiting) return
+    const stuck = this.store
+      .effects(plan.id)
+      .filter((effect) => ["intended", "uncertain"].includes(effect.state))
+    if (stuck.length > 0) {
+      if (
+        !this.cancelWaitElapsed(plan, null, "plan", "unresolved-effect", fence, {
+          effects: stuck.map((effect) => ({
+            id: effect.id,
+            kind: effect.kind,
+            state: effect.state,
+          })),
+        })
+      )
+        return
+      for (const effect of stuck)
+        this.supersedeEffect(effect, "Plan cancelled: effect never resolved", fence)
+    }
     this.store.fenced(this.owner, fence, (db) =>
       db
         .query(
@@ -7605,22 +7637,109 @@ export class TaskRuntime {
     return this.now() - first.at >= this.cancelIdleWaitMs
   }
 
-  /** Cancel the attempt and its node unless an effect is unresolved. The worktree is preserved. */
+  /**
+   * Whether the attempt's unresolved effects no longer block cancel. Effects left in
+   * `intended` or `uncertain` get a bounded wait, then are superseded.
+   */
+  private resolveCancelEffects(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
+    const stuck = this.store
+      .effects(plan.id)
+      .filter(
+        (effect) =>
+          effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
+      )
+    if (stuck.length === 0) return true
+    if (
+      !this.cancelWaitElapsed(plan, attempt.task_id, attempt.id, "unresolved-effect", fence, {
+        attemptID: attempt.id,
+        effects: stuck.map((effect) => ({ id: effect.id, kind: effect.kind, state: effect.state })),
+      })
+    )
+      return false
+    for (const effect of stuck)
+      this.supersedeEffect(effect, "Plan cancelled: effect never resolved", fence)
+    return true
+  }
+
+  /** A cancel wait that only the user can end, or one bounded by `cancelIdleWaitMs`. */
+  private cancelBlock(
+    session: HostSession,
+  ): { cause: string; bounded: boolean; detail?: Record<string, unknown> } | undefined {
+    if (session.pendingInput) return { cause: "pending-input", bounded: false }
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+      return {
+        cause: "pending-approval",
+        bounded: false,
+        detail: {
+          pendingPermissions: session.pendingPermissions ?? 0,
+          pendingForms: session.pendingForms ?? 0,
+        },
+      }
+    if (session.observationUnstable) return { cause: "observation-unstable", bounded: true }
+    return undefined
+  }
+
+  /**
+   * Record why a cancel is waiting (once per cause). A bounded cause settles the
+   * attempt after `cancelIdleWaitMs`; true means the attempt settled.
+   */
+  private cancelWait(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    wait: { cause: string; bounded: boolean; detail?: Record<string, unknown> },
+  ): boolean {
+    const payload = { attemptID: attempt.id, sessionID: attempt.session_id, ...wait.detail }
+    if (!wait.bounded) {
+      this.store.fenced(this.owner, fence, () =>
+        this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WAIT", {
+          scope: attempt.id,
+          cause: wait.cause,
+          ...payload,
+        }),
+      )
+      return false
+    }
+    if (!this.cancelWaitElapsed(plan, attempt.task_id, attempt.id, wait.cause, fence, payload))
+      return false
+    return this.settleCancelledAttempt(plan, attempt, fence, true)
+  }
+
+  /** Records the cancel-wait cause once and reports whether the bounded wait since its start elapsed. */
+  private cancelWaitElapsed(
+    plan: PlanRow,
+    taskID: string | null,
+    scope: string,
+    cause: string,
+    fence: number,
+    detail: Record<string, unknown>,
+  ): boolean {
+    this.store.fenced(this.owner, fence, () => {
+      this.store.recordOnce(plan.id, taskID, "CANCEL_WAIT", { scope, cause, ...detail })
+      const started = this.store.latestTransition<{ scope: string; at: number }>(
+        plan.id,
+        taskID,
+        "CANCEL_WAIT_STARTED",
+      )
+      if (started?.scope !== scope)
+        this.store.record(plan.id, taskID, "CANCEL_WAIT_STARTED", { scope, at: this.now() })
+    })
+    const started = this.store.latestTransition<{ scope: string; at: number }>(
+      plan.id,
+      taskID,
+      "CANCEL_WAIT_STARTED",
+    )
+    return started !== undefined && this.now() - started.at >= this.cancelIdleWaitMs
+  }
+
+  /** Cancel the attempt and its node once its effects resolve or are superseded. The worktree is preserved. */
   private settleCancelledAttempt(
     plan: PlanRow,
     attempt: AttemptRow,
     fence: number,
     workerNeverIdle: boolean,
   ): boolean {
-    if (
-      this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-        )
-    )
-      return false
+    if (!this.resolveCancelEffects(plan, attempt, fence)) return false
     if (workerNeverIdle)
       this.store.fenced(this.owner, fence, () =>
         this.store.record(plan.id, attempt.task_id, "WORKER_CANCEL_WITHOUT_IDLE", {
@@ -7646,6 +7765,7 @@ export class TaskRuntime {
   }
 
   private cancelMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
+    if (!this.resolveCancelEffects(plan, attempt, fence)) return false
     return this.store.fenced(this.owner, fence, () => {
       const currentPlan = this.store.plan(plan.id)
       const current = this.store

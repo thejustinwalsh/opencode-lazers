@@ -14289,6 +14289,96 @@ test("cancelling a never-idle worker finishes within its bounded wait and preser
   expect(countTransitions(f, f.receipt.planID, "WORKER_CANCEL_WITHOUT_IDLE")).toBe(1)
 })
 
+async function idleCancelFixture(clock: { now: number }) {
+  const f = fixture({
+    shared: false,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    now: () => clock.now,
+    workerNoProgressWindowMs: 0,
+    cancelIdleWaitMs: 30_000,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id, "interrupted")
+  return { f, attempt, session: f.sessions.get(attempt.session_id)! }
+}
+
+test("cancelling an archived worker settles it at once and preserves the worktree", async () => {
+  const clock = { now: 1_000_000 }
+  const { f, attempt, session } = await idleCancelFixture(clock)
+  session.archived = true
+  session.busy = false
+  // The native success belongs to a different input: without the archive rule this waits forever.
+  session.turn = { inputID: "msg_other", state: "completed" }
+  await cancelRunningPlan(f, "cancel-archived")
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("cancelled")
+  expect(existsSync(attempt.workspace)).toBe(true)
+  expect(countTransitions(f, f.receipt.planID, "CANCEL_WORKER_ARCHIVED")).toBe(1)
+})
+
+test("a stuck uncertain effect is superseded after the bounded wait and the cancel completes", async () => {
+  const clock = { now: 1_000_000 }
+  const { f, attempt, session } = await idleCancelFixture(clock)
+  session.archived = true
+  f.store.atomic((db) =>
+    db
+      .query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'uncertain',?,?,0)")
+      .run("stuck-effect", f.receipt.planID, attempt.task_id, attempt.id, "session", "{}", null),
+  )
+  await cancelRunningPlan(f, "cancel-uncertain")
+  await f.runtime.tick()
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+  clock.now += 31_000
+  for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelled")
+  const effect = f.store.effects(f.receipt.planID).find((row) => row.id === "stuck-effect")!
+  expect(effect.state).toBe("failed")
+  expect(JSON.parse(effect.receipt!)).toMatchObject({ superseded: true })
+  expect(countTransitions(f, f.receipt.planID, "EFFECT_SUPERSEDED")).toBe(1)
+  expect(countTransitions(f, f.receipt.planID, "CANCEL_WAIT")).toBe(1)
+})
+
+test.each([
+  ["observation-unstable", true],
+  ["turn-input-mismatch", true],
+  ["background-activity", true],
+  ["pending-input", false],
+  ["pending-approval", false],
+] as const)(
+  "a cancel waiting on %s records the reason once across ticks (bounded: %s)",
+  async (cause, bounded) => {
+    const clock = { now: 1_000_000 }
+    const { f, session } = await idleCancelFixture(clock)
+    if (cause === "observation-unstable") session.observationUnstable = true
+    if (cause === "turn-input-mismatch") session.turn = { inputID: "msg_other", state: "completed" }
+    if (cause === "background-activity") session.runningShells = 1
+    if (cause === "pending-input") session.pendingInput = true
+    if (cause === "pending-approval") session.pendingPermissions = 1
+    await cancelRunningPlan(f, `cancel-${cause}`)
+    const waits = () =>
+      f.repository.read((db) =>
+        db
+          .query<{ payload: string }, [string]>(
+            "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='CANCEL_WAIT' ORDER BY id",
+          )
+          .all(f.receipt.planID)
+          .map((row) => JSON.parse(row.payload) as { cause: string }),
+      )
+    for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+    expect(waits().map((wait) => wait.cause)).toEqual([cause])
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
+    clock.now += 31_000
+    for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+    expect(waits().map((wait) => wait.cause)).toEqual([cause])
+    expect(f.store.plan(f.receipt.planID)?.state).toBe(bounded ? "cancelled" : "cancelling")
+  },
+)
+
 test.each([
   ["cancelled", "cancel"],
   ["integrated", "cancel"],
