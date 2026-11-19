@@ -65,6 +65,10 @@ export type SummaryRow = {
   action?: "errors"
 }
 
+/** Recording-gap events plus the report's data notes: one count for Summary and Gaps. */
+export const recordGapCount = (events: readonly TrajectoryEvent[], notes: readonly string[]) =>
+  events.filter((event) => event.kind === "worker-gap").length + notes.length
+
 const workerDone = (events: readonly TrajectoryEvent[]) =>
   events.some(
     (event) =>
@@ -86,6 +90,8 @@ export function attemptSummary(input: {
   state: string
   calls: number
   files: number
+  /** Gaps in the record: `recordGapCount(events, notes)`, the number the Gaps disclosure shows. */
+  gaps: number
   /** Tool names of failed calls, one per call. */
   failedCalls: readonly string[]
   attemptStart: number | null
@@ -138,7 +144,7 @@ export function attemptSummary(input: {
   const count = (kinds: readonly string[]) =>
     events.filter((event) => kinds.includes(event.kind)).length
   const retries = Math.max(count(["provider-retry"]), count(["worker-provider-retry"]))
-  const gaps = count(["worker-gap"])
+  const gaps = input.gaps
   const modelErrors = count(["assistant-error"])
   const failedChecks = events.filter(
     (event) =>
@@ -152,7 +158,7 @@ export function attemptSummary(input: {
     ...(failedChecks ? [plural(failedChecks, "failed check")] : []),
     ...(modelErrors ? [plural(modelErrors, "model error")] : []),
     ...(retries ? [plural(retries, "provider retry", "provider retries")] : []),
-    ...(gaps ? [plural(gaps, "recording gap")] : []),
+    ...(gaps ? [plural(gaps, "gap")] : []),
   ]
   if (errors.length > 0) rows.push({ label: "Errors", text: errors.join(" · "), action: "errors" })
 
@@ -194,7 +200,7 @@ const errorMessage = (error: unknown) => {
   return ""
 }
 
-export type EndReason = { text: string; raw?: string; tone: "failed" | "cancelled" }
+export type EndReason = { text: string; raw?: string; tone: string }
 
 /**
  * Why an attempt that did not succeed ended, from what was recorded: the last reason on a runner
@@ -321,8 +327,11 @@ export function costView(report: Pick<TrajectoryReport, "effort">): CostView | n
       ? { source: cost.currentIndex.sources[0].source, at: cost.currentIndex.retrievedAt }
       : null
   if (!priceSource) return null
-  if (
-    estimate?.status === "partial" ||
+  // The figure and its label read the same basis: the estimate's own token coverage when the
+  // estimate is the figure, the index sessions only when the index total is.
+  if (estimate && estimate.sources.length > 0) {
+    if (estimateShare(report).unpriced > 0 && estimate.status === "partial") partial = true
+  } else if (
     (cost?.coverage.partialSessions ?? 0) > 0 ||
     (cost?.coverage.unpricedSessionIDs.length ?? 0) > 0 ||
     unpricedCategories(cost).length > 0
@@ -371,21 +380,30 @@ export function coverageView(report: Pick<TrajectoryReport, "effort">): Coverage
   const cost = report.effort.marketEquivalentCost
   const view = costView(report)
   if (!cost || !view) return null
+  const estimate = cost.observedUsageEstimate
   let priced = 0
   let unpriced = 0
-  for (const session of cost.sessions)
-    for (const category of Object.values(session.categories)) {
-      const tokens = category.tokens ?? 0
-      if (category.status === "valued") priced += tokens
-      else if (category.status === "unknown" || category.status === "unavailable")
-        unpriced += tokens
+  let names: string[]
+  if (estimate && estimate.sources.length > 0) {
+    const share = estimateShare(report)
+    priced = share.priced
+    unpriced = estimate.status === "partial" ? share.unpriced : 0
+    names = unpriced > 0 ? share.names : []
+  } else {
+    for (const session of cost.sessions)
+      for (const category of Object.values(session.categories)) {
+        const tokens = category.tokens ?? 0
+        if (category.status === "valued") priced += tokens
+        else if (category.status === "unknown" || category.status === "unavailable")
+          unpriced += tokens
+      }
+    names = unpricedCategories(cost)
+    if (priced + unpriced === 0) {
+      priced = cost.coverage.pricedSessions
+      unpriced = Math.max(0, cost.coverage.totalUniqueSessions - cost.coverage.pricedSessions)
     }
-  const names = unpricedCategories(cost)
-  const estimate = cost.observedUsageEstimate
-  if (priced + unpriced === 0) {
-    priced = cost.coverage.pricedSessions
-    unpriced = Math.max(0, cost.coverage.totalUniqueSessions - cost.coverage.pricedSessions)
   }
+  if (priced + unpriced === 0) priced = 1
   const caption = estimate
     ? `${plural(estimate.retainedCallCount, "call")} priced`
     : `${cost.coverage.pricedSessions} of ${plural(cost.coverage.totalUniqueSessions, "session")} priced`
@@ -396,6 +414,31 @@ export function coverageView(report: Pick<TrajectoryReport, "effort">): Coverage
     ...(names.length > 0 ? { note: `${andList(names)} have no published price` } : {}),
     aside: `${view.source} prices · ${view.date}`,
   }
+}
+
+/**
+ * Tokens the estimate priced against the tokens the report measured, per category. The estimate
+ * prices retained call measurements; any measured token beyond them has no price.
+ */
+function estimateShare(report: Pick<TrajectoryReport, "effort">) {
+  const usage = report.effort.tokenUsage
+  const categories = report.effort.marketEquivalentCost?.observedUsageEstimate?.categories
+  let priced = 0
+  let unpriced = 0
+  const names: string[] = []
+  for (const key of Object.keys(CATEGORY_WORDS) as Array<keyof typeof CATEGORY_WORDS>) {
+    const total = usage.total?.[key] ?? usage.measuredSubtotal[key]
+    const known = categories?.[key].tokens ?? 0
+    if (total === null) {
+      priced += known
+      continue
+    }
+    priced += Math.min(known, total)
+    const missing = Math.max(0, total - known)
+    unpriced += missing
+    if (missing > 0) names.push(CATEGORY_WORDS[key])
+  }
+  return { priced, unpriced, names }
 }
 
 export type RateRow = { tier: string; cells: [string, string, string, string] }

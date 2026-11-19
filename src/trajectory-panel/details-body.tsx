@@ -15,7 +15,14 @@ import {
   durationText,
 } from "../details/index.ts"
 import type { LabelTone, LaneTick } from "../details/index.ts"
-import { caveats, coverageView, costView, ratesRows, tokensText } from "./attempt-summary.ts"
+import {
+  caveats,
+  recordGapCount,
+  coverageView,
+  costView,
+  ratesRows,
+  tokensText,
+} from "./attempt-summary.ts"
 import type { EndReason, SummaryRow } from "./attempt-summary.ts"
 import { eventFilters, eventLabel, eventMatchesFilter } from "./event-names.ts"
 import type { EventFilter } from "./event-names.ts"
@@ -113,7 +120,7 @@ export function AttemptPane(props: AttemptPaneProps) {
     props.events.filter((event) => eventMatchesFilter(event, props.eventsRequest.filter)),
   )
   const gapEvents = createMemo(() => props.events.filter((event) => event.kind === "worker-gap"))
-  const gapCount = () => props.notes.length + gapEvents().length
+  const gapTotal = () => recordGapCount(props.events, props.notes)
   return (
     <div class="lazers-trajectory-pane-body" data-pane="attempt">
       <Show when={props.reason}>
@@ -254,7 +261,7 @@ export function AttemptPane(props: AttemptPaneProps) {
             </For>
           </div>
         </Disclosure>
-        <Disclosure label="Gaps" count={gapCount()}>
+        <Disclosure label="Gaps" count={gapTotal()}>
           <ul class="lazers-trajectory-gap-list">
             <For each={props.notes}>{(note) => <li>{note}</li>}</For>
             <For each={gapEvents()}>
