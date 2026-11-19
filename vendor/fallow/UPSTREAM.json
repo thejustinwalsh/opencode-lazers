@@ -1,0 +1,22 @@
+{
+  "repo": "fallow-rs/fallow",
+  "tag": "v3.43.2",
+  "commit": "b6a3e048dc882bdf11c8269c73167223b9e32774",
+  "tarballSha256": "771644aa95d7df0ea6deef3e55c0610205d30190af58e976c64ed881e823d49a",
+  "importedPaths": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "crates/types",
+    "crates/config",
+    "crates/extract",
+    "crates/graph",
+    "crates/core",
+    "crates/engine",
+    "crates/mutation",
+    "crates/security",
+    "crates/output",
+    "crates/report-protocol",
+    "crates/process"
+  ]
+}
