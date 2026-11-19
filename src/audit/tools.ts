@@ -32,8 +32,10 @@ import {
   detectEntryPoints,
   draftFallowConfig,
   dupesGroups,
+  filterByResolvedPaths,
   healthFunctions,
   page,
+  resolveToolPaths,
   type DeadCodeFindingKind,
   type HealthSort,
 } from "./fallow-tools-support.ts"
@@ -244,11 +246,11 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-check",
       description:
-        "Read-only preview of the Fallow review the runtime will run when this attempt finishes: changed files against the merge-base with the default branch (or HEAD~1). Findings are feedback, never a rejection. Older findings are not counted.",
+        "Read-only preview of the Fallow review the runtime will run when this attempt finishes: changed files against the merge-base with the default branch (or HEAD~1), optionally narrowed to given files or directories. Findings are feedback, never a rejection. Older findings are not counted.",
       input: z.strictObject(pathsInput),
       output: FallowCheckOutput,
       options: { codemode: true, permission: "lz-fallow-check" },
-      execute: (_input, call) =>
+      execute: (input, call) =>
         ctx.permission
           .assert({
             sessionID: call.sessionID,
@@ -261,18 +263,28 @@ export function registerAuditTools(
               Effect.tryPromise({
                 try: async () => {
                   const workspace = ctx.location.directory
+                  const resolvedPaths = await resolveToolPaths(workspace, input.paths)
                   const baseCommit = await resolvePreviewBaseCommit(workspace)
-                  const result = await fallowReview({
-                    workspace,
-                    baseCommit,
-                    artifact: "HEAD",
-                    repository,
-                  })
+                  const result = resolvedPaths.empty
+                    ? {
+                        status: "clean" as const,
+                        introduced: [],
+                        concerns: [],
+                        thresholds: undefined,
+                      }
+                    : await fallowReview({ workspace, baseCommit, artifact: "HEAD", repository })
+                  const introduced = filterByResolvedPaths(result.introduced, resolvedPaths)
+                  const concerns = filterByResolvedPaths(result.concerns, resolvedPaths)
                   const output = {
-                    status: result.status,
-                    introduced: result.introduced,
-                    concerns: result.concerns,
-                    thresholds: result.thresholds,
+                    status:
+                      result.status === "unavailable"
+                        ? result.status
+                        : introduced.length + concerns.length === 0
+                          ? ("clean" as const)
+                          : ("findings" as const),
+                    introduced,
+                    concerns,
+                    thresholds: result.thresholds ?? { cyclomatic: 20, cognitive: 15 },
                   }
                   return { content: JSON.stringify(output), output }
                 },
@@ -284,7 +296,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-dupes",
       description:
-        "Duplicate code groups from Fallow's duplication analysis, ranked worst first by token count and paged. No source fragments; each instance carries only file and line range.",
+        "Duplicate code groups from Fallow's duplication analysis, ranked worst first by token count and paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). No source fragments; each instance carries only file and line range.",
       input: z.strictObject({
         ...pathsInput,
         ...boundedPaging,
@@ -305,12 +317,17 @@ export function registerAuditTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () =>
-                  withEffectiveConfig(ctx, repository, async (resolved) => {
+                try: async () => {
+                  const resolvedPaths = await resolveToolPaths(ctx.location.directory, input.paths)
+                  if (resolvedPaths.empty) {
+                    const output = { groups: [], total: 0, duplicationPct: 0, nextOffset: null }
+                    return { content: JSON.stringify(output), output }
+                  }
+                  return withEffectiveConfig(ctx, repository, async (resolved) => {
                     const report = await defaultFallowAnalyzer.duplication({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
-                      files: input.paths,
+                      files: resolvedPaths.files,
                     })
                     const groups = dupesGroups(report)
                     const paged = page(groups, input)
@@ -321,7 +338,8 @@ export function registerAuditTools(
                       nextOffset: paged.nextOffset,
                     }
                     return { content: JSON.stringify(output), output }
-                  }),
+                  })
+                },
                 catch: (error) => new Tool.Error({ message: String(error) }),
               }),
             ),
@@ -330,7 +348,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-health",
       description:
-        "Functions over Fallow's complexity limits, ranked worst first by the requested metric and paged. No source fragments.",
+        "Functions over Fallow's complexity limits, ranked worst first by the requested metric and paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). No source fragments.",
       input: z.strictObject({
         ...pathsInput,
         ...boundedPaging,
@@ -349,12 +367,22 @@ export function registerAuditTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () =>
-                  withEffectiveConfig(ctx, repository, async (resolved) => {
+                try: async () => {
+                  const resolvedPaths = await resolveToolPaths(ctx.location.directory, input.paths)
+                  if (resolvedPaths.empty) {
+                    const output = {
+                      functions: [],
+                      total: 0,
+                      thresholds: { cyclomatic: 20, cognitive: 15 },
+                      nextOffset: null,
+                    }
+                    return { content: JSON.stringify(output), output }
+                  }
+                  return withEffectiveConfig(ctx, repository, async (resolved) => {
                     const report = await defaultFallowAnalyzer.complexity({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
-                      files: input.paths,
+                      files: resolvedPaths.files,
                     })
                     const sort: HealthSort = input.sort
                     const paged = page(healthFunctions(report, sort), input)
@@ -365,7 +393,8 @@ export function registerAuditTools(
                       nextOffset: paged.nextOffset,
                     }
                     return { content: JSON.stringify(output), output }
-                  }),
+                  })
+                },
                 catch: (error) => new Tool.Error({ message: String(error) }),
               }),
             ),
@@ -374,7 +403,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-dead-code",
       description:
-        "Dead-code candidates in this project: unused files, exports, types and dependencies, paged. Unused class members are left out unless the project's Fallow config turns that rule on. Disabled with no usable config; use lz-fallow-config to see what is missing.",
+        "Dead-code candidates in this project: unused files, exports, types and dependencies, paged. paths may name files or directories (with or without a trailing slash; '.' for the whole workspace). Unused class members are left out unless the project's Fallow config turns that rule on. Disabled with no usable config; use lz-fallow-config to see what is missing.",
       input: z.strictObject({
         ...pathsInput,
         ...boundedPaging,
@@ -393,8 +422,13 @@ export function registerAuditTools(
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async () =>
-                  withEffectiveConfig(ctx, repository, async (resolved) => {
+                try: async () => {
+                  const resolvedPaths = await resolveToolPaths(ctx.location.directory, input.paths)
+                  if (resolvedPaths.empty) {
+                    const output = { findings: [], total: 0, nextOffset: null }
+                    return { content: JSON.stringify(output), output }
+                  }
+                  return withEffectiveConfig(ctx, repository, async (resolved) => {
                     if (!resolved.deadCodeEnabled)
                       throw new Tool.Error({
                         message:
@@ -403,7 +437,7 @@ export function registerAuditTools(
                     const report = await defaultFallowAnalyzer.deadCode({
                       root: ctx.location.directory,
                       configPath: resolved.configPath,
-                      files: input.paths,
+                      files: resolvedPaths.files,
                     })
                     const kinds = input.kinds as DeadCodeFindingKind[] | undefined
                     const paged = page(deadCodeFindings(report, resolved.config, kinds), input)
@@ -413,7 +447,8 @@ export function registerAuditTools(
                       nextOffset: paged.nextOffset,
                     }
                     return { content: JSON.stringify(output), output }
-                  }),
+                  })
+                },
                 catch: (error) =>
                   error instanceof Tool.Error ? error : new Tool.Error({ message: String(error) }),
               }),

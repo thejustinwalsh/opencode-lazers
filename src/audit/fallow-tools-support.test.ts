@@ -7,8 +7,10 @@ import {
   detectEntryPoints,
   draftFallowConfig,
   dupesGroups,
+  filterByResolvedPaths,
   healthFunctions,
   page,
+  resolveToolPaths,
 } from "./fallow-tools-support.ts"
 
 const cleanups: (() => void)[] = []
@@ -137,4 +139,80 @@ test("detectEntryPoints finds fixtures, cli.ts, worker references, and a script'
   expect(found).toContain("src/host.ts")
   expect(found).toContain("scripts.ts")
   expect(found).not.toContain("src/untouched.ts")
+})
+
+function workspaceWithFiles() {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "lz-tool-paths-")))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  mkdirSync(join(dir, "src", "audit", "nested"), { recursive: true })
+  writeFileSync(join(dir, "src", "audit", "a.ts"), "export const a = 1\n")
+  writeFileSync(join(dir, "src", "audit", "b.ts"), "export const b = 1\n")
+  writeFileSync(join(dir, "src", "audit", "nested", "c.ts"), "export const c = 1\n")
+  writeFileSync(join(dir, "src", "other.ts"), "export const other = 1\n")
+  return dir
+}
+
+test("resolveToolPaths with no paths means no restriction", async () => {
+  const dir = workspaceWithFiles()
+  expect(await resolveToolPaths(dir, undefined)).toEqual({ files: undefined, empty: false })
+  expect(await resolveToolPaths(dir, [])).toEqual({ files: undefined, empty: false })
+})
+
+test("resolveToolPaths expands a directory to the same files as listing them", async () => {
+  const dir = workspaceWithFiles()
+  const byDirectory = await resolveToolPaths(dir, ["src/audit"])
+  const byFiles = await resolveToolPaths(dir, [
+    "src/audit/a.ts",
+    "src/audit/b.ts",
+    "src/audit/nested/c.ts",
+  ])
+  expect(byDirectory.files).toEqual(byFiles.files)
+  expect(byDirectory.files).toEqual(["src/audit/a.ts", "src/audit/b.ts", "src/audit/nested/c.ts"])
+})
+
+test("resolveToolPaths treats a trailing slash the same as none", async () => {
+  const dir = workspaceWithFiles()
+  const withSlash = await resolveToolPaths(dir, ["src/audit/"])
+  const withoutSlash = await resolveToolPaths(dir, ["src/audit"])
+  expect(withSlash).toEqual(withoutSlash)
+})
+
+test("resolveToolPaths follows a nested directory", async () => {
+  const dir = workspaceWithFiles()
+  const resolved = await resolveToolPaths(dir, ["src/audit/nested"])
+  expect(resolved.files).toEqual(["src/audit/nested/c.ts"])
+})
+
+test("resolveToolPaths combines a directory and a separate file", async () => {
+  const dir = workspaceWithFiles()
+  const resolved = await resolveToolPaths(dir, ["src/audit/nested", "src/other.ts"])
+  expect(resolved.files).toEqual(["src/audit/nested/c.ts", "src/other.ts"])
+})
+
+test("resolveToolPaths on '.' returns the whole tree without erroring", async () => {
+  const dir = workspaceWithFiles()
+  const resolved = await resolveToolPaths(dir, ["."])
+  expect(resolved.files).toContain("src/other.ts")
+  expect(resolved.files).toContain("src/audit/nested/c.ts")
+  expect(resolved.empty).toBe(false)
+})
+
+test("resolveToolPaths on a non-existent path is empty, not an error", async () => {
+  const dir = workspaceWithFiles()
+  const resolved = await resolveToolPaths(dir, ["src/does-not-exist"])
+  expect(resolved).toEqual({ files: [], empty: true })
+})
+
+test("resolveToolPaths rejects a path that escapes the workspace", async () => {
+  const dir = workspaceWithFiles()
+  await expect(resolveToolPaths(dir, ["../elsewhere"])).rejects.toThrow("path-outside-workspace")
+  await expect(resolveToolPaths(dir, ["/etc/passwd"])).rejects.toThrow("path-outside-workspace")
+})
+
+test("filterByResolvedPaths keeps only findings whose file was resolved, or everything with no restriction", () => {
+  const findings = [{ file: "a.ts" }, { file: "b.ts" }]
+  expect(filterByResolvedPaths(findings, { files: undefined, empty: false })).toEqual(findings)
+  expect(filterByResolvedPaths(findings, { files: ["a.ts"], empty: false })).toEqual([
+    { file: "a.ts" },
+  ])
 })

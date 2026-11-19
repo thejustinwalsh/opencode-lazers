@@ -15,7 +15,7 @@ import { Effect } from "effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { z } from "zod"
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, realpathSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
@@ -222,4 +222,59 @@ test("Fallow analysis tools expose dupes, health, dead-code, config and a read-o
   await commit(root, "touch a")
   const check = await invoke<z.infer<typeof FallowCheckOutput>>("lz-fallow-check", {})
   expect(["clean", "findings", "unavailable"]).toContain(check.status)
+})
+
+test("lz-fallow-health and lz-fallow-dupes accept a directory path, matching an explicit file list", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lz-fallow-paths-")))
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }))
+  const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
+  cleanups.push(() => repository.close())
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture" }))
+  const srcDir = join(root, "src", "audit")
+  mkdirSync(srcDir, { recursive: true })
+  const nested = (depth: number) => {
+    let body = "return 1\n"
+    for (let i = depth; i >= 1; i--) body = `if (a > ${i}) {\n${body}}\n`
+    return `export function deep(a: number): number {\n${body}return 0\n}\n`
+  }
+  writeFileSync(join(srcDir, "deep.ts"), nested(9))
+  writeFileSync(join(root, "other.ts"), "export const other = 1\n")
+
+  const { invoke } = await harness(root, repository)
+
+  const byDirectory = await invoke<z.infer<typeof FallowHealthOutput>>("lz-fallow-health", {
+    paths: ["src/audit"],
+  })
+  expect(
+    byDirectory.functions.some((f) => f.file === "src/audit/deep.ts" && f.name === "deep"),
+  ).toBe(true)
+
+  const byFile = await invoke<z.infer<typeof FallowHealthOutput>>("lz-fallow-health", {
+    paths: ["src/audit/deep.ts"],
+  })
+  expect(byDirectory.functions).toEqual(byFile.functions)
+
+  const trailingSlash = await invoke<z.infer<typeof FallowHealthOutput>>("lz-fallow-health", {
+    paths: ["src/audit/"],
+  })
+  expect(trailingSlash.functions).toEqual(byDirectory.functions)
+
+  const missing = await invoke<z.infer<typeof FallowHealthOutput>>("lz-fallow-health", {
+    paths: ["src/does-not-exist"],
+  })
+  expect(missing).toEqual({
+    functions: [],
+    total: 0,
+    thresholds: { cyclomatic: 20, cognitive: 15 },
+    nextOffset: null,
+  })
+
+  await expect(
+    invoke<z.infer<typeof FallowHealthOutput>>("lz-fallow-health", { paths: ["../escape"] }),
+  ).rejects.toThrow("path-outside-workspace")
+
+  const dupesByDirectory = await invoke<z.infer<typeof FallowDupesOutput>>("lz-fallow-dupes", {
+    paths: ["src/audit", "other.ts"],
+  })
+  expect(dupesByDirectory).toBeDefined()
 })
