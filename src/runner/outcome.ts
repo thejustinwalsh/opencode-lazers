@@ -1,11 +1,14 @@
 import { FallowAcceptance } from "../audit/contract.ts"
 import { findingLine, renderNotice } from "../audit/fallow-render.ts"
+import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
 
 /** Human action beside durable machine identity, without replaying full check logs. */
 export function outcomeText(serialized: string) {
   const payload = JSON.parse(serialized)
   let action: string
   switch (payload.status) {
+    case RECOVERY_BUNDLE_STATUS:
+      return recoveryBundleText(serialized)
     case "architect-handoff": {
       const planIDs = Array.isArray(payload.planIDs)
         ? payload.planIDs.filter((id: unknown): id is string => typeof id === "string")

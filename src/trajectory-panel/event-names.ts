@@ -124,6 +124,8 @@ export const runnerTransitions: Record<string, string> = {
   READY: "Ready",
   RECONCILE: "Reconciled",
   RECONCILE_REQUESTED: "Reconcile requested",
+  RECOVERY_BUNDLE_FAILED: "Recovery bundle failed",
+  RECOVERY_BUNDLE_RAISED: "Recovery bundle raised",
   REPAIR: "Repair",
   RESUME: "Resumed",
   RETAINED_ACCEPT: "Retained result accepted",
