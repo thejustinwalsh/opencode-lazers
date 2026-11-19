@@ -62,3 +62,23 @@ test("the heading keeps the whole first sentence", () => {
   const long = `${"word ".repeat(30)}end. Second sentence.`
   expect(taskHeading(long)).toBe(`${"word ".repeat(30)}end.`)
 })
+
+test("the reasons the runtime records read as what happened and what to do", () => {
+  const cases: Array<[string, RegExp]> = [
+    [
+      "Worker execution was interrupted; the runtime could not resume it",
+      /interrupted .* resume or retry/,
+    ],
+    ["Worker interrupted", /interrupted/],
+    ["Verification quality exited with code 1", /verification check failed/],
+    ["Combined artifact verification failed", /conflicts with other accepted changes/],
+    ["No native worker route is available for the systems persona", /Assign one in Models/],
+    ["Reviewed landing branch or HEAD changed during adoption", /target branch moved/],
+    ["Owned worktree is dirty; preserve /Users/x/worktrees/abc", /worktree holds work/],
+  ]
+  for (const [raw, expected] of cases) {
+    const text = taskReasonView(raw, "blocked").text
+    expect(text).toMatch(expected)
+    expect(text).not.toMatch(/\/Users|unknown/i)
+  }
+})
