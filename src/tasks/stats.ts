@@ -1,5 +1,5 @@
 import { callsText, durationText } from "../details/format.ts"
-import { tokenLabel } from "../recovery/trajectory-facts.ts"
+import { tokenLabel } from "../recovery/token-label.ts"
 import type { TaskConcern } from "./contract.ts"
 import type { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 

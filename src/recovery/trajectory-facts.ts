@@ -47,12 +47,7 @@ export function durationLabel(ms: number): string {
   return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`
 }
 
-export function tokenLabel(count: number): string {
-  if (count >= 1_000_000_000) return `${(count / 1_000_000_000).toFixed(1)}B`
-  if (count >= 1_000_000) return `${Math.round(count / 1_000_000)}M`
-  if (count >= 1_000) return `${Math.round(count / 1_000)}k`
-  return String(count)
-}
+export { tokenLabel } from "./token-label.ts"
 
 const REPAIR_EVENTS = ["REPAIR", "RESUME", "RETAINED_REPAIR", "RETRY_REQUESTED"]
 
