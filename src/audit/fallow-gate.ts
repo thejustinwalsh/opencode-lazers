@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
-import { hasFallowConfig } from "./config.ts"
+import { getLatestFallowConfig, hasFallowConfig } from "./config.ts"
 
 /**
  * Every project needs a Fallow config: the audit that reviews each task reads its entry points,
@@ -61,4 +61,9 @@ export async function fallowConfigGate(input: {
     repository: input.repository,
   })
   return present ? undefined : configRequired(input.repository.projectDirectory)
+}
+
+/** A stored LAZERS config settles the gate without touching git, so a dispatch need not wait. */
+export function hasStoredFallowConfig(repository: TaskRepository): boolean {
+  return getLatestFallowConfig(repository) !== undefined
 }

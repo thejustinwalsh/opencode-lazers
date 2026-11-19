@@ -1408,6 +1408,38 @@ Still open:
    instance. Should the runtime send it back to that task's worker itself, or
    leave that to the Architect (planned)?
 
+## The review is `fallow audit` (2026-11-19)
+
+The engine's own audit runs in WebAssembly. Vendored patch 0012 gives `AuditOptions` a
+`base_root` (a tree of the base commit the host materialises with `git archive`, read-only
+second preopen) instead of `git worktree add`; implements `BaseFileReader` on WASI with
+`git cat-file blob` host calls (without it the diff-risk rules and the docs-only fast path
+silently did nothing); shares one rayon pool per process on WASI (a second
+`use_current_thread` pool fails, and an audit resolves several contexts); adds a
+`skip_duplication` switch for health. Everything else (changed files by three-dot diff plus
+working tree, attribution, tiers, test-file exemption, estimated CRAP, dependency scoping,
+hunk-scoped duplication demotion, diff-risk rules) is the engine's, unmodified.
+
+| Official audit rule                            | Where it runs                                        | Test (`src/audit/review.test.ts` unless noted)  |
+| ---------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------- |
+| Changed files only, base compare               | engine `changed_files` + `AuditBackend::run_base`    | introduced, inherited, uncommitted working tree |
+| Introduced / worsened / inherited              | engine `classify_complexity_attribution_against_all` | inherited unchanged; worsened in tier           |
+| Tier change makes a finding introduced         | engine                                               | tier crossing 28 to 45                          |
+| Test-file complexity never fails               | engine `gate_exemption: test-file`                   | test-file exemption                             |
+| Estimated-CRAP-only warns                      | engine `effective_severity`                          | `engine-audit.test.ts` fixture                  |
+| Diff-risk rules                                | engine `diff_risk`                                   | skipped test, new suppression                   |
+| Dependencies only when package.json is touched | engine `scope_dependency_findings`                   | dependency scoping                              |
+| Duplication only from added hunks              | engine `demote_preexisting_dupe_introductions`       | hunk-scoped duplication                         |
+| Verdict pass/warn/fail                         | engine                                               | package verdict                                 |
+| Unknown field or enum value in the report      | LAZERS: strict zod schema                            | `engine-audit.test.ts`                          |
+
+Measured on this repository (Apple silicon, Bun 1.4.4), review of a 49-file change, fresh
+worktree, process peak RSS: previous review 3.4 s cold, 1.6 s warm, 684 MB; the audit 9.7 s
+cold, 6.7 s warm, 999 MB. It analyses the whole project twice (head and base) with the
+CSS analysis the audit includes. Whole-repository dead code, duplication and health in one
+run: 4.5 s against 7.8 s as three runs (linear memory peak 156 MB against 154 MB: the
+runs were never concurrent, so the saving is time, not peak).
+
 ## Follow-ups noticed, not part of this plan
 
 - `scripts/release-package.ts` copies `processor.js`, `repo-worker.js` and

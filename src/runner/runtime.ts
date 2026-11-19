@@ -84,7 +84,11 @@ import {
   type FallowReview,
 } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
-import { fallowConfigGate, FALLOW_CONFIG_REQUIRED } from "../audit/fallow-gate.ts"
+import {
+  fallowConfigGate,
+  FALLOW_CONFIG_REQUIRED,
+  hasStoredFallowConfig,
+} from "../audit/fallow-gate.ts"
 import { needsRepair } from "../audit/audit-findings.ts"
 import type { FallowDisposition } from "../audit/contract.ts"
 import { dispositionsAfterRepair } from "../audit/fallow-dispositions.ts"
@@ -5429,9 +5433,6 @@ export class TaskRuntime {
   }
 
   async startTask(input: StartTaskInput): Promise<StartTaskResult> {
-    const refused = await this.fallowGate()
-    if (refused)
-      throw new Error(`${FALLOW_CONFIG_REQUIRED}: ${refused.missing} ${refused.guidance}`)
     const actor = await this.host.session(input.sessionID)
     if (!actor || actor.archived || actor.projectID !== this.projectID)
       throw new Error("Start requires a live session in this project")
@@ -5467,6 +5468,9 @@ export class TaskRuntime {
         return { status: "existing", planID: plan.id, state: this.store.execution(task.id)!.state }
       }
     } else {
+      const refused = await this.fallowGate()
+      if (refused)
+        throw new Error(`${FALLOW_CONFIG_REQUIRED}: ${refused.missing} ${refused.guidance}`)
       if (task.status !== "submitted") throw new Error("Task cannot be started")
       if (task.provenance.startingRevision.kind !== "git")
         throw new Error("Task has no committed starting revision")
@@ -8738,9 +8742,12 @@ export class TaskRuntime {
     // Work queued before the project had a config (or before this rule) must not dead-end: the
     // plan's Architect gets the same actionable refusal through the hold path, and the tick
     // releases the hold once a config exists.
-    const refused = await this.fallowGate()
+    const refused =
+      !this.fallowReviewEnabled || hasStoredFallowConfig(this.store.repository)
+        ? undefined
+        : await this.fallowGate()
     if (refused) {
-      this.hold(plan, `${FALLOW_CONFIG_REQUIRED}: ${refused.missing} ${refused.guidance}`)
+      this.hold(plan, `FALLOW_CONFIG_REQUIRED: ${refused.missing} ${refused.guidance}`)
       return
     }
     const task = this.store.repository.get(node.task_id)!
