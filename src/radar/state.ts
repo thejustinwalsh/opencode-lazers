@@ -1,6 +1,5 @@
 import { panelErrorMessage } from "../panel-error.ts"
 import type {
-  ObservationChange,
   ObservationScope,
   RadarResponse,
   SnapshotResponse,
@@ -333,5 +332,3 @@ export class RadarPanelState {
       void this.refresh(this.epoch, this.sync.generation, transport, this.controller.signal)
   }
 }
-
-export type RadarChange = ObservationChange

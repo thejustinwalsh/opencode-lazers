@@ -16,7 +16,7 @@ const HUE: Record<DestKind, string> = {
   service: "var(--text-strong)",
   you: "var(--icon-warning-base)",
 }
-export const destHue = (kind: DestKind) => HUE[kind]
+const destHue = (kind: DestKind) => HUE[kind]
 
 function truncate(text: string, limit: number) {
   return text.length > limit ? `${text.slice(0, Math.max(1, limit - 1))}…` : text

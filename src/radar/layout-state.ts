@@ -7,7 +7,7 @@ export type RadarLayoutClient = {
   layout(input: RadarLayoutInput, options?: { signal?: AbortSignal }): Promise<RadarLayoutResult>
 }
 
-export type RadarLayoutState = {
+type RadarLayoutState = {
   key: string
   result?: RadarLayoutResult
   error?: string

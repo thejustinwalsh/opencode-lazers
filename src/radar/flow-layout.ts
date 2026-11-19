@@ -2,7 +2,7 @@ import { DEST_GROUPS } from "./flow-model.ts"
 import type { FlowDestination, FlowEdge, FlowModel, FlowSession } from "./flow-model.ts"
 
 /** At or below this panel width the layout abbreviates roles and drops counts. */
-export const FLOW_NARROW = 420
+const FLOW_NARROW = 420
 
 export type PlacedSession = FlowSession & { x: number; y: number }
 export type PlacedDestination = FlowDestination & { x: number; y: number }

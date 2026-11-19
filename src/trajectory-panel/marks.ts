@@ -11,7 +11,7 @@
  */
 
 /** Drawn width of a tick. */
-export const TICK_PX = 2
+const TICK_PX = 2
 /** Narrowest recorded duration that is drawn as a span rather than a tick. */
 export const SPAN_MIN_PX = 6
 /** Marks closer than this are drawn as one run. */

@@ -15,7 +15,7 @@ import type { ActivityLine, LiveSession } from "./monitor-model.ts"
  * from calls and model requests the live read observed; a destination nobody used in the window
  * is not listed and a figure the read does not carry is omitted.
  */
-export const FLOW_WINDOW_MS = 120_000
+const FLOW_WINDOW_MS = 120_000
 export const FEED_CAP = 150
 
 type Live = LiveRadarResponse

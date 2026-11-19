@@ -7,7 +7,7 @@
  * break. Real timestamps are never altered: only their screen position is.
  */
 
-export const IDLE_MIN_MS = 60_000
+const IDLE_MIN_MS = 60_000
 const IDLE_SHOWN_MIN_MS = 8_000
 const IDLE_SHOWN_SHARE = 0.02
 
