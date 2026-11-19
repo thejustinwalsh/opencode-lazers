@@ -280,3 +280,25 @@ test("task instructions render only concise effective advice with its provenance
   expect(instructions).not.toContain("Old advice")
   expect(instructions).not.toContain('"history"')
 })
+
+test("task instructions show the scope model: edit, create with purpose, and protected", () => {
+  if (detail.status !== "found") throw new Error("fixture task missing")
+  const scoped = {
+    ...detail,
+    task: {
+      ...detail.task,
+      proposal: {
+        ...detail.task.proposal,
+        createScope: [{ path: "src/runner/queue-limit.ts", purpose: "the queue limit rule" }],
+        protectedScope: ["src/audit/**"],
+      },
+    },
+  }
+  const instructions = taskInstructions(scoped)
+  expect(instructions).toContain("## Write scope\n- src/**\n- README.md")
+  expect(instructions).toContain(
+    "## Expected new files and folders (create)\n- src/runner/queue-limit.ts — the queue limit rule",
+  )
+  expect(instructions).toContain("## Protected (do not touch)\n- src/audit/**")
+  expect(instructions).toContain("say why in one line in your final message")
+})

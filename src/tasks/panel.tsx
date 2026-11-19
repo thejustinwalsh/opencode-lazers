@@ -194,6 +194,40 @@ function checkTiming(check: TaskProposal["verification"][number]) {
 }
 
 /** The goal repeats only when it says more than the derived title. */
+type ScopeReview = { divergences: string[]; accepted: string[]; reason: string | undefined }
+
+/** The recorded scope divergence and the Architect's decision, read from the task's activity. */
+function scopeReview(
+  activity: readonly { event: string; payload: string }[] | undefined,
+): ScopeReview {
+  const parse = (payload: string): Record<string, unknown> => {
+    try {
+      return JSON.parse(payload) as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+  const paths = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.flatMap((item) =>
+          typeof item === "object" &&
+          item !== null &&
+          typeof (item as { path?: unknown }).path === "string"
+            ? [(item as { path: string }).path]
+            : [],
+        )
+      : []
+  const reported = activity?.findLast((event) => event.event === "SCOPE_REPORTED")
+  const amended = activity?.findLast((event) => event.event === "SCOPE_AMENDED")
+  const report = reported ? parse(reported.payload) : {}
+  const reason = amended ? parse(amended.payload).reason : undefined
+  return {
+    divergences: [...paths(report.divergences), ...paths(report.accepted)],
+    accepted: paths(report.accepted),
+    reason: typeof reason === "string" ? reason : undefined,
+  }
+}
+
 function objectiveExtendsTitle(objective: string) {
   return taskTitle(objective) !== objective.trim().replace(/\s+/g, " ")
 }
@@ -2088,13 +2122,60 @@ function TaskPanel(
                 </Show>
               </Section>
               <div class="lazers-tasks-disclosures">
-                <Disclosure label="Scope" count={task().proposal.writeScope.length}>
+                <Disclosure
+                  label="Scope"
+                  count={
+                    task().proposal.writeScope.length +
+                    (task().proposal.createScope?.length ?? 0) +
+                    (task().proposal.protectedScope?.length ?? 0)
+                  }
+                >
                   <ul
                     class="lazers-tasks-paths"
                     style={{ "font-family": ctx.appearance.font("mono") }}
                   >
                     <For each={task().proposal.writeScope}>{(path) => <li>{path}</li>}</For>
                   </ul>
+                  <Show when={task().proposal.createScope?.length}>
+                    <h4>Creates</h4>
+                    <ul
+                      class="lazers-tasks-paths"
+                      style={{ "font-family": ctx.appearance.font("mono") }}
+                    >
+                      <For each={task().proposal.createScope}>
+                        {(entry) => (
+                          <li>
+                            {entry.path} — {entry.purpose}
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                  <Show when={task().proposal.protectedScope?.length}>
+                    <h4>Protected</h4>
+                    <ul
+                      class="lazers-tasks-paths"
+                      style={{ "font-family": ctx.appearance.font("mono") }}
+                    >
+                      <For each={task().proposal.protectedScope}>{(path) => <li>{path}</li>}</For>
+                    </ul>
+                  </Show>
+                  <Show when={scopeReview(selectedDetail()?.activity).divergences.length}>
+                    <h4>
+                      Divergence{" "}
+                      {scopeReview(selectedDetail()?.activity).accepted.length
+                        ? `accepted: ${scopeReview(selectedDetail()?.activity).reason ?? "amended"}`
+                        : "awaiting decision"}
+                    </h4>
+                    <ul
+                      class="lazers-tasks-paths"
+                      style={{ "font-family": ctx.appearance.font("mono") }}
+                    >
+                      <For each={scopeReview(selectedDetail()?.activity).divergences}>
+                        {(path) => <li>{path}</li>}
+                      </For>
+                    </ul>
+                  </Show>
                   <For each={[["Excludes", task().proposal.exclusions]] as const}>
                     {([label, values]) => (
                       <Show when={values.length}>
