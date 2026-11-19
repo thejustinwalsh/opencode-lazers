@@ -8,7 +8,7 @@ import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
 import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
-import { openConcerns } from "../recovery/detector.ts"
+import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { effectiveTaskStateFilter } from "./state-filter.ts"
@@ -173,6 +173,7 @@ export class TaskReads {
             ? this.startedAt(task.id, execution.planID)
             : {}),
           ...(execution ? this.concern(task.id, execution.planID, execution.state) : {}),
+          ...(execution ? this.takeover(task.id, execution.planID, execution.state) : {}),
           reason: execution?.reason ?? disposition?.reason ?? null,
         }
       }),
@@ -371,6 +372,24 @@ export class TaskReads {
         },
       }
     })
+  }
+
+  /** `{ takeover: true }` while an unsettled task's latest attempt is the Architect's takeover. */
+  protected takeover(
+    taskID: string,
+    planID: string,
+    state: string,
+  ): { takeover: true } | Record<string, never> {
+    if (!canStruggle(state)) return {}
+    const policy = this.repository.read(
+      (db) =>
+        db
+          .query<{ policy: string }, [string, string]>(
+            "SELECT policy FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC LIMIT 1",
+          )
+          .get(planID, taskID)?.policy,
+    )
+    return policy !== undefined && isTakeoverAttempt(policy) ? { takeover: true } : {}
   }
 
   /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */

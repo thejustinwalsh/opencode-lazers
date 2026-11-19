@@ -1,4 +1,5 @@
 import { sameProject } from "../project-key.ts"
+import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
@@ -850,6 +851,7 @@ function attemptView(
   sessionError: string | null,
   stats: PrivacyStats,
   checks: CheckView[],
+  concern?: { line: string; action?: string; because?: string },
 ) {
   const admitted =
     modelFromPolicy(attempt.policy, stats) ?? modelView(parseObject(snapshot.row.model), stats)
@@ -864,6 +866,17 @@ function attemptView(
     planID: safeText(attempt.plan_id, stats, 128),
     number: attempt.number,
     state: safeText(attempt.state, stats, 80),
+    // The Architect finishing the task itself, not a worker's attempt.
+    ...(isTakeoverAttempt(attempt.policy) ? { takeover: { agent: "architect" as const } } : {}),
+    ...(concern
+      ? {
+          concern: {
+            line: safeText(concern.line, stats, 600),
+            ...(concern.action ? { action: safeText(concern.action, stats, 40) } : {}),
+            ...(concern.because ? { because: safeText(concern.because, stats, 600) } : {}),
+          },
+        }
+      : {}),
     sessionID: safeText(attempt.session_id, stats, 128),
     baseCommit: safeText(attempt.base_commit, stats, 128),
     resultCommit: attempt.artifact ? safeText(attempt.artifact, stats, 128) : null,
@@ -1434,6 +1447,9 @@ function paginateEvents(
   const cursorMarket = object(object(cursorSummary.effort)?.marketEquivalentCost)
   const cursorIndex = object(cursorMarket?.currentIndex)
   if (cursorIndex) delete cursorIndex.retrievedAt
+  // A concern raised mid-read must not invalidate a continuation.
+  if (Array.isArray(cursorSummary.attempts))
+    for (const entry of cursorSummary.attempts) delete object(entry)?.concern
   if (input.cursor && options.allEvents) throw new Error("Invalid or stale trajectory cursor")
   // Full captures and live status never issue continuation tokens.
   const pagination = options.allEvents
@@ -1535,6 +1551,17 @@ export async function inspectTrajectory(
     : rawEvents
   const focusedTaskPlans = focusedPlanViews(store, task, rawPlans, checksByPlan, stats)
 
+  // One read: the task's open concerns, shown on the attempt each was raised against.
+  const concerns = new Map<string, { line: string; action?: string; because?: string }>()
+  for (const open of store.read((db) =>
+    openConcerns(db, store.repository.projectDirectory, { taskID: task.id }),
+  )) {
+    const known = concerns.get(open.attemptID)
+    concerns.set(open.attemptID, {
+      line: known ? `${known.line}; ${open.reason}` : open.reason,
+      ...(open.advice ? { action: open.advice.action, because: open.advice.because } : {}),
+    })
+  }
   const attemptViews = allAttempts.map(({ attempt, snapshot }) =>
     attemptView(
       attempt,
@@ -1544,6 +1571,7 @@ export async function inspectTrajectory(
       reads.errors.get(attempt.id) ?? null,
       stats,
       allChecks,
+      concerns.get(attempt.id),
     ),
   )
   const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)

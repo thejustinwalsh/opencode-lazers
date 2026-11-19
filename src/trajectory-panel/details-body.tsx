@@ -51,6 +51,8 @@ export type AttemptPaneProps = {
   reason: EndReason | null
   /** The glyph for the Callout, already drawn. */
   reasonIcon: JSX.Element
+  /** An open concern and an Architect takeover, from `attemptSignals`. */
+  signals?: { concern?: { line: string; recommendation?: string }; takeover?: true }
   events: readonly TrajectoryEvent[]
   notes: readonly string[]
   identifiers: ReadonlyArray<{ label: string; value?: string | null }>
@@ -123,6 +125,20 @@ export function AttemptPane(props: AttemptPaneProps) {
   const gapTotal = () => recordGapCount(props.events, props.notes)
   return (
     <div class="lazers-trajectory-pane-body" data-pane="attempt">
+      <Show when={props.signals?.concern}>
+        {(concern) => (
+          <Callout
+            class="lazers-trajectory-callout"
+            iconTone="attention"
+            icon={<props.ui.Icon name="circle-exclamation" size="small" />}
+            text={concern().line}
+          >
+            <Show when={concern().recommendation}>
+              {(text) => <p class="lazers-trajectory-note">{text()}</p>}
+            </Show>
+          </Callout>
+        )}
+      </Show>
       <Show when={props.reason}>
         {(reason) => (
           <Callout

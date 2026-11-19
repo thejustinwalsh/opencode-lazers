@@ -899,6 +899,7 @@ function TaskPanel(
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
         ...(taskRow().concern ? [`concern: ${taskRow().concern!.line}`] : []),
+        ...(taskRow().takeover ? ["takeover"] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -971,6 +972,11 @@ function TaskPanel(
                   Concern
                 </Label>
               )}
+            </Show>
+            <Show when={taskRow().takeover}>
+              <Label tone="interactive" title="The Architect is finishing this task itself">
+                Takeover
+              </Label>
             </Show>
             <Show when={runningStart(taskRow())}>
               {(start) => (

@@ -781,3 +781,71 @@ test("a running task that trips a detector rule shows its open concern with tota
   expect(found?.line).toContain("after 90M tokens")
   expect(found?.totals).toMatchObject({ attempts: 2, verifyRounds: 3, toolCalls: 200 })
 })
+
+test("a task whose latest attempt is an Architect takeover is marked; an ordinary attempt is not", () => {
+  const repository = fixture().open()
+  const reads = new TaskReads(repository)
+  const worker = insert(repository, "Worker task")
+  const taken = insert(repository, "Taken over task")
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "takeover-plan",
+      objective: taken.proposal.objective,
+      baseCommit: "a".repeat(40),
+      nodes: [
+        { taskID: worker.id, revision: 1 },
+        { taskID: taken.id, revision: 1 },
+      ],
+      dependencies: [],
+      integrationOrder: [worker.id, taken.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "architect",
+  )
+  repository.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(plan.planID)
+    db.query("UPDATE runner_nodes SET state='running',reason=NULL WHERE plan_id=?").run(plan.planID)
+    const addAttempt = (taskID: string, number: number, policy: string) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts
+          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          plan.planID,
+          taskID,
+          number,
+          `session-${taskID}-${number}`,
+          `message-${taskID}-${number}`,
+          "/worktree",
+          "a".repeat(40),
+          null,
+          policy,
+          "running",
+          Date.now() - 60_000 + number,
+          0,
+          0,
+        )
+    addAttempt(worker.id, 1, "{}")
+    addAttempt(taken.id, 1, "{}")
+    addAttempt(
+      taken.id,
+      2,
+      JSON.stringify({
+        agent: "architect",
+        takeover: {
+          takeoverID: crypto.randomUUID(),
+          architectSessionID: "architect-session",
+          fromAttemptID: crypto.randomUUID(),
+        },
+      }),
+    )
+  })
+  const tasks = reads.query({ state: "all" }).tasks
+  expect(tasks.find((task) => task.taskID === taken.id)?.takeover).toBe(true)
+  expect(tasks.find((task) => task.taskID === worker.id)?.takeover).toBeUndefined()
+})

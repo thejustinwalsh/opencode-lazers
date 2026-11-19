@@ -9,6 +9,7 @@ import {
   recentCalls,
   startedText,
   toolName,
+  workerSignals,
   workerState,
   workerStats,
 } from "./worker-pane.ts"
@@ -213,4 +214,29 @@ test("a held worker is not running in the summary, the map or the list word", ()
   expect(map.nodeByID.get("session:1")?.sub).toBe("waiting")
   expect(map.nodeByID.get("session:1")?.running).toBe(false)
   expect(map.nodeByID.get("session:2")?.sub).toBe("running")
+})
+
+test("a raised concern and a takeover show beside the state; absent facts show nothing", () => {
+  const base = attempt()
+  expect(workerSignals(base)).toEqual({})
+  expect(workerSignals(null)).toEqual({})
+  expect(
+    workerSignals({
+      ...base,
+      concern: {
+        line: "3 verification rounds",
+        action: "takeover",
+        because: "Rounds keep failing",
+      },
+    }),
+  ).toEqual({
+    concern: {
+      line: "3 verification rounds",
+      recommendation: "Recommended: takeover. Rounds keep failing",
+    },
+  })
+  expect(workerSignals({ ...base, concern: { line: "Long run" } })).toEqual({
+    concern: { line: "Long run" },
+  })
+  expect(workerSignals({ ...base, takeover: true })).toEqual({ takeover: true })
 })

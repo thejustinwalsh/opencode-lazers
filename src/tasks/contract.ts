@@ -60,6 +60,8 @@ const TaskSummary = z.strictObject({
   startedAt: z.number().finite().optional(),
   /** Present only while the task is unsettled and its recorded facts trip a concern rule. */
   concern: TaskConcern.optional(),
+  /** True while the task's latest attempt is the Architect finishing it (a takeover attempt). */
+  takeover: z.literal(true).optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,
