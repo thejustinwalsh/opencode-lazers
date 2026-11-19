@@ -1849,3 +1849,52 @@ test("trajectory marks an attempt with an open concern and an Architect takeover
     fixture.close()
   }
 })
+
+test("an Architect takeover attempt is not read as a missing worker session and adds no unknown usage", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) => {
+      db.query(
+        "UPDATE runner_attempts SET policy=?,session_id='lazers-takeover:request',token_count=NULL,cost=NULL WHERE id<>?",
+      ).run(
+        JSON.stringify({
+          agent: "architect",
+          takeover: { takeoverID: "t", architectSessionID: "a", fromAttemptID: firstAttemptID },
+        }),
+        firstAttemptID,
+      )
+    })
+    const asked: string[] = []
+    const host = {
+      ...fixture.host,
+      session: (id: string, ...rest: unknown[]) => {
+        asked.push(id)
+        return (fixture.host.session as (...args: unknown[]) => unknown)(id, ...rest)
+      },
+    } as typeof fixture.host
+    const report = (await inspectTrajectory(
+      fixture.store,
+      host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )) as {
+      attempts: Array<{ id: string; takeover?: unknown }>
+      effort: { tokenUsage: { unknownAttempts: string[]; legacyAttemptScalarsNotAdded: unknown[] } }
+      coverage: { attemptsWithoutRecordedSessions: number; unavailableSessionContexts: number }
+    }
+    const takeovers = report.attempts.filter((attempt) => attempt.takeover)
+    expect(takeovers.length).toBeGreaterThan(0)
+    expect(asked.some((id) => id.startsWith("lazers-takeover:"))).toBe(false)
+    for (const attempt of takeovers) {
+      expect(report.effort.tokenUsage.unknownAttempts).not.toContain(attempt.id)
+      expect(JSON.stringify(report.effort.tokenUsage.legacyAttemptScalarsNotAdded)).not.toContain(
+        attempt.id,
+      )
+    }
+    expect(report.coverage.unavailableSessionContexts).toBe(0)
+    expect(report.coverage.attemptsWithoutRecordedSessions).toBe(0)
+  } finally {
+    fixture.close()
+  }
+})

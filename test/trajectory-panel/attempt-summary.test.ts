@@ -422,3 +422,23 @@ test("rates are a per-million table and the caveats stay at three lines or fewer
 test("tokens read as in and out", () => {
   expect(tokensText(report(priced()).effort.tokenUsage)).toBe("1.2M in · 3.9k out")
 })
+
+test("an attempt with no recorded usage or cost shows no tokens, no cost and no coverage", () => {
+  const none = {
+    uncachedInput: null,
+    cacheRead: null,
+    cacheWrite: null,
+    output: null,
+    reasoning: null,
+  }
+  const report = {
+    effort: {
+      tokenUsage: { measuredSubtotal: none, total: null },
+      recordedCost: { apiEquivalentTotalUsd: null },
+    },
+  } as unknown as TrajectoryReport
+  expect(tokensText(report.effort.tokenUsage)).toBe("")
+  expect(costView(report)).toBeNull()
+  expect(coverageView(report)).toBeNull()
+  expect(caveats(report)).toEqual([])
+})

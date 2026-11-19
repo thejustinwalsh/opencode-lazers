@@ -1593,11 +1593,11 @@ function PanelView(
                         </span>
                       )}
                     </Show>
-                    <Show when={headerAttempt()}>
-                      {(attempt) => (
+                    <Show when={headerAttempt() && !headerAttempt()?.takeover}>
+                      {(_) => (
                         <span>
-                          <b>{attempt().toolCount.value.toLocaleString()}</b>{" "}
-                          {attempt().toolCount.value === 1 ? "call" : "calls"}
+                          <b>{headerAttempt()!.toolCount.value.toLocaleString()}</b>{" "}
+                          {headerAttempt()!.toolCount.value === 1 ? "call" : "calls"}
                         </span>
                       )}
                     </Show>
@@ -1912,7 +1912,7 @@ function PanelView(
                                 }
                                 aria-selected={selected()}
                                 tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
-                                aria-label={`${attemptName({ number: lane().attempt.number, takeover: detail()?.takeover })}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
+                                aria-label={`${attemptName({ number: lane().attempt.number, takeover: detail()?.takeover })}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() && !detail()!.takeover ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
                                 title={basisText(lane().attempt.timingBasis)}
                                 onClick={() => chooseAttempt(lane().attempt.id)}
                               >

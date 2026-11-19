@@ -81,3 +81,24 @@ test("a concern task adds its totals across attempts to the stat row", () => {
   expect("Cost" in stats).toBe(false)
   expect("Total time" in values(taskStats({ createdAt: 0, now: HOUR }))).toBe(false)
 })
+
+test("an Architect takeover attempt shows no Calls, and a concern shows no zero totals", () => {
+  const takeover = { state: "running", startedAt: 1_000_000, toolCount: 0, takeover: true as const }
+  const shownTakeover = values(
+    taskStats({ createdAt: 0, now: 1_000_000 + 60_000, attempt: takeover }),
+  )
+  expect(shownTakeover).toMatchObject({ Runtime: "1m", Calls: undefined, Model: undefined })
+  const totals = {
+    attempts: 2,
+    verifyRounds: 3,
+    attemptMs: 60_000,
+    tokens: 0,
+    toolCalls: 0,
+    costUSD: null,
+  }
+  const shown = values(taskStats({ createdAt: 0, now: HOUR, concern: totals }))
+  expect(shown).not.toHaveProperty("Tokens")
+  expect(shown).not.toHaveProperty("Total calls")
+  expect(shown).not.toHaveProperty("Cost")
+  expect(shown["Total time"]).toBe("1m")
+})

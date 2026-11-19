@@ -158,7 +158,11 @@ export function AttemptPane(props: AttemptPaneProps) {
               ? `${durationText(props.duration.ms)}${props.duration.open ? " so far" : ""}`
               : null,
           },
-          { label: "Calls", value: callsText(props.calls, props.files) },
+          {
+            label: "Calls",
+            // An Architect takeover records no tool count of its own: omit rather than show 0.
+            value: props.signals?.takeover ? null : callsText(props.calls, props.files),
+          },
           { label: "Tokens", value: tokensText(props.report.effort.tokenUsage) },
           {
             label: "Cost",

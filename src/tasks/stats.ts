@@ -7,6 +7,8 @@ export type StatAttempt = {
   state: string
   startedAt: number
   toolCount: number
+  /** An Architect takeover records no tool count of its own. */
+  takeover?: true
   model?: AttemptModel
   summary?: AttemptSummary
 }
@@ -55,7 +57,9 @@ export function taskStats(input: {
     },
     {
       label: "Calls",
-      ...(attempt ? { value: callsText(attempt.toolCount, attempt.summary?.files) } : {}),
+      ...(attempt && !attempt.takeover
+        ? { value: callsText(attempt.toolCount, attempt.summary?.files) }
+        : {}),
     },
     { label: "Model", ...(modelText(attempt?.model) ? { value: modelText(attempt?.model)! } : {}) },
     ...(input.concern ? concernStats(input.concern) : []),
@@ -66,8 +70,8 @@ export function taskStats(input: {
 function concernStats(totals: TaskConcern["totals"]) {
   return [
     { label: "Total time", value: durationText(totals.attemptMs) },
-    { label: "Total calls", value: callsText(totals.toolCalls) },
-    { label: "Tokens", value: tokenLabel(totals.tokens) },
+    ...(totals.toolCalls > 0 ? [{ label: "Total calls", value: callsText(totals.toolCalls) }] : []),
+    ...(totals.tokens > 0 ? [{ label: "Tokens", value: tokenLabel(totals.tokens) }] : []),
     ...(totals.costUSD === null ? [] : [{ label: "Cost", value: `$${totals.costUSD.toFixed(2)}` }]),
     { label: "Rounds", value: String(totals.verifyRounds) },
   ]
