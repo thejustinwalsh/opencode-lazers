@@ -10,6 +10,7 @@ import {
   createKeyed,
   usePanel,
 } from "@opencode/plugin/gui"
+import { refusalMessage } from "../audit/fallow-refusal.ts"
 import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { createVirtualizer, defaultRangeExtractor } from "@tanstack/solid-virtual"
 import { Schema } from "effect"
@@ -1249,7 +1250,8 @@ function TaskPanel(
     const ticket = feedback.begin(taskID)
     if (!ticket) return
     try {
-      await state.start({ taskID, revision, sessionID: props.session.id })
+      const result = await state.start({ taskID, revision, sessionID: props.session.id })
+      if (result.status === "refused") feedback.fail(ticket, new Error(refusalMessage(result)))
     } catch (error) {
       feedback.fail(ticket, error)
     } finally {

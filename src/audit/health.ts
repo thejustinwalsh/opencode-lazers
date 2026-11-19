@@ -1,6 +1,6 @@
 import type { AuditHistory } from "./history.ts"
 import type { AuditActor } from "./history.ts"
-import { DUPLICATION_NOT_INCLUDED, fallowReport } from "./report.ts"
+import { DUPLICATION_NOT_INCLUDED, fallowReport, type ReportRunners } from "./report.ts"
 import type { FallowHealthComparison, FallowHealthRunOutput } from "./contract.ts"
 
 /**
@@ -41,6 +41,21 @@ export function scoreOf(health: unknown): HealthScore | undefined {
     formulaVersion: int(score.formula_version),
     penalties,
   }
+}
+
+/** The vital sign each penalty is computed from. */
+const VITAL_SIGN: Record<string, string> = {
+  dead_files: "dead_file_pct",
+  dead_exports: "dead_export_pct",
+  complexity: "critical_complexity_pct",
+  p90_complexity: "p90_cyclomatic",
+  maintainability: "maintainability_avg",
+  hotspots: "hotspot_count",
+  unused_deps: "unused_dep_count",
+  circular_deps: "circular_dep_count",
+  unit_size: "functions_over_60_loc_per_k",
+  coupling: "coupling_high_pct",
+  duplication: "duplication_pct",
 }
 
 type Reports = { deadCode?: Obj; duplication?: Obj; health?: Obj }
@@ -177,7 +192,10 @@ export function healthRunOutput(
     (e) => e.section === "duplication" && e.message === DUPLICATION_NOT_INCLUDED,
   )
   const penalties = Object.entries(score?.penalties ?? {})
-    .map(([metric, penalty]) => ({ metric, penalty }))
+    .map(([metric, penalty]) => {
+      const raw = (reports.health?.vital_signs as Obj | undefined)?.[VITAL_SIGN[metric] ?? ""]
+      return { metric, penalty, value: typeof raw === "number" ? raw : null }
+    })
     .sort((a, b) => b.penalty - a.penalty)
   const top = penalties
     .filter((p) => p.penalty > 0)
@@ -223,12 +241,14 @@ export async function fallowHealthRun(
   input: HealthRunInput,
   actor: AuditActor,
   signal?: AbortSignal,
+  runners?: ReportRunners,
 ): Promise<FallowHealthRunOutput> {
   const summary = await fallowReport(
     history,
     { ...input, sections: [...HEALTH_SECTIONS] },
     actor,
     signal,
+    runners,
   )
   return healthRunOutput(history, summary.runID)
 }

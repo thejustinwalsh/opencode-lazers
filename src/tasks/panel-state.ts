@@ -1,7 +1,7 @@
 import { panelErrorMessage } from "../panel-error.ts"
 import type {
   StartTaskInput,
-  StartTaskResult,
+  StartTaskReply,
   TaskDetail,
   CurrentActivityOutput,
   CurrentTaskActivity,
@@ -111,7 +111,7 @@ export interface TaskTransport {
   topology?(signal: AbortSignal): Promise<TopologyResponse>
   scheduling?(input: SchedulingInput, signal: AbortSignal): Promise<SchedulingPage>
   currentActivity?(taskIDs: string[], signal: AbortSignal): Promise<CurrentActivityOutput>
-  start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskResult>
+  start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskReply>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
   online(): boolean
 }
@@ -199,7 +199,7 @@ export class TaskPanelState {
   private refreshPending = false
   private pendingVersion = 0
   private refreshing = false
-  private starts = new Map<string, Promise<StartTaskResult>>()
+  private starts = new Map<string, Promise<StartTaskReply>>()
   private linkedRequests = new Map<
     string,
     Promise<Extract<TaskDetail, { status: "found" }> | undefined>
@@ -880,7 +880,7 @@ export class TaskPanelState {
     return request
   }
 
-  async start(input: StartTaskInput): Promise<StartTaskResult> {
+  async start(input: StartTaskInput): Promise<StartTaskReply> {
     const key = `${input.taskID}:${input.revision}`
     const pending = this.starts.get(key)
     if (pending) return pending

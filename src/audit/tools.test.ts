@@ -11,6 +11,7 @@ import type {
   FallowDeadCodeOutput,
   FallowDupesOutput,
   FallowHealthOutput,
+  FallowHealthRunOutput,
 } from "./contract.ts"
 import { afterEach, expect, test } from "bun:test"
 import { Effect } from "effect"
@@ -104,6 +105,7 @@ async function harness(root: string, repository: TaskRepository) {
 test("Code Mode audit tools expose typed durable reports, history, finding decisions and legacy import", async () => {
   const root = mkdtempSync(join(tmpdir(), "lz-audit-tools-")),
     repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
+  setFallowConfig(repository, {}, { sessionID: "t", agent: "architect" }, "fixture")
   try {
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture", main: "index.ts" }))
     writeFileSync(join(root, "index.ts"), "console.log('fixture')")
@@ -306,3 +308,31 @@ test("lz-fallow-health and lz-fallow-dupes accept a directory path, matching an 
   })
   expect(dupesByDirectory).toBeDefined()
 })
+
+test("lz-fallow-health score view runs end to end through the tool and compares with its baseline", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lz-fallow-health-tool-")))
+  cleanups.push(() => rmSync(root, { recursive: true, force: true }))
+  const repository = new TaskRepository(join(root, "data", "tasks.sqlite"), root)
+  cleanups.push(() => repository.close())
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "fixture" }))
+  writeFileSync(join(root, "index.ts"), "console.log('fixture')\n")
+  setFallowConfig(repository, { entry: ["index.ts"] }, { sessionID: "t", agent: "architect" }, "x")
+  const { invoke } = await harness(root, repository)
+  const baseline = await invoke<z.infer<typeof FallowHealthRunOutput>>("lz-fallow-health", {
+    phase: "baseline",
+    requestID: "base",
+  })
+  expect(baseline).toMatchObject({ duplicationIncluded: true, phase: "baseline" })
+  expect(baseline.score).toBeGreaterThan(0)
+  expect(baseline.penalties.every((p) => typeof p.penalty === "number")).toBe(true)
+  const followUp = await invoke<z.infer<typeof FallowHealthRunOutput>>("lz-fallow-health", {
+    phase: "follow-up",
+    requestID: "follow",
+    baselineRunID: baseline.runID,
+  })
+  expect(followUp.comparison).toMatchObject({ baselineRunID: baseline.runID, scoreDelta: 0 })
+  const stored = await invoke<z.infer<typeof FallowHealthRunOutput>>("lz-fallow-health", {
+    read: baseline.runID,
+  })
+  expect(stored.score).toBe(baseline.score)
+}, 120_000)

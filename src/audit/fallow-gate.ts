@@ -1,6 +1,8 @@
-import { z } from "zod"
+import { FALLOW_CONFIG_REQUIRED, type FallowConfigRequired } from "./fallow-refusal.ts"
 import type { TaskRepository } from "../storage.ts"
 import { getLatestFallowConfig, hasFallowConfig } from "./config.ts"
+
+export { FALLOW_CONFIG_REQUIRED, FallowConfigRequired } from "./fallow-refusal.ts"
 
 /**
  * Every project needs a Fallow config: the audit that reviews each task reads its entry points,
@@ -8,22 +10,6 @@ import { getLatestFallowConfig, hasFallowConfig } from "./config.ts"
  * the review on, submitting work to a project that has none is refused with this typed result.
  * It is a validation result of the submit command, not a workflow state.
  */
-export const FALLOW_CONFIG_REQUIRED = "FALLOW_CONFIG_REQUIRED"
-
-export const FallowConfigRequired = z.strictObject({
-  status: z.literal("refused"),
-  code: z.literal(FALLOW_CONFIG_REQUIRED),
-  /** The canonical project root that has no config. */
-  project: z.string().min(1),
-  missing: z.string().min(1),
-  /** Always true: the refusal happens before anything is stored or queued. */
-  nothingQueued: z.literal(true),
-  /** The tools to use next, in order. */
-  next: z.array(z.string().min(1)),
-  guidance: z.string().min(1),
-})
-export type FallowConfigRequired = z.infer<typeof FallowConfigRequired>
-
 export const FALLOW_CONFIG_TOOLS = [
   "lz-fallow-config (mode suggest)",
   "lz-fallow-config (mode dry-run)",

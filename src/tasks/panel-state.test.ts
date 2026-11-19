@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test"
+import { refusalMessage } from "../audit/fallow-refusal.ts"
+import { configRequired } from "../audit/fallow-gate.ts"
 import { STALLED_PAGE, TaskPanelState } from "./panel-state.ts"
 import type { TaskTransport } from "./panel-state.ts"
 import type { StartTaskInput, StartTaskResult, TaskDetail, TaskPage } from "./contract.ts"
@@ -1745,4 +1747,29 @@ test("a re-mounted view renders its last page, counts and detail at once and ref
   bare.connect("view", "/project", transport(never), {})
   expect(bare.data.page).toBeUndefined()
   bare.close()
+})
+
+test("a refused start reaches the panel as the typed result, not an exception", async () => {
+  const refusal = configRequired("/project")
+  const id = crypto.randomUUID()
+  const state = new TaskPanelState(() => {})
+  try {
+    state.connect(
+      "first",
+      "/project",
+      transport(
+        async () => page("/project", id),
+        undefined,
+        async () => refusal,
+      ),
+      {},
+    )
+    const result = await state.start({ taskID: id, revision: 1, sessionID: "architect-session" })
+    expect(result).toEqual(refusal)
+    expect(result.status === "refused" && refusalMessage(result)).toContain(
+      "lz-fallow-config (mode suggest)",
+    )
+  } finally {
+    state.close()
+  }
 })

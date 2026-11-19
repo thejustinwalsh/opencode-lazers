@@ -304,6 +304,8 @@ const Penalty = z.strictObject({
   metric: text,
   /** Points taken off 100 by this metric. */
   penalty: z.number(),
+  /** The measured value behind it (percent, count or average, per the metric); null when not measured. */
+  value: z.number().nullable(),
 })
 const HealthRow = z.strictObject({
   file: z.string(),

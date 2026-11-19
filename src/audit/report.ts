@@ -1,6 +1,11 @@
 import { realpath, readFile } from "node:fs/promises"
 import { AuditHistory } from "./history.ts"
 import {
+  cleanupResolvedFallowConfig,
+  resolveCurrentFallowConfig,
+  type ResolvedFallowConfig,
+} from "./config.ts"
+import {
   fallowCombined,
   fallowHealthWithoutDuplication,
   fallowSection,
@@ -38,6 +43,18 @@ type SharedSection = "deadCode" | "duplication" | "health"
 const SHARED: readonly SharedSection[] = ["deadCode", "duplication", "health"]
 
 type Outcome = { report?: unknown; failure?: string }
+/** The engine calls a report makes; tests inject failures (a project too large for the index). */
+export type ReportRunners = {
+  combined: typeof fallowCombined
+  healthWithoutDuplication: typeof fallowHealthWithoutDuplication
+  section: typeof fallowSection
+}
+const realRunners: ReportRunners = {
+  combined: fallowCombined,
+  healthWithoutDuplication: fallowHealthWithoutDuplication,
+  section: fallowSection,
+}
+
 type Scope = { root: string; signal?: AbortSignal; timeoutMs: number }
 
 /**
@@ -49,12 +66,13 @@ type Scope = { root: string; signal?: AbortSignal; timeoutMs: number }
 async function sharedSections(
   wanted: readonly ReportSection[],
   scope: Scope,
+  run: ReportRunners,
 ): Promise<Map<SharedSection, Outcome>> {
   const results = new Map<SharedSection, Outcome>()
   const names = SHARED.filter((name) => wanted.includes(name))
   if (names.length === 0) return results
   try {
-    const combined = await fallowCombined(scope)
+    const combined = await run.combined(scope)
     for (const name of names) results.set(name, { report: combined[name] })
     return results
   } catch (error) {
@@ -65,10 +83,10 @@ async function sharedSections(
     try {
       const report =
         name === "health"
-          ? await fallowHealthWithoutDuplication(scope)
+          ? await run.healthWithoutDuplication(scope)
           : name === "duplication"
             ? undefined
-            : await fallowSection(name, scope)
+            : await run.section(name, scope)
       results.set(name, name === "duplication" ? { failure: DUPLICATION_NOT_INCLUDED } : { report })
     } catch (error) {
       results.set(name, { failure: error instanceof Error ? error.message : String(error) })
@@ -91,14 +109,27 @@ export async function fallowReport(
   input: AuditRequest,
   actor: AuditActor,
   signal?: AbortSignal,
+  run: ReportRunners = realRunners,
 ) {
   const start = history.start({ ...input, workspace: await realpath(input.workspace) }, actor)
   if (!start.created) return result(history, start.run.runID)
   const runID = start.run.runID
+  let resolved: ResolvedFallowConfig | undefined
   try {
-    const scope = { root: start.run.workspace, signal, timeoutMs: SECTION_TIMEOUT_MS }
+    // The same config every Fallow entry point reads: repo file, else the stored LAZERS config,
+    // else the config-required error (the run is then recorded as interrupted).
+    resolved = await resolveCurrentFallowConfig({
+      directory: start.run.workspace,
+      repository: history.repository,
+    })
+    const scope = {
+      root: start.run.workspace,
+      ...(resolved.configPath ? { configPath: resolved.configPath } : {}),
+      signal,
+      timeoutMs: SECTION_TIMEOUT_MS,
+    }
     const wanted = input.sections ?? SECTIONS
-    const shared = await sharedSections(wanted, scope).catch((error: unknown) => {
+    const shared = await sharedSections(wanted, scope, run).catch((error: unknown) => {
       // A failure of the shared run is each shared section's failure, as a failed scan was.
       const failure = error instanceof Error ? error.message : String(error)
       return new Map<SharedSection, Outcome>(
@@ -112,7 +143,7 @@ export async function fallowReport(
       if (done) ({ report, failure } = done)
       else {
         try {
-          report = await fallowSection(name, scope)
+          report = await run.section(name, scope)
         } catch (error) {
           failure = error instanceof Error ? error.message : String(error)
         }
@@ -125,6 +156,8 @@ export async function fallowReport(
     history.finish(runID, error instanceof Error ? error.message : String(error))
     await result(history, runID)
     throw error
+  } finally {
+    if (resolved) await cleanupResolvedFallowConfig(resolved)
   }
   return result(history, runID)
 }

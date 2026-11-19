@@ -1,4 +1,5 @@
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
+import { FallowConfigRequiredError, refusalMessage } from "../audit/fallow-refusal.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -15017,4 +15018,20 @@ test("stale held work reaches one Architect as one recovery bundle once contact 
   await f.runtime.command({ requestID: "recover-run", planID, action: "run" }, "successor")
   expect(f.store.plan(planID)!.owner).toBe("successor")
   expect(f.store.latestTransition(planID, null, "OWNER_ADOPTED")).toBeDefined()
+})
+
+test("Start of a task in a project with no Fallow config is refused with the typed result and queues no plan", async () => {
+  const f = fixture({ shared: true, commit: true, startOnly: true, fallowConfig: "none" })
+  const error = await f.runtime
+    .startTask({ taskID: f.tasks[0]!.id, revision: 1, sessionID: "owner" })
+    .catch((caught: unknown) => caught)
+  expect(error).toBeInstanceOf(FallowConfigRequiredError)
+  const refusal = (error as FallowConfigRequiredError).refusal
+  expect(refusal).toMatchObject({
+    status: "refused",
+    code: "FALLOW_CONFIG_REQUIRED",
+    nothingQueued: true,
+  })
+  expect(refusalMessage(refusal)).toContain("Nothing was queued.")
+  expect(f.store.plans()).toHaveLength(0)
 })

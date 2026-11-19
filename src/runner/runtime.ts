@@ -85,11 +85,8 @@ import {
   type FallowReview,
 } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
-import {
-  fallowConfigGate,
-  FALLOW_CONFIG_REQUIRED,
-  hasStoredFallowConfig,
-} from "../audit/fallow-gate.ts"
+import { fallowConfigGate, hasStoredFallowConfig } from "../audit/fallow-gate.ts"
+import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
 import { needsRepair } from "../audit/audit-findings.ts"
 import type { FallowDisposition } from "../audit/contract.ts"
 import { dispositionsAfterRepair } from "../audit/fallow-dispositions.ts"
@@ -5516,8 +5513,7 @@ export class TaskRuntime {
       }
     } else {
       const refused = await this.fallowGate()
-      if (refused)
-        throw new Error(`${FALLOW_CONFIG_REQUIRED}: ${refused.missing} ${refused.guidance}`)
+      if (refused) throw new FallowConfigRequiredError(refused)
       if (task.status !== "submitted") throw new Error("Task cannot be started")
       if (task.provenance.startingRevision.kind !== "git")
         throw new Error("Task has no committed starting revision")
