@@ -893,3 +893,37 @@ Still open:
   `decision-worker.js` but not `transition-indexes-worker.js`, which
   `scripts/build-server.ts` builds and `src/runner/transition-indexes.ts`
   spawns.
+
+#### Phase 2 (results)
+
+The review and the three exploration tools now default to `defaultFallowAnalyzer`
+(`src/audit/wasm-analyzer.ts`), which is `wasmFallowAnalyzer`.
+
+- **In WASM:** `complexity` and `duplication`, served by `src/audit/fallow-worker.ts`
+  (one worker thread, spawned lazily through `workerURL`, one request at a time). The
+  worker lists files (`git ls-files -z --cached --others --exclude-standard`, else a walk
+  that skips dot-directories and `node_modules`), reads them, refuses any path whose
+  realpath leaves the root, and passes paths and contents to the module. A trap returns
+  `analyzer-panic` with `lastPanic()`. Abort or the 60 s timeout terminates the worker; the
+  next request spawns a new one.
+- **Stays native:** `deadCode` (needs module resolution and plugin discovery over a real
+  filesystem, see Phase 1), `lz-fallow-report` (the durable five-section scan), and any
+  call whose config has a local or `npm:` `extends` (`extends-unsupported`: the call
+  falls back to native when it loads, otherwise the error surfaces).
+- **Protocol:** request `{ id, kind, root, files?, changed?, configName?, configText?, options? }`,
+  response `{ id, ok: true, report }` or `{ id, error: { code, message } }`; the worker posts
+  `{ ready: true }` once the module is instantiated.
+- **Fields WASM does not produce** (filled with 0 or a fixed value, none read by the review
+  or the tools): `col`, `param_count`, `crap`, `coverage_pct`, `actions` on findings;
+  `start_col`, `end_col`, `spread` on clones; `files_with_clones`, `total_tokens`,
+  `duplicated_tokens` in stats. CRAP-only findings are absent.
+- **Native ignores `files`** for health and duplication, so the native review always
+  analysed the whole root. WASM honours it: complexity reads only the changed files;
+  duplication keeps the whole root as corpus and reports groups touching the changed files.
+- **Shipping:** `dist/fallow-worker.js` and `dist/fallow.wasm` are built by `build:server`
+  and found through `wasmURL`; the release package now also carries
+  `dist/transition-indexes-worker.js`, which was built and spawned but never packaged.
+- **Measured:** a 10-file changed check through the worker (complexity and duplication
+  requests, queued) on this repository: 488 ms for the first call including worker spawn and
+  module instantiation, 278 to 302 ms afterwards. It is bounded by tokenizing the whole
+  corpus for duplication (Phase 1), not by the 10 files.
