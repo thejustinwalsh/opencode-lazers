@@ -19,6 +19,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { checkResourcesSettled, combineArtifacts, git } from "./artifacts.ts"
@@ -11427,6 +11428,65 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(committed.wakeContext.bytes).toBeGreaterThan(0)
 })
 
+test("a cold Architect with a small context is reused on every tick, never renewed", async () => {
+  const now = 2_000_000_200_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 12_000
+  const count = (event: string) =>
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) AS n FROM runner_transitions WHERE event=?",
+          )
+          .get(event)!.n,
+    )
+  const watched = [
+    "ARCHITECT_RENEWAL_STARTED",
+    "ARCHITECT_RENEWAL_COMMITTED",
+    "OWNER_CONTINUED",
+    "ARCHITECT_ROUTED",
+  ]
+  const before = watched.map(count)
+  for (let tick = 0; tick < 12; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)).toBeFalsy()
+  expect(owner.archived).toBe(false)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  const after = watched.map(count)
+  expect(after[0]).toBe(before[0]!)
+  expect(after[1]).toBe(before[1]!)
+  expect(after[2]).toBe(before[2]!)
+  // The routing decision is recorded once per change, not once per tick.
+  expect(after[3]! - before[3]!).toBeLessThanOrEqual(1)
+})
+
+test("a cold Architect with a large context is renewed exactly once", async () => {
+  const now = 2_000_000_300_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 180_000
+  for (let tick = 0; tick < 12; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  expect(owner.archived).toBe(true)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+})
+
 test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
   const now = 2_000_000_100_000
   expect(architectIdleWindowMs(5_000)).toBe(5_000)
@@ -14619,6 +14679,58 @@ test("a persistent Architect source scan failure records once per distinct cause
   for (let tick = 0; tick < 3; tick++) await f.runtime.tick()
   expect(failures().length).toBe(baseline + 2)
   expect(failures().at(-1)?.error).toBe("a different cause")
+})
+
+test("a missing live location is not an Architect source scan failure", async () => {
+  const now = 2_000_000_519_700
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-scan-no-location.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  let reads = 0
+  f.host.architectInputPage = async () => {
+    reads++
+    throw new NoCapabilityProviderError("native")
+  }
+  const failures = () =>
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ n: number }, []>(
+            "SELECT count(*) AS n FROM runner_transitions WHERE event='ARCHITECT_SOURCE_SCAN_FAILED'",
+          )
+          .get()!.n,
+    )
+  const baseline = failures()
+  f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
+  for (let tick = 0; tick < 5; tick++) await f.runtime.tick()
+  expect(reads).toBeGreaterThanOrEqual(2)
+  expect(failures()).toBe(baseline)
+})
+
+test("source scan failures are recorded once per source even when sources interleave on one plan", () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  const plan = f.receipt.planID
+  const fail = (source: string, error: string) =>
+    f.store.recordSourceScanFailure(plan, {
+      renewalID: `r-${source}`,
+      sourceSessionID: source,
+      error,
+    })
+  expect(fail("s1", "boom")).toBe(true)
+  expect(fail("s2", "boom")).toBe(true)
+  // A process restart replays both sources; neither is a new fact.
+  expect(fail("s1", "boom")).toBe(false)
+  expect(fail("s2", "boom")).toBe(false)
+  expect(fail("s1", "other")).toBe(true)
+  expect(transitions(f, plan, "ARCHITECT_SOURCE_SCAN_FAILED")).toHaveLength(3)
 })
 
 async function cancelRunningPlan(f: ReturnType<typeof fixture>, requestID: string) {
