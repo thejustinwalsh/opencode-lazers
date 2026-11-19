@@ -270,12 +270,12 @@ function projectedFileTargets(value: unknown) {
   return { coverage: projectedCoverage, operation, paths }
 }
 
-/** Fail-closed trajectory view; stored native or model payloads are never copied wholesale. */
-export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
-  const stats = privacyStats()
-  const value = payload(row)
-  const recordedAt = epochMillis(row.recorded_at)
-  const view: Record<string, unknown> = {
+function baseProgressView(
+  row: ProgressRow,
+  recordedAt: number | null,
+  stats: ReturnType<typeof privacyStats>,
+): Record<string, unknown> {
+  return {
     id: `progress:${row.seq}`,
     sequence: row.seq,
     at: row.at,
@@ -300,144 +300,263 @@ export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
     eventIDs: list(row.event_ids_json).map((id) => safeText(id, stats, 200)),
     kind: row.kind === "commentary" ? "commentary" : `worker-${safeText(row.kind, stats, 80)}`,
   }
+}
+
+function projectedUsage(value: JsonObject) {
+  const usage = object(value.usage)
+  if (!usage) return null
+  return {
+    input: number(usage.input),
+    output: number(usage.output),
+    reasoning: number(usage.reasoning),
+    cacheRead: number(usage.cacheRead),
+    cacheWrite: number(usage.cacheWrite),
+    costUSD: number(usage.costUSD),
+  }
+}
+
+function applyProjectedError(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
+}
+
+function isLegacyRouteInvalid(value: JsonObject, legacyRoute: unknown): boolean {
+  if (Object.hasOwn(value, "route") && value.route === null) return true
+  if (value.route !== undefined && value.route !== null && legacyRoute === null) return true
+  return false
+}
+
+function resolveStepRoutes(
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+): { route: unknown; routeEvidence: unknown } {
+  const routeEvidence = projectedRouteEvidence(value.routeEvidence, stats)
+  const explicitEvidenceLost = Object.hasOwn(value, "routeEvidence") && !object(value.routeEvidence)
+  const legacyRoute = projectedRoute(value.route, stats)
+  const legacyRouteInvalid = isLegacyRouteInvalid(value, legacyRoute)
+  return {
+    routeEvidence:
+      routeEvidence ??
+      (explicitEvidenceLost || legacyRouteInvalid ? { status: "identity-unavailable" } : null),
+    route:
+      object(routeEvidence)?.route ?? (routeEvidence || legacyRouteInvalid ? null : legacyRoute),
+  }
+}
+
+function applyCommentary(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.text = typeof value.text === "string" ? safeText(value.text, stats, 1200) : ""
+}
+
+function applyTool(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  kind: string,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.tool = typeof value.tool === "string" ? safeText(value.tool, stats, 160) : null
+  view.status = string(value.status)
+  if (typeof value.detail === "string") view.detail = safeText(value.detail, stats, 200)
+  view.callStatus = value.callStatus === "called" ? "called" : null
+  view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
+  view.execution = projectedExecution(value.execution, stats)
+  view.timing = projectedTiming(kind, value.timing, stats)
+  if (typeof value.content === "string") view.result = visibleProgressText(value.content, stats)
+  // Legacy arbitrary structured output is not exported either.
+  applyProjectedError(view, value, stats)
+  view.observations = projectedObservations(value.observations, stats)
+  if (Object.hasOwn(value, "fileTargets"))
+    view.fileTargets = projectedFileTargets(value.fileTargets) ?? {
+      coverage: "omitted",
+      operation: null,
+      paths: [],
+    }
+}
+
+function applyVisibleText(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""
+  if (value.messageType === "user" || value.messageType === "synthetic") {
+    view.kind = value.messageType
+    view.messageType = value.messageType
+    view.createdAt = epochMillis(value.createdAt)
+    view.at = view.createdAt
+  }
+}
+
+function applyStep(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  kind: string,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.status = string(value.status)
+  view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
+  view.timing = projectedTiming(kind, value.timing, stats)
+  view.finish = string(value.finish)
+  view.measurementBasis = string(value.measurementBasis)
+  view.agent = typeof value.agent === "string" ? safeText(value.agent, stats, 200) : null
+  const resolved = resolveStepRoutes(value, stats)
+  view.routeEvidence = resolved.routeEvidence
+  view.route = resolved.route
+  view.observations = projectedObservations(value.observations, stats)
+  view.usage = projectedUsage(value)
+  applyProjectedError(view, value, stats)
+}
+
+function applyUsageSnapshot(view: Record<string, unknown>, value: JsonObject) {
+  view.measurementBasis = string(value.measurementBasis)
+  view.usage = projectedUsage(value)
+  view.additive = false
+}
+
+function applyProviderRetry(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  kind: string,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.attempt = number(value.attempt)
+  view.timing = projectedTiming(kind, value.timing, stats)
+  applyProjectedError(view, value, stats)
+}
+
+function applyExecutionOutcome(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.outcome = string(value.outcome)
+  view.basis = string(value.basis)
+  applyProjectedError(view, value, stats)
+  if (typeof value.reason === "string") view.reason = safeText(value.reason, stats, 500)
+}
+
+function applyOutcomeSnapshot(view: Record<string, unknown>, value: JsonObject) {
+  view.outcome = string(value.outcome)
+  view.basis = "cumulative-session-outcome-snapshot"
+  view.additive = false
+  view.turnIdentity = "unavailable"
+}
+
+function applyShell(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  kind: string,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.shellID = typeof value.shellID === "string" ? safeText(value.shellID, stats, 128) : null
+  view.command = typeof value.command === "string" ? safeText(value.command, stats) : null
+  view.status = string(value.status)
+  view.exit = number(value.exit)
+  if (typeof value.output === "string") view.output = safeText(value.output, stats)
+  view.truncated = value.truncated === true
+  view.timing = projectedTiming(kind, value.timing, stats)
+}
+
+function applyVerification(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  kind: string,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.checkID = typeof value.checkID === "string" ? safeText(value.checkID, stats, 120) : "unknown"
+  view.result = string(value.result)
+  view.exitCode = number(value.exitCode)
+  view.startedAt = epochMillis(value.startedAt)
+  view.endedAt = epochMillis(value.endedAt)
+  view.timing = projectedTiming(kind, value.timing, stats)
+  view.timedOut = typeof value.timedOut === "boolean" ? value.timedOut : null
+  view.unchanged = typeof value.unchanged === "boolean" ? value.unchanged : null
+  if (typeof value.artifact === "string") view.artifact = safeText(value.artifact, stats, 128)
+  if (typeof value.command === "string") view.command = safeText(value.command, stats)
+  applyProjectedError(view, value, stats)
+}
+
+function applyArtifact(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.commit = typeof value.commit === "string" ? safeText(value.commit, stats, 128) : null
+}
+
+function applyGap(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.reason =
+    typeof value.reason === "string" ? safeText(value.reason, stats, 500) : "Unknown recovery gap"
+}
+
+function applyReminder(
+  view: Record<string, unknown>,
+  value: JsonObject,
+  stats: ReturnType<typeof privacyStats>,
+) {
+  view.text = typeof value.text === "string" ? safeText(value.text, stats, 500) : ""
+  view.delivery = string(value.delivery)
+  view.observedAt = epochMillis(value.reconciledAt)
+  view.nativeEventID =
+    typeof value.nativeEventID === "string" ? safeText(value.nativeEventID, stats, 200) : null
+}
+
+/** Fail-closed trajectory view; stored native or model payloads are never copied wholesale. */
+export function projectProgressFact(row: ProgressRow): Record<string, unknown> {
+  const stats = privacyStats()
+  const value = payload(row)
+  const recordedAt = epochMillis(row.recorded_at)
+  const view = baseProgressView(row, recordedAt, stats)
 
   switch (row.kind) {
     case "commentary":
-      view.text = typeof value.text === "string" ? safeText(value.text, stats, 1200) : ""
+      applyCommentary(view, value, stats)
       break
     case "tool":
-      view.tool = typeof value.tool === "string" ? safeText(value.tool, stats, 160) : null
-      view.status = string(value.status)
-      if (typeof value.detail === "string") view.detail = safeText(value.detail, stats, 200)
-      view.callStatus = value.callStatus === "called" ? "called" : null
-      view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
-      view.execution = projectedExecution(value.execution, stats)
-      view.timing = projectedTiming(row.kind, value.timing, stats)
-      if (typeof value.content === "string") view.result = visibleProgressText(value.content, stats)
-      // Legacy arbitrary structured output is not exported either.
-      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
-      view.observations = projectedObservations(value.observations, stats)
-      if (Object.hasOwn(value, "fileTargets"))
-        view.fileTargets = projectedFileTargets(value.fileTargets) ?? {
-          coverage: "omitted",
-          operation: null,
-          paths: [],
-        }
+      applyTool(view, value, row.kind, stats)
       break
     case "visible-text":
-      view.text = typeof value.text === "string" ? safeText(value.text, stats) : ""
-      if (value.messageType === "user" || value.messageType === "synthetic") {
-        view.kind = value.messageType
-        view.messageType = value.messageType
-        view.createdAt = epochMillis(value.createdAt)
-        view.at = view.createdAt
-      }
+      applyVisibleText(view, value, stats)
       break
-    case "step": {
-      const usage = object(value.usage)
-      view.status = string(value.status)
-      view.statusProvenance = projectedProvenance(value.statusProvenance, stats)
-      view.timing = projectedTiming(row.kind, value.timing, stats)
-      view.finish = string(value.finish)
-      view.measurementBasis = string(value.measurementBasis)
-      view.agent = typeof value.agent === "string" ? safeText(value.agent, stats, 200) : null
-      const routeEvidence = projectedRouteEvidence(value.routeEvidence, stats)
-      const explicitEvidenceLost =
-        Object.hasOwn(value, "routeEvidence") && !object(value.routeEvidence)
-      const legacyRoute = projectedRoute(value.route, stats)
-      const legacyRouteInvalid =
-        (Object.hasOwn(value, "route") && value.route === null) ||
-        (value.route !== undefined && value.route !== null && legacyRoute === null)
-      view.routeEvidence =
-        routeEvidence ??
-        (explicitEvidenceLost || legacyRouteInvalid ? { status: "identity-unavailable" } : null)
-      view.route =
-        object(routeEvidence)?.route ?? (routeEvidence || legacyRouteInvalid ? null : legacyRoute)
-      view.observations = projectedObservations(value.observations, stats)
-      view.usage = usage
-        ? {
-            input: number(usage.input),
-            output: number(usage.output),
-            reasoning: number(usage.reasoning),
-            cacheRead: number(usage.cacheRead),
-            cacheWrite: number(usage.cacheWrite),
-            costUSD: number(usage.costUSD),
-          }
-        : null
-      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
+    case "step":
+      applyStep(view, value, row.kind, stats)
       break
-    }
-    case "usage-snapshot": {
-      const usage = object(value.usage)
-      view.measurementBasis = string(value.measurementBasis)
-      view.usage = usage
-        ? {
-            input: number(usage.input),
-            output: number(usage.output),
-            reasoning: number(usage.reasoning),
-            cacheRead: number(usage.cacheRead),
-            cacheWrite: number(usage.cacheWrite),
-            costUSD: number(usage.costUSD),
-          }
-        : null
-      view.additive = false
+    case "usage-snapshot":
+      applyUsageSnapshot(view, value)
       break
-    }
     case "provider-retry":
-      view.attempt = number(value.attempt)
-      view.timing = projectedTiming(row.kind, value.timing, stats)
-      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
+      applyProviderRetry(view, value, row.kind, stats)
       break
     case "execution-outcome":
-      view.outcome = string(value.outcome)
-      view.basis = string(value.basis)
-      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
-      if (typeof value.reason === "string") view.reason = safeText(value.reason, stats, 500)
+      applyExecutionOutcome(view, value, stats)
       break
     case "outcome-snapshot":
-      view.outcome = string(value.outcome)
-      view.basis = "cumulative-session-outcome-snapshot"
-      view.additive = false
-      view.turnIdentity = "unavailable"
+      applyOutcomeSnapshot(view, value)
       break
     case "shell":
-      view.shellID = typeof value.shellID === "string" ? safeText(value.shellID, stats, 128) : null
-      view.command = typeof value.command === "string" ? safeText(value.command, stats) : null
-      view.status = string(value.status)
-      view.exit = number(value.exit)
-      if (typeof value.output === "string") view.output = safeText(value.output, stats)
-      view.truncated = value.truncated === true
-      view.timing = projectedTiming(row.kind, value.timing, stats)
+      applyShell(view, value, row.kind, stats)
       break
     case "verification":
-      view.checkID =
-        typeof value.checkID === "string" ? safeText(value.checkID, stats, 120) : "unknown"
-      view.result = string(value.result)
-      view.exitCode = number(value.exitCode)
-      view.startedAt = epochMillis(value.startedAt)
-      view.endedAt = epochMillis(value.endedAt)
-      view.timing = projectedTiming(row.kind, value.timing, stats)
-      view.timedOut = typeof value.timedOut === "boolean" ? value.timedOut : null
-      view.unchanged = typeof value.unchanged === "boolean" ? value.unchanged : null
-      if (typeof value.artifact === "string") view.artifact = safeText(value.artifact, stats, 128)
-      if (typeof value.command === "string") view.command = safeText(value.command, stats)
-      if (value.error !== undefined) view.error = publicProgressError(value.error, stats)
+      applyVerification(view, value, row.kind, stats)
       break
     case "artifact":
-      view.commit = typeof value.commit === "string" ? safeText(value.commit, stats, 128) : null
+      applyArtifact(view, value, stats)
       break
     case "gap":
-      view.reason =
-        typeof value.reason === "string"
-          ? safeText(value.reason, stats, 500)
-          : "Unknown recovery gap"
+      applyGap(view, value, stats)
       break
     case "reminder":
-      view.text = typeof value.text === "string" ? safeText(value.text, stats, 500) : ""
-      view.delivery = string(value.delivery)
-      view.observedAt = epochMillis(value.reconciledAt)
-      view.nativeEventID =
-        typeof value.nativeEventID === "string" ? safeText(value.nativeEventID, stats, 200) : null
+      applyReminder(view, value, stats)
       break
     default:
       view.kind = "worker-unknown"
