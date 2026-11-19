@@ -83,7 +83,9 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:ModelTools", () => registerModelTools(ctx, repository))
       yield* sectionEffect("setup:ModelsServer", () =>
-        registerModelsServer(ctx, repository).pipe(Effect.orDie),
+        registerModelsServer(ctx, repository, undefined, undefined, { prewarmDecision: true }).pipe(
+          Effect.orDie,
+        ),
       )
       const agentRoutes = agentRouteReader(repository)
       yield* sectionEffect("setup:Architect", () => registerArchitect(ctx, agentRoutes))
