@@ -42,25 +42,39 @@ function isRemoteExtends(config: unknown): boolean {
   return values.some((value) => typeof value === "string" && /^https?:\/\//i.test(value))
 }
 
+/** Index just past a `// line` comment starting at `start`. */
+function skipLineComment(content: string, start: number): number {
+  let i = start
+  while (i < content.length && content[i] !== "\n") i++
+  return i
+}
+
+/** Index just past a `/* block *\/` comment starting at `start`. */
+function skipBlockComment(content: string, start: number): number {
+  let i = start + 2
+  while (i < content.length && content.slice(i, i + 2) !== "*/") i++
+  return i + 2
+}
+
 /** Strips `//` and block comments from JSONC text, leaving string contents untouched. */
 function stripJsonComments(content: string): string {
   let result = ""
   let inString = false
-  for (let i = 0; i < content.length; i++) {
+  let i = 0
+  while (i < content.length) {
     const two = content.slice(i, i + 2)
     if (!inString && two === "//") {
-      while (i < content.length && content[i] !== "\n") i++
+      i = skipLineComment(content, i)
       continue
     }
     if (!inString && two === "/*") {
-      i += 2
-      while (i < content.length && content.slice(i, i + 2) !== "*/") i++
-      i += 1
+      i = skipBlockComment(content, i)
       continue
     }
     const char = content[i]!
     if (char === '"' && content[i - 1] !== "\\") inString = !inString
     result += char
+    i++
   }
   return result
 }
