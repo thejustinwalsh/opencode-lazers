@@ -76,6 +76,7 @@ export function outcomeText(serialized: string) {
     default:
       action = "Recorded runtime update; no automatic action is requested."
   }
+  if (payload.status === "task-accepted" && payload.fallow) action += fallowNotice(payload.fallow)
   const evidence = Array.isArray(payload.evidence)
     ? payload.evidence.map((check: unknown) =>
         typeof check === "object" && check !== null && "id" in check ? check.id : check,
@@ -95,4 +96,22 @@ export function coalescedOutcomeText(entries: ReadonlyArray<{ planID: string; pa
     `LAZERS outcomes: ${entries.length} updates across ${plans} ${plans === 1 ? "plan" : "plans"}, the latest state of each`,
     ...entries.map((entry) => `--- plan ${entry.planID} ---\n${outcomeText(entry.payload)}`),
   ].join("\n\n")
+}
+
+const FALLOW_NOTICE_LIMIT = 10
+
+/** Remaining Fallow findings of an accepted task, one `check file:line subject` per line. */
+function fallowNotice(fallow: { introduced?: unknown; concerns?: unknown }): string {
+  const section = (title: string, items: unknown) => {
+    if (!Array.isArray(items) || !items.length) return []
+    const lines = items
+      .slice(0, FALLOW_NOTICE_LIMIT)
+      .map((item) => `- ${item.check} ${item.file}:${item.line} ${item.subject}`)
+    return [`${title} (${items.length}):`, ...lines]
+  }
+  const lines = [
+    ...section("Fallow findings the repair attempt did not resolve", fallow.introduced),
+    ...section("Fallow concerns", fallow.concerns),
+  ]
+  return lines.length ? `\n${lines.join("\n")}` : ""
 }

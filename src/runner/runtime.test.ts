@@ -24,11 +24,15 @@ import type { CheckReceipt } from "./artifacts.ts"
 import type { ArchitectSourceResult, HostSession, RunnerHost } from "./host.ts"
 import { DEFAULT_ARCHITECT_CACHE_WINDOW_MS } from "./architect-routing.ts"
 import { UNCERTAIN_EFFECT_RECEIPT_SCHEMA } from "./startup-recovery.ts"
-import { TaskRuntime, architectIdleWindowMs } from "./runtime.ts"
+import { TaskRuntime as ProductionTaskRuntime, architectIdleWindowMs } from "./runtime.ts"
+import type { FallowReview } from "./fallow-check.ts"
+import type { FallowReviewResult, Finding } from "../audit/review.ts"
 import { RunnerStore, type AttemptRow } from "./store.ts"
 import { retireOutboxLifecycle } from "./retire-gates.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
 import { PlanInput } from "./schema.ts"
+import { outcomeText } from "./outcome.ts"
+import { TaskProposalSchema } from "../task.ts"
 import { fingerprint } from "../identity.ts"
 import type { WorkerPersona } from "./schema.ts"
 import { TaskReads } from "../tasks/read.ts"
@@ -46,6 +50,25 @@ import {
 } from "./verification-activities.ts"
 import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
+
+const cleanFallowResult: FallowReviewResult = {
+  status: "clean",
+  introduced: [],
+  concerns: [],
+  thresholds: { cyclomatic: 20, cognitive: 15 },
+  configSource: "defaults",
+}
+
+/** Tests do not load the native analyzer: every runtime reviews clean unless a test injects one. */
+class TaskRuntime extends ProductionTaskRuntime {
+  constructor(...args: ConstructorParameters<typeof ProductionTaskRuntime>) {
+    const [store, host, projectID, progress, options = {}] = args
+    super(store, host, projectID, progress, {
+      fallowReviewRun: async () => cleanFallowResult,
+      ...options,
+    })
+  }
+}
 
 type RegisteredRunnerTool = Parameters<ToolEditor["add"]>[0]
 
@@ -87,6 +110,8 @@ function fixture(
     additionalCombinedCheckCommand?: string
     verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
     useProjectVerificationDefaults?: boolean
+    fallowReview?: "on" | "off"
+    fallowReviewRun?: FallowReview
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -404,6 +429,8 @@ function fixture(
   const runtime = new TaskRuntime(store, host, "project", undefined, {
     architectIdleWindowMs: options.architectIdleWindowMs,
     autoResumeInterrupted: options.autoResume ?? false,
+    ...(options.fallowReview ? { fallowReview: options.fallowReview } : {}),
+    ...(options.fallowReviewRun ? { fallowReviewRun: options.fallowReviewRun } : {}),
     architectPromptHook: options.architectPromptHook,
     wakeScheduler: options.wakeScheduler,
     ...(options.verificationTimeoutDefaults === undefined
@@ -4969,6 +4996,178 @@ test("a repair attempt is told about every failing check", async () => {
   expect(prompt).toContain("- content: `echo content-out; echo content-err >&2; exit 7` exit 7")
   expect(prompt).toContain("stdout:\n```\ncontent-out\n\n```")
   expect(prompt).toContain("stderr:\n```\ncontent-err\n\n```")
+})
+
+function fallowFinding(file: string, line: number): Finding {
+  return {
+    id: `${file}:${line}`,
+    check: "duplication",
+    status: "introduced",
+    file,
+    line,
+    endLine: line + 8,
+    subject: "cloned block",
+    fix: "Reuse the existing helper.",
+  }
+}
+
+/** Scripted reviews: each call takes the next result and the last one repeats. */
+function scriptedReview(...results: FallowReviewResult[]) {
+  const calls: number[] = []
+  const run: FallowReview = async () => {
+    calls.push(Date.now())
+    return results[Math.min(calls.length, results.length) - 1]!
+  }
+  return { run, calls }
+}
+
+const introducedResult = (...findings: Finding[]): FallowReviewResult => ({
+  ...cleanFallowResult,
+  status: "findings",
+  introduced: findings,
+})
+
+function taskAcceptedOutcomes(f: ReturnType<typeof fixture>) {
+  return (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload) as Record<string, unknown>)
+    .filter((payload) => payload.status === "task-accepted")
+}
+
+const singleTask = [{ name: "a", path: "a.txt" }]
+
+test("fallow findings alone send one repair carrying the guidance, then accept with the remainder", async () => {
+  const review = scriptedReview(introducedResult(fallowFinding("src/a.ts", 12)))
+  const f = fixture({
+    repair: true,
+    taskFiles: singleTask,
+    fallowReviewRun: review.run,
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  const repairs = f.store
+    .activity(planID, f.tasks[0]!.id)
+    .filter((event) => event.event === "REPAIR")
+  expect(repairs).toHaveLength(1)
+  expect(JSON.stringify(repairs[0])).toContain("Verification lazers-fallow found 1 introduced")
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  await f.runtime.tick()
+  const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
+  expect(prompt).toContain("- lazers-fallow: `lazers:fallow-review` exit 1")
+  expect(prompt).toContain("src/a.ts:12-20")
+  await drive(f.runtime)
+  // The repair attempt's review still has findings and no repair remains: accepted, never failed or held.
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(2)
+  expect(
+    f.store.activity(planID, f.tasks[0]!.id).filter((event) => event.event === "REPAIR"),
+  ).toHaveLength(1)
+  const outcomes = taskAcceptedOutcomes(f)
+  expect(outcomes).toHaveLength(1)
+  expect(outcomes[0]!.fallow).toMatchObject({ introduced: [{ file: "src/a.ts", line: 12 }] })
+  expect(outcomes[0]!.evidence).toEqual(["content"])
+  expect(review.calls).toHaveLength(2)
+})
+
+test("fallow findings and a failing check give exactly one repair carrying both", async () => {
+  const review = scriptedReview(introducedResult(fallowFinding("src/b.ts", 30)))
+  const f = fixture({
+    repair: true,
+    taskFiles: singleTask,
+    checkCommand: "echo content-out; exit 7",
+    fallowReviewRun: review.run,
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  const repairs = f.store
+    .activity(planID, f.tasks[0]!.id)
+    .filter((event) => event.event === "REPAIR")
+  expect(repairs).toHaveLength(1)
+  expect(JSON.stringify(repairs[0])).toContain(
+    "Verification content exited with code 7; Verification lazers-fallow found 1 introduced findings",
+  )
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  await f.runtime.tick()
+  const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
+  expect(prompt).toContain("content-out")
+  expect(prompt).toContain("src/b.ts:30-38")
+})
+
+test("a clean review accepts without a fallow field", async () => {
+  const f = fixture({ taskFiles: singleTask })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  const outcomes = taskAcceptedOutcomes(f)
+  expect(outcomes).toHaveLength(1)
+  expect("fallow" in outcomes[0]!).toBe(false)
+})
+
+test("an unavailable review accepts and records FALLOW_UNAVAILABLE once", async () => {
+  const review = scriptedReview({
+    ...cleanFallowResult,
+    status: "unavailable",
+    reason: "analyzer crashed",
+  })
+  const f = fixture({ repair: true, taskFiles: singleTask, fallowReviewRun: review.run })
+  const planID = f.receipt.planID
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  const unavailable = f.store
+    .activity(planID, f.tasks[0]!.id)
+    .filter((event) => event.event === "FALLOW_UNAVAILABLE")
+  expect(unavailable).toHaveLength(1)
+  expect(JSON.stringify(unavailable[0])).toContain("analyzer crashed")
+})
+
+test("fallowReview off records no review effect", async () => {
+  const review = scriptedReview(introducedResult(fallowFinding("src/a.ts", 1)))
+  const f = fixture({ taskFiles: singleTask, fallowReview: "off", fallowReviewRun: review.run })
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+  expect(review.calls).toHaveLength(0)
+  expect(
+    f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "verify:lazers-fallow"),
+  ).toHaveLength(0)
+})
+
+test("lazers-fallow is a reserved verification ID", () => {
+  const f = fixture({ taskFiles: singleTask })
+  const reserved = { id: "lazers-fallow", command: "true" }
+  const plan = { ...f.input, requestID: "reserved-plan", verification: [reserved] }
+  expect(() => f.runtime.submitPlan(plan, "owner")).toThrow("reserved")
+  const task = f.tasks[0]!
+  const proposal = structuredClone(task.proposal)
+  proposal.verification = [reserved]
+  proposal.acceptance = []
+  expect(TaskProposalSchema.safeParse(proposal).error?.message).toContain("reserved")
+})
+
+test("concerns alone accept without a repair and reach the Architect", async () => {
+  const concern = { ...fallowFinding("src/c.ts", 5), check: "complexity" as const }
+  const review = scriptedReview({ ...cleanFallowResult, status: "findings", concerns: [concern] })
+  const f = fixture({ repair: true, taskFiles: singleTask, fallowReviewRun: review.run })
+  const planID = f.receipt.planID
+  await runPlan(f)
+  await f.runtime.tick()
+  await drive(f.runtime)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  const outcomes = taskAcceptedOutcomes(f)
+  expect(outcomes[0]!.fallow).toMatchObject({ introduced: [], concerns: [{ file: "src/c.ts" }] })
+  const text = outcomeText(JSON.stringify(outcomes[0]))
+  expect(text).toContain("Fallow concerns (1):\n- complexity src/c.ts:5 cloned block")
 })
 
 test("a single failing check keeps its unchanged failure reason", async () => {

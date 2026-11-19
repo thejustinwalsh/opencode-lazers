@@ -68,6 +68,18 @@ import {
   writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
+import {
+  FALLOW_CHECK_COMMAND,
+  FALLOW_CHECK_ID,
+  FALLOW_EFFECT_KIND,
+  defaultFallowReview,
+  fallowCheckReceipt,
+  fallowOutcome,
+  fallowReasonText,
+  unavailableFallowResult,
+  type FallowReview,
+} from "./fallow-check.ts"
+import type { FallowReviewResult } from "../audit/review.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
   architectCacheWindowMs,
@@ -237,6 +249,10 @@ export type TaskRuntimeOptions = {
   /** Cancellation waits this long after interrupting a busy worker, then settles without its idleness. Default 30 seconds. */
   cancelIdleWaitMs?: number
   architectReuseMaxContextTokens?: number
+  /** Review each candidate for introduced duplication and complexity. Default "on". */
+  fallowReview?: "on" | "off"
+  /** The review itself; defaults to the Fallow analyzer. Tests inject a stub. */
+  fallowReviewRun?: FallowReview
   verificationTimeoutDefaults?: VerificationTimeoutDefaults
   now?: () => number
   architectPromptHook?: boolean
@@ -415,6 +431,12 @@ type CleanupAuditDiagnostics = {
   >
 }
 
+/** The `task-accepted` outcome's Fallow field: only when something remains to report. */
+function fallowAcceptance(review: FallowReviewResult | undefined) {
+  const fallow = fallowOutcome(review)
+  return fallow ? { fallow } : {}
+}
+
 /** Verification effects only read the candidate; a missing receipt means run the check again. */
 function isRerunnableEffect(kind: string): boolean {
   return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
@@ -513,6 +535,8 @@ export class TaskRuntime {
   private readonly now: () => number
   private readonly architectRouting: ArchitectRoutingOptions
   private readonly autoResumeInterrupted: boolean
+  private readonly fallowReviewEnabled: boolean
+  private readonly fallowReviewRun: FallowReview
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
   private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
@@ -537,6 +561,8 @@ export class TaskRuntime {
     this.now = options.now ?? Date.now
     this.schedulingRead = new TaskSchedulingRead(store, this.now)
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
+    this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
+    this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
     this.workerNoProgressWindowMs = options.workerNoProgressWindowMs ?? 30 * 60_000
     this.cancelIdleWaitMs = options.cancelIdleWaitMs ?? 30_000
     this.architectRouting = {
@@ -10032,17 +10058,16 @@ export class TaskRuntime {
       }
     }
     const failures = receipts.filter((r) => !checkSucceeded(r))
-    if (failures.length) {
-      const held = failures.find(
-        (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
-      )
-      if (held) {
-        this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
-        return
-      }
-      this.failAttempt(plan, attempt, failures.map(checkFailureReason).join("; "))
+    const held = failures.find(
+      (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
+    )
+    if (held) {
+      this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
       return
     }
+    const review = await this.fallowReviewResult(plan, attempt, artifact, repairID, fence)
+    if (review === "pending") return
+    if (this.decideVerification(plan, attempt, failures, review)) return
     try {
       // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
       if (!(await artifactUnchanged(attempt.workspace, artifact.commit))) {
@@ -10099,6 +10124,7 @@ export class TaskRuntime {
           attemptID: attempt.id,
           artifact: artifact.commit,
           evidence: receipts.map((r) => r.id),
+          ...fallowAcceptance(review),
         },
         true,
       )
@@ -10109,6 +10135,147 @@ export class TaskRuntime {
       // Progress facts never grant or revoke acceptance.
     }
   }
+  /**
+   * One decision for the authored checks and the Fallow review. Returns true when the attempt was
+   * settled (repair or fail). Findings alone repair while a repair attempt remains and are
+   * otherwise left to acceptance; they never fail an attempt or raise a hold.
+   */
+  private decideVerification(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    failures: CheckReceipt[],
+    review: FallowReviewResult | undefined,
+  ): boolean {
+    if (review?.status === "unavailable")
+      this.store.recordOnce(plan.id, attempt.task_id, "FALLOW_UNAVAILABLE", {
+        attemptID: attempt.id,
+        reason: review.reason ?? "Fallow review unavailable",
+      })
+    const introduced = review?.introduced.length ?? 0
+    const reasons = failures.map(checkFailureReason)
+    if (introduced > 0 && (failures.length > 0 || this.repairAvailable(attempt)))
+      reasons.push(fallowReasonText(introduced))
+    if (!reasons.length) return false
+    this.failAttempt(plan, attempt, reasons.join("; "))
+    return true
+  }
+
+  /** The Fallow review's result for this candidate; "pending" while it is journaled or running. */
+  private async fallowReviewResult(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    artifact: { commit: string; identity: string },
+    repairID: string | undefined,
+    fence: number,
+  ): Promise<FallowReviewResult | "pending" | undefined> {
+    if (!this.fallowReviewEnabled) return undefined
+    const verificationEpoch =
+      this.store.latestTransition<{ verificationEpoch: number }>(
+        plan.id,
+        attempt.task_id,
+        "VERIFICATION_RESUMED",
+      )?.verificationEpoch ?? 0
+    const known = this.store
+      .effects(plan.id)
+      .toReversed()
+      .find((e) => {
+        if (e.attempt_id !== attempt.id || e.kind !== FALLOW_EFFECT_KIND || effectSuperseded(e))
+          return false
+        const payload = JSON.parse(e.payload) as Record<string, unknown>
+        return (
+          payload.artifact === artifact.commit &&
+          payload.identity === artifact.identity &&
+          payload.workspace === attempt.workspace &&
+          (payload.repairID ?? undefined) === repairID &&
+          (e.state === "completed" || (payload.verificationEpoch ?? 0) === verificationEpoch)
+        )
+      })
+    if (known?.state === "completed") return actualCheckResultFromEffect(known)?.fallow
+    if (known) {
+      const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
+      if (activity?.state === "running" || activity?.state === "completed") return "pending"
+      // The review never holds a task: a lost run is an unavailable review.
+      return unavailableFallowResult("Fallow review did not complete")
+    }
+    const receiptPath = join(
+      this.dataDirectory,
+      "receipts",
+      attempt.id,
+      `${FALLOW_CHECK_ID}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}.json`,
+    )
+    const effect = this.effect(
+      plan.id,
+      attempt.task_id,
+      attempt.id,
+      FALLOW_EFFECT_KIND,
+      {
+        check: { id: FALLOW_CHECK_ID, command: FALLOW_CHECK_COMMAND },
+        workspace: attempt.workspace,
+        artifact: artifact.commit,
+        identity: artifact.identity,
+        receiptPath,
+        ...(verificationEpoch ? { verificationEpoch } : {}),
+        ...(repairID ? { repairID } : {}),
+      },
+      fence,
+    )
+    this.startCheckActivity({
+      id: effect.id,
+      identity: { effectID: effect.id, payload: effect.payload },
+      metadata: {
+        kind: "effect",
+        projectDirectory: this.directory,
+        planID: plan.id,
+        effectID: effect.id,
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        receiptPath,
+      },
+      run: (signal) => this.runFallowReview(attempt, artifact, receiptPath, signal),
+    })
+    return "pending"
+  }
+
+  private async runFallowReview(
+    attempt: AttemptRow,
+    artifact: { commit: string; identity: string },
+    receiptPath: string,
+    signal: AbortSignal,
+  ): Promise<CheckReceipt> {
+    const startedAt = Date.now()
+    const result = await this.fallowReviewRun({
+      workspace: attempt.workspace,
+      baseCommit: attempt.base_commit,
+      artifact: artifact.commit,
+      repository: this.store.repository,
+      signal,
+    }).catch((error: unknown) => unavailableFallowResult(errorText(error)))
+    const receipt = fallowCheckReceipt({
+      id: FALLOW_CHECK_ID,
+      workspace: attempt.workspace,
+      artifact: artifact.commit,
+      inputIdentity: artifact.identity,
+      environmentIdentity: verificationEnvironmentIdentity(),
+      startedAt,
+      endedAt: Date.now(),
+      result,
+    })
+    await writeCheckReceipt(receiptPath, receipt)
+    return receipt
+  }
+
+  /** True while this attempt, if it fails, moves its task to REPAIR rather than FAIL. */
+  private repairAvailable(attempt: AttemptRow): boolean {
+    const task = this.store.repository.get(attempt.task_id)!
+    const node = this.store.nodes(attempt.plan_id).find((n) => n.task_id === task.id)!
+    return (
+      node.state === "verifying" &&
+      (task.proposal.limits?.maxRepairAttempts ?? 1) > 0 &&
+      !JSON.parse(attempt.policy).repairAttempt &&
+      !this.retainedRepairForAttempt(attempt)
+    )
+  }
+
   private async missingEvidence(
     workspace: string,
     assertions: TaskProposal["acceptance"],
@@ -10167,18 +10334,11 @@ export class TaskRuntime {
     workerObservation?: TerminalWorkerHold,
   ) {
     const task = this.store.repository.get(attempt.task_id)!
-    const node = this.store.nodes(plan.id).find((n) => n.task_id === task.id)!
     this.store.atomic((db) => {
       db.query(
         "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
       ).run(attempt.id)
-      if (
-        node.state === "verifying" &&
-        (task.proposal.limits?.maxRepairAttempts ?? 1) > 0 &&
-        !JSON.parse(attempt.policy).repairAttempt &&
-        !this.retainedRepairForAttempt(attempt)
-      )
-        this.store.move(plan.id, task.id, "REPAIR", reason)
+      if (this.repairAvailable(attempt)) this.store.move(plan.id, task.id, "REPAIR", reason)
       else this.store.move(plan.id, task.id, "FAIL", reason)
     })
     try {

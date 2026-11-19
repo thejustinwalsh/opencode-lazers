@@ -22,6 +22,7 @@ import {
 } from "./verification-timeout.ts"
 import type { VerificationDeadlineReceipt } from "./verification-timeout.ts"
 import type { TaskProposal } from "../task.ts"
+import type { FallowReviewResult } from "../audit/review.ts"
 
 const execFileAsync = promisify(execFile)
 
@@ -603,6 +604,8 @@ export type CheckReceipt = {
   /** Legacy diagnostic only; never establishes or invalidates a check. */
   unchanged?: boolean
   isolation?: unknown
+  /** Structured result of the Fallow review; present only on the `lazers-fallow` receipt. */
+  fallow?: FallowReviewResult
 }
 
 export type CheckPhaseReceipt = {
