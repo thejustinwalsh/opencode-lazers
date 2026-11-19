@@ -1,2 +1,4 @@
-[target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="custom"']
+[target.wasm32-wasip1]
+# Analysis recurses deeply on nested sources; the default 1 MiB WASI stack is too small. This
+# matches the 16 MiB worker stack native Fallow gives its threads.
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]

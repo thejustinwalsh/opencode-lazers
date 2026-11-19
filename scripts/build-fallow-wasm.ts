@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
@@ -7,16 +7,17 @@ import { fileURLToPath } from "node:url"
 import { patchSetSha256 } from "./vendor-fallow.ts"
 
 /**
- * Builds the vendored Fallow analysis to WebAssembly and writes the committed artifact:
+ * Builds the vendored Fallow analysis to a WebAssembly (WASI preview 1) command and writes the
+ * committed artifact:
  *
  *   bun scripts/build-fallow-wasm.ts
  *
- *   cargo build --release --locked  ->  wasm-bindgen --target web  ->  wasm-opt -Oz
- *   -> src/audit/wasm/{fallow.wasm, fallow.js, fallow.d.ts, ARTIFACT.json}
+ *   cargo build --release --locked --target wasm32-wasip1  ->  wasm-opt -Oz
+ *   -> src/audit/wasm/{fallow.wasm, ARTIFACT.json}
  *
- * Needs rustc with the wasm32-unknown-unknown target, `wasm-bindgen` at exactly the version of
- * the `wasm-bindgen` crate in crates/fallow-wasm/Cargo.lock, and `wasm-opt` on PATH.
+ * Needs rustc with the wasm32-wasip1 target and `wasm-opt` on PATH.
  */
+const TARGET = "wasm32-wasip1"
 const root = fileURLToPath(new URL("..", import.meta.url))
 const crateDir = join(root, "crates/fallow-wasm")
 const targetDir = join(root, ".cache/fallow-wasm-target")
@@ -44,13 +45,6 @@ async function version(cmd: string[]) {
   }
 }
 
-async function lockedBindgenVersion() {
-  const lock = await readFile(join(crateDir, "Cargo.lock"), "utf8")
-  const match = /name = "wasm-bindgen"\nversion = "([^"]+)"/.exec(lock)
-  if (!match?.[1]) throw new Error("wasm-bindgen is not in crates/fallow-wasm/Cargo.lock")
-  return match[1]
-}
-
 /** Hash of the binding crate sources, so a changed binding is visible in the manifest. */
 async function bindingSha256() {
   const hash = createHash("sha256")
@@ -70,74 +64,64 @@ async function bindingSha256() {
   return hash.digest("hex")
 }
 
+/** Imports the module asks of its host, so a changed surface shows in the committed manifest. */
+async function importList(wasm: Uint8Array) {
+  const module = await WebAssembly.compile(wasm)
+  return WebAssembly.Module.imports(module)
+    .map((entry) => `${entry.module}.${entry.name}`)
+    .sort()
+}
+
 export async function buildFallowWasm() {
   const upstream = JSON.parse(await readFile(join(root, "vendor/fallow/UPSTREAM.json"), "utf8"))
   const toolchain = {
     rustc: await version(["rustc", "--version"]),
     cargo: await version(["cargo", "--version"]),
-    wasmBindgen: await version(["wasm-bindgen", "--version"]),
     wasmOpt: await version(["wasm-opt", "--version"]),
   }
-  const locked = await lockedBindgenVersion()
-  if (!toolchain.wasmBindgen.endsWith(` ${locked}`)) {
-    throw new Error(
-      `wasm-bindgen CLI must be ${locked}: cargo install wasm-bindgen-cli --version ${locked} --locked`,
-    )
-  }
-
   const sysroot = (await run(["rustc", "--print", "sysroot"])).trim()
-  await run(
-    ["cargo", "build", "--release", "--locked", "--target", "wasm32-unknown-unknown"],
-    crateDir,
-    {
-      CARGO_TARGET_DIR: targetDir,
-      // Replaces .cargo/config.toml rustflags, so the entropy cfg is repeated. The path remaps keep
-      // panic locations from embedding this checkout's or the user's cargo home path.
-      CARGO_ENCODED_RUSTFLAGS: [
-        "--cfg",
-        'getrandom_backend="custom"',
-        `--remap-path-prefix=${root.replace(/\/$/, "")}=/lazers`,
-        `--remap-path-prefix=${cargoHome}=/cargo`,
-        `--remap-path-prefix=${sysroot}=/rustc-sysroot`,
-      ].join("\x1f"),
-    },
-  )
-  const raw = join(targetDir, "wasm32-unknown-unknown/release/fallow_wasm.wasm")
-  const stage = join(targetDir, "bindgen")
-  await rm(stage, { recursive: true, force: true })
-  await mkdir(stage, { recursive: true })
-  await run(["wasm-bindgen", "--target", "web", "--out-dir", stage, "--out-name", "fallow", raw])
+  await run(["cargo", "build", "--release", "--locked", "--target", TARGET], crateDir, {
+    CARGO_TARGET_DIR: targetDir,
+    // Replaces .cargo/config.toml rustflags, so the stack size is repeated. The path remaps keep
+    // panic locations from embedding this checkout's or the user's cargo home path.
+    CARGO_ENCODED_RUSTFLAGS: [
+      "-C",
+      "link-arg=-zstack-size=16777216",
+      `--remap-path-prefix=${root.replace(/\/$/, "")}=/lazers`,
+      `--remap-path-prefix=${cargoHome}=/cargo`,
+      `--remap-path-prefix=${sysroot}=/rustc-sysroot`,
+    ].join("\x1f"),
+  })
+  const raw = join(targetDir, `${TARGET}/release/fallow-wasi.wasm`)
 
   await mkdir(outDir, { recursive: true })
   const wasmPath = join(outDir, "fallow.wasm")
   await run([
     "wasm-opt",
     "-Oz",
+    "--strip-debug",
+    "--strip-producers",
     "--enable-bulk-memory",
     "--enable-sign-ext",
     "--enable-mutable-globals",
     "--enable-nontrapping-float-to-int",
     "--enable-multivalue",
     "--enable-reference-types",
-    join(stage, "fallow_bg.wasm"),
+    raw,
     "-o",
     wasmPath,
   ])
-  const glue = (await readFile(join(stage, "fallow.js"), "utf8")).replaceAll(
-    "fallow_bg.wasm",
-    "fallow.wasm",
-  )
-  await writeFile(join(outDir, "fallow.js"), glue)
-  await writeFile(join(outDir, "fallow.d.ts"), await readFile(join(stage, "fallow.d.ts")))
 
   const wasm = await readFile(wasmPath)
   const manifest = {
     upstreamTag: upstream.tag as string,
     upstreamCommit: upstream.commit as string,
+    target: TARGET,
     patchSetSha256: await patchSetSha256(),
     bindingSha256: await bindingSha256(),
     wasmSha256: sha256(wasm),
     bytes: wasm.byteLength,
+    imports: await importList(wasm),
     toolchain,
   }
   await writeFile(join(outDir, "ARTIFACT.json"), `${JSON.stringify(manifest, null, 2)}\n`)
