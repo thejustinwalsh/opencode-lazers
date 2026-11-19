@@ -1,7 +1,8 @@
 # Fallow as in-process WebAssembly tools
 
-Status: plan only. Nothing here is implemented. Line numbers are as read on
-2026-11-19 and will drift; function names are the stable reference.
+Status: Phases 0 to 3 are built, merged and verified live in OpenCode on
+2026-11-19 (see "Live verification"). Phase 4 is in progress. Line numbers are
+as read on 2026-11-19 and will drift; function names are the stable reference.
 
 ## Problem
 
@@ -859,6 +860,58 @@ a baseline and a linked follow-up without the model calling
 
 Phase 1 may need a step up for the engine patches; say so when it happens.
 
+## Live verification in OpenCode, 2026-11-19
+
+Driver-assisted. The driver (Claude) built and merged everything below,
+reloaded the regular OpenCode service, re-enabled Architect contact and drove
+the session. What the product did on its own is marked "product"; what the
+driver fixed is marked "driver".
+
+### What ran
+
+| Run                                    | Plan       | Result                                                                                                                                                                                                                         |
+| -------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auditor task LZ-241, first base        | `2a6c1efd` | Review ran (`clean`). Two authored checks failed for reasons on `main`, one repair with both failures in its prompt, then fail and hold. Product                                                                               |
+| Same work, fresh plan                  | `9f85d801` | Dispatched in 3 minutes; `verify-run`, `test-audit`, `lazers-fallow` (clean, 1.9 s) passed; task and plan accepted; integrated as `e1363c59`. The callback in `src/audit/history.ts` went from cognitive 27 to 6. Product      |
+| Probe 1, intentional clone and nesting | `c959a3c6` | Review found 3 introduced findings; one `REPAIR`, guidance in the repair prompt; the repair worker asked which of task and review wins; accepted. Exposed the repair-base defect below                                         |
+| Probe 2, same, after fixes             | `7b7432f1` | First attempt: 2 findings, guidance as designed. Repair attempt: review again reported 2 introduced and 1 dead-code concern; task accepted, never failed or held; `task-accepted` carried all three for the Architect. Product |
+
+Guidance the worker received in probe 2:
+
+```
+Fallow review: 2 findings introduced by this task. Older findings are not counted.
+1. complexity src/audit/probe-clone-2.ts:43 `probeClassify2` cognitive 201 (limit 15), cyclomatic 38 (limit 20).
+   Split it into smaller named functions.
+2. duplication src/audit/probe-clone-2.ts:1-43 repeats src/audit/attribution.ts:73-114 (43 lines).
+   Keep one implementation and import it instead of copying it.
+Fix these inside your write scope. Do not add fallow-ignore comments.
+```
+
+### Defects the walkthrough found, all fixed by the driver and re-verified live
+
+| Defect                                                                                                                                                | Fix                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lz-fallow-*` tools returned nothing for a directory in `paths`                                                                                       | `resolveToolPaths`, `src/audit/fallow-tools-support.ts`                                                                                                     |
+| Scheduler ticks took 11 to 20 minutes: a cancelled plan's cleanup ran a squash search of up to 15,600 diffs every tick and ran before all other plans | Bounded, memoised containment proof (`src/runner/change-identity.ts`); terminal cleanup runs after runnable plans; `PLAN_STEP_SLOW` record names slow steps |
+| Starting an Architect renewal threw `UNIQUE constraint failed: runner_architect_sources.session_id`                                                   | Upsert on both paths, `src/runner/store.ts`                                                                                                                 |
+| `bun check` failed in every fresh worker worktree: a test fixture re-exported from `echarts`, which is not a dependency                               | Dead export removed. Fallow's self-scan had flagged it as an unlisted dependency                                                                            |
+| A WASM parity test required findings in a file the Auditor had just fixed                                                                             | Repository parity tests derive their inputs from the tree                                                                                                   |
+| Changed-file duplication grouped clones differently from the full run (upstream behaviour, native too)                                                | The module always runs the full detection and filters; the focused path is deleted                                                                          |
+| A repair attempt's review compared its artifact with itself and read `clean`                                                                          | Review base is the task's attempt chain, `taskChainBase` in `src/runner/runtime.ts`                                                                         |
+| Guidance anchored a clone in the original file, split adjacent clones in two, and named no metric                                                     | `src/audit/review.ts`, `attribution.ts`                                                                                                                     |
+| The dead-code pass had made the `ArchitectContact` RPC contract private; only the operator's script imports it                                        | Re-exported and listed in `ignoreExports`                                                                                                                   |
+
+### What is in WebAssembly and what is not
+
+| Analysis                                   | Runs in                       | Note                                                                                        |
+| ------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| Complexity, duplication, feature flags     | WebAssembly worker thread     | 4.85 MB module, no filesystem, network, process, clock or random import                     |
+| Dead code, import cycles                   | Native addon, where installed | They need the module resolver over a real filesystem; a virtual filesystem is separate work |
+| `lz-fallow-report` (five durable sections) | Native addon                  | Unchanged                                                                                   |
+
+So the native dependency is still present. The task review itself needs only
+the WebAssembly module.
+
 ## Open questions for the owner
 
 Decided on 2026-11-19 and folded into the design:
@@ -934,3 +987,19 @@ prunes the corpus to candidate files and can group the same code differently: on
 repository it reported one clone as five instances at 55 tokens where the full run reports
 two at 64. The module therefore always runs the full detection and keeps the groups that
 touch the changed files; the focus path was removed from patch 0005.
+
+- An accepted plan cannot be cancelled. Probe plans `c959a3c6` and `7b7432f1`
+  are accepted and must never be integrated; they have no supported exit.
+- A retried task can be scheduled in the shared checkout behind stale
+  reservations, and the runtime refuses a workspace-mode change after
+  execution has started. LZ-241's retry was stuck that way until it was
+  resubmitted as a fresh plan.
+- Five legacy attempts have held reservations since 2026-11-05.
+- `lz-verify-task` returned `unavailable` twice for the Architect ("All fibers
+  interrupted without error"): local inference failed. Not investigated.
+- The repair worker asked which of the task and the review wins even when the
+  task said to keep the flagged code and finish without asking.
+- `verify()` is cognitive 80 and `runCommandOnce` 104; eight more functions
+  are over cognitive 100.
+- Reproducible build of `fallow.wasm` from a second checkout is unconfirmed.
+- `src/submission.test.ts` has two failing tests that predate this work.
