@@ -164,8 +164,8 @@ export class AdoptionExecution {
     if (
       competing.some((item) =>
         scopePatternsConflict(
-          this.runtime.store.effectiveWriteScope(adoption.task_id),
-          this.runtime.store.effectiveWriteScope(item.task_id),
+          this.runtime.store.effectiveReservationScope(adoption.task_id),
+          this.runtime.store.effectiveReservationScope(item.task_id),
         ),
       )
     )

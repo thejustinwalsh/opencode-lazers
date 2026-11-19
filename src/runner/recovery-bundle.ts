@@ -188,6 +188,11 @@ export function recommend(facts: RecoveryFacts): z.infer<typeof RecoveryRecommen
       )
     return pick("reconcile", "Cleanup retries when facts change; reconcile re-observes it now")
   }
+  if (family === "scope-divergence")
+    return pick(
+      "amend-scope",
+      "The change diverged from the task's scope and checks passed; accept it with amend-scope and a reason, send it back with retained-repair, or cancel",
+    )
   if (family === "scope-violation")
     return pick("amend-scope", "The change reached outside the write scope; decide the scope")
   if (family === "uncertain-effect")

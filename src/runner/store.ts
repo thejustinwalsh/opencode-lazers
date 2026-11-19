@@ -30,6 +30,7 @@ import type { TaskRepository } from "../storage.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
 import { git, scopePatternsConflict } from "./artifacts.ts"
+import { reservationPatterns, type ScopeModel } from "./scope.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput, PlanSubmissionInput } from "./schema.ts"
 import type { Execution, Finding, TaskState } from "./schema.ts"
@@ -2881,17 +2882,43 @@ export class RunnerStore {
       ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
     ])
   }
+  /**
+   * The scope model in force: the task's edit/create/protected plus what Architect amendments added
+   * (`amended`) or released (exact paths an amendment named that the task protected).
+   */
+  effectiveScope(
+    taskID: string,
+    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
+  ): ScopeModel {
+    if (!task) throw new Error("Task not found")
+    const edit = this.effectiveWriteScope(taskID, task)
+    const original = new Set(task.proposal.writeScope)
+    const amended = edit.filter((pattern) => !original.has(pattern))
+    const protectedScope = task.proposal.protectedScope ?? []
+    return {
+      edit,
+      amended,
+      create: task.proposal.createScope ?? [],
+      protected: protectedScope,
+      released: amended.filter((pattern) => !/[*?{}[\]!]/.test(pattern)),
+    }
+  }
+  /** Edit plus create: what the task reserves against concurrent work. */
+  effectiveReservationScope(taskID: string): string[] {
+    const scope = this.effectiveScope(taskID)
+    return reservationPatterns(scope.edit, scope.create)
+  }
   dispatchReservations() {
     return [
       ...this.activeProjectAttempts().map((attempt) => ({
         taskID: attempt.task_id,
         shared: attempt.workspace === this.repository.projectDirectory,
-        scopes: this.effectiveWriteScope(attempt.task_id),
+        scopes: this.effectiveReservationScope(attempt.task_id),
       })),
       ...this.activeAdoptions().map((adoption) => ({
         taskID: adoption.task_id,
         shared: false,
-        scopes: this.effectiveWriteScope(adoption.task_id),
+        scopes: this.effectiveReservationScope(adoption.task_id),
       })),
     ]
   }
@@ -3278,7 +3305,10 @@ export class RunnerStore {
           id,
           planned: !!this.execution(id),
           content: fingerprint(record!.proposal),
-          scope: this.effectiveWriteScope(id, record),
+          scope: reservationPatterns(
+            this.effectiveWriteScope(id, record),
+            record!.proposal.createScope ?? [],
+          ),
         }
       })
       const relations = db
@@ -3781,13 +3811,16 @@ export class RunnerStore {
         activeAttempts.some(
           (attempt) =>
             attempt.workspace === this.repository.projectDirectory ||
-            scopePatternsConflict(input.writeScope, this.effectiveWriteScope(attempt.task_id)),
+            scopePatternsConflict(
+              input.writeScope,
+              this.effectiveReservationScope(attempt.task_id),
+            ),
         )
       )
         throw new Error("A conflicting worker prevents descendant adoption")
       if (
         this.activeAdoptions().some((adoption) =>
-          scopePatternsConflict(input.writeScope, this.effectiveWriteScope(adoption.task_id)),
+          scopePatternsConflict(input.writeScope, this.effectiveReservationScope(adoption.task_id)),
         )
       )
         throw new Error("An active descendant reservation conflicts with this task scope")

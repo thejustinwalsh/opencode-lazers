@@ -91,6 +91,10 @@ function fixture(
     fail?: boolean
     missingEvidence?: boolean
     outside?: boolean
+    /** Extra files the worker writes (null deletes); `attempt` limits one attempt number. */
+    writes?: { path: string; content: string | null; attempt?: number }[]
+    createScope?: { path: string; purpose: string }[]
+    protectedScope?: string[]
     shared?: boolean
     commit?: boolean
     repair?: boolean
@@ -158,6 +162,8 @@ function fixture(
     const proposal = validProposal()
     proposal.objective = `Write ${path}`
     proposal.writeScope = scope
+    if (options.createScope) proposal.createScope = options.createScope
+    if (options.protectedScope) proposal.protectedScope = options.protectedScope
     proposal.verification = [
       ...(options.beforeCheck
         ? [
@@ -340,6 +346,15 @@ function fixture(
       mkdirSync(dirname(join(session.directory, path)), { recursive: true })
       writeFileSync(join(session.directory, path), wrongFirstA || wrongFirstB ? "wrong" : info.name)
       if (options.outside) writeFileSync(join(session.directory, "escape.txt"), "bad")
+      for (const write of options.writes ?? []) {
+        if (write.attempt !== undefined && write.attempt !== assigned.number) continue
+        const target = join(session.directory, write.path)
+        if (write.content === null) rmSync(target, { force: true })
+        else {
+          mkdirSync(dirname(target), { recursive: true })
+          writeFileSync(target, write.content)
+        }
+      }
       if (options.shared || options.commit) {
         const checkout = session.directory
         git(checkout, ["add", path])
@@ -949,30 +964,86 @@ test("task integration records a reviewed landing without finalizing the plan or
   expect(f.store.attempts(planID)[1]!.base_commit).toBe(git(f.root, ["rev-parse", "HEAD"]))
 })
 
-test("scope violations hold a stopped candidate without spending repair, then amendment and reconcile verify it", async () => {
+/** The `task-accepted` outcome's scope review, from the delivered notice. */
+function acceptedScope(f: ReturnType<typeof fixture>, planID: string) {
+  const rows = f.store.detail(planID).delivery as { payload: string }[]
+  const accepted = rows
+    .map((row) => JSON.parse(row.payload))
+    .findLast((payload) => payload.status === "task-accepted")
+  return accepted?.scope as
+    | {
+        created: { path: string; class: string; purpose?: string }[]
+        missingExpected: { path: string; purpose: string }[]
+        divergences: { path: string }[]
+        accepted: { path: string; reason: string }[]
+        warnings: unknown[]
+      }
+    | undefined
+}
+
+const taskEvents = (f: ReturnType<typeof fixture>, planID: string, taskID: string, name: string) =>
+  f.store.activity(planID, taskID).filter((event) => event.event === name)
+
+test("a new file beside the scoped file is accepted with no hold and shown in the acceptance notice", async () => {
   const f = fixture({ outside: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
   const planID = f.receipt.planID
   const task = f.tasks[0]!
-  const spec = f.repository.get(task.id)
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  expect(taskEvents(f, planID, task.id, "SCOPE_DECISION_REQUIRED")).toHaveLength(0)
+  const scope = acceptedScope(f, planID)!
+  expect(scope.created).toEqual([{ path: "escape.txt", class: "allowed-new" }])
+  expect(scope.divergences).toEqual([])
+})
+
+test("a created file named in createScope is expected, and an expected file never created is noted", async () => {
+  const f = fixture({
+    outside: true,
+    createScope: [
+      { path: "escape.txt", purpose: "the escape helper" },
+      { path: "never.txt", purpose: "not created" },
+    ],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  const scope = acceptedScope(f, planID)!
+  expect(scope.created).toEqual([
+    { path: "escape.txt", class: "expected-new", purpose: "the escape helper" },
+  ])
+  expect(scope.missingExpected).toEqual([{ path: "never.txt", purpose: "not created" }])
+})
+
+test("a protected change holds without spending repair; naming the exact path releases it", async () => {
+  const f = fixture({
+    outside: true,
+    repair: true,
+    protectedScope: ["escape.txt"],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
   await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
   await drive(f.runtime, 4)
   const blocked = f.store.plan(planID)!
   const first = f.store.attempts(planID)[0]!
   expect(blocked.state).toBe("blocked")
+  expect(blocked.reason).toContain("protected paths")
   expect(blocked.reason).toContain("escape.txt")
   expect(first.state).toBe("verifying")
-  expect(f.store.nodes(planID)[0]!.state).toBe("verifying")
-  expect(
-    f.store.activity(planID, task.id).filter((event) => event.event === "REPAIR"),
-  ).toHaveLength(0)
+  expect(taskEvents(f, planID, task.id, "REPAIR")).toHaveLength(0)
+  expect(taskEvents(f, planID, task.id, "SCOPE_DECISION_REQUIRED")[0]!.payload).toContain(
+    '"kind":"protected"',
+  )
   const history = f.store.activity(planID, task.id)
-  const workspaceStatus = git(first.workspace, ["status", "--porcelain"])
   await drive(f.runtime, 5)
   expect(f.store.plan(planID)!.version).toBe(blocked.version)
   expect(f.store.activity(planID, task.id)).toEqual(history)
-  expect(git(first.workspace, ["status", "--porcelain"])).toBe(workspaceStatus)
-  expect(readFileSync(join(first.workspace, "escape.txt"), "utf8")).toBe("bad")
-  expect(f.store.attempts(planID)).toHaveLength(1)
+  // A glob does not release protection; an exact reviewed path does.
   await f.runtime.command(
     {
       requestID: "authorize-dependency",
@@ -985,22 +1056,176 @@ test("scope violations hold a stopped candidate without spending repair, then am
     "owner",
   )
   await drive(f.runtime, 2)
-  expect(f.store.plan(planID)!.state).toBe("blocked")
-  await f.runtime.command(
-    {
-      requestID: "review-candidate",
-      planID,
-      action: "reconcile",
-    },
-    "owner",
-  )
+  await f.runtime.command({ requestID: "review-candidate", planID, action: "reconcile" }, "owner")
   await drive(f.runtime, 5)
   expect(f.store.plan(planID)!.state).toBe("accepted")
   expect(f.store.attempts(planID)).toHaveLength(1)
-  expect(f.store.attempts(planID)[0]!.id).toBe(first.id)
-  expect(f.store.attempts(planID)[0]!.state).toBe("accepted")
-  expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
-  expect(f.repository.get(task.id)).toEqual(spec)
+})
+
+test("an edit to an existing file outside the scope does not block: the Architect accepts it with a recorded amendment", async () => {
+  const f = fixture({
+    writes: [{ path: "seed.txt", content: "changed by the worker\n" }],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await drive(f.runtime, 4)
+  // Checks ran on the whole change and passed; only the decision is outstanding.
+  const blocked = f.store.plan(planID)!
+  const attempt = f.store.attempts(planID)[0]!
+  expect(blocked.state).toBe("blocked")
+  expect(blocked.reason).toStartWith("Scope divergence needs a decision")
+  expect(blocked.reason).toContain("seed.txt (existing file, modified")
+  expect(attempt.state).toBe("verifying")
+  expect(f.store.nodes(planID)[0]!.state).toBe("verifying")
+  expect(
+    f.store
+      .effects(planID)
+      .some((effect) => effect.kind === "verify:content" && effect.state === "completed"),
+  ).toBe(true)
+  expect(taskEvents(f, planID, task.id, "REPAIR")).toHaveLength(0)
+  const required = JSON.parse(
+    taskEvents(f, planID, task.id, "SCOPE_DECISION_REQUIRED").at(-1)!.payload,
+  )
+  expect(required).toMatchObject({ kind: "divergence", paths: ["seed.txt"] })
+  const detail = f.store.detail(planID) as { delivery: { payload: string }[] }
+  const notice = detail.delivery
+    .map((row) => JSON.parse(row.payload))
+    .findLast((p) => p.status === "blocked")
+  expect(notice.allowedActions).toEqual(
+    expect.arrayContaining(["amend-scope", "retained-repair", "reconcile", "cancel"]),
+  )
+  // It waits, with no churn.
+  const history = f.store.activity(planID, task.id)
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.version).toBe(blocked.version)
+  expect(f.store.activity(planID, task.id)).toEqual(history)
+  // It is recoverable from the bundle while nobody answers.
+  const { RecoveryBundles } = await import("./recovery-bundle.ts")
+  const bundles = new RecoveryBundles({
+    store: f.store,
+    host: f.host,
+    directory: f.root,
+    projectID: "project",
+    owner: "owner",
+    now: () => Date.now() + 3 * 60 * 60 * 1000,
+    validArchitect: (session): session is HostSession =>
+      Boolean(session && !session.archived && session.agent === "architect"),
+    ensureArchitectOwner: async () => f.sessions.get("owner")!,
+  })
+  const items = await bundles.collect()
+  expect(items.find((item) => item.planID === planID)).toMatchObject({
+    holdFamily: "scope-divergence",
+    recommendation: { action: "amend-scope" },
+  })
+  await f.runtime.command(
+    {
+      requestID: "accept-divergence",
+      planID,
+      action: "amend-scope",
+      taskID: task.id,
+      scopeAdditions: ["seed.txt"],
+      reason: "The seed file needs the matching change.",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 2)
+  await f.runtime.command({ requestID: "review-candidate", planID, action: "reconcile" }, "owner")
+  await drive(f.runtime, 5)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(f.store.attempts(planID)).toHaveLength(1)
+  const scope = acceptedScope(f, planID)!
+  expect(scope.divergences).toEqual([])
+  expect(scope.accepted).toEqual([
+    { path: "seed.txt", reason: "The seed file needs the matching change." },
+  ])
+})
+
+test("a divergence rides in the one combined repair with the failing check and is cleared when moved back", async () => {
+  const marker = join(tmpdir(), `lazers-scope-tries-${crypto.randomUUID()}`)
+  cleanup.push(() => rmSync(marker, { force: true }))
+  const f = fixture({
+    repair: true,
+    writes: [
+      { path: "seed.txt", content: "changed by the worker\n", attempt: 1 },
+      { path: "seed.txt", content: "baseline\n", attempt: 2 },
+    ],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: (_name, path) =>
+      `[ -f '${marker}' ] || { touch '${marker}'; echo first-try-fails; exit 7; }; test "$(cat ${path})" = "a"`,
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  const repairs = taskEvents(f, planID, task.id, "REPAIR")
+  expect(repairs).toHaveLength(1)
+  expect(JSON.stringify(repairs[0])).toContain(
+    "Scope divergence: 1 change(s) outside the task's scope",
+  )
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  await f.runtime.tick()
+  const prompt = f.sessions.get(attempts[1]!.session_id)!.messages[0]!.text
+  expect(prompt).toContain("first-try-fails")
+  expect(prompt).toContain(
+    "These changes are outside the task's scope: move/remove them or say why they are needed.",
+  )
+  expect(prompt).toContain("seed.txt (existing file, modified")
+  f.completeWorker(attempts[1]!.session_id)
+  await settleVerification(f.runtime)
+  await drive(f.runtime, 3)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+  expect(taskEvents(f, planID, task.id, "SCOPE_DECISION_REQUIRED")).toHaveLength(0)
+})
+
+test("a divergence the worker keeps after the one repair waits for the Architect", async () => {
+  const f = fixture({
+    repair: true,
+    writes: [{ path: "seed.txt", content: "kept on purpose\n" }],
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await f.runtime.tick()
+  await settleVerification(f.runtime)
+  // The first attempt passed its checks; the divergence alone spent the one repair.
+  const attempts = f.store.attempts(planID)
+  expect(attempts).toHaveLength(2)
+  await f.runtime.tick()
+  f.completeWorker(attempts[1]!.session_id)
+  await settleVerification(f.runtime)
+  await drive(f.runtime, 3)
+  const plan = f.store.plan(planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Scope divergence needs a decision")
+  expect(f.store.attempts(planID)).toHaveLength(2)
+})
+
+test("reservations include created paths, so two tasks creating in one folder run serially", async () => {
+  const options = {
+    delayed: true,
+    independent: true,
+    taskFiles: [
+      { name: "a", path: "a.txt" },
+      { name: "b", path: "b.txt" },
+    ],
+  }
+  const free = fixture(options)
+  await free.runtime.command(
+    { requestID: "run", planID: free.receipt.planID, action: "run" },
+    "owner",
+  )
+  await drive(free.runtime, 3)
+  expect(free.store.attempts(free.receipt.planID).length).toBe(2)
+  const f = fixture({ ...options, createScope: [{ path: "shared/", purpose: "new shared code" }] })
+  expect(f.store.effectiveReservationScope(f.tasks[0]!.id)).toEqual(["a.txt", "shared/**"])
+  expect(f.store.effectiveWriteScope(f.tasks[0]!.id)).toEqual(["a.txt"])
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await drive(f.runtime, 3)
+  expect(f.store.attempts(f.receipt.planID).length).toBe(1)
 })
 
 test("scope amendments preserve the specification and recover dependency edits in the same attempt", async () => {
@@ -3191,9 +3416,10 @@ test("a committed shared-checkout correction gets fresh mechanical preparation",
   expect(new Set(effects.map((effect) => JSON.parse(effect.payload).receiptPath)).size).toBe(2)
 }, 15_000)
 
-test("out-of-scope candidate changes are not mechanically modified", async () => {
+test("protected candidate changes are not mechanically modified", async () => {
   const f = fixture({
     outside: true,
+    protectedScope: ["escape.txt"],
     taskFiles: [{ name: "a", path: "src/result.ts", scope: ["src/**"] }],
     checkCommand: "bun fmt --check src/result.ts",
   })
@@ -5667,7 +5893,11 @@ test("an ordinary failure beside a timeout still holds without repair", async ()
 })
 
 test("verification failure and scope violations cannot unblock a successor", async () => {
-  for (const options of [{ fail: true }, { outside: true }, { missingEvidence: true }]) {
+  for (const options of [
+    { fail: true },
+    { outside: true, protectedScope: ["escape.txt"] },
+    { missingEvidence: true },
+  ]) {
     const f = fixture(options)
     await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
     await drive(f.runtime, 5)
