@@ -370,7 +370,7 @@ maximum 25, `offset`, `nextOffset`); no source fragments; no raw report.
 
 | Tool                  | Fallow source                       | Input                                                                                             | Output                                                                                                                             | For                             |
 | --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| `lz-fallow-check`     | The review function itself          | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ status, round, maxRounds, introduced: Finding[], concerns: Finding[], thresholds, next }`                                       | Implementor, Auditor, Architect |
+| `lz-fallow-check`     | The review function itself          | `{}` for the caller's changed files, or `{ paths: string[] }`                                     | `{ clean: boolean, introduced: Finding[], concerns: Finding[], thresholds }`                                                       | Implementor, Auditor, Architect |
 | `lz-fallow-dupes`     | `dupes` / `detectDuplication`       | `{ paths?, mode?, minTokens?, minLines?, limit, offset }`                                         | `{ groups: [{ id, lines, tokens, instances: [{ file, startLine, endLine }], moreInstances }], total, duplicationPct, nextOffset }` | Auditor, Architect              |
 | `lz-fallow-health`    | `health` / `computeComplexity`      | `{ paths?, sort: "cognitive" \| "cyclomatic" \| "lines", limit, offset }`                         | `{ functions: [{ file, line, name, cyclomatic, cognitive, lines, exceeded }], total, thresholds, nextOffset }`                     | Auditor, Architect              |
 | `lz-fallow-dead-code` | `dead-code` / `detectDeadCode`      | `{ paths?, kinds?: ("file" \| "export" \| "type" \| "dependency" \| "member")[], limit, offset }` | `{ findings: [{ id, kind, file, line, name }], total, nextOffset }`                                                                | Auditor, Architect              |
@@ -415,33 +415,23 @@ Not exposed, and why:
 
 ### Who runs what, and when
 
-Owner direction (2026-11-19): Fallow is feedback, not rejection. Run it, give
-the agent the findings, let it try again, and follow the rule the D1 task
-review already uses: up to three rounds, then accept a result that is resolved
-or no worse.
+Owner direction (2026-11-19): Fallow is feedback, not rejection, and the
+agent that wrote the code fixes it before the Architect sees it. Complexity
+and duplication are an extension of linting.
 
-That rule exists as `ReviewProgression` in `src/review/progression.ts`
-(`REVIEW_ROUNDS = 3`, `REVIEW_THRESHOLD = 0.7`), used by `lz-verify-task`
-(`src/webgpu/task-review.ts`). Fallow reuses the class; it does not copy it.
-
-| `ReviewProgression` concept | D1 task review                            | Fallow review                                                                              |
-| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Subject                     | A task proposal                           | A worker attempt's candidate                                                               |
-| Checks                      | D1 questions                              | `complexity`, `duplication` (task); plus `dead-code`, `cycles` (plan)                      |
-| Score, 0 to 1               | Direction-normalized P(good)              | `1 / (1 + introduced findings)` for that check                                             |
-| `resolved`                  | Score at or above 0.7                     | No introduced findings                                                                     |
-| `non_regressed`             | Focused check scored no lower than before | Focused check has no more introduced findings than the previous round                      |
-| `limit`                     | Three rounds used                         | Same                                                                                       |
-| Fingerprint                 | Hash of the proposal                      | Candidate tree OID plus config hash. Same fingerprint replays the result and uses no round |
-| Record                      | Per review ID                             | Per attempt, in the runner store                                                           |
+An earlier draft gave Fallow its own three rounds on `ReviewProgression`
+(`src/review/progression.ts`, the D1 task-review rule). That is dropped: the
+existing repair attempt is the second look, and one repair carries Fallow
+findings and failing checks together, so no separate round counter, score or
+fingerprint is needed.
 
 ```
-candidate ──▶ Fallow (changed files, introduced only) ──▶ ReviewProgression.evaluate
-                                                             │
-        completed ───────────────── accept ◀─────────────────┤
-        feedback ── REPAIR: a repair attempt gets the findings ─┘  (rounds = 1 + repair attempts)
-        completed_with_concerns ─── accept, concerns to the Architect
-        unavailable ─────────────── accept, recorded once
+candidate ──▶ Fallow (changed files, introduced only) + authored checks
+                          │
+   clean + pass ──────────┼──▶ accept
+   findings and/or fail ──┼──▶ one REPAIR; the repair attempt is given everything
+   findings only, no repair attempt left ──▶ accept, concerns to the Architect
+   analyzer unavailable ──▶ treated as clean, recorded once
 ```
 
 A Fallow review never rejects a task. Authored verification checks keep
@@ -487,20 +477,20 @@ attempt whose changed files the analyzer supports.
 Thresholds come from the effective Fallow config, else Fallow's defaults
 (cyclomatic 20, cognitive 15, 50 tokens and 5 lines in `mild` mode).
 
-| Lifecycle point                 | Fallow check                                                                                                                  | Trigger                                      | Outcome                                                                    | What the agent is told                                                                                                           |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Plan submitted                  | None                                                                                                                          |                                              |                                                                            | Nothing. Admission stays base-commit and route preflight                                                                         |
-| Worker dispatched               | None                                                                                                                          |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
-| Worker mid-task                 | Complexity and duplication on its changed files                                                                               | Agent tool `lz-fallow-check`, optional       | Same record and rounds as the runtime's review; an unchanged tree replays  | Findings and a `next` instruction                                                                                                |
-| Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                      | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
-| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, alongside the authored checks   | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
-| Task accepted                   | Concerns left after the rounds; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
-| Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                 | Runtime                                      | Same rounds                                                                | Same guidance. Finding-count delta goes to the Architect                                                                         |
-| Architect review                | None automatic                                                                                                                | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
-| Pre-integration, combined check | Complexity and duplication across all tasks; dead code and import cycles introduced since the plan base                       | Runtime, effect `graph-verify:lazers-fallow` | No rounds and no hold: no single worker owns the combined result           | Findings in the plan outcome. Catches two tasks that each added the same helper; the Architect submits a cleanup task or accepts |
+| Lifecycle point                 | Fallow check                                                                                                                          | Trigger                                      | Outcome                                                                    | What the agent is told                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Plan submitted                  | None                                                                                                                                  |                                              |                                                                            | Nothing. Admission stays base-commit and route preflight                                                                         |
+| Worker dispatched               | None                                                                                                                                  |                                              |                                                                            | `src/implementor.md` gains three lines: the review runs when you finish, its limits, `lz-fallow-check`                           |
+| Worker mid-task                 | Complexity and duplication on its changed files                                                                                       | Agent tool `lz-fallow-check`, optional       | Read-only preview of what the runtime's review will report                 | Findings and a `next` instruction                                                                                                |
+| Auditor attempt starts          | Full five-section baseline report, linked to the attempt                                                                              | Runtime                                      | Stored. Unavailable is recorded; the Auditor proceeds from source          | The baseline run ID is in the task; read it with `lz-get-audit`                                                                  |
+| Worker finishes                 | Complexity and duplication, changed files, base `attempt.base_commit`, after format and lint, alongside the authored checks           | Runtime, effect `verify:lazers-fallow`       | `feedback`: the same attempt continues with the findings. Otherwise accept | Guidance text below                                                                                                              |
+| Task accepted                   | Concerns left after the repair attempt; complexity that was already over and grew; new unused exports; added `fallow-ignore` comments | Runtime, same run                            | Never blocks                                                               | Listed in the `task-accepted` outcome for the Architect                                                                          |
+| Auditor finishes                | Same review, plus the follow-up report linked to the baseline                                                                         | Runtime                                      | Same path                                                                  | Same guidance. Finding-count delta goes to the Architect                                                                         |
+| Architect review                | None automatic                                                                                                                        | Agent tools, for scoping a cleanup           |                                                                            |                                                                                                                                  |
+| Pre-integration, combined check | Complexity and duplication across all tasks; dead code and import cycles introduced since the plan base                               | Runtime, effect `graph-verify:lazers-fallow` | No rounds and no hold: no single worker owns the combined result           | Findings in the plan outcome. Catches two tasks that each added the same helper; the Architect submits a cleanup task or accepts |
 
 Decided (2026-11-19): complexity that was already over a limit and grew is a
-concern, not feedback that costs a round. A deliberate finding is waived with
+concern, not feedback that triggers a repair. A deliberate finding is waived with
 a Fallow suppression comment that carries a reason, written on the
 Architect's instruction, and reported to the Architect as an added
 suppression.
@@ -512,7 +502,7 @@ Guidance text, composed by the runtime from fixed templates, at most ten
 findings and 1,500 characters:
 
 ```
-Fallow review, round 1 of 3: 2 findings introduced by this task. Older findings are not counted.
+Fallow review: 2 findings introduced by this task. Older findings are not counted.
 1. complexity src/runner/plan-step.ts:120 `planStep` cognitive 31, limit 15 (was 12).
    Move the branch at lines 140-190 into a named function.
 2. duplication src/tasks/read.ts:210-248 repeats src/tasks/detail.ts:77-115 (38 lines).
@@ -521,8 +511,7 @@ Fix these inside your write scope, then finish again. Do not add fallow-ignore c
 ```
 
 Like `lz-verify-task`, the tool result carries `status` and
-`next: { action, instruction }`, and the worker is told not to narrate round
-counts or scores (`src/webgpu/review-tool.ts:8`).
+`next: { action, instruction }`.
 
 Where an agent tool is worth having:
 
@@ -650,9 +639,8 @@ No new state. No new machine event. `lifecycleMachines` is unchanged.
 | Findings, or a failed check, with a repair attempt left | One `failAttempt()` → task `verifying --REPAIR--> ready` (`src/runner/machine.ts`). The repair attempt's input carries the Fallow findings and the check failures together |
 | `completed`, with or without concerns                   | The existing `ACCEPT` path in `verify()`                                                                                                                                   |
 | `unavailable` (analyzer error or timeout)               | The effect completes with a receipt marked `skipped`; `FALLOW_UNAVAILABLE` is recorded once; accept                                                                        |
-| Rounds                                                  | `ReviewProgressionRecord` per attempt. `reserveRound()` runs before analysis, so a crash consumes its round, as in the D1 review                                           |
 | Findings only, no repair attempt left                   | Accept with concerns. Fallow alone never moves a task to `failed` and never raises a hold                                                                                  |
-| Service restart mid-review                              | No receipt → superseded and re-run, as for any `verify:` effect; the fingerprint replays a finished round                                                                  |
+| Service restart mid-review                              | No receipt → superseded and re-run, as for any `verify:` effect                                                                                                            |
 
 Looks are `1 + maxRepairAttempts` (default 1: the original attempt and its
 repair). The review adds no repair of its own, no state and no hold, so it
@@ -735,8 +723,8 @@ the existing stall probe); each tool's output for this repository is under
    instead of the first. Lands on its own, before any Fallow code, with a test
    that two failing checks both reach the repair attempt.
 1. Attribution in the host (complexity base-side, added-line overlap).
-1. `FallowReview`: analyzer result into `ReviewProgression`, the per-attempt
-   record, the fingerprint.
+1. `FallowReview`: analyzer result into introduced findings and concerns for
+   one attempt.
 1. `verify:lazers-fallow` in `TaskRuntime.verify()`, after mechanical
    preparation and alongside the authored checks; one combined decision;
    receipt, guidance text,
@@ -758,7 +746,7 @@ gets no feedback; an analyzer error accepts the task and records
 `FALLOW_UNAVAILABLE` once; a restart mid-review re-runs it;
 `lifecycle-machines.test.ts`, `lifecycle-dead-ends.test.ts` and
 `hold-actions.test.ts` pass unchanged. And in the Desktop walkthrough: the
-Trajectory checks lane shows each round; what Radar shows is recorded here.
+Trajectory checks lane shows the review on each attempt; what Radar shows is recorded here.
 
 ### Phase 4: Auditor and the plan review
 
@@ -794,9 +782,8 @@ Decided on 2026-11-19 and folded into the design:
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Config source           | A repo Fallow config is honoured first and alone; else the LAZERS project config; the Architect may set it                                                                           |
 | Contract                | Changes, with the wording under "Contract change"                                                                                                                                    |
-| Shape of the check      | A three-round review on `ReviewProgression`; it never rejects a task                                                                                                                 |
+| Shape of the check      | A review whose findings ride the existing repair attempt with any failing checks; Fallow alone never rejects a task                                                                  |
 | Who fixes               | The agent that wrote the code, before its task is done. No time-based sweep and no after-integration report                                                                          |
-| Score                   | `1 / (1 + introduced findings)` per check                                                                                                                                            |
 | Worsened complexity     | A concern for the Architect, not feedback                                                                                                                                            |
 | Waiver                  | A Fallow suppression comment with a reason                                                                                                                                           |
 | Dead code at task level | A note for the Architect                                                                                                                                                             |
