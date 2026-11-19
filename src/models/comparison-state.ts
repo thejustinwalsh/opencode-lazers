@@ -355,7 +355,7 @@ function blank(
 }
 
 /** Coordinates bounded comparison reads and the selected task's actual observation. */
-/** Longest the first decision read waits for a source refresh before using saved prices. */
+/** Longest a decision read waits for a forced source refresh before using saved prices. */
 const SOURCE_WAIT_MS = 10_000
 const BACKGROUND_POLL_MS = 3_000
 const BACKGROUND_POLLS = 20
@@ -391,6 +391,8 @@ export class ModelComparisonPanelState {
   private projectID = ""
   private projectDirectory = ""
   private sourceRefreshPromise?: Promise<void>
+  /** Whether the refresh in flight was asked for (the header button), not the open-time one. */
+  private sourceRefreshForced = false
   private comparisonPromise?: Promise<void>
   private taskListPromise?: Promise<void>
   private seededTask = false
@@ -580,6 +582,7 @@ export class ModelComparisonPanelState {
     if (!transport || this.controller.signal.aborted) return
     const signal = this.controller.signal
     this.update({ sourceRefresh: "refreshing", sourceRefreshError: "" })
+    this.sourceRefreshForced = force
     const operation = (async () => {
       try {
         // The server answers from its stored snapshots at once and refreshes only what is past
@@ -598,7 +601,10 @@ export class ModelComparisonPanelState {
             stale: true,
           })
       } finally {
-        if (generation === this.generation) this.sourceRefreshPromise = undefined
+        if (generation === this.generation) {
+          this.sourceRefreshPromise = undefined
+          this.sourceRefreshForced = false
+        }
       }
     })()
     this.sourceRefreshPromise = operation
@@ -723,13 +729,14 @@ export class ModelComparisonPanelState {
       JSON.stringify(filters) === JSON.stringify(this.data.decisionFilters)
     const operation = (async () => {
       try {
-        // Refresh and capture sources before taking the global filtered snapshot.
-        // connect() and explicit refreshes share the same in-flight source refresh.
-        const sourceRefresh =
-          this.sourceRefreshPromise ??
-          (this.data.sourceRefresh === "idle" ? this.refreshSources(generation) : undefined)
-        // A slow source refresh must not hold the comparison back: continue with saved prices.
-        if (sourceRefresh) await settleWithin(sourceRefresh, SOURCE_WAIT_MS)
+        // The open-time source refresh answers from stored snapshots and fetches in the
+        // background, so the snapshot never waits for it: it is a round trip that used to sit
+        // in front of the slowest read. Only a refresh the person asked for is waited on, and
+        // even then a slow one must not hold the comparison back: continue with saved prices.
+        if (this.data.sourceRefresh === "idle" && !this.sourceRefreshPromise)
+          void this.refreshSources(generation)
+        if (this.sourceRefreshForced && this.sourceRefreshPromise)
+          await settleWithin(this.sourceRefreshPromise, SOURCE_WAIT_MS)
         if (!current()) return
 
         for (let attempt = 0; attempt < 2; attempt++) {
