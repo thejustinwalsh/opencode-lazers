@@ -7677,119 +7677,125 @@ export class TaskRuntime {
             .at(-1)?.id === attempt.id),
     )
     let waiting = false
-    for (const attempt of active) {
-      let session = await this.host.session(attempt.session_id)
-      if (!session) {
-        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
-        continue
-      }
-      if (session.archived && !session.busy) {
-        // An archived session can never run again: it counts as stopped.
-        this.store.fenced(this.owner, fence, () =>
-          this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
-            attemptID: attempt.id,
-            sessionID: attempt.session_id,
-            workspace: attempt.workspace,
-            retainedWorkPreserved: true,
-          }),
-        )
-        if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
-        continue
-      }
-      const promptCompleted = this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            JSON.parse(effect.payload).messageID === attempt.message_id &&
-            effect.state === "completed",
-        )
-      this.observeUsage(attempt, session, fence)
-      const backgroundReason = this.backgroundBlockReason(session)
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-        this.approvalWait(plan, attempt, session, fence)
-      if (session.busy) {
-        if (await this.interruptForCancel(plan, attempt, fence)) {
-          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
-          continue
-        }
-        if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        waiting = true
-        continue
-      }
-      const blocked = this.cancelBlock(session)
-      if (blocked) {
-        if (!this.cancelWait(plan, attempt, fence, blocked)) waiting = true
-        continue
-      }
-      if (backgroundReason) {
-        this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
-          waiting = true
-        continue
-      }
-      session = await this.host.session(attempt.session_id, { messages: true })
-      if (!session) {
-        if (!this.cancelMissingWorker(plan, attempt, fence)) waiting = true
-        continue
-      }
-      this.observeUsage(attempt, session, fence)
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-        this.approvalWait(plan, attempt, session, fence)
-      if (session.busy) {
-        if (await this.interruptForCancel(plan, attempt, fence)) {
-          if (!this.settleCancelledAttempt(plan, attempt, fence, true)) waiting = true
-          continue
-        }
-        waiting = true
-        continue
-      }
-      const detailedBlocked = this.cancelBlock(session)
-      if (detailedBlocked) {
-        if (!this.cancelWait(plan, attempt, fence, detailedBlocked)) waiting = true
-        continue
-      }
-      const detailedBackgroundReason = this.backgroundBlockReason(session)
-      if (detailedBackgroundReason) {
-        this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-        if (!this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true }))
-          waiting = true
-        continue
-      }
-      if (
-        promptCompleted &&
-        (!session.turn ||
-          !this.matchesWorkerInput(attempt, session.turn.inputID) ||
-          (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
-      ) {
-        if (
-          !this.cancelWait(plan, attempt, fence, {
-            cause: "turn-input-mismatch",
-            bounded: true,
-            detail: {
-              turnInputID: session.turn?.inputID ?? null,
-              turnState: session.turn?.state ?? null,
-            },
-          })
-        )
-          waiting = true
-        continue
-      }
-      if (promptCompleted) {
-        this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
-        this.workerEvent(
-          plan,
-          attempt,
-          "WORKER_STOPPED",
-          fence,
-          session.outcome ?? "cancelled",
-          session.turn?.inputID,
-        )
-      }
-      if (!this.settleCancelledAttempt(plan, attempt, fence, false)) waiting = true
-    }
+    for (const attempt of active)
+      if (await this.cancelAttemptWorker(plan, attempt, fence)) waiting = true
     if (!allowPlanSettlement || waiting) return
+    this.settleCancelledPlan(plan, fence)
+  }
+
+  /** Stops one attempt's worker for a cancel. True while the attempt still has to be waited on. */
+  private async cancelAttemptWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+  ): Promise<boolean> {
+    let session = await this.host.session(attempt.session_id)
+    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
+    if (session.archived && !session.busy) {
+      // An archived session can never run again: it counts as stopped.
+      this.store.fenced(this.owner, fence, () =>
+        this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          workspace: attempt.workspace,
+          retainedWorkPreserved: true,
+        }),
+      )
+      return !this.settleCancelledAttempt(plan, attempt, fence, false)
+    }
+    const promptCompleted = this.store
+      .effects(plan.id)
+      .some(
+        (effect) =>
+          effect.attempt_id === attempt.id &&
+          effect.kind === "prompt" &&
+          JSON.parse(effect.payload).messageID === attempt.message_id &&
+          effect.state === "completed",
+      )
+    this.observeUsage(attempt, session, fence)
+    const backgroundReason = this.backgroundBlockReason(session)
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+      this.approvalWait(plan, attempt, session, fence)
+    if (session.busy) {
+      const busySession = session
+      return this.cancelBusyWorker(plan, attempt, fence, () => {
+        if (backgroundReason)
+          this.backgroundWait(plan, attempt, busySession, backgroundReason, fence)
+      })
+    }
+    const blocked = this.cancelBlock(session)
+    if (blocked) return !this.cancelWait(plan, attempt, fence, blocked)
+    if (backgroundReason) {
+      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
+      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
+    }
+    session = await this.host.session(attempt.session_id, { messages: true })
+    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
+    this.observeUsage(attempt, session, fence)
+    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
+      this.approvalWait(plan, attempt, session, fence)
+    if (session.busy) return this.cancelBusyWorker(plan, attempt, fence)
+    const detailedBlocked = this.cancelBlock(session)
+    if (detailedBlocked) return !this.cancelWait(plan, attempt, fence, detailedBlocked)
+    const detailedBackgroundReason = this.backgroundBlockReason(session)
+    if (detailedBackgroundReason) {
+      this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
+      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
+    }
+    return this.settleStoppedWorker(plan, attempt, fence, session, promptCompleted)
+  }
+
+  /** A busy worker is interrupted; true (still waiting) unless the bounded wait already elapsed. */
+  private async cancelBusyWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    whileWaiting?: () => void,
+  ) {
+    if (await this.interruptForCancel(plan, attempt, fence))
+      return !this.settleCancelledAttempt(plan, attempt, fence, true)
+    whileWaiting?.()
+    return true
+  }
+
+  /** An idle worker: record its stop when its prompt ran, then settle the attempt as cancelled. */
+  private settleStoppedWorker(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    fence: number,
+    session: HostSession,
+    promptCompleted: boolean,
+  ) {
+    if (
+      promptCompleted &&
+      (!session.turn ||
+        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
+        (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
+    )
+      return !this.cancelWait(plan, attempt, fence, {
+        cause: "turn-input-mismatch",
+        bounded: true,
+        detail: {
+          turnInputID: session.turn?.inputID ?? null,
+          turnState: session.turn?.state ?? null,
+        },
+      })
+    if (promptCompleted) {
+      this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+      this.workerEvent(
+        plan,
+        attempt,
+        "WORKER_STOPPED",
+        fence,
+        session.outcome ?? "cancelled",
+        session.turn?.inputID,
+      )
+    }
+    return !this.settleCancelledAttempt(plan, attempt, fence, false)
+  }
+
+  /** Every attempt has settled: supersede stuck effects (after a bounded wait) and cancel the plan. */
+  private settleCancelledPlan(plan: PlanRow, fence: number) {
     const stuck = this.store
       .effects(plan.id)
       .filter((effect) => ["intended", "uncertain"].includes(effect.state))
