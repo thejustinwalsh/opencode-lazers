@@ -111,11 +111,11 @@ function migrateTasks(db: Database): void {
   const version = () =>
     db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version
   const initial = version()
-  if (initial > 8) throw new Error(`Unsupported LAZERS database version ${initial}`)
-  if (initial < 8)
+  if (initial > TASKS_VERSION) throw new Error(`Unsupported LAZERS database version ${initial}`)
+  if (initial < TASKS_VERSION)
     db.transaction(() => {
       const current = version()
-      if (current > 8) throw new Error(`Unsupported LAZERS database version ${current}`)
+      if (current > TASKS_VERSION) throw new Error(`Unsupported LAZERS database version ${current}`)
       db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -259,13 +259,78 @@ function migrateTasks(db: Database): void {
       );
       PRAGMA user_version=8;
     `)
-      db.query("INSERT OR IGNORE INTO schema_modules VALUES(?,?,?,?)").run(
-        "tasks",
-        8,
-        JSON.stringify(schemaModules.tasks.tables),
-        Date.now(),
-      )
+      if (current < 9) {
+        collapseTaskChanges(db)
+        db.exec("PRAGMA user_version=9")
+      }
+      db.query(
+        `INSERT INTO schema_modules VALUES(?,?,?,?) ON CONFLICT(module)
+         DO UPDATE SET generation=excluded.generation,tables_json=excluded.tables_json`,
+      ).run("tasks", TASKS_VERSION, JSON.stringify(schemaModules.tasks.tables), Date.now())
     }).immediate()
+}
+
+/** `PRAGMA user_version` of the tasks module; equals its declared schema generation. */
+const TASKS_VERSION = 9
+
+/**
+ * Task change counters. Readers only ever take `MAX(id)` of a project (per `kind`), so one row per
+ * project and kind carries everything they read. `AUTOINCREMENT` keeps ids rising after a row is
+ * replaced, and the replace runs in the same transaction as the write that bumps it.
+ */
+const TASK_CHANGE_SCHEMA = `
+  CREATE TABLE task_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_directory TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'insert'
+  );
+  CREATE INDEX task_changes_project ON task_changes(project_directory, id);
+  CREATE TRIGGER tasks_changed AFTER INSERT ON tasks BEGIN
+    DELETE FROM task_changes WHERE project_directory=NEW.project_directory AND kind='insert';
+    INSERT INTO task_changes(project_directory,kind) VALUES (NEW.project_directory,'insert');
+    UPDATE tasks SET created_version = last_insert_rowid() WHERE id = NEW.id;
+  END;
+`
+
+/**
+ * Replace the append-only change log (2.5 M rows on the live database) with the counters above.
+ * Seeds come from the log's own indexes, then the whole table goes in one DROP TABLE, which only
+ * returns pages to the free list (no row is rewritten or re-indexed).
+ */
+function collapseTaskChanges(db: Database): void {
+  const sequence =
+    db.query<{ seq: number }, []>("SELECT seq FROM sqlite_sequence WHERE name='task_changes'").get()
+      ?.seq ?? 0
+  const projects = db
+    .query<{ project_directory: string; newest: number }, []>(
+      "SELECT project_directory, MAX(id) AS newest FROM task_changes GROUP BY project_directory",
+    )
+    .all()
+  const newestMutation = db.query<{ id: number | null }, [string]>(
+    "SELECT id FROM task_changes WHERE project_directory=? AND kind='mutation' ORDER BY id DESC LIMIT 1",
+  )
+  const newestCreated = db.query<{ id: number | null }, [string]>(
+    "SELECT MAX(created_version) AS id FROM tasks WHERE project_directory=?",
+  )
+  const seeds: Array<[number, string, string]> = []
+  for (const { project_directory, newest } of projects) {
+    const mutation = newestMutation.get(project_directory)?.id ?? null
+    if (mutation !== null) seeds.push([mutation, project_directory, "mutation"])
+    // The newest row of the project is an insert unless a mutation holds that id; otherwise the
+    // insert trigger stamped its id on the task as `created_version`.
+    const insert = mutation === newest ? (newestCreated.get(project_directory)?.id ?? 0) : newest
+    if (insert > 0) seeds.push([insert, project_directory, "insert"])
+  }
+  db.exec("DROP TRIGGER IF EXISTS tasks_changed; DROP TABLE task_changes")
+  db.exec(TASK_CHANGE_SCHEMA)
+  const add = db.query("INSERT INTO task_changes(id,project_directory,kind) VALUES (?,?,?)")
+  for (const seed of seeds) add.run(...seed)
+  // Ids never reuse a value the log has issued, even when its newest rows were pruned.
+  const raised = db
+    .query("UPDATE sqlite_sequence SET seq=MAX(seq,?) WHERE name='task_changes'")
+    .run(sequence)
+  if (raised.changes === 0 && sequence > 0)
+    db.query("INSERT INTO sqlite_sequence(name,seq) VALUES('task_changes',?)").run(sequence)
 }
 
 type SharedEntry = {
@@ -420,7 +485,7 @@ export class TaskRepository {
     // Schema installers call back into this repository, so it must see the handle.
     this.shared = shared
     try {
-      shared.once("tasks", migrateTasks)
+      shared.once(`tasks@${schemaModules.tasks.generation}`, migrateTasks)
       shared.once("task-advice-and-projects", () => {
         installTaskAdviceSchema(this)
         installProjectSchema(this)
@@ -578,9 +643,15 @@ export class TaskRepository {
   }
 
   changed(): void {
-    this.db
-      .query("INSERT INTO task_changes(project_directory,kind) VALUES (?,'mutation')")
-      .run(this.projectDirectory)
+    // One counter row per project and kind: the replacement keeps `MAX(id)` rising without a log.
+    this.db.transaction(() => {
+      this.db
+        .query("DELETE FROM task_changes WHERE project_directory=? AND kind='mutation'")
+        .run(this.projectDirectory)
+      this.db
+        .query("INSERT INTO task_changes(project_directory,kind) VALUES (?,'mutation')")
+        .run(this.projectDirectory)
+    })()
   }
 
   submitOnce(key: string, proposal: unknown, create: () => unknown) {
