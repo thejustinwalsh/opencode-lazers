@@ -5237,7 +5237,8 @@ test("lost worktree creation response resumes its own blocked startup after reco
         "completed",
       )
       expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
-      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "preparing")).toBe(
+      // The settled worktree effect lets the same pass prompt both workers.
+      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "running")).toBe(
         true,
       )
 
