@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { makeFixture, moduleKinds, repoRoot, runOp, trackedSources } from "./test-support.ts"
+import {
+  disposeFixture,
+  makeFixture,
+  moduleKinds,
+  repoRoot,
+  runOp,
+  trackedSources,
+} from "./test-support.ts"
 
 /**
  * What LAZERS asks of Fallow, on small fixture projects with expectations written by hand, on
@@ -39,7 +45,7 @@ export const main = () => shout(ping(), alpha([1], reexported))
           "src/inner.ts": `export const reexported = 1\nexport const leftover = 2\n`,
         })
       })
-      afterAll(() => rmSync(dir, { recursive: true, force: true }))
+      afterAll(async () => disposeFixture(dir))
 
       test("reports exactly the unused file, export and dependency, and nothing that is used", async () => {
         const dead = await op(dir, "deadCode")
@@ -77,9 +83,9 @@ export const main = () => shout(ping(), alpha([1], reexported))
         cyclic = makeFixture()
         broken = makeFixture({ "src/pong.ts": `export const pong = (): number => 1\n` })
       })
-      afterAll(() => {
-        rmSync(cyclic, { recursive: true, force: true })
-        rmSync(broken, { recursive: true, force: true })
+      afterAll(async () => {
+        await disposeFixture(cyclic)
+        await disposeFixture(broken)
       })
 
       test("one import cycle is reported with its files, and none once it is broken", async () => {
@@ -113,7 +119,7 @@ export const main = () => shout(ping(), alpha([1], reexported))
           }),
         })
       })
-      afterAll(() => rmSync(dir, { recursive: true, force: true }))
+      afterAll(async () => disposeFixture(dir))
 
       type Group = { instances: { file: string; start_line: number; end_line: number }[] }
       const groups = (report: Record<string, any>) =>
@@ -196,7 +202,7 @@ export const main = () => shout(ping(), alpha([1], reexported))
             op(bad, "duplicationReport", { configPath: join(bad, "config/bad.json") }),
           ).rejects.toThrow(/config/i)
         } finally {
-          rmSync(bad, { recursive: true, force: true })
+          await disposeFixture(bad)
         }
       })
     })
@@ -208,7 +214,7 @@ describe("both modules answer alike", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
   test("every report on the fixture is identical, apart from timing", async () => {
     for (const name of [

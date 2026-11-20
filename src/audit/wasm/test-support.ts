@@ -8,6 +8,7 @@ import {
   readlinkSync,
   realpathSync,
   lstatSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -16,6 +17,10 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { MAX_FALLOW_THREADS, type GitCall, type RunOptions } from "../fallow-wasi.ts"
 import { runDirectFallowModule } from "./resource-lifetime/direct-analysis.ts"
+import {
+  closeDirectAnalysisScope,
+  openDirectAnalysisScope,
+} from "./resource-lifetime/direct-analysis-scope.ts"
 
 export const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
 export const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
@@ -31,41 +36,52 @@ export type ModuleKind = (typeof moduleKinds)[number]
 export type OpResult = { report: Record<string, any>; git: GitCall[]; stderr: string }
 
 /** Run one request against the shipped module and unwrap its envelope. */
-export async function runOp(
+export function runOp(
   op: string,
   root: string,
   extra: Record<string, unknown> = {},
   options: RunOptions = {},
   kind: ModuleKind = "single",
 ): Promise<OpResult> {
-  const git: GitCall[] = []
-  const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
-  const outcome = await runDirectFallowModule(
-    kind === "threads" ? threadedWasmModule : wasmModule,
-    {
-      op,
-      root,
-      options: { threads, explain: true, css: true, cache: options.cache === true },
-      ...extra,
-    },
-    {
-      maxThreads: threads,
-      ...options,
-      onGit: (call) => (git.push(call), options.onGit?.(call)),
-    },
-  )
-  const parsed = JSON.parse(outcome.stdout) as {
-    report?: Record<string, any>
-    error?: { code: string; message: string }
-  }
-  if (parsed.error) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
-  return { report: parsed.report ?? {}, git, stderr: outcome.stderr }
+  const completion = (async () => {
+    const git: GitCall[] = []
+    const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
+    const outcome = await runDirectFallowModule(
+      kind === "threads" ? threadedWasmModule : wasmModule,
+      {
+        op,
+        root,
+        options: { threads, explain: true, css: true, cache: options.cache === true },
+        ...extra,
+      },
+      {
+        maxThreads: threads,
+        ...options,
+        onGit: (call) => (git.push(call), options.onGit?.(call)),
+      },
+    )
+    const parsed = JSON.parse(outcome.stdout) as {
+      report?: Record<string, any>
+      error?: { code: string; message: string }
+    }
+    if (parsed.error) throw new Error(`${parsed.error.code}: ${parsed.error.message}`)
+    return { report: parsed.report ?? {}, git, stderr: outcome.stderr }
+  })()
+  void completion.catch(() => {})
+  return completion
 }
 
 /** Error code of a request that must fail. */
-export async function errorCode(op: string, root: string, extra: Record<string, unknown> = {}) {
-  const outcome = await runDirectFallowModule(wasmModule, { op, root, ...extra })
-  return (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code
+export function errorCode(
+  op: string,
+  root: string,
+  extra: Record<string, unknown> = {},
+): Promise<string | undefined> {
+  const completion = runDirectFallowModule(wasmModule, { op, root, ...extra }).then(
+    (outcome) => (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code,
+  )
+  void completion.catch(() => {})
+  return completion
 }
 
 export function trackedSources(root: string): string[] {
@@ -171,5 +187,12 @@ export function makeFixture(extra: Record<string, string> = {}): string {
   git("init", "-q", "-b", "main")
   git("add", ".")
   git("commit", "-q", "-m", "fixture")
+  openDirectAnalysisScope(dir)
   return dir
+}
+
+/** Stop and drain direct analyses before removing a fixture used by timed-out test bodies. */
+export async function disposeFixture(dir: string): Promise<void> {
+  await closeDirectAnalysisScope(dir)
+  rmSync(dir, { recursive: true, force: true })
 }

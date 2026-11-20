@@ -1,9 +1,10 @@
-import { rmSync } from "node:fs"
 import { Worker } from "node:worker_threads"
 import { join } from "node:path"
 import { WasiTrap } from "../../fallow-wasi.ts"
 import { runDirectFallowModule } from "./direct-analysis.ts"
+import { directAnalysisScopeFor } from "./direct-analysis-scope.ts"
 import {
+  disposeFixture,
   makeFixture,
   repoRoot,
   runOp,
@@ -115,8 +116,11 @@ try {
   Bun.gc(true)
   const retainedInstances = instanceRefs.filter((ref) => ref.deref() !== undefined).length
   const retainedMemories = memoryRefs.filter((ref) => ref.deref() !== undefined).length
+  const timings = directAnalysisScopeFor(repoRoot).metrics
   if (peakPendingTerminations > 2)
     throw new Error(`direct helper termination peak exceeded its bound: ${peakPendingTerminations}`)
+  if (timings.pendingHelpers !== 0)
+    throw new Error(`direct analysis left ${timings.pendingHelpers} helpers pending`)
 
   console.log(
     JSON.stringify({
@@ -129,11 +133,22 @@ try {
         pending: pendingTerminations,
         peakPending: peakPendingTerminations,
       },
+      timings: {
+        queued: timings.queued,
+        started: timings.started,
+        cancelled: timings.cancelled,
+        queueWaitMs: Math.round(timings.queueWaitMs),
+        executionMs: Math.round(timings.executionMs),
+        terminationMs: Math.round(timings.terminationMs),
+        gcMs: Math.round(timings.gcMs),
+        peakHelpers: timings.peakHelpers,
+        pendingHelpers: timings.pendingHelpers,
+      },
     }),
   )
 } finally {
   Worker.prototype.terminate = terminateWorker
   await Bun.sleep(0)
   Bun.gc(true)
-  rmSync(fixture, { recursive: true, force: true })
+  await disposeFixture(fixture)
 }
