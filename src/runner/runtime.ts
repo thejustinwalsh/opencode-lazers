@@ -1,25 +1,13 @@
-import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
-import {
-  changeDispatchPause,
-  changeSchedule,
-  recordIntegration,
-  terminalPlanStates as terminal,
-} from "./plan-control.ts"
-import { GitObservations } from "./git-observations.ts"
+import { terminalPlanStates as terminal } from "./plan-control.ts"
+
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import {
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
 } from "./runtime-helpers.ts"
-import type {
-  CommandContext,
-  RetainedRepairRecoverySeed,
-  RetainedRepairSeed,
-  RetainedVerificationSeed,
-  RunnerTransitionRecord,
-} from "./runtime-helpers.ts"
+import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -37,6 +25,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { CommandPipeline } from "./command-pipeline.ts"
 import { CommandsRecovery } from "./commands-recovery.ts"
 import { CommandsRetained } from "./commands-retained.ts"
 import { CommandsScope } from "./commands-scope.ts"
@@ -58,7 +47,7 @@ import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./tak
 import { HandoffStore } from "../recovery/handoff/store.ts"
 
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
-import { workerAgent } from "./worker-agent.ts"
+
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
 
 import { dirname, join } from "node:path"
@@ -82,23 +71,9 @@ import {
 } from "./architect-routing.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
 
-import {
-  baseReachable,
-  proofForArtifact,
-  type BaseReach,
-  type IntegrationProof,
-} from "./integration-proof.ts"
-import { knownTree } from "./identity-store.ts"
-
 import type { HostSession, RunnerHost } from "./host.ts"
-import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
-import type { CommandInput as PlanCommand } from "./schema.ts"
-import {
-  PLAN_MOVED_RETRIES,
-  PlanMovedDuringCommand,
-  planCommandProblem,
-  withoutLegacyVersion,
-} from "./plan-commands.ts"
+import { ModelPolicy, PlanInput } from "./schema.ts"
+
 import type { PlanRow, NodeRow, AttemptRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 
@@ -194,40 +169,6 @@ export function architectIdleWindowMs(value: unknown): number {
   return architectCacheWindowMs(value)
 }
 
-/** Whether a command's outcome leaves work the scheduler should pick up now. */
-function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
-  const outcome = result as { status?: unknown; instructionUpdates?: unknown } | null | undefined
-  const status = outcome?.status
-  switch (command.action) {
-    case "run":
-      return status === "running"
-    case "integrated":
-      return status === "cleanup-requested"
-    case "reconcile":
-      return status === "reconciling"
-    case "cancel":
-      return status === "cancelling"
-    case "resume":
-      return (
-        status === "resuming" ||
-        status === "verification-resumed" ||
-        status === "combined-verification-resumed"
-      )
-    case "retry":
-      return status === "retrying"
-    case "amend-scope":
-      return (
-        status === "scope-amended" &&
-        Array.isArray(outcome?.instructionUpdates) &&
-        outcome.instructionUpdates.length > 0
-      )
-    case "retained-repair":
-      return status === "retained-repair-requested"
-    default:
-      return false
-  }
-}
-
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
@@ -253,6 +194,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly commandPipeline: CommandPipeline
   private readonly commandsRecovery: CommandsRecovery
   private readonly commandsRetained: CommandsRetained
   private readonly commandsScope: CommandsScope
@@ -582,6 +524,40 @@ export class TaskRuntime {
       delegatedAgentCapacity: this.delegatedAgentCapacity,
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
+    this.commandPipeline = new CommandPipeline(this.core, {
+      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
+      assertSchedulerActive: (...args) => this.assertSchedulerActive(...args),
+      cleanupAuditDiagnostics: (...args) => this.cleanupAuditDiagnostics(...args),
+      assertCombinedVerificationResume: (...args) => this.assertCombinedVerificationResume(...args),
+      prepareResumeContinuation: (...args) => this.prepareResumeContinuation(...args),
+      prepareStartupSettlement: (...args) => this.prepareStartupSettlement(...args),
+      prepareAdoption: (...args) => this.prepareAdoption(...args),
+      prepareRetainedRepair: (...args) => this.prepareRetainedRepair(...args),
+      prepareReviewInputReconciliation: (...args) => this.prepareReviewInputReconciliation(...args),
+      retainedRepairRecoveryCurrent: (...args) => this.retainedRepairRecoveryCurrent(...args),
+      prepareRetainedVerification: (...args) => this.prepareRetainedVerification(...args),
+      observeRetainedRepairCandidate: (...args) => this.observeRetainedRepairCandidate(...args),
+      retainedRepairBackgroundProblem: (...args) => this.retainedRepairBackgroundProblem(...args),
+      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      commandRun: (...args) => this.commandRun(...args),
+      commandCancel: (...args) => this.commandCancel(...args),
+      commandReassign: (...args) => this.commandReassign(...args),
+      commandTakeoverSubmit: (...args) => this.commandTakeoverSubmit(...args),
+      commandAmendScope: (...args) => this.commandAmendScope(...args),
+      commandSendBackDivergence: (...args) => this.commandSendBackDivergence(...args),
+      divergenceHold: (...args) => this.divergenceHold(...args),
+      commandAdoptDescendant: (...args) => this.commandAdoptDescendant(...args),
+      commandVerifyRetained: (...args) => this.commandVerifyRetained(...args),
+      commandSettleStartup: (...args) => this.commandSettleStartup(...args),
+      commandRetainedRepair: (...args) => this.commandRetainedRepair(...args),
+      commandReconcile: (...args) => this.commandReconcile(...args),
+      commandResumeOrRetry: (...args) => this.commandResumeOrRetry(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+      requestTick: this.requestTick,
+      wakeScheduler: this.wakeScheduler,
+    })
     this.recoveryBundles = new RecoveryBundles({
       store: this.store,
       host: this.host,
@@ -712,46 +688,6 @@ export class TaskRuntime {
   private identityStamping: Promise<void> | undefined
   private identityStampedAt = Number.NEGATIVE_INFINITY
   private notesConfigured = false
-
-  /**
-   * Async Git proofs a command needs, gathered before its transaction:
-   * integration containment (`integrated`) and baseline
-   * reachability (an explicit `baseCommit`).
-   */
-  private async preflightProofs(command: CommandInput, plan: PlanRow) {
-    const bases = new Map<string, BaseReach>()
-    let integration: IntegrationProof | undefined
-    if (command.baseCommit)
-      bases.set(
-        command.baseCommit,
-        await baseReachable(
-          this.directory,
-          command.baseCommit,
-          "HEAD",
-          this.store.repository.read((db) => knownTree(db, command.baseCommit)),
-        ),
-      )
-    if (command.action === "integrated") {
-      const task = command.taskID
-        ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
-        : undefined
-      const artifact = task?.artifact ?? plan.artifact
-      if (artifact) {
-        const attempt = command.taskID
-          ? this.store
-              .attempts(plan.id)
-              .filter((candidate) => candidate.task_id === command.taskID)
-              .at(-1)
-          : undefined
-        integration = await proofForArtifact(
-          (run) => this.store.repository.read(run),
-          this.directory,
-          { artifact, attemptID: attempt?.id, base: attempt?.base_commit },
-        )
-      }
-    }
-    return { bases, integration }
-  }
 
   stampIdentity(force = false): Promise<void> {
     if (this.identityStamping) return this.identityStamping
@@ -1033,175 +969,8 @@ export class TaskRuntime {
     return this.runCommand({ requestID, planID: plan.id, action: "run" }, plan.owner, true)
   }
 
-  private async runCommand(input: unknown, caller: string, admission: boolean): Promise<unknown> {
-    const command = CommandInput.parse(withoutLegacyVersion(input))
-    if (admission && command.action !== "run")
-      throw new Error("Only admission runs without an Architect caller")
-    // The runtime samples host and Git facts asynchronously, then commits only
-    // against the plan version it read first. A scheduler tick that moved the
-    // plan in between sends the command back through the machine, bounded.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await this.runCommandOnce(command, caller, admission)
-      } catch (error) {
-        if (!(error instanceof PlanMovedDuringCommand)) throw error
-        if (attempt < PLAN_MOVED_RETRIES) continue
-        const current = this.store.plan(command.planID)
-        throw new Error(
-          `Plan ${current?.state ?? "unknown"} changed repeatedly while ${command.action} was applied. ${
-            current ? (planCommandProblem(current.state, command) ?? "Retry the command.") : ""
-          }`.trim(),
-          { cause: error },
-        )
-      }
-    }
-  }
-
-  private async runCommandOnce(
-    command: PlanCommand,
-    caller: string,
-    admission: boolean,
-  ): Promise<unknown> {
-    const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
-    if (prior !== undefined) return prior
-    // Resolve host facts before the transaction, then recheck against the version read here.
-    const old = await this.admitCommandPlan(command, caller, admission)
-    const baseVersion = old.version
-    let continuedOwner: string | undefined
-    const configuredWorker =
-      command.action === "run" && !JSON.parse(old.body).workerModel
-        ? await this.host.workerModel?.(workerAgent(JSON.parse(old.body).workerAgent))
-        : undefined
-    let ownerSession = await this.commandOwnerSession(command, old)
-    // Integration and baseline proofs run before the transaction (they read Git
-    // asynchronously) and are consumed, never recomputed, inside it.
-    const preflight = await this.preflightProofs(command, old)
-    const resumption =
-      command.action === "resume" && command.taskID
-        ? await this.prepareResumeContinuation(old, command, caller, ownerSession, command.taskID)
-        : undefined
-    if (command.action === "resume" && !command.taskID)
-      this.assertCombinedVerificationResume(old, command, ownerSession)
-    if (command.action === "run" && !this.validArchitect(ownerSession)) {
-      ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
-      continuedOwner = ownerSession.id
-    }
-    const adoptionSeed =
-      command.action === "adopt-descendant"
-        ? await this.prepareAdoption(old, command, caller, ownerSession)
-        : undefined
-    const retainedVerificationSeed =
-      command.action === "verify-retained"
-        ? await this.prepareRetainedVerification(old, command, caller, ownerSession)
-        : undefined
-    const retainedRepair =
-      command.action === "retained-repair" && !this.divergenceHold(old, command.taskID)
-        ? await this.prepareRetainedRepair(old, command, caller, ownerSession)
-        : undefined
-    const reviewInput = await this.prepareReviewInputReconciliation(
-      old,
-      command,
-      caller,
-      ownerSession,
-    )
-    const startupSettlement =
-      command.action === "settle-startup"
-        ? await this.prepareStartupSettlement(old, command, ownerSession)
-        : undefined
-
-    if (retainedVerificationSeed)
-      ownerSession = await this.revalidateRetainedVerification(
-        old,
-        caller,
-        retainedVerificationSeed,
-        ownerSession,
-      )
-    if (retainedRepair)
-      await this.revalidateRetainedRepair(old, caller, baseVersion, retainedRepair)
-    if (resumption?.retainedRepairRecovery)
-      await this.revalidateRetainedRepairRecovery(old, caller, resumption.retainedRepairRecovery)
-    // Native cleanup observations are sampled outside the command transaction,
-    // then published only if the recorded plan version is still current.
-    const cleanupDiagnostics =
-      command.action === "audit" ? await this.cleanupAuditDiagnostics(old) : undefined
-    const obs = new GitObservations()
-    const ctx: CommandContext = {
-      command,
-      caller,
-      baseVersion,
-      continuedOwner,
-      configuredWorker,
-      ownerSession,
-      preflight,
-      terminalContinuation: resumption?.terminalContinuation,
-      terminalRepairContinuation: resumption?.terminalRepairContinuation,
-      retainedRepairRecovery: resumption?.retainedRepairRecovery,
-      adoptionSeed,
-      retainedVerificationSeed,
-      retainedRepair,
-      reviewInput,
-      startupSettlement,
-      cleanupDiagnostics,
-      obs,
-    }
-    const result = await obs.run(
-      () =>
-        this.store.command(command.requestID, { command, caller }, (db) =>
-          this.applyCommandIn(db, ctx),
-        ),
-      () => this.assertSchedulerActive(),
-    )
-    if (commandWakesScheduler(command, result)) this.wakeScheduler?.()
-    if (
-      command.action === "verify-retained" ||
-      command.action === "pause" ||
-      command.action === "unpause"
-    )
-      await this.requestTick()
-    return result
-  }
-
-  /** The plan a command may act on, with its owner adopted by the commanding Architect. */
-  private async admitCommandPlan(command: PlanCommand, caller: string, admission: boolean) {
-    let old = this.store.plan(command.planID)
-    if (!old) throw new Error("Plan not found")
-    // The recorded state decides legality; reject before any asynchronous owner recovery effect.
-    const unavailable = planCommandProblem(old.state, command)
-    if (unavailable) throw new Error(unavailable)
-    // The owner is advisory. Any live Architect of this project may command the
-    // plan and is adopted as its owner; reading (audit) needs no Architect.
-    if (command.action !== "audit" && !admission) {
-      if (!this.validArchitect(await this.host.session(caller)))
-        throw new Error("A live Architect session of this project must command the plan")
-      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
-        old = this.store.plan(command.planID)!
-    }
-    return old
-  }
-
-  private async commandOwnerSession(
-    command: PlanCommand,
-    old: PlanRow,
-  ): Promise<HostSession | null | undefined> {
-    const target = command.action === "reassign" ? command.targetSessionID : old.owner
-    if (
-      ![
-        "run",
-        "pause",
-        "unpause",
-        "reassign",
-        "reconcile",
-        "resume",
-        "retry",
-        "adopt-descendant",
-        "settle-startup",
-        "retained-repair",
-        "verify-retained",
-      ].includes(command.action)
-    )
-      return undefined
-    if (!target) throw new Error("Target session required")
-    return this.host.session(target)
+  private runCommand(...args: Parameters<CommandPipeline["runCommand"]>) {
+    return this.commandPipeline.runCommand(...args)
   }
 
   private prepareResumeContinuation(
@@ -1214,188 +983,6 @@ export class TaskRuntime {
     ...args: Parameters<StartupSettlement["prepareStartupSettlement"]>
   ) {
     return this.startupSettlement.prepareStartupSettlement(...args)
-  }
-
-  /** Re-reads the owner (and repair candidate) at the last moment before a retained verification reserves. */
-  private async revalidateRetainedVerification(
-    old: PlanRow,
-    caller: string,
-    seed: RetainedVerificationSeed,
-    ownerSession: HostSession | null | undefined,
-  ) {
-    const [currentOwner, currentPlan] = await Promise.all([
-      this.host.session(caller),
-      Promise.resolve(this.store.plan(old.id)),
-    ])
-    if (
-      !this.validArchitect(currentOwner) ||
-      !currentPlan ||
-      currentPlan.revision !== seed.planRevision
-    )
-      throw new Error("Retained verification owner or plan revision changed before reservation")
-    let observed = ownerSession
-    const observeOwner = async () => {
-      observed = await this.host.session(caller)
-      if (!this.validArchitect(observed))
-        throw new Error("Retained verification owner changed during final native admission")
-    }
-    if (seed.repair) {
-      const latest = this.store.attempts(old.id).find((a) => a.id === seed.attemptID)
-      if (!latest) throw new Error("Retained repair attempt disappeared before reservation")
-      await this.observeRetainedRepairCandidate(currentPlan, latest, seed.repair, observeOwner)
-    } else await observeOwner()
-    return observed
-  }
-
-  private async revalidateRetainedRepair(
-    old: PlanRow,
-    caller: string,
-    baseVersion: number,
-    retainedRepair: RetainedRepairSeed,
-  ) {
-    const attempt = this.store
-      .attempts(old.id)
-      .find((candidate) => candidate.id === retainedRepair.attemptID)
-    if (!attempt)
-      throw new Error("Retained repair attempt changed before final native revalidation")
-    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-    const observedOwner = await this.host.session(old.owner)
-    if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
-      throw new Error("Retained repair owner changed before final admission")
-    const observedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const observedProblem = this.retainedRepairWorkerProblem(
-      old,
-      attempt,
-      observedWorker,
-      retainedRepair.nativeInputID,
-      retainedRepair.model,
-    )
-    const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      observedWorker,
-      retainedRepair.nativeInputID,
-    )
-    if (
-      observedProblem ||
-      observedBackgroundProblem ||
-      !observedWorker ||
-      this.retainedRepairObservation(observedWorker) !== retainedRepair.workerObservation
-    )
-      throw new Error(observedProblem ?? "Retained worker changed before final admission")
-    const confirmedOwner = await this.host.session(old.owner)
-    if (!this.validArchitect(confirmedOwner) || confirmedOwner.id !== caller)
-      throw new Error("Retained repair owner changed during final admission")
-    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedProblem = this.retainedRepairWorkerProblem(
-      old,
-      attempt,
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-      retainedRepair.model,
-    )
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-    )
-    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-    if (
-      confirmedProblem ||
-      confirmedBackgroundProblem ||
-      !confirmedWorker ||
-      this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error(
-        confirmedProblem ??
-          confirmedBackgroundProblem ??
-          "Retained repair authorization changed during final admission",
-      )
-  }
-
-  private async revalidateRetainedRepairRecovery(
-    old: PlanRow,
-    caller: string,
-    recovery: RetainedRepairRecoverySeed,
-  ) {
-    const currentOwner = await this.host.session(caller)
-    const recoveryAttempt = this.store
-      .attempts(old.id)
-      .find((candidate) => candidate.id === recovery.attemptID)
-    const currentWorker = await this.host.session(recovery.worker.id, { messages: true })
-    if (
-      !recoveryAttempt ||
-      !this.validArchitect(currentOwner) ||
-      currentOwner.id !== recovery.owner ||
-      !currentWorker ||
-      this.retainedRepairObservation(currentWorker) !== recovery.workerObservation ||
-      currentWorker.messages.some((message) => message.id === recovery.failedMessageID) ||
-      !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, recovery)
-    )
-      throw new Error("Retained repair recovery changed during final native revalidation")
-  }
-
-  /** The command's one transaction: re-check the plan version, then apply the action. */
-  private applyCommandIn(db: Database, ctx: CommandContext) {
-    const { command, continuedOwner, baseVersion } = ctx
-    const plan = this.store.plan(command.planID)!
-    if (plan.version !== baseVersion) throw new PlanMovedDuringCommand()
-    const unavailableNow = planCommandProblem(plan.state, command)
-    if (unavailableNow) throw new Error(unavailableNow)
-    // Commit owner adoption with the original request receipt. If native
-    // creation succeeds but this command fails, exact replay can recover it
-    // without granting an old owner authority over a reassigned plan.
-    if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
-    const activeAdoptions = this.store.activeAdoptions(plan.id)
-    if (activeAdoptions.length && !["adopt-descendant", "cancel", "audit"].includes(command.action))
-      throw new Error(
-        "A descendant adoption is pending; only its adoption or cancellation is allowed",
-      )
-    return this.dispatchCommandIn(db, ctx, plan)
-  }
-
-  private dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
-    if (command.action === "retained-repair")
-      return this.divergenceHold(plan, command.taskID)
-        ? this.commandSendBackDivergence(db, ctx, plan)
-        : this.commandRetainedRepair(db, ctx, plan)
-    if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
-    if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
-    if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
-    if (command.action === "integrated")
-      return recordIntegration(
-        this.store,
-        db,
-        plan,
-        command,
-        obs.git(this.directory, ["branch", "--show-current"]),
-        preflight.integration,
-      )
-    if (command.action === "pause" || command.action === "unpause")
-      return changeDispatchPause(
-        this.store,
-        plan,
-        command,
-        caller,
-        ownerSession,
-        this.validArchitect(ownerSession),
-      )
-    if (command.action === "schedule")
-      return changeSchedule(this.store, plan, command, caller, this.directory, preflight.bases)
-    if (command.action === "audit")
-      return {
-        status: "audited",
-        ...this.store.audit(),
-        version: plan.version,
-        ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
-      }
-    if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
-    if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
-    if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
-    if (command.action === "takeover-submit") return this.commandTakeoverSubmit(ctx, plan)
-    if (command.action === "resume" || command.action === "retry")
-      return this.commandResumeOrRetry(db, ctx, plan)
-    if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
-    return this.commandRun(db, ctx, plan)
   }
 
   private commandRetainedRepair(...args: Parameters<CommandsRetained["commandRetainedRepair"]>) {
