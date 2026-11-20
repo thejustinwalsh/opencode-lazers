@@ -7,8 +7,8 @@ SQLite in the host runtime is 3.54.0 with JSON, JSONB, generated columns, expres
 indexes, triggers and FTS5.
 
 Who writes and reads each table is summarized under "Traced facts" below. Every
-compaction keeps feature
-parity; items marked **verify** depend on that.
+compaction keeps feature parity; the **verify** column names the readers to keep
+working.
 
 ## Measurements
 
