@@ -374,3 +374,25 @@ test("this repository's profile commands prove in a repository run under bun", a
   expect(proofs["verify:tests"].outcome).toBe("proven")
   expect(proofs["fix:0"].outcome).toBe("proven")
 }, 120_000)
+
+test("a toolchain whose version command fails is not proven", async () => {
+  const tools = fakeTools({ cargo: "#!/bin/sh\necho 'no default toolchain' >&2\nexit 1\n" })
+  cleanups.push(tools.cleanup)
+  const root = repo({ "src/lib.rs": "pub fn a() {}\n" })
+  const result = await proveProfile({
+    projectDirectory: root,
+    dataDirectory: temp("lazers-proof-data-"),
+    profile: profileOf({
+      toolchains: ["cargo"],
+      verify: [{ id: "ok", command: "true" }],
+      source: { include: ["src/**"] },
+    }),
+    workspace: workspace(root),
+    environment: { PATH: `${tools.bin}:/usr/bin:/bin` },
+  })
+  expect(byKey(result.proofs)["tool:cargo"]).toMatchObject({
+    outcome: "failed",
+    exitCode: 1,
+    reason: "cargo --version exited with code 1",
+  })
+})
