@@ -190,7 +190,7 @@ test("exit-zero verification keeps its result when owned subprocess cleanup is u
     }
     rmSync(root, { recursive: true, force: true })
   }
-}, 15_000)
+})
 
 test("failed and timed-out checks retain their actual outcomes independently of cleanup", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-check-outcomes-"))
@@ -219,7 +219,7 @@ test("failed and timed-out checks retain their actual outcomes independently of 
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
-}, 15_000)
+})
 
 test("the Windows process-tree adapter distinguishes child exit from remaining descendants", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-check-process-tree-adapter-"))
@@ -283,7 +283,7 @@ test("the Windows process-tree adapter distinguishes child exit from remaining d
     }
     rmSync(root, { recursive: true, force: true })
   }
-}, 15_000)
+})
 
 test("historical wall limits do not stop a quiet check inside current inactivity defaults", async () => {
   const root = mkdtempSync(join(tmpdir(), "lazers-check-quiet-defaults-"))
@@ -388,7 +388,7 @@ test("continuous recognized phases share the total hard backstop and cancellatio
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
-}, 15_000)
+})
 
 test("identical check modules retain the same environment identity across reload", async () => {
   const directory = mkdtempSync(join(tmpdir(), "lazers-check-reload-"))

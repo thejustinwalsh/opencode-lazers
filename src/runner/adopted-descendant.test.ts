@@ -82,7 +82,7 @@ function fixture(
       {
         id: "task-check",
         command: taskCommand,
-        timeoutMs: 1000,
+        timeoutMs: 60_000,
         ...options.taskTiming,
       },
     ]
@@ -390,7 +390,9 @@ async function waitForAdoptionCondition(
   complete: () => boolean,
   awaitOwnedCheck = false,
 ) {
-  const deadline = Date.now() + 1_200
+  // A diagnostic bound, not a budget: the loop returns as soon as `complete()` holds. A 1.2 s bound
+  // and a 1 s task-check timeout failed the plan (check exit 1) when the machine was loaded.
+  const deadline = Date.now() + 60_000
   let ticks = 0
   let maxTickMs = 0
   let activityWaits = 0
@@ -725,7 +727,7 @@ test("failed/READY task adopts only after fresh checks, including receipt recove
   expectOutboxPreserved(f, oldOutcomes)
   await integratePlan(f)
   expect(f.store.plan(f.planID)?.state).toBe("integrated")
-}, 15_000)
+})
 
 test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup without replay", async () => {
   const f = fixture("failed-task", undefined, {
@@ -830,7 +832,7 @@ test("pre-LZ207 adoption fingerprints reuse checks through reopen and cleanup wi
       state: row.state,
     })),
   ).toEqual(legacyRows)
-}, 15_000)
+})
 
 test("adoption input fingerprints are versioned: new rows are v2, stored v1 rows still verify, v2 survives a commit rewrite", async () => {
   const f = fixture("failed-task")
@@ -893,7 +895,7 @@ test("adoption input fingerprints are versioned: new rows are v2, stored v1 rows
   expect(
     runtime.currentAdoptionInputFingerprint(plan, { ...rewrittenRow, input_fingerprint: v1 }),
   ).not.toBe(v1)
-}, 15_000)
+})
 
 test("accepted task with blocked combined check adopts a descendant without rewriting acceptance or landing receipts", async () => {
   const f = fixture("blocked-combined")
@@ -999,7 +1001,7 @@ test("adoption scope uses the latest reviewed integration baseline, not interven
   await waitForAdoptionState(f, requested.adoptionID, "accepted")
   expect(f.store.adoption(requested.adoptionID)?.state).toBe("accepted")
   expect(f.store.plan(f.planID)).toMatchObject({ state: "accepted", artifact: candidate })
-}, 15_000)
+})
 
 test("adoption verifies reviewed main with independent work without widening worker scope", async () => {
   const f = fixture("failed-task")
@@ -1042,7 +1044,7 @@ test("adoption verifies reviewed main with independent work without widening wor
   expect(readFileSync(join(f.root, "parallel-ui.txt"), "utf8")).toBe(
     "independently reviewed UI work\n",
   )
-}, 15_000)
+})
 
 test("adoption still rejects protected-path changes in the original worker artifact", async () => {
   const f = fixture("failed-task")
@@ -1315,7 +1317,7 @@ test("changed verification command input invalidates completed adoption receipts
   expect(f.store.adoptionChecks(requested.adoptionID, "task")[0]?.state).toBe("completed")
   expect(readFileSync(f.taskLog, "utf8")).toHaveLength(2)
   expect(f.events.filter((event) => /^(create|prompt):/.test(event))).toHaveLength(2)
-}, 15_000)
+})
 
 test("owner-session loss after verification is replaced by a fresh Architect and acceptance still publishes", async () => {
   const f = fixture("failed-task")
@@ -1559,7 +1561,7 @@ test("a worker activated after the final idle observation still fences adoption 
   expect(f.store.nodes(f.planID)[0]?.state).toBe("failed")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
   expect(f.store.attempts(f.planID)[0]).toMatchObject({ id: attempt.id, state: "failed" })
-}, 15_000)
+})
 
 test("cancellation during a fresh check fences acceptance and cleans the settled adoption workspace", async () => {
   const f = fixture("failed-task")

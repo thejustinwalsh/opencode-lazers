@@ -49,7 +49,9 @@ async function waitForStagedSource(directory: string) {
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
     const filename = readdirSync(directory).find((name) => name.startsWith(".source-"))
-    if (filename) return join(directory, filename)
+    // The staging file exists empty before the worker writes into it; wait for its content.
+    if (filename && readFileSync(join(directory, filename), "utf8") !== "")
+      return join(directory, filename)
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   throw new Error("Background worker did not stage its source file")

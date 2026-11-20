@@ -1409,20 +1409,27 @@ test("route allocation over many sessions reads each session's facts, not every 
       observations: [],
     })),
   )
+  // Count element reads of the capture instead of timing them: reads do not depend on load.
+  let reads = 0
+  const counted = new Proxy(facts, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) reads++
+      return Reflect.get(target, key, receiver)
+    },
+  })
   const input = {
     attempts,
-    progressFacts: facts,
+    progressFacts: counted,
     progressTruncated: false,
     truncatedContextSessionIDs: [],
   }
-  const started = performance.now()
   const applicabilities = taskValuationApplicabilities(input)
-  const elapsed = performance.now() - started
   // Every session resolves to the one route, whatever the size of the capture.
   expect(applicabilities).toHaveLength(sessions)
   expect(new Set(applicabilities.map((entry) => entry.route.modelID))).toEqual(
     new Set([route.modelID]),
   )
   // 60,000 facts x 1,000 sessions took seconds when each session rescanned the capture.
-  expect(elapsed).toBeLessThan(750)
-}, 30_000)
+  // Measured: 180,000 reads for 60,000 facts (3 per fact). A per-session rescan reads 60,000,000.
+  expect(reads).toBeLessThan(facts.length * 10)
+})

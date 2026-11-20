@@ -53,13 +53,15 @@ test("commands that are not bun test are untouched", () => {
     expect(withTestHangGuard(command)).toBe(command)
 })
 
-test("the package test script and the guidance carry the same guarded command", () => {
+test("the package test script and the standing guidance carry the same guarded command", () => {
   const root = join(import.meta.dir, "..", "..")
   const read = (path: string) => readFileSync(join(root, path), "utf8")
   expect(JSON.parse(read("package.json")).scripts.test).toBe(GUARDED_TEST_COMMAND)
-  for (const path of ["AGENTS.md", "src/implementor.md", "src/tasks/instructions.ts"])
+  for (const path of ["AGENTS.md", "src/implementor.md"])
     expect(read(path)).toContain(GUARDED_TEST_COMMAND)
   expect(read("src/architect.md")).toContain(guard)
+  // Standing task prompts carry no repository commands; the project profile supplies them.
+  expect(read("src/tasks/instructions.ts")).not.toContain("bun test")
 })
 
 function fixture() {
@@ -89,7 +91,7 @@ test("a multi-file run slower than Bun's 5 s default passes and records both com
   expect(receipt.command).toBe("bun test")
   expect(receipt.effectiveCommand).toBe(`bun test ${guard}`)
   expect(JSON.parse(readFileSync(receiptPath, "utf8")).effectiveCommand).toBe(`bun test ${guard}`)
-}, 60_000)
+})
 
 test("the guard also applies inside a recognised phase chain", async () => {
   const root = fixture()
@@ -108,4 +110,4 @@ test("the guard also applies inside a recognised phase chain", async () => {
     `bun test ${guard} a.test.ts`,
     `bun test ${guard} b.test.ts`,
   ])
-}, 60_000)
+})
