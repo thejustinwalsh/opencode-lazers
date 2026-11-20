@@ -313,7 +313,7 @@ test("a failed detail read retries without events and stops retrying after recov
   } finally {
     state.close()
   }
-}, 10_000)
+})
 
 test("closing a failed view cancels its recovery reads", async () => {
   let reads = 0

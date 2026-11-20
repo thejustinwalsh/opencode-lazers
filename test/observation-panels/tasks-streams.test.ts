@@ -602,7 +602,7 @@ test("scrolling down and back up slides the window without moving what is read",
     // Rows of the window are keyed by task id: each id appears once.
     expect(new Set(h.rowIDs()).size).toBe(h.rowIDs().length)
   })
-}, 60_000)
+})
 
 test("expanding a row opens one dependency stream and collapsing closes it", async () => {
   await withPanel(async (h) => {
