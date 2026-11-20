@@ -249,3 +249,67 @@ export function anchoredScrollTop(
 export function estimateItemSize(item: VirtualItem) {
   return item.kind === "task" ? TASK_ROW_HEIGHT : LOADER_HEIGHT
 }
+
+/**
+ * The same flat sequence as `flattenExecutionList`, from stream windows: the listed rows of the
+ * `tasks.schedule` window, and for every expanded row the children its own `tasks.dependencies`
+ * stream holds (`children`, by the parent's item key). A row is expandable when it stores
+ * dependencies; a cycle is cut on the ancestor path, which is view state.
+ */
+export function spliceItems(input: {
+  rows: readonly { row: ExecutionListRow; priority?: number }[]
+  expanded: ReadonlySet<string>
+  children(parentKey: string, parentTaskID: string): readonly ExecutionListRow[] | undefined
+  /** Another window exists before (`start`) or after (`end`) the rows. */
+  loaders?: { start?: boolean; end?: boolean }
+}): VirtualItem[] {
+  const items: VirtualItem[] = []
+  if (input.loaders?.start) items.push({ kind: "loader", key: LOADER_START_KEY })
+  const push = (
+    row: ExecutionListRow,
+    key: string,
+    depth: number,
+    setSize: number,
+    posInSet: number,
+    ancestors: ReadonlySet<string>,
+    priority?: number,
+    parentKey?: string,
+  ) => {
+    const expandable = (row.dependencyCount ?? 0) > 0 && !ancestors.has(row.taskID)
+    const expanded = expandable && input.expanded.has(key)
+    items.push({
+      kind: "task",
+      key,
+      row,
+      depth,
+      level: depth + 1,
+      setSize,
+      posInSet,
+      ...(parentKey ? { parentKey } : {}),
+      ...(priority ? { priority } : {}),
+      expandable,
+      expanded,
+    })
+    if (!expanded) return
+    const next = new Set([...ancestors, row.taskID])
+    const kids = input.children(key, row.taskID) ?? []
+    kids.forEach((child, index) =>
+      push(
+        child,
+        `${key}>${child.taskID}`,
+        depth + 1,
+        kids.length,
+        index + 1,
+        next,
+        undefined,
+        key,
+      ),
+    )
+  }
+  input.rows.forEach(({ row, priority }, index) =>
+    push(row, taskKey(row.taskID), 0, input.rows.length, index + 1, new Set(), priority),
+  )
+  if (input.loaders?.end) items.push({ kind: "loader", key: LOADER_KEY })
+  return items
+}
+export const LOADER_START_KEY = "loader:before"

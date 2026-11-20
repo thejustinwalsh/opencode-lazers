@@ -5,7 +5,7 @@ import {
   TASK_SOURCES,
   taskBlockerColumns,
   taskBucketCountColumns,
-  taskDependencyColumns,
+  taskDependencyRowColumns,
   taskIndexColumns,
   taskPlanColumns,
   taskScheduleColumns,
@@ -134,7 +134,20 @@ export const taskScheduleSource = defineSource({
 /** The dependency children of one task, in the order the list shows them. */
 export const taskDependenciesSource = defineSource({
   name: TASK_SOURCES.dependencies,
-  table: "task_schedule_edges",
+  table: `(SELECT e.parent_task_id AS parent_task_id, e.ord AS ord, e.child_task_id AS child_task_id,
+      e.kind AS kind, e.child_reference AS child_reference, e.child_title AS child_title,
+      e.child_state AS child_state, e.waiting AS waiting, e.child_plan_id AS child_plan_id,
+      c.status AS c_status, c.reason AS c_reason, c.node_reason AS c_node_reason,
+      c.plan_reason AS c_plan_reason, c.node_state AS c_node_state, c.plan_state AS c_plan_state,
+      c.ordinal AS c_ordinal, c.priority_key AS c_priority_key, c.started_at AS c_started_at,
+      c.takeover AS c_takeover, c.concern AS c_concern, c.dispatch_pause AS c_dispatch_pause,
+      c.dispatch_pause_plan_id AS c_dispatch_pause_plan_id, c.dependency_count AS c_dependency_count,
+      c.wait_plans_count AS c_wait_plans_count, c.wait_plan_ids AS c_wait_plan_ids,
+      c.blocker_task_ids AS c_blocker_task_ids, c.dependency_waiting AS c_dependency_waiting,
+      c.decision AS c_decision, c.decision_reason AS c_decision_reason, c.stale AS c_stale,
+      c.source_plan AS c_source_plan, c.session_id AS c_session_id
+    FROM task_schedule_edges e LEFT JOIN task_schedule c ON c.task_id=e.child_task_id) AS task_schedule_edges`,
+  tables: ["task_schedule_edges", "task_schedule"],
   key: ["parent_task_id", "ord"],
   orders: {
     ord: [
@@ -147,8 +160,11 @@ export const taskDependenciesSource = defineSource({
     assertTaskInScope(context, scope, input.parent)
     return input
   },
-  filter: (input: TaskChildFilter) => ({ where: "parent_task_id = ?", params: [input.parent!] }),
-  columns: taskDependencyColumns,
+  filter: (input: TaskChildFilter) => ({
+    where: "task_schedule_edges.parent_task_id = ?",
+    params: [input.parent!],
+  }),
+  columns: taskDependencyRowColumns,
 })
 
 /** Plans in scheduler order: priority (1 first, none last), then plan creation order. */

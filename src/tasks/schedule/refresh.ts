@@ -629,6 +629,8 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     sort_key: sortKey,
     status: status.status,
     reason: displayReason,
+    node_reason: placement?.reason ?? null,
+    plan_reason: plan?.reason ?? null,
     started_at: startedAt,
     takeover: struggling && latest && isTakeoverAttempt(latest.policy) ? 1 : 0,
     concern: open.length
@@ -642,6 +644,17 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     dispatch_pause: json(status.dispatchPause),
     dispatch_pause_plan_id: status.dispatchPause ? (placement?.plan_id ?? null) : null,
     wait_plans_count: waits.length,
+    wait_plan_ids: JSON.stringify(waits.map((wait) => wait.planID)),
+    // Every task the row waits behind: unmet dependencies, then unaccepted prerequisites, then the
+    // reservations holding it back (the three lists `rowBlockers` merged).
+    blocker_task_ids: JSON.stringify([
+      ...new Set([
+        ...edges.filter((edge) => edge.waiting === 1).map((edge) => edge.child_task_id as string),
+        ...waitingOn,
+        ...status.blockers,
+      ]),
+    ]),
+    dependency_waiting: edges.some((edge) => edge.waiting === 1) ? 1 : 0,
     blocker_count: status.blockers.length,
     dependency_count: edges.length,
     decision,

@@ -63,6 +63,8 @@ export const taskScheduleColumns = {
   objective: "text",
   status: "text",
   reason: "text",
+  node_reason: "text",
+  plan_reason: "text",
   node_state: "text",
   plan_state: "text",
   bucket: "text",
@@ -78,6 +80,9 @@ export const taskScheduleColumns = {
   dependency_count: "int",
   blocker_count: "int",
   wait_plans_count: "int",
+  wait_plan_ids: "json",
+  blocker_task_ids: "json",
+  dependency_waiting: "bool",
   decision: "text",
   decision_reason: "text",
   disposition: "json",
@@ -101,6 +106,42 @@ export const taskDependencyColumns = {
   child_state: "text",
   waiting: "bool",
   child_plan_id: "text",
+} as const satisfies Columns
+
+/** The child's own list row, so a nested row renders exactly as a listed one. */
+const childOf = <C extends Record<string, string>>(columns: C) =>
+  Object.fromEntries(Object.entries(columns).map(([name, type]) => [`c_${name}`, type])) as {
+    [K in keyof C & string as `c_${K}`]: C[K]
+  }
+export const taskDependencyChildColumns = childOf({
+  status: "text",
+  reason: "text",
+  node_reason: "text",
+  plan_reason: "text",
+  node_state: "text",
+  plan_state: "text",
+  ordinal: "int",
+  priority_key: "int",
+  started_at: "int",
+  takeover: "bool",
+  concern: "json",
+  dispatch_pause: "json",
+  dispatch_pause_plan_id: "text",
+  dependency_count: "int",
+  wait_plans_count: "int",
+  wait_plan_ids: "json",
+  blocker_task_ids: "json",
+  dependency_waiting: "bool",
+  decision: "text",
+  decision_reason: "text",
+  stale: "bool",
+  source_plan: "json",
+  session_id: "text",
+} as const)
+
+export const taskDependencyRowColumns = {
+  ...taskDependencyColumns,
+  ...taskDependencyChildColumns,
 } as const satisfies Columns
 
 export const taskPlanColumns = {
@@ -177,10 +218,10 @@ export const taskScheduleRef: SourceRef<TaskScheduleFilter, typeof taskScheduleC
     detail: taskScheduleDetail,
   },
 )
-export const taskDependenciesRef: SourceRef<TaskChildFilter, typeof taskDependencyColumns> =
+export const taskDependenciesRef: SourceRef<TaskChildFilter, typeof taskDependencyRowColumns> =
   sourceRef({
     name: TASK_SOURCES.dependencies,
-    columns: taskDependencyColumns,
+    columns: taskDependencyRowColumns,
   })
 export const taskPlansRef: SourceRef<TaskPlansFilter, typeof taskPlanColumns> = sourceRef({
   name: TASK_SOURCES.plans,

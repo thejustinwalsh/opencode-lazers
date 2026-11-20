@@ -6,47 +6,8 @@ import type { SchedulingNode, SchedulingPlan, SchedulingSnapshot } from "./sched
 type Plan = TopologyResponse["plans"][number]
 type Node = Plan["nodes"][number]
 
-export type ExecutionListRow = {
-  taskID: string
-  title: string
-  status: string
-  reason: string | null
-  waiting: boolean
-  holdReason: string | null
-  ordinal: number
-  reference?: string
-  /** Epoch ms the running task's current attempt began; absent unless the read supplied it. */
-  startedAt?: number
-  /** Present when the task's recorded effort trips a concern rule. */
-  concern?: TaskConcern
-  /** The latest attempt is the Architect finishing the task itself. */
-  takeover?: true
-  sourcePlan?: TaskSummary["sourcePlan"]
-  dispatchPause?: TaskSummary["dispatchPause"]
-  dispatchPausePlanID?: string
-  contextOnly: boolean
-  prerequisites: string[]
-  successors: string[]
-  dependencyTasks?: Array<{
-    taskID: string
-    reference?: string
-    title: string
-    state: string
-    waiting: boolean
-  }>
-  scheduling?: {
-    decision: SchedulingNode["decision"]
-    reason: string | null
-    waitingOn: string[]
-    waitingOnPlans?: string[]
-    waitingOnPlansCount?: number
-    waitingOnPlansComplete?: boolean
-    reservationTaskIDs: string[]
-    reservationTaskCount?: number
-    reservationTaskIDsComplete?: boolean
-    reservationTaskIDsScopeLimited?: boolean
-  }
-}
+export type { ExecutionListRow } from "./task-row.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 
 export type ExecutionPlanGroup = {
   planID: string
