@@ -1762,6 +1762,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
     expect(panel?.id).toBe("models")
     expect(panels.map((registeredPanel) => registeredPanel.id).toSorted()).toEqual([
       "models",
+      "plan",
       "radar",
       "tasks",
       "trajectory",
@@ -1770,6 +1771,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       ["radar", "Radar"],
       ["models", "Models"],
       ["trajectory", "Trajectory"],
+      ["plan", "Plan"],
     ] as const) {
       const registeredPanel = panels.find((entry) => entry.id === id)!
       expect(registeredPanel.list({ open: [] })).toEqual([])
