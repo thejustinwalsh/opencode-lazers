@@ -4,7 +4,8 @@ import { Worker } from "node:worker_threads"
 import { openStream, type StreamPool } from "./client.ts"
 import { defineSource } from "./source.ts"
 import type { PoolStream, ReaderPool } from "./pool.ts"
-import { SHARED_CONTROL_BYTES } from "./protocol.ts"
+import { allocateSharedFrames, SharedFrameWriter } from "./shared-frames.ts"
+import { frameSize, writeFrame } from "./frame.ts"
 import { itemSource } from "./test-source.ts"
 import { seedItems, testPool, type SeededDatabase } from "./test-harness.ts"
 
@@ -166,8 +167,7 @@ test("Review Focus 1: while the reader flips 10,000 times every read is one comp
   })
   const rows = 40
   const frameBytes = 64 * 1024
-  const shared = new SharedArrayBuffer(SHARED_CONTROL_BYTES + 2 * frameBytes)
-  new Int32Array(shared, 0, 4)[3] = frameBytes
+  const shared = allocateSharedFrames(frameBytes)
   let flipper: Worker | undefined
   const fake: StreamPool = {
     attach(_request, listener) {
@@ -202,3 +202,48 @@ test("Review Focus 1: while the reader flips 10,000 times every read is one comp
   stream.close()
   await flipper!.terminate()
 }, 60_000)
+
+test("items read before a flip still read the same after two more reader flips, until the consumer advances", async () => {
+  const flipSource = defineSource({
+    name: "test.hold",
+    table: "t",
+    key: ["n"],
+    orders: { n: [{ column: "n", direction: "asc" }] },
+    filter: () => ({ where: "", params: [] }),
+    columns: { n: "int", t: "text" },
+    count: "more",
+  })
+  const columns = { n: "int", t: "text" } as const
+  const shared = allocateSharedFrames(8 * 1024)
+  const writer = new SharedFrameWriter(shared)
+  const flip = (n: number) => {
+    writeFrame(shared, writer.offset, columns, { revision: n, count: 3, before: 0, after: 0 }, [
+      [n, `row ${n}`],
+      [n, `row ${n}`],
+      [n, `row ${n}`],
+    ])
+    writer.publish(n)
+  }
+  const fake: StreamPool = {
+    attach(_request, listener) {
+      queueMicrotask(() => listener({ type: "opened", stream: 1, shared }))
+      return { id: 1, post: () => 0, release: () => {}, close: () => {} }
+    },
+  }
+  expect(frameSize(columns, [[1, "x"]])).toBeGreaterThan(0)
+  const stream = openStream(fake, flipSource, { filter: {}, order: "n", window: 3 })
+  const arrived = new Promise<void>((resolve) => stream.on("change", resolve))
+  await Bun.sleep(5)
+  flip(1)
+  await arrived
+  const held = stream.items
+  expect(held.map((r) => r.t)).toEqual(["row 1", "row 1", "row 1"])
+  // Synchronously, so the consumer cannot advance in between: two more flips.
+  flip(2)
+  flip(3)
+  expect(held.map((r) => r.t)).toEqual(["row 1", "row 1", "row 1"])
+  expect(held[0]!.n).toBe(1)
+  await until(() => stream.revision === 3)
+  expect(stream.items.map((r) => r.t)).toEqual(["row 3", "row 3", "row 3"])
+  stream.close()
+})

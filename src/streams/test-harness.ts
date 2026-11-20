@@ -5,14 +5,8 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { readFrame, type Columns, type FrameHeader } from "./frame.ts"
 import { readerPool, type OpenRequest, type PoolStream, type ReaderPool } from "./pool.ts"
-import {
-  SHARED_ACTIVE,
-  SHARED_CONTROL_BYTES,
-  SHARED_FRAME_BYTES,
-  type Anchor,
-  type FromReader,
-  type Tier,
-} from "./protocol.ts"
+import { type Anchor, type FromReader, type Tier } from "./protocol.ts"
+import { SharedFrameConsumer } from "./shared-frames.ts"
 import { streamColumns, type Source } from "./source.ts"
 
 export const testSourceModule = pathToFileURL(join(import.meta.dir, "test-source.ts")).href
@@ -78,6 +72,8 @@ export function openHarness<F, C extends Columns>(
   const messages: FromReader[] = []
   const waiters: (() => void)[] = []
   let shared: SharedArrayBuffer | undefined
+  let consumer: SharedFrameConsumer | undefined
+  let heldAt = 0
   const columns = streamColumns(source as never, request.window)
   const decode = (message: Extract<FromReader, { type: "frame" }>): Delivered => {
     let buffer: ArrayBufferLike
@@ -88,9 +84,10 @@ export function openHarness<F, C extends Columns>(
       offset = message.bytes.byteOffset
     } else {
       buffer = shared!
-      const control = new Int32Array(shared!, 0, 4)
-      offset =
-        SHARED_CONTROL_BYTES + Atomics.load(control, SHARED_ACTIVE) * control[SHARED_FRAME_BYTES]!
+      // This harness is the stream's only consumer: it takes the newest frame, else keeps its last.
+      consumer ??= new SharedFrameConsumer(shared!)
+      heldAt = consumer.take()?.offset ?? heldAt
+      offset = heldAt
     }
     const frame = readFrame(buffer, offset, columns)
     const ids = Array.from({ length: frame.header.count }, (_, i) => frame.row(i).id as number)

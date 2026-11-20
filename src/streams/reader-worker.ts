@@ -2,10 +2,6 @@ import { parentPort, workerData } from "node:worker_threads"
 import { acquireSharedConnection } from "../storage.ts"
 import { encodeRow, frameSize, readRow, writeFrame, type Columns } from "./frame.ts"
 import {
-  SHARED_ACTIVE,
-  SHARED_CONTROL_BYTES,
-  SHARED_FRAME_BYTES,
-  SHARED_SEQUENCE,
   SHARED_STOP,
   type Anchor,
   type FromReader,
@@ -13,6 +9,7 @@ import {
   type Tier,
   type ToReader,
 } from "./protocol.ts"
+import { allocateSharedFrames, SharedFrameWriter } from "./shared-frames.ts"
 import {
   anchorQuery,
   edgeColumns,
@@ -57,7 +54,7 @@ const run = (query: SQL): unknown[][] => {
 }
 
 type Count = number | "more"
-type Shared = { buffer: SharedArrayBuffer; control: Int32Array; frameBytes: number }
+type Shared = { buffer: SharedArrayBuffer; control: Int32Array; writer: SharedFrameWriter }
 type Stream = {
   id: number
   source: Source<never, Columns>
@@ -261,10 +258,8 @@ const trimPool = () => {
 }
 
 const newShared = (frameBytes: number): Shared => {
-  const buffer = new SharedArrayBuffer(SHARED_CONTROL_BYTES + 2 * frameBytes)
-  const view = new Int32Array(buffer, 0, 4)
-  view[SHARED_FRAME_BYTES] = frameBytes
-  return { buffer, control: view, frameBytes }
+  const buffer = allocateSharedFrames(frameBytes)
+  return { buffer, control: new Int32Array(buffer, 0, 16), writer: new SharedFrameWriter(buffer) }
 }
 const frameBytesFor = (size: number) => Math.max(4096, (Math.ceil(size * 1.5) + 7) & ~7)
 
@@ -285,21 +280,12 @@ const emit = (stream: Stream) => {
   }
   if (stream.tier === "shared") {
     let shared = stream.shared!
-    if (size > shared.frameBytes) {
+    if (size > shared.writer.frameBytes) {
       shared = stream.shared = newShared(frameBytesFor(size))
       send({ type: "regrow", stream: stream.id, shared: shared.buffer })
     }
-    const next = 1 - Atomics.load(shared.control, SHARED_ACTIVE)
-    writeFrame(
-      shared.buffer,
-      SHARED_CONTROL_BYTES + next * shared.frameBytes,
-      stream.columns,
-      header,
-      stream.rows,
-    )
-    Atomics.store(shared.control, SHARED_ACTIVE, next)
-    Atomics.store(shared.control, SHARED_SEQUENCE, sequence)
-    Atomics.notify(shared.control, SHARED_SEQUENCE)
+    writeFrame(shared.buffer, shared.writer.offset, stream.columns, header, stream.rows)
+    shared.writer.publish(sequence)
     send({ type: "frame", ...base })
   } else if (stream.tier === "transfer") {
     const buffer = takeBuffer(size)

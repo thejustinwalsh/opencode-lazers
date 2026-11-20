@@ -1,14 +1,7 @@
 import { readFrame, type Columns, type FrameHeader } from "./frame.ts"
 import type { PoolStream, ReaderPool } from "./pool.ts"
-import {
-  SHARED_ACTIVE,
-  SHARED_CONTROL_BYTES,
-  SHARED_FRAME_BYTES,
-  SHARED_SEQUENCE,
-  SHARED_STOP,
-  type Anchor,
-  type FromReader,
-} from "./protocol.ts"
+import { SHARED_SEQUENCE, SHARED_STOP, type Anchor, type FromReader } from "./protocol.ts"
+import { SharedFrameConsumer } from "./shared-frames.ts"
 import { streamColumns, type Source } from "./source.ts"
 
 export type StreamOptions<F> = {
@@ -73,7 +66,11 @@ export function decodeFrameMessage<C extends Columns>(
   }
 }
 
-type SharedState = { buffer: SharedArrayBuffer; control: Int32Array }
+type SharedState = {
+  buffer: SharedArrayBuffer
+  control: Int32Array
+  consumer: SharedFrameConsumer
+}
 
 export function openStream<F, C extends Columns>(
   pool: StreamPool,
@@ -94,7 +91,6 @@ export function openStream<F, C extends Columns>(
   let failure: Error | undefined
   let closed = false
   let shared: SharedState | undefined
-  let scratch = new ArrayBuffer(0)
   let firstFrame: { resolve(): void; reject(error: Error): void } | undefined
   const first = new Promise<void>((resolve, reject) => {
     firstFrame = { resolve, reject }
@@ -134,35 +130,17 @@ export function openStream<F, C extends Columns>(
     waiting.clear()
   }
 
-  /** A consistent copy of the active shared frame: retried while the reader flips under it. */
-  const snapshot = (state: SharedState): number => {
-    const { control, buffer } = state
-    const frameBytes = control[SHARED_FRAME_BYTES]!
-    for (;;) {
-      const before = Atomics.load(control, SHARED_SEQUENCE)
-      const active = Atomics.load(control, SHARED_ACTIVE)
-      const base = SHARED_CONTROL_BYTES + active * frameBytes
-      const used = new DataView(buffer).getUint32(base + 4, true)
-      if (used <= frameBytes) {
-        if (scratch.byteLength < used)
-          scratch = new ArrayBuffer(Math.max(used, scratch.byteLength * 2))
-        new Uint8Array(scratch, 0, used).set(new Uint8Array(buffer, base, used))
-        if (Atomics.load(control, SHARED_SEQUENCE) === before) {
-          const frame = readFrame(scratch, 0, columns)
-          adopt({ header: frame.header, row: frame.row, sequence: before })
-          return before
-        }
-      }
-    }
-  }
-
-  /** Waits on the shared sequence word without blocking the thread, and reads each new frame. */
+  /**
+   * Waits on the shared sequence word without blocking the thread; each new frame is taken and
+   * read in place: the frame this stream holds is never written by the reader.
+   */
   const pump = async (state: SharedState) => {
-    let seen = 0
     while (!closed && shared === state) {
       const sequence = Atomics.load(state.control, SHARED_SEQUENCE)
-      if (sequence !== seen && sequence !== 0) {
-        seen = snapshot(state)
+      const taken = state.consumer.take()
+      if (taken) {
+        const frame = readFrame(state.buffer, taken.offset, columns)
+        adopt({ header: frame.header, row: frame.row, sequence: taken.sequence })
         continue
       }
       const wait = Atomics.waitAsync(state.control, SHARED_SEQUENCE, sequence)
@@ -172,7 +150,11 @@ export function openStream<F, C extends Columns>(
 
   const useShared = (buffer: SharedArrayBuffer) => {
     const previous = shared
-    shared = { buffer, control: new Int32Array(buffer, 0, 4) }
+    shared = {
+      buffer,
+      control: new Int32Array(buffer, 0, 16),
+      consumer: new SharedFrameConsumer(buffer),
+    }
     if (previous) Atomics.notify(previous.control, SHARED_SEQUENCE)
     void pump(shared)
   }
