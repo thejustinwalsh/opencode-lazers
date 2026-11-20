@@ -14,8 +14,8 @@ export type StreamCommand = { type: "slide"; delta: number } | { type: "seek"; a
 
 export type PoolStream = {
   readonly id: number
-  /** Move or re-anchor the window; the reader answers with one frame. */
-  post(command: StreamCommand): void
+  /** Move or re-anchor the window; the reader answers with one frame carrying the returned op (0 when closed). */
+  post(command: StreamCommand): number
   /** Transfer tier: send a consumed buffer home to the worker that allocated it. */
   release(buffer: ArrayBuffer): void
   /** Close the stream on its worker. Idempotent. */
@@ -212,10 +212,11 @@ function createReaderPool(
       return {
         id: stream.id,
         post(command) {
-          if (stream.closed) return
+          if (stream.closed) return 0
           const op = ++stream.nextOp
           stream.unanswered.push({ op, command })
           post(slot, { ...command, stream: stream.id, op })
+          return op
         },
         release(buffer) {
           const owner = owners.get(buffer)

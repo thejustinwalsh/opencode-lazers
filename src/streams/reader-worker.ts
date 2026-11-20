@@ -260,11 +260,10 @@ const trimPool = () => {
   while (pool.length > Math.max(2, 2 * transferStreams)) pool.shift()
 }
 
-const newShared = (frameBytes: number, sequence: number): Shared => {
+const newShared = (frameBytes: number): Shared => {
   const buffer = new SharedArrayBuffer(SHARED_CONTROL_BYTES + 2 * frameBytes)
   const view = new Int32Array(buffer, 0, 4)
   view[SHARED_FRAME_BYTES] = frameBytes
-  view[SHARED_SEQUENCE] = sequence
   return { buffer, control: view, frameBytes }
 }
 const frameBytesFor = (size: number) => Math.max(4096, (Math.ceil(size * 1.5) + 7) & ~7)
@@ -287,7 +286,7 @@ const emit = (stream: Stream) => {
   if (stream.tier === "shared") {
     let shared = stream.shared!
     if (size > shared.frameBytes) {
-      shared = stream.shared = newShared(frameBytesFor(size), sequence - 1)
+      shared = stream.shared = newShared(frameBytesFor(size))
       send({ type: "regrow", stream: stream.id, shared: shared.buffer })
     }
     const next = 1 - Atomics.load(shared.control, SHARED_ACTIVE)
@@ -364,7 +363,7 @@ const open = (message: Extract<ToReader, { type: "open" }>) => {
     }
     adopt(stream, load(stream, toWindowAnchor(stream, message.anchor)))
     if (stream.tier === "shared") {
-      stream.shared = newShared(frameBytesFor(frameSize(columns, stream.rows)), stream.sequence)
+      stream.shared = newShared(frameBytesFor(frameSize(columns, stream.rows)))
       send({ type: "opened", stream: stream.id, shared: stream.shared.buffer })
     } else send({ type: "opened", stream: stream.id })
     streams.set(stream.id, stream)
