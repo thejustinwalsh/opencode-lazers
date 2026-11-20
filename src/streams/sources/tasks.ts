@@ -157,13 +157,14 @@ export const taskDependenciesSource = defineSource({
   },
   async authorize(input: TaskChildFilter, context) {
     const scope = await scopeOf(input, context)
-    assertTaskInScope(context, scope, input.parent)
+    assertTaskInScope(context, scope, input.parent ?? input.task)
     return input
   },
-  filter: (input: TaskChildFilter) => ({
-    where: "task_schedule_edges.parent_task_id = ?",
-    params: [input.parent!],
-  }),
+  // `parent` lists a task's dependencies; `task` lists the tasks that depend on it.
+  filter: (input: TaskChildFilter) =>
+    input.parent !== undefined
+      ? { where: "task_schedule_edges.parent_task_id = ?", params: [input.parent] }
+      : { where: "task_schedule_edges.child_task_id = ?", params: [input.task!] },
   columns: taskDependencyRowColumns,
 })
 
@@ -195,6 +196,10 @@ export const taskPlansSource = defineSource({
     if (input.planID !== undefined) {
       clauses.push("task_schedule_plans.plan_id = ?")
       params.push(input.planID)
+    }
+    if (input.planIDs !== undefined) {
+      clauses.push(`task_schedule_plans.plan_id IN (${placeholders(input.planIDs)})`)
+      params.push(...input.planIDs)
     }
     if (input.state !== undefined) {
       clauses.push("task_schedule_plans.state = ?")

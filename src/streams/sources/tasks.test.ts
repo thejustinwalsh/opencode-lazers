@@ -261,6 +261,34 @@ test("dependency children, plans, and bucket counts read as sources", async () =
   sessions.close()
 })
 
+test("dependents read through the child index, and plans read by a list of ids", async () => {
+  const dependents = openStream(pool, taskDependenciesSource, {
+    filter: { task: ids["task0-0"]! },
+    order: "ord",
+    window: 10,
+  })
+  await dependents.ready()
+  expect(dependents.items.map((row) => row.parent_task_id)).toEqual([ids.successor])
+  dependents.close()
+
+  const all = openStream(pool, taskPlansSource, {
+    filter: { project: PROJECT },
+    order: "schedule",
+    window: 100,
+  })
+  await all.ready()
+  const wanted = all.items.slice(0, 2).map((row) => row.plan_id as string)
+  all.close()
+  const some = openStream(pool, taskPlansSource, {
+    filter: { project: PROJECT, planIDs: wanted },
+    order: "schedule",
+    window: 10,
+  })
+  await some.ready()
+  expect(some.items.map((row) => row.plan_id)).toEqual(wanted)
+  some.close()
+})
+
 test("a window anchored on a task keeps its place when a priority change re-keys it", async () => {
   const stream = openStream(pool, taskScheduleSource, {
     filter: { project: PROJECT, state: "open" },

@@ -204,6 +204,8 @@ export type TaskPlansFilter = {
   scope?: TaskScope
   project: string
   planID?: string
+  /** Several plans by id, as the plans a plan runs after. */
+  planIDs?: readonly string[]
   state?: string
   /** Set by the service in a session view: plans with a task linked to the session. */
   session?: string
