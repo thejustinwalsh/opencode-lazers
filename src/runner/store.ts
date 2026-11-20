@@ -286,6 +286,52 @@ const RENEWAL_COLUMNS = [
   "coverage_fingerprint",
   "started_at",
 ] as const
+const ATTEMPT_COLUMNS = [
+  "id",
+  "plan_id",
+  "task_id",
+  "number",
+  "session_id",
+  "message_id",
+  "workspace",
+  "base_commit",
+  "artifact",
+  "policy",
+  "state",
+  "started_at",
+  "token_count",
+  "tool_count",
+  "retry_count",
+  "cost",
+] as const
+const ADOPTION_COLUMNS = [
+  "id",
+  "plan_id",
+  "task_id",
+  "request_id",
+  "owner",
+  "plan_version",
+  "task_revision",
+  "attempt_id",
+  "node_state",
+  "attempt_state",
+  "old_artifact",
+  "descendant_commit",
+  "target_branch",
+  "landing_head",
+  "reviewed_baseline",
+  "candidate_tree",
+  "input_fingerprint",
+  "environment_identity",
+  "reason",
+  "combined_artifact",
+  "task_workspace",
+  "combined_workspace",
+  "state",
+  "hold_reason",
+  "created_at",
+  "updated_at",
+] as const
 /** A renewal without its continuity document, for callers that decide on state and ids. */
 type ArchitectRenewalHead = Omit<ArchitectRenewalRow, "continuity_json">
 const RENEWAL_HEAD_COLUMNS = RENEWAL_COLUMNS.filter((name) => name !== "continuity_json")
@@ -447,10 +493,10 @@ export type SchedulingNodeFact = NodeRow & {
   scope_payload: string | null
 }
 
-export type SchedulingReservationFact = AttemptRow & {
-  task_body: string
-  scope_payload: string | null
-}
+/** What the scheduling page reads of a live attempt: its identity, task and workspace. */
+export type SchedulingReservationFact = Pick<AttemptRow, "id" | "plan_id" | "task_id" | "workspace">
+/** What the scheduling page reads of an open adoption: which task it holds. */
+export type SchedulingAdoptionFact = Pick<AdoptionRow, "id" | "plan_id" | "task_id">
 
 export type SchedulingFactSnapshot = {
   projectDirectory: string
@@ -467,7 +513,7 @@ export type SchedulingFactSnapshot = {
   reservations: SchedulingReservationFact[]
   totalReservationCount: number
   reservationsComplete: boolean
-  adoptions: AdoptionRow[]
+  adoptions: SchedulingAdoptionFact[]
   totalAdoptionCount: number
   adoptionsComplete: boolean
   taskIntegrations: TaskPrerequisiteIntegrationRow[]
@@ -4287,7 +4333,7 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<AttemptRow, [string]>(
-          `SELECT a.* FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
+          `SELECT ${columnList("a", ATTEMPT_COLUMNS)} FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
            WHERE a.project_directory=? AND a.state IN ('preparing','running','verifying')
            ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number`,
         )
@@ -4408,10 +4454,7 @@ export class RunnerStore {
 
       const reservations = db
         .query<SchedulingReservationFact, [string, string, number]>(
-          `SELECT a.*,t.body AS task_body,
-             (SELECT tr.payload FROM runner_transitions tr
-              WHERE tr.plan_id=a.plan_id AND tr.task_id=a.task_id AND tr.event='SCOPE_AMENDED'
-              ORDER BY tr.id DESC LIMIT 1) AS scope_payload
+          `SELECT a.id,a.plan_id,a.task_id,a.workspace
            FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
            WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
@@ -4428,8 +4471,8 @@ export class RunnerStore {
       const reservationsComplete = reservations.length === totalReservationCount
 
       const adoptions = db
-        .query<AdoptionRow, [string, number]>(
-          `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+        .query<SchedulingAdoptionFact, [string, number]>(
+          `SELECT a.id,a.plan_id,a.task_id FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
            WHERE p.project_directory=? AND a.state IN ('pending','task-checks','combined-checks')
            ORDER BY p.rowid,a.created_at,a.id LIMIT ?`,
         )
@@ -4585,7 +4628,7 @@ export class RunnerStore {
       planID
         ? db
             .query<AdoptionRow, [string, string]>(
-              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+              `SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
                WHERE p.project_directory=? AND a.plan_id=?
                  AND a.state IN ('pending','task-checks','combined-checks')
                ORDER BY a.created_at,a.id`,
@@ -4593,7 +4636,7 @@ export class RunnerStore {
             .all(this.repository.projectDirectory, planID)
         : db
             .query<AdoptionRow, [string]>(
-              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+              `SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
                WHERE p.project_directory=?
                  AND a.state IN ('pending','task-checks','combined-checks')
                ORDER BY a.created_at,a.id`,
