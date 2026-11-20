@@ -9,6 +9,7 @@ import type { HostSession, RunnerHost } from "./host.ts"
 import { availablePlanCommands, planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
+import { runbook } from "../guidance/index.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -888,11 +889,9 @@ export function recoveryBundleText(serialized: string): string {
   })
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
-    "Work through all of it in this one pass. Verify each with lz-inspect-plan, then resolve it with lz-plan-command or lz-dispose-task. Reuse what exists before starting fresh: resume a live worker, verify-retained a committed result whose checks passed, retained-repair unfinished work; submit a new task only when the old approach is wrong, and then cancel and dispose what it supersedes. The recommendation is advice from recorded facts; you decide. Resolved items leave the next bundle.",
+    runbook("recovery-bundle"),
     ...(bundle.items.some((item) => item.kind === "worker-concern")
-      ? [
-          'Items of kind worker-concern are still running: a deterministic rule matched their recorded trajectory, and an Escalated reason means you have not answered and the measure doubled. Read the evidence with lz-inspect-recovery, then choose one: (1) continue or follow up later: lz-disposition-recovery-concern acknowledge, or follow-up with a due time; (2) steer: lz-checkpoint-recovery-worker with what to change; (3) take over and finish it yourself: lz-request-handoff {attemptID, reason} tells the worker you are taking over, waits for its handoff, stops it and returns the handoff, then you finish the task in the same workspace and submit it with lz-plan-command {action: "takeover-submit", planID, taskID, reason}; (4) split or re-plan: submit the new tasks, then cancel this one; (5) cancel: lz-plan-command cancel. The Recommended action on each item is the rule\'s advice from the recorded facts. An out-of-scope write is reviewed before acceptance; amend-scope only if the write was right.',
-        ]
+      ? [runbook("worker-concerns"), runbook("recovery-controls")]
       : []),
     ...(bundle.replaces ? ["This bundle replaces the earlier one; ignore the earlier list."] : []),
     "",

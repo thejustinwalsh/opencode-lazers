@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { runbook } from "../guidance/index.ts"
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -552,8 +553,10 @@ test("the bundle text states what to do and lists each item with its advice", as
   const a = f.reconciler("scheduler")
   const bundle = (await a.bundles.reconcile(a.fence))!
   const text = outcomeText(JSON.stringify(bundle))
-  expect(text).toContain("Work through all of it in this one pass")
+  expect(text).toContain("work through all of it in one pass")
   expect(text).toContain("Recommended:")
+  expect(text).toContain(runbook("recovery-bundle"))
+  expect(text).not.toContain(runbook("worker-concerns"))
   expect(coalescedOutcomeText([{ planID: bundle.planID, payload: JSON.stringify(bundle) }])).toBe(
     text,
   )
@@ -622,7 +625,12 @@ test("the detector records one concern per rule, the bundle carries it once, and
   expect(items[0]!.concern).toMatchObject({ ruleID: "verify-rounds-repeated", version: 1 })
   const bundle = await f.reconciler("scheduler").bundles.reconcile(fence)
   expect(bundle?.items).toHaveLength(1)
-  expect(recoveryBundleText(JSON.stringify(bundle))).toContain("Concern verify-rounds-repeated")
+  const text = recoveryBundleText(JSON.stringify(bundle))
+  expect(text).toContain("Concern verify-rounds-repeated")
+  // A worker-concern item opens the concern and controls runbooks beside the bundle's own.
+  expect(text).toContain(runbook("recovery-bundle"))
+  expect(text).toContain(runbook("worker-concerns"))
+  expect(text).toContain(runbook("recovery-controls"))
   expect(await f.reconciler("scheduler").bundles.reconcile(fence)).toBeUndefined()
 })
 

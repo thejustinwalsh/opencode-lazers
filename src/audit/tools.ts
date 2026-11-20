@@ -7,6 +7,7 @@ import {
   FallowCheckOutput,
   FallowConfigOutput,
   FallowConfigSetOutput,
+  FallowConfigGuideOutput,
   FallowConfigSuggestOutput,
   FallowDryRunOutput,
   FallowDeadCodeOutput,
@@ -47,6 +48,7 @@ import { fallowReview, type FallowReviewResult } from "./review.ts"
 import { resolvePreviewBaseCommit } from "./review-git.ts"
 import { dryRunFallowConfig, suggestFallowConfig } from "./fallow-config-tools.ts"
 import { missingConfigText } from "./fallow-gate.ts"
+import { Delivery, runbook } from "../guidance/index.ts"
 
 const text = z.string().min(1)
 const paging = { offset: z.int().nonnegative().default(0), limit: z.int().positive().default(50) }
@@ -477,12 +479,18 @@ export function registerAuditTools(
     editor.add({
       name: "lz-fallow-config",
       description:
-        "Show, suggest or dry-run this project's Fallow config. Returns the effective config, a proposed one with evidence, or finding counts per class.",
+        "Show, suggest or dry-run this project's Fallow config. Returns the effective config, a proposed one with evidence, or finding counts per class. The first suggest of a session carries the config runbook; mode guide returns a runbook again (topic config, the default, or suppressions).",
       input: z.strictObject({
-        mode: z.enum(["show", "suggest", "dry-run"]).default("show"),
+        mode: z.enum(["show", "suggest", "dry-run", "guide"]).default("show"),
         config: z.record(z.string(), z.unknown()).optional().describe("candidate for dry-run"),
+        topic: z.enum(["config", "suppressions"]).optional().describe("runbook for guide mode"),
       }),
-      output: z.union([FallowConfigOutput, FallowConfigSuggestOutput, FallowDryRunOutput]),
+      output: z.union([
+        FallowConfigOutput,
+        FallowConfigSuggestOutput,
+        FallowDryRunOutput,
+        FallowConfigGuideOutput,
+      ]),
       options: { codemode: true, permission: "lz-fallow-config" },
       execute: (input, call) =>
         ctx.permission
@@ -498,12 +506,23 @@ export function registerAuditTools(
                 try: async () => {
                   const project = repository.projectDirectory
                   const workspace = ctx.location.directory
+                  if (input.mode === "guide") {
+                    const topic = input.topic ?? "config"
+                    const output = {
+                      topic,
+                      guidance: runbook(
+                        topic === "config" ? "fallow-config" : "fallow-suppressions",
+                      ),
+                    }
+                    return { content: JSON.stringify(output), output }
+                  }
                   if (input.mode === "suggest") {
-                    const output = await suggestFallowConfig(
-                      workspace,
-                      project,
-                      defaultFallowAnalyzer,
-                    )
+                    const delivery = new Delivery(call.sessionID)
+                    const output = {
+                      ...(await suggestFallowConfig(workspace, project, defaultFallowAnalyzer)),
+                      guidance: delivery.once("fallow-config"),
+                    }
+                    delivery.commit()
                     return { content: JSON.stringify(output), output }
                   }
                   const found = await withEffectiveConfig(ctx, repository, async (r) => r).catch(
