@@ -1,3 +1,4 @@
+import { installIdentityKeys, installOwnerKeys } from "./identity-keys.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
@@ -1019,6 +1020,7 @@ export class RunnerStore {
       (db) => {
         retireConflictScans(db)
         retireUnusedIndexes(db)
+        installIdentityKeys(db)
         db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -1329,6 +1331,7 @@ export class RunnerStore {
             UPDATE runner_attempts SET project_directory=NEW.project_directory WHERE plan_id=NEW.id;
           END;
       `)
+        installOwnerKeys(db)
         const reminderColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
