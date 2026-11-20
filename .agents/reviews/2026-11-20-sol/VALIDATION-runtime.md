@@ -1,0 +1,37 @@
+# Validation: runtime lane (fix/review-runtime)
+
+Baseline for re-location: main at e23cb2c5. Every `confirmed` row has a test that failed before the fix and passes after.
+
+| Finding | Verdict | Evidence (test) | Fix commit | Notes |
+| --- | --- | --- | --- | --- |
+| 81b1d6ba-1 | confirmed | `src/retention/retention.test.ts` "81b1d6ba-1: a plan that stops being finished between batches loses nothing more" (18 rows deleted vs <=3) | bc421906 | Eligibility, retired set and specs are recomputed inside each batch transaction; dry run and real run still share `classifyPlans`/`selectSpecs`. Each batch now pays one classification; no limit added. |
+| 81b1d6ba-2 | confirmed | `src/retention/service.test.ts` "81b1d6ba-2: ..." (running shell; plan retried during an awaited probe) | 559dce83 | `removalBlocker` runs right before the native call: plan ownership re-read, attempts not in flight, worker session idle (busy, pending input/permission/form, shells, children, unstable observation), tree still clean. Host uncertainty keeps the tree. `WorktreeHost` gained `session` (the native host already has it). |
+| 81b1d6ba-3 | confirmed | `src/retention/service.test.ts` "81b1d6ba-3: ..." | 559dce83 | Slice and run record carry `skipped: {path, reason}`; GUI result text names kept trees. `done` stays true so the GUI loop cannot spin; retry is the next purge (manual, or automatic at its 6h interval), which re-inspects. |
+| 84e85b0f-1 | confirmed | `src/runner/runtime.test.ts` "84e85b0f-1: a notice claimed before a restart..." (timed out before) | 72f62803 | A pre-existing claim moves the row to awaiting-handoff (notice never resent, delivery recorded unknown), so the handoff deadline applies. |
+| 84e85b0f-2 | confirmed | `src/runner/runtime.test.ts` "84e85b0f-2: a finished takeover does not keep its plan out of retention" | 15a0a985 | Reviewed-handoff dispositions need a report (FK), which a takeover request never has, so the suggested "record a disposition" is impossible; and the request is still used by the full-draft path, so not creating it would break that. Retention now treats a `takeover:<id>` request as closed once its takeover is taken-over or cancelled. |
+| 3bb090ac-1 | confirmed | `src/audit/fallow-cache.test.ts` (publish and seed through a symlinked `.gitignore`); reviewer repro also passes | 5a4db22b | `.gitignore` is created with `wx`; an existing entry (file or link) is never written. |
+| 7abe4acd-1 | confirmed | `src/runner/takeover-handoff.test.ts` | bca7b2f8 | The 8000-character cut is deleted; fields and raw are stored whole. |
+| 7abe4acd-2 | confirmed | `src/runner/runtime.test.ts` "7abe4acd-2: a handoff saved while a host read is in flight..." | cf17c6c1 | `move` merges the patch into the payload read inside its transaction; the notice claim and stop deadline use `json_set`, so no write carries a stale copy. |
+| 93bb4046-1 | confirmed | `src/runner/recovery-bundle.test.ts` "93bb4046-1: every item of a long backlog is identified" | 956f0a08 | Items past the 60 detailed ones get one identifying line (reference, state, plan and task id, actions); nothing is left out, each is reachable with `lz-inspect-plan`. |
+| 42c5ff4a-1 | confirmed | `src/audit/fallow-dispositions.test.ts` | 38f0c456 | A waiver counts only when its file matches and its kinds name the finding's rule (or name none, a blanket comment). Line is not compared: findings are from the pre-repair file, so lines have moved. Two same-rule findings in one file with one waiver still both read suppressed; residual, noted. |
+| d93f6681-1 | confirmed, `needs-design` | code trace below | none | See section. |
+
+Extra: the known failing test "a plan queued before the project had a config..." was in the Fallow config text. The held reason omitted the store tool that the refusal's `next` lists; the guidance now ends "Store the reviewed config with lz-fallow-config-set." (commit "fix(audit): the held-plan reason ...").
+
+Tests run: single files and `-t` targets only (`reload-safe` reported `safe to reload: no`, one verification running). `bun run verify` is clean. Under load (load average about 22) several takeover tests in `runtime.test.ts` hit the default 5s timeout both with and without these changes; with `--timeout 60000` all 15 takeover-related tests pass.
+
+## Rejected
+
+None.
+
+## needs-design: d93f6681-1 (ledger source paging)
+
+Trace: `readCaptureRows` (observation-ledger-read.ts) loads every task, reference, plan, node, attempt, transition, adoption and progress row through `queryAll` (spread of `iterate`), then fingerprints the whole capture; `outputFromCapture` slices a page from it; cursors embed `capture.fingerprint` and reject a mismatch. So a first page and every continuation cost O(retained history) in time and memory. The finding is correct, and the previous "ceiling" removal (9edaf451) made correctness complete but not bounded.
+
+A correct fix changes the cursor and snapshot contract, so it needs an owner decision. Options:
+
+1. Keyset paging by task, coherent pin from a cheap change token (per-table max rowid and count, or `PRAGMA data_version` within one read transaction): first page selects the task ids (created_at,id order), then reads only those tasks' references, attempts, transitions and progress with `WHERE task_id IN (...)`. The fingerprint becomes (token, last key). Cost per page is O(page) plus an index seek; staleness detection remains.
+2. Cache the full capture per snapshot across continuations (keyed by fingerprint, LRU). Continuations are cheap, the first page is still O(all) and the worker peak is unchanged. Smallest change; does not meet the finding's first-page concern.
+3. Option 1 for membership and detail, plus a per-task digest table maintained at write time so the fingerprint needs no scan. Fastest reads; adds write-path work and a migration.
+
+Recommendation: option 1, with a test that counts source rows visited for a first page over a large unrelated backlog.
