@@ -65,6 +65,7 @@ export const modelPersonaLabels = {
   architect: "Architect",
   "lazers-implementor": "Implementor",
   auditor: "Auditor",
+  "lazers-planning": "Planning agents",
 } as const
 export const modelTaskKindLabels: Record<ModelDecisionTaskKind, string> = {
   "bug-repair": "Bug repair",

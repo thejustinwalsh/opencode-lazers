@@ -34,7 +34,7 @@ const route = (name: string, variant?: string) => ({
 
 // -- settings schema and layering -----------------------------------------------------------
 
-test("settings carry the three agents beside the personas, with their own layers", () => {
+test("settings carry the four agents beside the personas, with their own layers", () => {
   const service = new ModelSettingsService(open())
   const settings = service.settings()
   expect(settings.personas.map((entry) => entry.persona)).toEqual([
@@ -44,6 +44,7 @@ test("settings carry the three agents beside the personas, with their own layers
     "architect",
     "lazers-implementor",
     "auditor",
+    "lazers-planning",
   ])
   const architectEntry = settings.personas.find((entry) => entry.persona === "architect")!
   expect(architectEntry).toMatchObject({

@@ -21,7 +21,12 @@ describe("readAgentRoutes", () => {
   test("lists every LAZERS agent in display order", async () => {
     const routes = await readAgentRoutes(fakeContext({}))
     expect(routes.map((route) => route.agentID)).toEqual(LAZERS_AGENTS.map((a) => a.agentID))
-    expect(routes.map((route) => route.label)).toEqual(["Architect", "Implementor", "Auditor"])
+    expect(routes.map((route) => route.label)).toEqual([
+      "Architect",
+      "Implementor",
+      "Auditor",
+      "Planning agents",
+    ])
   })
 
   test("native configuration is reported as native with effort", async () => {

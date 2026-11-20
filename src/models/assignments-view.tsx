@@ -17,6 +17,7 @@ const agentIcons = {
   architect: "brain",
   "lazers-implementor": "code",
   auditor: "review",
+  "lazers-planning": "magnifying-glass",
 } as const
 
 /** Writes recorded across the task, project and shared layers of one persona. */
@@ -178,8 +179,8 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
         </div>
         <p class="lazers-models-assignment-hint">
           Used when LAZERS starts or continues an Architect session, and for every Implementor and
-          Auditor run. A model you pick yourself for a session you start still applies to that
-          session.
+          Auditor run; the planning agents share one route and follow the Implementor until it is
+          set. A model you pick yourself for a session you start still applies to that session.
         </p>
       </Show>
     </section>

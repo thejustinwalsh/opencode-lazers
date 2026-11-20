@@ -16,6 +16,9 @@ import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures
 import { workerURL } from "../worker-url.ts"
 import { computeGeneration } from "./generation.ts"
 import sourcePlugin from "../index.ts"
+import { readFileSync } from "node:fs"
+import { PLANNING_AGENT_IDS } from "../planning/contract.ts"
+import { planningAgent, sharedPrompt } from "../planning/index.ts"
 
 const dist = fileURLToPath(new URL("../../dist/", import.meta.url))
 
@@ -171,3 +174,20 @@ test("the bundled fallow worker finds both modules and its thread script, and an
     rmSync(root, { recursive: true, force: true })
   }
 }, 60_000)
+
+test("the server bundle carries the planning agents: names, prompts, shared text once each", () => {
+  const bundle = readFileSync(`${dist}server.js`, "utf8")
+  expect(bundle).toContain("lazers-planning-")
+  const shared = sharedPrompt.trim()
+  for (const id of PLANNING_AGENT_IDS) {
+    const prompt = planningAgent(id).prompt
+    // A distinctive line of the agent's own text (its heading) is in the bundle.
+    const own = prompt.split("\n")[0]!
+    expect(bundle).toContain(own)
+    expect(prompt.split(shared).length - 1).toBe(1)
+  }
+  // The shared text is bundled once; the composed prompt joins it to each agent at load.
+  expect(bundle.split(shared.split("\n")[0]!).length - 1).toBe(1)
+  expect(bundle).toContain("`lazers-planning-${id}`")
+  expect(bundle).toContain("PLANNING_AGENT_IDS")
+})

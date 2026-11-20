@@ -26,7 +26,7 @@ import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import { readAgentRoutes } from "./agent-routes.ts"
-import { isAgentSubject } from "./agent-ids.ts"
+import { LAZERS_AGENTS, isAgentSubject } from "./agent-ids.ts"
 import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 
 /** A background refresh gives up after this long. */
@@ -449,13 +449,17 @@ export function registerModelsServer(
             // transform applied it), and the source word says whose route it is.
             const set = new Map(
               withService((service) =>
-                ["architect", "lazers-implementor", "auditor"].flatMap((id) => {
+                LAZERS_AGENTS.map((agent) => agent.agentID).flatMap((id) => {
                   const route = service.mappings.agentRoute(id)
                   return route ? [[id, route] as const] : []
                 }),
               ),
             )
-            const agents = await readAgentRoutes(ctx, signal, (id) => set.get(id) ?? null)
+            const agents = await readAgentRoutes(
+              ctx,
+              signal,
+              (id: string) => set.get(id as never) ?? null,
+            )
             return ModelSettingsOutputSchema.parse({ ...output, agents })
           },
           catch: failure,
