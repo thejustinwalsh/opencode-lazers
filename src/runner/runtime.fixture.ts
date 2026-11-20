@@ -25,9 +25,9 @@ import { TaskRuntime as ProductionTaskRuntime } from "./runtime.ts"
 import type { FallowReview } from "./fallow-check.ts"
 import type { AuditorReport } from "./auditor-report.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
-import type { FallowPackage } from "../audit/contract.ts"
+import type { FallowPackage, FallowFinding } from "../audit/contract.ts"
 import { setFallowConfig } from "../audit/config.ts"
-import { RunnerStore } from "./store.ts"
+import { RunnerStore, type AttemptRow } from "./store.ts"
 import { PlanInput } from "./schema.ts"
 import type { WorkerPersona } from "./schema.ts"
 import type { OutcomeInboxEntry } from "./inbox.ts"
@@ -35,6 +35,10 @@ import { isOwnedQueuedOutcome } from "./inbox.ts"
 import { verificationActivitiesForDatabase } from "./verification-activities.ts"
 import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
+import { setProjectSetting } from "../projects/settings.ts"
+import { registerProject } from "../project-key.ts"
+import type { CheckReceipt } from "./artifacts.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 
 export const cleanPackage: FallowPackage = {
   verdict: "pass",
@@ -1010,3 +1014,980 @@ export const transitions = (f: ReturnType<typeof fixture>, planID: string, event
       )
       .all(planID, event),
   )
+
+export function setReviewInputObservation(
+  f: ReturnType<typeof fixture>,
+  attempt: AttemptRow,
+  reviewInputID: string,
+) {
+  const ownedAttempt = attempt
+  const worker = f.sessions.get(ownedAttempt.session_id)!
+  const reviewRequestID = `review-${ownedAttempt.task_id}-${ownedAttempt.number}`
+  worker.messages.push({
+    id: reviewInputID,
+    type: "synthetic",
+    text: "Continue the already-assigned task after review.",
+    metadata: {
+      lazersReview: {
+        taskID: ownedAttempt.task_id,
+        attemptID: ownedAttempt.id,
+        requestID: reviewRequestID,
+      },
+    },
+  })
+  worker.busy = false
+  worker.pendingInput = false
+  worker.pendingPermissions = 0
+  worker.pendingForms = 0
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: reviewInputID, state: "completed" }
+  worker.model = JSON.parse(ownedAttempt.policy).model
+
+  return { worker, reviewRequestID }
+}
+
+export async function heldReviewInputFixture() {
+  const f = fixture({ delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  const reviewInputID = "msg_received_review_steer"
+  const { worker, reviewRequestID } = setReviewInputObservation(f, attempt, reviewInputID)
+  await f.runtime.tick()
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("blocked")
+  expect(f.store.plan(f.receipt.planID)?.reason).toContain("current assigned input")
+  expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("running")
+  return { f, attempt, worker, reviewInputID, reviewRequestID }
+}
+
+export function reviewInputCommand(
+  f: ReturnType<typeof fixture>,
+  attempt: AttemptRow,
+  reviewInputID: string,
+  requestID = "reconcile-review-steer",
+) {
+  return {
+    requestID,
+    planID: f.receipt.planID,
+    action: "reconcile" as const,
+    taskID: attempt.task_id,
+    attemptID: attempt.id,
+    reviewInputID,
+  }
+}
+
+export async function holdInterruptedAttempt(f: ReturnType<typeof fixture>) {
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: attempt.message_id, state: "interrupted" }
+
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  expect(f.store.plan(planID)?.reason).toContain("Worker execution was interrupted")
+  return { planID, attempt: f.store.attempts(planID)[0]!, worker }
+}
+
+export async function holdFailedAttempt(
+  f: ReturnType<typeof fixture>,
+  inputID?: string | null,
+  outcome: HostSession["outcome"] = "failed",
+) {
+  await runPlan(f)
+  await f.runtime.tick()
+  const planID = f.receipt.planID
+  const attempt = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  worker.busy = false
+  worker.outcome = outcome
+  worker.turn = {
+    inputID: inputID === undefined ? attempt.message_id : inputID,
+    state: "completed",
+  }
+
+  await f.runtime.tick()
+  expect(f.store.plan(planID)?.state).toBe("blocked")
+  return { planID, attempt: f.store.attempts(planID)[0]!, worker }
+}
+
+export async function acceptedAttemptFixture(options: { syntheticTerminalInput?: boolean } = {}) {
+  const f = fixture({
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt", scope: ["a.txt", "repair-notes.txt"] }],
+  })
+  const planID = f.receipt.planID
+  const task = f.tasks[0]!
+  await runPlan(f)
+  await f.runtime.tick()
+  const original = f.store.attempts(planID)[0]!
+  const worker = f.sessions.get(original.session_id)!
+  if (options.syntheticTerminalInput) {
+    const claim = f.runtime.progress.claimReminder(
+      original.session_id,
+      "Provide a concise handoff after the owned background shell completes.",
+      SessionMessage.ID.create(),
+    )
+    if (!claim) throw new Error("Could not capture the owned synthetic worker input")
+    expect(f.runtime.progress.finishReminder(claim, "admitted")).toBe(true)
+    worker.messages.push({
+      id: claim.messageID,
+      type: "synthetic",
+      text: "Provide a concise handoff after the owned background shell completes.",
+      metadata: claim.ownership,
+    })
+    worker.turn = { inputID: claim.messageID, state: "completed" }
+    worker.outcome = "succeeded"
+  }
+  await drive(f.runtime, 10)
+  expect(f.store.plan(planID)?.state).toBe("accepted")
+  const artifact = f.store.nodes(planID)[0]!.artifact!
+  Object.assign(worker, {
+    busy: false,
+    pendingInput: false,
+    pendingPermissions: 0,
+    pendingForms: 0,
+    observationUnstable: false,
+  })
+  return { f, planID, task, original, artifact, worker }
+}
+
+export async function acceptedRetainedRepairFixture() {
+  const {
+    f,
+    planID,
+    task,
+    original,
+    artifact,
+    worker: acceptedWorker,
+  } = await acceptedAttemptFixture()
+  await f.runtime.command(
+    {
+      requestID: "retained-repair-for-continuation",
+      planID,
+      action: "retained-repair",
+      taskID: task.id,
+      attemptID: original.id,
+      artifact,
+      reason: "The accepted parser misses the recovery edge case.",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  acceptedWorker.busy = false
+  acceptedWorker.pendingInput = false
+  acceptedWorker.pendingPermissions = 0
+  acceptedWorker.pendingForms = 0
+  acceptedWorker.observationUnstable = false
+  const attempt = f.store.attempts(planID)[0]!
+  const repair = f.store.latestRetainedRepair<{
+    operationID: string
+    messageID: string
+    owner: string
+  }>(planID, task.id)!
+  return {
+    f,
+    planID,
+    task,
+    original,
+    attempt,
+    artifact,
+    repair,
+    worker: f.sessions.get(attempt.session_id)!,
+  }
+}
+
+export async function reproduceLegacyRetainedRepairFenceFailure() {
+  const state = await acceptedRetainedRepairFixture()
+  const { f, planID, task, attempt, repair, worker } = state
+  worker.tokens = 777
+  worker.tools = 23
+  worker.cost = 2.5
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: repair.messageID, state: "interrupted" }
+
+  await f.runtime.tick()
+  await f.runtime.stop()
+  const reopened = reopenRuntime(f)
+  const resume = {
+    requestID: "reproduce-retained-repair-fence-failure",
+    planID,
+    action: "resume" as const,
+    taskID: task.id,
+    attemptID: attempt.id,
+    reason: "Reproduce the historical authorized interrupted continuation.",
+  }
+  await reopened.runtime.command(resume, "owner")
+  const failedReservation = reopened.store.attempts(planID)[0]!
+  const firstResume = reopened.store
+    .activity(planID, task.id)
+    .filter((entry) => entry.event === "ATTEMPT_RESUMED")
+    .at(-1)!
+  const legacyPayload = JSON.parse(firstResume.payload) as Record<string, unknown>
+  delete legacyPayload.retainedRepairContinuation
+  reopened.store.atomic((db) =>
+    db
+      .query("UPDATE runner_transitions SET payload=? WHERE id=?")
+      .run(JSON.stringify(legacyPayload), firstResume.id),
+  )
+
+  const legacyRuntime = Reflect.get(reopened.runtime, "repairRecords") as {
+    retainedRepairForAttempt: (candidate: AttemptRow) => unknown
+  }
+  const currentLookup = legacyRuntime.retainedRepairForAttempt
+  legacyRuntime.retainedRepairForAttempt = function (candidate) {
+    const found = currentLookup.call(legacyRuntime, candidate) as
+      { repairMessageID?: unknown } | undefined
+    return found?.repairMessageID === candidate.message_id ? found : undefined
+  }
+  try {
+    await reopened.runtime.tick()
+    expect(reopened.store.plan(planID)?.reason).toBe(
+      "Retained repair is missing a valid owner/control authorization fence",
+    )
+    await reopened.runtime.tick()
+  } finally {
+    legacyRuntime.retainedRepairForAttempt = currentLookup
+  }
+  expect(reopened.store.attempts(planID)).toHaveLength(1)
+  expect(reopened.store.attempts(planID)[0]).toMatchObject({
+    id: attempt.id,
+    state: "cancelled",
+    session_id: attempt.session_id,
+    workspace: attempt.workspace,
+    base_commit: attempt.base_commit,
+    policy: attempt.policy,
+    message_id: failedReservation.message_id,
+    token_count: 777,
+    tool_count: 23,
+    cost: 2.5,
+  })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(2)
+  return { ...state, reopened, failedReservation }
+}
+
+export type LegacyFenceState = Awaited<ReturnType<typeof reproduceLegacyRetainedRepairFenceFailure>>
+
+export function recoveryCommand(state: LegacyFenceState, requestID: string) {
+  return {
+    requestID,
+    planID: state.planID,
+    action: "resume" as const,
+    taskID: state.task.id,
+    attemptID: state.attempt.id,
+    reason: "Recover only the original retained repair after its proven fence failure.",
+  }
+}
+
+export function recoveryAdmissionSnapshot(state: LegacyFenceState) {
+  const plan = state.reopened.store.plan(state.planID)!
+  return {
+    version: plan.version,
+    state: plan.state,
+    owner: plan.owner,
+    attempt: structuredClone(
+      state.reopened.store
+        .attempts(state.planID)
+        .find((candidate) => candidate.id === state.attempt.id)!,
+    ),
+    resumes: state.reopened.store
+      .activity(state.planID, state.task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED").length,
+    promptEffects: state.reopened.store
+      .effects(state.planID)
+      .filter((effect) => effect.attempt_id === state.attempt.id && effect.kind === "prompt")
+      .length,
+    prompts: state.f.events.filter((event) => event.startsWith("prompt:")).length,
+    creates: state.f.events.filter((event) => event.startsWith("create:")).length,
+  }
+}
+
+export function expectNoRecoveryAdmission(
+  state: LegacyFenceState,
+  before: ReturnType<typeof recoveryAdmissionSnapshot>,
+) {
+  const plan = state.reopened.store.plan(state.planID)!
+  expect({ version: plan.version, state: plan.state, owner: plan.owner }).toEqual({
+    version: before.version,
+    state: before.state,
+    owner: before.owner,
+  })
+  expect(
+    state.reopened.store
+      .attempts(state.planID)
+      .find((candidate) => candidate.id === state.attempt.id),
+  ).toEqual(before.attempt)
+  expect(
+    state.reopened.store
+      .activity(state.planID, state.task.id)
+      .filter((entry) => entry.event === "ATTEMPT_RESUMED"),
+  ).toHaveLength(before.resumes)
+  expect(
+    state.reopened.store
+      .effects(state.planID)
+      .filter((effect) => effect.attempt_id === state.attempt.id && effect.kind === "prompt"),
+  ).toHaveLength(before.promptEffects)
+  expect(state.f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(before.prompts)
+  expect(state.f.events.filter((event) => event.startsWith("create:"))).toHaveLength(before.creates)
+}
+
+export async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: string) {
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  const originalWorktrees = state.f.host.worktrees
+  state.f.host.worktrees = async () => {
+    entered.resolve()
+    await release.promise
+    return originalWorktrees()
+  }
+  const command = recoveryCommand(state, requestID)
+  const pending = state.reopened.runtime.command(command, "owner")
+  await entered.promise
+  return {
+    command,
+    pending,
+    release: () => {
+      release.resolve()
+      state.f.host.worktrees = originalWorktrees
+    },
+  }
+}
+
+export async function prepareInterruptedCombinedCheck(
+  options: {
+    combinedCheckCommand?: string
+    additionalCombinedCheckCommand?: string
+    verificationTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    reopenTimeoutDefaults?: { inactivityTimeoutMs: number; hardTimeoutMs: number }
+    interruptedCheckID?: string
+    legacyCompletedCheckID?: string
+    wakeScheduler?: () => void
+  } = {},
+) {
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    combinedCheckCommand:
+      options.combinedCheckCommand ??
+      "printf started > .lazers-combined-started; while [ ! -f .lazers-combined-release ]; do sleep 0.02; done; exit 0",
+    ...(options.additionalCombinedCheckCommand
+      ? { additionalCombinedCheckCommand: options.additionalCombinedCheckCommand }
+      : {}),
+    ...(options.verificationTimeoutDefaults
+      ? {
+          useProjectVerificationDefaults: true,
+          verificationTimeoutDefaults: options.verificationTimeoutDefaults,
+        }
+      : {}),
+  })
+  await runPlan(f)
+  let interruptedEffect: ReturnType<RunnerStore["effects"]>[number] | undefined
+  for (let index = 0; index < 30; index++) {
+    await f.runtime.tick()
+    const effect = f.store
+      .effects(f.receipt.planID)
+      .find(
+        (candidate) =>
+          candidate.kind === `graph-verify:${options.interruptedCheckID ?? "combined"}`,
+      )
+    const activity = effect
+      ? verificationActivitiesForDatabase(f.repository.path).find(
+          (candidate) => candidate.metadata.effectID === effect.id,
+        )
+      : undefined
+    if (effect && activity?.state === "running") {
+      interruptedEffect = effect
+      break
+    }
+    const activeChecks = verificationActivitiesForDatabase(f.repository.path).filter(
+      (candidate) =>
+        candidate.metadata.planID === f.receipt.planID && candidate.state === "running",
+    )
+    await Promise.all(activeChecks.map((candidate) => candidate.settled))
+  }
+  if (!interruptedEffect) throw new Error("Combined verification did not start")
+  const payload = JSON.parse(interruptedEffect.payload) as {
+    workspace: string
+    receiptPath: string
+  }
+  await waitForPath(join(payload.workspace, ".lazers-combined-started"))
+  let legacyReceipt: string | null = null
+  if (options.legacyCompletedCheckID) {
+    const legacyEffect = f.store
+      .effects(f.receipt.planID)
+      .find((candidate) => candidate.kind === `graph-verify:${options.legacyCompletedCheckID}`)
+    if (!legacyEffect?.receipt) throw new Error("Completed combined check receipt is missing")
+    const legacyPayload = JSON.parse(legacyEffect.payload) as Record<string, unknown>
+    delete legacyPayload.authoredCheck
+    delete legacyPayload.verificationDeadline
+    f.store.atomic((db) =>
+      db
+        .query("UPDATE runner_effects SET payload=? WHERE id=?")
+        .run(JSON.stringify(legacyPayload), legacyEffect.id),
+    )
+    legacyReceipt = legacyEffect.receipt
+  }
+  await f.runtime.stop()
+  rmSync(join(payload.workspace, ".lazers-combined-started"), { force: true })
+  rmSync(join(payload.workspace, ".lazers-combined-release"), { force: true })
+
+  const reopened = reopenRuntime(f, options.reopenTimeoutDefaults, options.wakeScheduler)
+  await drive(reopened.runtime, 4)
+  const interrupted = reopened.store
+    .effects(f.receipt.planID)
+    .find((candidate) => candidate.id === interruptedEffect.id)!
+  if (interrupted.state !== "uncertain")
+    throw new Error("Combined interruption was not durably reconciled as uncertain")
+  return {
+    f,
+    reopened,
+    interrupted,
+    receiptPath: payload.receiptPath,
+    planID: f.receipt.planID,
+    legacyReceipt,
+  }
+}
+
+export async function prepareAfterPlanDependency(
+  f: ReturnType<typeof fixture>,
+  requestID: string,
+  priority = 10,
+  holdCleanup = false,
+) {
+  const parentID = f.receipt.planID
+  const childTask = f.createTask("b", "b.txt")
+  const child = f.store.submit(
+    {
+      ...f.inputFor([childTask], { requestID }),
+      afterPlans: [parentID],
+      priority,
+    },
+    "owner",
+  )
+  await runPlan(f, child.planID, `${requestID}-run`)
+  const accepted = await acceptPlan(f, parentID)
+  includeArtifact(f, accepted.plan.artifact!)
+  if (holdCleanup)
+    writeFileSync(join(accepted.attempt.workspace, "keep-owned-worktree.txt"), "still owned")
+  await recordPlanIntegration(f, parentID)
+  return { parentID, child, accepted }
+}
+
+export async function cancelUnstartedPlan(
+  f: ReturnType<typeof fixture>,
+  planID = f.receipt.planID,
+) {
+  await runPlan(f, planID, `run-${planID}`)
+  const plan = f.store.plan(planID)!
+  await f.runtime.command(
+    {
+      requestID: `cancel-${planID}`,
+      planID,
+      action: "cancel",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+  return f.store.plan(planID)!
+}
+
+export async function failSecondSharedTask(f: ReturnType<typeof fixture>) {
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await driveWithTaskSourceLandings(f)
+  const attempts = f.store.attempts(f.receipt.planID)
+  const predecessor = attempts.find((attempt) => attempt.task_id === f.tasks[0]!.id)!
+  const failed = attempts.find((attempt) => attempt.task_id === f.tasks[1]!.id)!
+  if (!predecessor.artifact || !failed.artifact)
+    throw new Error("Expected predecessor and failed worker artifacts")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(predecessor.state).toBe("accepted")
+  expect(failed.state).toBe("failed")
+  expect(failed.base_commit).toBe(predecessor.artifact)
+  expect(failed.artifact).toBeTruthy()
+  return { predecessor, failed }
+}
+
+export function attemptCheck(
+  f: ReturnType<typeof fixture>,
+  taskID: string,
+  attemptID: string,
+): CheckReceipt {
+  const effect = f.store
+    .effects(f.receipt.planID)
+    .find(
+      (candidate) =>
+        candidate.task_id === taskID &&
+        candidate.attempt_id === attemptID &&
+        candidate.kind === "verify:content",
+    )
+  if (!effect?.receipt) throw new Error(`Missing verification receipt for ${attemptID}`)
+  expect(effect.state).toBe("completed")
+  return (JSON.parse(effect.receipt) as { check: CheckReceipt }).check
+}
+
+export const skillBodyCanary = "SECRET_SKILL_BODY_CANARY"
+
+export function seedLegacySkillBody(
+  f: ReturnType<typeof fixture>,
+  attempt: ReturnType<RunnerStore["attempts"]>[number],
+) {
+  const policy = JSON.parse(attempt.policy) as Record<string, unknown>
+  const context = JSON.parse(policy.context as string) as Record<string, unknown>
+  const body = [{ id: "legacy-skill", path: "/old/SKILL.md", content: skillBodyCanary }]
+  policy.skills = body
+  context.skills = body
+  policy.context = JSON.stringify(context)
+  delete policy.packet
+  const serialized = JSON.stringify(policy)
+  f.store.atomic((db) =>
+    db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(serialized, attempt.id),
+  )
+  attempt.policy = serialized
+  return serialized
+}
+
+export function expectNoSkillBody(policyText: string) {
+  expect(policyText).not.toContain(skillBodyCanary)
+  const policy = JSON.parse(policyText) as Record<string, unknown>
+  expect(policy.skills).toBeUndefined()
+  expect(JSON.parse(policy.context as string)).not.toHaveProperty("skills")
+}
+
+/** A shell-check effect: the runtime's own Fallow review is journaled beside these. */
+export const authoredVerifyEffect = (effect: { kind: string }) =>
+  effect.kind.startsWith("verify:") && effect.kind !== "verify:fallow-audit"
+
+export function fallowFinding(
+  file: string,
+  line: number,
+  extra: Partial<FallowFinding> = {},
+): FallowFinding {
+  return {
+    id: `duplication:code-duplication:${file}`,
+    rule: "code-duplication",
+    class: "duplication",
+    severity: "warn",
+    attribution: "introduced",
+    file,
+    line,
+    endLine: line + 8,
+    message: "cloned block",
+    suggestion: "Reuse the existing helper.",
+    ...extra,
+  }
+}
+
+export function reviewOf(...findings: FallowFinding[]): FallowReviewResult {
+  const live = findings.filter((f) => f.attribution !== "inherited")
+  const errors = live.filter((f) => f.severity === "error").length
+  return {
+    status: live.length ? "findings" : "clean",
+    package: {
+      ...cleanPackage,
+      verdict: errors ? "fail" : live.length ? "warn" : "pass",
+      findings,
+      summary: { errors, warnings: live.length - errors, inherited: findings.length - live.length },
+    },
+  }
+}
+
+/** Scripted reviews: each call takes the next result and the last one repeats. */
+export function scriptedReview(...results: FallowReviewResult[]) {
+  const calls: number[] = []
+  const bases: string[] = []
+  const run: FallowReview = async (input) => {
+    calls.push(Date.now())
+    bases.push(input.baseCommit)
+    return results[Math.min(calls.length, results.length) - 1]!
+  }
+  return { run, calls, bases }
+}
+
+export const introducedResult = reviewOf
+
+export function taskAcceptedOutcomes(f: ReturnType<typeof fixture>) {
+  return (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload) as Record<string, unknown>)
+    .filter((payload) => payload.status === "task-accepted")
+}
+
+export const singleTask = [{ name: "a", path: "a.txt" }]
+
+export function planAcceptedOutcomes(f: ReturnType<typeof fixture>) {
+  return (f.store.detail(f.receipt.planID).delivery as { payload: string }[])
+    .map((row) => JSON.parse(row.payload) as Record<string, unknown>)
+    .filter((payload) => payload.status === "accepted")
+}
+
+export function planLevelRecords(f: ReturnType<typeof fixture>, event: string) {
+  return f.store.read((db) =>
+    db
+      .query<{ payload: string }, [string, string]>(
+        "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event=?",
+      )
+      .all(f.receipt.planID, event),
+  )
+}
+
+export const planFallowEffects = (f: ReturnType<typeof fixture>) =>
+  f.store.effects(f.receipt.planID).filter((effect) => effect.kind === "graph-verify:fallow-audit")
+
+export async function acceptedMergedFixture(options: { clock?: { offset: number } } = {}) {
+  const clock = options.clock
+  const f = fixture({
+    commit: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    ...(clock ? { now: () => Date.now() + clock.offset } : {}),
+  })
+  await runPlan(f)
+  await drive(f.runtime)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("accepted")
+  const attempt = f.store.attempts(plan.id)[0]!
+  git(f.root, ["merge", "--ff-only", plan.artifact!])
+  const integrate = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID: plan.id,
+        action: "integrated",
+        artifact: plan.artifact!,
+        targetBranch: "main",
+        reason: "Merged reviewed artifact",
+      },
+      "owner",
+    )
+  return { f, plan, attempt, worker: f.sessions.get(attempt.session_id)!, integrate }
+}
+
+export type HeldReviewInput = Awaited<ReturnType<typeof heldReviewInputFixture>>
+
+export const invalidReviewInputs: {
+  name: string
+  mutate: (context: HeldReviewInput) => void
+}[] = [
+  {
+    name: "wrong task metadata",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata!.lazersReview = {
+        taskID: crypto.randomUUID(),
+        attemptID: "wrong-attempt",
+        requestID: "review-request",
+      }
+    },
+  },
+  {
+    name: "wrong attempt metadata",
+    mutate: ({ attempt, worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata!.lazersReview = {
+        taskID: attempt.task_id,
+        attemptID: crypto.randomUUID(),
+        requestID: "review-request",
+      }
+    },
+  },
+  {
+    name: "missing review metadata",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages.find((message) => message.id === reviewInputID)!.metadata = { forged: true }
+    },
+  },
+  {
+    name: "absent native message",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.messages = worker.messages.filter((message) => message.id !== reviewInputID)
+    },
+  },
+  {
+    name: "unrelated latest input",
+    mutate: ({ worker }) => {
+      worker.turn = { inputID: "msg_unrelated_latest_input", state: "completed" }
+    },
+  },
+  {
+    name: "wrong session",
+    mutate: ({ worker }) => {
+      worker.id = "ses_foreign_worker"
+    },
+  },
+  {
+    name: "wrong project",
+    mutate: ({ worker }) => {
+      worker.projectID = "foreign-project"
+    },
+  },
+  {
+    name: "wrong workspace",
+    mutate: ({ worker }) => {
+      worker.directory = "/foreign/workspace"
+    },
+  },
+  {
+    name: "wrong attempt session metadata",
+    mutate: ({ worker }) => {
+      worker.metadata = { lazersAttemptID: crypto.randomUUID() }
+    },
+  },
+  {
+    name: "wrong model route",
+    mutate: ({ worker }) => {
+      worker.model = { providerID: "other-provider", id: "other-model" }
+    },
+  },
+  {
+    name: "running shell",
+    mutate: ({ worker }) => {
+      worker.runningShells = 1
+    },
+  },
+  {
+    name: "active child session",
+    mutate: ({ worker }) => {
+      worker.activeChildren = 1
+    },
+  },
+  {
+    name: "active foreground",
+    mutate: ({ worker }) => {
+      worker.busy = true
+    },
+  },
+  {
+    name: "pending native input",
+    mutate: ({ worker }) => {
+      worker.pendingInput = true
+    },
+  },
+  {
+    name: "pending turn",
+    mutate: ({ worker, reviewInputID }) => {
+      worker.turn = { inputID: reviewInputID, state: "pending" }
+    },
+  },
+  {
+    name: "pending approval",
+    mutate: ({ worker }) => {
+      worker.pendingPermissions = 1
+    },
+  },
+  {
+    name: "pending form",
+    mutate: ({ worker }) => {
+      worker.pendingForms = 1
+    },
+  },
+  {
+    name: "unstable observation",
+    mutate: ({ worker }) => {
+      worker.observationUnstable = true
+    },
+  },
+]
+
+export async function prepareIdleArchitect(
+  f: ReturnType<typeof fixture>,
+  now: number,
+  idleFor: number,
+) {
+  await runPlan(f)
+  await drive(f.runtime, 2)
+  const owner = f.sessions.get("owner")!
+  owner.busy = false
+  owner.idleAt = now - idleFor
+  // Renewal is judged only for plans awaiting an Architect; its tokens are unknown, so a cold cache is large.
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Awaiting Architect judgement' WHERE id=?",
+      )
+      .run(f.receipt.planID),
+  )
+  await f.runtime.recordArchitectContinuity(owner.id, {
+    decisions: ["Keep the existing approved implementation direction."],
+    unresolvedQuestions: ["Confirm whether the follow-up needs additional scope."],
+  })
+  return f.store.attempts(f.receipt.planID)[0]!
+}
+
+export function withoutDraft<T extends { draft?: unknown }>(input: T): Omit<T, "draft"> {
+  const { draft: _draft, ...rest } = input
+  return rest
+}
+
+export function countArchitectContact(f: ReturnType<typeof fixture>) {
+  const created: string[] = []
+  const create = f.host.createArchitect!
+  f.host.createArchitect = async (input) => {
+    created.push(input.id)
+    return create(input)
+  }
+  return { created }
+}
+
+/** Plans that share the fixture Architect, each with an outcome of its own to report. */
+export function architectBacklog(f: ReturnType<typeof fixture>, size: number) {
+  const ids = Array.from({ length: size }, (_, index) => `backlog-${index}`)
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'blocked',body,model,'held',artifact
+      FROM runner_plans WHERE id=?`)
+    for (const id of ids) clone.run(id, f.receipt.planID)
+  })
+  const emit = (planID: string, payload: Record<string, unknown>) =>
+    (
+      Reflect.get(f.runtime, "journal") as {
+        outcome(id: string, payload: unknown, resume: boolean): void
+      }
+    ).outcome(planID, payload, true)
+  const deliver = async () => {
+    const fence = f.store.claim(f.runtime.owner)!
+    return (
+      f.runtime as unknown as { outcomeDelivery: { deliver(fence: number): Promise<boolean> } }
+    ).outcomeDelivery.deliver(fence)
+  }
+  return { ids, emit, deliver }
+}
+
+export function handOverPlan(f: ReturnType<typeof fixture>, planID: string) {
+  f.sessions.set("owner-2", { ...f.sessions.get("owner")!, id: "owner-2", messages: [] })
+  f.store.updatePlanOwner(planID, "owner", "owner-2")
+}
+
+export async function cancelRunningPlan(f: ReturnType<typeof fixture>, requestID: string) {
+  await f.runtime.command(
+    {
+      requestID,
+      planID: f.receipt.planID,
+      action: "cancel",
+    },
+    "owner",
+  )
+}
+
+export async function idleCancelFixture(clock: { now: number }) {
+  const f = fixture({
+    shared: false,
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    now: () => clock.now,
+    workerNoProgressWindowMs: 0,
+    cancelIdleWaitMs: 30_000,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.receipt.planID)[0]!
+  f.completeWorker(attempt.session_id, "interrupted")
+  return { f, attempt, session: f.sessions.get(attempt.session_id)! }
+}
+
+export const known = (value: string) => ({ status: "known" as const, value })
+
+export function workerHandoffDraft() {
+  return {
+    target: {
+      outcome: known("a.txt holds the task name"),
+      originalUserIntent: { status: "unknown" as const },
+      workerInterpretation: known("write a.txt"),
+      contractReferences: [],
+    },
+    completedWork: [{ summary: "Committed a first version of a.txt", evidence: [] }],
+    partialWork: [],
+    workspaceState: known("a.txt committed with the wrong content"),
+    approaches: [{ approach: "wrote a.txt", result: known("content check fails"), evidence: [] }],
+    failure: {
+      status: "observed" as const,
+      behavior: known("the content check fails"),
+      cause: "implementation" as const,
+      evidence: [],
+    },
+    assumptions: [],
+    evidence: [],
+    preservedObligations: [],
+    remainingWork: known("write the right content"),
+    remainingDecisions: { status: "not-applicable" as const },
+    reportedOwnership: {
+      writerActivity: known("stopping"),
+      backgroundActivity: known("none"),
+      unresolvedNativeEffects: known("none"),
+      reportedQuiescence: "idle" as const,
+    },
+  }
+}
+
+export const fastTakeover = { handoffWindowMs: 200, stopWaitMs: 50, pollMs: 5 }
+
+export async function takeoverFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const f = fixture({
+    delayed: true,
+    wrongFirstA: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    takeover: fastTakeover,
+    ...options,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const worker = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.sessions.get(worker.session_id)!.busy).toBe(true)
+  const steered: string[] = []
+  return { f, worker, steered }
+}
+
+export function commitWorkInProgress(worker: AttemptRow) {
+  git(worker.workspace, ["add", "-A"])
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "WIP before takeover",
+  ])
+}
+
+/** A worker that still uses the full reviewed handoff draft is read as the worker's account. */
+export function workerWritesHandoff(
+  f: ReturnType<typeof fixture>,
+  worker: AttemptRow,
+  requestID: string,
+) {
+  commitWorkInProgress(worker)
+  new HandoffStore(f.repository).saveDraft(
+    { requestID, draftID: crypto.randomUUID(), draft: workerHandoffDraft() },
+    {
+      sessionID: worker.session_id,
+      agent: String(JSON.parse(worker.policy).agent),
+      role: "worker",
+    },
+  )
+}
+
+export async function submitTakeover(
+  f: ReturnType<typeof fixture>,
+  taskID: string,
+  requestID: string,
+  sessionID = "owner",
+) {
+  return f.runtime.command(
+    {
+      requestID,
+      planID: f.receipt.planID,
+      action: "takeover-submit",
+      taskID,
+      reason: "Architect result",
+    },
+    sessionID,
+  )
+}
+
+export async function registeredKey(f: ReturnType<typeof fixture>) {
+  return (await registerProject(f.repository, { directory: f.root, opencodeProjectID: "project" }))
+    .key
+}
+
+export async function capacityLimit(f: ReturnType<typeof fixture>, limit: number | undefined) {
+  setProjectSetting(f.repository, await f.runtime.delegatedAgentCapacity.key(), "limit", limit)
+}
