@@ -588,3 +588,11 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - A member whose signature wraps as `): Promise<` at two spaces continues; the moved-member check now treats a closer line ending in `{`, `<` or `(` as continuing.
 - S12 became two modules: `StartupSettlement` (with `prepareStartupSettlement` and `resumeStartupRecovery`) and `ContinuationPreparation`. `adopted-descendant.test.ts` reaches the fingerprint methods through `Reflect.get(f.runtime, "adoptionPreparation")`.
 - Fallow baseline after the profile work (Tasks 2.3 and 2.4 add `prepareProfileFix`): 50 complexity findings and 15 clone groups across the split modules; every step since kept both numbers.
+
+## 14. Corrections found while doing S15, S18, S19a to S19e and S20
+
+- Order: the four handler modules (S19b to S19e) came before `CommandPipeline` (S19a). The pipeline's dispatch table needs the handlers' signatures, and `CommandsControl["commandRun"]` and the like are indexed types, where hand-written ones would have been about thirty signatures.
+- `requireBaseReachable` (from R02) moved into `CommandsRecovery`, its only users; `commandWakesScheduler` moved into `command-pipeline.ts`. `preflightProofs` moved with the pipeline.
+- `CommandsControl` and `PlanStep` take `requestRetick` (the allowed rewrite of `this.tickRequested = true`; `PlanStep` has three such writes in `step`). `QueueReview` takes `outcomeDelivery` as a value, so it is constructed after `OutcomeDelivery`; `PlanStep` is constructed after `AdoptionExecution` and `WorktreeCleanup` for the same reason.
+- `commands-control.ts` and `retained-verification-preparation.ts` first formed a 13th clone group because their four-getter blocks matched; the getter order of a new module must differ from every module with the same getters.
+- `runtime.ts` is 1,879 lines after S20 (the plan targets 1,000 or fewer): `runTick`, `reconcilePlan`, the public API and 70 or so coordinator forwarders remain. Dropping the forwarders (S21) is what remains.

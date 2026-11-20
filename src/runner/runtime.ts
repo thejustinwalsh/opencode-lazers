@@ -1,28 +1,9 @@
-import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
-import {
-  changeDispatchPause,
-  changeSchedule,
-  recordIntegration,
-  terminalPlanStates as terminal,
-} from "./plan-control.ts"
-import { GitObservations, ObservationRequired } from "./git-observations.ts"
+import { terminalPlanStates as terminal } from "./plan-control.ts"
+
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
-import {
-  messageID,
-  actualCheckResultFromEffect,
-  checkSettlementProblem,
-  errorText,
-  isRerunnableEffect,
-} from "./runtime-helpers.ts"
-import type {
-  CommandContext,
-  RetainedRepairRecoverySeed,
-  RetainedRepairSeed,
-  RetainedVerificationSeed,
-  RunnerTransitionRecord,
-  StartupRecoveryAuthorization,
-} from "./runtime-helpers.ts"
+import { checkSettlementProblem, errorText } from "./runtime-helpers.ts"
+import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -40,6 +21,14 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { PlanStep } from "./plan-step.ts"
+import { CommandPipeline } from "./command-pipeline.ts"
+import { CommandsRecovery } from "./commands-recovery.ts"
+import { CommandsRetained } from "./commands-retained.ts"
+import { CommandsScope } from "./commands-scope.ts"
+import { CommandsControl } from "./commands-control.ts"
+import { QueueReview } from "./queue-review.ts"
+import { WorkerPreparation } from "./worker-preparation.ts"
 import { ContinuationPreparation } from "./continuation-preparation.ts"
 import { StartupSettlement } from "./startup-settlement.ts"
 import { AdoptionPreparation } from "./adoption-preparation.ts"
@@ -50,24 +39,19 @@ import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { RecoveryBundles } from "./recovery-bundle.ts"
-import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
+import { RecoveryDetector } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
-import { sameModelSnapshot } from "./model-route.ts"
 
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
-import { workerAgent } from "./worker-agent.ts"
+
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
-import { existsSync, realpathSync } from "node:fs"
+
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 
 import { verificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
-
-import { checkResourcesSettled, scopePatternsConflict } from "./artifacts.ts"
-
-import { classifyChanges } from "./scope.ts"
 
 import { defaultFallowPlanReview, defaultFallowReview, type FallowReview } from "./fallow-check.ts"
 
@@ -82,65 +66,34 @@ import {
 } from "./architect-routing.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
 
-import {
-  baseReachable,
-  proofForArtifact,
-  type BaseReach,
-  type IntegrationProof,
-} from "./integration-proof.ts"
-import { knownTree } from "./identity-store.ts"
+import type { HostSession, RunnerHost } from "./host.ts"
+import { ModelPolicy, PlanInput } from "./schema.ts"
 
-import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
-import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
-import type { CommandInput as PlanCommand } from "./schema.ts"
-import {
-  PLAN_MOVED_RETRIES,
-  PlanMovedDuringCommand,
-  planCommandProblem,
-  withoutLegacyVersion,
-} from "./plan-commands.ts"
-import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
-import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
-
-import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation.ts"
+import type { PlanRow } from "./store.ts"
+import { RunnerStore } from "./store.ts"
 
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
 import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
-import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
-import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
-import { samePhysicalWorkspace } from "./workspace-location.ts"
-import { selectSchedulingCandidates } from "./scheduling-selection.ts"
-import type { SchedulingReservation } from "./scheduling-selection.ts"
+import { sharedScheduler } from "./scheduler-coordinator.ts"
+
 import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
-import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
 
-import { startupFailureSettlementFromReceipt } from "./startup-recovery.ts"
-
-import {
-  activeRetainedVerifications,
-  createRetainedVerification,
-  retainedVerificationsForPlan,
-  saveRetainedVerification,
-} from "./retained-verification/store.ts"
+import { activeRetainedVerifications } from "./retained-verification/store.ts"
 import {
   abortVerificationActivities,
   forgetVerificationActivity,
   startVerificationActivity,
   verificationActivityKey,
-  verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
 
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
-import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
-
-import { sameProject } from "../project-key.ts"
 
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 
@@ -206,40 +159,6 @@ export function architectIdleWindowMs(value: unknown): number {
   return architectCacheWindowMs(value)
 }
 
-/** Whether a command's outcome leaves work the scheduler should pick up now. */
-function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
-  const outcome = result as { status?: unknown; instructionUpdates?: unknown } | null | undefined
-  const status = outcome?.status
-  switch (command.action) {
-    case "run":
-      return status === "running"
-    case "integrated":
-      return status === "cleanup-requested"
-    case "reconcile":
-      return status === "reconciling"
-    case "cancel":
-      return status === "cancelling"
-    case "resume":
-      return (
-        status === "resuming" ||
-        status === "verification-resumed" ||
-        status === "combined-verification-resumed"
-      )
-    case "retry":
-      return status === "retrying"
-    case "amend-scope":
-      return (
-        status === "scope-amended" &&
-        Array.isArray(outcome?.instructionUpdates) &&
-        outcome.instructionUpdates.length > 0
-      )
-    case "retained-repair":
-      return status === "retained-repair-requested"
-    default:
-      return false
-  }
-}
-
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
@@ -265,6 +184,14 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly planStep: PlanStep
+  private readonly commandPipeline: CommandPipeline
+  private readonly commandsRecovery: CommandsRecovery
+  private readonly commandsRetained: CommandsRetained
+  private readonly commandsScope: CommandsScope
+  private readonly commandsControl: CommandsControl
+  private readonly queueReview: QueueReview
+  private readonly workerPreparation: WorkerPreparation
   private readonly continuationPreparation: ContinuationPreparation
   private readonly startupSettlement: StartupSettlement
   private readonly adoptionPreparation: AdoptionPreparation
@@ -484,6 +411,21 @@ export class TaskRuntime {
       retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
+    this.workerPreparation = new WorkerPreparation(this.core, {
+      effect: (...args) => this.effect(...args),
+      hold: (...args) => this.hold(...args),
+      receipt: (...args) => this.receipt(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      promptAdmissionAllowed: (...args) => this.promptAdmissionAllowed(...args),
+      repairFailureBrief: (...args) => this.repairFailureBrief(...args),
+      startAuditorReport: (...args) => this.startAuditorReport(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      retainedRepairPromptCurrent: (...args) => this.retainedRepairPromptCurrent(...args),
+      sessionTitle: (...args) => this.sessionTitle(...args),
+      startupWorkspaceReady: (...args) => this.startupWorkspaceReady(...args),
+      workerEvent: (...args) => this.workerEvent(...args),
+      parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
+    })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
       ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
@@ -493,6 +435,13 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+    })
+    this.queueReview = new QueueReview(this.core, {
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      outcome: (...args) => this.outcome(...args),
+      fallowGate: (...args) => this.fallowGate(...args),
+      outcomeDelivery: this.outcomeDelivery,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.recoveryDetector = new RecoveryDetector({
       store: this.store,
@@ -524,6 +473,81 @@ export class TaskRuntime {
         ? {}
         : { stopWaitMs: options.takeoverStopWaitMs }),
       ...(options.takeoverPollMs === undefined ? {} : { pollMs: options.takeoverPollMs }),
+    })
+    this.commandsControl = new CommandsControl(this.core, {
+      hold: (...args) => this.hold(...args),
+      resolveTaskDispatchRoute: (...args) => this.resolveTaskDispatchRoute(...args),
+      assertNoDispatchedDependents: (...args) => this.assertNoDispatchedDependents(...args),
+      requestRetick: () => {
+        this.tickRequested = true
+      },
+      takeovers: this.takeovers,
+      retainedVerificationAborts: this.retainedVerificationAborts,
+      parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.commandsScope = new CommandsScope(this.core, {
+      repairAvailable: (...args) => this.repairAvailable(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.commandsRetained = new CommandsRetained(this.core, {
+      assertNoDispatchedDependents: (...args) => this.assertNoDispatchedDependents(...args),
+      retainedRepairAttemptAccepted: (...args) => this.retainedRepairAttemptAccepted(...args),
+      retainedRepairRecoveryCurrent: (...args) => this.retainedRepairRecoveryCurrent(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
+      assertRetainedVerificationScopeAvailable: (...args) =>
+        this.assertRetainedVerificationScopeAvailable(...args),
+      retainedRepairCandidateCurrent: (...args) => this.retainedRepairCandidateCurrent(...args),
+      retainedVerificationWorkspacePath: (...args) =>
+        this.retainedVerificationWorkspacePath(...args),
+      assertStartupSettlementCurrent: (...args) => this.assertStartupSettlementCurrent(...args),
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.commandsRecovery = new CommandsRecovery(this.core, {
+      assertTerminalContinuation: (...args) => this.assertTerminalContinuation(...args),
+      commandRecoverRetainedRepair: (...args) => this.commandRecoverRetainedRepair(...args),
+      interruptedChecksFor: (...args) => this.interruptedChecksFor(...args),
+      settledStartupEffect: (...args) => this.settledStartupEffect(...args),
+      hasMeaningfulWorkerProgress: (...args) => this.hasMeaningfulWorkerProgress(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.commandPipeline = new CommandPipeline(this.core, {
+      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
+      assertSchedulerActive: (...args) => this.assertSchedulerActive(...args),
+      cleanupAuditDiagnostics: (...args) => this.cleanupAuditDiagnostics(...args),
+      assertCombinedVerificationResume: (...args) => this.assertCombinedVerificationResume(...args),
+      prepareResumeContinuation: (...args) => this.prepareResumeContinuation(...args),
+      prepareStartupSettlement: (...args) => this.prepareStartupSettlement(...args),
+      prepareAdoption: (...args) => this.prepareAdoption(...args),
+      prepareRetainedRepair: (...args) => this.prepareRetainedRepair(...args),
+      prepareReviewInputReconciliation: (...args) => this.prepareReviewInputReconciliation(...args),
+      retainedRepairRecoveryCurrent: (...args) => this.retainedRepairRecoveryCurrent(...args),
+      prepareRetainedVerification: (...args) => this.prepareRetainedVerification(...args),
+      observeRetainedRepairCandidate: (...args) => this.observeRetainedRepairCandidate(...args),
+      retainedRepairBackgroundProblem: (...args) => this.retainedRepairBackgroundProblem(...args),
+      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      commandRun: (...args) => this.commandRun(...args),
+      commandCancel: (...args) => this.commandCancel(...args),
+      commandReassign: (...args) => this.commandReassign(...args),
+      commandTakeoverSubmit: (...args) => this.commandTakeoverSubmit(...args),
+      commandAmendScope: (...args) => this.commandAmendScope(...args),
+      commandSendBackDivergence: (...args) => this.commandSendBackDivergence(...args),
+      divergenceHold: (...args) => this.divergenceHold(...args),
+      commandAdoptDescendant: (...args) => this.commandAdoptDescendant(...args),
+      commandVerifyRetained: (...args) => this.commandVerifyRetained(...args),
+      commandSettleStartup: (...args) => this.commandSettleStartup(...args),
+      commandRetainedRepair: (...args) => this.commandRetainedRepair(...args),
+      commandReconcile: (...args) => this.commandReconcile(...args),
+      commandResumeOrRetry: (...args) => this.commandResumeOrRetry(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+      requestTick: this.requestTick,
+      wakeScheduler: this.wakeScheduler,
     })
     this.recoveryBundles = new RecoveryBundles({
       store: this.store,
@@ -601,6 +625,44 @@ export class TaskRuntime {
       verificationDeadline: (...args) => this.verificationDeadline(...args),
       verificationTarget: (...args) => this.verificationTarget(...args),
     })
+    this.planStep = new PlanStep(this.core, {
+      advanceAttempt: (...args) => this.advanceAttempt(...args),
+      architectRoute: (...args) => this.architectRoute(...args),
+      recordArchitectRoute: (...args) => this.recordArchitectRoute(...args),
+      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
+      cancelCheckActivities: (...args) => this.cancelCheckActivities(...args),
+      reconcileCancelledCheckActivities: (...args) =>
+        this.reconcileCancelledCheckActivities(...args),
+      recoverCancelledRetainedChecks: (...args) => this.recoverCancelledRetainedChecks(...args),
+      retainedCheckSettlementProblem: (...args) => this.retainedCheckSettlementProblem(...args),
+      cancelReservedAttempt: (...args) => this.cancelReservedAttempt(...args),
+      cancelWorkers: (...args) => this.cancelWorkers(...args),
+      command: (...args) => this.command(...args),
+      considerArchitectRenewal: (...args) => this.considerArchitectRenewal(...args),
+      continueArchitectRenewal: (...args) => this.continueArchitectRenewal(...args),
+      dispatch: (...args) => this.dispatch(...args),
+      integratedPrerequisiteBaseline: (...args) => this.integratedPrerequisiteBaseline(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      taskDependencyIDs: (...args) => this.taskDependencyIDs(...args),
+      taskDependencyIntegration: (...args) => this.taskDependencyIntegration(...args),
+      finish: (...args) => this.finish(...args),
+      hold: (...args) => this.hold(...args),
+      outcome: (...args) => this.outcome(...args),
+      holdAbandonedTakeover: (...args) => this.holdAbandonedTakeover(...args),
+      reconcileEffect: (...args) => this.reconcileEffect(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      settledStartupEffect: (...args) => this.settledStartupEffect(...args),
+      verify: (...args) => this.verify(...args),
+      requestRetick: () => {
+        this.tickRequested = true
+      },
+      adoptionExecution: this.adoptionExecution,
+      takeovers: this.takeovers,
+      worktreeCleanup: this.worktreeCleanup,
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+      timed: (name, run) => this.timed(name, run),
+    })
     this.renewal = new ArchitectRenewal(this.core, {
       architectPromptHook: this.architectPromptHook,
       ownership: this.ownership,
@@ -655,60 +717,6 @@ export class TaskRuntime {
   private identityStamping: Promise<void> | undefined
   private identityStampedAt = Number.NEGATIVE_INFINITY
   private notesConfigured = false
-
-  /**
-   * Record tree OID, patch-id, change id and the `refs/notes/lazers` note for
-   * every stored artifact and base that has no current identity. This is an
-   * observation: it never grants, revokes or delays an acceptance, and a
-   * failure (for example a repository that is not available) is ignored and
-   * retried on the next call. Calls coalesce; unforced calls are throttled.
-   */
-  /** The reachability verdict computed before the transaction for `base`, as a readable error. */
-  private requireBaseReachable(bases: ReadonlyMap<string, BaseReach>, base: string) {
-    const reach = bases.get(base)
-    if (!reach) throw new Error(`Baseline ${base.slice(0, 8)} was not checked against HEAD`)
-    if (!reach.ok) throw new Error(reach.reason)
-  }
-
-  /**
-   * Async Git proofs a command needs, gathered before its transaction:
-   * integration containment (`integrated`) and baseline
-   * reachability (an explicit `baseCommit`).
-   */
-  private async preflightProofs(command: CommandInput, plan: PlanRow) {
-    const bases = new Map<string, BaseReach>()
-    let integration: IntegrationProof | undefined
-    if (command.baseCommit)
-      bases.set(
-        command.baseCommit,
-        await baseReachable(
-          this.directory,
-          command.baseCommit,
-          "HEAD",
-          this.store.repository.read((db) => knownTree(db, command.baseCommit)),
-        ),
-      )
-    if (command.action === "integrated") {
-      const task = command.taskID
-        ? this.store.nodes(plan.id).find((node) => node.task_id === command.taskID)
-        : undefined
-      const artifact = task?.artifact ?? plan.artifact
-      if (artifact) {
-        const attempt = command.taskID
-          ? this.store
-              .attempts(plan.id)
-              .filter((candidate) => candidate.task_id === command.taskID)
-              .at(-1)
-          : undefined
-        integration = await proofForArtifact(
-          (run) => this.store.repository.read(run),
-          this.directory,
-          { artifact, attemptID: attempt?.id, base: attempt?.base_commit },
-        )
-      }
-    }
-    return { bases, integration }
-  }
 
   stampIdentity(force = false): Promise<void> {
     if (this.identityStamping) return this.identityStamping
@@ -990,175 +998,8 @@ export class TaskRuntime {
     return this.runCommand({ requestID, planID: plan.id, action: "run" }, plan.owner, true)
   }
 
-  private async runCommand(input: unknown, caller: string, admission: boolean): Promise<unknown> {
-    const command = CommandInput.parse(withoutLegacyVersion(input))
-    if (admission && command.action !== "run")
-      throw new Error("Only admission runs without an Architect caller")
-    // The runtime samples host and Git facts asynchronously, then commits only
-    // against the plan version it read first. A scheduler tick that moved the
-    // plan in between sends the command back through the machine, bounded.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await this.runCommandOnce(command, caller, admission)
-      } catch (error) {
-        if (!(error instanceof PlanMovedDuringCommand)) throw error
-        if (attempt < PLAN_MOVED_RETRIES) continue
-        const current = this.store.plan(command.planID)
-        throw new Error(
-          `Plan ${current?.state ?? "unknown"} changed repeatedly while ${command.action} was applied. ${
-            current ? (planCommandProblem(current.state, command) ?? "Retry the command.") : ""
-          }`.trim(),
-          { cause: error },
-        )
-      }
-    }
-  }
-
-  private async runCommandOnce(
-    command: PlanCommand,
-    caller: string,
-    admission: boolean,
-  ): Promise<unknown> {
-    const prior = this.store.priorCommand<unknown>(command.requestID, { command, caller })
-    if (prior !== undefined) return prior
-    // Resolve host facts before the transaction, then recheck against the version read here.
-    const old = await this.admitCommandPlan(command, caller, admission)
-    const baseVersion = old.version
-    let continuedOwner: string | undefined
-    const configuredWorker =
-      command.action === "run" && !JSON.parse(old.body).workerModel
-        ? await this.host.workerModel?.(workerAgent(JSON.parse(old.body).workerAgent))
-        : undefined
-    let ownerSession = await this.commandOwnerSession(command, old)
-    // Integration and baseline proofs run before the transaction (they read Git
-    // asynchronously) and are consumed, never recomputed, inside it.
-    const preflight = await this.preflightProofs(command, old)
-    const resumption =
-      command.action === "resume" && command.taskID
-        ? await this.prepareResumeContinuation(old, command, caller, ownerSession, command.taskID)
-        : undefined
-    if (command.action === "resume" && !command.taskID)
-      this.assertCombinedVerificationResume(old, command, ownerSession)
-    if (command.action === "run" && !this.validArchitect(ownerSession)) {
-      ownerSession = await this.ensureArchitectOwner(old, ownerSession, false)
-      continuedOwner = ownerSession.id
-    }
-    const adoptionSeed =
-      command.action === "adopt-descendant"
-        ? await this.prepareAdoption(old, command, caller, ownerSession)
-        : undefined
-    const retainedVerificationSeed =
-      command.action === "verify-retained"
-        ? await this.prepareRetainedVerification(old, command, caller, ownerSession)
-        : undefined
-    const retainedRepair =
-      command.action === "retained-repair" && !this.divergenceHold(old, command.taskID)
-        ? await this.prepareRetainedRepair(old, command, caller, ownerSession)
-        : undefined
-    const reviewInput = await this.prepareReviewInputReconciliation(
-      old,
-      command,
-      caller,
-      ownerSession,
-    )
-    const startupSettlement =
-      command.action === "settle-startup"
-        ? await this.prepareStartupSettlement(old, command, ownerSession)
-        : undefined
-
-    if (retainedVerificationSeed)
-      ownerSession = await this.revalidateRetainedVerification(
-        old,
-        caller,
-        retainedVerificationSeed,
-        ownerSession,
-      )
-    if (retainedRepair)
-      await this.revalidateRetainedRepair(old, caller, baseVersion, retainedRepair)
-    if (resumption?.retainedRepairRecovery)
-      await this.revalidateRetainedRepairRecovery(old, caller, resumption.retainedRepairRecovery)
-    // Native cleanup observations are sampled outside the command transaction,
-    // then published only if the recorded plan version is still current.
-    const cleanupDiagnostics =
-      command.action === "audit" ? await this.cleanupAuditDiagnostics(old) : undefined
-    const obs = new GitObservations()
-    const ctx: CommandContext = {
-      command,
-      caller,
-      baseVersion,
-      continuedOwner,
-      configuredWorker,
-      ownerSession,
-      preflight,
-      terminalContinuation: resumption?.terminalContinuation,
-      terminalRepairContinuation: resumption?.terminalRepairContinuation,
-      retainedRepairRecovery: resumption?.retainedRepairRecovery,
-      adoptionSeed,
-      retainedVerificationSeed,
-      retainedRepair,
-      reviewInput,
-      startupSettlement,
-      cleanupDiagnostics,
-      obs,
-    }
-    const result = await obs.run(
-      () =>
-        this.store.command(command.requestID, { command, caller }, (db) =>
-          this.applyCommandIn(db, ctx),
-        ),
-      () => this.assertSchedulerActive(),
-    )
-    if (commandWakesScheduler(command, result)) this.wakeScheduler?.()
-    if (
-      command.action === "verify-retained" ||
-      command.action === "pause" ||
-      command.action === "unpause"
-    )
-      await this.requestTick()
-    return result
-  }
-
-  /** The plan a command may act on, with its owner adopted by the commanding Architect. */
-  private async admitCommandPlan(command: PlanCommand, caller: string, admission: boolean) {
-    let old = this.store.plan(command.planID)
-    if (!old) throw new Error("Plan not found")
-    // The recorded state decides legality; reject before any asynchronous owner recovery effect.
-    const unavailable = planCommandProblem(old.state, command)
-    if (unavailable) throw new Error(unavailable)
-    // The owner is advisory. Any live Architect of this project may command the
-    // plan and is adopted as its owner; reading (audit) needs no Architect.
-    if (command.action !== "audit" && !admission) {
-      if (!this.validArchitect(await this.host.session(caller)))
-        throw new Error("A live Architect session of this project must command the plan")
-      if (caller !== old.owner && this.store.adoptPlanOwner(old.id, old.owner, caller))
-        old = this.store.plan(command.planID)!
-    }
-    return old
-  }
-
-  private async commandOwnerSession(
-    command: PlanCommand,
-    old: PlanRow,
-  ): Promise<HostSession | null | undefined> {
-    const target = command.action === "reassign" ? command.targetSessionID : old.owner
-    if (
-      ![
-        "run",
-        "pause",
-        "unpause",
-        "reassign",
-        "reconcile",
-        "resume",
-        "retry",
-        "adopt-descendant",
-        "settle-startup",
-        "retained-repair",
-        "verify-retained",
-      ].includes(command.action)
-    )
-      return undefined
-    if (!target) throw new Error("Target session required")
-    return this.host.session(target)
+  private runCommand(...args: Parameters<CommandPipeline["runCommand"]>) {
+    return this.commandPipeline.runCommand(...args)
   }
 
   private prepareResumeContinuation(
@@ -1173,880 +1014,46 @@ export class TaskRuntime {
     return this.startupSettlement.prepareStartupSettlement(...args)
   }
 
-  /** Re-reads the owner (and repair candidate) at the last moment before a retained verification reserves. */
-  private async revalidateRetainedVerification(
-    old: PlanRow,
-    caller: string,
-    seed: RetainedVerificationSeed,
-    ownerSession: HostSession | null | undefined,
+  private commandRetainedRepair(...args: Parameters<CommandsRetained["commandRetainedRepair"]>) {
+    return this.commandsRetained.commandRetainedRepair(...args)
+  }
+
+  private commandAmendScope(...args: Parameters<CommandsScope["commandAmendScope"]>) {
+    return this.commandsScope.commandAmendScope(...args)
+  }
+
+  private divergenceHold(...args: Parameters<CommandsScope["divergenceHold"]>) {
+    return this.commandsScope.divergenceHold(...args)
+  }
+
+  private commandSendBackDivergence(
+    ...args: Parameters<CommandsScope["commandSendBackDivergence"]>
   ) {
-    const [currentOwner, currentPlan] = await Promise.all([
-      this.host.session(caller),
-      Promise.resolve(this.store.plan(old.id)),
-    ])
-    if (
-      !this.validArchitect(currentOwner) ||
-      !currentPlan ||
-      currentPlan.revision !== seed.planRevision
-    )
-      throw new Error("Retained verification owner or plan revision changed before reservation")
-    let observed = ownerSession
-    const observeOwner = async () => {
-      observed = await this.host.session(caller)
-      if (!this.validArchitect(observed))
-        throw new Error("Retained verification owner changed during final native admission")
-    }
-    if (seed.repair) {
-      const latest = this.store.attempts(old.id).find((a) => a.id === seed.attemptID)
-      if (!latest) throw new Error("Retained repair attempt disappeared before reservation")
-      await this.observeRetainedRepairCandidate(currentPlan, latest, seed.repair, observeOwner)
-    } else await observeOwner()
-    return observed
+    return this.commandsScope.commandSendBackDivergence(...args)
   }
 
-  private async revalidateRetainedRepair(
-    old: PlanRow,
-    caller: string,
-    baseVersion: number,
-    retainedRepair: RetainedRepairSeed,
-  ) {
-    const attempt = this.store
-      .attempts(old.id)
-      .find((candidate) => candidate.id === retainedRepair.attemptID)
-    if (!attempt)
-      throw new Error("Retained repair attempt changed before final native revalidation")
-    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-    const observedOwner = await this.host.session(old.owner)
-    if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
-      throw new Error("Retained repair owner changed before final admission")
-    const observedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const observedProblem = this.retainedRepairWorkerProblem(
-      old,
-      attempt,
-      observedWorker,
-      retainedRepair.nativeInputID,
-      retainedRepair.model,
-    )
-    const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      observedWorker,
-      retainedRepair.nativeInputID,
-    )
-    if (
-      observedProblem ||
-      observedBackgroundProblem ||
-      !observedWorker ||
-      this.retainedRepairObservation(observedWorker) !== retainedRepair.workerObservation
-    )
-      throw new Error(observedProblem ?? "Retained worker changed before final admission")
-    const confirmedOwner = await this.host.session(old.owner)
-    if (!this.validArchitect(confirmedOwner) || confirmedOwner.id !== caller)
-      throw new Error("Retained repair owner changed during final admission")
-    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedProblem = this.retainedRepairWorkerProblem(
-      old,
-      attempt,
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-      retainedRepair.model,
-    )
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-    )
-    if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-    if (
-      confirmedProblem ||
-      confirmedBackgroundProblem ||
-      !confirmedWorker ||
-      this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error(
-        confirmedProblem ??
-          confirmedBackgroundProblem ??
-          "Retained repair authorization changed during final admission",
-      )
+  private commandAdoptDescendant(...args: Parameters<CommandsRetained["commandAdoptDescendant"]>) {
+    return this.commandsRetained.commandAdoptDescendant(...args)
   }
 
-  private async revalidateRetainedRepairRecovery(
-    old: PlanRow,
-    caller: string,
-    recovery: RetainedRepairRecoverySeed,
-  ) {
-    const currentOwner = await this.host.session(caller)
-    const recoveryAttempt = this.store
-      .attempts(old.id)
-      .find((candidate) => candidate.id === recovery.attemptID)
-    const currentWorker = await this.host.session(recovery.worker.id, { messages: true })
-    if (
-      !recoveryAttempt ||
-      !this.validArchitect(currentOwner) ||
-      currentOwner.id !== recovery.owner ||
-      !currentWorker ||
-      this.retainedRepairObservation(currentWorker) !== recovery.workerObservation ||
-      currentWorker.messages.some((message) => message.id === recovery.failedMessageID) ||
-      !this.retainedRepairRecoveryCurrent(old, recoveryAttempt, recovery)
-    )
-      throw new Error("Retained repair recovery changed during final native revalidation")
+  private commandVerifyRetained(...args: Parameters<CommandsRetained["commandVerifyRetained"]>) {
+    return this.commandsRetained.commandVerifyRetained(...args)
   }
 
-  /** The command's one transaction: re-check the plan version, then apply the action. */
-  private applyCommandIn(db: Database, ctx: CommandContext) {
-    const { command, continuedOwner, baseVersion } = ctx
-    const plan = this.store.plan(command.planID)!
-    if (plan.version !== baseVersion) throw new PlanMovedDuringCommand()
-    const unavailableNow = planCommandProblem(plan.state, command)
-    if (unavailableNow) throw new Error(unavailableNow)
-    // Commit owner adoption with the original request receipt. If native
-    // creation succeeds but this command fails, exact replay can recover it
-    // without granting an old owner authority over a reassigned plan.
-    if (continuedOwner) this.store.updatePlanOwner(plan.id, plan.owner, continuedOwner)
-    const activeAdoptions = this.store.activeAdoptions(plan.id)
-    if (activeAdoptions.length && !["adopt-descendant", "cancel", "audit"].includes(command.action))
-      throw new Error(
-        "A descendant adoption is pending; only its adoption or cancellation is allowed",
-      )
-    return this.dispatchCommandIn(db, ctx, plan)
+  private commandSettleStartup(...args: Parameters<CommandsRetained["commandSettleStartup"]>) {
+    return this.commandsRetained.commandSettleStartup(...args)
   }
 
-  private dispatchCommandIn(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession, preflight, cleanupDiagnostics, obs } = ctx
-    if (command.action === "retained-repair")
-      return this.divergenceHold(plan, command.taskID)
-        ? this.commandSendBackDivergence(db, ctx, plan)
-        : this.commandRetainedRepair(db, ctx, plan)
-    if (command.action === "amend-scope") return this.commandAmendScope(db, ctx, plan)
-    if (command.action === "adopt-descendant") return this.commandAdoptDescendant(ctx, plan)
-    if (command.action === "verify-retained") return this.commandVerifyRetained(db, ctx, plan)
-    if (command.action === "integrated")
-      return recordIntegration(
-        this.store,
-        db,
-        plan,
-        command,
-        obs.git(this.directory, ["branch", "--show-current"]),
-        preflight.integration,
-      )
-    if (command.action === "pause" || command.action === "unpause")
-      return changeDispatchPause(
-        this.store,
-        plan,
-        command,
-        caller,
-        ownerSession,
-        this.validArchitect(ownerSession),
-      )
-    if (command.action === "schedule")
-      return changeSchedule(this.store, plan, command, caller, this.directory, preflight.bases)
-    if (command.action === "audit")
-      return {
-        status: "audited",
-        ...this.store.audit(),
-        version: plan.version,
-        ...(cleanupDiagnostics ? { cleanupDiagnostics } : {}),
-      }
-    if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
-    if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
-    if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
-    if (command.action === "takeover-submit") return this.commandTakeoverSubmit(ctx, plan)
-    if (command.action === "resume" || command.action === "retry")
-      return this.commandResumeOrRetry(db, ctx, plan)
-    if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
-    return this.commandRun(db, ctx, plan)
+  private commandReassign(...args: Parameters<CommandsControl["commandReassign"]>) {
+    return this.commandsControl.commandReassign(...args)
   }
 
-  private commandRetainedRepair(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, baseVersion, ownerSession, retainedRepair, obs } = ctx
-    if (!retainedRepair || !ownerSession || !this.validArchitect(ownerSession))
-      throw new Error("Retained repair requires the current same-project Architect owner")
-    if (caller !== plan.owner || ownerSession.id !== plan.owner)
-      throw new Error("Retained repair owner changed before admission")
-    if (caller !== retainedRepair.owner || plan.owner !== retainedRepair.owner)
-      throw new Error("Retained repair owner/control authorization changed before admission")
-    if (!new Set(["running", "accepted", "blocked"]).has(plan.state))
-      throw new Error("Retained repair requires a running, accepted or blocked, unintegrated plan")
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const task = this.store.repository.get(retainedRepair.taskID)
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === retainedRepair.taskID)
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((item) => item.task_id === retainedRepair.taskID)
-      .at(-1)
-    if (
-      !task ||
-      !node ||
-      !attempt ||
-      node.state !== "accepted" ||
-      attempt.id !== retainedRepair.attemptID ||
-      !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
-      attempt.message_id !== retainedRepair.previousMessageID ||
-      attempt.session_id !== retainedRepair.sessionID ||
-      attempt.workspace !== retainedRepair.workspace ||
-      node.artifact !== retainedRepair.artifact ||
-      attempt.artifact !== retainedRepair.artifact ||
-      input.nodes.find((item) => item.taskID === task.id)?.revision !== task.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(task.id)
-    )
-      throw new Error("Retained task, attempt, artifact, or assignment changed before admission")
-    const policy = JSON.parse(attempt.policy) as {
-      workspaceMode?: unknown
-    }
-    const route = this.retainedAttemptModel(plan, attempt)
-    if (
-      policy.workspaceMode !== "isolated" ||
-      !route ||
-      !sameModelSnapshot(route, retainedRepair.model)
-    )
-      throw new Error("Retained task execution route changed before admission")
-    if (
-      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED") ||
-      obs.isAncestor(
-        this.directory,
-        retainedRepair.artifact,
-        obs.git(this.directory, ["rev-parse", "HEAD"]),
-      )
-    )
-      throw new Error("Source-landed task work cannot be repaired in its retained workspace")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Uncertain effects prevent retained repair")
-    this.assertNoDispatchedDependents(plan, task.id, input)
-    if (
-      !existsSync(attempt.workspace) ||
-      obs.git(attempt.workspace, ["rev-parse", "HEAD"]) !== retainedRepair.artifact ||
-      !this.preparationAllowed(attempt) ||
-      this.store
-        .activeProjectAttempts()
-        .some(
-          (other) =>
-            other.id !== attempt.id && samePhysicalWorkspace(other.workspace, attempt.workspace),
-        )
-    )
-      throw new Error("Retained artifact or effective scope reservation changed before admission")
-
-    this.delegatedAgentCapacity.requeueRunnerInTransaction(
-      db,
-      { planID: plan.id, taskID: task.id, attemptNumber: attempt.number },
-      attempt.id,
-    )
-    this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
-    const cleared = db
-      .query(
-        "UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=? AND state='ready' AND artifact=?",
-      )
-      .run(plan.id, task.id, retainedRepair.artifact).changes
-    const updatedAttempt = db
-      .query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state=? AND message_id=?",
-      )
-      .run(
-        retainedRepair.messageID,
-        attempt.id,
-        attempt.state,
-        retainedRepair.previousMessageID,
-      ).changes
-    const updatedPlan = db
-      .query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=? AND version=? AND state IN ('running','accepted','blocked')",
-      )
-      .run(plan.id, baseVersion + 1).changes
-    if (cleared !== 1 || updatedAttempt !== 1 || updatedPlan !== 1)
-      throw new Error("Retained repair authorization changed during atomic admission")
-    this.store.record(plan.id, task.id, "RETAINED_REPAIR_REQUESTED", {
-      operationID: retainedRepair.operationID,
-      requestID: command.requestID,
-      owner: caller,
-      expectedVersion: baseVersion,
-      attemptID: attempt.id,
-      previousMessageID: retainedRepair.previousMessageID,
-      nativeInputID: retainedRepair.nativeInputID,
-      nativeAssignmentID: retainedRepair.previousMessageID,
-      previousAttemptState: attempt.state,
-      messageID: retainedRepair.messageID,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      route: retainedRepair.model,
-      artifact: retainedRepair.artifact,
-      defect: command.reason,
-      workerObservation: retainedRepair.workerObservation,
-      usageRetained: true,
-      sameAttempt: true,
-      sameSession: true,
-      sameWorkspace: true,
-      sameRoute: true,
-    })
-    return {
-      status: "retained-repair-requested",
-      operationID: retainedRepair.operationID,
-      taskID: task.id,
-      attemptID: attempt.id,
-      artifact: retainedRepair.artifact,
-      messageID: retainedRepair.messageID,
-      version: this.store.plan(plan.id)!.version,
-    }
+  private commandTakeoverSubmit(...args: Parameters<CommandsControl["commandTakeoverSubmit"]>) {
+    return this.commandsControl.commandTakeoverSubmit(...args)
   }
 
-  private commandAmendScope(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller } = ctx
-    if (
-      !command.taskID ||
-      (!command.scopeAdditions?.length && !command.scopeRemovals?.length) ||
-      !command.reason
-    )
-      throw new Error("Scope amendment requires task, changed paths and reason")
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    if (!node || terminal.has(plan.state) || ["accepted", "incorporated"].includes(node.state))
-      throw new Error("Scope amendment requires unfinished work in this plan")
-    const previous = this.store.effectiveWriteScope(node.task_id)
-    const original = this.store.repository.get(node.task_id)!.proposal.writeScope
-    const requestedRemovals = new Set(command.scopeRemovals ?? [])
-    if (original.some((path) => requestedRemovals.has(path)))
-      throw new Error("Scope amendment cannot remove original task scope")
-    if (command.scopeAdditions?.some((path) => requestedRemovals.has(path)))
-      throw new Error("Scope amendment cannot add and remove the same pattern")
-    const writeScope = [
-      ...new Set([
-        ...previous.filter((path) => !requestedRemovals.has(path)),
-        ...(command.scopeAdditions ?? []),
-      ]),
-    ]
-    if (writeScope.length > 100) throw new Error("Effective write scope exceeds 100 paths")
-    const additions = writeScope.filter((path) => !previous.includes(path))
-    const removals = previous.filter((path) => !writeScope.includes(path))
-    if (!additions.length && !removals.length)
-      return { status: "scope-unchanged", version: plan.version }
-    const active = ["preparing", "running", "verifying"]
-    const writers = this.store
-      .attempts(plan.id)
-      .filter((a) => a.task_id === node.task_id && active.includes(a.state))
-    if (removals.length && writers.length)
-      throw new Error("Scope removal requires stopped task writers")
-    if (writers.length) {
-      for (const other of this.store.activeProjectAttempts())
-        if (
-          other.task_id !== node.task_id &&
-          active.includes(other.state) &&
-          scopePatternsConflict(writeScope, this.store.effectiveReservationScope(other.task_id))
-        )
-          throw new Error(`Scope amendment conflicts with active task ${other.task_id}`)
-    }
-    this.store.record(plan.id, node.task_id, "SCOPE_AMENDED", {
-      additions,
-      ...(removals.length ? { removals } : {}),
-      writeScope,
-      reason: command.reason,
-      caller,
-      taskRevision: this.store.repository.get(node.task_id)!.revision,
-    })
-    const instructionUpdates: string[] = []
-    for (const attempt of this.store
-      .attempts(plan.id)
-      .filter(
-        (item) =>
-          item.task_id === node.task_id &&
-          (["running", "verifying"].includes(item.state) ||
-            (item.state === "preparing" &&
-              this.store
-                .effects(plan.id)
-                .some(
-                  (effect) =>
-                    effect.attempt_id === item.id &&
-                    effect.kind === "prompt" &&
-                    effect.state !== "failed",
-                ))),
-      )) {
-      const payload: WorkerInstruction = {
-        sessionID: attempt.session_id,
-        attemptID: attempt.id,
-        projectID: this.projectID,
-        directory: attempt.workspace,
-        key: `lazers-scope-${attempt.id}-${fingerprint(writeScope)}`,
-        text: `Architect-authorized additive execution scope for task ${node.task_id}, revision 1, attempt ${attempt.id}. The immutable specification is unchanged.\nAdded paths: ${JSON.stringify(additions)}\nAuthorized cumulative write scope: ${JSON.stringify(writeScope)}\nReason: ${command.reason}\nContinue in this same assigned workspace; preserve legitimate dependency/test changes. All original acceptance and verification requirements still apply. This is authorization, not evidence of acceptance.`,
-      }
-      const kind = "scope-instruction"
-      const id = fingerprint({
-        planID: plan.id,
-        taskID: node.task_id,
-        attemptID: attempt.id,
-        kind,
-        payload,
-      })
-      // Command authorization and native-update intent commit atomically.
-      // The fenced runtime owns delivery and recovery, including lost replies.
-      db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,0)").run(
-        id,
-        plan.id,
-        node.task_id,
-        attempt.id,
-        kind,
-        JSON.stringify(payload),
-      )
-      this.store.record(plan.id, node.task_id, "EFFECT_INTENDED", {
-        effectID: id,
-        kind,
-        attemptID: attempt.id,
-      })
-      instructionUpdates.push(id)
-    }
-    db.query("UPDATE runner_plans SET version=version+1 WHERE id=?").run(plan.id)
-    const continued = this.continueAfterDivergenceDecision(db, plan, node.task_id, caller)
-    return {
-      status: "scope-amended",
-      version: plan.version + 1 + (continued ? 1 : 0),
-      writeScope,
-      instructionUpdates,
-      ...(continued ? { continued: true } : {}),
-    }
-  }
-
-  /** The undecided divergence this plan is held on for the task, if any. */
-  private divergenceHold(plan: PlanRow, taskID: string | undefined) {
-    if (!taskID || plan.state !== "blocked") return undefined
-    const wait = this.store.latestTransition<{ kind?: string; reason: string; attemptID: string }>(
-      plan.id,
-      taskID,
-      "SCOPE_DECISION_REQUIRED",
-    )
-    return wait?.kind === "divergence" && wait.reason === plan.reason ? wait : undefined
-  }
-
-  /**
-   * The Architect sends a held, verified divergence back (`retained-repair`): the attempt moves to
-   * the task's one repair, whose prompt carries the out-of-scope paths and the Architect's reason.
-   * With no repair left it is refused; amend-scope or cancel remain the exits.
-   */
-  private commandSendBackDivergence(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession } = ctx
-    const wait = this.divergenceHold(plan, command.taskID)
-    if (!wait || !ownerSession || !this.validArchitect(ownerSession) || caller !== plan.owner)
-      throw new Error("Sending back a divergence requires the current Architect owner")
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((item) => item.task_id === command.taskID)
-      .at(-1)
-    if (
-      !attempt ||
-      attempt.id !== wait.attemptID ||
-      attempt.id !== command.attemptID ||
-      attempt.state !== "verifying" ||
-      attempt.artifact !== command.artifact ||
-      !command.reason?.trim()
-    )
-      throw new Error("Send-back must name the held attempt, its exact artifact and a reason")
-    if (!this.repairAvailable(attempt))
-      throw new Error(
-        "The task's one repair is spent; accept the divergence with amend-scope or cancel",
-      )
-    const reason = `Scope divergence sent back by the Architect: ${command.reason}`
-    db.query(
-      "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
-    ).run(attempt.id)
-    // REPAIR must stay the task's newest transition: it marks the next attempt as the repair.
-    this.store.record(plan.id, attempt.task_id, "SCOPE_SENT_BACK", {
-      attemptID: attempt.id,
-      reason: command.reason,
-      caller,
-    })
-    this.store.move(plan.id, attempt.task_id, "REPAIR", reason)
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-    ).run(plan.id)
-    return { status: "scope-sent-back", attemptID: attempt.id, version: plan.version + 1 }
-  }
-
-  /**
-   * An amendment that covers every path of an undecided divergence is the decision: the held,
-   * already-verified candidate continues to acceptance without a separate reconcile. Anything else
-   * outstanding (protected hold, uncovered paths, pending effects) still waits for reconcile.
-   */
-  private continueAfterDivergenceDecision(
-    db: Database,
-    plan: PlanRow,
-    taskID: string,
-    caller: string,
-  ): boolean {
-    const current = this.store.plan(plan.id)!
-    const wait = this.store.latestTransition<{
-      kind?: string
-      reason: string
-      divergences?: { path: string; status: "added" | "modified" | "deleted" }[]
-    }>(plan.id, taskID, "SCOPE_DECISION_REQUIRED")
-    if (
-      current.state !== "blocked" ||
-      wait?.kind !== "divergence" ||
-      wait.reason !== current.reason ||
-      !wait.divergences?.length
-    )
-      return false
-    const model = this.store.effectiveScope(taskID)
-    const open = classifyChanges(wait.divergences, model).some(
-      (change) => change.class === "divergence" || change.class === "protected",
-    )
-    if (open) return false
-    if (
-      this.store
-        .effects(plan.id)
-        .some(
-          (e) =>
-            ["intended", "uncertain"].includes(e.state) &&
-            !isRerunnableEffect(e.kind) &&
-            e.kind !== "scope-instruction",
-        )
-    )
-      return false
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-    ).run(plan.id)
-    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-      caller,
-      verificationEpoch: this.store.plan(plan.id)!.version,
-      cause: "scope-divergence-decision",
-    })
-    return true
-  }
-
-  private commandAdoptDescendant(ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession, adoptionSeed } = ctx
-    if (!adoptionSeed || !ownerSession || !this.validArchitect(ownerSession))
-      throw new Error("Descendant adoption requires the current same-project Architect owner")
-    if (ownerSession.id !== plan.owner || caller !== plan.owner)
-      throw new Error("Descendant adoption owner changed")
-    const adoptionID = crypto.randomUUID()
-    const adoption = this.store.createAdoption({
-      id: adoptionID,
-      planID: plan.id,
-      taskID: adoptionSeed.taskID,
-      writeScope: this.store.effectiveReservationScope(adoptionSeed.taskID),
-      requestID: command.requestID,
-      owner: plan.owner,
-      expectedVersion: plan.version,
-      taskRevision: adoptionSeed.taskRevision,
-      attemptID: adoptionSeed.attemptID,
-      nodeState: adoptionSeed.nodeState,
-      attemptState: adoptionSeed.attemptState,
-      oldArtifact: adoptionSeed.oldArtifact,
-      descendantCommit: adoptionSeed.descendantCommit,
-      targetBranch: adoptionSeed.targetBranch,
-      landingHead: adoptionSeed.landingHead,
-      reviewedBaseline: adoptionSeed.reviewedBaseline,
-      candidateTree: adoptionSeed.candidateTree,
-      inputFingerprint: adoptionSeed.inputFingerprint,
-      environmentIdentity: adoptionSeed.environmentIdentity,
-      reason: adoptionSeed.reason,
-      combinedArtifact: adoptionSeed.combinedArtifact,
-    })
-    return {
-      status: "descendant-adoption-requested",
-      adoptionID: adoption.id,
-      taskID: adoption.task_id,
-      artifact: adoption.descendant_commit,
-      combinedArtifact: adoption.combined_artifact,
-      version: plan.version + 1,
-    }
-  }
-
-  private commandVerifyRetained(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, ownerSession, retainedVerificationSeed, obs } = ctx
-    const seed = retainedVerificationSeed
-    if (!seed || !ownerSession || !this.validArchitect(ownerSession))
-      throw new Error("Retained verification requires the current same-project Architect owner")
-    if (
-      plan.revision !== seed.planRevision ||
-      command.projectID !== this.projectID ||
-      command.taskID !== seed.taskID ||
-      command.taskRevision !== seed.taskRevision ||
-      command.attemptID !== seed.attemptID ||
-      command.artifact !== seed.artifact
-    )
-      throw new Error("Retained verification authorization or candidate changed before reservation")
-    const taskRow = db
-      .query<{ project_directory: string; body: string }, [string, string]>(
-        "SELECT project_directory,body FROM tasks WHERE project_directory=? AND id=?",
-      )
-      .get(this.directory, seed.taskID)
-    const reservedTask = taskRow ? this.store.repository.get(seed.taskID) : undefined
-    const attemptRow = db
-      .query<
-        {
-          id: string
-          artifact: string | null
-          session_id: string
-          message_id: string
-          workspace: string
-        },
-        [string, string]
-      >(
-        "SELECT id,artifact,session_id,message_id,workspace FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC LIMIT 1",
-      )
-      .get(plan.id, seed.taskID)
-    const nodeRow = db
-      .query<{ state: string; artifact: string | null }, [string, string]>(
-        "SELECT state,artifact FROM runner_nodes WHERE plan_id=? AND task_id=?",
-      )
-      .get(plan.id, seed.taskID)
-    if (
-      !["blocked", "accepted", "cleanup-blocked"].includes(plan.state) ||
-      !taskRow ||
-      taskRow.project_directory !== this.directory ||
-      reservedTask?.revision !== seed.taskRevision ||
-      reservedTask.provenance.projectID !== this.projectID ||
-      reservedTask.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(seed.taskID) !== undefined ||
-      !attemptRow ||
-      attemptRow.id !== seed.attemptID ||
-      attemptRow.session_id !== seed.originalSessionID ||
-      attemptRow.message_id !== seed.originalMessageID ||
-      realpathSync(attemptRow.workspace) !== seed.originalWorkspace ||
-      (seed.repair
-        ? attemptRow.artifact !== seed.repair.previousArtifact ||
-          nodeRow?.artifact !== null ||
-          !this.retainedRepairCandidateCurrent(
-            plan,
-            this.store.attempts(plan.id).find((a) => a.id === seed.attemptID)!,
-            seed.repair,
-          ) ||
-          obs.git(seed.originalWorkspace, ["rev-parse", "HEAD"]) !== seed.artifact
-        : (attemptRow.artifact !== null && attemptRow.artifact !== seed.artifact) ||
-          (nodeRow?.artifact !== null && nodeRow?.artifact !== seed.artifact))
-    )
-      throw new Error(
-        "Original task, latest attempt or exact committed candidate changed before reservation",
-      )
-    this.assertRetainedVerificationScopeAvailable(
-      plan.id,
-      seed.taskID,
-      seed.attemptID,
-      this.retainedVerificationWorkspacePath(seed.id, "task"),
-    )
-    const operation = createRetainedVerification(db, this.directory, {
-      ...seed,
-      state: "pending",
-      failureReason: null,
-      cleanupState: "pending",
-      createdAt: this.now(),
-      updatedAt: this.now(),
-    })
-    this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_REQUESTED", {
-      operationID: operation.id,
-      taskRevision: operation.taskRevision,
-      attemptID: operation.attemptID,
-      artifact: operation.artifact,
-      owner: operation.owner,
-      requestID: command.requestID,
-      oldExecutionAndResourceHoldsPreserved: true,
-    })
-    return {
-      status: "retained-verification-requested",
-      operationID: operation.id,
-      taskID: operation.taskID,
-      attemptID: operation.attemptID,
-      artifact: operation.artifact,
-      retainedVerification: { operationID: operation.id },
-      probeBasis: { task: retainedVerificationProbeBasis(operation, "task") },
-      version: plan.version,
-    }
-  }
-
-  private commandSettleStartup(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, baseVersion, startupSettlement } = ctx
-    if (!startupSettlement || !command.taskID || !command.reason)
-      throw new Error("Startup settlement evidence is unavailable")
-    this.assertStartupSettlementCurrent(
-      plan,
-      startupSettlement.attempt,
-      startupSettlement.effect,
-      startupSettlement.failure,
-    )
-    const receipt = appendRunnerEffectReceipt(
-      startupSettlement.effect.receipt,
-      startupSettlement.evidence,
-    )
-    const settledEffect = db
-      .query(
-        `UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=?
-     WHERE id=? AND plan_id=? AND task_id=? AND attempt_id=? AND state='uncertain'`,
-      )
-      .run(
-        receipt,
-        startupSettlement.effect.id,
-        plan.id,
-        command.taskID,
-        startupSettlement.attempt.id,
-      ).changes
-    if (settledEffect !== 1) throw new Error("Original startup effect changed before settlement")
-    const reason =
-      "Startup worktree failure evidence was settled after all reserved resources were confirmed absent; explicit resume is required"
-    const changed = db
-      .query(
-        `UPDATE runner_plans SET reason=?,version=version+1
-     WHERE id=? AND project_directory=? AND owner=? AND version=? AND state='blocked'`,
-      )
-      .run(reason, plan.id, this.store.repository.projectDirectory, caller, baseVersion).changes
-    if (changed !== 1) throw new Error("Plan changed before startup settlement")
-    this.store.record(plan.id, command.taskID, "WORKTREE_STARTUP_FAILURE_SETTLED_ABSENT", {
-      ...startupSettlement.evidence,
-      reason: command.reason,
-      caller,
-    })
-    return {
-      status: "startup-failure-settled-absent",
-      planID: plan.id,
-      taskID: command.taskID,
-      attemptID: startupSettlement.attempt.id,
-      effectID: startupSettlement.effect.id,
-      version: plan.version + 1,
-      evidence: startupSettlement.evidence,
-    }
-  }
-
-  private commandReassign(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, ownerSession } = ctx
-    if (!ownerSession || ownerSession.archived || ownerSession.projectID !== this.projectID)
-      throw new Error("Reassignment needs an unarchived same-project owner")
-    const retiredSource = db
-      .query<{ present: number }, [string, string, string]>(
-        `SELECT 1 AS present FROM runner_architect_renewals r
-     JOIN runner_architect_renewal_plans rp ON rp.renewal_id=r.id
-     WHERE r.previous_session_id=? AND rp.plan_id=? AND rp.transferred=1
-       AND EXISTS(SELECT 1 FROM runner_plans current WHERE current.id=rp.plan_id AND current.owner<>?)
-     LIMIT 1`,
-      )
-      .get(caller, plan.id, caller)
-    if (caller !== plan.owner && retiredSource)
-      throw new Error("A retired Architect predecessor cannot reassign a transferred plan")
-    db.query("UPDATE runner_plans SET owner=?,version=version+1 WHERE id=?").run(
-      ownerSession.id,
-      plan.id,
-    )
-    this.store.record(plan.id, null, "OWNER_REASSIGNED", {
-      from: plan.owner,
-      to: ownerSession.id,
-      reason: command.reason,
-    })
-    return { status: "reassigned", version: plan.version + 1 }
-  }
-
-  /** The Architect finished a task it took over: its attempt goes to the ordinary verification. */
-  private commandTakeoverSubmit(ctx: CommandContext, plan: PlanRow) {
-    const { command } = ctx
-    if (!command.taskID || !command.reason)
-      throw new Error("takeover-submit requires taskID and reason")
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((item) => item.task_id === command.taskID)
-      .at(-1)
-    // A verifying attempt resubmits only when its verification is held: a new candidate then.
-    const resubmitHeld = attempt?.state === "verifying" && plan.state === "blocked"
-    // An accepted takeover result the plan is held on (combined verification) is the Architect's
-    // own work: it corrects it in the same workspace and resubmits, as a worker's retained repair.
-    const reopenAccepted =
-      attempt?.state === "accepted" &&
-      plan.state === "blocked" &&
-      attempt !== undefined &&
-      isTakeoverAttempt(attempt.policy)
-    if (
-      !attempt ||
-      !isTakeoverAttempt(attempt.policy) ||
-      (attempt.state !== "running" && !resubmitHeld && !reopenAccepted)
-    )
-      throw new Error(
-        "takeover-submit needs the task's running takeover attempt; call lz-request-handoff first",
-      )
-    if (reopenAccepted) this.assertTakeoverReopenable(plan, attempt, ctx.obs)
-    const submission =
-      this.store
-        .activity(plan.id, attempt.task_id)
-        .filter(
-          (event) =>
-            event.event === "TAKEOVER_SUBMITTED" &&
-            this.parseTransitionPayload<{ attemptID?: unknown }>(event)?.attemptID === attempt.id,
-        ).length + 1
-    const takeoverID = (JSON.parse(attempt.policy) as { takeover: { takeoverID: string } }).takeover
-      .takeoverID
-    if (reopenAccepted) {
-      this.store.move(plan.id, attempt.task_id, "RETAINED_REPAIR", command.reason)
-      this.store.move(plan.id, attempt.task_id, "DISPATCH")
-    }
-    if (!resubmitHeld) this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
-    this.store.atomic((db) => {
-      // Each submission is a new candidate: its own input identity, so mechanical-fix and check
-      // effects journaled for an earlier submission are never matched or reused (as a repair
-      // attempt's new attempt or a retained repair's new input keys them apart).
-      const state = resubmitHeld
-        ? "state"
-        : reopenAccepted
-          ? "lz_runner_transition('attempt',lz_runner_transition('attempt',lz_runner_transition('attempt',state,'preparing'),'running'),'verifying')"
-          : "lz_runner_transition('attempt',state,'verifying')"
-      db.query(
-        `UPDATE runner_attempts SET state=${state},message_id=?,artifact=NULL WHERE id=?`,
-      ).run(`takeover-${takeoverID}-submission-${submission}`, attempt.id)
-      if (reopenAccepted)
-        db.query("UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=?").run(
-          plan.id,
-          attempt.task_id,
-        )
-      // A resubmission after a failed verification lifts its hold.
-      if (plan.state === "blocked")
-        db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=?",
-        ).run(plan.id)
-    })
-    this.store.record(plan.id, attempt.task_id, "TAKEOVER_SUBMITTED", {
-      attemptID: attempt.id,
-      reason: command.reason,
-      submission,
-    })
-    this.tickRequested = true
-    return { status: "takeover-submitted", attemptID: attempt.id, version: plan.version }
-  }
-
-  /** The retained-repair boundaries, for the Architect's own accepted takeover result. */
-  private assertTakeoverReopenable(plan: PlanRow, attempt: AttemptRow, obs: GitObservations) {
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-    if (
-      !node ||
-      node.state !== "accepted" ||
-      !node.artifact ||
-      plan.artifact !== null ||
-      this.store.latestTransition(plan.id, attempt.task_id, "TASK_INTEGRATION_RECORDED") ||
-      this.store.repository.taskDisposition(attempt.task_id) ||
-      obs.isAncestor(this.directory, node.artifact, obs.git(this.directory, ["rev-parse", "HEAD"]))
-    )
-      throw new Error("Only an accepted, unintegrated takeover result held by its plan reopens")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Uncertain effects prevent reopening the takeover result")
-    this.assertNoDispatchedDependents(plan, attempt.task_id, PlanInput.parse(JSON.parse(plan.body)))
-    if (!existsSync(attempt.workspace)) throw new Error("The takeover's retained workspace is gone")
-  }
-
-  /**
-   * A takeover attempt lives while the Architect session that took it over does. When that session
-   * is gone or archived the work is not failed: the plan holds, advertising takeover-submit (any
-   * live Architect continues in the workspace) and cancel, and the recovery bundle lists it.
-   */
-  private async holdAbandonedTakeover(plan: PlanRow, attempt: AttemptRow) {
-    if (plan.state !== "running") return
-    const takeover = (
-      JSON.parse(attempt.policy) as { takeover: { architectSessionID: string; takeoverID: string } }
-    ).takeover
-    const architect = await this.host.session(takeover.architectSessionID)
-    if (this.validArchitect(architect)) return
-    this.store.recordOnce(plan.id, attempt.task_id, "TAKEOVER_ABANDONED", {
-      takeoverID: takeover.takeoverID,
-      attemptID: attempt.id,
-      architectSessionID: takeover.architectSessionID,
-      cause: architect ? "archived" : "absent",
-    })
-    this.hold(
-      plan,
-      `Takeover abandoned: Architect session ${takeover.architectSessionID} is ${architect ? "archived" : "gone"}; the work stays in ${attempt.workspace}`,
-      ["takeover-submit", "cancel"],
-    )
+  private holdAbandonedTakeover(...args: Parameters<CommandsControl["holdAbandonedTakeover"]>) {
+    return this.commandsControl.holdAbandonedTakeover(...args)
   }
 
   /**
@@ -2063,380 +1070,18 @@ export class TaskRuntime {
     return this.takeovers.recordWorkerHandoff(input, sessionID)
   }
 
-  private commandCancel(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller } = ctx
-    this.store.cancelAdoptions(plan.id, "Cancellation requested")
-    this.takeovers.cancelForPlan(plan.id, command.reason ?? "Cancellation requested")
-    for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
-      saveRetainedVerification(db, {
-        ...operation,
-        state: "cancelled",
-        failureReason: "Plan cancellation requested",
-        updatedAt: this.now(),
-      })
-      db.query(
-        `UPDATE runner_retained_verification_resources SET state=lz_runner_transition('resource',state,'uncertain'),updated_at=?
-     WHERE operation_id=? AND state IN ('creating','active')`,
-      ).run(this.now(), operation.id)
-      this.retainedVerificationAborts.get(operation.id)?.abort()
-      this.store.record(plan.id, operation.taskID, "RETAINED_VERIFICATION_CANCELLED", {
-        operationID: operation.id,
-        source: "plan-cancellation",
-        previousState: operation.state,
-        previousFailureReason: operation.failureReason,
-        reason: "Plan cancellation requested",
-        oldExecutionAndResourceHoldsPreserved: true,
-      })
-    }
-    // Stop admission now. In-flight work remains running until interruption is proven.
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelling'),reason=?,version=version+1 WHERE id=?",
-    ).run(command.reason ?? "Cancellation requested", plan.id)
-    for (const node of this.store.nodes(plan.id))
-      if (!terminal.has(node.state) && node.state !== "running" && node.state !== "verifying")
-        this.store.move(plan.id, node.task_id, "CANCEL")
-    this.store.record(plan.id, null, "CANCEL_REQUESTED", { caller, reason: command.reason })
-    return { status: "cancelling", version: this.store.plan(plan.id)!.version }
+  private commandCancel(...args: Parameters<CommandsControl["commandCancel"]>) {
+    return this.commandsControl.commandCancel(...args)
   }
 
-  private commandResumeOrRetry(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const {
-      command,
-      ownerSession,
-      terminalContinuation,
-      terminalRepairContinuation,
-      retainedRepairRecovery,
-    } = ctx
-    const retry = command.action === "retry"
-    if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-    if (!command.taskID) return this.commandResumeCombinedVerification(db, ctx, plan)
-    if (!command.taskID || !command.reason) throw new Error("Resume requires taskID and reason")
-    const node = this.store.nodes(plan.id).find((n) => n.task_id === command.taskID)
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((a) => a.task_id === command.taskID)
-      .at(-1)
-    if (command.attemptID && command.attemptID !== attempt?.id)
-      throw new Error("Command attemptID does not match the exact latest task attempt")
-    if (retainedRepairRecovery)
-      return this.commandRecoverRetainedRepair(db, ctx, plan, node, attempt, retainedRepairRecovery)
-    if (!retry && node?.state === "verifying" && attempt?.state === "verifying") {
-      const interrupted = this.interruptedChecksFor(plan, attempt)
-      if (interrupted.length)
-        return this.commandResumeInterruptedVerification(db, ctx, plan, attempt, interrupted)
-    }
-    const continuingTerminalWorker = Boolean(
-      !retry &&
-      terminalContinuation &&
-      attempt?.id === terminalContinuation.attemptID &&
-      attempt.message_id === terminalContinuation.messageID,
-    )
-    if (continuingTerminalWorker) this.assertTerminalContinuation(ctx, plan, attempt)
-    if (retry && node?.state === "cancelled" && !attempt)
-      return this.commandRequeueUnstartedTask(db, ctx, plan, node, ownerSession)
-    if (
-      !["blocked", "cancelled", "failed"].includes(plan.state) ||
-      !node ||
-      !["exhausted", "cancelled", "running", "verifying", "failed", "blocked"].includes(
-        node.state,
-      ) ||
-      !attempt ||
-      (!continuingTerminalWorker &&
-        !["exhausted", "cancelled", "preparing", "failed"].includes(attempt.state))
-    )
-      throw new Error("Only an exhausted or cancelled, stopped attempt can resume")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Reconcile uncertain effects first")
-
-    const settledStartupEffect = attempt ? this.settledStartupEffect(plan.id, attempt) : undefined
-    if (settledStartupEffect)
-      return this.commandAuthorizeStartupRecovery(db, ctx, plan, attempt, settledStartupEffect)
-
-    if (!retry)
-      this.delegatedAgentCapacity.requeueRunnerInTransaction(
-        db,
-        { planID: plan.id, taskID: node.task_id, attemptNumber: attempt.number },
-        attempt.id,
-      )
-    if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-    else if (node.state !== "running")
-      this.store.move(plan.id, node.task_id, "RESUME", command.reason)
-    const planInput = PlanInput.parse(JSON.parse(plan.body))
-    const sharedMode =
-      command.workspaceMode === "shared" ||
-      (command.workspaceMode === undefined && planInput.workspaceMode === "shared")
-    let selectedBaseline: string | null = null
-    if (
-      !continuingTerminalWorker &&
-      (command.workspaceMode === "shared" ||
-        (retry && sharedMode && command.baseCommit !== undefined))
-    )
-      selectedBaseline = this.selectSharedWorkspace(db, ctx, plan, node, attempt)
-    // A retry may leave the shared checkout: the command's isolated mode is recorded on the plan
-    // body, the same way `selectSharedWorkspace` records a shared one, so the new attempt gets a
-    // native worktree instead of queueing behind every other plan's reservation.
-    if (retry && command.workspaceMode === "isolated" && !continuingTerminalWorker) {
-      const priorMode =
-        JSON.parse(plan.body).workspaceMode ??
-        (attempt.workspace === this.directory ? "shared" : "isolated")
-      if (priorMode !== "isolated") {
-        const revised = PlanInput.parse({ ...JSON.parse(plan.body), workspaceMode: "isolated" })
-        db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
-          JSON.stringify(revised),
-          plan.id,
-        )
-        db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
-          plan.id,
-          plan.revision + 1,
-          JSON.stringify(revised),
-          plan.owner,
-          Date.now(),
-        )
-        this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
-          attemptID: attempt.id,
-          from: attempt.workspace,
-          mode: "isolated",
-          reason: command.reason,
-        })
-      }
-    }
-    let resumedMessageID: string | undefined
-    if (retry)
-      db.query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=? AND state='preparing'",
-      ).run(attempt.id)
-    else {
-      resumedMessageID = messageID()
-      db.query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=?",
-      ).run(resumedMessageID, attempt.id)
-    }
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-    ).run(plan.id)
-    this.store.record(plan.id, node.task_id, retry ? "RETRY_REQUESTED" : "ATTEMPT_RESUMED", {
-      attemptID: attempt.id,
-      reason: command.reason,
-      usageRetained: true,
-      budget: null,
-      ...(resumedMessageID
-        ? {
-            previousMessageID: attempt.message_id,
-            messageID: resumedMessageID,
-          }
-        : {}),
-      ...(continuingTerminalWorker
-        ? {
-            terminalInputID: terminalContinuation!.inputID,
-            terminalOutcome: terminalContinuation!.worker.outcome,
-            ...(terminalContinuation!.worker.outcome === "interrupted"
-              ? { interruptedInputID: terminalContinuation!.inputID }
-              : {}),
-          }
-        : {}),
-      ...(continuingTerminalWorker && terminalRepairContinuation
-        ? {
-            retainedRepairContinuation: {
-              schema: "lazers-retained-repair-continuation/v1",
-              operationID: terminalRepairContinuation.operationID,
-              owner: terminalRepairContinuation.owner,
-            },
-          }
-        : {}),
-      ...(retry ? { selectedBaseline } : {}),
-    })
-    return {
-      status: retry ? "retrying" : "resuming",
-      version: this.store.plan(plan.id)!.version,
-    }
-  }
-
-  private commandResumeCombinedVerification(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, baseVersion, ownerSession } = ctx
-    const retry = command.action === "retry"
-    if (retry || !command.reason?.trim())
-      throw new Error("Resume requires an exact task attempt or a blocked combined check")
-    if (plan.state !== "blocked" || plan.artifact !== null || !this.validArchitect(ownerSession))
-      throw new Error("Combined verification resume requires a blocked, unaccepted plan")
-    if (
-      verificationActivitiesForDatabase(this.store.repository.path).some(
-        (activity) => activity.metadata.planID === plan.id && activity.state === "running",
-      )
-    )
-      throw new Error("A live verification activity prevents combined verification resume")
-    // A combined check without a conclusive receipt is simply re-run.
-    const superseded = this.store
-      .effects(plan.id)
-      .filter(
-        (effect) =>
-          effect.task_id === null &&
-          effect.kind.startsWith("graph-verify:") &&
-          ["intended", "uncertain"].includes(effect.state),
-      )
-    for (const effect of superseded)
-      db.query(
-        "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state IN ('intended','uncertain')",
-      ).run(effect.id)
-    const changedPlan = db
-      .query(
-        `UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1
-     WHERE id=? AND version=? AND state='blocked' AND artifact IS NULL`,
-      )
-      .run(plan.id, baseVersion).changes
-    if (changedPlan !== 1) throw new Error("Combined verification plan changed")
-    const resumed = this.store.plan(plan.id)!
-    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-      caller,
-      verificationEpoch: resumed.version,
-      continuation: "combined-verification",
-      supersededEffectIDs: superseded.map((effect) => effect.id),
-    })
-    return {
-      status: "combined-verification-resumed",
-      planID: plan.id,
-      supersededEffectIDs: superseded.map((effect) => effect.id),
-      verificationEpoch: resumed.version,
-      version: resumed.version,
-    }
+  private commandResumeOrRetry(...args: Parameters<CommandsRecovery["commandResumeOrRetry"]>) {
+    return this.commandsRecovery.commandResumeOrRetry(...args)
   }
 
   private commandRecoverRetainedRepair(
-    db: Database,
-    ctx: CommandContext,
-    plan: PlanRow,
-    node: NodeRow | undefined,
-    attempt: AttemptRow | undefined,
-    retainedRepairRecovery: RetainedRepairRecoverySeed,
+    ...args: Parameters<CommandsRetained["commandRecoverRetainedRepair"]>
   ) {
-    const { command, ownerSession } = ctx
-    const retry = command.action === "retry"
-    const recoveryTask = this.store.repository.get(retainedRepairRecovery.taskID)
-    const admittedRecoveryTask = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-      (candidate) => candidate.taskID === retainedRepairRecovery!.taskID,
-    )
-    if (
-      retry ||
-      !attempt ||
-      !node ||
-      retainedRepairRecovery.taskID !== command.taskID ||
-      retainedRepairRecovery.taskID !== attempt.task_id ||
-      retainedRepairRecovery.taskRevision !== admittedRecoveryTask?.revision ||
-      recoveryTask?.id !== retainedRepairRecovery.taskID ||
-      recoveryTask.revision !== retainedRepairRecovery.taskRevision ||
-      recoveryTask.provenance.projectID !== this.projectID ||
-      recoveryTask.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(retainedRepairRecovery.taskID) !== undefined ||
-      command.taskID !== retainedRepairRecovery.taskID ||
-      command.attemptID !== retainedRepairRecovery.attemptID ||
-      !this.validArchitect(ownerSession) ||
-      !this.retainedRepairRecoveryCurrent(plan, attempt, retainedRepairRecovery)
-    )
-      throw new Error("Retained repair recovery authorization changed before reservation")
-    const resumedMessageID = messageID()
-    this.delegatedAgentCapacity.requeueRunnerInTransaction(
-      db,
-      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
-      attempt.id,
-    )
-    this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
-    const updatedAttempt = db
-      .query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing'),message_id=? WHERE id=? AND state='cancelled' AND message_id=?",
-      )
-      .run(resumedMessageID, attempt.id, retainedRepairRecovery.failedMessageID).changes
-    const updatedPlan = db
-      .query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=?",
-      )
-      .run(
-        plan.id,
-        RETAINED_REPAIR_FENCE_FAILURE_REASON,
-        retainedRepairRecovery.planVersion + 1,
-      ).changes
-    if (updatedAttempt !== 1 || updatedPlan !== 1)
-      throw new Error("Retained repair recovery reservation changed during atomic admission")
-    this.store.record(plan.id, attempt.task_id, "ATTEMPT_RESUMED", {
-      attemptID: attempt.id,
-      reason: command.reason,
-      usageRetained: true,
-      budget: null,
-      previousMessageID: retainedRepairRecovery.failedMessageID,
-      messageID: resumedMessageID,
-      terminalInputID: retainedRepairRecovery.interruptedInputID,
-      terminalOutcome: "interrupted",
-      interruptedInputID: retainedRepairRecovery.interruptedInputID,
-      retainedRepairRecovery: {
-        schema: "lazers-retained-repair-recovery/v1",
-        operationID: retainedRepairRecovery.operationID,
-        failedMessageID: retainedRepairRecovery.failedMessageID,
-        interruptedInputID: retainedRepairRecovery.interruptedInputID,
-        owner: retainedRepairRecovery.owner,
-        failedResumeTransitionID: retainedRepairRecovery.resumedTransitionID,
-        blockedTransitionID: retainedRepairRecovery.blockedTransitionID,
-        cancelledTransitionID: retainedRepairRecovery.cancelledTransitionID,
-      },
-    })
-    return {
-      status: "retained-repair-recovered",
-      version: this.store.plan(plan.id)!.version,
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      messageID: resumedMessageID,
-    }
-  }
-
-  private commandResumeInterruptedVerification(
-    db: Database,
-    ctx: CommandContext,
-    plan: PlanRow,
-    attempt: AttemptRow,
-    interrupted: EffectRow[],
-  ) {
-    const { command, ownerSession } = ctx
-    if (
-      plan.state !== "blocked" ||
-      !this.validArchitect(ownerSession) ||
-      command.attemptID !== attempt.id ||
-      command.workspaceMode !== undefined ||
-      command.baseCommit !== undefined
-    )
-      throw new Error("Interrupted verification resume requires its exact preserved attempt")
-    const interruptedIDs = new Set(interrupted.map((effect) => effect.id))
-    if (
-      this.store
-        .effects(plan.id)
-        .some(
-          (effect) =>
-            ["intended", "uncertain"].includes(effect.state) && !interruptedIDs.has(effect.id),
-        )
-    )
-      throw new Error("Reconcile other uncertain effects first")
-    for (const effect of interrupted)
-      db.query(
-        "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed') WHERE id=? AND state='uncertain'",
-      ).run(effect.id)
-    const verificationEpoch =
-      (this.store.latestTransition<{ verificationEpoch: number }>(
-        plan.id,
-        attempt.task_id,
-        "VERIFICATION_RESUMED",
-      )?.verificationEpoch ?? 0) + 1
-    this.store.record(plan.id, attempt.task_id, "VERIFICATION_RESUMED", {
-      attemptID: attempt.id,
-      interruptedEffectIDs: [...interruptedIDs],
-      verificationEpoch,
-      reason: command.reason,
-    })
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-    ).run(plan.id)
-    return {
-      status: "verification-resumed",
-      version: this.store.plan(plan.id)!.version,
-      attemptID: attempt.id,
-    }
+    return this.commandsRetained.commandRecoverRetainedRepair(...args)
   }
 
   private assertTerminalContinuation(
@@ -2445,390 +1090,12 @@ export class TaskRuntime {
     return this.continuationPreparation.assertTerminalContinuation(...args)
   }
 
-  private commandRequeueUnstartedTask(
-    db: Database,
-    ctx: CommandContext,
-    plan: PlanRow,
-    node: NodeRow,
-    ownerSession: HostSession,
-  ) {
-    const { command, caller, preflight, obs } = ctx
-    if (
-      !["blocked", "cancelled", "failed", "running"].includes(plan.state) ||
-      plan.artifact !== null
-    )
-      throw new Error("Only an admitted, nonintegrated plan can requeue an unstarted task")
-    if (ownerSession.id !== plan.owner || ownerSession.projectID !== this.projectID)
-      throw new Error("Foreign owner session")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Reconcile uncertain effects first")
-
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    if (command.baseCommit !== undefined && command.baseCommit !== input.baseCommit) {
-      if (this.store.attempts(plan.id).length)
-        throw new Error("A plan with prior attempts cannot change its unstarted baseline")
-      const baseCommit = obs.git(this.directory, ["rev-parse", `${command.baseCommit}^{commit}`])
-      if (baseCommit !== command.baseCommit)
-        throw new Error("An explicit baseline must identify a commit")
-      obs.git(this.directory, ["merge-base", "--is-ancestor", input.baseCommit, baseCommit])
-      this.requireBaseReachable(preflight.bases, baseCommit)
-      this.store.revisePlan(
-        plan,
-        PlanInput.parse({ ...input, baseCommit }),
-        "UNSTARTED_BASELINE_SELECTED",
-        { from: input.baseCommit, baseCommit, caller, reason: command.reason },
-      )
-    }
-    this.store.move(plan.id, node.task_id, "RETRY", command.reason)
-    if (plan.state !== "running")
-      db.query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-      ).run(plan.id)
-    this.store.record(plan.id, node.task_id, "UNSTARTED_TASK_REQUEUED", {
-      caller,
-      reason: command.reason,
-    })
-    return { status: "requeued", version: this.store.plan(plan.id)!.version }
+  private commandReconcile(...args: Parameters<CommandsRecovery["commandReconcile"]>) {
+    return this.commandsRecovery.commandReconcile(...args)
   }
 
-  private commandAuthorizeStartupRecovery(
-    db: Database,
-    ctx: CommandContext,
-    plan: PlanRow,
-    attempt: AttemptRow,
-    settledStartupEffect: EffectRow,
-  ) {
-    const { command, ownerSession } = ctx
-    const retry = command.action === "retry"
-    const settlement = startupFailureSettlementFromReceipt(settledStartupEffect.receipt)
-    if (
-      retry ||
-      !command.attemptID ||
-      command.attemptID !== attempt!.id ||
-      attempt!.state !== "preparing" ||
-      plan.state !== "blocked" ||
-      !this.validArchitect(ownerSession) ||
-      !settlement
-    )
-      throw new Error("Startup recovery requires explicit resume of the exact settled attempt")
-    const workerEffects = this.store
-      .effects(plan.id)
-      .some(
-        (effect) =>
-          effect.attempt_id === attempt!.id &&
-          (effect.kind === "session" ||
-            effect.kind === "prompt" ||
-            effect.kind.startsWith("verify:") ||
-            effect.kind.startsWith("graph-verify:")),
-      )
-    if (
-      workerEffects ||
-      this.hasMeaningfulWorkerProgress(attempt!.id) ||
-      !this.preparationAllowed(attempt!)
-    )
-      throw new Error(
-        "Startup recovery cannot continue after worker effects or conflicting ownership",
-      )
-
-    const recoveryID = crypto.randomUUID()
-    const authorization: StartupRecoveryAuthorization = {
-      schema: "lazers-worktree-startup-authorization/v1",
-      recoveryID,
-      sourceEffectID: settledStartupEffect.id,
-      settlementRequestID: settlement.requestID,
-      requestID: command.requestID,
-      owner: plan.owner,
-      planVersion: plan.version + 1,
-      planRevision: plan.revision,
-      taskID: attempt!.task_id,
-      attemptID: attempt!.id,
-      sessionID: attempt!.session_id,
-      messageID: attempt!.message_id,
-      workspace: attempt!.workspace,
-      base: attempt!.base_commit,
-      policy: attempt!.policy,
-    }
-    this.delegatedAgentCapacity.requeueRunnerInTransaction(
-      db,
-      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
-      attempt.id,
-    )
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
-    ).run(plan.id, plan.version)
-    this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_AUTHORIZED", authorization)
-    this.store.record(plan.id, attempt!.task_id, "ATTEMPT_RESUMED", {
-      attemptID: attempt!.id,
-      reason: command.reason,
-      usageRetained: true,
-      budget: null,
-      startupRecoveryID: recoveryID,
-      sourceEffectID: settledStartupEffect.id,
-    })
-    return {
-      status: "startup-recovery-authorized",
-      version: plan.version + 1,
-      attemptID: attempt!.id,
-      recoveryID,
-    }
-  }
-
-  private selectSharedWorkspace(
-    db: Database,
-    ctx: CommandContext,
-    plan: PlanRow,
-    node: NodeRow,
-    attempt: AttemptRow,
-  ) {
-    const { command, preflight, obs } = ctx
-    const retry = command.action === "retry"
-    const source = command.baseCommit ?? obs.git(this.directory, ["rev-parse", "HEAD"])
-    if (command.baseCommit !== undefined) this.requireBaseReachable(preflight.bases, source)
-    if (!retry)
-      db.query("UPDATE runner_attempts SET workspace=?,base_commit=? WHERE id=?").run(
-        this.directory,
-        source,
-        attempt.id,
-      )
-    const revised = PlanInput.parse({
-      ...JSON.parse(plan.body),
-      workspaceMode: "shared",
-      baseCommit: source,
-    })
-    db.query("UPDATE runner_plans SET body=?,revision=revision+1 WHERE id=?").run(
-      JSON.stringify(revised),
-      plan.id,
-    )
-    db.query("INSERT INTO runner_plan_revisions VALUES(?,?,?,?,?)").run(
-      plan.id,
-      plan.revision + 1,
-      JSON.stringify(revised),
-      plan.owner,
-      Date.now(),
-    )
-    this.store.record(plan.id, node.task_id, "WORKSPACE_SELECTED", {
-      attemptID: attempt.id,
-      from: attempt.workspace,
-      directory: this.directory,
-      source,
-      explicitBaseline: retry && command.baseCommit !== undefined,
-      mode: "shared",
-      reason: command.reason,
-    })
-    return retry && command.baseCommit !== undefined ? source : null
-  }
-
-  private commandReconcile(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { command, caller, baseVersion, ownerSession, reviewInput } = ctx
-    if (!ownerSession || ownerSession.archived) throw new Error("Owner unavailable")
-    let existingReviewInput = false
-    if (reviewInput) {
-      const { binding, evidence } = reviewInput
-      if (
-        !this.validArchitect(ownerSession) ||
-        ownerSession.id !== binding.ownerSessionID ||
-        binding.planID !== plan.id ||
-        binding.expectedPlanVersion !== baseVersion ||
-        binding.commandRequestID !== command.requestID ||
-        !["running", "blocked"].includes(plan.state)
-      )
-        throw new Error("Review input reconciliation authorization or plan version changed")
-
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((attempt) => attempt.task_id === binding.taskID)
-        .at(-1)
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === binding.taskID)
-      const task = this.store.repository.get(binding.taskID)
-      if (
-        !latest ||
-        latest.id !== binding.attemptID ||
-        !["running", "verifying"].includes(latest.state) ||
-        latest.session_id !== binding.sessionID ||
-        latest.workspace !== binding.workspace ||
-        latest.message_id !== binding.assignedMessageID ||
-        !node ||
-        node.state !== latest.state ||
-        !task ||
-        task.provenance.projectID !== binding.projectID ||
-        task.provenance.projectDirectory !== binding.projectDirectory ||
-        task.revision !==
-          PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-            (item) => item.taskID === binding.taskID,
-          )?.revision
-      )
-        throw new Error("Review input worker assignment changed during native observation")
-
-      const policy = ModelPolicy.parse(JSON.parse(latest.policy).model)
-      if (
-        policy.providerID !== binding.model.providerID ||
-        policy.id !== binding.model.id ||
-        policy.variant !== binding.model.variant
-      )
-        throw new Error("Review input worker route changed during native observation")
-
-      const aliases = db
-        .query<{ id: number; payload: string }, [string, string]>(
-          `SELECT id,payload FROM runner_transitions
-       WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
-       ORDER BY id`,
-        )
-        .all(plan.id, binding.taskID)
-      for (const row of aliases) {
-        let prior: ReturnType<typeof parseReviewInputAlias>
-        try {
-          prior = parseReviewInputAlias(JSON.parse(row.payload))
-        } catch {
-          prior = undefined
-        }
-        if (!prior || prior.attemptID !== binding.attemptID) continue
-        if (prior.reviewInputID !== binding.reviewInputID) continue
-        if (
-          !matchesReviewInputAlias(prior, {
-            projectDirectory: binding.projectDirectory,
-            projectID: binding.projectID,
-            planID: binding.planID,
-            taskID: binding.taskID,
-            attemptID: binding.attemptID,
-            sessionID: binding.sessionID,
-            workspace: binding.workspace,
-            assignedMessageID: binding.assignedMessageID,
-            reviewInputID: binding.reviewInputID,
-          }) ||
-          prior.reviewRequestID !== evidence.reviewRequestID
-        )
-          throw new Error("Review input already has a different durable lineage relationship")
-        existingReviewInput = true
-        break
-      }
-    }
-    if (
-      this.store
-        .effects(plan.id)
-        .some((e) => ["intended", "uncertain"].includes(e.state) && !isRerunnableEffect(e.kind))
-    )
-      return {
-        status: "blocked",
-        reason: "Uncertain effects require conclusive host/artifact evidence",
-        version: plan.version,
-      }
-    if (plan.state === "blocked") {
-      db.query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
-      ).run(plan.id)
-      for (const node of this.store.nodes(plan.id))
-        if (
-          node.state === "blocked" &&
-          !this.store.attempts(plan.id).some((a) => a.task_id === node.task_id)
-        )
-          this.store.move(plan.id, node.task_id, "RECONCILE")
-    }
-    if (reviewInput && !existingReviewInput) {
-      const { binding, evidence } = reviewInput
-      this.store.record(plan.id, binding.taskID, "WORKER_REVIEW_INPUT_RECONCILED", {
-        schemaVersion: 1,
-        kind: "owner-reviewed-native-input-alias",
-        source: "observed-native-review-input",
-        runtimeSentMessage: false,
-        projectDirectory: binding.projectDirectory,
-        projectID: binding.projectID,
-        planID: binding.planID,
-        taskID: binding.taskID,
-        attemptID: binding.attemptID,
-        sessionID: binding.sessionID,
-        workspace: binding.workspace,
-        assignedMessageID: binding.assignedMessageID,
-        reviewInputID: binding.reviewInputID,
-        reviewRequestID: evidence.reviewRequestID,
-        ownerSessionID: binding.ownerSessionID,
-        commandRequestID: binding.commandRequestID,
-        expectedPlanVersion: binding.expectedPlanVersion,
-        model: binding.model,
-        input: evidence.input,
-        observation: evidence.observation,
-      })
-    }
-    this.store.record(plan.id, null, "RECONCILE_REQUESTED", {
-      caller,
-      verificationEpoch: this.store.plan(plan.id)!.version,
-      ...(reviewInput ? { reviewInputID: reviewInput.binding.reviewInputID } : {}),
-    })
-    return {
-      status: "reconciling",
-      version: this.store.plan(plan.id)!.version,
-      ...(reviewInput
-        ? {
-            reviewInputID: reviewInput.binding.reviewInputID,
-            relationshipRecorded: !existingReviewInput,
-          }
-        : {}),
-    }
-  }
-
-  private commandRun(db: Database, ctx: CommandContext, plan: PlanRow) {
-    const { configuredWorker, ownerSession, obs } = ctx
-    if (plan.state !== "draft" && plan.state !== "blocked")
-      throw new Error("Execution already requested or ended")
-    if (this.store.attempts(plan.id).length)
-      throw new Error("Existing execution must be reconciled; admission cannot replace its policy")
-    if (!ownerSession || ownerSession.projectID !== this.projectID)
-      throw new Error("An Architect session of this project must command the plan")
-    const proposal = PlanInput.parse(JSON.parse(plan.body))
-    const selectedModel = proposal.workerModel ?? configuredWorker
-    const configuredRoute = proposal.workerModel ? null : (configuredWorker ?? null)
-    const nodeRouteDecisions = proposal.nodes.map((node) =>
-      node.persona && proposal.workerAgent !== "auditor"
-        ? this.resolveTaskDispatchRoute(proposal, node.taskID, node.persona, configuredRoute)
-        : null,
-    )
-    const everyNodeHasRoute = proposal.nodes.every((node, index) =>
-      node.persona && proposal.workerAgent !== "auditor"
-        ? nodeRouteDecisions[index]?.status === "resolved"
-        : selectedModel !== undefined,
-    )
-    if (!everyNodeHasRoute)
-      return this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
-    const model = selectedModel ? ModelPolicy.parse(selectedModel) : null
-    try {
-      if (
-        obs.git(this.directory, ["rev-parse", `${proposal.baseCommit}^{commit}`]) !==
-        proposal.baseCommit
-      )
-        throw new Error("Base mismatch")
-    } catch (error) {
-      if (error instanceof ObservationRequired) throw error
-      return this.hold(plan, `Unavailable committed source baseline: ${errorText(error)}`)
-    }
-    const audit = this.store.exactContentConflicts(proposal.nodes.map((n) => n.taskID))
-    const conflicts = audit.findings
-    if (conflicts.length)
-      return this.hold(
-        plan,
-        `Unresolved overlap findings: ${conflicts.map((f) => f.id).join(", ")}`,
-      )
-    db.query(
-      "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),model=?,reason=NULL,version=version+1 WHERE id=?",
-    ).run(model ? JSON.stringify(model) : null, plan.id)
-    this.store.record(plan.id, null, "ADMITTED", {
-      model,
-      modelSource: proposal.workerModel
-        ? "explicit-plan-selection"
-        : configuredWorker
-          ? "native-agent-selection"
-          : "persona-mapping-selection",
-      auditWatermark: audit.watermark,
-      source: proposal.baseCommit,
-      enforcement: {
-        budget: "unconfigured; historical proposed limits are not execution policy",
-        tokens: "measured usage only",
-        cost: "API-equivalent price unavailable until resolved; never treated as zero",
-        tools: "measured usage only",
-        repairs: "one bounded verification repair by default",
-      },
-    })
-    return { status: "running", planID: plan.id, version: this.store.plan(plan.id)!.version }
+  private commandRun(...args: Parameters<CommandsControl["commandRun"]>) {
+    return this.commandsControl.commandRun(...args)
   }
 
   /**
@@ -3135,127 +1402,12 @@ export class TaskRuntime {
     }
   }
 
-  private async requestQueueReview(
-    waits: { planID: string; prerequisitePlanIDs?: string[]; reservationTaskIDs?: string[] }[],
-    fence: number,
-  ) {
-    const current = () =>
-      waits.filter(
-        ({ planID }) =>
-          this.store.plan(planID)?.state === "running" &&
-          !this.store.effectiveDispatchPause(planID),
-      )
-    const waiting = current()
-    const anchor = waiting[0]
-    if (!anchor) return
-    const review = { waiting }
-    const event = "QUEUE_REVIEW_REQUESTED"
-    const prior = this.store.atomic((db) =>
-      db
-        .query<OutboxRow & { requestedAt: number }, [string, string]>(
-          `SELECT o.*, o.rowid AS sequence, CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
-                COALESCE(json_extract(o.payload,'$.requestedAt'),
-                  (SELECT max(t.created_at) FROM runner_transitions t
-                   WHERE t.plan_id=o.plan_id AND t.event='QUEUE_REVIEW_REQUESTED'), 0) AS requestedAt
-           FROM runner_outbox o
-          WHERE o.plan_id=? AND json_extract(o.payload,'$.status')='queue-review'
-            AND json_extract(o.payload,'$.waiting')=?
-          ORDER BY o.rowid DESC LIMIT 1`,
-        )
-        .get(anchor.planID, JSON.stringify(waiting)),
-    )
-    if (prior && this.now() - prior.requestedAt < PROJECT_RECONCILIATION_INTERVAL_MS) return
-    if (prior?.state === "pending") return
-    const checking = () =>
-      verificationActivitiesForDatabase(this.store.repository.path).some(
-        (activity) =>
-          activity.metadata.projectDirectory === this.directory && activity.state === "running",
-      )
-    if (checking()) return
-    const active = this.store.activeProjectAttempts()
-    for (const attempt of active) {
-      const session = await this.host.session(attempt.session_id)
-      if (
-        session?.busy ||
-        session?.pendingInput ||
-        session?.observationUnstable ||
-        (session && this.backgroundBlockReason(session))
-      )
-        return
-    }
-    const owner = this.store.plan(anchor.planID)?.owner
-    if (!owner) return
-    const architect = await this.host.session(owner)
-    if (
-      architect?.busy ||
-      architect?.pendingInput ||
-      architect?.observationUnstable ||
-      (architect?.pendingPermissions ?? 0) > 0 ||
-      (architect?.pendingForms ?? 0) > 0
-    )
-      return
-
-    if (prior?.state === "delivered") {
-      // A delivered review still waiting in the Architect's inbox is not asked again.
-      if (prior.session_id !== owner || !this.validArchitect(architect)) return
-      const observation = await this.outcomeDelivery.outcomeObservation(
-        prior,
-        owner,
-        this.outcomeDelivery.ownership(prior),
-      )
-      if (observation === "queued") return
-    }
-    this.store.fenced(this.owner, fence, () => {
-      if (
-        checking() ||
-        this.store.plan(anchor.planID)?.owner !== owner ||
-        JSON.stringify(current()) !== JSON.stringify(waiting) ||
-        this.store
-          .activeProjectAttempts()
-          .some(
-            (attempt) =>
-              !active.some(
-                (observed) =>
-                  observed.id === attempt.id &&
-                  observed.message_id === attempt.message_id &&
-                  observed.state === attempt.state,
-              ),
-          )
-      )
-        return
-      const requestedAt = this.now()
-      this.store.record(anchor.planID, null, event, { ...review, requestedAt })
-      this.outcome(anchor.planID, { status: "queue-review", ...review, requestedAt }, true)
-    })
+  private requestQueueReview(...args: Parameters<QueueReview["requestQueueReview"]>) {
+    return this.queueReview.requestQueueReview(...args)
   }
 
-  /**
-   * Plans held at dispatch because the project had no Fallow config resume on their own once one
-   * exists (the same running transition the Architect's `run` makes), so a queued task never
-   * dead-ends on a rule that arrived after it.
-   */
-  private async releaseFallowConfigHolds(fence: number) {
-    const held = this.store.atomic((db) =>
-      db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM runner_plans WHERE project_directory=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
-        )
-        .all(this.directory),
-    )
-    if (held.length === 0 || (await this.fallowGate())) return
-    for (const { id } of held)
-      this.store.fenced(this.owner, fence, (db) => {
-        const changed = db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
-          )
-          .run(id).changes
-        if (changed === 1)
-          this.store.record(id, null, "RECONCILE_REQUESTED", {
-            caller: "fallow-config",
-            verificationEpoch: this.store.plan(id)!.version,
-          })
-      })
+  private releaseFallowConfigHolds(...args: Parameters<QueueReview["releaseFallowConfigHolds"]>) {
+    return this.queueReview.releaseFallowConfigHolds(...args)
   }
 
   private async runTick() {
@@ -3486,514 +1638,12 @@ export class TaskRuntime {
       )
   }
 
-  /**
-   * A cancelled prerequisite drops its dependency edge and notifies the
-   * Architect; dependents are never held on it. The dropped edge is recorded
-   * in a plan revision. A hold left by an earlier version is released through
-   * the task and plan machines.
-   */
-  private reconcileCancelledDependencies(planID: string, fence: number) {
-    return this.store.fenced(this.owner, fence, (db) => {
-      const plan = this.store.plan(planID)!
-      if (!["running", "blocked"].includes(plan.state)) return plan
-      const input = PlanInput.parse(JSON.parse(plan.body))
-      const cancelledPlan = (id: string) =>
-        ["cancelling", "cancelled"].includes(this.store.plan(id)?.state ?? "")
-      const nodes = this.store.nodes(planID)
-      const planEdges = (input.afterPlans ?? []).filter(cancelledPlan)
-      const pause = this.store.dispatchPause(planID)
-      const pausedUntil = (pause?.untilPlans ?? []).filter(cancelledPlan)
-      const taskEdges = input.dependencies.filter(
-        (edge) => nodes.find((node) => node.task_id === edge.prerequisite)?.state === "cancelled",
-      )
-      if (planEdges.length || taskEdges.length) {
-        this.store.revisePlan(
-          plan,
-          PlanInput.parse({
-            ...input,
-            afterPlans: (input.afterPlans ?? []).filter((id) => !planEdges.includes(id)),
-            dependencies: input.dependencies.filter((edge) => !taskEdges.includes(edge)),
-          }),
-          "DEPENDENCY_EDGE_DROPPED",
-          {
-            planPrerequisites: planEdges,
-            taskEdges: taskEdges.map((edge) => ({
-              prerequisite: edge.prerequisite,
-              successor: edge.successor,
-            })),
-          },
-        )
-        for (const edge of taskEdges)
-          db.query(
-            "DELETE FROM runner_dependencies WHERE plan_id=? AND prerequisite=? AND successor=?",
-          ).run(planID, edge.prerequisite, edge.successor)
-      }
-      if (pause && pausedUntil.length) {
-        const remaining = pause.untilPlans.filter((id) => !pausedUntil.includes(id))
-        this.store.setDispatchPause(
-          planID,
-          remaining.length ? { reason: pause.reason, untilPlans: remaining } : null,
-          { droppedCancelledPrerequisites: pausedUntil },
-        )
-      }
-      if (planEdges.length || taskEdges.length || pausedUntil.length)
-        this.outcome(
-          planID,
-          {
-            status: "dependency-dropped",
-            reason: "A cancelled prerequisite was dropped; dependent work continues",
-            droppedPlanPrerequisites: planEdges,
-            droppedTaskPrerequisites: taskEdges.map((edge) => edge.prerequisite),
-            droppedPauseConditions: pausedUntil,
-            allowedActions: ["schedule", "audit"],
-          },
-          true,
-        )
-      this.releaseLegacyDependencyHold(plan.id)
-      return this.store.plan(planID)!
-    })
+  private interruptedChecksFor(...args: Parameters<PlanStep["interruptedChecksFor"]>) {
+    return this.planStep.interruptedChecksFor(...args)
   }
 
-  /** Releases a hold applied by an earlier version for a cancelled prerequisite. */
-  private releaseLegacyDependencyHold(planID: string) {
-    type Saved = {
-      roots: string[]
-      nodes: Array<{ taskID: string; version: number; reason: string }>
-      planHold: { previousState: string; previousReason: string | null; reason: string } | null
-    }
-    const previous = this.store.latestTransition<Saved>(planID, null, "DEPENDENCY_CANCELLATION")
-    if (!previous || (!previous.nodes.length && !previous.planHold)) return
-    for (const node of this.store.nodes(planID)) {
-      const saved = previous.nodes.find((item) => item.taskID === node.task_id)
-      if (saved && node.state === "blocked" && node.version === saved.version)
-        this.store.move(planID, node.task_id, "RECONCILE")
-    }
-    const plan = this.store.plan(planID)!
-    const hold = previous.planHold
-    if (hold && plan.state === "blocked" && plan.reason === hold.reason)
-      this.store.atomic((db) =>
-        db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=?,version=version+1 WHERE id=?",
-          )
-          .run(hold.previousState, hold.previousReason, planID),
-      )
-    this.store.record(planID, null, "DEPENDENCY_CANCELLATION", {
-      roots: [],
-      nodes: [],
-      planHold: null,
-    } satisfies Saved)
-  }
-
-  private interruptedChecksFor(plan: PlanRow, attempt: AttemptRow) {
-    return this.store.effects(plan.id).filter((effect) => {
-      const receipt = actualCheckResultFromEffect(effect)
-      return (
-        effect.state === "uncertain" &&
-        effect.attempt_id === attempt.id &&
-        effect.kind.startsWith("verify:") &&
-        receipt?.aborted === true &&
-        receipt.cwd === attempt.workspace &&
-        receipt.artifact === attempt.artifact &&
-        receipt.inputIdentity === attempt.artifact &&
-        checkResourcesSettled(receipt)
-      )
-    })
-  }
-
-  private async step(initialPlan: PlanRow, fence: number) {
-    let plan = this.store.plan(initialPlan.id)
-    if (!plan) return
-    if (plan.state !== "running") await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-    if (plan.state === "cancelling") {
-      const activities = await this.timed("step:cancelCheckActivities", () =>
-        this.cancelCheckActivities(plan!.id),
-      )
-      await this.timed("step:reconcileCancelledCheckActivities", () =>
-        this.reconcileCancelledCheckActivities(plan!, activities, fence),
-      )
-      const cancelledOperations = this.store.atomic((db) =>
-        retainedVerificationsForPlan(db, this.directory, plan!.id).filter(
-          (operation) => operation.state === "cancelled",
-        ),
-      )
-      for (const operation of cancelledOperations)
-        await this.timed("step:recoverCancelledRetainedChecks", () =>
-          this.recoverCancelledRetainedChecks(operation.id),
-        )
-      const retainedProblem = this.store.atomic((db) =>
-        retainedVerificationsForPlan(db, this.directory, plan!.id).some(
-          (operation) =>
-            operation.state === "cancelled" &&
-            Boolean(this.retainedCheckSettlementProblem(operation.id)),
-        ),
-      )
-      const unsettled = activities.find((activity) => checkSettlementProblem(activity))
-      if (unsettled || retainedProblem) {
-        // Process uncertainty fences terminal settlement, not interruption of
-        // other owned workers. Continue cancellation without declaring idle.
-        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence, false))
-        const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
-        this.store.fenced(this.owner, fence, (db) => {
-          if (this.store.plan(plan!.id)?.reason === reason) return
-          db.query("UPDATE runner_plans SET reason=? WHERE id=? AND state='cancelling'").run(
-            reason,
-            plan!.id,
-          )
-          this.store.record(plan!.id, null, "VERIFICATION_CANCELLATION_UNCERTAIN", { reason })
-        })
-        return
-      }
-      await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
-      const pending = this.store
-        .effects(plan.id)
-        .find((e) => ["intended", "uncertain"].includes(e.state))
-      if (pending)
-        await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
-      return
-    }
-    const contactPaused = this.store.architectContactPaused()
-    const planRenewal = contactPaused ? undefined : this.store.architectRenewalForPlan(plan.id)
-    if (
-      planRenewal &&
-      ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
-    ) {
-      await this.timed("step:continueArchitectRenewal", () =>
-        this.continueArchitectRenewal(planRenewal, fence),
-      )
-      return
-    }
-    // Routing always reaches a live Architect: the owner is advisory, so a
-    // missing or archived one is replaced before any branch can return early.
-    const owner = await this.timed("step:host.session", () => this.host.session(plan!.owner))
-    if (!this.validArchitect(owner) && !contactPaused) {
-      this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-      await this.timed("step:ensureArchitectOwner", () => this.ensureArchitectOwner(plan!, owner))
-      plan = this.store.plan(plan.id)!
-    }
-    if (plan.state === "cleaning") {
-      await this.timed("step:cleanupWorktrees", () =>
-        this.worktreeCleanup.cleanupWorktrees(plan!, fence),
-      )
-      return
-    }
-    const adoption = this.store.activeAdoptions(plan.id)[0]
-    if (adoption) {
-      await this.timed("step:advanceAdoption", () =>
-        this.adoptionExecution.advanceAdoption(plan!, adoption, fence),
-      )
-      return
-    }
-    if (this.validArchitect(owner) && !contactPaused) {
-      const renewal = this.store.architectRenewalForSource(owner.id)
-      if (
-        renewal &&
-        ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state)
-      ) {
-        await this.timed("step:continueArchitectRenewal", () =>
-          this.continueArchitectRenewal(renewal, fence),
-        )
-        return
-      }
-      // Only work that needs judgement routes; a cold, large Architect is replaced.
-      if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
-        this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-        if (
-          await this.timed("step:considerArchitectRenewal", () =>
-            this.considerArchitectRenewal(plan!, owner, fence),
-          )
-        )
-          return
-      }
-    }
-    // An owner read can overlap an authorized resume, cancellation, or reassignment.
-    if (this.store.plan(plan.id)?.version !== plan.version) return
-    plan = this.reconcileCancelledDependencies(plan.id, fence)
-    const unresolved = this.store
-      .effects(plan.id)
-      .filter((e) => ["intended", "uncertain"].includes(e.state))
-    const pending = unresolved[0]
-    if (pending) {
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-      const attempt = pending.attempt_id
-        ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
-        : undefined
-      if (
-        plan.state === "blocked" &&
-        plan.reason?.startsWith(`Recovery uncertain for ${pending.kind} ${pending.id}:`) &&
-        attempt?.state === "verifying" &&
-        unresolved.length === 1 &&
-        actualCheckResultFromEffect(pending)?.processCleanup &&
-        this.interruptedChecksFor(plan, attempt).some((effect) => effect.id === pending.id)
-      ) {
-        await this.command(
-          {
-            requestID: `resume-settled-check:${pending.id}:${plan.version}`,
-            planID: plan.id,
-            action: "resume",
-            taskID: attempt.task_id,
-            attemptID: attempt.id,
-            reason: "Resume the interrupted check after confirming subprocess cleanup",
-          },
-          plan.owner,
-        )
-        this.tickRequested = true
-        return
-      }
-      await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
-      // A settled effect of a running plan unblocks the rest of its step: continue now, not at
-      // the next periodic pass. An unsettled effect waits for new facts instead of spinning, and
-      // a held plan waits for its Architect.
-      const settled = this.store.effects(plan.id).find((effect) => effect.id === pending.id)
-      if (
-        this.store.plan(plan.id)?.state === "running" &&
-        settled &&
-        !["intended", "uncertain"].includes(settled.state)
-      )
-        this.tickRequested = true
-      return
-    }
-    // A takeover in progress owns its worker attempt: advance it, and leave that worker alone.
-    for (const takeover of this.takeovers.open(plan.id))
-      await this.timed("step:takeover", () => this.takeovers.advance(takeover, true))
-    plan = this.store.plan(plan.id)!
-    const heldByTakeover = this.takeovers.heldAttempts(plan.id)
-    const active = this.store
-      .attempts(plan.id)
-      .filter((a) => ["preparing", "running", "verifying"].includes(a.state))
-      .filter((a) => !heldByTakeover.has(a.id))
-    if (active.length) {
-      await Promise.all(
-        active.map((attempt) => {
-          // The Architect works its own attempt; it is verified once submitted.
-          if (isTakeoverAttempt(attempt.policy)) {
-            if (attempt.state !== "verifying")
-              return this.timed("step:takeoverLiveness", () =>
-                this.holdAbandonedTakeover(this.store.plan(plan!.id)!, attempt),
-              )
-            const task = this.store.repository.get(attempt.task_id)!
-            return this.timed("step:verifyTakeover", () =>
-              this.verify(this.store.plan(plan!.id)!, attempt, task.proposal, fence),
-            )
-          }
-          const promptCompleted = this.store
-            .effects(plan!.id)
-            .some(
-              (effect) =>
-                effect.attempt_id === attempt.id &&
-                effect.kind === "prompt" &&
-                JSON.parse(effect.payload).messageID === attempt.message_id &&
-                effect.state === "completed",
-            )
-          const settledStartup = this.settledStartupEffect(plan!.id, attempt)
-          if (
-            plan!.state === "blocked" &&
-            attempt.state === "preparing" &&
-            !promptCompleted &&
-            !settledStartup &&
-            !this.retainedRepairForAttempt(attempt)
-          )
-            return this.cancelReservedAttempt(plan!, attempt, fence)
-          if (plan!.state === "blocked" && settledStartup) return
-          const scopeWait = this.store.latestTransition<{ attemptID: string; reason: string }>(
-            plan!.id,
-            attempt.task_id,
-            "SCOPE_DECISION_REQUIRED",
-          )
-          if (
-            plan!.state === "blocked" &&
-            scopeWait?.attemptID === attempt.id &&
-            scopeWait.reason === plan!.reason
-          )
-            return
-          return this.timed("step:advanceAttempt", () =>
-            this.advanceAttempt(this.store.plan(plan!.id)!, attempt, fence),
-          )
-        }),
-      )
-      plan = this.store.plan(plan.id)!
-      if (plan.state === "cancelling") {
-        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
-        return
-      }
-    }
-    if (plan.state === "blocked") return
-
-    let rawInput = JSON.parse(plan.body)
-    let input = PlanInput.parse(rawInput)
-    const prerequisites = input.afterPlans ?? []
-    const prerequisiteBaseline = prerequisites.length
-      ? await this.timed("step:integratedPrerequisiteBaseline", () =>
-          this.integratedPrerequisiteBaseline(prerequisites),
-        )
-      : undefined
-    if (prerequisites.length && !prerequisiteBaseline) {
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-      if (
-        !this.store.effectiveDispatchPause(plan.id) &&
-        this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
-      )
-        return { planID: plan.id, prerequisitePlanIDs: prerequisites }
-      return
-    }
-    if (prerequisites.length && !this.store.attempts(plan.id).length) {
-      // Dependents inherit the selected checkout after every prerequisite's
-      // current combined integration proof is present in its Git history.
-      const baseCommit = prerequisiteBaseline!
-      if (input.baseCommit !== baseCommit) {
-        input = PlanInput.parse({ ...rawInput, baseCommit })
-        this.store.revisePlan(plan, input, "DEPENDENCIES_INTEGRATED", { prerequisites, baseCommit })
-        plan = this.store.plan(plan.id)!
-        rawInput = JSON.parse(plan.body)
-      }
-    }
-    if (rawInput.workspaceMode === undefined) {
-      const attempts = this.store.attempts(plan.id)
-      if (attempts.length)
-        input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
-    }
-    const nodes = this.store.nodes(plan.id)
-    const occupied = this.store.dispatchReservations()
-    let pause = this.store.dispatchPause(plan.id)
-    if (
-      pause?.untilPlans.length &&
-      (await this.timed("step:integratedPrerequisiteBaseline", () =>
-        this.integratedPrerequisiteBaseline(pause!.untilPlans),
-      ))
-    ) {
-      this.store.fenced(this.owner, fence, () =>
-        this.store.setDispatchPause(plan!.id, null, { source: "resume-condition" }),
-      )
-      plan = this.store.plan(plan.id)!
-      this.outcome(
-        plan.id,
-        { status: "dispatch-resumed", reason: "Resume prerequisites integrated" },
-        true,
-      )
-      pause = undefined
-    }
-    // A project or global pause holds new dispatch whatever the plan's own pause says.
-    const held = this.store.effectiveDispatchPause(plan.id)
-    const ready: NodeRow[] = []
-    for (const node of nodes) {
-      if (
-        held ||
-        !["queued", "ready"].includes(node.state) ||
-        this.store.execution(node.task_id)!.waitingOn.length > 0
-      )
-        continue
-      const prerequisites = this.taskDependencyIDs(input, node)
-      if (
-        prerequisites.length === 0 ||
-        (
-          await this.timed("step:taskDependencyIntegration", () =>
-            this.taskDependencyIntegration(plan!, input, node),
-          )
-        ).status === "ready"
-      )
-        ready.push(node)
-    }
-    const selection = selectSchedulingCandidates(
-      input.workspaceMode,
-      ready.map((node) => ({
-        taskID: node.task_id,
-        scopes: this.store.effectiveReservationScope(node.task_id),
-      })),
-      occupied as SchedulingReservation[],
-    )
-    const selected = selection.selectedTaskIDs.flatMap((taskID) => {
-      const node = ready.find((candidate) => candidate.task_id === taskID)
-      return node ? [node] : []
-    })
-    if (selected.length) {
-      const admissionRequests = new Map<string, string>()
-      for (const node of selected) {
-        const attemptNumber =
-          this.store.attempts(plan.id).filter((attempt) => attempt.task_id === node.task_id)
-            .length + 1
-        admissionRequests.set(
-          node.task_id,
-          await this.delegatedAgentCapacity.ensureRunnerQueued({
-            planID: plan.id,
-            taskID: node.task_id,
-            attemptNumber,
-          }),
-        )
-      }
-      const activeTaskIDs = this.store
-        .attempts(plan.id)
-        .filter(
-          (attempt) =>
-            attempt.state === "running" ||
-            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
-        )
-        .map((attempt) => attempt.task_id)
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id, [
-        ...new Set([...selected.map((node) => node.task_id), ...activeTaskIDs]),
-      ])
-      await Promise.all(
-        selected.map(async (node) => {
-          try {
-            await this.timed("step:dispatch", () =>
-              this.dispatch(plan!, node, fence, admissionRequests.get(node.task_id)!),
-            )
-          } catch (error) {
-            const current = this.store.plan(plan!.id)
-            if (current && current.state !== "blocked")
-              this.hold(current, `Dispatch failed for ${node.task_id}: ${errorText(error)}`)
-          }
-        }),
-      )
-      return
-    }
-    const outstanding = this.store
-      .attempts(plan.id)
-      .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
-    await this.delegatedAgentCapacity.cancelRunnerQueue(
-      plan.id,
-      outstanding
-        .filter(
-          (attempt) =>
-            attempt.state === "running" ||
-            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
-        )
-        .map((attempt) => attempt.task_id),
-    )
-    if (outstanding.length) {
-      if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
-        return {
-          planID: plan.id,
-          reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
-        }
-      return
-    }
-    const failed = nodes.find((n) =>
-      ["failed", "cancelled", "exhausted", "blocked"].includes(n.state),
-    )
-    if (failed) {
-      this.hold(plan, `Task ${failed.task_id}: ${failed.reason ?? failed.state}`)
-      return
-    }
-    if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated")) {
-      await this.timed("step:finish", () => this.finish(plan!, fence))
-      return
-    }
-    if (ready.length && occupied.length) {
-      const reservationTaskIDs = occupied
-        .filter(
-          (entry) =>
-            input.workspaceMode === "shared" ||
-            entry.shared ||
-            ready.some((node) =>
-              scopePatternsConflict(
-                entry.scopes,
-                this.store.effectiveReservationScope(node.task_id),
-              ),
-            ),
-        )
-        .map((entry) => entry.taskID)
-      return { planID: plan.id, reservationTaskIDs: [...new Set(reservationTaskIDs)].sort() }
-    }
+  private step(...args: Parameters<PlanStep["step"]>) {
+    return this.planStep.step(...args)
   }
 
   private cancelWorkers(...args: Parameters<Cancellation["cancelWorkers"]>) {
@@ -4112,285 +1762,8 @@ export class TaskRuntime {
     return this.repairRecords.retainedRepairPromptCurrent(...args)
   }
 
-  /**
-   * A resume reserves a fresh input, but the interruption it answers may have been a stale
-   * observation: the worker is still inside its previous turn. Prompting it again would queue a
-   * second input behind a live turn and the retained-repair fence rightly refuses a busy worker,
-   * leaving the attempt in `preparing` while the worker works. When the session is busy on exactly
-   * the input the attempt had before the resume, the attempt takes that input back and runs.
-   */
-  private async adoptRunningWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const resumed = this.store
-      .activity(plan.id, attempt.task_id)
-      .filter((event) => event.event === "ATTEMPT_RESUMED")
-      .map((event) =>
-        this.parseTransitionPayload<{
-          attemptID?: unknown
-          messageID?: unknown
-          previousMessageID?: unknown
-        }>(event),
-      )
-      .filter((payload) => payload?.attemptID === attempt.id)
-      .at(-1)
-    const previousMessageID = resumed?.previousMessageID
-    if (resumed?.messageID !== attempt.message_id || typeof previousMessageID !== "string")
-      return false
-    const observed = await this.host.session(attempt.session_id, { messages: true })
-    if (
-      !observed ||
-      observed.archived ||
-      !observed.busy ||
-      observed.directory !== attempt.workspace ||
-      observed.turn?.state !== "pending" ||
-      observed.turn.inputID !== previousMessageID ||
-      observed.messages.some((message) => message.id === attempt.message_id)
-    )
-      return false
-    const adopted = this.store.fenced(this.owner, fence, (db) => {
-      if (this.store.plan(plan.id)?.state !== "running") return false
-      const changed =
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),message_id=? WHERE id=? AND state='preparing' AND message_id=?",
-          )
-          .run(previousMessageID, attempt.id, attempt.message_id).changes === 1
-      if (changed)
-        this.store.record(plan.id, attempt.task_id, "WORKER_RESUME_ADOPTED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          inputID: previousMessageID,
-          reservedMessageID: attempt.message_id,
-        })
-      return changed
-    })
-    return adopted
-  }
-
-  private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const admissionPlan = this.store.plan(plan.id)
-    if (!admissionPlan || admissionPlan.state !== "running") return
-    if (!(await this.startupWorkspaceReady(admissionPlan, attempt, fence))) return
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    const retainedRepair = this.retainedRepairForAttempt(attempt)
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      plan.id,
-      attempt.task_id,
-    )
-    if (latestRepair?.attemptID === attempt.id && !retainedRepair) {
-      this.hold(plan, "Retained repair is missing a valid owner/control authorization fence")
-      return
-    }
-    if (retainedRepair && (await this.adoptRunningWorker(plan, attempt, fence))) return
-    const existing = this.store.effects(plan.id)
-    if (
-      retainedRepair &&
-      !existing.some(
-        (effect) =>
-          effect.attempt_id === attempt.id &&
-          effect.kind === "session" &&
-          effect.state === "completed",
-      )
-    ) {
-      this.hold(plan, "Retained repair lost its original native session receipt")
-      return
-    }
-    if (
-      !retainedRepair &&
-      !existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")
-    ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-      const effect = this.effect(
-        plan.id,
-        attempt.task_id,
-        attempt.id,
-        "session",
-        { sessionID: attempt.session_id },
-        fence,
-      )
-      try {
-        await this.host.create({
-          id: attempt.session_id,
-          parentID: plan.owner,
-          agent: workerAgent(JSON.parse(attempt.policy).agent),
-          model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
-          directory: attempt.workspace,
-          title: this.sessionTitle(
-            this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100),
-          ),
-          attemptID: attempt.id,
-        })
-        this.receipt(effect, { sessionID: attempt.session_id }, fence)
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    this.startAuditorReport(attempt, "baseline")
-    const repairPrompt = retainedRepair
-      ? existing.find(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            (() => {
-              try {
-                return (
-                  (JSON.parse(effect.payload) as { repairID?: unknown }).repairID ===
-                    retainedRepair.operationID &&
-                  (JSON.parse(effect.payload) as { messageID?: unknown }).messageID ===
-                    attempt.message_id
-                )
-              } catch {
-                return false
-              }
-            })(),
-        )
-      : undefined
-    const conflictingPrompt = retainedRepair
-      ? existing.find(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            (() => {
-              try {
-                return (
-                  (JSON.parse(effect.payload) as { messageID?: unknown }).messageID ===
-                  attempt.message_id
-                )
-              } catch {
-                return false
-              }
-            })(),
-        )
-      : undefined
-    if (retainedRepair && conflictingPrompt && !repairPrompt) {
-      this.hold(plan, "Retained repair prompt receipt is not bound to its operation")
-      return
-    }
-    if (retainedRepair && repairPrompt?.state === "failed") {
-      this.hold(
-        plan,
-        "Retained repair prompt was conclusively rejected; explicit review is required",
-      )
-      return
-    }
-    if (retainedRepair && repairPrompt && repairPrompt.state !== "completed") {
-      this.hold(plan, "Retained repair prompt effect is unresolved; automatic replay is unsafe")
-      return
-    }
-    if (
-      !repairPrompt &&
-      !existing.some(
-        (e) =>
-          e.attempt_id === attempt.id &&
-          e.kind === "prompt" &&
-          JSON.parse(e.payload).messageID === attempt.message_id,
-      )
-    ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-      if (
-        retainedRepair &&
-        !(await this.retainedRepairPromptCurrent(plan, attempt, retainedRepair))
-      ) {
-        this.hold(plan, "Retained worker ownership or input changed before repair prompt admission")
-        return
-      }
-      const effect = this.effect(
-        plan.id,
-        attempt.task_id,
-        attempt.id,
-        "prompt",
-        {
-          sessionID: attempt.session_id,
-          messageID: attempt.message_id,
-          workspace: attempt.workspace,
-          ...(retainedRepair
-            ? {
-                repairID: retainedRepair.operationID,
-                previousMessageID: retainedRepair.previousMessageID,
-                nativeInputID: retainedRepair.nativeInputID,
-                nativeAssignmentID: retainedRepair.nativeAssignmentID,
-                admissionInputID: retainedRepair.admissionInputID,
-                repairMessageID: retainedRepair.repairMessageID,
-                ...(retainedRepair.continued
-                  ? {
-                      continuedFromInputID: retainedRepair.nativeInputID,
-                      continuedFromOutcome: retainedRepair.terminalOutcome,
-                    }
-                  : {}),
-                defect: retainedRepair.defect,
-              }
-            : {}),
-        },
-        fence,
-      )
-      try {
-        const selectedPersona = WorkerPersona.safeParse(JSON.parse(attempt.policy).persona)
-        const personaGuidance = selectedPersona.success
-          ? `\n\nSelected ${workerPersonaLabels[selectedPersona.data]} persona (advisory, independent of model/provider):\n${workerPersonaOverlay(selectedPersona.data)}`
-          : ""
-        await this.host.prompt({
-          sessionID: attempt.session_id,
-          id: attempt.message_id,
-          directory: attempt.workspace,
-          attemptID: attempt.id,
-          model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
-          ...(retainedRepair ? { moveIfNeeded: false } : {}),
-          text: retainedRepair
-            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
-            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${this.repairFailureBrief(attempt)}${personaGuidance}`,
-        })
-        this.receipt(
-          effect,
-          {
-            messageID: attempt.message_id,
-            taskID: attempt.task_id,
-            instructions: "readable; lz-get-task",
-            ...(retainedRepair
-              ? {
-                  repairID: retainedRepair.operationID,
-                  repairMessageID: retainedRepair.repairMessageID,
-                  ...(retainedRepair.continued
-                    ? { continuedFromInputID: retainedRepair.nativeInputID }
-                    : {}),
-                }
-              : {}),
-          },
-          fence,
-        )
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    const started = this.store.fenced(this.owner, fence, (db) => {
-      const currentPlan = this.store.plan(plan.id)
-      const currentAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
-      const currentNode = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      if (
-        currentPlan?.state !== "running" ||
-        currentAttempt?.state !== "preparing" ||
-        currentAttempt.message_id !== attempt.message_id ||
-        (retainedRepair
-          ? currentNode?.state !== (retainedRepair.continued ? "running" : "ready") ||
-            this.retainedRepairForAttempt(currentAttempt)?.operationID !==
-              retainedRepair.operationID
-          : false)
-      )
-        return false
-      if (retainedRepair && !retainedRepair.continued)
-        this.store.move(plan.id, attempt.task_id, "DISPATCH")
-      return (
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running') WHERE id=? AND state='preparing' AND message_id=?",
-          )
-          .run(attempt.id, attempt.message_id).changes === 1
-      )
-    })
-    if (!started) return
-    this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+  private prepareWorker(...args: Parameters<WorkerPreparation["prepareWorker"]>) {
+    return this.workerPreparation.prepareWorker(...args)
   }
 
   /**
