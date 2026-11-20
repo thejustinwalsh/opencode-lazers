@@ -133,7 +133,14 @@ test("the bundled fallow worker finds both modules and its thread script, and an
     report?: { functions: { file: string; name: string }[]; unused_files?: unknown[] }
     error?: unknown
     fallback?: string
+    /** The module's stdout as written, `{ report }` or `{ error }`; the caller parses it once. */
+    envelope?: ArrayBuffer
   }
+  const reportOf = (reply: Reply) =>
+    reply.envelope
+      ? (JSON.parse(new TextDecoder().decode(reply.envelope)) as { report?: Reply["report"] })
+          .report
+      : reply.report
   const ask = (request: Record<string, unknown>) =>
     new Promise<Reply>((resolve, reject) => {
       worker.once("error", reject)
@@ -153,7 +160,7 @@ test("the bundled fallow worker finds both modules and its thread script, and an
     ] as const) {
       const complexity = await ask({ id, kind: "complexity", files: ["complex.ts"], threads })
       expect(complexity.error).toBeUndefined()
-      expect(complexity.report?.functions.map((f) => f.name)).toEqual(["route"])
+      expect(reportOf(complexity)?.functions.map((f) => f.name)).toEqual(["route"])
     }
     // A whole-project run on the threaded module needs dist/fallow-threads.wasm and
     // dist/fallow-thread.js; a fallback would name the one that is missing.
