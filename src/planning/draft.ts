@@ -15,7 +15,7 @@ export const TaskDraft = z.strictObject({
   draftID: DraftID,
   dependsOn: z.array(DraftID).max(100).default([]),
   persona: WorkerPersona.optional(),
-  proposal: z.unknown(),
+  proposal: z.unknown().optional(),
 })
 export type TaskDraft = z.infer<typeof TaskDraft>
 
@@ -47,9 +47,9 @@ export const PlanningBody = z
       workerAgent: PlanSubmissionInput.shape.workerAgent,
       workerModel: PlanSubmissionInput.shape.workerModel,
       /** Validated with `TaskProposalSchema.shape.verification`; stored even when invalid. */
-      verification: z.unknown(),
+      verification: z.unknown().optional(),
       /** Validated with `TaskProposalSchema.shape.acceptance`; stored even when invalid. */
-      acceptance: z.unknown(),
+      acceptance: z.unknown().optional(),
     }),
     tasks: z.array(TaskDraft).min(1).max(100),
   })

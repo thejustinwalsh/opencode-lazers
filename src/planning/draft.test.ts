@@ -96,3 +96,16 @@ test("reordering tasks and object keys changes no hash", () => {
   expect(fieldHashes(b)).toEqual(fieldHashes(a))
   expect(changedFields(a, body([draft("a")]))).toEqual({ b: ["removed"] })
 })
+
+test("a body without plan-level verification or acceptance stores and reports both", () => {
+  const parsed = PlanningBody.parse({
+    title: "t",
+    ask: "a",
+    plan: { objective: "o" },
+    tasks: [{ draftID: "a" }],
+  })
+  const validation = validateBody(parsed)
+  expect(validation.plan.map((p) => p.path.split(".")[0])).toContain("verification")
+  expect(validation.plan.map((p) => p.path.split(".")[0])).toContain("acceptance")
+  expect(validation.drafts.a?.length).toBeGreaterThan(0)
+})
