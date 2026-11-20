@@ -2,7 +2,7 @@ import { Plugin, Style, bindPlugin } from "@opencode/plugin/gui"
 import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import { RETENTION_PRESET_DAYS, Retention } from "./contract.ts"
 import type { RetentionPreviewView, RetentionStatusView } from "./contract.ts"
-import { CUSTOM, formatBytes, formatCount, parseDays, plural } from "./format.ts"
+import { CUSTOM, compactionNotice, formatBytes, formatCount, parseDays, plural } from "./format.ts"
 import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
 
 const LONG_MS = 10 * 60_000
@@ -23,6 +23,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
     const [busy, setBusy] = createSignal<"" | "status" | "preview" | "retire">("")
     const [progress, setProgress] = createSignal<{ rows: number; bytes: number; trees: number }>()
     const [result, setResult] = createSignal("")
+    const [reclaimed, setReclaimed] = createSignal(0)
     const [error, setError] = createSignal("")
     const days = createMemo(() => parseDays(choice(), custom()))
     const rpc = () => ctx.client.rpc(Retention)
@@ -77,7 +78,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
         if (!confirmed) return
         let runID: number | undefined
         let skipped: Array<{ path: string; reason: string }> = []
-        const total = { rows: 0, bytes: 0, trees: 0, treeBytes: 0 }
+        const total = { rows: 0, bytes: 0, trees: 0, treeBytes: 0, reclaimed: 0 }
         setProgress({ rows: 0, bytes: 0, trees: 0 })
         for (;;) {
           const slice = await rpc().retire(
@@ -92,6 +93,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
           runID = slice.runID
           skipped = slice.skipped
           total.rows += slice.rows
+          total.reclaimed += slice.reclaimedBytes
           total.bytes += slice.bytes
           total.trees += slice.worktrees.length
           total.treeBytes += slice.worktrees.reduce((sum, tree) => sum + (tree.bytes ?? 0), 0)
@@ -100,6 +102,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
         }
         setProgress(undefined)
         setPreview(undefined)
+        setReclaimed(total.reclaimed)
         setResult(
           `Retired ${plural(total.rows, "record")} (${formatBytes(total.bytes)})` +
             `${total.trees ? ` and ${plural(total.trees, "worktree")} (${formatBytes(total.treeBytes)})` : ""}.` +
@@ -157,10 +160,13 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
             <Show when={result()}>
               <p class="lazers-settings-hint" role="status" aria-live="polite">
                 {result()}
+                <Show when={reclaimed() > 0}> Returned {formatBytes(reclaimed())} to disk.</Show>
                 <Show when={(status()?.freeBytes ?? 0) > 0}>
                   {" "}
-                  {formatBytes(status()!.freeBytes)} inside the database file is now free for reuse;
-                  the file itself shrinks only after a separate full compaction (VACUUM).
+                  {formatBytes(status()!.freeBytes)} inside the database file is free for reuse
+                  {status()!.autoVacuum === "none"
+                    ? "; the file does not shrink until the one-time compaction described under Recorded history."
+                    : "; later retention passes return it to disk."}
                 </Show>
               </p>
             </Show>
@@ -240,6 +246,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
               }
             />
           }
+          description={status() ? compactionNotice(status()!) : undefined}
         />
         <Ui.SettingsRow
           title={<SettingLabel name="Retire history older than" hint="finished work only" />}

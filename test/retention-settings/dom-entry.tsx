@@ -66,9 +66,14 @@ export function harness(
           {props.footer}
         </section>
       ),
-      SettingsRow: (props: { title: JSXElement; children?: JSXElement }) => (
+      SettingsRow: (props: {
+        title: JSXElement
+        description?: JSXElement
+        children?: JSXElement
+      }) => (
         <div class="fixture-row">
           <span>{props.title}</span>
+          <p class="fixture-description">{props.description}</p>
           {props.children}
         </div>
       ),

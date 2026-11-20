@@ -4,7 +4,7 @@ import type { HTMLButtonElement, HTMLInputElement, HTMLSelectElement } from "hap
 import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { parseDays } from "../../src/retention/format.ts"
+import { compactionNotice, parseDays } from "../../src/retention/format.ts"
 import type {
   RetentionPreviewView,
   RetentionSliceView,
@@ -63,7 +63,7 @@ const slice = (done: boolean, rows: number): RetentionSliceView => ({
   skipped: [],
   fileBytes: 2_520_000_000,
   freeBytes: 600_000_000,
-  reclaimedBytes: 0,
+  reclaimedBytes: done ? 250_000_000 : 0,
 })
 
 test("the days field accepts presets and a custom count from 1 to 3650 only", () => {
@@ -71,6 +71,22 @@ test("the days field accepts presets and a custom count from 1 to 3650 only", ()
   expect(parseDays("custom", " 45 ")).toBe(45)
   for (const bad of ["", "0", "-3", "1.5", "abc", "3651"])
     expect(parseDays("custom", bad)).toBeUndefined()
+})
+
+test("a database that never returns free pages shows the one-time compaction, its command and disk need", () => {
+  const big = {
+    ...status,
+    autoVacuum: "none" as const,
+    freeBytes: 600_000_000,
+    compactionDiskBytes: 4_000_000_000,
+  }
+  const notice = compactionNotice(big)!
+  expect(notice).toContain("600 MB of the file is free")
+  expect(notice).toContain("bun scripts/compact-database.ts --db <path> --yes")
+  expect(notice).toContain("needs 4.0 GB of free disk")
+  // Incremental, or little free space: nothing to say.
+  expect(compactionNotice({ ...big, autoVacuum: "incremental" })).toBeUndefined()
+  expect(compactionNotice({ ...big, freeBytes: 1_000_000 })).toBeUndefined()
 })
 
 test("retire needs a preview of the chosen age, then a confirmation, then reports progress and result", async () => {
@@ -142,6 +158,7 @@ test("retire needs a preview of the chosen age, then a confirmation, then report
     expect(labels[2]).toBe("30 days")
     expect(labels.at(-1)).toBe("Custom…")
     expect(root.textContent).toContain("2.5 GB on disk · 0 B reusable")
+    expect(root.querySelector(".fixture-description")!.textContent).toBe("")
 
     // No preview: Retire cannot be pressed.
     expect(button("Retire").disabled).toBe(true)
@@ -201,7 +218,10 @@ test("retire needs a preview of the chosen age, then a confirmation, then report
     expect(root.querySelector('[role="status"]')?.textContent).toContain(
       "Retired 6,131 records (613 KB) and 1 worktree (3.0 MB).",
     )
-    expect(root.textContent).toContain("separate full compaction (VACUUM)")
+    expect(root.querySelector('[role="status"]')?.textContent).toContain("Returned 250 MB to disk.")
+    expect(root.querySelector('[role="status"]')?.textContent).toContain(
+      "600 MB inside the database file is free for reuse; later retention passes return it to disk.",
+    )
     expect(root.querySelector(".lazers-retention-preview")).toBeNull()
 
     // Automatic retention is off until switched on, and off again by the same switch.
