@@ -70,21 +70,39 @@ type ModelsProps = PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajec
  * once and refreshes in place instead of starting from the skeleton.
  */
 const SNAPSHOT_LIMIT = 12
+/**
+ * Byte budget over the retained snapshots, estimated as two bytes per character of their JSON
+ * (heap strings and numbers cost about that). A snapshot of a project with a long history holds
+ * every row of its overview, so a count alone does not bound memory. The newest snapshot always
+ * stays; older ones go first. Tune with `modelsSnapshotBudget.bytes`.
+ */
+export const modelsSnapshotBudget = { bytes: 32 * 1024 * 1024 }
 const snapshots = new Map<string, ModelComparisonPanelData>()
+const snapshotBytes = new Map<string, number>()
 const assignmentRows = new Map<string, WorkerPersona>()
 const locations = new Map<string, { project: string; projectID: string }>()
 
 export const modelsSnapshotKey = (key: string, filters: ModelDecisionFilters) =>
   JSON.stringify([key, filters.persona, filters.taskKind, filters.period])
 
+const dropSnapshot = (key: string) => {
+  snapshots.delete(key)
+  snapshotBytes.delete(key)
+}
+
 export function rememberModelsSnapshot(data: ModelComparisonPanelData) {
   if (!data.key || !isConnectionSeedable(data)) return
   const key = modelsSnapshotKey(data.key, data.decisionFilters)
-  snapshots.delete(key)
+  dropSnapshot(key)
   snapshots.set(key, data)
-  for (const oldest of snapshots.keys()) {
-    if (snapshots.size <= SNAPSHOT_LIMIT) break
-    snapshots.delete(oldest)
+  snapshotBytes.set(key, JSON.stringify(data).length * 2)
+  let total = 0
+  for (const bytes of snapshotBytes.values()) total += bytes
+  for (const oldest of [...snapshots.keys()]) {
+    if (snapshots.size <= 1) break
+    if (snapshots.size <= SNAPSHOT_LIMIT && total <= modelsSnapshotBudget.bytes) break
+    total -= snapshotBytes.get(oldest) ?? 0
+    dropSnapshot(oldest)
   }
 }
 
@@ -95,6 +113,7 @@ export function recallModelsSnapshot(key: string, filters: ModelDecisionFilters)
 /** Forget everything; for tests. */
 export function resetModelsSnapshots() {
   snapshots.clear()
+  snapshotBytes.clear()
   assignmentRows.clear()
   locations.clear()
 }
