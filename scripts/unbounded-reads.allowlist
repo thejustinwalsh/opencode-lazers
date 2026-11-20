@@ -100,7 +100,8 @@ src/retention/retention.ts:442 | all | runner_transitions | retention sweep on i
 src/retention/store.ts:116 | star | retention_runs | LIMIT given by the caller (recent run summaries) | SELECT * FROM retention_runs ORDER BY id DESC LIMIT ?
 src/retention/worktrees.ts:99 | all | runner_attempts | one row per distinct workspace path; shared serial attempts collapse to one | SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id IN (SELECT value FROM json_ea
 src/retention/worktrees.ts:106 | all | runner_attempts | one row per distinct workspace path; shared serial attempts collapse to one | SELECT DISTINCT workspace FROM runner_attempts WHERE plan_id NOT IN (SELECT value FROM jso
-src/retention/worktrees.ts:175 | all | runner_attempts | todo | SELECT plan_id, session_id, state, workspace FROM runner_attempts
+src/retention/worktrees.ts:175 | all | runner_attempts | one row per distinct workspace path; shared serial attempts collapse to one | SELECT DISTINCT workspace FROM runner_attempts
+src/retention/worktrees.ts:184 | all | runner_attempts | attempts of the finding's own workspace paths | SELECT plan_id, session_id, state, workspace FROM runner_attempts WHERE workspace IN (SELE
 src/runner/adoption-preparation.ts:152 | all | runner_transitions | todo: integration events of the whole project; narrow to the newest or page | SELECT t.event,t.payload FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id W
 src/runner/commands-recovery.ts:566 | all | runner_transitions | one task's review-input alias transitions | SELECT id,payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='WORKER_
 src/runner/delegated-agent-capacity.ts:185 | all | delegated_agent_admissions | live admissions and active attempts only | SELECT id,process_id FROM delegated_agent_admissions WHERE project_key=? AND kind='native'
