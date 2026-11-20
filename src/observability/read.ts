@@ -1910,8 +1910,13 @@ export class ObservationReads {
     readonly secret: Uint8Array,
     private readonly nativeSessions?: RadarSessionHost,
     private readonly taskValuationProvider?: TaskValuationProvider,
+    /** `historyCacheMB` plugin option, in bytes. */
+    historyCacheLimitBytes?: number,
   ) {
-    this.history = new TrajectoryHistoryCache(secret)
+    this.history = new TrajectoryHistoryCache(
+      secret,
+      historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+    )
     this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
   }
 

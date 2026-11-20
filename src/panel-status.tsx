@@ -15,6 +15,8 @@ import type { PanelStatusInput, PanelStatusView } from "./panel-status.ts"
 
 export interface PanelStatusHandle {
   view: Accessor<PanelStatusView>
+  /** What the panel loads; keys the open state of the failure Details. */
+  subject: Accessor<string>
   /** The panel has content to render (ready, or kept under the reconnect banner). */
   showContent: Accessor<boolean>
   /** Put on the content container as `data-panel-dimmed`. */
@@ -38,9 +40,28 @@ export function createPanelStatus(input: Accessor<PanelStatusInput>): PanelStatu
   const view = createMemo(() => panelStatus(input(), elapsed()))
   return {
     view,
+    subject: () => input().subject,
     showContent: () => view().kind === "ready" || view().kind === "reconnecting",
     dimmed: () => (view().kind === "reconnecting" ? "true" : undefined),
   }
+}
+
+/**
+ * Whether a panel's failure Details is open, kept per subject outside the component. A refresh
+ * flips the status through loading and back, which re-creates the failure view; a native
+ * `<details>` created again starts closed, so the owner saw it open and shut at once.
+ */
+const detailsOpen = new Map<string, Accessor<boolean>>()
+const detailsSetters = new Map<string, (open: boolean) => void>()
+function detailsState(subject: string) {
+  let read = detailsOpen.get(subject)
+  if (!read) {
+    const [value, set] = createSignal(false)
+    read = value
+    detailsOpen.set(subject, read)
+    detailsSetters.set(subject, set)
+  }
+  return [read, detailsSetters.get(subject)!] as const
 }
 
 export type PanelSkeletonShape = "rows" | "chart" | "timeline"
@@ -101,16 +122,23 @@ export function PanelStatus(props: {
       )}
     </Show>
   )
-  const details = (detail: string | undefined) => (
-    <Show when={detail}>
-      {(text) => (
-        <details class="lazers-panel-details">
-          <summary>Details</summary>
-          <pre>{text()}</pre>
-        </details>
-      )}
-    </Show>
-  )
+  const details = (detail: string | undefined) => {
+    const [open, setOpen] = detailsState(props.status.subject())
+    return (
+      <Show when={detail}>
+        {(text) => (
+          <details
+            class="lazers-panel-details"
+            open={open()}
+            onToggle={(event) => setOpen(event.currentTarget.open)}
+          >
+            <summary>Details</summary>
+            <pre>{text()}</pre>
+          </details>
+        )}
+      </Show>
+    )
+  }
   const loading = createMemo(() => {
     const view = props.status.view()
     return view.kind === "loading" ? view : undefined
