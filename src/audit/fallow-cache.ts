@@ -46,7 +46,10 @@ async function copyCache(from: string, to: string): Promise<number> {
   const exists = await lstat(to).catch(() => undefined)
   if (exists && !exists.isDirectory()) return 0
   await mkdir(to, { recursive: true })
-  await writeFile(join(to, ".gitignore"), "*\n")
+  // Create-only: an existing entry (a user's file or a link to one) is never written through.
+  await writeFile(join(to, ".gitignore"), "*\n", { flag: "wx" }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  })
   let copied = 0
   for (const name of names) {
     const temporary = join(to, `${name}.seed-${process.pid}.tmp`)

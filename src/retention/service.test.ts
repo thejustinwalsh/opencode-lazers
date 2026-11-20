@@ -43,9 +43,13 @@ function setup() {
   })
   const removed: string[] = []
   const gone = new Set<string>()
+  const sessions = new Map<string, Record<string, unknown>>()
+  const refusals = new Set<string>()
   const host = {
+    session: async (id: string) => (sessions.get(id) as never) ?? null,
     worktrees: async () => [paths.clean, paths.dirty, paths.unmerged, paths.outside],
     removeWorktree: async (directory: string) => {
+      if (refusals.has(directory)) throw new Error("native refused removal")
       removed.push(directory)
       gone.add(directory)
     },
@@ -66,7 +70,16 @@ function setup() {
     probe,
     now: () => now,
   })
-  return { fixture, service, removed, paths, advance: (ms: number) => (now += ms) }
+  return {
+    fixture,
+    service,
+    removed,
+    paths,
+    sessions,
+    refusals,
+    probe,
+    advance: (ms: number) => (now += ms),
+  }
 }
 
 test("the preview lists worktrees: clean and merged ones are removable, the rest are listed with why", async () => {
@@ -133,4 +146,37 @@ test("automatic retention is off by default, runs only at a quiet point and then
   expect((await service.status()).lastRun?.id).toBeGreaterThan(first!.id)
   service.setAuto(null)
   expect(service.settings()).toEqual({ autoDays: null })
+})
+
+test("81b1d6ba-2: a worker still running a shell in the worktree keeps it", async () => {
+  const { service, removed, paths, sessions, fixture } = setup()
+  sessions.set(fixture.attempts[0]!.session_id, { id: "x", runningShells: 1, busy: false })
+  const slice = await service.retire({ days: 30 })
+  expect(removed).toEqual([])
+  expect(slice.skipped.map((entry) => entry.path)).toEqual([paths.clean])
+  expect(slice.skipped[0]!.reason).toContain("shell")
+})
+
+test("81b1d6ba-2: a plan retried while the worktree is being inspected keeps it", async () => {
+  const { service, removed, probe, fixture } = setup()
+  const contained = probe.contained
+  probe.contained = async (...args) => {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(fixture.receipt.planID),
+    )
+    return contained(...args)
+  }
+  await service.retire({ days: 30 })
+  expect(removed).toEqual([])
+})
+
+test("81b1d6ba-3: a refused removal is reported with its reason and recorded on the run", async () => {
+  const { service, removed, paths, refusals } = setup()
+  refusals.add(paths.clean)
+  const slice = await service.retire({ days: 30 })
+  expect(removed).toEqual([])
+  expect(slice.skipped).toEqual([
+    { path: paths.clean, reason: expect.stringContaining("native refused") },
+  ])
+  expect((await service.status()).lastRun?.skipped).toEqual(slice.skipped)
 })

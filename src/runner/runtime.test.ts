@@ -1,4 +1,5 @@
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
+import { classifyPlans } from "../retention/retention.ts"
 import { runbook } from "../guidance/index.ts"
 import { FallowConfigRequiredError, refusalMessage } from "../audit/fallow-refusal.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
@@ -16281,3 +16282,80 @@ test("a paused project's waiting task names the level in the execution read and 
   setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
   expect(f.store.execution(waiting.task_id)?.dispatchPause?.reason).toBe("Global pause: Away")
 })
+
+test("84e85b0f-1: a notice claimed before a restart does not strand the takeover in notifying", async () => {
+  const { f, worker, steered } = await takeoverFixture()
+  f.host.steerWorker = async (input) => {
+    steered.push(input.id)
+  }
+  const input = { attemptID: worker.id, reason: "Hung tool call", requestID: "take-crash" }
+  // The crash: the claim was persisted, the notice was never sent, the worker stays busy.
+  const row = await (f.runtime as any).takeovers.start(input, "owner")
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_takeovers SET payload=json_set(payload,'$.noticeSent',json('true')) WHERE id=?",
+      )
+      .run(row.id),
+  )
+  const result = await f.runtime.takeover(input, "owner")
+  expect(result.status).toBe("taken-over")
+  expect(steered).toEqual([])
+}, 5_000)
+
+test("84e85b0f-2: a finished takeover does not keep its plan out of retention", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.completeWorker(worker.session_id, "interrupted")
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Dead worker" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const planID = f.receipt.planID
+  // The plan integrated long ago.
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_plans SET state='integrated' WHERE id=?").run(planID)
+    db.query("UPDATE runner_attempts SET state='failed', started_at=1 WHERE plan_id=?").run(planID)
+    db.query("UPDATE runner_transitions SET created_at=1 WHERE plan_id=?").run(planID)
+  })
+  const { retired, kept } = classifyPlans(
+    f.repository.read((db) => db),
+    Date.now(),
+    30,
+  )
+  expect([...kept.keys()].join("\n")).not.toContain("handoff is open")
+  expect(retired.map((plan) => plan.id)).toContain(planID)
+})
+
+test("7abe4acd-2: a handoff saved while a host read is in flight survives the transition", async () => {
+  const { f, worker } = await takeoverFixture({
+    takeover: { handoffWindowMs: 60_000, stopWaitMs: 50, pollMs: 5 },
+  })
+  f.host.steerWorker = async () => {}
+  const takeovers = (f.runtime as any).takeovers
+  const row = await takeovers.start(
+    { attemptID: worker.id, reason: "Not converging", requestID: "take-race" },
+    "owner",
+  )
+  await takeovers.advance(row) // notifying -> awaiting-handoff
+  const read = f.host.session.bind(f.host)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  f.host.session = async (id: string, options?: never) => {
+    const session = await read(id, options)
+    await gate
+    // By the time the read returns, the worker's turn has ended.
+    return session && id === worker.session_id ? { ...session, busy: false } : session
+  }
+  const advancing = takeovers.advance(takeovers.open(f.receipt.planID)[0])
+  await Bun.sleep(20)
+  f.runtime.takeoverHandoff({ done: "half", remaining: "the final warning" }, worker.session_id)
+  release()
+  await advancing
+  const saved = f.store.read(
+    (db) =>
+      JSON.parse(
+        db
+          .query<{ payload: string }, [string]>("SELECT payload FROM runner_takeovers WHERE id=?")
+          .get(row.id)!.payload,
+      ) as { workerHandoff?: { remaining?: string } },
+  )
+  expect(saved.workerHandoff?.remaining).toBe("the final warning")
+}, 10_000)

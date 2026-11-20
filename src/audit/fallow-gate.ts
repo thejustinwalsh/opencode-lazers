@@ -30,7 +30,7 @@ export function configRequired(project: string): FallowConfigRequired {
     nothingQueued: true,
     next: [...FALLOW_CONFIG_TOOLS],
     guidance:
-      "Architect: call lz-fallow-config with mode suggest. Its result carries the guidance for building the config (entry points, ignore patterns, rules and severities, thresholds); mode guide returns it again.",
+      "Architect: call lz-fallow-config with mode suggest. Its result carries the guidance for building the config (entry points, ignore patterns, rules and severities, thresholds); mode guide returns it again. Store the reviewed config with lz-fallow-config-set.",
   }
 }
 

@@ -823,3 +823,45 @@ test("an edit outside the write scope is recorded as a concern with its paths, n
   expect(item.recommendation.action).toBe("steer")
   expect(f.store.plan(planID)!.state).toBe("running")
 })
+
+test("93bb4046-1: every item of a long backlog is identified in the notice", () => {
+  const item = (index: number) => ({
+    key: `k${index}`,
+    kind: "held-plan",
+    planID: `plan-${String(index).padStart(3, "0")}-0000000000`,
+    taskID: `task-${index}`,
+    reference: `LZ-${index}`,
+    title: "Fix the parser",
+    state: "blocked",
+    stateLabel: "Blocked",
+    explanation: null,
+    reason: "Dispatch failed",
+    holdFamily: null,
+    ageMs: 7_200_000,
+    actions: ["retry"],
+    reuse: {
+      artifact: null,
+      artifactInLanding: null,
+      checksPassed: null,
+      worktree: null,
+      worker: "none",
+    },
+    recommendation: { action: "retry", because: "transient" },
+  })
+  const items = Array.from({ length: 61 }, (_, index) => item(index))
+  const text = recoveryBundleText(
+    JSON.stringify({
+      status: "recovery-bundle",
+      planID: items[0]!.planID,
+      version: 1,
+      raisedAt: 1_700_000_000_000,
+      generation: 1,
+      count: items.length,
+      planIDs: items.map((entry) => entry.planID),
+      staleAfterMs: RECOVERY_STALE_MS,
+      replaces: null,
+      items,
+    }),
+  )
+  for (const entry of items) expect(text).toContain(entry.planID)
+})

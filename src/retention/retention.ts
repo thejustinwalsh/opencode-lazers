@@ -416,7 +416,17 @@ export function classifyPlans(db: Database, now: number, days: number) {
       ids(
         `SELECT DISTINCT r.plan_id FROM recovery_handoff_requests r
           WHERE NOT EXISTS (SELECT 1 FROM recovery_handoff_dispositions d
-                             WHERE d.project_directory=r.project_directory AND d.request_id=r.request_id)`,
+                             WHERE d.project_directory=r.project_directory AND d.request_id=r.request_id)
+            ${
+              // A takeover's request never gets a report, so never a disposition; it closes with
+              // its takeover.
+              tableExists(db, "runner_takeovers")
+                ? `AND NOT EXISTS (SELECT 1 FROM runner_takeovers t
+                                    WHERE t.project_directory=r.project_directory
+                                      AND 'takeover:'||t.id=r.request_id
+                                      AND t.state IN ('taken-over','cancelled'))`
+                : ""
+            }`,
         "recovery_handoff_requests",
       ),
     ],
@@ -581,23 +591,35 @@ export async function retireSlice(
   input: { now: number; days: number; budgetMs: number; batch: number },
 ): Promise<SliceResult> {
   const started = Date.now()
-  const { retired } = read((db) => classifyPlans(db, input.now, input.days))
-  const ctx = retentionContext(
-    input.now,
-    input.days,
-    retired.map((plan) => plan.id),
-  )
   const removed: SliceResult["removed"] = {}
   let rows = 0
-  const specs = read((db) =>
-    KINDS.flatMap((kind) => selectSpecs(db, ctx, kind).map((spec) => ({ kind, spec }))),
-  )
-  for (const { kind, spec } of specs) {
+  // Which (kind, table) pairs exist is stable; what each may delete is not. Eligibility is
+  // therefore recomputed inside every batch's own transaction: a plan retried, waited on or
+  // newly shared between batches is protected from the next batch on.
+  const targets = read((db) => {
+    const { retired } = classifyPlans(db, input.now, input.days)
+    const ctx = retentionContext(
+      input.now,
+      input.days,
+      retired.map((plan) => plan.id),
+    )
+    return KINDS.flatMap((kind) =>
+      selectSpecs(db, ctx, kind).map((spec) => ({ kind, table: spec.table })),
+    )
+  })
+  for (const { kind, table } of targets) {
     for (;;) {
       if (Date.now() - started >= input.budgetMs) return { removed, rows, done: false }
       const result = atomic((db) => {
-        const sample = measureBatch(db, spec, input.batch)
-        if (!sample.rows) return sample
+        const { retired } = classifyPlans(db, input.now, input.days)
+        const ctx = retentionContext(
+          input.now,
+          input.days,
+          retired.map((plan) => plan.id),
+        )
+        const spec = selectSpecs(db, ctx, kind).find((candidate) => candidate.table === table)
+        const sample = spec ? measureBatch(db, spec, input.batch) : { rows: 0, bytes: 0 }
+        if (!spec || !sample.rows) return sample
         db.query(
           `DELETE FROM ${spec.table} WHERE rowid IN (SELECT rowid FROM ${spec.table} WHERE ${spec.where} LIMIT ?)`,
         ).run(...spec.bind, input.batch)
