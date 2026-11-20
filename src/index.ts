@@ -60,6 +60,7 @@ import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { acquireLazersCore } from "./core/core.ts"
+import { nativeEventSubscriptions } from "./core/event-hub.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
 import { registerProjects } from "./projects/rpc.ts"
 import { taskDatabasePath } from "./storage.ts"
@@ -82,7 +83,14 @@ export default Plugin.define({
       const diagnosticsRoot = dirname(taskDatabasePath(dataDirectory))
       startHeapSampler({
         directory: join(diagnosticsRoot, "diagnostics"),
-        context: () => ({ locations: probe.locations, cores: coreSnapshot().length }),
+        context: () => ({
+          locations: probe.locations,
+          cores: coreSnapshot().length,
+          // Per event-type set: subscriptions opened, first-seen vs duplicate deliveries, and how
+          // many distinct locations delivered each retained event (evidence for whether one
+          // subscription per process would be enough; nothing acts on it).
+          events: nativeEventSubscriptions(),
+        }),
       })
       probe.configure({
         dataDirectory: diagnosticsRoot,

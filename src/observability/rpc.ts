@@ -484,12 +484,17 @@ export function registerObservability(
     // The host stream is server-wide: one subscription per process feeds every copy's tracker.
     yield* Effect.acquireRelease(
       Effect.sync(() =>
-        joinNativeEvents(ctx, NATIVE_EVENT_TYPES, {
-          attached: () => tracker.streamAttached(),
-          event: (event) =>
-            section(`event:${(event as { type?: string }).type}`, () => tracker.native(event)),
-          gap: () => tracker.streamGap(),
-        }),
+        joinNativeEvents(
+          ctx,
+          NATIVE_EVENT_TYPES,
+          {
+            attached: () => tracker.streamAttached(),
+            event: (event) =>
+              section(`event:${(event as { type?: string }).type}`, () => tracker.native(event)),
+            gap: () => tracker.streamGap(),
+          },
+          (ctx as { location?: { directory?: string } }).location?.directory,
+        ),
       ),
       (leave) => Effect.sync(leave),
     )

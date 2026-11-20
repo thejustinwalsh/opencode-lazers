@@ -113,10 +113,15 @@ export function nativeChildLifecycle(
     // The host stream is server-wide: one subscription per process feeds every copy's observer.
     yield* Effect.acquireRelease(
       Effect.sync(() =>
-        joinNativeEvents(ctx, eventTypes, {
-          event: (event) =>
-            void Effect.runFork(observe(event).pipe(Effect.catch(() => Effect.void))),
-        }),
+        joinNativeEvents(
+          ctx,
+          eventTypes,
+          {
+            event: (event) =>
+              void Effect.runFork(observe(event).pipe(Effect.catch(() => Effect.void))),
+          },
+          (ctx as { location?: { directory?: string } }).location?.directory,
+        ),
       ),
       (leave) => Effect.sync(leave),
     )
