@@ -22,6 +22,10 @@ import { dirname, join } from "node:path"
 import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { registerProject } from "../project-key.ts"
+import { effectivePause, setPause } from "../projects/pause.ts"
+import { inspectPlan } from "./inspection.ts"
+import type { CompactPlanDetail } from "./inspection.ts"
 import { checkResourcesSettled, combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { ArchitectSourceResult, HostSession, RunnerHost } from "./host.ts"
@@ -15865,4 +15869,82 @@ test("takeover: a failed verification goes back to the Architect on the same att
       .activity(f.receipt.planID, worker.task_id)
       .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
   ).toHaveLength(2)
+})
+
+async function registeredKey(f: ReturnType<typeof fixture>) {
+  return (await registerProject(f.repository, { directory: f.root, opencodeProjectID: "project" }))
+    .key
+}
+
+test("a project pause holds new dispatch only there; running work is verified; unpause dispatches again", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  // Another project's pause does not touch this one.
+  setPause(
+    f.repository,
+    { kind: "project", key: "github.com/other/project" },
+    {
+      paused: true,
+      reason: "Elsewhere",
+      by: "owner",
+    },
+  )
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  expect(first).toBeDefined()
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  expect(f.sessions.get(first.session_id)!.busy).toBe(true)
+  f.completeWorker(first.session_id)
+  await drive(f.runtime, 5)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  await integrateTaskSource(f, f.receipt.planID, first.task_id)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(effectivePause(f.repository, f.receipt.planID)).toMatchObject({
+    level: "project",
+    reason: "Rebuild",
+  })
+  setPause(f.repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("a global pause holds a project that was never registered, and lifting it dispatches", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  await runPlan(f)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  expect(effectivePause(f.repository, f.receipt.planID)?.level).toBe("global")
+  setPause(f.repository, { kind: "global" }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test("a paused project's waiting task names the level in the execution read and the plan inspection", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  await runPlan(f)
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  await drive(f.runtime, 3)
+  const waiting = f.store.nodes(f.receipt.planID)[0]!
+  expect(f.store.execution(waiting.task_id)?.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  const compact = inspectPlan(f.store, {
+    planID: f.receipt.planID,
+    full: false,
+  }) as CompactPlanDetail
+  expect(compact.plan.schedule.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  expect(f.store.execution(waiting.task_id)?.dispatchPause?.reason).toBe("Global pause: Away")
 })

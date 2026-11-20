@@ -89,7 +89,7 @@ export type CompactPlanDetail = {
       afterPlans: string[]
       integrationOrder: string[]
       dependencies: DependencyRow[]
-      dispatchPause?: { reason: string; untilPlans: string[] } | null
+      dispatchPause?: { reason: string; untilPlans: string[]; level?: "project" | "global" } | null
     }
   }
   waitingOnPlans: CompactWaitingPlan[]
@@ -117,7 +117,7 @@ export type CompactInspectionSummary = {
       workspaceMode: string
       afterPlans: string[]
       integrationOrder: string[]
-      dispatchPause?: { reason: string; untilPlans: string[] } | null
+      dispatchPause?: { reason: string; untilPlans: string[]; level?: "project" | "global" } | null
     }
     waitingOnPlans: CompactWaitingPlan[]
     counts: { nodes: number; nodesByState: Record<string, number> }
@@ -360,7 +360,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
       priority: plan.priority ?? 0,
       workspaceMode: plan.workspaceMode,
       afterPlans: arrayJSON<string>(plan.afterPlans, []),
-      dispatchPause: store.dispatchPause(plan.id) ?? null,
+      dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
       dependencies,
     },
@@ -442,7 +442,7 @@ function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
       priority: plan.priority ?? 0,
       workspaceMode: plan.workspaceMode,
       afterPlans: arrayJSON<string>(plan.afterPlans, []),
-      dispatchPause: store.dispatchPause(plan.id) ?? null,
+      dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
     },
     waitingOnPlans: waitingOnPlans(store, plan),

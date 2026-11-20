@@ -42,6 +42,7 @@ import type {
   TrajectoryStatusRequest,
 } from "./contract.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
+import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
 
 type PlanRecord = {
@@ -225,7 +226,10 @@ function loadTopologyAssociations(
       "SELECT id,revision,version,state,body,reason FROM runner_plans WHERE project_directory=? ORDER BY rowid",
     )
     .all(projectDirectory)
-  const pauses = new Map(
+  const pauses = new Map<
+    string,
+    { reason: string; untilPlans: string[]; level?: "project" | "global" }
+  >(
     db
       .query<{ plan_id: string; reason: string; until_plans: string }, [string]>(
         "SELECT c.plan_id,c.reason,c.until_plans FROM runner_dispatch_controls c JOIN runner_plans p ON p.id=c.plan_id WHERE p.project_directory=? AND c.state='paused'",
@@ -268,6 +272,15 @@ function loadTopologyAssociations(
       .all(...planIDs))
       associations.taskIDs.add(row.task_id)
   }
+  // A project or global pause holds every plan and is stricter than a plan's own.
+  const outer = outerPauseIn(db, projectDirectory)
+  if (outer)
+    for (const plan of allPlans)
+      pauses.set(plan.id, {
+        reason: outerPauseReason(outer),
+        untilPlans: [],
+        level: outer.level,
+      })
   return { stamp, associations, allPlans, pauses }
 }
 
