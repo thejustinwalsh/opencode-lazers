@@ -7,7 +7,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs"
-import { tmpdir } from "node:os"
+import { tmpdir, userInfo } from "node:os"
 import { join } from "node:path"
 import { fakeTools, requireToolchain } from "../../test/fixtures/profile/toolchain.ts"
 import { registerProject, resetProjectAliasCache } from "../project-key.ts"
@@ -349,6 +349,13 @@ test("a later revision with another fix command never changes a running preparat
 test.skipIf(!requireToolchain("cargo", "profile fix chain formats with rustfmt"))(
   "a real cargo toolchain's formatter fixes the changed file",
   async () => {
+    // Another test file in the same process may have moved HOME; the toolchain lives in the real one.
+    const saved = process.env.HOME
+    process.env.HOME = userInfo().homedir
+    cleanup.push(() => {
+      if (saved === undefined) delete process.env.HOME
+      else process.env.HOME = saved
+    })
     const f = fixFixture({
       writes: [{ path: "src/lib.rs", content: "pub fn   add(a:i32,b:i32)->i32{a+b}\n" }],
     })
