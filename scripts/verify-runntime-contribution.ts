@@ -161,6 +161,15 @@ const STAGES = {
       "packages/runntime/test/zoo/lfm3/audio/prompts.test.ts",
     ],
   },
+  "omni-audio-trim": {
+    baseCommit: "a3718c80f959b8e86d1b2abf056fb578f532aeb9",
+    directory: "contributions/runntime/omni-audio-trim",
+    allowedPaths: [
+      "packages/runntime/src/zoo/tasks/audio/lfm3.ts",
+      "packages/runntime/test/zoo/tasks/audio/speak.test.ts",
+      "packages/runntime/test/zoo/lfm3/audio-trim.gpu.test.ts",
+    ],
+  },
 } as const
 type ContributionStage = keyof typeof STAGES
 const HASH = /^[a-f0-9]{40}$/

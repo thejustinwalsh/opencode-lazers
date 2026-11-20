@@ -1,0 +1,10 @@
+GPU buffer bytes after each speak+transcribe cycle (six sentences, two passes), Apple M2 Pro, Q4_K_M + Q8_0 projector.
+Console output of audio-trim.gpu.test.ts (printed only when the run fails, so with-fix numbers come from the
+first run, whose only failure was the since-narrowed post-dispose check on 659 small uniform buffers).
+
+with the fix (commit 675eaf2), loadedBytes 1825200508:
+LFM3_AUDIO_TRIM_MEMORY {"loadedBytes":1825200508,"rows":[{"cycle":0,"gpuBytes":1859677140},{"cycle":1,"gpuBytes":1842983524},{"cycle":2,"gpuBytes":1852296844},{"cycle":3,"gpuBytes":1856435380},{"cycle":4,"gpuBytes":1885884660},{"cycle":5,"gpuBytes":1862617996},{"cycle":6,"gpuBytes":1859681420},{"cycle":7,"gpuBytes":1842986764},{"cycle":8,"gpuBytes":1852299148},{"cycle":9,"gpuBytes":1856437388},{"cycle":10,"gpuBytes":1885885324},{"cycle":11,"gpuBytes":1862617996}],"slack":65536}
+second pass minus first pass: +4280, +3240, +2304, +1952, +664, 0 bytes
+
+without the fix (src/zoo/tasks/audio/lfm3.ts at a3718c8; same test; fails the 64 KB repeat check, off by 206906552 B):
+LFM3_AUDIO_TRIM_MEMORY {"loadedBytes":1825200508,"rows":[{"cycle":0,"gpuBytes":1967372124},{"cycle":1,"gpuBytes":2000906988},{"cycle":2,"gpuBytes":2032201748},{"cycle":3,"gpuBytes":2041678780},{"cycle":4,"gpuBytes":2150670204},{"cycle":5,"gpuBytes":2174278676},{"cycle":6,"gpuBytes":2174278676},{"cycle":7,"gpuBytes":2174278676},{"cycle":8,"gpuBytes":2174278676},{"cycle":9,"gpuBytes":2174278676},{"cycle":10,"gpuBytes":2174278676},{"cycle":11,"gpuBytes":2174278676}]}
