@@ -3,6 +3,7 @@ import { Window } from "happy-dom"
 import { createRoot } from "solid-js"
 import { Command, ComposerPill } from "@opencode/plugin/gui"
 import type { InferenceRuntime } from "../../src/webgpu/runtime.ts"
+import { MICROPHONE_PREFIX } from "../../src/webgpu/pill-tooltip.ts"
 import { registerDictation } from "../../src/webgpu/dictation.tsx"
 import { AudioFixtureDelivery } from "../../src/verification/opencode/audio-fixture-contract.ts"
 import type { AudioObservationEvent } from "../../src/verification/opencode/audio-fixture-contract.ts"
@@ -175,9 +176,10 @@ test("composer-click fixture dictation preserves a draft, inserts streamed words
   try {
     const pill = contributions.get("local-dictation")!
     const control = () => pill.show?.()
-    expect(control()?.title).toContain("start dictation")
+    expect(control()?.title.startsWith(`${MICROPHONE_PREFIX} start dictation`)).toBe(true)
     control()?.run?.()
     await waitFor(() => control()?.title.includes("recording") === true)
+    expect(control()?.title.startsWith(`${MICROPHONE_PREFIX} recording`)).toBe(true)
     expect(control()?.title).toContain("click to stop")
     control()?.run?.()
     await waitFor(() => observations.some((event) => event.kind === "dictation-complete"))

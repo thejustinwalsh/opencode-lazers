@@ -2,9 +2,10 @@ import { expect, test } from "bun:test"
 import { Window } from "happy-dom"
 import type { OpenCodeEvent } from "@opencode/client"
 import { createRoot, createSignal } from "solid-js"
-import { Command, ComposerPill } from "@opencode/plugin/gui"
+import { Command, ComposerPill, Style } from "@opencode/plugin/gui"
 import { registerReadAloud, validateSpeechBuffer } from "../../src/webgpu/read-aloud.tsx"
 import type { InferenceRuntime } from "../../src/webgpu/runtime.ts"
+import { pillSelector, SPEAKER_PREFIX } from "../../src/webgpu/pill-tooltip.ts"
 import { speechSegments } from "../../src/webgpu/speech.ts"
 import { wavBase64 } from "../../src/webgpu/audio.ts"
 import { sha256Text } from "../../src/verification/opencode/audio-fixture-contract.ts"
@@ -180,6 +181,7 @@ function setup(
   const abort = new AbortController()
   const pills = new Map<string, NativePill>()
   let autoCommand: NativeCommand | undefined
+  const styles: string[] = []
   const ctx = {
     id: "lazers",
     signal: abort.signal,
@@ -202,6 +204,7 @@ function setup(
       const contribution = item as { id: string } & NativePill & NativeCommand
       if (registry === ComposerPill) pills.set(contribution.id, contribution)
       if (registry === Command) autoCommand = contribution
+      if (registry === Style) styles.push(item as string)
     },
   }
   const calls: Array<{ text: string; signal: AbortSignal; route?: string }> = []
@@ -235,6 +238,7 @@ function setup(
     navigate: () => setCurrentSession({ ...session, visit: {} }),
     pills,
     session,
+    styles,
   }
 }
 
@@ -757,6 +761,41 @@ test("the speaker pill shows idle, automatic and speaking states with icon, tone
     expect(speaking.title).toContain("automatic read aloud is on")
     expect(speaking.icon).toBe("waveform")
     speaking.run?.()
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+    dom.restore()
+  }
+})
+
+test("speaker pill titles and the CSS that styles and explains them use the same aria-label prefixes", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const dom = installWindow()
+  const harness = setup()
+  try {
+    const css = harness.styles.join("\n")
+    for (const prefix of [
+      SPEAKER_PREFIX,
+      `${SPEAKER_PREFIX} reading`,
+      `${SPEAKER_PREFIX} preparing`,
+    ])
+      expect(css).toContain(pillSelector(prefix))
+    expect(css).toContain(`${pillSelector(SPEAKER_PREFIX)}::after`)
+    expect(css).toContain("content:attr(aria-label)")
+    expect(css).toContain("pointer-events:none")
+    const pill = required(harness.pills.get("read-aloud"))
+    const input = { session: harness.session, screen: {} }
+    expect(required(pill.show(input)).title.startsWith(SPEAKER_PREFIX)).toBe(true)
+    required(pill.show(input)).run?.()
+    await audioStarted.promise
+    const title = required(pill.show(input)).title
+    expect(
+      title.startsWith(`${SPEAKER_PREFIX} reading`) ||
+        title.startsWith(`${SPEAKER_PREFIX} preparing`),
+    ).toBe(true)
+    required(pill.show(input)).run?.()
   } finally {
     harness.abort.abort()
     harness.dispose()

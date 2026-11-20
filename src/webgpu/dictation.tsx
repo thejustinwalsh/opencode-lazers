@@ -5,6 +5,7 @@ import { audioFilePCM16, MAX_AUDIO_SECONDS } from "./audio.ts"
 import type { InferenceRuntime } from "./runtime.ts"
 import { CaptureResources } from "./capture.ts"
 import { modifierTracker } from "./modifier-keys.ts"
+import { MICROPHONE_PREFIX, pillSelector, pillTooltipCss } from "./pill-tooltip.ts"
 import { normalizeASR } from "../verification/opencode/audio-fixture-contract.ts"
 import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 
@@ -361,7 +362,7 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       return {
         label:
           state() === "recording" ? `${meterText()} 0:${String(seconds()).padStart(2, "0")}` : "",
-        title: `LAZERS microphone: ${state() === "recording" ? `recording ${seconds()}s; click to stop` : state() === "transcribing" ? "transcribing; click to cancel" : state() === "permission" ? "requesting access; click to cancel" : "start dictation"}. Hold ${shortcut} to talk; Escape cancels.`,
+        title: `${MICROPHONE_PREFIX} ${state() === "recording" ? `recording ${seconds()}s; click to stop` : state() === "transcribing" ? "transcribing; click to cancel" : state() === "permission" ? "requesting access; click to cancel" : "start dictation"}. Hold ${shortcut} to talk; Escape cancels.`,
         run: toggle,
       }
     },
@@ -371,16 +372,17 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
   ctx.add(
     Style,
     `
-    [data-composer-pill][aria-label^="LAZERS microphone:"] { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; gap:5px; border-radius:14px; }
-    [data-composer-pill][aria-label^="LAZERS microphone:"]::before { content:""; display:block; flex:none; width:15px; height:15px; background:currentColor; mask:url("${microphone}") center/contain no-repeat; }
-    [data-composer-pill][aria-label^="LAZERS microphone:"] > span { font:12px/18px var(--font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace); font-variant-numeric:tabular-nums; letter-spacing:.3px; white-space:pre; }
-    [data-composer-pill][aria-label^="LAZERS microphone:"] > span:empty { display:none; }
-    [data-composer-pill][aria-label^="LAZERS microphone: recording"] { color:var(--icon-critical-base,#dc6666); }
-    [data-composer-pill][aria-label^="LAZERS microphone: recording"]::before { mask-image:url("${stopIcon}"); }
-    [data-composer-pill][aria-label^="LAZERS microphone: transcribing"]::before,
-    [data-composer-pill][aria-label^="LAZERS microphone: requesting"]::before { mask-image:url("${spinner}"); animation:lazers-mic-spin 1s linear infinite; }
+    ${pillSelector(MICROPHONE_PREFIX)} { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; gap:5px; border-radius:14px; }
+    ${pillSelector(MICROPHONE_PREFIX)}::before { content:""; display:block; flex:none; width:15px; height:15px; background:currentColor; mask:url("${microphone}") center/contain no-repeat; }
+    ${pillSelector(MICROPHONE_PREFIX)} > span { font:12px/18px var(--font-family-mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace); font-variant-numeric:tabular-nums; letter-spacing:.3px; white-space:pre; }
+    ${pillSelector(MICROPHONE_PREFIX)} > span:empty { display:none; }
+    ${pillSelector(`${MICROPHONE_PREFIX} recording`)} { color:var(--icon-critical-base,#dc6666); }
+    ${pillSelector(`${MICROPHONE_PREFIX} recording`)}::before { mask-image:url("${stopIcon}"); }
+    ${pillSelector(`${MICROPHONE_PREFIX} transcribing`)}::before,
+    ${pillSelector(`${MICROPHONE_PREFIX} requesting`)}::before { mask-image:url("${spinner}"); animation:lazers-mic-spin 1s linear infinite; }
     @keyframes lazers-mic-spin { to { transform:rotate(360deg); } }
-    @media(prefers-reduced-motion:reduce) { [data-composer-pill][aria-label^="LAZERS microphone:"]::before { animation:none; } }
+    @media(prefers-reduced-motion:reduce) { ${pillSelector(MICROPHONE_PREFIX)}::before { animation:none; } }
+    ${pillTooltipCss(MICROPHONE_PREFIX)}
   `,
   )
 }

@@ -6,6 +6,7 @@ import { createSpeechEventCoordinator, type SpeechEvent } from "./speech-events.
 import { latestCompletedResponse, speechSegments } from "./speech.ts"
 import { playSpeech } from "./speech-playback.ts"
 import { modifierTracker } from "./modifier-keys.ts"
+import { pillSelector, pillTooltipCss, SPEAKER_PREFIX } from "./pill-tooltip.ts"
 import { sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
 import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 import type {
@@ -434,7 +435,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
         // Host icon for the automatic state: waveform bars beside the speaker. Shape, not colour
         // alone, tells idle, automatic and speaking apart (speaking swaps the speaker for a stop square).
         ...(auto ? { icon: "waveform" as const, tone: "success" as const } : {}),
-        title: `LAZERS speaker: ${status}. Shift-click: automatic read aloud is ${auto ? "on" : "off"}.`,
+        title: `${SPEAKER_PREFIX} ${status}. Shift-click: automatic read aloud is ${auto ? "on" : "off"}.`,
         run() {
           if (!runtime.enabled("readAloud")) return
           if (modifiers.shift()) {
@@ -545,13 +546,14 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
   ctx.add(
     Style,
     `
-    [data-composer-pill][aria-label^="LAZERS speaker:"] { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; gap:4px; border-radius:14px; }
-    [data-composer-pill][aria-label^="LAZERS speaker:"] > span:empty { display:none; }
-    [data-composer-pill][aria-label^="LAZERS speaker:"]::before { content:""; display:block; width:15px; height:15px; background:currentColor; mask:url("${speaker}") center/contain no-repeat; }
-    [data-composer-pill][aria-label^="LAZERS speaker: reading"]::before { mask-image:url("${square}"); }
-    [data-composer-pill][aria-label^="LAZERS speaker: preparing"]::before { mask-image:url("${spinner}"); animation:lazers-speaker-spin 1s linear infinite; }
+    ${pillSelector(SPEAKER_PREFIX)} { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; gap:4px; border-radius:14px; }
+    ${pillSelector(SPEAKER_PREFIX)} > span:empty { display:none; }
+    ${pillSelector(SPEAKER_PREFIX)}::before { content:""; display:block; width:15px; height:15px; background:currentColor; mask:url("${speaker}") center/contain no-repeat; }
+    ${pillSelector(`${SPEAKER_PREFIX} reading`)}::before { mask-image:url("${square}"); }
+    ${pillSelector(`${SPEAKER_PREFIX} preparing`)}::before { mask-image:url("${spinner}"); animation:lazers-speaker-spin 1s linear infinite; }
     @keyframes lazers-speaker-spin { to { transform:rotate(360deg); } }
-    @media(prefers-reduced-motion:reduce) { [data-composer-pill][aria-label^="LAZERS speaker:"]::before { animation:none; } }
+    @media(prefers-reduced-motion:reduce) { ${pillSelector(SPEAKER_PREFIX)}::before { animation:none; } }
+    ${pillTooltipCss(SPEAKER_PREFIX)}
   `,
   )
 }
