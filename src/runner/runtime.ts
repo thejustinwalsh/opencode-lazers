@@ -12,13 +12,10 @@ import {
   messageID,
   isCommitID,
   isRecord,
-  sameVerificationCheckIdentity,
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
   isRerunnableEffect,
-  effectSuperseded,
-  fallowAcceptance,
 } from "./runtime-helpers.ts"
 import type { RetainedRepairRecord, StartupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
@@ -35,6 +32,7 @@ import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
+import { PlanFinish } from "./plan-finish.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -51,18 +49,12 @@ import { existsSync, lstatSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 
-import {
-  effectiveVerificationCheck,
-  verificationReceiptDeadline,
-  verificationTimeoutDefaults,
-} from "./verification-timeout.ts"
+import { verificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 
 import {
-  artifactUnchanged,
   commitIsAncestor,
   checkResourcesSettled,
-  canonicalCombinedArtifact,
   combineArtifacts,
   gitAsync,
   worktreeListPorcelain,
@@ -70,7 +62,7 @@ import {
   scopePatternsConflict,
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+
 import { classifyChanges, protectedPaths } from "./scope.ts"
 
 import { defaultFallowPlanReview, defaultFallowReview, type FallowReview } from "./fallow-check.ts"
@@ -93,7 +85,6 @@ import {
   type IntegrationProof,
 } from "./integration-proof.ts"
 import { knownTree } from "./identity-store.ts"
-import { checkSucceeded } from "./checks.ts"
 
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
@@ -428,6 +419,7 @@ export class TaskRuntime {
   private readonly verificationCandidate: VerificationCandidate
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
+  private readonly planFinish: PlanFinish
   private running = false
   private stopped = false
   private tickRequested = false
@@ -575,6 +567,21 @@ export class TaskRuntime {
       fallowReviewRun: options.fallowReviewRun ?? defaultFallowReview,
       fallowPlanReviewRun: options.fallowPlanReviewRun ?? defaultFallowPlanReview,
       auditorReportRun: options.auditorReportRun ?? defaultAuditorReport,
+    })
+    this.planFinish = new PlanFinish(this.core, {
+      effect: (...args) => this.effect(...args),
+      hold: (...args) => this.hold(...args),
+      outcome: (...args) => this.outcome(...args),
+      receipt: (...args) => this.receipt(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      checkActivity: (...args) => this.checkActivity(...args),
+      startCheckActivity: (...args) => this.startCheckActivity(...args),
+      runVerificationCheck: (...args) => this.runVerificationCheck(...args),
+      verificationDeadline: (...args) => this.verificationDeadline(...args),
+      verificationTarget: (...args) => this.verificationTarget(...args),
+      missingEvidence: (...args) => this.missingEvidence(...args),
+      planFallowReview: (...args) => this.planFallowReview(...args),
+      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
     })
     this.ownership = new ArchitectOwnership(this.core, {
       architectRouting: this.architectRouting,
@@ -7164,257 +7171,8 @@ export class TaskRuntime {
     return this.verificationReview.failAttempt(...args)
   }
 
-  private async finish(plan: PlanRow, fence: number) {
-    if (this.store.plan(plan.id)?.state !== "running") return
-    const verificationPlanVersion = this.store.plan(plan.id)!.version
-    const sourceGeneration = this.retainedRepairGeneration(plan.id)
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const reconcileTransition = this.store.latestTransition<Record<string, unknown>>(
-      plan.id,
-      null,
-      "RECONCILE_REQUESTED",
-    )
-    const verificationEpoch =
-      typeof reconcileTransition?.verificationEpoch === "number"
-        ? reconcileTransition.verificationEpoch
-        : 0
-    const nodes = this.store.nodes(plan.id)
-    const branches = input.integrationOrder.flatMap((taskID) => {
-      const node = nodes.find((candidate) => candidate.task_id === taskID)
-      return node?.artifact ? [node.artifact] : []
-    })
-    if (branches.length !== input.integrationOrder.length) {
-      this.hold(plan, "An accepted task artifact is missing from the integration order")
-      return
-    }
-    const acceptedNodesCurrent = () => {
-      const currentPlan = this.store.plan(plan.id)
-      const currentNodes = this.store.nodes(plan.id)
-      return Boolean(
-        currentPlan?.state === "running" &&
-        currentPlan.version === verificationPlanVersion &&
-        this.retainedRepairGeneration(plan.id) === sourceGeneration &&
-        input.integrationOrder.every((taskID) => {
-          const previous = nodes.find((node) => node.task_id === taskID)
-          const currentNode = currentNodes.find((node) => node.task_id === taskID)
-          return Boolean(
-            previous?.artifact &&
-            ["accepted", "incorporated"].includes(previous.state) &&
-            currentNode?.artifact === previous.artifact &&
-            ["accepted", "incorporated"].includes(currentNode.state),
-          )
-        }),
-      )
-    }
-    let artifact = ""
-    const acceptedInputsCurrent = () => acceptedNodesCurrent()
-    try {
-      artifact = await canonicalCombinedArtifact(
-        this.directory,
-        await combineArtifacts(this.directory, input.baseCommit, branches),
-        [],
-      )
-    } catch (error) {
-      if (!acceptedNodesCurrent()) return
-      this.hold(plan, `Combined artifact conflict: ${errorText(error)}`)
-      return
-    }
-    if (!acceptedNodesCurrent()) return
-    const attempts = this.store.attempts(plan.id)
-    const shared =
-      JSON.parse(plan.body).workspaceMode === undefined
-        ? attempts.at(-1)?.workspace === this.directory
-        : input.workspaceMode === "shared"
-    let workspace = this.directory
-    if (!shared || !(await artifactUnchanged(this.directory, artifact))) {
-      const existing = this.store
-        .effects(plan.id)
-        .find(
-          (effect) =>
-            effect.kind === "graph-worktree" &&
-            effect.state === "completed" &&
-            JSON.parse(effect.payload).base === artifact,
-        )
-      const matchingAttempt = attempts.find(
-        (attempt) => attempt.state === "accepted" && attempt.artifact === artifact,
-      )
-      if (existing) workspace = JSON.parse(existing.receipt!).workspace
-      else if (
-        matchingAttempt &&
-        existsSync(matchingAttempt.workspace) &&
-        (await artifactUnchanged(matchingAttempt.workspace, artifact))
-      )
-        workspace = matchingAttempt.workspace
-      else {
-        const proposed = canonicalProjectWorktreePath(this.directory, crypto.randomUUID())
-        const effect = this.effect(
-          plan.id,
-          null,
-          null,
-          "graph-worktree",
-          { workspace: proposed, base: artifact },
-          fence,
-        )
-        try {
-          const actual = await this.host.worktree({ directory: proposed, base: artifact })
-          if ((await gitAsync(actual, ["rev-parse", "HEAD"])) !== artifact)
-            throw new Error("Combined worktree did not use the accepted artifact")
-          this.receipt(effect, { workspace: actual, base: artifact }, fence)
-          workspace = actual
-        } catch (error) {
-          this.uncertain(effect, error, fence)
-          return
-        }
-      }
-    }
-    // Explicit reconciliation may follow a conclusive verifier/environment
-    // failure. Keep prior effects and give the requested check run its own ID;
-    // never replay uncertain effects or silently retry on ordinary ticks.
-    const receipts: CheckReceipt[] = []
-    for (const check of input.verification) {
-      const deadline = this.verificationDeadline(
-        this.verificationTarget(plan, "combined", check, artifact, null, null, null),
-      )
-      const effectiveCheck = effectiveVerificationCheck(check, deadline)
-      if (!acceptedInputsCurrent()) return
-      const existing = this.store.effects(plan.id).find((e) => {
-        if (e.kind !== `graph-verify:${check.id}`) return false
-        if (effectSuperseded(e)) return false
-        try {
-          const payload = JSON.parse(e.payload) as {
-            artifact?: unknown
-            workspace?: unknown
-            sourceGeneration?: unknown
-            verificationEpoch?: number
-            check?: unknown
-          }
-          const previous =
-            e.state === "completed" && e.receipt
-              ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
-              : undefined
-          return (
-            payload.artifact === artifact &&
-            payload.workspace === workspace &&
-            (payload.sourceGeneration ?? undefined) === sourceGeneration &&
-            ((payload.verificationEpoch ?? 0) === verificationEpoch ||
-              (previous !== undefined && checkSucceeded(previous))) &&
-            sameVerificationCheckIdentity(payload.check, effectiveCheck)
-          )
-        } catch {
-          return false
-        }
-      })
-      if (existing && existing.state !== "completed") {
-        const activityIdentity = { effectID: existing.id, payload: existing.payload }
-        const activity = this.checkActivity(existing.id, activityIdentity)
-        if (activity?.state === "running" || activity?.state === "completed") return
-        const actual = actualCheckResultFromEffect(existing)
-        const reason =
-          actual && !checkResourcesSettled(actual)
-            ? `Combined verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
-            : `Combined verification ${check.id} has an uncertain receipt and was not replayed`
-        this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
-        return
-      }
-      if (existing?.state === "completed") {
-        receipts.push(JSON.parse(existing.receipt!).check)
-        continue
-      }
-      const receiptPath = join(
-        this.dataDirectory,
-        "receipts",
-        plan.id,
-        `${check.id}-${artifact}${sourceGeneration ? `-${sourceGeneration}` : ""}${verificationEpoch ? `-${verificationEpoch}` : ""}.json`,
-      )
-      const effect = this.effect(
-        plan.id,
-        null,
-        null,
-        `graph-verify:${check.id}`,
-        {
-          workspace,
-          artifact,
-          identity: artifact,
-          check: effectiveCheck,
-          authoredCheck: check,
-          verificationDeadline: verificationReceiptDeadline(deadline),
-          receiptPath,
-          ...(sourceGeneration ? { sourceGeneration } : {}),
-          ...(verificationEpoch ? { verificationEpoch } : {}),
-        },
-        fence,
-      )
-      try {
-        this.startCheckActivity({
-          id: effect.id,
-          identity: { effectID: effect.id, payload: effect.payload },
-          metadata: {
-            kind: "effect",
-            projectDirectory: this.directory,
-            planID: plan.id,
-            effectID: effect.id,
-            receiptPath,
-          },
-          run: (signal) =>
-            this.runVerificationCheck(workspace, artifact, check, deadline, receiptPath, {
-              signal,
-            }),
-        })
-        return
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
-    if (receipts.some((r) => !checkSucceeded(r))) {
-      // An Architect's accepted takeover result is corrected by the Architect: it resubmits.
-      const takenOver = this.store
-        .attempts(plan.id)
-        .some((attempt) => attempt.state === "accepted" && isTakeoverAttempt(attempt.policy))
-      this.hold(
-        plan,
-        "Combined artifact verification failed",
-        takenOver ? ["takeover-submit", "audit", "reconcile", "cancel"] : undefined,
-      )
-      return
-    }
-    const planFallow = await this.planFallowReview(
-      plan,
-      { workspace, artifact, baseCommit: input.baseCommit, sourceGeneration, verificationEpoch },
-      fence,
-    )
-    if (planFallow === "pending") return
-    if (!(await artifactUnchanged(workspace, artifact))) {
-      this.hold(plan, "Combined candidate changed after verification")
-      return
-    }
-    const missing = await this.missingEvidence(workspace, input.acceptance, receipts)
-    if (missing.length) {
-      this.hold(plan, `Combined artifact evidence missing: ${missing.join(", ")}`)
-      return
-    }
-    this.store.fenced(this.owner, fence, (db) => {
-      if (!acceptedInputsCurrent()) return
-      db.query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'accepted'),artifact=?,version=version+1 WHERE id=?",
-      ).run(artifact, plan.id)
-      this.store.record(plan.id, null, "PLAN_ACCEPTED", {
-        artifact,
-        checks: receipts,
-        ...fallowAcceptance(planFallow),
-      })
-      this.outcome(
-        plan.id,
-        {
-          status: "accepted",
-          artifact,
-          evidence: receipts,
-          taskIDs: input.integrationOrder,
-          ...fallowAcceptance(planFallow),
-        },
-        true,
-      )
-    })
+  private finish(...args: Parameters<PlanFinish["finish"]>) {
+    return this.planFinish.finish(...args)
   }
   private reconcileEffect(...args: Parameters<EffectReconciliation["reconcileEffect"]>) {
     return this.effectReconciliation.reconcileEffect(...args)
