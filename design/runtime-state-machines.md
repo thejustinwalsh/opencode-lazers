@@ -22,6 +22,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt                                                                                                                                                |
 | Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                                                                                            |
 | Architect takeover    | `takeoverMachine`             | `lz_runner_transition('takeover', state, event)`        | Notify the worker, wait for its handoff, stop it, open the Architect's attempt; a plan cancellation cancels an open one                                                                                    |
+| Agent admission       | `capacityMachine`             | `lz_runner_transition('capacity', state, event)`        | Queued until under the Projects `limit` and first in order; released when its attempt or native child ends; a dead native queue owner or a stopped plan cancels a queued request                           |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
 `current.can()` and XState's pure `transition()` before returning the next state.
