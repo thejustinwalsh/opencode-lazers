@@ -31,7 +31,7 @@ export type NativeEventListener = {
   attached?(): void
   event(event: unknown): void
   /** A subscription ended or failed: events of its location may have been missed. */
-  gap?(): void
+  gap?(reason?: "failed" | "ended"): void
 }
 
 type Member = {
@@ -144,14 +144,18 @@ function run(hub: Hub, member: Member, types: readonly string[]) {
       each(hub, (listener) => listener.attached?.())
     }).pipe(
       Effect.andThen(
-        Stream.runForEach(member.ctx.event.subscribe({ types: types as never[] }), (event) =>
-          Effect.sync(() => deliver(hub, member, event)),
+        // Suspended so every reattach asks the host for a fresh stream instead of rerunning the
+        // first stream value.
+        Effect.suspend(() =>
+          Stream.runForEach(member.ctx.event.subscribe({ types: types as never[] }), (event) =>
+            Effect.sync(() => deliver(hub, member, event)),
+          ),
         ),
       ),
       Effect.match({
         // This copy's stream is gone: whatever only it carried is missed.
-        onFailure: () => each(hub, (listener) => listener.gap?.()),
-        onSuccess: () => each(hub, (listener) => listener.gap?.()),
+        onFailure: () => each(hub, (listener) => listener.gap?.("failed")),
+        onSuccess: () => each(hub, (listener) => listener.gap?.("ended")),
       }),
       Effect.andThen(Effect.sleep(1_000)),
     ),
