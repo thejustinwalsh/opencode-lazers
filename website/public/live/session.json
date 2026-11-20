@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "placeholder": true,
+  "steps": [
+    {
+      "type": "user",
+      "text": "PLACEHOLDER: this session has not been captured from the model yet."
+    },
+    {
+      "type": "answer",
+      "text": "PLACEHOLDER: run test/e2e/live-chat.mjs in a browser with WebGPU, then scripts/capture-live-session.ts, to replace this with the model's real answers and speech.",
+      "seconds": 0
+    }
+  ],
+  "audio": {}
+}
