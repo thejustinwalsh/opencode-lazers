@@ -41,7 +41,7 @@ const s = stylex.create({
     zIndex: 2,
   },
   rest: { position: "absolute", zIndex: 1, pointerEvents: "none" },
-  drift: { width: "100%", height: "100%", willChange: "transform" },
+  drift: { width: "100%", height: "100%" },
   sprite: {
     width: "100%",
     height: "100%",

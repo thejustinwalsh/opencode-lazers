@@ -8,8 +8,10 @@ import stripesMark from "./assets/mark-stripes.png"
 import { bp, color, type } from "./tokens.stylex"
 import { BeamCanvas, Cat, Field, Stripes, links, srOnly, t, useBeamKit } from "./ui"
 
-/* Scroll-driven transitions read --p (0..1 section entry progress, set from Lenis scroll).
-   Every rule falls back to the finished state, so reduced motion and no-JS read complete. */
+/* Scroll-driven transitions: elements marked data-reveal are animated by scroll.css
+   (animation-timeline: view()); where that is unsupported, motion.ts writes --p (0..1
+   section entry progress). Every rule falls back to the finished state, so reduced
+   motion and no-JS read complete. */
 const P = "var(--p, 1)"
 const fx = stylex.create({
   growX: { transform: `scaleX(${P})`, transformOrigin: "left center" },
@@ -99,8 +101,8 @@ const s = stylex.create({
 function Seam({ onInk = false }: { onInk?: boolean }) {
   return (
     <div aria-hidden="true" {...stylex.props(s.seam)}>
-      <div {...stylex.props(s.seamInk, onInk && s.seamOnInk)} />
-      <div {...stylex.props(s.seamSignal)} />
+      <div data-reveal="clip" {...stylex.props(s.seamInk, onInk && s.seamOnInk)} />
+      <div data-reveal="grow" {...stylex.props(s.seamSignal)} />
     </div>
   )
 }
@@ -321,7 +323,7 @@ export function Loop() {
               <p {...stylex.props(lp.detail)}>{st.detail}</p>
               {i < stations.length - 1 && (
                 <span aria-hidden="true" {...stylex.props(lp.link)}>
-                  <span {...stylex.props(lp.shaft, fx.growX)} />
+                  <span data-reveal="grow" {...stylex.props(lp.shaft, fx.growX)} />
                   <span {...stylex.props(lp.head)} />
                 </span>
               )}
@@ -331,7 +333,7 @@ export function Loop() {
 
         <div aria-hidden="true" {...stylex.props(lp.back)}>
           <span {...stylex.props(lp.backHead)} />
-          <span {...stylex.props(lp.backShaft, fx.growX)} />
+          <span data-reveal="grow" {...stylex.props(lp.backShaft, fx.growX)} />
         </div>
         <p {...stylex.props(lp.backText)}>
           <strong {...stylex.props(s.strong)}>Every candidate comes back with proof.</strong> The
