@@ -131,17 +131,6 @@ test("a dismissed project and an active profile show nothing", async () => {
   }
 })
 
-test("a pending profile raises Review, which opens the LAZERS settings page", async () => {
-  const w = notice({ status: { ...none, state: "pending", pendingRevision: 2 } })
-  w.mount("ses_1")
-  await tick()
-  expect(w.toasts[0]).toMatchObject({ title: "Profile ready for ALP" })
-  expect(w.toasts[0]!.actions!.map((a) => a.label)).toEqual(["Review"])
-  w.toasts[0]!.actions![0]!.run()
-  expect(w.settings).toEqual(["lazers"])
-  w.dispose()
-})
-
 test("an unreachable RPC shows nothing and throws nothing", async () => {
   const w = notice({ status: "offline" })
   w.mount("ses_1")
@@ -162,7 +151,7 @@ test("Settings: Run setup again starts setup through a session of the project an
     settings: { limit: null, weight: 1, spendCeilingTokens: null, setupDismissedAt: null },
     profile: { state: "active", revision: 1 },
   }
-  const profile: ProfileView = { key: "k", setupDismissedAt: null }
+  const profile: ProfileView = { key: "k", history: [], setupDismissedAt: null }
   const root = dom.document.createElement("main")
   dom.document.body.append(root)
   const api = settings(root as never, [project], {

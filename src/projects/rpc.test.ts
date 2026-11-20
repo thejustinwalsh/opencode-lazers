@@ -6,6 +6,7 @@ import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { effectivePause } from "./pause.ts"
+import { activeProfile } from "./profile-store.ts"
 import { projectsOperations } from "./rpc.ts"
 
 const cleanups: (() => void)[] = []
@@ -234,7 +235,7 @@ async function profileFixture() {
 
 test("profile: no revisions reads as none, and list gains only the profile and dismissal fields", async () => {
   const f = await profileFixture()
-  expect(f.ops.profile(f.key)).toEqual({ key: f.key, setupDismissedAt: null })
+  expect(f.ops.profile(f.key)).toEqual({ key: f.key, history: [], setupDismissedAt: null })
   expect(f.ops.list().projects.find((p) => p.key === f.key)).toMatchObject({
     profile: { state: "none" },
     settings: { setupDismissedAt: null },
@@ -251,79 +252,64 @@ test("profile: a stored repository-map source filter shows as the legacy source"
   expect(f.ops.profile(f.key).legacySource).toEqual({ include: ["src/**/*.ts"], exclude: [] })
 })
 
-test("propose proves and stores a pending revision; confirm makes it active; discard drops one", async () => {
+test("a save proves the commands and is the active revision at once; a second save supersedes it", async () => {
   const f = await profileFixture()
-  const outcome = await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "first" })
+  const outcome = await f.ops.saveProfile({ key: f.key, profile: goodProfile, reason: "first" })
   expect(outcome).toMatchObject({ ok: true, revision: 1 })
   if (!outcome.ok) throw new Error("unreachable")
   expect(outcome.proofs.map((p) => `${p.key}:${p.outcome}`)).toEqual(["verify:ok:proven"])
   expect(outcome.changes.every((c) => c.kind === "added")).toBe(true)
-  expect(f.ops.profile(f.key).pending?.revision).toBe(1)
-  expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile).toEqual({
-    state: "pending",
-    pendingRevision: 1,
-  })
-  expect(f.ops.confirmProfile(f.key, 1)).toEqual({ ok: true })
+  // Active immediately, with no further step.
   expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile).toEqual({
     state: "active",
     revision: 1,
   })
+  expect(activeProfile(f.repository, f.directory)?.revision).toBe(1)
   expect(f.ops.profile(f.key).active?.profile).toMatchObject({ verify: [{ id: "ok" }] })
-  await f.ops.proposeProfile({
+  const second = await f.ops.saveProfile({
     key: f.key,
     profile: { ...goodProfile, verify: [{ id: "ok", command: "true # again" }] },
     reason: "second",
   })
-  expect(f.ops.profile(f.key).pending?.changes).toEqual([
+  expect(second).toMatchObject({ ok: true, revision: 2 })
+  if (!second.ok) throw new Error("unreachable")
+  expect(second.changes).toEqual([
     { field: "verify", kind: "changed", key: "ok", before: "true", after: "true # again" },
   ])
-  expect(f.ops.discardProfile(f.key, 2)).toEqual({ ok: true })
-  expect(f.ops.profile(f.key).pending).toBeUndefined()
-  expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile.state).toBe("active")
+  const view = f.ops.profile(f.key)
+  expect(view.active?.revision).toBe(2)
+  expect(view.history.map((revision) => [revision.revision, revision.state])).toEqual([
+    [1, "superseded"],
+  ])
 })
 
 test("an invalid profile is refused with its field and stores nothing", async () => {
   const f = await profileFixture()
-  const outcome = await f.ops.proposeProfile({
+  const outcome = await f.ops.saveProfile({
     key: f.key,
     profile: { ...goodProfile, verify: [] },
     reason: "bad",
   })
   expect(outcome).toMatchObject({ ok: false, refusal: "PROFILE_INVALID" })
   expect(!outcome.ok && outcome.message).toContain("verify")
-  expect(f.ops.profile(f.key).pending).toBeUndefined()
+  expect(f.ops.profile(f.key).active).toBeUndefined()
 })
 
-test("confirming a discarded or missing revision is refused", async () => {
-  const f = await profileFixture()
-  await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
-  f.ops.discardProfile(f.key, 1)
-  expect(f.ops.confirmProfile(f.key, 1)).toMatchObject({
-    ok: false,
-    refusal: "PROFILE_REVISION_NOT_PENDING",
-  })
-  expect(f.ops.confirmProfile(f.key, 9)).toMatchObject({
-    ok: false,
-    refusal: "PROFILE_REVISION_NOT_PENDING",
-  })
-  expect(f.ops.confirmProfile("nope", 1)).toMatchObject({ ok: false, refusal: "PROJECT_MISSING" })
-})
-
-test("proposing for another project's key is refused as not loaded", async () => {
+test("saving for another project's key is refused as not loaded", async () => {
   const f = await profileFixture()
   expect(
-    await f.ops.proposeProfile({ key: f.otherKey, profile: goodProfile, reason: "x" }),
+    await f.ops.saveProfile({ key: f.otherKey, profile: goodProfile, reason: "x" }),
   ).toMatchObject({ ok: false, refusal: "PROJECT_NOT_LOADED" })
 })
 
 test("credential-looking env names are listed with the revision", async () => {
   const f = await profileFixture()
-  await f.ops.proposeProfile({
+  await f.ops.saveProfile({
     key: f.key,
     profile: { ...goodProfile, env: ["NPM_TOKEN", "CARGO_HOME"] },
     reason: "x",
   })
-  expect(f.ops.profile(f.key).pending?.credentialLikeEnv).toEqual(["NPM_TOKEN"])
+  expect(f.ops.profile(f.key).active?.credentialLikeEnv).toEqual(["NPM_TOKEN"])
 })
 
 // --- setup notice ---
@@ -383,7 +369,7 @@ test("a setup session that cannot be prompted leaves the dismissal in place", as
   expect(await ops.setupStatus("s")).toMatchObject({ dismissed: false })
 })
 
-test("setupStatus reports a pending proposal", async () => {
+test("setupStatus reports an active profile", async () => {
   const f = await profileFixture()
   const ops = projectsOperations(f.repository, {
     loaded: () => [f.directory],
@@ -391,11 +377,11 @@ test("setupStatus reports a pending proposal", async () => {
     proofWorkspace: undefined as never,
   })
   const withWorkspace = f.ops
-  await withWorkspace.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
-  expect(await ops.setupStatus("s")).toMatchObject({ state: "pending", pendingRevision: 1 })
+  await withWorkspace.saveProfile({ key: f.key, profile: goodProfile, reason: "x" })
+  expect(await ops.setupStatus("s")).toMatchObject({ state: "active" })
 })
 
-test("confirming a profile drops the stored source filter of every checkout, in one transaction", async () => {
+test("saving a profile drops the stored source filter of every checkout, in one transaction", async () => {
   const f = await profileFixture()
   // A second checkout of the same project, with its own stored filter.
   const second = join(f.directory, "..", "second-checkout")
@@ -420,8 +406,7 @@ test("confirming a profile drops the stored source filter of every checkout, in 
     f.repository.read(
       (db) => db.query("SELECT COUNT(*) AS n FROM repo_map_sources").get() as { n: number },
     ).n
-  await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
   expect(rows()).toBe(2)
-  expect(f.ops.confirmProfile(f.key, 1)).toEqual({ ok: true })
+  await f.ops.saveProfile({ key: f.key, profile: goodProfile, reason: "x" })
   expect(rows()).toBe(0)
 })

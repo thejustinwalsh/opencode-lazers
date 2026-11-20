@@ -229,7 +229,7 @@ test("a project with no profile lists one setup item on its first checkout only"
   expect(await items()).toEqual([])
 })
 
-test("a proposed profile is a confirmation item, and a confirmed one clears everything", async () => {
+test("the setup item shows until a profile is active, then nothing is asked of the owner", async () => {
   const three = await threeProjects()
   cleanups.push(() => three.close())
   const [a] = three.projects
@@ -241,18 +241,15 @@ test("a proposed profile is a confirmation item, and a confirmed one clears ever
     audit: "off" as const,
     source: { include: ["src/**"], exclude: [] },
   }
-  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
-  proposeRevision(a!.repository, {
+  const { activateRevision } = await import("./profile-store.ts")
+  const entries = () => a!.repository.read((db) => profileEntries(db, a!.key))
+  expect(entries()).toEqual([expect.objectContaining({ kind: "project-setup", id: a!.key })])
+  activateRevision(a!.repository, {
     projectKey: a!.key,
     profile,
     author: { kind: "owner" },
     reason: "t",
     proofs: [],
   })
-  const entries = () => a!.repository.read((db) => profileEntries(db, a!.key))
-  expect(entries()).toEqual([
-    expect.objectContaining({ kind: "profile-confirmation", id: `${a!.key}:r1` }),
-  ])
-  confirmRevision(a!.repository, { projectKey: a!.key, revision: 1, by: "owner" })
   expect(entries()).toEqual([])
 })

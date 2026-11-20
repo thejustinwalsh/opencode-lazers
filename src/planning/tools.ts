@@ -9,6 +9,7 @@ import type { TaskRepository } from "../storage.ts"
 import { PlanningAgentId, type PlanningAgentId as AgentID } from "./contract.ts"
 import { AGENT_ORDER } from "./decision/tree.ts"
 import { rulesAdd } from "./checks.ts"
+import { PlanTaskInput, type PlanTasker } from "./tasking.ts"
 import type { AgentSelection, PlanningReviews, ReviewResult } from "./reviews.ts"
 import type { TargetField } from "./contract.ts"
 import {
@@ -77,6 +78,8 @@ export type PlanDraftResult =
       validation: Validation
       deferred: typeof DEFERRED_TO_TASKING
       runbook?: string
+      /** After `finalize`: findings and questions still open, listed as they were left. */
+      open?: number
     }
   | { status: "conflict"; currentRevision: number }
   | { status: "invalid"; errors: { path: string; message: string }[] }
@@ -165,17 +168,11 @@ export class PlanDrafts {
       case "abandon":
         return this.abandon(input.planningID)
       case "guide":
-        return input.topic === "show" || input.topic === "resolve"
-          ? {
-              status: "guide",
-              topic: input.topic,
-              guidance: runbook(input.topic === "show" ? "planning-show" : "planning-resolve"),
-            }
-          : {
-              status: "guide",
-              topic: input.topic,
-              guidance: `The ${input.topic} runbook is not written yet; topics "show" and "resolve" are available.`,
-            }
+        return {
+          status: "guide",
+          topic: input.topic,
+          guidance: runbook(`planning-${input.topic}`),
+        }
       case "evidence":
         return this.evidence(input.planningID, input.draftID)
     }
@@ -257,7 +254,23 @@ export class PlanDrafts {
     }
     this.store.move(row.id, "ready", this.now())
     const stored = JSON.parse(this.store.revision(row.id, revision)!.body) as PlanningBody
-    return this.stored(row.id, PlanningBody.parse(stored), revision, delivery)
+    const result = this.stored(row.id, PlanningBody.parse(stored), revision, delivery)
+    if (result.status !== "stored") return result
+    // Informational, never a gate: tasking follows unless the owner says stop.
+    return {
+      ...result,
+      breakdown: `${result.breakdown}\nFinal r${revision} — tasking next. Reply "stop" to keep it open.`,
+      open: this.openCount(row.id),
+    }
+  }
+
+  /** Findings still open plus questions not yet answered or merged. */
+  private openCount(planningID: string): number {
+    return (
+      this.store.findings(planningID).filter((f) => f.resolution === "open").length +
+      this.store.questions(planningID).filter((q) => q.route === "open" || q.route === "owner")
+        .length
+    )
   }
 
   private abandon(planningID: string): PlanDraftResult {
@@ -332,6 +345,9 @@ export function registerPlanningTools(
   })
 }
 
+/** The one agent of the final pass (the owner's decision). */
+export const FINAL_PASS_AGENT: AgentID = "readiness"
+
 export const PlanReviewInput = z.strictObject({
   planningID: z.uuid(),
   stage: z.enum(["review", "final"]).default("review"),
@@ -345,7 +361,7 @@ export const PlanReviewInput = z.strictObject({
 export type PlanReviewInput = z.infer<typeof PlanReviewInput>
 
 export type PlanReviewResult =
-  | ReviewResult
+  | (ReviewResult & { note?: string })
   | { status: "needs-agents"; scores?: Record<string, number>; reason: string }
   | { status: "invalid"; errors: { path: string; message: string }[] }
 
@@ -391,6 +407,37 @@ export class PlanReviewer {
     })
   }
 
+  /** One agent, Readiness, on the current revision, after the owner's answers. */
+  private async final(
+    planningID: string,
+    caller: { sessionID: string },
+    signal: AbortSignal | undefined,
+    delivery: Delivery,
+    input: PlanReviewInput,
+  ): Promise<PlanReviewResult> {
+    const planning = this.store.planning(planningID)!
+    if (!["questions-open", "final-review"].includes(planning.state))
+      return invalid(
+        "planningID",
+        `plan is ${planning.state}; the final pass follows the review`,
+      ) as PlanReviewResult
+    const review = await this.reviews.start({
+      planningID,
+      stage: "final",
+      agents: [{ agent: FINAL_PASS_AGENT, source: "final" }],
+      parentSessionID: caller.sessionID,
+      directory: this.directory,
+    })
+    const result = await this.reviews.run(review.id, signal)
+    return {
+      ...result,
+      runbook: delivery.once("planning-resolve"),
+      ...(input.agents?.length
+        ? { note: "agents is ignored for the final pass; only Readiness ran" }
+        : {}),
+    }
+  }
+
   async call(
     input: PlanReviewInput,
     caller: { sessionID: string },
@@ -400,8 +447,7 @@ export class PlanReviewer {
     const planning = this.store.planning(input.planningID)
     if (!planning || planning.projectKey !== this.projectID)
       return invalid("planningID", "no such plan in this project") as PlanReviewResult
-    if (input.stage === "final")
-      return invalid("stage", "the final pass is not available yet") as PlanReviewResult
+    if (input.stage === "final") return this.final(planning.id, caller, signal, delivery, input)
     if (!["drafted", "questions-open", "in-review"].includes(planning.state))
       return invalid(
         "planningID",
@@ -782,6 +828,42 @@ export function registerPlanResolveTool(
               Effect.tryPromise({
                 try: async () => {
                   const output = await resolver.call(input, { sessionID: call.sessionID })
+                  return { content: JSON.stringify(output), output: output as never }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              }),
+            ),
+          ),
+    })
+  })
+}
+
+/** Registers `lz-plan-task`: "just task it" from any open state, and normal tasking after the final pass. */
+export function registerPlanTaskTool(
+  ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
+  tasker: PlanTasker,
+) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: "lz-plan-task",
+      description:
+        'Task a stored plan exactly as stored: each draft goes through the same path as lz-submit-task, then the plan through lz-submit-plan. It works from every open state, so "just task it" needs no review. Every check runs before anything is written; a failing draft is listed and nothing is saved. Open reviews are cancelled. A repeat call returns the same tasks. The result maps each draft to its task and lists the fields changed after the last review. Run lz-verify-task on each draft first, with evidence from lz-plan-draft action "evidence", and pass the review ids in selfReviews.',
+      input: PlanTaskInput,
+      output: z.record(z.string(), z.unknown()),
+      options: { codemode: true, permission: "lz-plan-task" },
+      execute: (input, call) =>
+        ctx.permission
+          .assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: "lz-plan-task",
+            resources: [ctx.location.directory],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  const output = await tasker.call(input, { sessionID: call.sessionID })
                   return { content: JSON.stringify(output), output: output as never }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),

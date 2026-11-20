@@ -27,12 +27,11 @@ const revision = (
   over: Partial<Revision> = {},
 ): Revision => ({
   revision: number,
-  state: "confirmed",
+  state: "active",
   profile,
   author: { kind: "architect", sessionID: "s" },
   reason: "init",
   createdAt: 1,
-  decidedAt: 1_800_000_000_000,
   proofs,
   credentialLikeEnv: [],
   ...over,
@@ -61,6 +60,7 @@ const project = (profile: ProjectView["profile"] = { state: "none" }): ProjectVi
 })
 const view = (over: Partial<ProfileView>): ProfileView => ({
   key: "k",
+  history: [],
   setupDismissedAt: null,
   ...over,
 })
@@ -129,7 +129,7 @@ const tick = async () => {
 async function open(
   profile: ProfileView | undefined,
   summary: ProjectView["profile"],
-  options: { confirm?: boolean; propose?: ProfileOutcomeView } = {},
+  options: { save?: ProfileOutcomeView } = {},
 ) {
   const root = dom.document.createElement("main")
   dom.document.body.append(root)
@@ -223,75 +223,40 @@ test("a credential-looking env name carries Credential", async () => {
   ui.close()
 })
 
-const pendingView = () =>
-  view({
-    active: revision(1, { ...base, verify: [{ id: "tests", command: "cargo test" }] }, [
-      proof("verify:tests", "cargo test"),
-    ]),
-    pending: {
-      ...revision(
-        2,
-        base,
-        [
-          proof("verify:tests", "cargo test --locked"),
-          proof("fix:0", "cargo fmt --"),
-          proof("fix:1", "cargo clippy --fix", { outcome: "failed", exitCode: 1 }),
-        ],
-        { state: "proposed", decidedAt: undefined as never },
-      ),
-      changes: [
-        {
-          field: "verify",
-          kind: "changed",
-          key: "tests",
-          before: "cargo test",
-          after: "cargo test --locked",
-        },
-      ],
-    },
+test("a failing fix or install shows as failing and is not run unattended", async () => {
+  const ui = await open(view({ active }), { state: "active", revision: 1 })
+  expect(ui.text()).toContain("Not run unattended")
+  // Only the failing fix carries it; the proven one does not.
+  expect(ui.text().match(/Not run unattended/g)).toHaveLength(1)
+  ui.close()
+})
+
+test("Settings has no confirmation step: no Confirm or Discard, and no dialog", async () => {
+  const ui = await open(view({ active }), { state: "active", revision: 1 })
+  const labels = [...ui.root.querySelectorAll("button")].map((b) => b.textContent)
+  expect(labels).not.toContain("Confirm")
+  expect(labels).not.toContain("Discard")
+  expect(ui.text()).not.toMatch(/pending|proposed|not active|confirm/i)
+  expect(ui.api.confirms).toEqual([])
+  ui.close()
+})
+
+test("earlier revisions are listed with who set them and why", async () => {
+  const earlier = revision(1, base, [], {
+    state: "superseded",
+    author: { kind: "owner" },
+    reason: "first setup",
   })
-
-test("a pending revision shows what changed, verbatim", async () => {
-  const ui = await open(pendingView(), { state: "pending", revision: 1, pendingRevision: 2 })
-  expect(ui.text()).toContain("Pending revision 2")
-  expect(ui.text()).toContain("Changed")
-  expect(ui.text()).toMatch(/verify tests\s*cargo test\s*→\s*cargo test --locked/)
-  ui.close()
-})
-
-test("Confirm asks first, naming what runs unattended and what will not", async () => {
-  const ui = await open(pendingView(), { state: "pending", revision: 1, pendingRevision: 2 })
-  await ui.press("Confirm")
-  expect(ui.api.confirms).toHaveLength(1)
-  const description = ui.api.confirms[0]!.description!
-  expect(description).toContain("fix: cargo fmt --")
-  expect(description.split("Will not run unattended (unproven):")[1]).toContain(
-    "fix: cargo clippy --fix",
-  )
-  expect(description.split("Will not run unattended (unproven):")[0]).not.toContain("clippy")
-  expect(ui.calls("confirmProfile")).toEqual([
-    { method: "confirmProfile", input: { key: "k", revision: 2 } },
-  ])
-  ui.close()
-})
-
-test("declining the confirmation calls nothing", async () => {
   const ui = await open(
-    pendingView(),
-    { state: "pending", revision: 1, pendingRevision: 2 },
-    { confirm: false },
+    view({
+      active: revision(2, base, [proof("verify:tests", "cargo test --locked")]),
+      history: [earlier],
+    }),
+    { state: "active", revision: 2 },
   )
-  await ui.press("Confirm")
-  expect(ui.calls("confirmProfile")).toEqual([])
-  ui.close()
-})
-
-test("Discard discards the pending revision", async () => {
-  const ui = await open(pendingView(), { state: "pending", revision: 1, pendingRevision: 2 })
-  await ui.press("Discard")
-  expect(ui.calls("discardProfile")).toEqual([
-    { method: "discardProfile", input: { key: "k", revision: 2 } },
-  ])
+  expect(ui.text()).toContain("Earlier revisions")
+  expect(ui.text()).toContain("Revision 1, set by owner")
+  expect(ui.text()).toContain("first setup")
   ui.close()
 })
 
@@ -302,7 +267,7 @@ test("saving invalid JSON shows the parse error and calls nothing", async () => 
   await ui.type("Reason", "x")
   await ui.press("Save")
   expect(ui.text()).toContain("Not valid JSON")
-  expect(ui.calls("proposeProfile")).toEqual([])
+  expect(ui.calls("saveProfile")).toEqual([])
   ui.close()
 })
 
@@ -312,8 +277,8 @@ test("a refusal is shown beside the editor and the old profile stays displayed",
   await ui.type("Profile JSON", JSON.stringify({ ...base, verify: [] }))
   await ui.type("Reason", "drop verify")
   await ui.press("Save")
-  expect(ui.calls("proposeProfile")).toHaveLength(1)
-  expect(ui.calls("proposeProfile")[0]!.input).toMatchObject({
+  expect(ui.calls("saveProfile")).toHaveLength(1)
+  expect(ui.calls("saveProfile")[0]!.input).toMatchObject({
     key: "k",
     reason: "drop verify",
     profile: { verify: [] },
@@ -325,12 +290,12 @@ test("a refusal is shown beside the editor and the old profile stays displayed",
   ui.close()
 })
 
-test("a proved proposal closes the editor", async () => {
+test("a Settings save is the new active revision at once: the editor closes and no confirmation is asked", async () => {
   const ui = await open(
     view({ active }),
     { state: "active", revision: 1 },
     {
-      propose: {
+      save: {
         ok: true,
         revision: 2,
         proofs: [],
@@ -349,6 +314,8 @@ test("a proved proposal closes the editor", async () => {
   await ui.press("Edit")
   await ui.type("Reason", "tweak")
   await ui.press("Save")
+  expect(ui.calls("saveProfile")).toHaveLength(1)
+  expect(ui.api.confirms).toEqual([])
   expect(ui.root.querySelector('[aria-label="Profile JSON"]')).toBeNull()
   ui.close()
 })

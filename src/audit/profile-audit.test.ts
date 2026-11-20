@@ -8,7 +8,7 @@ import { join } from "node:path"
 import type { z } from "zod"
 import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { parseProfile } from "../projects/profile.ts"
-import { confirmRevision, proposeRevision } from "../projects/profile-store.ts"
+import { activateRevision } from "../projects/profile-store.ts"
 import { TaskRepository } from "../storage.ts"
 import { fallowConfigGate } from "./fallow-gate.ts"
 import { changedAuditFiles } from "./review-git.ts"
@@ -51,14 +51,13 @@ async function project(audit: "fallow" | "off" | undefined) {
       source: { include: ["src/**/*.ts"], exclude: [] },
     })
     if (!parsed.ok) throw new Error("bad fixture")
-    proposeRevision(repository, {
+    activateRevision(repository, {
       projectKey: key,
       profile: parsed.profile,
       author: { kind: "owner" },
       reason: "t",
       proofs: [],
     })
-    confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
   }
   return { root, base, repository }
 }

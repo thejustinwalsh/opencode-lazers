@@ -146,6 +146,7 @@ test("with the decision model not run the note gives the Architect the same ques
   const note = decisionNote(row({ status: "unavailable", reason: "no-window", size: null }))
   expect(note).toContain("decision model not run (no-window)")
   expect(note).toContain("answer these yourself")
+  expect(note).toContain("`architectPick`")
   for (const choice of SIZE_CHOICES) expect(note).toContain(choice)
   for (const id of AGENT_ORDER) expect(note).toContain(`- ${id}: ${useWhen(id)}`)
 })

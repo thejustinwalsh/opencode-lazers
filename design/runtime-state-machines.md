@@ -567,11 +567,11 @@ the global pause applies to it until its registration lands.
 ## Project profile revisions
 
 `profileRevisionMachine` (`src/projects/profile-machine.ts`, key `profile` in `lifecycleMachines`) has
-three states: `proposed`, `confirmed` and `discarded`. A proposal leaves `proposed` by exactly one of
-`OWNER_CONFIRMED` (the owner confirms it in Settings), `OWNER_DISCARDED` (the owner rejects it) or
-`REPLACED` (a newer proposal for the same project arrives). `confirmed` and `discarded` are final.
-That a newer confirmed revision supersedes an older one is not a transition: the runtime reads the
-latest `confirmed` row. Rows live in `lazers_profile_revisions` (append-only: only `state`,
-`decided_at` and `decided_by` change) with their command proofs in `lazers_profile_proofs`
-(`src/projects/profile-store.ts`). No agent tool confirms; the owner's controls are the two
-`OWNER_*` events. Dismissing the setup notice is the project setting `setupDismissedAt`, not a state.
+two states: `active` and `superseded`. A revision is written `active` by the Architect's tool call or
+by a Settings save, and the next revision of the same project moves it to `superseded` with the one
+event `SUPERSEDED`; `superseded` is final. There is no approval step. Rows live in
+`lazers_profile_revisions` (append-only: only `state`, `decided_at` and `decided_by` change) with
+their command proofs in `lazers_profile_proofs` (`src/projects/profile-store.ts`). A superseded
+revision stays readable by id, which is how a run that started with it keeps it
+(`lazers_profile_pins`). Dismissing the setup notice is the project setting `setupDismissedAt`, not a
+state.

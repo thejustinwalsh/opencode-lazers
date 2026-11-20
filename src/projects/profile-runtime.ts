@@ -12,7 +12,7 @@ import { effectiveInstall, type EffectiveInstall } from "./toolchains.ts"
 
 /**
  * What the runner needs from an `ActiveProfile`. Readers take `ActiveProfile | undefined` and
- * keep today's code for `undefined`; nothing here runs unless a profile was confirmed.
+ * keep today's code for `undefined`; nothing here runs unless a profile is active.
  */
 export type ProfileCommands = {
   toolchains: readonly string[]
@@ -74,7 +74,7 @@ export function runnableInstall(active: ActiveProfile, workspace: string): Effec
  * The profile an isolated recheck is set up with, with only its proven installs. Spread into
  * `createRetainedCheckContext`'s input; empty when the run has no profile. With an `operationID`
  * the revision is pinned on first use, so a recheck resumed after a restart keeps the revision it
- * started with, even if a newer one was confirmed meanwhile.
+ * started with, even if a newer one became active meanwhile.
  */
 export function retainedProfileInput(
   repository: Pick<TaskRepository, "read" | "atomic">,
@@ -103,7 +103,7 @@ export function retainedProfileInput(
   }
 }
 
-/** Whether the project's confirmed profile turns the Fallow audit off (no profile: it does not). */
+/** Whether the project's active profile turns the Fallow audit off (no profile: it does not). */
 export function auditIsOff(
   repository: Pick<TaskRepository, "read">,
   projectDirectory: string,

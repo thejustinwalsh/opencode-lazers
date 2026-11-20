@@ -171,6 +171,7 @@ export function registerWorker(
             { action: "lz-plan-draft", resource: "*", effect: "deny" },
             { action: "lz-plan-review", resource: "*", effect: "deny" },
             { action: "lz-plan-resolve", resource: "*", effect: "deny" },
+            { action: "lz-plan-task", resource: "*", effect: "deny" },
           ]
           agent.permissions = permissions.filter(
             (rule, index) =>

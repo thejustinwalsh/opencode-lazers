@@ -47,8 +47,7 @@ export async function startSetupInSession(ctx: Ctx, session: NoticeSession): Pro
 /**
  * The setup notice. For each mounted session it asks that session's own location whether its
  * project has a profile: none (and not dismissed) raises "Set up LAZERS for <CODE>" with Set up
- * and Dismiss; a proposal waiting raises "Profile ready for <CODE>" with Review. Each (project,
- * state) is toasted at most once per window; closing a toast is not a dismissal. It is a
+ * and Dismiss. Each (project, state) is toasted at most once per window; closing a toast is not a dismissal. It is a
  * notice only: nothing here gates work.
  */
 export function setupNotice(ctx: Ctx): void {
@@ -88,14 +87,6 @@ export function setupNotice(ctx: Ctx): void {
                 .catch(() => undefined),
           },
         ],
-      })
-    } else if (status.state === "pending") {
-      raised.add(mark)
-      ctx.toast.show({
-        title: `Profile ready for ${status.code}`,
-        description: "Review and confirm it in Settings.",
-        persistent: true,
-        actions: [{ label: "Review", run: () => ctx.layout.settings("lazers") }],
       })
     }
   }

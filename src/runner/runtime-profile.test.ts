@@ -12,7 +12,7 @@ import { join } from "node:path"
 import { fakeTools, fixtureRepo, requireToolchain } from "../../test/fixtures/profile/toolchain.ts"
 import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { parseProfile } from "../projects/profile.ts"
-import { confirmRevision, proposeRevision, type ProofRecord } from "../projects/profile-store.ts"
+import { activateRevision, type ProofRecord } from "../projects/profile-store.ts"
 import {
   cleanup,
   deferred,
@@ -54,14 +54,13 @@ async function confirm(
     directory: f.root,
     opencodeProjectID: "project",
   })
-  const row = proposeRevision(f.repository, {
+  const row = activateRevision(f.repository, {
     projectKey: key,
     profile: profileOf(raw),
     author: { kind: "architect", sessionID: "s1", agent: "architect" },
     reason: "test",
     proofs,
   })
-  confirmRevision(f.repository, { projectKey: key, revision: row.revision, by: "owner" })
   return { key, row }
 }
 
@@ -166,14 +165,13 @@ test("a revision confirmed while a check runs never disturbs it; the next verify
   await runPlan(f)
   for (let n = 0; n < 6 && !held; n++) await f.runtime.tick()
   expect(held).toBe(true)
-  const second = proposeRevision(f.repository, {
+  const second = activateRevision(f.repository, {
     projectKey: key,
     profile: profileOf({ ...cargoProfile, env: ["RUSTUP_HOME"] }),
     author: { kind: "architect", sessionID: "s1", agent: "architect" },
     reason: "second",
     proofs: [],
   })
-  confirmRevision(f.repository, { projectKey: key, revision: second.revision, by: "owner" })
   gate.resolve()
   await driveWithTaskSourceLandings(f, 30)
   const effects = verifyEffects(f)
@@ -329,14 +327,13 @@ test("a later revision with another fix command never changes a running preparat
   await runPlan(f)
   for (let n = 0; n < 8 && !held; n++) await f.runtime.tick()
   expect(held).toBe(true)
-  const second = proposeRevision(f.repository, {
+  const second = activateRevision(f.repository, {
     projectKey: key,
     profile: profileOf(fixProfile([{ command: join(bin, "fixer2.sh"), files: ["**/*.rs"] }])),
     author: { kind: "architect", sessionID: "s1", agent: "architect" },
     reason: "second",
     proofs: [proof("fix:0")],
   })
-  confirmRevision(f.repository, { projectKey: key, revision: second.revision, by: "owner" })
   await f.runtime.tick()
   expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toContain("inputs changed")
   gate.resolve()

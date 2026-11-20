@@ -9,6 +9,20 @@ import { ArchitectContinuityInput, CommandInput, PlanSubmissionInput } from "./s
 import type { TaskRuntime } from "./runtime.ts"
 import { TakeoverInput, WorkerHandoffInput } from "./takeover.ts"
 
+/** Submits a plan and captures its repository map: the body of `lz-submit-plan`, shared with tasking a stored plan. */
+export async function submitPlanReceipt(
+  runtime: Pick<TaskRuntime, "submitPlan">,
+  onPlanSubmitted: ((planID: string) => Promise<unknown>) | undefined,
+  input: unknown,
+  sessionID: string,
+): Promise<unknown> {
+  const receipt = await runtime.submitPlan(input, sessionID)
+  const planID = (receipt as { planID?: unknown }).planID
+  // Best effort: the first worker read captures the map if this does not.
+  if (typeof planID === "string") await onPlanSubmitted?.(planID).catch(() => undefined)
+  return receipt
+}
+
 export function registerRunnerTools(
   ctx: Plugin.Context,
   runtime: TaskRuntime,
@@ -22,13 +36,8 @@ export function registerRunnerTools(
         description:
           "Persist a versioned task dependency plan referencing existing exact task revisions. `workerModel` is an optional exact user-selected native route; each node may independently choose one optional UI, Systems or Small task/refactoring persona. Use priority for dispatch order (1 is top, 0 is none, larger integers are lower) and afterPlans for integration prerequisites. Overlapping scopes serialize; resolve duplicate candidates with an explicit relation. Submitting admits the plan and the scheduler runs it, with no separate run command; set draft true only to save it without admitting (run it later with lz-plan-command run). Stable requestID is mandatory for safe retries.",
         schema: PlanSubmissionInput,
-        run: async (input: unknown, sessionID: string) => {
-          const receipt = await runtime.submitPlan(input, sessionID)
-          const planID = (receipt as { planID?: unknown }).planID
-          // Best effort: the first worker read captures the map if this does not.
-          if (typeof planID === "string") await onPlanSubmitted?.(planID).catch(() => undefined)
-          return receipt
-        },
+        run: (input: unknown, sessionID: string) =>
+          submitPlanReceipt(runtime, onPlanSubmitted, input, sessionID),
       },
       {
         name: "lz-plan-command",

@@ -616,3 +616,18 @@ test("a changed checklist cannot reuse an earlier review; a new review preserves
     ),
   ).toBe(true)
 })
+
+test("an input over a review limit says to split the item, not to shorten it", async () => {
+  const reviewer = new TaskReviewer(memory(), {} as never)
+  const result = (await reviewer.verify(
+    { ...draft(), evidence: Array.from({ length: 21 }, () => "a recorded fact") },
+    "owner",
+    new AbortController().signal,
+  )) as { status: string; errors: { path: string; message: string }[] }
+  expect(result.status).toBe("invalid")
+  expect(result.errors[0]).toEqual({
+    path: "evidence",
+    message:
+      "This item is too large for one task: split it into tasks in the plan (limit: 20 entries).",
+  })
+})

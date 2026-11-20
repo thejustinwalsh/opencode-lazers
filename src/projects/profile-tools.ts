@@ -11,7 +11,7 @@ import { getLatestFallowConfig } from "../audit/config.ts"
 import { parseProfile, profileDiff } from "./profile.ts"
 import { proveProfile } from "./profile-proof.ts"
 import type { ProofWorkspace } from "./profile-proof.ts"
-import { activeProfileForKey, proposeRevision } from "./profile-store.ts"
+import { activeProfileForKey, activateRevision } from "./profile-store.ts"
 import { profileViewOf } from "./rpc.ts"
 import { projectForDirectory } from "./registry.ts"
 import { projectKeyOfDirectory } from "./settings.ts"
@@ -21,9 +21,10 @@ const REPO_FALLOW_CONFIGS = [".fallowrc.json", ".fallowrc.jsonc", "fallow.toml",
 const KNOWN_TOOLCHAINS = ["bun", "npm", "pnpm", "yarn", "cargo"]
 
 /**
- * `lz-project-profile`: the Architect reads what a project's profile needs, then proposes the
- * profile as the one JSON document `parseProfile` validates. The runtime proves each command in a
- * native worktree and stores a pending revision. No mode confirms: only the owner does, in Settings.
+ * `lz-project-profile`: the Architect reads what a project's profile needs, then sets the profile
+ * as the one JSON document `parseProfile` validates. The runtime proves each command once in a
+ * native worktree and stores the profile as the active revision in the same call; the owner edits
+ * it afterwards in Settings. There is no approval step.
  */
 export function registerProfileTools(
   ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
@@ -34,11 +35,11 @@ export function registerProfileTools(
     editor.add({
       name: "lz-project-profile",
       description:
-        "Show what this project's verification profile needs, or propose one. Mode show returns the current and pending profile, source filters and hardened installs; mode propose validates the profile JSON, runs each command once in a separate worktree and stores a pending revision the owner confirms in Settings; mode guide returns the setup runbook. The first propose of a session carries the runbook.",
+        "Show what this project's verification profile needs, or set it. Mode show returns the active profile, source filters and hardened installs; mode set (also accepted as propose) validates the profile JSON, runs each command once in a separate worktree and makes the result the active profile at once, which the owner can edit in Settings; mode guide returns the setup runbook. The first set of a session carries the runbook.",
       input: z.strictObject({
-        mode: z.enum(["show", "guide", "propose"]).default("show"),
-        profile: z.unknown().optional().describe("the profile JSON, for propose"),
-        reason: z.string().min(1).max(2000).optional().describe("why, for propose"),
+        mode: z.enum(["show", "guide", "set", "propose"]).default("show"),
+        profile: z.unknown().optional().describe("the profile JSON, for set"),
+        reason: z.string().min(1).max(2000).optional().describe("why, for set"),
         proofTargets: z
           .record(z.string(), z.array(z.string()))
           .optional()
@@ -72,7 +73,6 @@ export function registerProfileTools(
                       projectKey: key,
                       code: projectForDirectory(repository, directory)?.code ?? "",
                       ...(view.active ? { active: view.active } : {}),
-                      ...(view.pending ? { pending: view.pending } : {}),
                       ...(view.legacySource ? { legacySource: view.legacySource } : {}),
                       derivedSource: await deriveSourceDefinition(directory),
                       hardenedInstalls: Object.fromEntries(
@@ -100,25 +100,23 @@ export function registerProfileTools(
                     workspace: deps.workspace,
                     repository,
                   })
-                  const row = proposeRevision(repository, {
+                  const before = activeProfileForKey(repository, key)?.profile
+                  const row = activateRevision(repository, {
                     projectKey: key,
                     profile: parsed.profile,
                     author: { kind: "architect", sessionID: call.sessionID, agent: call.agent },
-                    reason: input.reason ?? "Proposed by the Architect",
+                    reason: input.reason ?? "Set by the Architect",
                     proofs: proof.proofs,
                     mapPreview: proof.mapPreview,
                   })
                   const delivery = new Delivery(call.sessionID)
                   const output = {
                     revision: row.revision,
-                    state: "proposed",
+                    state: "active",
                     proofs: row.proofs,
                     mapPreview: proof.mapPreview,
-                    changes: profileDiff(
-                      activeProfileForKey(repository, key)?.profile,
-                      parsed.profile,
-                    ),
-                    next: "The owner confirms in Settings, LAZERS, Projects, this project, Verification. Nothing runs from this profile until then.",
+                    changes: profileDiff(before, parsed.profile),
+                    next: "This profile is active now. The owner can edit it in Settings, LAZERS, Projects, this project, Verification. A command whose proof failed is shown as failing, and a failing fix or install is not run unattended.",
                     guidance: delivery.once("project-setup"),
                   }
                   delivery.commit()

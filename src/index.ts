@@ -6,7 +6,9 @@ import { dirname, join } from "node:path"
 import { Effect } from "effect"
 import { registerArchitect } from "./architect.ts"
 import { agentRouteReader } from "./models/agent-route-apply.ts"
-import { registerTaskTools } from "./tools.ts"
+import { registerTaskTools, taskSubmitter } from "./tools.ts"
+import { startingRevision } from "./submission.ts"
+import { PlanTasker } from "./planning/tasking.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerPlanningAgents } from "./planning/register.ts"
@@ -24,12 +26,13 @@ import {
   PlanResolver,
   PlanReviewer,
   registerPlanResolveTool,
+  registerPlanTaskTool,
   registerPlanReviewTool,
   registerPlanningTools,
 } from "./planning/tools.ts"
 import { PlanningStore } from "./planning/store.ts"
 import { projectKeyOfDirectory, projectSettings } from "./projects/settings.ts"
-import { registerRunnerTools } from "./runner/tools.ts"
+import { registerRunnerTools, submitPlanReceipt } from "./runner/tools.ts"
 import {
   architectContextStubsMode,
   registerArchitectContextStubs,
@@ -209,6 +212,38 @@ export default Plugin.define({
           yield* registerPlanResolveTool(
             ctx,
             new PlanResolver(store, projectID, sessionMessageText(ctx)),
+          )
+          yield* registerPlanTaskTool(
+            ctx,
+            new PlanTasker({
+              store,
+              projectID,
+              submitTask: taskSubmitter(ctx, repository, core.verificationDefaults, () =>
+                core.runtime.fallowGate(),
+              ),
+              submitPlan: (input, sessionID) =>
+                submitPlanReceipt(
+                  core.runtime,
+                  (planID) =>
+                    freezePlanMap(
+                      repository,
+                      planID,
+                      ctx.location.directory,
+                      repository.projectDirectory,
+                    ),
+                  input,
+                  sessionID,
+                ),
+              headCommit: async () => {
+                const revision = await startingRevision(ctx.location.directory)
+                if (revision.kind !== "git")
+                  throw new Error("The checkout has no commit; give baseCommit")
+                return revision.commit
+              },
+              cancelReviews: (planningID, reason) =>
+                planningReviews.cancelForPlanning(planningID, reason),
+              timeoutDefaults: core.verificationDefaults,
+            }),
           )
           yield* registerPlanReviewTool(
             ctx,

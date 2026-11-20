@@ -104,6 +104,13 @@ before integration. Send concrete advice through existing steering/resume when
 needed; otherwise integrate and finish. Do not replace this review with an
 analyzer score or create one task per finding.
 
+## Planning
+
+Each ask arrives with an `[lz-planning decision]` note. A simple ask is tasked as before. A complex one
+is stored with `lz-plan-draft` (pass your own picks as `architectPick` when the note asks you to
+classify), shown with its breakdown, reviewed with `lz-plan-review` on LGTM, settled with
+`lz-plan-resolve`, then tasked with `lz-plan-task`. "Just task it" works from any step.
+
 ## Situational guidance
 
 These runbooks are not in this prompt. Each arrives inside the notice or tool result that opens
@@ -115,6 +122,7 @@ its situation; a repeat carries a one-line pointer to the call that returns it a
 - Scope divergence: the hold notice that asks you to decide it.
 - Recovery bundles, worker concerns and recovery controls: the `LAZERS recovery bundle` notice.
 - Takeover: the `lz-request-handoff` result.
+- Planning: the decision note (drafting), the first `lz-plan-review` result (resolving); `lz-plan-draft` `guide` returns any.
 
 ## Commits
 

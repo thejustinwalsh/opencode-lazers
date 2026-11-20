@@ -23,10 +23,8 @@ export function harness(
     reachable?: boolean
     /** Profile views by project key; anything else reads as no profile. */
     profiles?: Record<string, ProfileView>
-    /** The answer of the confirmation dialog. */
-    confirm?: boolean
-    /** What `proposeProfile` answers. */
-    propose?: ProfileOutcomeView
+    /** What `saveProfile` answers. */
+    save?: ProfileOutcomeView
     /** Sessions of open tabs, for starting setup from Settings. */
     sessions?: { id: string; directory: string }[]
   } = {},
@@ -38,22 +36,28 @@ export function harness(
   let globalPause: ProjectsListing["globalPause"] = null
   let reachable = options.reachable ?? true
   const calls: Call[] = []
-  const settings = { globalSlots: null, agingMs: 600_000, historyCacheMB: 128 }
+  const settings = {
+    globalSlots: null,
+    agingMs: 600_000,
+    historyCacheMB: 128,
+    decisionModel: { kind: "local" as const },
+    decisionSlicer: "windows" as const,
+  }
   const ok: ProjectsOutcome = { ok: true }
   const find = (scope: ProjectScope) =>
     scope.kind === "project" ? projects.find((p) => p.key === scope.key) : undefined
   const methods = {
     profile: (input: { key: string }): ProfileView =>
-      structuredClone(options.profiles?.[input.key] ?? { key: input.key, setupDismissedAt: null }),
-    proposeProfile: (_input: Record<string, unknown>): ProfileOutcomeView =>
-      options.propose ?? {
+      structuredClone(
+        options.profiles?.[input.key] ?? { key: input.key, history: [], setupDismissedAt: null },
+      ),
+    saveProfile: (_input: Record<string, unknown>): ProfileOutcomeView =>
+      options.save ?? {
         ok: false,
         refusal: "PROFILE_INVALID",
         message: "verify: A profile needs at least one verify command",
       },
     startSetup: () => ({ ok: true as const, sessionID: "setup-1" }),
-    confirmProfile: (): ProjectsOutcome => ok,
-    discardProfile: (): ProjectsOutcome => ok,
     list: (): ProjectsListing => ({
       projects: structuredClone(projects),
       globalPause,
@@ -160,6 +164,24 @@ export function harness(
           onChange={(e) => props.onChange(e.currentTarget.checked)}
         />
       ),
+      Select: (props: {
+        label: string
+        value: string
+        options: readonly { value: string; label: string }[]
+        onChange(value: string): void
+      }) => (
+        <select
+          aria-label={props.label}
+          value={props.value}
+          onChange={(e) => props.onChange(e.currentTarget.value)}
+        >
+          {props.options.map((option) => (
+            <option value={option.value} selected={option.value === props.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ),
       Button: (props: { children: JSX.Element; onClick?(): void }) => (
         <button type="button" onClick={() => props.onClick?.()}>
           {props.children}
@@ -181,7 +203,7 @@ export function harness(
     dialogs: {
       confirm: async (dialog: { title: string; description?: string }) => {
         confirms.push(dialog)
-        return options.confirm ?? true
+        return true
       },
     },
     toast: {

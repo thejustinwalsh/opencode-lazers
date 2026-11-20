@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
 import { activeProfile } from "../projects/profile-store.ts"
 import type { TaskRepository } from "../storage.ts"
@@ -55,12 +54,6 @@ export function repoMapSource(
   } catch {
     return undefined
   }
-}
-
-/** Removes the stored source filters of a project's checkouts; a confirmed profile replaces them. */
-export function dropLegacySources(db: Database, paths: readonly string[]): void {
-  for (const path of paths)
-    db.query("DELETE FROM repo_map_sources WHERE project_directory=?").run(path)
 }
 
 /**

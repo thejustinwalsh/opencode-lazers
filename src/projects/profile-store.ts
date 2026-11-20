@@ -9,10 +9,10 @@ import { projectKeyOfDirectory } from "./settings.ts"
 
 /**
  * Append-only profile revisions, following the Fallow config store (`src/audit/config.ts`).
- * A revision's payload and fingerprint never change; only its state and decision columns do,
- * and only through the `profileRevision` machine. The runtime reads only the latest confirmed
- * revision (`activeProfile`) or a pinned confirmed one (`profileRevisionByID`); a proposal, a
- * discarded revision or a payload that no longer parses reads as no profile.
+ * A new revision is written active and supersedes the one before it; its payload and fingerprint
+ * never change, only its state does, through the `profileRevision` machine. The runtime reads the
+ * latest active revision (`activeProfile`) or a pinned one by id (`profileRevisionByID`, active or
+ * superseded). A payload that no longer parses reads as no profile.
  */
 export type ProofOutcome = "proven" | "failed" | "not-run"
 export type ProofRecord = {
@@ -61,13 +61,14 @@ export type ActiveProfile = {
   revision: number
   projectKey: string
   profile: ProjectProfile
-  confirmedAt: number
+  /** When this revision was written (it is active from then on). */
+  activatedAt: number
   proofs: ReadonlyMap<string, ProofRecord>
 }
 
 export class ProfileStoreError extends Error {
   constructor(
-    readonly code: "PROFILE_REVISION_NOT_PENDING" | "PROFILE_REVISION_MISSING" | "PROFILE_INVALID",
+    readonly code: "PROFILE_INVALID",
     message: string,
   ) {
     super(message)
@@ -81,10 +82,25 @@ const TAIL_BYTES = 4096
 export function installProfileSchema(repository: TaskRepository): void {
   const module = schemaModules["project-profile"]
   repository.installSchema("project-profile", module.generation, module.tables, (db) => {
+    const old = db
+      .query<{ sql: string }, []>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='lazers_profile_revisions'",
+      )
+      .get()
+    // Generation 3 removed the owner-confirmation step: states are now active and superseded.
+    // Per project the newest proposed revision, else the newest confirmed one, becomes active and
+    // every other revision superseded; the stored source filters of a project that gets an
+    // active profile are dropped, as they are whenever a profile becomes active.
+    if (old?.sql.includes("'proposed'")) {
+      db.exec(`
+        ALTER TABLE lazers_profile_revisions RENAME TO lazers_profile_revisions_v2;
+        DROP INDEX IF EXISTS lazers_profile_revisions_key;
+      `)
+    }
     db.exec(`
       CREATE TABLE IF NOT EXISTS lazers_profile_revisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, project_key TEXT NOT NULL, revision INTEGER NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('proposed','confirmed','discarded')),
+        state TEXT NOT NULL CHECK(state IN ('active','superseded')),
         payload TEXT NOT NULL, sha256 TEXT NOT NULL,
         author_kind TEXT NOT NULL CHECK(author_kind IN ('architect','owner')),
         session_id TEXT, agent TEXT, reason TEXT NOT NULL, map_preview TEXT,
@@ -101,6 +117,30 @@ export function installProfileSchema(repository: TaskRepository): void {
       CREATE TABLE IF NOT EXISTS lazers_profile_pins (
         scope TEXT PRIMARY KEY, revision_id INTEGER NOT NULL, created_at INTEGER NOT NULL);
     `)
+    if (old?.sql.includes("'proposed'")) {
+      db.exec(`
+        INSERT INTO lazers_profile_revisions(id,project_key,revision,state,payload,sha256,author_kind,
+          session_id,agent,reason,map_preview,created_at,decided_at,decided_by)
+        SELECT r.id,r.project_key,r.revision,
+          CASE WHEN r.id = (
+            SELECT c.id FROM lazers_profile_revisions_v2 c
+             WHERE c.project_key=r.project_key AND c.state IN ('proposed','confirmed')
+             ORDER BY (c.state='proposed') DESC, c.revision DESC LIMIT 1
+          ) THEN 'active' ELSE 'superseded' END,
+          r.payload,r.sha256,r.author_kind,r.session_id,r.agent,r.reason,r.map_preview,
+          r.created_at,r.decided_at,r.decided_by
+        FROM lazers_profile_revisions_v2 r;
+        DROP TABLE lazers_profile_revisions_v2;
+      `)
+      const hasTable = (name: string) =>
+        db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) !== null
+      if (hasTable("repo_map_sources") && hasTable("lazers_project_paths"))
+        db.exec(`
+          DELETE FROM repo_map_sources WHERE project_directory IN (
+            SELECT p.path FROM lazers_project_paths p
+             WHERE p.key IN (SELECT project_key FROM lazers_profile_revisions WHERE state='active'));
+        `)
+    }
   })
 }
 
@@ -219,8 +259,12 @@ function transitionState(
   )
 }
 
-/** Stores a new pending revision; a still-pending older proposal is replaced by it. */
-export function proposeRevision(
+/**
+ * Writes a new revision as the active one, in one transaction: the previous active revision is
+ * superseded and the project's stored source filters are dropped (the profile's `source` replaces
+ * them). Nothing waits for an approval.
+ */
+export function activateRevision(
   repository: TaskRepository,
   input: {
     projectKey: string
@@ -239,12 +283,12 @@ export function proposeRevision(
     )
   const profile = parsed.profile
   return repository.atomic((db) => {
-    for (const pending of db
+    for (const previous of db
       .query<RevisionSql, [string]>(
-        `SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE project_key=? AND state='proposed'`,
+        `SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE project_key=? AND state='active'`,
       )
       .all(input.projectKey))
-      transitionState(db, pending, "REPLACED", "replaced")
+      transitionState(db, previous, "SUPERSEDED", input.author.kind)
     const revision =
       (db
         .query<{ latest: number | null }, [string]>(
@@ -258,7 +302,7 @@ export function proposeRevision(
         .query(
           `INSERT INTO lazers_profile_revisions(project_key,revision,state,payload,sha256,author_kind,
              session_id,agent,reason,map_preview,created_at)
-           VALUES(?,?,'proposed',?,?,?,?,?,?,?,?)`,
+           VALUES(?,?,'active',?,?,?,?,?,?,?,?)`,
         )
         .run(
           input.projectKey,
@@ -293,67 +337,19 @@ export function proposeRevision(
         proof.toolVersion ?? null,
         proof.ranAt,
       )
+    // The profile's source replaces any stored repository-map filter of the project's checkouts.
+    if (
+      db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='repo_map_sources'").get()
+    )
+      db.query(
+        `DELETE FROM repo_map_sources WHERE project_directory IN
+           (SELECT path FROM lazers_project_paths WHERE key=?)`,
+      ).run(input.projectKey)
     const row = db
       .query<RevisionSql, [number]>(`SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE id=?`)
       .get(id)!
     return toRevision(db, row)!
   })
-}
-
-function decide(
-  repository: TaskRepository,
-  input: { projectKey: string; revision: number; by: string },
-  event: "OWNER_CONFIRMED" | "OWNER_DISCARDED",
-  onConfirmed?: (db: Database, row: ProfileRevisionRow) => void,
-): ProfileRevisionRow {
-  return repository.atomic((db) => {
-    const row = db
-      .query<RevisionSql, [string, number]>(
-        `SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE project_key=? AND revision=?`,
-      )
-      .get(input.projectKey, input.revision)
-    if (!row)
-      throw new ProfileStoreError(
-        "PROFILE_REVISION_MISSING",
-        `No profile revision ${input.revision} for this project`,
-      )
-    if (row.state !== "proposed")
-      throw new ProfileStoreError(
-        "PROFILE_REVISION_NOT_PENDING",
-        `Profile revision ${input.revision} is ${row.state}, not pending`,
-      )
-    transitionState(db, row, event, input.by)
-    const decided = toRevision(
-      db,
-      db
-        .query<RevisionSql, [number]>(`SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE id=?`)
-        .get(row.id)!,
-    )
-    if (!decided)
-      throw new ProfileStoreError("PROFILE_INVALID", "The stored revision no longer parses")
-    onConfirmed?.(db, decided)
-    return decided
-  })
-}
-
-export function confirmRevision(
-  repository: TaskRepository,
-  input: {
-    projectKey: string
-    revision: number
-    by: string
-    /** Runs inside the confirming transaction (Task 5.1 drops the legacy source rows here). */
-    onConfirmed?: (db: Database, row: ProfileRevisionRow) => void
-  },
-): ProfileRevisionRow {
-  return decide(repository, input, "OWNER_CONFIRMED", input.onConfirmed)
-}
-
-export function discardRevision(
-  repository: TaskRepository,
-  input: { projectKey: string; revision: number; by: string },
-): ProfileRevisionRow {
-  return decide(repository, input, "OWNER_DISCARDED")
 }
 
 /** Every revision whose payload still parses, newest first. */
@@ -368,21 +364,6 @@ export function profileRevisions(repository: Reader, projectKey: string): Profil
   )
 }
 
-export function pendingRevision(
-  repository: Reader,
-  projectKey: string,
-): ProfileRevisionRow | undefined {
-  return repository.read((db) => {
-    const row = db
-      .query<RevisionSql, [string]>(
-        `SELECT ${COLUMNS} FROM lazers_profile_revisions
-         WHERE project_key=? AND state='proposed' ORDER BY revision DESC LIMIT 1`,
-      )
-      .get(projectKey)
-    return row ? toRevision(db, row) : undefined
-  })
-}
-
 function activeOf(db: Database, row: RevisionSql | null | undefined): ActiveProfile | undefined {
   if (!row) return undefined
   const revision = toRevision(db, row)
@@ -392,12 +373,12 @@ function activeOf(db: Database, row: RevisionSql | null | undefined): ActiveProf
     revision: revision.revision,
     projectKey: revision.projectKey,
     profile: revision.profile,
-    confirmedAt: revision.decidedAt ?? revision.createdAt,
+    activatedAt: revision.createdAt,
     proofs: new Map(revision.proofs.map((proof) => [proof.key, proof])),
   }
 }
 
-/** The latest confirmed revision of a project; a corrupt one reads as no profile. */
+/** The active revision of a project; a corrupt one reads as no profile. */
 export function activeProfileForKey(
   repository: Reader,
   projectKey: string,
@@ -408,14 +389,14 @@ export function activeProfileForKey(
       db
         .query<RevisionSql, [string]>(
           `SELECT ${COLUMNS} FROM lazers_profile_revisions
-           WHERE project_key=? AND state='confirmed' ORDER BY revision DESC LIMIT 1`,
+           WHERE project_key=? AND state='active' ORDER BY revision DESC LIMIT 1`,
         )
         .get(projectKey),
     ),
   )
 }
 
-/** The latest confirmed revision of the project a checkout directory belongs to. */
+/** The active revision of the project a checkout directory belongs to. */
 export function activeProfile(
   repository: Reader,
   projectDirectory: string,
@@ -424,15 +405,13 @@ export function activeProfile(
   return key === undefined ? undefined : activeProfileForKey(repository, key)
 }
 
-/** A confirmed revision by id, so an unattended run keeps the revision it started with. */
+/** A revision by id, active or superseded, so an unattended run keeps the revision it started with. */
 export function profileRevisionByID(repository: Reader, id: number): ActiveProfile | undefined {
   return repository.read((db) =>
     activeOf(
       db,
       db
-        .query<RevisionSql, [number]>(
-          `SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE id=? AND state='confirmed'`,
-        )
+        .query<RevisionSql, [number]>(`SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE id=?`)
         .get(id),
     ),
   )

@@ -75,6 +75,34 @@ export type PlanningReviewsDeps = {
   notify: (sessionID: string, id: string, text: string) => Promise<void>
   title: (agent: AgentID, revision: number) => string
   model?: () => ModelRef | undefined
+  /**
+   * USD per million tokens for the model a run used, from the configured price sources; `undefined`
+   * when no source prices it. A review's cost is shown only when every run it counts was priced,
+   * and it is never a limit.
+   */
+  price?: (model: ModelRef) => RunPrice | undefined
+}
+
+export type RunPrice = { input: number; output: number; cacheRead?: number }
+
+/** Cost of runs in USD, or undefined when any run has no price or no recorded model. */
+export function runsCost(
+  runs: readonly RunRow[],
+  price?: (model: ModelRef) => RunPrice | undefined,
+) {
+  if (!price || !runs.length) return undefined
+  let total = 0
+  for (const run of runs) {
+    if (!run.modelJson) return undefined
+    const rates = price(JSON.parse(run.modelJson) as ModelRef)
+    if (!rates) return undefined
+    total +=
+      ((run.inputTokens ?? 0) * rates.input +
+        (run.outputTokens ?? 0) * rates.output +
+        (run.cacheReadTokens ?? 0) * (rates.cacheRead ?? 0)) /
+      1_000_000
+  }
+  return total
 }
 
 const sessionID = () => `ses_${randomUUID()}`
@@ -131,7 +159,8 @@ export class PlanningReviews {
       if (!["drafted", "questions-open", "in-review"].includes(planning.state))
         throw new Error(`plan is ${planning.state}; it cannot be reviewed`)
       store.move(planning.id, "in-review", now())
-    } else if (planning.state !== "final-review")
+    } else if (planning.state === "questions-open") store.move(planning.id, "final-review", now())
+    else if (planning.state !== "final-review")
       throw new Error(`plan is ${planning.state}; the final pass follows the review`)
     const revision = store.revision(planning.id, planning.revision)!
     const body = PlanningBody.parse(JSON.parse(revision.body))
@@ -554,12 +583,14 @@ export class PlanningReviews {
     for (const finding of findings)
       if (finding.severity && finding.severity in severities)
         severities[finding.severity as FindingSeverity]++
+    const cost = runsCost(store.runs(reviewID), this.deps.price)
     const summary: ReviewSummary = {
       agents: agents.length,
       notRun: agents.filter((agent) => agent.status === "not-run").length,
       findings: severities,
       ownerQuestions: questions.length,
       tokens: agents.reduce((sum, agent) => sum + agent.tokens, 0),
+      ...(cost === undefined ? {} : { costUSD: cost }),
     }
     const stored = store.revision(review.planningId, review.revision)!
     const body = PlanningBody.parse(JSON.parse(stored.body))
