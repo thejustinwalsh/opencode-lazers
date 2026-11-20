@@ -18,6 +18,25 @@ const ObservationScopeView = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("all") }),
 ])
 
+/** The all-projects additions every output carries: the page's project and the next cursor. */
+const AllPage = {
+  project: ProjectRef.optional(),
+  nextCursor: z.string().nullable().optional(),
+}
+const PageCursor = z.string().min(1).max(2048).optional()
+/** A cursor pages the all-projects scope; it means nothing in the others. */
+function cursorOnlyForAll(
+  input: { scope: { kind: string }; cursor?: string | undefined },
+  ctx: z.RefinementCtx,
+) {
+  if (input.cursor && input.scope.kind !== "all")
+    ctx.addIssue({
+      code: "custom",
+      path: ["cursor"],
+      message: "A cursor applies to the all-projects scope only",
+    })
+}
+
 const Boundary = z.strictObject({
   repositoryVersion: z.int().nonnegative(),
   sourceRevision: z.int().nonnegative(),
@@ -130,11 +149,14 @@ const TimelineCheck = z.strictObject({
   timingBasis: z.string(),
 })
 
-const SnapshotInput = z.strictObject({ scope: ObservationScope })
+const SnapshotInput = z
+  .strictObject({ scope: ObservationScope, cursor: PageCursor })
+  .superRefine(cursorOnlyForAll)
 export const SnapshotOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
+  ...AllPage,
   observedAt: z.iso.datetime(),
   boundary: Boundary,
   machine: z.strictObject({
@@ -160,29 +182,23 @@ export const SnapshotOutput = z.strictObject({
 
 // Complete current recorded topology, independent of execution-history volume.
 const TopologyInput = z
-  .strictObject({ scope: ObservationScope, cursor: z.string().min(1).max(2048).optional() })
-  .superRefine((input, ctx) => {
-    if (input.cursor && input.scope.kind !== "all")
-      ctx.addIssue({
-        code: "custom",
-        path: ["cursor"],
-        message: "A cursor applies to the all-projects scope only",
-      })
-  })
+  .strictObject({ scope: ObservationScope, cursor: PageCursor })
+  .superRefine(cursorOnlyForAll)
 export const TopologyOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
   /** All-projects scope: the project this page reads, and where the next page starts. */
-  project: ProjectRef.optional(),
-  nextCursor: z.string().nullable().optional(),
+  ...AllPage,
   observedAt: z.iso.datetime(),
   boundary: Boundary.omit({ transitionSequence: true }),
   plans: z.array(ObservationPlan).max(1000),
   unplannedTasks: z.array(UnplannedTask).max(1000),
 })
 
-const ProgressDiagnosticsInput = z.strictObject({ scope: ObservationScope })
+const ProgressDiagnosticsInput = z
+  .strictObject({ scope: ObservationScope, cursor: PageCursor })
+  .superRefine(cursorOnlyForAll)
 const ProcessSchedulerTotals = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("available"),
@@ -203,7 +219,11 @@ const ProcessSchedulerTotals = z.discriminatedUnion("status", [
 ])
 const ProgressDiagnosticsOutput = z.strictObject({
   schemaVersion: z.literal(1),
-  scope: z.strictObject({ kind: z.literal("project") }),
+  scope: z.union([
+    z.strictObject({ kind: z.literal("project") }),
+    z.strictObject({ kind: z.literal("all") }),
+  ]),
+  ...AllPage,
   observedAt: z.number().finite(),
   implementationID: z.string().min(1).max(80),
   moduleGenerationID: z.uuid(),
@@ -378,14 +398,18 @@ const RadarEdge = z.strictObject({
   evidence: z.array(RadarEvidence).max(100),
 })
 
-export const RadarInput = z.strictObject({
-  scope: ObservationScope,
-  includeUnmanagedSessions: z.boolean().default(false),
-})
+export const RadarInput = z
+  .strictObject({
+    scope: ObservationScope,
+    includeUnmanagedSessions: z.boolean().default(false),
+    cursor: PageCursor,
+  })
+  .superRefine(cursorOnlyForAll)
 export const RadarOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
+  ...AllPage,
   observedAt: z.iso.datetime(),
   boundary: Boundary,
   freshness: z.strictObject({
@@ -584,14 +608,18 @@ const LiveFlow = z.strictObject({
     .optional(),
 })
 
-export const LiveRadarInput = z.strictObject({
-  scope: ObservationScope,
-  includeUnmanagedSessions: z.boolean().default(false),
-})
+export const LiveRadarInput = z
+  .strictObject({
+    scope: ObservationScope,
+    includeUnmanagedSessions: z.boolean().default(false),
+    cursor: PageCursor,
+  })
+  .superRefine(cursorOnlyForAll)
 export const LiveRadarOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1).max(200),
   scope: ObservationScopeView,
+  ...AllPage,
   streamEpoch: z.uuid(),
   observedAt: z.number().finite(),
   boundary: z.strictObject({
@@ -787,14 +815,19 @@ export const LiveAttemptOutput = z.strictObject({
     .nullable(),
 })
 export const LIVE_GROUP_TASKS = 25
-export const LiveGroupInput = z.strictObject({
-  scope: ObservationScope,
-  group: z.enum(["needs-you", "failed", "queued"]),
-})
+export const LiveGroupInput = z
+  .strictObject({
+    scope: ObservationScope,
+    group: z.enum(["needs-you", "failed", "queued"]),
+    cursor: PageCursor,
+  })
+  .superRefine(cursorOnlyForAll)
 /** The tasks behind one Map group node: at most `LIVE_GROUP_TASKS`, newest first, and the total. */
 export const LiveGroupOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1).max(200),
+  /** All-projects scope: the project of this page and the next cursor. */
+  ...AllPage,
   group: z.enum(["needs-you", "failed", "queued"]),
   total: z.int().nonnegative(),
   tasks: z

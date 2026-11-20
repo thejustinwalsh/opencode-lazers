@@ -6,7 +6,13 @@ import { encodeUnitCursor, projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ObservationChangeTracker } from "./changes.ts"
-import { TopologyOutput } from "./contract.ts"
+import {
+  LiveGroupOutput,
+  LiveRadarOutput,
+  RadarOutput,
+  SnapshotOutput,
+  TopologyOutput,
+} from "./contract.ts"
 import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
@@ -20,10 +26,23 @@ afterEach(() => {
 const secret = new Uint8Array(32).fill(7)
 const host = { session: async () => null, status: async () => null }
 
+const emptyInventory = { sessions: [], truncated: false }
+const nativeSessions = {
+  get: async () => null,
+  project: async () => emptyInventory,
+  descendants: async () => emptyInventory,
+}
+
 async function fixture(live: (three: Awaited<ReturnType<typeof threeProjects>>) => string[]) {
   const three = await threeProjects()
   const [a] = three.projects
-  const reads = new ObservationReads(new RunnerStore(a!.repository), host, "project", secret)
+  const reads = new ObservationReads(
+    new RunnerStore(a!.repository),
+    host,
+    "project",
+    secret,
+    nativeSessions,
+  )
   const tracker = new ObservationChangeTracker(a!.repository, secret, "project")
   tracker.initialize()
   const units = () => projectUnits(a!.repository, () => live(three))
@@ -123,25 +142,87 @@ test("session and project scopes read exactly as before and carry no project", a
   for (const plan of session.plans) expect("project" in plan).toBe(false)
 })
 
-test("every other observation read refuses the all-projects scope", async () => {
+async function walk<
+  T extends { nextCursor?: string | null; project?: { code: string; loaded: boolean } },
+>(read: (cursor?: string) => Promise<T>) {
+  const result: T[] = []
+  let cursor: string | undefined
+  do {
+    const page = await read(cursor)
+    result.push(page)
+    cursor = page.nextCursor ?? undefined
+  } while (cursor)
+  return result
+}
+
+test("snapshot, radar, live radar and live groups page by project with the same stamp", async () => {
+  const { reads, tracker, units } = await fixture((t) => [t.projects[1]!.directory])
+  const signal = new AbortController().signal
+  const access = () => ({ units: units() })
+  const snapshots = await walk((cursor) =>
+    reads.snapshotAll({ scope: all, ...(cursor ? { cursor } : {}) }, tracker, access(), signal),
+  )
+  expect(snapshots.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
+  expect(snapshots.every((page) => SnapshotOutput.safeParse(page).success)).toBe(true)
+  for (const page of snapshots)
+    for (const plan of page.plans) expect(plan.project).toEqual(page.project)
+
+  const radar = await walk((cursor) =>
+    reads.radarAll(
+      { scope: all, includeUnmanagedSessions: true, ...(cursor ? { cursor } : {}) },
+      tracker,
+      signal,
+      access(),
+    ),
+  )
+  expect(radar.map((page) => [page.project?.code, page.project?.loaded])).toEqual([
+    ["AAA", false],
+    ["BBB", true],
+    ["CCC", false],
+  ])
+  expect(radar.every((page) => RadarOutput.safeParse(page).success)).toBe(true)
+  // Another location's native sessions are not readable here: unavailable, never invented.
+  for (const page of radar.slice(1)) {
+    expect(page.freshness.nativeInventory).toBe("unavailable")
+    for (const session of page.sessions) {
+      expect(session.availability).toBe("unavailable")
+      expect(session.state).toBe("unknown")
+    }
+  }
+
+  const live = await walk((cursor) =>
+    reads.liveRadarAll(
+      { scope: all, includeUnmanagedSessions: false, ...(cursor ? { cursor } : {}) },
+      tracker,
+      signal,
+      access(),
+    ),
+  )
+  expect(live.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
+  expect(live.every((page) => LiveRadarOutput.safeParse(page).success)).toBe(true)
+  for (const page of live.slice(1))
+    for (const session of page.sessions) expect(session.state).toBe("unknown")
+
+  const groups = await walk((cursor) =>
+    reads.liveGroupAll(
+      { scope: all, group: "queued", ...(cursor ? { cursor } : {}) },
+      tracker,
+      signal,
+      access(),
+    ),
+  )
+  expect(groups.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
+  expect(groups.every((page) => LiveGroupOutput.safeParse(page).success)).toBe(true)
+})
+
+test("reads that are single-attempt or single-task refuse all until they resolve their own project", async () => {
   const { reads, tracker } = await fixture(() => [])
   const signal = new AbortController().signal
   const refusal = "All-projects scope is not available for this read"
-  expect(() => reads.snapshot(all, tracker)).toThrow(refusal)
-  expect(() => reads.liveGroup({ scope: all, group: "queued" }, signal)).toThrow(refusal)
   expect(() => reads.liveAttempt({ scope: all, sessionID: "s" }, signal)).toThrow(refusal)
   expect(() => reads.liveHistory({ scope: all, sessionID: "s", limit: 5 }, signal)).toThrow(refusal)
-  expect(() =>
-    reads.liveRadar({ scope: all, includeUnmanagedSessions: false }, tracker, signal, "e"),
-  ).toThrow(refusal)
-  await expect(
-    reads.radar({ scope: all, includeUnmanagedSessions: false }, tracker, signal),
-  ).rejects.toThrow()
   await expect(
     reads.trajectory({ scope: all, taskID: crypto.randomUUID(), limit: 5 }, tracker, signal),
-  ).rejects.toThrow(refusal)
-  await expect(
-    reads.trajectoryStatus({ scope: all, taskID: crypto.randomUUID() }, tracker),
   ).rejects.toThrow(refusal)
 })
 
@@ -289,12 +370,18 @@ test("rpc: all from a session of another OpenCode project is refused like the ot
   await expect(f.call()).rejects.toThrow("Observation scope is unavailable")
 })
 
-test("rpc: the other observation reads refuse all before asserting anything", async () => {
-  const f = await rpcFixture([])
-  await expect(Effect.runPromise(f.handlers.snapshot({ scope: all }))).rejects.toThrow(
-    "All-projects scope is not available for this read",
-  )
-  expect(f.asserts).toEqual([])
+test("rpc: snapshot pages by project through the same gate", async () => {
+  const f = await rpcFixture(["BBB"])
+  const codes: (string | undefined)[] = []
+  let cursor: string | undefined
+  do {
+    const page = (await Effect.runPromise(
+      f.handlers.snapshot({ scope: all, ...(cursor ? { cursor } : {}) }),
+    )) as Page
+    codes.push(page.project?.code)
+    cursor = page.nextCursor ?? undefined
+  } while (cursor)
+  expect(codes).toEqual(["AAA", "CCC"])
 })
 
 type TaskHandlers = { query(input: unknown): Effect.Effect<unknown> }

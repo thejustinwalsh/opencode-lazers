@@ -52,6 +52,18 @@ const NATIVE_EVENT_TYPES = [
   "session.status",
 ] as const
 
+function schedulerTotals(agent: string) {
+  return agent === "architect"
+    ? {
+        status: "available" as const,
+        scope: "process" as const,
+        audience: "architect-only" as const,
+        source: "sharedScheduler.snapshot" as const,
+        ...sharedScheduler.snapshot(),
+      }
+    : { status: "unavailable" as const, reason: "architect-only" as const }
+}
+
 async function authorize(
   ctx: ObservationContext,
   scope: { sessionID: string },
@@ -97,7 +109,13 @@ export function registerObservability(
       snapshot: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all")
+              return reads.snapshotAll(
+                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                tracker,
+                await accessFor(input.scope),
+                signal,
+              )
             await authorize(
               ctx,
               input.scope,
@@ -132,7 +150,27 @@ export function registerObservability(
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all") {
+              const access = await accessFor(input.scope)
+              const agent = (await callerSession(ctx, input.scope.sessionID, projectID))!.agent
+              signal.throwIfAborted()
+              return reads
+                .allPage(
+                  { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                  tracker,
+                  access,
+                  (unit) => ({
+                    ...progressReconstructionDiagnostics(
+                      reads.store.repository.path,
+                      unit.reads.store.repository.projectDirectory,
+                      unit.reads.projectIdentity,
+                    ),
+                    scope: { kind: "project" as const },
+                    processSchedulerTotals: schedulerTotals(agent),
+                  }),
+                )
+                .then((page) => ({ ...page, scope: { kind: "all" as const } }))
+            }
             const agent = await authorize(
               ctx,
               input.scope,
@@ -146,16 +184,7 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               projectID,
             )
-            const processSchedulerTotals =
-              agent === "architect"
-                ? {
-                    status: "available" as const,
-                    scope: "process" as const,
-                    audience: "architect-only" as const,
-                    source: "sharedScheduler.snapshot" as const,
-                    ...sharedScheduler.snapshot(),
-                  }
-                : { status: "unavailable" as const, reason: "architect-only" as const }
+            const processSchedulerTotals = schedulerTotals(agent)
             return {
               ...reconstruction,
               scope: { kind: "project" as const },
@@ -167,7 +196,27 @@ export function registerObservability(
       radar: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all") {
+              const access = await accessFor(input.scope)
+              const scope = input.scope
+              for (let attempt = 1; ; attempt++) {
+                signal.throwIfAborted()
+                try {
+                  return await reads.radarAll(
+                    {
+                      scope,
+                      includeUnmanagedSessions: input.includeUnmanagedSessions,
+                      ...(input.cursor ? { cursor: input.cursor } : {}),
+                    },
+                    tracker,
+                    signal,
+                    access,
+                  )
+                } catch (error) {
+                  if (!(error instanceof ObservationReadChangedError) || attempt === 3) throw error
+                }
+              }
+            }
             await authorize(
               ctx,
               input.scope,
@@ -200,7 +249,17 @@ export function registerObservability(
       liveRadar: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all")
+              return reads.liveRadarAll(
+                {
+                  scope: input.scope,
+                  includeUnmanagedSessions: input.includeUnmanagedSessions,
+                  ...(input.cursor ? { cursor: input.cursor } : {}),
+                },
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,
@@ -215,7 +274,17 @@ export function registerObservability(
       liveGroup: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all")
+              return reads.liveGroupAll(
+                {
+                  scope: input.scope,
+                  group: input.group,
+                  ...(input.cursor ? { cursor: input.cursor } : {}),
+                },
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,

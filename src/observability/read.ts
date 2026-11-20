@@ -25,8 +25,10 @@ import { LiveRadarReader } from "./live-read.ts"
 import type {
   LiveAttemptRequestInput,
   LiveGroupRequestInput,
+  LiveGroupResponse,
   LiveHistoryRequestInput,
   LiveRadarRequestInput,
+  LiveRadarResponse,
   ObservationScope,
   SingleScope,
   ObservationScopeView,
@@ -2221,28 +2223,120 @@ export class ObservationReads {
    * with that checkout's own project-scope read, marked with its project and the next cursor.
    * Nothing is read for a checkout the caller may not see.
    */
+  /** The OpenCode project id this reader's rows are labelled with. */
+  get projectIdentity() {
+    return this.projectID
+  }
+
   async allPage<T extends object>(
     input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
     ownTracker: ObservationChangeTracker,
     access: { units: readonly ProjectUnit[]; canRead: CanRead },
     read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
-  ): Promise<
-    Omit<T, "scope"> & { scope: { kind: "all" }; project: ProjectRef; nextCursor: string | null }
-  > {
+  ): Promise<Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }> {
     const picked = await pickUnit(access.units, input.cursor, access.canRead)
     if (!picked) throw new Error("No project is readable in this scope")
     const unit = this.forUnit(picked.unit, ownTracker)
     try {
       const page = await read(unit, { kind: "project", sessionID: input.scope.sessionID })
+      const { scope: _scope, ...rest } = page as T & { scope?: unknown }
       return {
-        ...page,
-        scope: { kind: "all" },
+        ...rest,
+        // Outputs that name their scope say `all`; the others (a group read) have none to rewrite.
+        ...("scope" in page ? { scope: { kind: "all" as const } } : {}),
         project: picked.unit.project,
         nextCursor: picked.nextCursor,
-      }
+      } as unknown as Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }
     } finally {
       unit.release()
     }
+  }
+
+  async snapshotAll(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    tracker: ObservationChangeTracker,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    signal?: AbortSignal,
+  ): Promise<SnapshotResponse> {
+    const page = await this.allPage(
+      input,
+      tracker,
+      { units: access.units, canRead: access.canRead ?? allowAll },
+      (unit, scope) => unit.reads.snapshot(scope, unit.tracker, signal),
+    )
+    return {
+      ...page,
+      scope: { kind: "all" },
+      plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
+      unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
+    }
+  }
+
+  async radarAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      includeUnmanagedSessions: boolean
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<RadarResponse> {
+    const page = await this.allPage(
+      input,
+      tracker,
+      { units: access.units, canRead: access.canRead ?? allowAll },
+      (unit, scope) =>
+        unit.reads.radar(
+          { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+          unit.tracker,
+          signal,
+        ),
+    )
+    return { ...page, scope: { kind: "all" } }
+  }
+
+  async liveRadarAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      includeUnmanagedSessions: boolean
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<LiveRadarResponse> {
+    const page = await this.allPage(
+      input,
+      tracker,
+      { units: access.units, canRead: access.canRead ?? allowAll },
+      async (unit, scope) =>
+        unit.reads.liveRadar(
+          { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+          unit.tracker,
+          signal,
+          unit.tracker.streamEpoch,
+        ),
+    )
+    return { ...page, scope: { kind: "all" } }
+  }
+
+  async liveGroupAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      group: "needs-you" | "failed" | "queued"
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<LiveGroupResponse> {
+    return this.allPage(
+      input,
+      tracker,
+      { units: access.units, canRead: access.canRead ?? allowAll },
+      async (unit, scope) => unit.reads.liveGroup({ scope, group: input.group }, signal),
+    )
   }
 
   async topologyAll(
@@ -2258,6 +2352,7 @@ export class ObservationReads {
     )
     return {
       ...page,
+      scope: { kind: "all" },
       plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
       unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
     }
