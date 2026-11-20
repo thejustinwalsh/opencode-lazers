@@ -5,6 +5,7 @@ import type { InferenceRuntime } from "./runtime.ts"
 import { createSpeechEventCoordinator, type SpeechEvent } from "./speech-events.ts"
 import { latestCompletedResponse, speechSegments } from "./speech.ts"
 import { playSpeech } from "./speech-playback.ts"
+import { modifierTracker } from "./modifier-keys.ts"
 import { sha256Text } from "../verification/opencode/audio-fixture-contract.ts"
 import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 import type {
@@ -368,7 +369,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     syncAutoEvents()
   }
 
-  const commandID = `${ctx.id}.auto-speech`
+  const modifiers = modifierTracker(ctx)
   ctx.add(Command, {
     id: "auto-speech",
     title: "Toggle automatic read aloud",
@@ -417,12 +418,29 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       const response = latestCompletedResponse(
         input.session.server.data.session.message.list(input.session.id),
       )
-      if (!speechSegments(response).length && !active) return
+      const hasResponse = speechSegments(response).length > 0
+      const auto = automatic()
+      const status = active
+        ? phase === "loading"
+          ? "preparing speech; click to stop"
+          : phase === "playing"
+            ? "reading response; click to stop"
+            : "stop speech"
+        : hasResponse
+          ? "read the last response"
+          : "no response to read yet"
       return {
         label: "",
-        title: `LAZERS speaker: ${active ? (phase === "loading" ? "preparing speech; click to stop" : phase === "playing" ? "reading response; click to stop" : "stop speech") : "read latest completed response"}`,
+        // Host icon for the automatic state: waveform bars beside the speaker. Shape, not colour
+        // alone, tells idle, automatic and speaking apart (speaking swaps the speaker for a stop square).
+        ...(auto ? { icon: "waveform" as const, tone: "success" as const } : {}),
+        title: `LAZERS speaker: ${status}. Shift-click: automatic read aloud is ${auto ? "on" : "off"}.`,
         run() {
           if (!runtime.enabled("readAloud")) return
+          if (modifiers.shift()) {
+            toggleAutomatic()
+            return
+          }
           if (operation) {
             stop(true)
             return
@@ -516,26 +534,6 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       }
     },
   })
-  ctx.add(ComposerPill, {
-    id: "auto-speech",
-    order: 22,
-    show() {
-      if (!runtime.enabled("readAloud")) return
-      const shortcut = ctx.keybinds.keybind(commandID).join("+")
-      return {
-        label: `Auto ${automatic() ? "on" : "off"}`,
-        title: `LAZERS automatic read aloud ${automatic() ? "on" : "off"}; shortcut ${shortcut}`,
-        rows: [
-          {
-            id: "toggle",
-            label: `Turn automatic read aloud ${automatic() ? "off" : "on"}`,
-            run: toggleAutomatic,
-          },
-        ],
-      }
-    },
-  })
-
   const svg = (body: string) =>
     "data:image/svg+xml," +
     encodeURIComponent(
@@ -547,7 +545,7 @@ export function registerReadAloud(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
   ctx.add(
     Style,
     `
-    [data-composer-pill][aria-label^="LAZERS speaker:"] { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; border-radius:14px; }
+    [data-composer-pill][aria-label^="LAZERS speaker:"] { display:inline-flex; align-items:center; justify-content:center; min-width:28px; min-height:28px; height:28px; padding:5px 6px; gap:4px; border-radius:14px; }
     [data-composer-pill][aria-label^="LAZERS speaker:"] > span:empty { display:none; }
     [data-composer-pill][aria-label^="LAZERS speaker:"]::before { content:""; display:block; width:15px; height:15px; background:currentColor; mask:url("${speaker}") center/contain no-repeat; }
     [data-composer-pill][aria-label^="LAZERS speaker: reading"]::before { mask-image:url("${square}"); }

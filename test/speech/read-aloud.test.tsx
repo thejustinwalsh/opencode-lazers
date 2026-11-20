@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Window } from "happy-dom"
 import type { OpenCodeEvent } from "@opencode/client"
 import { createRoot, createSignal } from "solid-js"
 import { Command, ComposerPill } from "@opencode/plugin/gui"
@@ -16,6 +17,8 @@ type EventPayload = { resolve(value: IteratorResult<OpenCodeEvent>): void; signa
 type PillView = {
   label: string
   title: string
+  icon?: string
+  tone?: string
   rows?: readonly { run?: () => void }[]
   run?: () => void
 }
@@ -235,6 +238,35 @@ function setup(
   }
 }
 
+function installWindow() {
+  const window = new Window()
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window")
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
+  Object.defineProperty(globalThis, "window", { configurable: true, value: window })
+  Object.defineProperty(globalThis, "document", { configurable: true, value: window.document })
+  return {
+    window,
+    key(type: "keydown" | "keyup", shiftKey: boolean) {
+      window.dispatchEvent(new window.KeyboardEvent(type, { key: "Shift", shiftKey }))
+    },
+    restore() {
+      for (const [name, old] of [
+        ["window", previous],
+        ["document", previousDocument],
+      ] as const) {
+        if (old) Object.defineProperty(globalThis, name, old)
+        else Reflect.deleteProperty(globalThis, name)
+      }
+    },
+  }
+}
+
+function shiftClick(dom: ReturnType<typeof installWindow>, view: PillView) {
+  dom.key("keydown", true)
+  view.run?.()
+  dom.key("keyup", false)
+}
+
 function required<T>(value: T | undefined): T {
   expect(value).toBeDefined()
   if (value === undefined) throw new Error("Expected registered control")
@@ -259,7 +291,7 @@ test("registered speaker replays the last completed reply during new work and St
     const speaker = required(harness.pills.get("read-aloud"))
     const input = { session: harness.session, screen: {} }
     const view = required(speaker.show(input))
-    expect(view.title).toContain("read latest completed response")
+    expect(view.title).toContain("read the last response")
     view.run?.()
     await audioStarted.promise
     expect(harness.calls.map((call) => call.text)).toEqual(["The last completed answer."])
@@ -268,7 +300,7 @@ test("registered speaker replays the last completed reply during new work and St
     required(speaker.show(input)).run?.()
     expect(harness.calls[0]?.signal.aborted).toBe(true)
     expect(sourceStops).toBe(1)
-    expect(required(speaker.show(input)).title).toContain("read latest completed response")
+    expect(required(speaker.show(input)).title).toContain("read the last response")
   } finally {
     harness.abort.abort()
     harness.dispose()
@@ -506,9 +538,7 @@ test("a rejected playback observation aborts output and a fresh request succeeds
     speaker.show(input)?.run?.()
     await audioStarted.promise
     await waitFor(() => harness.audioObservations.some((item) => item.kind === "playback-failed"))
-    await waitFor(
-      () => speaker.show(input)?.title.includes("read latest completed response") === true,
-    )
+    await waitFor(() => speaker.show(input)?.title.includes("read the last response") === true)
     expect(sourceStops).toBe(1)
     activePlan = retryPlan
     naturalEnd = true
@@ -536,13 +566,15 @@ test("a rejected playback observation aborts output and a fresh request succeeds
 test("native menu and command enable final-only auto speech, deduplicate parts, and stop playback", async () => {
   const original = globalThis.AudioContext
   globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const dom = installWindow()
   const harness = setup()
   try {
-    const autoPill = required(harness.pills.get("auto-speech"))
+    const autoPill = required(harness.pills.get("read-aloud"))
     const input = { session: harness.session, screen: {} }
-    expect(required(autoPill.show(input)).label).toBe("Auto off")
-    required(autoPill.show(input)).rows?.[0]?.run?.()
-    expect(required(autoPill.show(input)).label).toBe("Auto on")
+    expect(harness.pills.has("auto-speech")).toBe(false)
+    expect(required(autoPill.show(input)).title).toContain("automatic read aloud is off")
+    shiftClick(dom, required(autoPill.show(input)))
+    expect(required(autoPill.show(input)).title).toContain("automatic read aloud is on")
     await harness.channel.waitForSubscription(1)
 
     harness.channel.publish(event("session.execution.started", {}))
@@ -593,11 +625,12 @@ test("native menu and command enable final-only auto speech, deduplicate parts, 
     expect(sourceStops).toBe(1)
 
     required(harness.autoCommand).run?.()
-    expect(required(autoPill.show(input)).label).toBe("Auto off")
+    expect(required(autoPill.show(input)).title).toContain("automatic read aloud is off")
   } finally {
     harness.abort.abort()
     harness.dispose()
     globalThis.AudioContext = original
+    dom.restore()
   }
 })
 
@@ -646,3 +679,88 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
   throw new Error("Timed out waiting for owned playback completion")
 }
+
+test("shift tracks the click: shift-click toggles automatic read aloud, a plain click speaks, blur resets", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const dom = installWindow()
+  const harness = setup()
+  try {
+    const pill = required(harness.pills.get("read-aloud"))
+    const input = { session: harness.session, screen: {} }
+    const view = () => required(pill.show(input))
+    expect(view().title).toContain("automatic read aloud is off")
+
+    dom.key("keydown", true)
+    view().run?.()
+    expect(view().title).toContain("automatic read aloud is on")
+    expect(harness.calls).toEqual([])
+    dom.key("keyup", false)
+
+    // Shift up: a click reads the response instead of toggling.
+    view().run?.()
+    await audioStarted.promise
+    expect(view().title).toContain("automatic read aloud is on")
+    expect(harness.calls.map((call) => call.text)).toEqual(["The last completed answer."])
+    view().run?.()
+
+    // A window that loses focus while Shift is down must not leave Shift stuck.
+    dom.key("keydown", true)
+    dom.window.dispatchEvent(new dom.window.Event("blur"))
+    view().run?.()
+    expect(view().title).toContain("automatic read aloud is on")
+    dom.key("keydown", true)
+    Object.defineProperty(dom.window.document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    })
+    dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"))
+    view().run?.()
+    expect(view().title).toContain("automatic read aloud is on")
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+    dom.restore()
+  }
+})
+
+test("the speaker pill shows idle, automatic and speaking states with icon, tone and title", async () => {
+  const original = globalThis.AudioContext
+  globalThis.AudioContext = FakeAudioContext as unknown as typeof AudioContext
+  const dom = installWindow()
+  const harness = setup()
+  try {
+    const pill = required(harness.pills.get("read-aloud"))
+    const input = { session: harness.session, screen: {} }
+    const idle = required(pill.show(input))
+    expect(idle.icon).toBeUndefined()
+    expect(idle.tone).toBeUndefined()
+    expect(idle.title).toBe(
+      "LAZERS speaker: read the last response. Shift-click: automatic read aloud is off.",
+    )
+
+    shiftClick(dom, idle)
+    const auto = required(pill.show(input))
+    expect(auto.icon).toBe("waveform")
+    expect(auto.tone).toBe("success")
+    expect(auto.title).toBe(
+      "LAZERS speaker: read the last response. Shift-click: automatic read aloud is on.",
+    )
+
+    required(pill.show(input)).run?.()
+    await audioStarted.promise
+    const speaking = required(pill.show(input))
+    expect(speaking.title).toMatch(
+      /^LAZERS speaker: (preparing speech|reading response); click to stop\./,
+    )
+    expect(speaking.title).toContain("automatic read aloud is on")
+    expect(speaking.icon).toBe("waveform")
+    speaking.run?.()
+  } finally {
+    harness.abort.abort()
+    harness.dispose()
+    globalThis.AudioContext = original
+    dom.restore()
+  }
+})
