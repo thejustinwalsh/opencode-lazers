@@ -18,14 +18,28 @@ const sources = () => {
   return [...host[Symbol.for("lazers.streams.sources.v1")]!.values()]
 }
 
-test("no registered source reads a WITHOUT ROWID table: SQLite's update hook never names one", () => {
+/** Every `source table` pair whose declared SQL says WITHOUT ROWID, and how many tables were checked. */
+function withoutRowid(declared: Map<string, string>) {
+  const violations: string[] = []
+  let checked = 0
+  for (const source of sources())
+    for (const table of source.readsTables) {
+      const sql = declared.get(table)
+      if (!sql) continue
+      checked++
+      if (/WITHOUT ROWID/i.test(sql)) violations.push(`${source.name} ${table}`)
+    }
+  return { violations, checked }
+}
+
+function declaredTables() {
   const directory = mkdtempSync(join(tmpdir(), "lazers-rowid-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/p")
-  ensureTaskScheduleSchema(repository)
-  new ProgressRecorder(new RunnerStore(repository), "p")
-  repository.atomic((db) => installProgressDisplaySchema(db))
   try {
-    const declared = new Map(
+    ensureTaskScheduleSchema(repository)
+    new ProgressRecorder(new RunnerStore(repository), "p")
+    repository.atomic((db) => installProgressDisplaySchema(db))
+    return new Map(
       repository.read((db) =>
         db
           .query<{ name: string; sql: string }, []>(
@@ -35,21 +49,29 @@ test("no registered source reads a WITHOUT ROWID table: SQLite's update hook nev
           .map((row) => [row.name, row.sql] as const),
       ),
     )
-    let checked = 0
-    for (const source of sources())
-      for (const table of source.readsTables) {
-        const sql = declared.get(table)
-        if (!sql) continue
-        checked++
-        expect(`${source.name} ${table} ${/WITHOUT ROWID/i.test(sql)}`).toBe(
-          `${source.name} ${table} false`,
-        )
-      }
-    expect(checked).toBeGreaterThan(5)
   } finally {
     repository.close()
     rmSync(directory, { recursive: true, force: true })
   }
+}
+
+test("no registered source reads a WITHOUT ROWID table: SQLite's update hook never names one", () => {
+  const { violations, checked } = withoutRowid(declaredTables())
+  expect(violations).toEqual([])
+  expect(checked).toBeGreaterThan(5)
+})
+
+test("the check can fail: a source table declared WITHOUT ROWID in a scratch copy of the schema is reported", () => {
+  const declared = declaredTables()
+  const scratch = new Map(declared)
+  // A scratch copy of one table's declaration, never installed by product code.
+  scratch.set(
+    "task_schedule_counts",
+    `${declared.get("task_schedule_counts")!.replace(/\)\s*$/, ") WITHOUT ROWID")}`,
+  )
+  const { violations } = withoutRowid(scratch)
+  expect(violations.some((entry) => entry.endsWith(" task_schedule_counts"))).toBe(true)
+  expect(withoutRowid(declared).violations).toEqual([])
 })
 
 test("the owner wakes on a dirty row another connection queued", async () => {
