@@ -573,7 +573,7 @@ export type CheckReceipt = {
   id: string
   /** The author's command, as declared. */
   command: string
-  /** What actually ran, present only when the runtime added a flag (the test hang guard). */
+  /** What actually ran, present only when the runtime added a Bun verification default. */
   effectiveCommand?: string
   cwd: string
   artifact: string

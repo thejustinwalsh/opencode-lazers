@@ -66,6 +66,44 @@ test("with a profile, a chain of its commands runs as phases with the toolchain 
   })
 })
 
+test("profile-generated Bun checks keep their declared timeout and record the effective reporter", async () => {
+  const f = setup()
+  const target = join(f.root, "profile.test.ts")
+  Bun.write(
+    target,
+    'import { expect, test } from "bun:test"\ntest("profile", () => expect(true).toBe(true))\n',
+  )
+  const command = `bun test --timeout 120000 ${target}`
+  const parsed = parseProfile({
+    toolchains: ["bun"],
+    verify: [{ id: "tests", command }],
+    env: [],
+    source: { include: ["src/**/*.ts"] },
+  })
+  if (!parsed.ok) throw new Error("bad Bun profile fixture")
+  const bunProfile = checkRunProfile({
+    revisionID: 10,
+    revision: 1,
+    projectKey: "k",
+    profile: parsed.profile,
+    activatedAt: 1,
+    proofs: new Map(),
+  })
+
+  const receipt = await runDeclaredCheck(
+    f.root,
+    "candidate",
+    { id: "tests", command },
+    join(f.root, "bun-receipt.json"),
+    { profile: bunProfile },
+  )
+
+  expect(receipt.command).toBe(command)
+  expect(receipt.effectiveCommand).toBe(`bun test --dots --timeout 120000 ${target}`)
+  expect(receipt.exitCode).toBe(0)
+  expect(receipt.phases?.[0]?.effectiveCommand).toBe(receipt.effectiveCommand)
+})
+
 test("with no profile the same chain is one unrecognised command", async () => {
   const f = setup()
   const receipt = await runDeclaredCheck(

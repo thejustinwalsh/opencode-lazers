@@ -425,12 +425,17 @@ export class TaskRepository {
         installProjectSchema(this)
       })
       // The connection and its `once` keys outlive a plugin reload (they hang off globalThis), so
-      // a schema added later needs its own key or a reloaded service never installs it.
-      shared.once("task-observations", () => installObservedRevisionsSchema(this))
-      shared.once("project-controls", () => installProjectControlsSchema(this))
-      shared.once("project-profile", () => installProfileSchema(this))
-      shared.once("repo-map", () => installRepoMapSchema(this))
-      shared.once("planning", () => installPlanningSchema(this))
+      // a schema added later needs its own key or a reloaded service never installs it. The key
+      // carries the declared generation for the same reason: a reload that raises a module's
+      // generation must run its upgrade (found live on 2026-11-20: the profile and planning
+      // upgrades were skipped after a reload because their keys had already run).
+      const at = (module: keyof typeof schemaModules) =>
+        `${module}@${schemaModules[module].generation}`
+      shared.once(at("task-observations"), () => installObservedRevisionsSchema(this))
+      shared.once(at("project-controls"), () => installProjectControlsSchema(this))
+      shared.once(at("project-profile"), () => installProfileSchema(this))
+      shared.once(at("repo-map"), () => installRepoMapSchema(this))
+      shared.once(at("planning"), () => installPlanningSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined

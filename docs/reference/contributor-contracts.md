@@ -63,6 +63,8 @@ The five planning agents (`lazers-planning-comprehension`, `-grounding`, `-readi
 
 [`src/runner/verification-timeout.ts`](../../src/runner/verification-timeout.ts) sets the default 15-minute inactivity allowance and 60-minute hard backstop. Project and per-check settings can override both. Real standard output or standard error resets the inactivity allowance.
 
+Recognized direct `bun test` commands run with Bun's `--dots` reporter unless the command already chooses a reporter. This emits actual per-test output for the inactivity watchdog; the authored command and the effective command are recorded separately. The runtime also supplies the 120-second per-test hang guard only when no explicit `--timeout` is present.
+
 The runtime records check commands, outcomes, timestamps, and observed environment. A failed check may trigger one configured repair attempt. Resume and retry keep earlier attempts and usage. Acceptance records required checks and the Architect's reviewed decision. There is no human-evidence gate; `kind: "human"` evidence in stored tasks is ignored. Integration remains a separate action.
 
 ### Project profile
