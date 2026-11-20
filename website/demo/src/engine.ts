@@ -167,9 +167,26 @@ export class Engine<D> {
     await new Promise<void>((resolve) => setTimeout(resolve, 250))
   }
 
+  /** What a real cursor would look like here: the computed `cursor`, else by element kind. */
+  private cursorAt(x: number, y: number): "default" | "pointer" | "text" {
+    const el = document.elementFromPoint(x, y)
+    if (!el) return "default"
+    const css = getComputedStyle(el).cursor
+    if (css === "pointer") return "pointer"
+    if (css === "text") return "text"
+    if (css !== "auto") return "default"
+    if (
+      el.closest("input:not([type=checkbox]):not([type=radio]), textarea, [contenteditable=true]")
+    )
+      return "text"
+    if (el.closest("button, a[href], summary, [role=button], [role=option], [role=tab], select"))
+      return "pointer"
+    return "default"
+  }
+
   private emitPointer(down: boolean) {
     const { x, y, off } = this.pointer
-    this.opts.post({ type: "pointer", x, y, down, off })
+    this.opts.post({ type: "pointer", x, y, down, off, cursor: this.cursorAt(x, y) })
   }
 
   private async moveTo(el: HTMLElement, instant: boolean) {
