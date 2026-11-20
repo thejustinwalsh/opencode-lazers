@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { FeaturePolicy, defaultFeatures, featureEnabled, needsChat, usesGPU } from "./features.ts"
+import {
+  DEFAULT_MODEL_KEEP_ALIVE_MS,
+  FeaturePolicy,
+  defaultFeatures,
+  featureEnabled,
+  needsChat,
+  usesGPU,
+} from "./features.ts"
 
 test("master and dependency switches mask features while retaining individual preferences", async () => {
   let saved = defaultFeatures(true)
@@ -54,4 +61,10 @@ test("concurrent partial settings writes preserve each other; failed persistence
   fail = false
   await policy.configure({ enabled: false })
   expect(policy.read().enabled).toBe(false)
+})
+
+test("resident weights have a finite default idle timeout inside the settings range", () => {
+  // Chat plus decision weights are about 2.2 GB; "never unload" must be a choice, not the default.
+  expect(DEFAULT_MODEL_KEEP_ALIVE_MS).toBeGreaterThan(0)
+  expect(DEFAULT_MODEL_KEEP_ALIVE_MS).toBeLessThanOrEqual(86_400_000)
 })
