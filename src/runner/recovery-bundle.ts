@@ -10,6 +10,7 @@ import { availablePlanCommands, planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import { runbook } from "../guidance/index.ts"
+import { noticeMarker } from "./notice-marker.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -887,8 +888,15 @@ export function recoveryBundleText(serialized: string): string {
       `   Actions: ${item.actions.join(", ") || "none"}. Recommended: ${item.recommendation.action ?? "review"} - ${item.recommendation.because}`,
     ]
   })
+  const marker = noticeMarker({
+    kind: RECOVERY_BUNDLE_STATUS,
+    plan: bundle.planID,
+    v: bundle.version,
+    gen: bundle.generation,
+  })
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
+    ...(marker ? [marker] : []),
     runbook("recovery-bundle"),
     ...(bundle.items.some((item) => item.kind === "worker-concern")
       ? [runbook("worker-concerns"), runbook("recovery-controls")]
