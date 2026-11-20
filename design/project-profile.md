@@ -152,3 +152,12 @@ That lives in the implementation plan, `.agents/plans/project-profile.md`. Answe
 - **Confirmation:** each stored command records when the owner confirmed it and its last proven
   result. An edit is stored as a pending revision; the runtime keeps running the last confirmed
   revision until the owner confirms the new one.
+
+## Owner decision, 2026-11-20: one JSON, one schema
+
+The primary interface for a profile is the Architect: it explores the repository and makes one
+tool call with the profile as JSON. That JSON has one schema (the profile type's). Settings shows
+the same JSON, validated by the same schema, for now: no separate form model and no second shape.
+The tool's input, the stored revision and the Settings view are the same document. Plan tasks 1.6,
+1.7 and 3.2 follow this: the Settings view renders and edits that JSON and the owner confirms it
+there.
