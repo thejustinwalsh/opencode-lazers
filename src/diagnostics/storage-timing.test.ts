@@ -93,7 +93,9 @@ function slowReadCaller(repo: TaskRepository) {
 test("the site names the calling function", () => {
   setStorageTiming(true)
   slowReadCaller(repository)
-  expect(drainStorageTiming(20)[0]?.site).toMatch(/^slowReadCaller \(.*storage-timing\.test\.ts:\d+\)$/)
+  expect(drainStorageTiming(20)[0]?.site).toMatch(
+    /^slowReadCaller \(.*storage-timing\.test\.ts:\d+\)$/,
+  )
 })
 
 test("the site names the caller when everything is one bundled file", async () => {
@@ -130,7 +132,6 @@ export function bundledWriter(repo: TaskRepository) {
   built.bundledCaller(repository)
   built.bundledWriter(repository)
   const sites = drainStorageTiming(20).map((row) => row.site)
-  console.log("bundled sites:", sites)
   expect(sites.some((site) => /^bundledCaller \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
   expect(sites.some((site) => /^bundledWriter \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
 })
