@@ -570,3 +570,31 @@ test("fresh churn events do not make a finished plan look active", () => {
   )
   expect(classifyPlans(db, NOW, 30).retired).toEqual([])
 })
+
+test("81b1d6ba-1: a plan that stops being finished between batches loses nothing more", async () => {
+  const fixture = setup()
+  const db = handle(fixture)
+  const detail =
+    "SELECT COUNT(*) AS n FROM runner_progress WHERE kind IN ('tool','step','native-observation')"
+  const before = count(db, detail)
+  let calls = 0
+  const retried = <T>(run: (database: Database) => T) => {
+    const result = fixture.store.atomic(run)
+    // After the first batch commits, the plan is retried: it is no longer terminal.
+    if (++calls === 1)
+      fixture.store.atomic((database) =>
+        database
+          .query("UPDATE runner_plans SET state='running' WHERE id=?")
+          .run(fixture.receipt.planID),
+      )
+    return result
+  }
+  await retireSlice(retried, (run) => fixture.repository.read(run), {
+    now: NOW,
+    days: 30,
+    budgetMs: 10_000,
+    batch: 3,
+  })
+  // Only the first batch, taken while the plan was finished, may have gone.
+  expect(before - count(db, detail)).toBeLessThanOrEqual(3)
+})

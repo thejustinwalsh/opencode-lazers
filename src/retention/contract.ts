@@ -17,6 +17,7 @@ const Worktree = z.strictObject({
   action: z.enum(["remove", "keep"]),
   reason: z.string(),
 })
+const Skipped = z.strictObject({ path: z.string(), reason: z.string() })
 const Removed = z.record(z.string(), z.strictObject({ rows: z.number(), bytes: z.number() }))
 const Run = z.strictObject({
   id: z.number(),
@@ -26,6 +27,7 @@ const Run = z.strictObject({
   done: z.boolean(),
   removed: Removed,
   worktrees: z.array(z.strictObject({ path: z.string(), bytes: z.number().nullable() })),
+  skipped: z.array(Skipped),
 })
 
 const StatusOutput = z.strictObject({
@@ -56,6 +58,7 @@ const SliceOutput = z.strictObject({
   rows: z.number(),
   bytes: z.number(),
   worktrees: z.array(z.strictObject({ path: z.string(), bytes: z.number().nullable() })),
+  skipped: z.array(Skipped),
   fileBytes: z.number(),
   freeBytes: z.number(),
 })

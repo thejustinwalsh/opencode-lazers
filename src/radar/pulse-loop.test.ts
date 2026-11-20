@@ -22,9 +22,14 @@ function fakeHost() {
   const elapsed = (fake: Fake) => (fake.paused ? fake.held : state.time - fake.startedAt)
   const endsAt = (fake: Fake) =>
     fake.startedAt + fake.timing.delayMs + fake.timing.durationMs * fake.timing.iterations
+  const listeners = new Set<() => void>()
   const host: PulseHost = {
     visible: () => !state.hidden,
     reducedMotion: () => state.reduced,
+    onReducedMotionChange: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     animate: (_dot, points, timing, finish) => {
       const fake: Fake = {
         points,
@@ -77,7 +82,11 @@ function fakeHost() {
     state.time = target
   }
   const running = () => state.animations.filter((a) => !a.cancelled && !a.done)
-  return { state, host, advance, running }
+  const preference = (reduced: boolean) => {
+    state.reduced = reduced
+    for (const listener of listeners) listener()
+  }
+  return { state, host, advance, running, preference, listeners }
 }
 
 const wire = (change: Partial<WireInput> = {}): WireInput => ({
@@ -127,19 +136,19 @@ test("updates between and during crossings restart nothing and write nothing but
   advance(7_000)
   const before = running()
   const created = state.animations.length
-  const writes: string[] = []
-  const observer = new window.MutationObserver((records) => {
-    for (const record of records) writes.push(`${record.type}:${record.attributeName ?? ""}`)
-  })
+  const observer = new window.MutationObserver(() => {})
   observer.observe(element as never, { attributes: true, childList: true, subtree: true })
   loop.update([wire()])
   advance(3_000)
   loop.update([wire()])
   expect(state.animations).toHaveLength(created)
   expect(running()).toEqual(before)
-  expect(writes).toEqual([])
+  // `takeRecords` is the synchronous view of what the observer queued; its callback has not run.
+  expect(observer.takeRecords()).toEqual([])
   loop.update([wire({ dim: true })])
   expect(element.querySelector("[data-dim]")?.getAttribute("data-dim")).toBe("true")
+  // Positive control: the same instrumentation does see a real write.
+  expect(observer.takeRecords().length).toBeGreaterThan(0)
   expect(state.animations).toHaveLength(created)
   observer.disconnect()
   loop.dispose()
@@ -244,4 +253,18 @@ test("the whole view is capped", () => {
   expect(running().length).toBeLessThanOrEqual(MAX_TOTAL)
   expect(loop.moving).toBe(running().length)
   loop.dispose()
+})
+
+test("70a0f10e-1: a reduced-motion change stops every pulse at once and opting out restores them", () => {
+  const { host, running, preference, listeners } = fakeHost()
+  const loop = createPulseLoop(layer().element, host)
+  loop.update([wire()])
+  expect(running().length).toBeGreaterThan(0)
+  preference(true)
+  expect(running()).toHaveLength(0)
+  expect(loop.moving).toBe(0)
+  preference(false)
+  expect(running().length).toBeGreaterThan(0)
+  loop.dispose()
+  expect(listeners.size).toBe(0)
 })

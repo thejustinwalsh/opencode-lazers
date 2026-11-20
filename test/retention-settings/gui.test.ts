@@ -58,6 +58,7 @@ const slice = (done: boolean, rows: number): RetentionSliceView => ({
   rows,
   bytes: rows * 100,
   worktrees: done ? [{ path: "/p.worktrees/a", bytes: 3_000_000 }] : [],
+  skipped: [],
   fileBytes: 2_520_000_000,
   freeBytes: 600_000_000,
 })

@@ -112,7 +112,6 @@ const HANDOFF_FIELDS = [
   "tried",
   "notes",
 ] as const
-const FIELD_LIMIT = 8_000
 
 /** The slim worker handoff as advertised; `recordWorkerHandoff` accepts anything. */
 export const WorkerHandoffInput = z.looseObject({
@@ -127,12 +126,11 @@ export const WorkerHandoffInput = z.looseObject({
 /** Never rejects: known fields become text, anything else is kept verbatim as `raw`. */
 export function normalizeWorkerHandoff(input: unknown): WorkerHandoff {
   const text = (value: unknown) =>
-    (typeof value === "string"
+    typeof value === "string"
       ? value
       : Array.isArray(value)
         ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join("\n")
         : JSON.stringify(value)
-    ).slice(0, FIELD_LIMIT)
   const handoff: WorkerHandoff = { author: "worker" }
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     if (input !== undefined) handoff.raw = text(input)
@@ -405,16 +403,27 @@ export class TakeoverExecution {
     return JSON.parse(row.payload) as Payload
   }
 
+  /**
+   * State change that merges `patch` into the payload as it is now, inside the transaction: the
+   * worker's handoff can be saved while the caller awaited the host, and a stale copy must not
+   * overwrite it.
+   */
   private move(row: TakeoverRow, to: TakeoverState, patch: Partial<Payload>, event?: string) {
     const { store } = this.deps
     return store.atomic((db) => {
+      const current = db
+        .query<{ payload: string }, [string, string]>(
+          "SELECT payload FROM runner_takeovers WHERE id=? AND state=?",
+        )
+        .get(row.id, row.state)
+      if (!current) return false
       const changed = db
         .query(
           "UPDATE runner_takeovers SET state=lz_runner_transition('takeover',state,?),payload=?,updated_at=? WHERE id=? AND state=?",
         )
         .run(
           to,
-          JSON.stringify({ ...this.payload(row), ...patch }),
+          JSON.stringify({ ...(JSON.parse(current.payload) as Payload), ...patch }),
           this.deps.now(),
           row.id,
           row.state,
@@ -447,12 +456,21 @@ export class TakeoverExecution {
       (db) =>
         db
           .query(
-            "UPDATE runner_takeovers SET payload=?,updated_at=? WHERE id=? AND state='notifying' AND json_extract(payload,'$.noticeSent') IS NULL",
+            "UPDATE runner_takeovers SET payload=json_set(payload,'$.noticeSent',json('true')),updated_at=? WHERE id=? AND state='notifying' AND json_extract(payload,'$.noticeSent') IS NULL",
           )
-          .run(JSON.stringify({ ...payload, noticeSent: true }), this.deps.now(), row.id)
-          .changes === 1,
+          .run(this.deps.now(), row.id).changes === 1,
     )
-    if (!claimed) return
+    if (!claimed) {
+      // Claimed by a call that did not finish (a reload between the claim and the move): whether
+      // the notice went out is unknown and it is never resent. Wait on the handoff window.
+      this.move(
+        this.row(row.id)!,
+        "awaiting-handoff",
+        { noticeError: "notice delivery unknown: an earlier call claimed it and did not finish" },
+        "TAKEOVER_NOTICE_DELIVERED",
+      )
+      return
+    }
     let noticeError: string | undefined
     try {
       await this.deps.host.steerWorker({
@@ -527,8 +545,10 @@ export class TakeoverExecution {
         payload = { ...payload, stopDeadline: now() + this.stopWaitMs }
         store.atomic((db) =>
           db
-            .query("UPDATE runner_takeovers SET payload=? WHERE id=? AND state='stopping'")
-            .run(JSON.stringify(payload), row.id),
+            .query(
+              "UPDATE runner_takeovers SET payload=json_set(payload,'$.stopDeadline',?) WHERE id=? AND state='stopping'",
+            )
+            .run(payload.stopDeadline!, row.id),
         )
         store.record(row.plan_id, row.task_id, "TAKEOVER_WORKER_INTERRUPTED", {
           takeoverID: row.id,

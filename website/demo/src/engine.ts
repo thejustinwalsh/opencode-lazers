@@ -5,18 +5,20 @@ import { dataAt, T0 } from "./story.ts"
 type Post = (message: DemoMessageBody) => void
 
 /** One virtual clock for steps, pointer travel and typing; it advances only while playing. */
-class Clock {
+export class Clock {
   t = 0
   playing = false
   private last = 0
   private raf = 0
   private waiters: { at: number; resolve: () => void }[] = []
+  private parked: (() => void)[] = []
 
   play() {
     if (this.playing) return
     this.playing = true
     this.last = performance.now()
     this.raf = requestAnimationFrame(this.frame)
+    for (const wake of this.parked.splice(0)) requestAnimationFrame(() => wake())
   }
   pause() {
     this.playing = false
@@ -30,6 +32,15 @@ class Clock {
     this.waiters = this.waiters.filter((waiter) => waiter.at > this.t)
     for (const waiter of due) waiter.resolve()
     this.raf = requestAnimationFrame(this.frame)
+  }
+  /**
+   * The next animation frame of a playing clock. While paused nothing is scheduled: the caller
+   * parks until `play`, so an offscreen demo's pointer and scroll loops cost no frames or messages.
+   */
+  nextFrame() {
+    return new Promise<void>((resolve) =>
+      this.playing ? requestAnimationFrame(() => resolve()) : this.parked.push(resolve),
+    )
   }
   until(at: number) {
     return at <= this.t
@@ -207,7 +218,7 @@ export class Engine<D> {
       const k = ease(Math.min(1, (this.clock.t - begin) / ms))
       this.pointer = { x: start.x + (x - start.x) * k, y: start.y + (y - start.y) * k, off: false }
       this.emitPointer(false)
-      await frameDelay()
+      await this.clock.nextFrame()
     }
     this.pointer = { x, y, off: false }
     this.emitPointer(false)
@@ -279,7 +290,7 @@ export class Engine<D> {
         const begin = this.clock.t
         while (ms > 0 && this.clock.t - begin < ms) {
           el.scrollTop = from + (action.to - from) * ease((this.clock.t - begin) / ms)
-          await frameDelay()
+          await this.clock.nextFrame()
         }
         el.scrollTop = action.to
         return this.pause_(160, instant)
