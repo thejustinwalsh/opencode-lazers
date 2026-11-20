@@ -1330,8 +1330,19 @@ export class RunnerStore {
         .get(id, this.repository.projectDirectory),
     )
   }
+  /** Throws unless the project holds this plan; an existence read, so no plan body is loaded. */
+  private requirePlan(planID: string) {
+    const found = this.read((db) =>
+      db
+        .query<{ present: number }, [string, string]>(
+          "SELECT 1 AS present FROM runner_plans WHERE id=? AND project_directory=? LIMIT 1",
+        )
+        .get(planID, this.repository.projectDirectory),
+    )
+    if (!found) throw new Error("Plan not found")
+  }
   nodes(planID: string) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<NodeRow, [string]>("SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal")
@@ -1555,7 +1566,7 @@ export class RunnerStore {
     )
   }
   continuation(planID: string) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
@@ -2947,7 +2958,7 @@ export class RunnerStore {
     })
   }
   ensureContinuation(planID: string, input: Omit<ContinuationRow, "plan_id" | "generation">) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.atomic((db) => {
       db.query("INSERT OR IGNORE INTO runner_continuations VALUES(?,?,?,?,?,1)").run(
         planID,
@@ -3190,7 +3201,7 @@ export class RunnerStore {
   }
   /** Whole-task history; prefer activityEvents / activityCount / hasActivity. */
   activity(planID: string, taskID: string) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<
@@ -3604,7 +3615,7 @@ export class RunnerStore {
     })
   }
   latestTransition<T>(planID: string, taskID: string | null, event: string): T | undefined {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     const row = this.read((db) =>
       db
         .query<{ payload: string }, [string, string | null, string]>(
@@ -3619,7 +3630,7 @@ export class RunnerStore {
     taskID: string | null,
     event: string,
   ): number | undefined {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read(
       (db) =>
         db
@@ -3630,7 +3641,7 @@ export class RunnerStore {
     )
   }
   verificationTimeoutAmendments(planID: string): VerificationTimeoutAmendment[] {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<{ payload: string }, [string]>(
@@ -3641,7 +3652,7 @@ export class RunnerStore {
     )
   }
   latestRetainedRepair<T>(planID: string, taskID?: string): T | undefined {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     const row = this.read((db) =>
       taskID === undefined
         ? db
@@ -3897,13 +3908,26 @@ export class RunnerStore {
     })
   }
   attempts(planID: string) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<AttemptRow, [string]>(
           "SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
         )
         .all(planID),
+    )
+  }
+  /** The id of the project's plan that holds this attempt: one indexed read, no plan body. */
+  planIDOfAttempt(attemptID: string): string | null {
+    return (
+      this.read((db) =>
+        db
+          .query<{ plan_id: string }, [string, string]>(
+            `SELECT a.plan_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+             WHERE a.id=? AND p.project_directory=?`,
+          )
+          .get(attemptID, this.repository.projectDirectory),
+      )?.plan_id ?? null
     )
   }
   /** The newest attempt id of one task, ordered as attempts() is; one row, no history. */
@@ -4223,7 +4247,7 @@ export class RunnerStore {
     )
   }
   effects(planID: string) {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE plan_id=? ORDER BY rowid")
@@ -4242,7 +4266,7 @@ export class RunnerStore {
     )
   }
   adoptions(planID: string): AdoptionRow[] {
-    if (!this.plan(planID)) throw new Error("Plan not found")
+    this.requirePlan(planID)
     return this.read((db) =>
       db
         .query<AdoptionRow, [string]>(
