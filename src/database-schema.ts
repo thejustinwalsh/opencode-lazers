@@ -147,7 +147,7 @@ export const schemaModules = {
     ],
   },
   "recovery-progress": {
-    generation: 1,
+    generation: 2,
     source: "src/recovery/journal.ts",
     tables: [
       "recovery_progress_facts",
