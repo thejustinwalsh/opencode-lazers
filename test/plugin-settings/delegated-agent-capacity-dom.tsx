@@ -42,6 +42,7 @@ const Button = (props: { disabled?: boolean; onClick?: () => void; children: JSX
   </button>
 )
 
+// fallow-ignore-next-line unused-export -- Vite library entry dynamically imported as capacity-dom.js by delegated-agent-capacity.test.ts
 export function harness(root: HTMLElement, initialSession?: TestSession) {
   const [session, setSession] = createSignal<TestSession | undefined>(initialSession)
   const context = {

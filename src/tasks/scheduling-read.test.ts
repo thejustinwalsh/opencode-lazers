@@ -444,6 +444,14 @@ test.each([100, 101])(
     })
     expect(firstPage.selectionComplete).toBe(true)
     expect(firstPage.next).toMatchObject({
+      status: "waiting",
+      reason: "Waiting for delegated-agent capacity; all configured slots are in use.",
+    })
+    // These synthetic active reservations exceed the default project cap.
+    // With spare capacity, the unrelated candidate remains the global next task.
+    const capacity = new DelegatedAgentCapacity(f.repository)
+    await capacity.configure({ expectedRevision: 0, limit: reservationCount + 1 })
+    expect((await read.read({ scope, limit: 100 })).next).toMatchObject({
       status: "known",
       candidate: { taskID: globalNext.task.id },
     })

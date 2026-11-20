@@ -37,6 +37,19 @@ The full declared behavior suite must still pass for the committed takeover
 candidate through runtime verification; the earlier 969-test result above is
 not current-candidate evidence.
 
+The first committed takeover candidate's runtime behavior run passed 979 tests
+and failed 2 reservation-read expectations that predated the default capacity
+limit. Those tests now check saturated waiting first, then configure spare
+fixture capacity and check the unrelated next task. The follow-up passed quality
+checks and 38 focused scheduling, native-hook, capacity and Settings tests.
+The runtime's two complexity errors were addressed by separating native tool
+result interpretation from settlement and simplifying abandoned queued-owner
+recovery. The harness export is consumed by the Vite-generated dynamic import;
+its narrowly reasoned unused-export suppression preserves that tested entry point.
+Estimated static reachability/CRAP warnings are not evidence that these exercised
+RPC, Settings and native-hook paths lack behavior coverage. Full current-candidate
+runtime verification remains required.
+
 ## Live rollout probe
 
 The OpenCode Desktop/native rollout steps in

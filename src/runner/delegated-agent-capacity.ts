@@ -172,6 +172,22 @@ function reconcileRunnerAdmissions(db: Database, projectKey: string, now: number
   ).run(now, projectKey)
 }
 
+function nativeQueueOwnerGone(processID: number | null, currentPID: number) {
+  if (!processID) return true
+  if (processID === currentPID) return false
+  try {
+    process.kill(processID, 0)
+    return false
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "EPERM"
+    )
+  }
+}
+
 function releaseDeadNativeOwners(
   db: Database,
   projectKey: string,
@@ -179,31 +195,17 @@ function releaseDeadNativeOwners(
   now: number,
 ) {
   const rows = db
-    .query<{ id: string; state: AdmissionState; process_id: number | null }, [string]>(
-      `SELECT id,state,process_id FROM delegated_agent_admissions
+    .query<{ id: string; process_id: number | null }, [string]>(
+      `SELECT id,process_id FROM delegated_agent_admissions
        WHERE project_key=? AND kind='native' AND state='queued'`,
     )
     .all(projectKey)
-  for (const row of rows) {
-    if (!row.process_id) {
+  for (const row of rows)
+    if (nativeQueueOwnerGone(row.process_id, currentPID))
       db.query(
-        `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,?),updated_at=?
-         WHERE id=? AND state=? AND process_id IS NULL`,
-      ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
-      continue
-    }
-    if (row.process_id === currentPID) continue
-    try {
-      process.kill(row.process_id, 0)
-    } catch (error) {
-      if (typeof error === "object" && error !== null && "code" in error && error.code === "EPERM")
-        continue
-      db.query(
-        `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,?),updated_at=?
-         WHERE id=? AND state=?`,
-      ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
-    }
-  }
+        `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'cancelled'),updated_at=?
+         WHERE id=? AND state='queued'`,
+      ).run(now, row.id)
 }
 
 function nextQueuedAdmission(db: Database, projectKey: string) {

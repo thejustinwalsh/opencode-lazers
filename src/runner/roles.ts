@@ -45,6 +45,69 @@ function nativeChildIDFromError(message: string) {
   )
 }
 
+type NativeToolResult = {
+  tool: string
+  sessionID: string
+  id: string
+  input: unknown
+} & (
+  | { status: "completed"; result: { metadata?: unknown } }
+  | { status: "error"; error: { message: string } }
+)
+
+function nativeToolCompletion(call: NativeToolResult) {
+  const input = Predicate.isObject(call.input) ? call.input : undefined
+  if (
+    !/(?:^|[._/])subagent(?:$|[._/])/.test(call.tool) ||
+    typeof input?.agent !== "string" ||
+    input.agent.toLowerCase() === "architect"
+  )
+    return undefined
+  const metadata =
+    call.status === "completed" && Predicate.isObject(call.result.metadata)
+      ? call.result.metadata
+      : undefined
+  const message = call.status === "error" ? call.error.message : ""
+  return {
+    childID:
+      (typeof metadata?.sessionID === "string" ? metadata.sessionID : undefined) ??
+      (typeof input.sessionID === "string" ? input.sessionID : undefined) ??
+      nativeChildIDFromError(message),
+    childCompleted: call.status === "completed" && metadata?.status === "completed",
+    unboundCompleted:
+      (call.status === "completed" && input.background !== true) ||
+      (call.status === "error" && knownPreChildFailure(message)),
+  }
+}
+
+function settleNativeTool(
+  call: NativeToolResult,
+  capacity: DelegatedAgentCapacity,
+  nativeChildren: { watch: (id: string) => Effect.Effect<unknown> } | undefined,
+  wakeScheduler?: () => void,
+) {
+  return Effect.gen(function* () {
+    const completion = nativeToolCompletion(call)
+    if (!completion) return
+    const request = yield* Effect.promise(() => capacity.nativeRequest(call.sessionID, call.id))
+    if (!request) return
+    if (completion.childID) {
+      yield* Effect.promise(() => capacity.bindNativeChild(request.id, completion.childID!))
+      if (!completion.childCompleted) {
+        if (nativeChildren) yield* nativeChildren.watch(completion.childID)
+        return
+      }
+    } else if (!completion.unboundCompleted) return
+    const released = yield* Effect.promise(() =>
+      capacity.releaseNativeRequest(request.id, request.request_key),
+    )
+    if (released) wakeScheduler?.()
+  }).pipe(
+    // Admission bookkeeping must not change a native tool's result.
+    Effect.catch(() => Effect.void),
+  )
+}
+
 /**
  * The Implementor and Auditor agents. Model precedence per agent: the LAZERS route (this
  * project's, else the shared one), then the native OpenCode configuration, then (Auditor only)
@@ -199,54 +262,7 @@ export function registerWorker(
     )
     if (capacity)
       yield* timedHooks(ctx.tool, "tool").hook("execute.after", (call) =>
-        Effect.gen(function* () {
-          try {
-            const input = Predicate.isObject(call.input) ? call.input : undefined
-            if (
-              !/(?:^|[._/])subagent(?:$|[._/])/.test(call.tool) ||
-              typeof input?.agent !== "string" ||
-              input.agent.toLowerCase() === "architect"
-            )
-              return
-            const request = yield* Effect.promise(() =>
-              capacity.nativeRequest(call.sessionID, call.id),
-            )
-            if (!request) return
-            const background = input.background === true
-            const metadata =
-              call.status === "completed" && Predicate.isObject(call.result.metadata)
-                ? call.result.metadata
-                : undefined
-            const message = call.status === "error" ? call.error.message : ""
-            const childID =
-              (typeof metadata?.sessionID === "string" ? metadata.sessionID : undefined) ??
-              (typeof input.sessionID === "string" ? input.sessionID : undefined) ??
-              nativeChildIDFromError(message)
-            if (childID) {
-              yield* Effect.promise(() => capacity.bindNativeChild(request.id, childID))
-              if (call.status === "completed" && metadata?.status === "completed") {
-                const released = yield* Effect.promise(() =>
-                  capacity.releaseNativeRequest(request.id, request.request_key),
-                )
-                if (released) wakeScheduler?.()
-              } else {
-                if (nativeChildren) yield* nativeChildren.watch(childID)
-              }
-              return
-            }
-            if (
-              (call.status === "completed" && !background) ||
-              (call.status === "error" && knownPreChildFailure(message))
-            ) {
-              const released = yield* Effect.promise(() =>
-                capacity.releaseNativeRequest(request.id, request.request_key),
-              )
-              if (released) wakeScheduler?.()
-            }
-          } catch {
-            // Admission bookkeeping must not change a native tool's result.
-          }
-        }),
+        settleNativeTool(call, capacity, nativeChildren, wakeScheduler),
       )
     if (capacity)
       yield* timedHooks(ctx.session, "session").hook("experimental.idle", (idle) =>
