@@ -86,8 +86,10 @@ test("registered Code Mode tools permission-check, restrict writes to Architect 
 
   const settings = tools.get("lz-get-model-settings")!
   const configure = tools.get("lz-configure-models")!
-  expect(settings.options).toMatchObject({ codemode: true, pinned: true })
-  expect(configure.options).toMatchObject({ codemode: true, pinned: true })
+  expect(settings.options).toMatchObject({ codemode: true })
+  expect(settings.options?.pinned).toBeUndefined()
+  expect(configure.options).toMatchObject({ codemode: true })
+  expect(configure.options?.pinned).toBeUndefined()
 
   denied = true
   await expect(

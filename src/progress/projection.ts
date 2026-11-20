@@ -351,7 +351,9 @@ function applyCommentary(
   value: JsonObject,
   stats: ReturnType<typeof privacyStats>,
 ) {
-  view.text = typeof value.text === "string" ? safeText(value.text, stats, 1200) : ""
+  // The whole stored note; a panel that wants a short form derives it when it displays this.
+  view.text =
+    typeof value.text === "string" ? safeText(value.text, stats, Number.POSITIVE_INFINITY) : ""
 }
 
 function applyTool(

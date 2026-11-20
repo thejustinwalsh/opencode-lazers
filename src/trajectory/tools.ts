@@ -6,6 +6,7 @@ import type { RunnerStore } from "../runner/store.ts"
 import type { TrajectoryHost } from "./native.ts"
 import { inspectTrajectory } from "./read.ts"
 import { privacyStats, safeError } from "./privacy.ts"
+import { declareInput } from "../tool-input.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
 import type { TaskValuationProvider } from "../models/task-valuation.ts"
@@ -27,7 +28,7 @@ export function registerTrajectoryTools(
       name: "lz-inspect-trajectory",
       description:
         "Read a redacted, project-owned worker task/attempt trajectory and total effort, including failed retries. Provide exactly one taskID or attemptID; continue with the returned cursor and unchanged limit. Only visible safe content is included; context coverage, compaction, missing usage and unknown cost are explicit.",
-      input: z.toJSONSchema(InspectTrajectoryInput, { io: "input" }),
+      input: declareInput(InspectTrajectoryInput),
       output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
       options: {
         codemode: true,

@@ -7,6 +7,7 @@ import { Tool } from "@opencode/schema/tool"
 import { makeFixture, firstAttemptID, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "./recorder.ts"
 import { projectProgressFact } from "./projection.ts"
+import { ProgressInput } from "./schema.ts"
 
 const workerSession = "ses-failed"
 
@@ -2344,6 +2345,34 @@ test("more than 25 distinct observations on one fact are all stored and read bac
     const observations = JSON.parse(facts[0]!.payload).observations as Array<{ eventID: string }>
     expect(new Set(observations.map((item) => item.eventID)).size).toBe(40)
     expect(projectProgressFact(facts[0]!).observations).toHaveLength(40)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("a 5,000-character progress note is accepted and read back whole", () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+    )
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const note = Array.from({ length: 500 }, (_, index) => `step ${index}`.padEnd(10, ".")).join("")
+    expect(note.length).toBeGreaterThanOrEqual(5000)
+    expect(ProgressInput.safeParse({ message: note }).success).toBe(true)
+    const saved = recorder.report({
+      sessionID: workerSession,
+      agent: "lazers-implementor",
+      callID: "long-note",
+      messageID: "message-long-note",
+      message: note,
+    })
+    expect(saved.text).toBe(note)
+    const row = fixture.store
+      .progressFacts([firstAttemptID])
+      .find((entry) => entry.kind === "commentary")!
+    expect(JSON.parse(row.payload).text).toBe(note)
+    expect(projectProgressFact(row).text).toBe(note)
   } finally {
     fixture.close()
   }

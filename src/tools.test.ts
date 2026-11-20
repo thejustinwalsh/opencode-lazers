@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Agent, Location } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Tool } from "@opencode/schema/tool"
 import { Effect, Schema } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -441,9 +442,9 @@ test("Architect correction controls record, replay, revise, retract, and inspect
   expect(correction.output).toBeUndefined()
   expect(inspect.options).toMatchObject({
     codemode: true,
-    pinned: true,
     permission: "lz-inspect-task-corrections",
   })
+  expect(inspect.options?.pinned).toBeUndefined()
   expect(inspect.output).toBeDefined()
   const input = {
     taskID: childReceipt.taskID,
@@ -887,14 +888,15 @@ test("retained tool callbacks survive disposal of the registration connection", 
   }
 })
 
-test("tool execution returns validation guidance without persisting an invalid task", async () => {
+test("tool execution rejects an invalid task without persisting it", async () => {
   const { tools, repository } = await setup()
-  const result = await Effect.runPromise(
+  const failure = await Effect.runPromise(
     tools.get("lz-submit-task")!.execute({ objective: "Incomplete" }, context),
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
   )
-  const output = JSON.parse(String(result.content))
-  expect(output.status).toBe("invalid")
-  expect(output.errors.length).toBeGreaterThan(0)
+  expect(failure).toBeInstanceOf(Tool.Error)
   expect(repository.list()).toEqual([])
 })
 
@@ -1006,14 +1008,9 @@ test("native schema/runtime require keys, validate before database access, and l
   const query = spyOn(Database.prototype, "query")
   const exec = spyOn(Database.prototype, "exec")
   try {
-    for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)]) {
-      const result = await call("lz-submit-task", { ...validProposal(), idempotencyKey })
-      expect(result.status).toBe("invalid")
-      expect(result.errors[0].path).toBe("idempotencyKey")
-    }
-    const result = await call("lz-submit-task", { ...keyedProposal(), verification: [] })
-    expect(result.status).toBe("invalid")
-    expect(result.errors[0].path).toBe("acceptance.0.evidence.0.verificationID")
+    for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)])
+      await expect(call("lz-submit-task", { ...validProposal(), idempotencyKey })).rejects.toThrow()
+    await expect(call("lz-submit-task", { ...keyedProposal(), verification: [] })).rejects.toThrow()
     expect(query).not.toHaveBeenCalled()
     expect(exec).not.toHaveBeenCalled()
   } finally {

@@ -1,8 +1,12 @@
 import { z } from "zod"
 
-/** Progress is one short annotation; identity and authority are never model inputs. */
+/**
+ * Progress is an annotation; identity and authority are never model inputs. Its length is not
+ * limited: a handoff checkpoint that does not fit a cap is refused work, and panels that need a
+ * short form derive it when they display the stored text.
+ */
 export const ProgressInput = z.strictObject({
-  message: z.string().trim().min(1).max(1200),
+  message: z.string().trim().min(1),
 })
 
 type ProgressInput = z.infer<typeof ProgressInput>

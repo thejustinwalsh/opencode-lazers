@@ -37,7 +37,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
         "Read the exact saved shared, project and optional task model routes for each worker persona, including revisions, inheritance resolution and provenance. Saved routes are not filtered or substituted using the live catalog.",
       input: ModelSettingsInputSchema,
       output: ModelSettingsOutputSchema,
-      options: { codemode: true, pinned: true, permission: "lz-get-model-settings" },
+      options: { codemode: true, permission: "lz-get-model-settings" },
       execute: (input, call) =>
         ctx.permission
           .assert({
@@ -70,7 +70,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
         "Architect-only exact route update for a shared, project or existing project-task persona mapping, or a shared or project route for an agent (architect, lazers-implementor, auditor). Writes against the current mapping (last write wins; earlier revisions stay in history). Use route null to remove an override and reveal inheritance.",
       input: ModelMappingToolInput,
       output: ModelMappingWriteOutputSchema,
-      options: { codemode: true, pinned: true, permission: "lz-configure-models" },
+      options: { codemode: true, permission: "lz-configure-models" },
       execute: (input, call) =>
         ctx.permission
           .assert({

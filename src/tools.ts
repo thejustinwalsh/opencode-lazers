@@ -23,6 +23,7 @@ import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationToolInput } from "./task-classification.ts"
 import { tolerantJsonSchema } from "./legacy-fields.ts"
+import { declareInput } from "./tool-input.ts"
 import { guardedWrite, observeRevision } from "./tasks/observed-revisions.ts"
 import {
   TaskCorrectionToolInput,
@@ -91,8 +92,8 @@ export function registerTaskTools(
     editor.add({
       name: "lz-submit-task",
       description:
-        "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input returns field errors without saving.",
-      input: z.toJSONSchema(TaskSubmissionSchema, { io: "input" }),
+        "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input saves nothing and returns the wrong fields with the full usage.",
+      input: declareInput(TaskSubmissionSchema),
       options: { codemode: true, permission: "lz-submit-task" },
       execute: (input, context) =>
         ctx.permission
@@ -106,17 +107,7 @@ export function registerTaskTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const parsed = TaskSubmissionSchema.safeParse(input)
-                  if (!parsed.success)
-                    return {
-                      content: JSON.stringify({
-                        status: "invalid",
-                        errors: parsed.error.issues.map((issue) => ({
-                          path: issue.path.join("."),
-                          message: issue.message,
-                        })),
-                      }),
-                    }
+                  const parsed = TaskSubmissionSchema.parse(input)
                   const refused = await fallowGate?.()
                   if (refused) return { content: JSON.stringify(refused) }
                   // Observed before the transaction: Git must not run inside it.
@@ -130,7 +121,7 @@ export function registerTaskTools(
                   const receipt = await withRepository((connection) => {
                     const submitted = submitTask(
                       connection,
-                      parsed.data,
+                      parsed,
                       () => ({
                         projectID: ctx.location.project.id,
                         projectDirectory: ctx.location.project.canonical,
@@ -171,7 +162,7 @@ export function registerTaskTools(
       name: "lz-dispose-task",
       description:
         "Architect-only durable disposition for an old task: record reviewed fulfillment, supersession, rejection or duplication with a reason, evidence and project-local related task IDs. The immutable task remains readable. This does not accept worker execution, override active work, or force a plan state.",
-      input: z.toJSONSchema(TaskDispositionInput, { io: "input" }),
+      input: declareInput(TaskDispositionInput),
       options: { codemode: true, permission: "lz-dispose-task" },
       execute: (input, context) =>
         ctx.permission
@@ -312,13 +303,9 @@ export function registerTaskTools(
       name: "lz-inspect-task-corrections",
       description:
         "Architect-only project-scoped inspection of effective same-goal correction membership and its complete append-only audit. Unlinked tasks remain separate and unreviewed; a retracted link is explicitly independent. The returned identity pins one coherent read snapshot.",
-      input: z.toJSONSchema(TaskCorrectionInspectionInput, { io: "input" }),
+      input: declareInput(TaskCorrectionInspectionInput),
       output: TaskCorrectionInspection,
-      options: {
-        codemode: true,
-        pinned: true,
-        permission: "lz-inspect-task-corrections",
-      },
+      options: { codemode: true, permission: "lz-inspect-task-corrections" },
       execute: (input, context) =>
         ctx.permission
           .assert({

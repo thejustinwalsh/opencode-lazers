@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { declareInput } from "./tool-input.ts"
 
 /** Drop named keys from a plain object input; anything else passes through untouched. */
 function dropFields(input: unknown, fields: readonly string[]): unknown {
@@ -22,7 +23,5 @@ export function ignoringLegacyFields<T extends z.ZodType>(schema: T, fields: rea
  * once the legacy fields are dropped, so every other unknown field is still refused.
  */
 export function tolerantJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  const json = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>
-  delete json.additionalProperties
-  return json
+  return declareInput(schema, { tolerant: true })
 }
