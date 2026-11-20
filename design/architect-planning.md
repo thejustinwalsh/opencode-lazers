@@ -236,3 +236,12 @@ Decision:
   the Architect to answer them itself before planning and to state its picks in one line. The
   Architect's pick is recorded in the same decision record (`architect_json`, source `architect`),
   so a later threshold can be compared against D1 on the same shape.
+- **What D1 is asked (second run).** The model makes small judgments about what the text says; code
+  makes the decision. Thirteen yes/no observations with true/false criteria replace the per-agent
+  and size questions, one request each; a rule table maps their maxima over the pieces to each
+  agent (yes at 0.7, no at 0.3, between is "Architect decides"), with no `wording_only` guard.
+- **Size is a recorded guess** (about 40% exact on the labelled set) and nothing routes on it;
+  selection still cuts nothing, and the brainstorm runbook is the Architect's call, not triggered
+  by D1.
+- **The not-run note** carries the same observations as questions from the same definitions; the
+  old per-agent and 5-way forms stay for the replay script only.
