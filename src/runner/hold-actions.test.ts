@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import {
   FALLBACK_HOLD_ACTIONS,
   HOLD_FAMILIES,
@@ -31,12 +31,21 @@ test("requested actions are kept and merged with the family's unblocking actions
 })
 
 test("every literal hold reason in the runtime maps to a named family", () => {
-  const source = readFileSync(new URL("./runtime.ts", import.meta.url), "utf8")
+  // Every non-test runner module can raise a hold (the runtime was split into siblings),
+  // so scan them all; the call may sit on `this`, a bound alias or the journal.
+  // Only plan holds count: outcome-delivery has an unrelated outbox `hold(rows, EVENT_NAME)`.
+  const directory = new URL("./", import.meta.url)
+  const modules = readdirSync(directory).filter(
+    (name) => name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts"),
+  )
   const reasons: string[] = []
-  for (const match of source.matchAll(
-    /this\.hold\(\s*(?:plan|current),\s*(?:"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g,
-  ))
-    reasons.push((match[1] ?? match[2] ?? "").replace(/\$\{[^}]*\}/g, "x"))
+  for (const name of modules) {
+    const source = readFileSync(new URL(name, directory), "utf8")
+    for (const match of source.matchAll(
+      /\bhold\(\s*plan,\s*(?:"((?:[^"\\]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g,
+    ))
+      reasons.push((match[1] ?? match[2] ?? "").replace(/\$\{[^}]*\}/g, "x"))
+  }
   expect(reasons.length).toBeGreaterThan(20)
   const unclassified = reasons.filter((reason) => !holdFamily(reason))
   expect(unclassified).toEqual([])
