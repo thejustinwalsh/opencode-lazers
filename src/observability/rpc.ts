@@ -65,7 +65,7 @@ function schedulerTotals(agent: string) {
     : { status: "unavailable" as const, reason: "architect-only" as const }
 }
 
-async function authorize(
+export async function authorize(
   ctx: ObservationContext,
   scope: { sessionID: string },
   projectID: string,
@@ -314,33 +314,6 @@ export function registerObservability(
               "read",
             )
             return reads.liveAttempt(input, signal)
-          },
-          catch: (error) => error,
-        }).pipe(
-          Effect.catch((error) =>
-            error instanceof LiveHistoryUnavailableError
-              ? Effect.fail(
-                  context.error("live_history_unavailable", error.message, {
-                    reason: error.reason,
-                    recovery: "restart",
-                  }),
-                )
-              : Effect.die(new Error(safeError(error, privacyStats()))),
-          ),
-        ),
-      liveHistory: (input, context) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all")
-              return reads.liveHistoryAll(input, tracker, signal, await accessFor(input.scope))
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.liveHistory(input, signal)
           },
           catch: (error) => error,
         }).pipe(

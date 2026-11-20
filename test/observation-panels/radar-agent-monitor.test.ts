@@ -7,6 +7,10 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { ObservationChangeTracker } from "../../src/observability/changes.ts"
 import { Observability } from "../../src/observability/contract.ts"
 import { ProgressRecorder } from "../../src/progress/recorder.ts"
+import { refreshProgressDisplay } from "../../src/progress/display-store.ts"
+import { Streams } from "../../src/streams/contract.ts"
+import { readerPool, type ReaderPool } from "../../src/streams/pool.ts"
+import { createStreamsService } from "../../src/streams/rpc.ts"
 import { makeFixture, firstAttemptID } from "../trajectory/fixture.ts"
 import { operationalReads } from "../radar/operational.ts"
 import type { RadarNativeSession } from "../../src/observability/native.ts"
@@ -41,10 +45,10 @@ type Change = {
   resnapshotRequired: boolean
 }
 
-function changeBus() {
-  const queued: Change[] = []
-  const waiters: ((value: Change | undefined) => void)[] = []
-  const publish = (change: Change) => {
+function changeBus<T = Change>() {
+  const queued: T[] = []
+  const waiters: ((value: T | undefined) => void)[] = []
+  const publish = (change: T) => {
     const waiter = waiters.shift()
     if (waiter) waiter(change)
     else queued.push(change)
@@ -54,8 +58,8 @@ function changeBus() {
       while (!signal.aborted) {
         const value =
           queued.shift() ??
-          (await new Promise<Change | undefined>((resolve) => {
-            const done = (change: Change | undefined) => {
+          (await new Promise<T | undefined>((resolve) => {
+            const done = (change: T | undefined) => {
               const index = waiters.indexOf(done)
               if (index >= 0) waiters.splice(index, 1)
               signal.removeEventListener("abort", abort)
@@ -177,11 +181,52 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
   let disposeSetup: (() => void) | undefined
   let mounted: { dispose(): void; setVisible(value: boolean): void } | undefined
   let tracker: ObservationChangeTracker | undefined
+  let pool: ReaderPool | undefined
+  let streamsService: ReturnType<typeof createStreamsService> | undefined
   try {
     fixture.store.atomic((db) =>
       db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
     )
     const recorder = new ProgressRecorder(fixture.store, "project")
+    // A hundred and fifty calls from long before the live ones (and recorded before them): the older calls.
+    fixture.store.atomic((db) => {
+      const attempt = db
+        .query<{ plan_id: string; task_id: string }, [string]>(
+          "SELECT plan_id,task_id FROM runner_attempts WHERE id=?",
+        )
+        .get(firstAttemptID)!
+      const insert = db.query(
+        `INSERT INTO runner_progress(project_directory,project_id,plan_id,task_id,attempt_id,session_id,
+          at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+         VALUES(?,?,?,?,?,?,?,?,?,'[]','tool','[]',?,?,?,?)`,
+      )
+      for (let index = 0; index < 150; index++) {
+        const result = insert.run(
+          fixture.directory,
+          "project",
+          attempt.plan_id,
+          attempt.task_id,
+          firstAttemptID,
+          "ses-failed",
+          1 + index,
+          1 + index,
+          "runtime",
+          `call-older-${index}`,
+          `msg-older-${index}`,
+          `older-${index}`,
+          JSON.stringify({
+            tool: "read",
+            status: "succeeded",
+            fileTargets: {
+              coverage: "observed",
+              operation: "read",
+              paths: [`src/older-${index}.ts`],
+            },
+          }),
+        )
+        refreshProgressDisplay(db, Number(result.lastInsertRowid))
+      }
+    })
     const createCall = (input: {
       tool: "read" | "patch"
       callID: string
@@ -270,7 +315,36 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
       sessionID: string
       includeUnmanagedSessions: boolean
     }> = []
-    const historyRequests: string[] = []
+    // The older calls of a worker are a stream of the project's service, backed here by a real
+    // reader pool over the fixture's database.
+    const streamBus = changeBus<{ stream: string; seq: number }>()
+    const streamOpens: { source: string; filter: Record<string, unknown>; window: number }[] = []
+    pool = readerPool(fixture.repository.path, { workers: 1 })
+    streamsService = createStreamsService({
+      pool,
+      changed: (stream, seq) => streamBus.publish({ stream, seq }),
+      context: {
+        projectID: projectID,
+        projectDirectory: fixture.directory,
+        projectIds: (id) => [id],
+        assertRead: async () => {},
+      },
+    })
+    const streamsRpc = {
+      open: (input: { source: string; filter: Record<string, unknown>; window: number }) => {
+        streamOpens.push(input)
+        return streamsService!.open(input as never)
+      },
+      slide: (input: never) => streamsService!.slide(input),
+      seek: (input: never) => streamsService!.seek(input),
+      read: (input: never) => streamsService!.read(input),
+      touch: (input: never) => streamsService!.touch(input),
+      close: (input: never) => streamsService!.close(input),
+      events: {
+        subscribe: (_name: string, options: { signal: AbortSignal }) =>
+          streamBus.subscribe(options.signal),
+      },
+    }
     const legacyCalls = { snapshot: 0, radar: 0, trajectory: 0, diagnostics: 0 }
     const rpc = {
       liveRadar: (
@@ -286,18 +360,6 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
           includeUnmanagedSessions: input.includeUnmanagedSessions,
         })
         return reads.liveRadar(input, tracker!, options.signal, tracker!.streamEpoch)
-      },
-      liveHistory: (
-        input: {
-          scope: { kind: "session" | "project"; sessionID: string }
-          sessionID: string
-          limit: number
-          cursor?: string
-        },
-        options: { signal: AbortSignal },
-      ) => {
-        historyRequests.push(input.sessionID)
-        return reads.liveHistory(input, options.signal)
       },
       liveAttempt: (
         input: { scope: { kind: "session" | "project"; sessionID: string }; sessionID: string },
@@ -340,7 +402,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         },
       },
       debug: { location: { list: async () => [{ directory: fixture.directory }] } },
-      rpc: (_definition: typeof Observability) => rpc,
+      // The bundled panel carries its own copy of the contract: match it by id.
+      rpc: (definition: { id: string }) => (definition.id === Streams.id ? streamsRpc : rpc),
     }
     const session = {
       id: "ses-view-architect",
@@ -626,7 +689,53 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
         .map((header) => header.textContent),
     ).toEqual(["Tool", "Target", "Duration", "Time"])
     expect(inspectorText()).not.toMatch(/Grep|read\b/)
-    expect(historyRequests).toContain("ses-failed")
+    // The worker's older calls open as a stream of the attempt, tools only, from before its live calls.
+    await until(() => streamOpens.length > 0)
+    expect(streamOpens.at(-1)).toMatchObject({
+      source: "observability.liveHistory",
+      filter: {
+        projectDirectory: fixture.directory,
+        attemptID: firstAttemptID,
+        sessionID: "ses-failed",
+        toolsOnly: true,
+      },
+    })
+    // The live read lists the newest calls, some of the 150 among them; the stream lists the
+    // rest: every call at a time before the live read's earliest (they are at times 1 to 150).
+    const olderCount = () => (streamOpens.at(-1)!.filter.beforeAt as number) - 1
+    expect(olderCount()).toBeGreaterThan(60)
+    await openDisclosure("Calls")
+    await until(() => container.querySelector(".lazers-radar-history [role=row] code") !== null)
+    const historyRows = () =>
+      [...container.querySelectorAll<HTMLElement>(".lazers-radar-history-window code")].map((row) =>
+        Number(row.dataset.sequence),
+      )
+    const scrollArea = container.querySelector<HTMLElement>(".lazers-radar-history-scroll")!
+    const content = container.querySelector<HTMLElement>(".lazers-radar-history-content")!
+    // One scroll area as tall as every older call; only a window of rows is drawn.
+    const total = olderCount()
+    expect(content.style.height).toBe(`${total * 28}px`)
+    expect(scrollArea.style.height).toBe("224px")
+    const firstWindow = historyRows()
+    expect(firstWindow.length).toBeGreaterThan(8)
+    expect(firstWindow.length).toBeLessThan(total)
+    expect(container.querySelector(".lazers-radar-history-window code")?.textContent).toBe(
+      `src/older-${total - 1}.ts`,
+    )
+    // Scrolling to the oldest rows slides the window there; its rows stay at their own offset.
+    const lastRow = () =>
+      [...container.querySelectorAll(".lazers-radar-history-window code")].at(-1)
+    expect(
+      container.querySelector(".lazers-radar-history-window")?.getAttribute("style"),
+    ).toContain("translateY(0px)")
+    scrollArea.scrollTop = total * 28 - 224
+    scrollArea.dispatchEvent(new dom.window.Event("scroll") as unknown as Event)
+    await until(() => lastRow()?.textContent === "src/older-0.ts")
+    expect(
+      container.querySelector(".lazers-radar-history-window")?.getAttribute("style"),
+    ).toContain(`translateY(${(total - firstWindow.length) * 28}px)`)
+    expect(historyRows().length).toBe(firstWindow.length)
+    expect(content.style.height).toBe(`${total * 28}px`)
     const inspectorHead = container.querySelector(".lazers-details-bar")!
     expect(inspectorHead.querySelector(".lazers-radar-inspector-glyph")).not.toBeNull()
     expect(inspectorHead.querySelector(".lazers-radar-session-icon")).toBeNull()
@@ -856,6 +965,8 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     mounted?.dispose()
     disposeSetup?.()
     tracker?.close()
+    streamsService?.dispose()
+    await pool?.close()
     fixture.close()
     for (const [name, descriptor] of previousGlobals) {
       if (descriptor) Object.defineProperty(globalThis, name, descriptor)

@@ -17,6 +17,7 @@ import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { projectKeyFor, registerProject } from "../project-key.ts"
 import { globalSettings, spendCeilingFor } from "../projects/settings.ts"
+import { startProgressDisplayBackfill } from "../progress/display-backfill.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { nativeHost } from "../runner/native.ts"
 import { TaskRuntime } from "../runner/runtime.ts"
@@ -233,6 +234,13 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
 
   const retention = new RetentionService({ repository, host: nativeRunnerHost })
   built("retention")
+  // Display rows for progress older than their table: small transactions, longer at a quiet point.
+  const displayBackfill = startProgressDisplayBackfill(repository, {
+    onError: (error) =>
+      void Effect.runPromise(
+        Effect.logWarning("LAZERS progress display backfill failed", { error: String(error) }),
+      ),
+  })
   scheduler = sharedScheduler.register(
     schedulerProjectKey(repository.path, repository.projectDirectory, projectID),
     {
@@ -280,6 +288,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   }
   const disposeCore = async () => {
     scheduler = undefined
+    displayBackfill.stop()
     await registration.dispose()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.

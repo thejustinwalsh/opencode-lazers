@@ -43,7 +43,6 @@ test("active assignment lookup uses the project partial index regardless of reta
       fixture.repository.path,
       fixture.directory,
       "project",
-      new Uint8Array(32).fill(8),
     ).readCurrent(null, new AbortController().signal)
     expect(source.assignments.has("ses-failed")).toBe(true)
     expect(

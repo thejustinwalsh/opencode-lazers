@@ -1,3 +1,4 @@
+import { refreshProgressDisplay } from "./display-store.ts"
 import { installHostMessageSchema } from "../core/host-messages.ts"
 import { observationRevisionStamp, StampGate } from "../core/stamp-gate.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
@@ -1731,7 +1732,9 @@ export class ProgressRecorder {
           payload,
         )
       if (inserted.changes) {
-        return db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
+        const seq = db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
+        refreshProgressDisplay(db, seq)
+        return seq
       }
       throw new Error("Progress fact disappeared during append")
     }
@@ -1805,6 +1808,7 @@ export class ProgressRecorder {
         recordedAt,
         existing.seq,
       )
+      refreshProgressDisplay(db, existing.seq)
     }
     return existing.seq
   }
@@ -1819,11 +1823,13 @@ export class ProgressRecorder {
     const payload = JSON.stringify(value)
     if (payload === row.payload) return false
     const recordedAt = Math.max(row.recorded_at ?? Number.MIN_SAFE_INTEGER, Date.now())
-    return Boolean(
+    const changed = Boolean(
       db
         .query("UPDATE runner_progress SET payload=?,recorded_at=? WHERE seq=?")
         .run(payload, recordedAt, seq).changes,
     )
+    if (changed) refreshProgressDisplay(db, seq)
+    return changed
   }
 
   /** Canonical tool-call history; runner_progress remains its assigned-worker projection. */

@@ -139,3 +139,38 @@ test("registration wires the handlers, pushes events, and releases the pool with
   expect(await call("close", { stream: "r" })).toEqual({ closed: true })
   await Effect.runPromise(Scope.close(scope, { _tag: "Success", value: undefined } as never))
 })
+
+test("a source that authorizes an open can refuse it or narrow its filter, on the main thread", async () => {
+  const asked: string[] = []
+  const context = {
+    projectID: "p",
+    projectDirectory: "/p",
+    projectIds: (id: string) => [id],
+    assertRead: async (sessionID: string) => {
+      asked.push(sessionID)
+      if (sessionID === "denied") throw new Error("Not permitted")
+    },
+  }
+  const service = createStreamsService({ pool, changed: () => {}, context })
+  const guarded = { ...open, source: "test.items.guarded" }
+  // Narrowed: the caller asked for group g2 and g1 is what it gets.
+  const narrowed = await service.open({ stream: "n", ...guarded, filter: { group: "g2" } })
+  expect(decode(narrowed).ids.every((id) => id % 3 === 1)).toBe(true)
+  // The caller's own claim never decides: the permission check saw it first.
+  await expect(
+    service.open({ stream: "d", ...guarded, filter: { group: "denied" } }),
+  ).rejects.toThrow("Not permitted")
+  await expect(service.open({ stream: "r", ...guarded, filter: { group: "g0" } })).rejects.toThrow(
+    "not readable",
+  )
+  expect(service.size).toBe(1)
+  expect(asked).toEqual(["g2", "denied", "g0"])
+  // A service with no context refuses a source that needs one; a source without a hook is unaffected.
+  const bare = createStreamsService({ pool, changed: () => {} })
+  await expect(bare.open({ stream: "b", ...guarded, filter: {} })).rejects.toThrow(
+    "cannot authorize",
+  )
+  expect(decode(await bare.open({ stream: "c", ...open })).ids).toEqual(range(1, 50))
+  service.dispose()
+  bare.dispose()
+})

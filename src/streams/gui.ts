@@ -167,7 +167,8 @@ export function createStream<F, C extends Columns>(
   }
 }
 
-type RpcCall<I, O> = (input: I, options: { signal: AbortSignal }) => Promise<O>
+type CallOptions = { signal: AbortSignal; location?: { directory: string } }
+type RpcCall<I, O> = (input: I, options: CallOptions) => Promise<O>
 /** The shape of `ctx.client.rpc(Streams)` that the transport uses. */
 export type StreamsRpc = {
   open: RpcCall<Parameters<StreamsTransport["open"]>[0], StreamFrame>
@@ -188,8 +189,16 @@ export type StreamsRpc = {
 export function rpcStreamsTransport(
   rpc: () => StreamsRpc,
   signal: AbortSignal,
-  options: { resubscribeMs?: number } = {},
+  options: {
+    resubscribeMs?: number
+    /** The location whose service holds the streams; every call of a stream goes to the same one. */
+    location?: { directory: string }
+    /** Asked before a stream opens; a location that is not loaded must not be booted by a read. */
+    ready?: () => Promise<boolean>
+  } = {},
 ): StreamsTransport {
+  const call = (extra: { signal: AbortSignal } = { signal }): CallOptions =>
+    options.location ? { ...extra, location: options.location } : extra
   const listeners = new Set<(event: ChangedEvent) => void>()
   let listening = false
   let subscribedBefore = false
@@ -214,13 +223,16 @@ export function rpcStreamsTransport(
     listening = false
   }
   return {
-    open: (input) => rpc().open(input, { signal }),
-    slide: (stream, delta) => rpc().slide({ stream, delta }, { signal }),
-    seek: (stream, anchor) => rpc().seek({ stream, anchor }, { signal }),
-    read: (stream) => rpc().read({ stream }, { signal }),
-    touch: (stream) => rpc().touch({ stream }, { signal }),
+    open: async (input) => {
+      if (options.ready && !(await options.ready())) throw new Error("The location is not loaded")
+      return rpc().open(input, call())
+    },
+    slide: (stream, delta) => rpc().slide({ stream, delta }, call()),
+    seek: (stream, anchor) => rpc().seek({ stream, anchor }, call()),
+    read: (stream) => rpc().read({ stream }, call()),
+    touch: (stream) => rpc().touch({ stream }, call()),
     close: async (stream) =>
-      void (await rpc().close({ stream }, { signal: AbortSignal.timeout(5_000) })),
+      void (await rpc().close({ stream }, call({ signal: AbortSignal.timeout(5_000) }))),
     onChanged(listener) {
       listeners.add(listener)
       if (!listening) void listen()

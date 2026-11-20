@@ -793,6 +793,23 @@
   background: var(--surface-base-hover);
 }
 
+/* Older calls: a scroll area as tall as every row; only the stream's window of rows is drawn, at its place. */
+.lazers-radar-history-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.lazers-radar-history-content {
+  position: relative;
+}
+.lazers-radar-history-window {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+}
+.lazers-radar-history-window .lazers-kit-row {
+  height: 28px;
+}
+
 /* Inspector */
 .lazers-radar-monitor-inspector .lazers-radar-inspector-head {
   display: flex;

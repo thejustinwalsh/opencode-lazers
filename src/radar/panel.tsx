@@ -3,6 +3,9 @@ import type { PanelProps, SetupContext } from "@opencode/plugin/gui"
 import { Schema } from "effect"
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js"
 import { Observability } from "../observability/contract.ts"
+import { Streams } from "../streams/contract.ts"
+import { rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import type { HistorySource } from "./history-list.tsx"
 import {
   activeState,
   machineSupported,
@@ -873,8 +876,6 @@ function emptyRadarMonitorData(key = ""): RadarMonitorData {
     error: "",
     connection: "connecting",
     selectedSessionID: null,
-    historyLoading: false,
-    historyError: "",
   }
 }
 
@@ -916,6 +917,8 @@ function RadarLiveMonitorPanel(
   onCleanup(() => state.close())
 
   let transportRef: ReturnType<typeof createRadarMonitorTransport> | undefined
+  // The selected worker's older calls are a stream of the project's service, one per viewed location.
+  const [historySource, setHistorySource] = createSignal<HistorySource>()
   createKeyed(
     radarKeyedSource(
       current,
@@ -932,6 +935,23 @@ function RadarLiveMonitorPanel(
         radarLocationGuard(value.client, value.directory, () => props.session.directory),
       )
       transportRef = transport
+      const streams = new AbortController()
+      setHistorySource({
+        transport: rpcStreamsTransport(
+          () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+          streams.signal,
+          {
+            location: { directory: value.directory },
+            ready: radarLocationGuard(value.client, value.directory, () => props.session.directory),
+          },
+        ),
+        projectDirectory: value.directory,
+        scope: observationScope,
+      })
+      onCleanup(() => {
+        streams.abort()
+        setHistorySource(undefined)
+      })
       state.connect(
         key,
         value.projectID,
@@ -1011,7 +1031,7 @@ function RadarLiveMonitorPanel(
           save({ monitorSessionID: sessionID })
         }}
         onRefresh={() => state.refreshNow()}
-        onLoadMoreHistory={() => state.loadMoreHistory()}
+        history={historySource()}
         readAttempt={(sessionID, signal) => transportRef!.liveAttempt!(scope(), sessionID, signal)}
         readGroup={(group, signal) => transportRef!.liveGroup!(scope(), group, signal)}
         showIdle={prefs().showIdle === true}

@@ -245,14 +245,6 @@ test("a task, an attempt and a worker session of another project resolve under a
   )
   expect(attempt.project?.code).toBe("BBB")
   expect(attempt.attempt?.id).toBe(attemptID)
-  const history = await reads.liveHistoryAll(
-    { scope: all, sessionID: "ses-beta-worker", limit: 5 },
-    tracker,
-    signal,
-    access,
-  )
-  expect(history.project?.code).toBe("BBB")
-  expect(history.scope).toEqual({ kind: "all" })
 
   // An unknown task or worker session is refused plainly.
   await expect(
@@ -434,7 +426,7 @@ test("rpc: all from a session of another OpenCode project is refused", async () 
   )
 })
 
-test("rpc: trajectory by reference, live attempt and live history resolve across projects", async () => {
+test("rpc: trajectory by reference and live attempt resolve across projects", async () => {
   const f = await rpcFixture()
   const [, b] = f.three.projects
   const taskID = b!.taskIDs[0]!
@@ -451,12 +443,6 @@ test("rpc: trajectory by reference, live attempt and live history resolve across
     sessionID: "ses-beta-worker",
   })
   expect(attempt.project.code).toBe("BBB")
-  const history = await f.call<{ project: { code: string } }>("liveHistory", {
-    scope: all,
-    sessionID: "ses-beta-worker",
-    limit: 5,
-  })
-  expect(history.project.code).toBe("BBB")
   await expect(
     f.call("trajectory", { scope: all, reference: "BBB-9999", limit: 5 }),
   ).rejects.toThrow("No observation in this scope")
@@ -484,7 +470,6 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
       expect((await f.walk(method, extra)).length).toBe(3)
     await f.call("trajectory", { scope: all, reference, limit: 5 })
     await f.call("liveAttempt", { scope: all, sessionID: "ses-beta-worker" })
-    await f.call("liveHistory", { scope: all, sessionID: "ses-beta-worker", limit: 5 })
     const pages: unknown[] = []
     let cursor: string | undefined
     do {

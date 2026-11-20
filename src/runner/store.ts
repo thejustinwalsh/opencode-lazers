@@ -1,3 +1,5 @@
+import { installProgressDisplayBackfill } from "../progress/display-backfill.ts"
+import { installProgressDisplaySchema } from "../progress/display-store.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
@@ -1307,6 +1309,8 @@ export class RunnerStore {
             UPDATE runner_progress SET latest_observed_at=${progressRecencySQL("NEW")} WHERE seq=NEW.seq;
           END;
         `)
+        installProgressDisplaySchema(db)
+        installProgressDisplayBackfill(db)
         const attemptColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")

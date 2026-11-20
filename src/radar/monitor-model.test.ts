@@ -365,8 +365,6 @@ test("summary segments, coverage gaps and the three connection words", () => {
     error: "",
     connection: "connected",
     selectedSessionID: null,
-    historyLoading: false,
-    historyError: "",
     ...change,
   })
   const words = [

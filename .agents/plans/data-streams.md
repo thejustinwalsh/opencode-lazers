@@ -386,17 +386,23 @@ panel or tool.
 4. **Read-meter test:** wrap the main repository with `meterRepository`, open the stream,
    slide and seek, and assert `statements` is empty; assert the same meter sees the old
    path's statements so the test is not vacuous.
-5. **Consumer.** Server side (tool, report, fold): `openStream(pool, source, ...)` with the
+5. **Carry over the old read's scope checks.** List every check the replaced RPC made (the
+   permission assert on the caller's session, the session-scope rule, project id aliases, the
+   project directory) and declare them in the source's `authorize(filter, context)`. It runs on
+   the main thread at `open` (point reads only), returns the filter to use (overwrite what the
+   caller must not choose, such as the project directory) or throws. A filter column the check
+   needs must be stored on the row and indexed.
+6. **Consumer.** Server side (tool, report, fold): `openStream(pool, source, ...)` with the
    pool from `acquireReaderPool` held by the project core, window = the tool's page size,
    read one window, return the edge key as the continue marker, close in the same call.
    GUI: `createStream(transport, sourceRef, options)` over `Streams` RPC; window from the
    view (visible rows plus slop each side), `slide` on scroll, rows keyed by the source key.
-6. **Delete** the replaced read, its paging state and caches, and its
+7. **Delete** the replaced read, its paging state and caches, and its
    `scripts/unbounded-reads.allowlist` entries; list remaining callers by file:line.
-7. **Verify:** `bun run verify`, the new tests, the consumer's DOM or tool tests, a server
+8. **Verify:** `bun run verify`, the new tests, the consumer's DOM or tool tests, a server
    and GUI build in the worktree. The heap sampler's `readerPools` line shows the pool
    (workers, streams, statements, buffers) in the live service.
-8. **Report** each filter or order with no index, each field that blocked the migration,
+9. **Report** each filter or order with no index, each field that blocked the migration,
    and each caller left behind.
 
 #### Findings: the Tasks panel
@@ -433,6 +439,31 @@ both return the full `TaskSummary` (effective `status`, `reason`, `recordedState
 `waitingOnPlans`, `startedAt`, `concern`, `takeover`, `classification`, `matches`,
 `disposition`), and `lz-query-tasks` also filters by search, scope path and session and
 returns `count`, `snapshot` and `stateCounts`. They wait for the stored projection.
+
+#### Findings: live history
+
+The Radar worker pane's older calls (one row per progress event of an attempt) read through
+`observability.liveHistory`, with no statement on the main thread.
+
+1. **Display fields were computed at read time** (`projectProgressFact` plus privacy sanitizing
+   and truncation), so a source could not read them. `runner_progress_display` (one narrow row per
+   progress `seq`) now stores them, written in the transaction that writes the progress row from
+   `progressDisplay` (`src/progress/display.ts`), the one function the old read also used. A
+   separate table, not columns on `runner_progress`: a new column sits after the payload, so a
+   reader of it walks overflow pages for every row past about 4 KB, and the wide rows stay unread.
+2. **Existing rows** get their display from a backfill: a watermark row (`below_seq`) records that
+   every row at or above it has one; pages of 100 rows are written newest first, one small
+   transaction each, from the project core's own timer (longer slices when no attempt is active).
+   A reader sees the display rows that exist, so an attempt's older rows appear as the backfill
+   reaches them; nothing is shown that is not computed. An old-version writer cannot run against the
+   new generation (`installSchema` refuses a stored generation above its own), so only rows older
+   than the upgrade ever need the backfill.
+3. **The list is a scroll area**, sized by the exact count (`count: { exact: "scan" }` over a
+   covering index range), with only the stream's window drawn; scrolling slides the window.
+4. **Left as is:** the history contract bounds still apply to the stored display (a payload past
+   4096 bytes, event ids past 2048 and call or message ids past 200 give a row its columns only),
+   so about one row in nine of the live database shows no tool. Lifting the bounds is one change
+   in `progressDisplay` plus a re-backfill, since nothing reads the payload at read time now.
 
 ## Order and lanes
 

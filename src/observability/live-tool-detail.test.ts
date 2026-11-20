@@ -125,7 +125,6 @@ test("a session with no runner assignment still gets its call summaries", () => 
       fixture.store.repository.path,
       fixture.store.repository.projectDirectory,
       "project",
-      new Uint8Array(32),
     )
     const details = store.toolDetails(["ses-architect", "ses-other"], new AbortController().signal)
     expect(details.get("ses-architect\u0000call-execute")).toBe("lz-inspect-plan · lz-query-tasks")

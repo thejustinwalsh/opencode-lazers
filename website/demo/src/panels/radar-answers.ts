@@ -2,16 +2,18 @@ import { Changed, Observability } from "../../../../src/observability/contract.t
 import type {
   LiveAttemptResponse,
   LiveGroupResponse,
-  LiveHistoryResponse,
   LiveRadarResponse,
   ObservationScope,
 } from "../../../../src/observability/contract.ts"
+import { frameSize, writeFrame } from "../../../../src/streams/frame.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
+import { liveHistoryColumns } from "../../../../src/streams/sources/live-history-ref.ts"
 import type { Read } from "../adapter.ts"
 import { T0 } from "../story.ts"
 
 /**
  * Pure answers for the Radar panel: a compact description of the world at one moment, expanded
- * into the exact `lazers.observability` live reads (`liveRadar`, `liveHistory`, `liveAttempt`,
+ * into the exact `lazers.observability` live reads (`liveRadar`, `liveAttempt`,
  * `liveGroup`) the real panel reads. No browser or Solid code, so the build script can validate it.
  * Times are story milliseconds: 0 is the story's start and the demo's `Date.now()` is `T0 + clock`.
  */
@@ -292,44 +294,19 @@ function live(data: RadarData, scope: ObservationScope): LiveRadarResponse {
   }
 }
 
-function history(data: RadarData, sessionID: string, scope: ObservationScope): LiveHistoryResponse {
-  const worker = data.workers.find((candidate) => workerSession(candidate.n) === sessionID)
-  return {
-    schemaVersion: 1,
-    projectID: PROJECT.id,
-    scope:
-      scope.kind === "session"
-        ? { kind: "session", sessionID: scope.sessionID }
-        : { kind: "project" },
-    sessionID,
-    attemptID: worker ? attemptID(worker.n) : null,
-    source: "runner-progress",
-    runnerRevision: data.rev,
-    capturedAt: Date.now(),
-    items: [],
-    nextCursor: null,
-    limits: {
-      items: 25,
-      payloadBytes: 4096,
-      sourceQueries: 10,
-      sourceRows: 40,
-      sourceBytes: 250_000,
-      responseBytes: 512_000,
-    },
-    coverage: {
-      hasMore: false,
-      payloadTruncated: false,
-      journal: "available",
-      sourceQueries: 1,
-      sourceRowsRead: 0,
-      sourceBytesRead: 0,
-      sourcePayloadBytesRead: 0,
-      nativeInventoryReads: 0,
-      nativeContextLoads: 0,
-      retainedStateEntries: 0,
-      responseBytes: 512,
-    },
-  }
+/** The demo keeps no progress rows to list: its older-calls stream is always an empty window. */
+function emptyHistoryFrame() {
+  const bytes = new Uint8Array(frameSize(liveHistoryColumns, []))
+  writeFrame(
+    bytes.buffer,
+    0,
+    liveHistoryColumns,
+    { revision: 0, count: 0, before: 0, after: 0 },
+    [],
+  )
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return { seq: 1, data: btoa(binary) }
 }
 
 /** One tick per tool call: the ones the read lists, and earlier ones spread from the start. */
@@ -402,12 +379,18 @@ export function rpc(data: () => RadarData) {
   return {
     [Observability.id]: {
       liveRadar: (input: { scope: ObservationScope }) => live(data(), input.scope),
-      liveHistory: (input: { scope: ObservationScope; sessionID: string }) =>
-        history(data(), input.sessionID, input.scope),
       liveAttempt: (input: { scope: ObservationScope; sessionID: string }) =>
         attempt(data(), input.sessionID, input.scope),
       liveGroup: (input: { group: "needs-you" | "failed" | "queued" }) =>
         group(data(), input.group),
+    },
+    [Streams.id]: {
+      open: () => emptyHistoryFrame(),
+      slide: () => emptyHistoryFrame(),
+      seek: () => emptyHistoryFrame(),
+      read: () => emptyHistoryFrame(),
+      touch: () => ({ alive: true }),
+      close: () => ({ closed: true }),
     },
   } as Record<string, Record<string, (input: never) => unknown>>
 }
@@ -425,11 +408,6 @@ export function reads(data: RadarData): Read[] {
     })
   const ids = [ARCHITECT, ...data.workers.map((worker) => workerSession(worker.n))]
   for (const id of ids) {
-    out.push({
-      label: `lazers.observability.liveHistory ${id}`,
-      schema: Observability.methods.liveHistory.output,
-      value: history(data, id, session),
-    })
     out.push({
       label: `lazers.observability.liveAttempt ${id}`,
       schema: Observability.methods.liveAttempt.output,
