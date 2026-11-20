@@ -8,12 +8,17 @@ import type {
   ProfileRevisionView,
   ProfileView,
   ProjectScope,
+  SetupStartedView,
+  SetupStatusView,
   ProjectsListing,
   ProjectsOutcome,
 } from "./contract.ts"
 import { pauseRecords, setPause } from "./pause.ts"
 import type { PauseScope } from "./pause.ts"
-import { ProjectCodeError, projects, setProjectCode } from "./registry.ts"
+import { ProjectCodeError, projectForDirectory, projects, setProjectCode } from "./registry.ts"
+import { runbook } from "../guidance/index.ts"
+import { startSetupSession } from "./setup-session.ts"
+import type { SetupSessionApi } from "./setup-session.ts"
 import { isLoaded, liveDirectories } from "./scope.ts"
 import { needsYouPage } from "./needs-you.ts"
 import type { NeedsYouSession } from "./needs-you.ts"
@@ -80,7 +85,7 @@ function profileState(repository: Controls, key: string) {
   }
 }
 
-const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
+export const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
   revision: row.revision,
   state: row.state,
   profile: row.profile,
@@ -143,6 +148,32 @@ function guarded(repository: Controls, scope: ProjectScope, act: () => void): Pr
   }
 }
 
+/** The stored revisions of a project as the owner sees them; shared with the Architect's tool. */
+export function profileViewOf(repository: Controls, key: string): ProfileView {
+  const revisions = profileRevisions(repository, key)
+  const active = activeProfileForKey(repository, key)
+  const activeRow = active ? revisions.find((row) => row.id === active.revisionID) : undefined
+  const pendingRow = pendingRevision(repository, key)
+  const legacy = projects(repository)
+    .find((project) => project.key === key)
+    ?.paths.map((path) => repoMapSource(repository, path))
+    .find(Boolean)
+  return {
+    key,
+    ...(activeRow ? { active: revisionView(activeRow) } : {}),
+    ...(pendingRow
+      ? {
+          pending: {
+            ...revisionView(pendingRow),
+            changes: profileDiff(activeRow?.profile, pendingRow.profile),
+          },
+        }
+      : {}),
+    ...(legacy ? { legacySource: { include: legacy.include, exclude: legacy.exclude } } : {}),
+    setupDismissedAt: projectSettings(repository, key).setupDismissedAt,
+  }
+}
+
 /** The operations behind `lz.projects`; separate from registration so tests call them directly. */
 export function projectsOperations(
   repository: Controls,
@@ -155,8 +186,26 @@ export function projectsOperations(
     proofWorkspace?: ProofWorkspace
     /** Receipts of proof runs are written under this directory. */
     dataDirectory?: string
+    /** Reads a session of this location's project; the setup notice answers only for those. */
+    sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
+    /** Creates and prompts the setup Architect session. */
+    setupSession?: SetupSessionApi
   },
 ) {
+  /** This location's own project, when the calling session is one of its sessions. */
+  const setupProject = async (
+    sessionID: string,
+  ): Promise<{ key: string; code: string } | Extract<ProjectsOutcome, { ok: false }>> => {
+    const session = await options.sessionOf?.(sessionID).catch(() => null)
+    const key = projectKeyOfDirectory(repository, repository.projectDirectory)
+    if (!session?.agent || !key)
+      return {
+        ok: false,
+        refusal: "PROJECT_NOT_LOADED",
+        message: "That session does not belong to a registered project of this location.",
+      }
+    return { key, code: projectForDirectory(repository, repository.projectDirectory)?.code ?? "" }
+  }
   const proposalRefusal = (message: string): ProfileOutcomeView => ({
     ok: false,
     refusal: "PROJECT_NOT_LOADED",
@@ -182,30 +231,7 @@ export function projectsOperations(
     }
   }
   return {
-    profile(key: string): ProfileView {
-      const revisions = profileRevisions(repository, key)
-      const active = activeProfileForKey(repository, key)
-      const activeRow = active ? revisions.find((row) => row.id === active.revisionID) : undefined
-      const pendingRow = pendingRevision(repository, key)
-      const legacy = projects(repository)
-        .find((project) => project.key === key)
-        ?.paths.map((path) => repoMapSource(repository, path))
-        .find(Boolean)
-      return {
-        key,
-        ...(activeRow ? { active: revisionView(activeRow) } : {}),
-        ...(pendingRow
-          ? {
-              pending: {
-                ...revisionView(pendingRow),
-                changes: profileDiff(activeRow?.profile, pendingRow.profile),
-              },
-            }
-          : {}),
-        ...(legacy ? { legacySource: { include: legacy.include, exclude: legacy.exclude } } : {}),
-        setupDismissedAt: projectSettings(repository, key).setupDismissedAt,
-      }
-    },
+    profile: (key: string) => profileViewOf(repository, key),
     async proposeProfile(input: {
       key: string
       profile: unknown
@@ -252,6 +278,57 @@ export function projectsOperations(
         mapPreview: proof.mapPreview,
         changes: profileDiff(activeProfileForKey(repository, input.key)?.profile, parsed.profile),
       }
+    },
+    async setupStatus(sessionID: string): Promise<SetupStatusView> {
+      const project = await setupProject(sessionID)
+      if ("ok" in project) return project
+      const state = profileState(repository, project.key)
+      return {
+        ok: true,
+        key: project.key,
+        code: project.code,
+        state: state.state,
+        dismissed: projectSettings(repository, project.key).setupDismissedAt !== null,
+        ...(state.pendingRevision === undefined ? {} : { pendingRevision: state.pendingRevision }),
+      }
+    },
+    async startSetup(sessionID: string): Promise<SetupStartedView> {
+      const project = await setupProject(sessionID)
+      if ("ok" in project) return project
+      if (!options.setupSession)
+        return {
+          ok: false,
+          refusal: "PROJECT_NOT_LOADED",
+          message: "This location cannot create a setup session.",
+        }
+      try {
+        const started = await startSetupSession(options.setupSession, {
+          directory: repository.projectDirectory,
+          code: project.code,
+          projectKey: project.key,
+          text: `${runbook("project-setup")}\n\nStart with \`lz-project-profile\` in mode \`show\`.`,
+        })
+        setProjectSetting(repository, project.key, "setupDismissedAt", undefined)
+        return { ok: true, sessionID: started.sessionID }
+      } catch (error) {
+        return {
+          ok: false,
+          refusal: "PROJECT_NOT_LOADED",
+          message: `Could not start the setup session: ${error instanceof Error ? error.message : String(error)}`,
+        }
+      }
+    },
+    dismissSetup(key: string): ProjectsOutcome {
+      if (!projectExists(repository, key))
+        return refuse("PROJECT_MISSING", "That project is not registered.")
+      setProjectSetting(repository, key, "setupDismissedAt", Date.now())
+      return OK
+    },
+    resumeSetupNotice(key: string): ProjectsOutcome {
+      if (!projectExists(repository, key))
+        return refuse("PROJECT_MISSING", "That project is not registered.")
+      setProjectSetting(repository, key, "setupDismissedAt", undefined)
+      return OK
     },
     confirmProfile: (key: string, revision: number) => decide(key, revision, confirmRevision),
     discardProfile: (key: string, revision: number) => decide(key, revision, discardRevision),
@@ -306,7 +383,10 @@ export function registerProjects(
     sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
   },
 ) {
-  const operations = projectsOperations(repository, options)
+  const operations = projectsOperations(repository, {
+    ...options,
+    setupSession: options.setupSession ?? ctx.session,
+  })
   return timedRpc(ctx.rpc).register(Projects, {
     needsYou: (input) =>
       Effect.tryPromise({
@@ -331,6 +411,10 @@ export function registerProjects(
       }).pipe(Effect.orDie),
     list: () => Effect.sync(() => operations.list()),
     profile: (input) => Effect.sync(() => operations.profile(input.key)),
+    setupStatus: (input) => Effect.promise(() => operations.setupStatus(input.sessionID)),
+    startSetup: (input) => Effect.promise(() => operations.startSetup(input.sessionID)),
+    dismissSetup: (input) => Effect.sync(() => operations.dismissSetup(input.key)),
+    resumeSetupNotice: (input) => Effect.sync(() => operations.resumeSetupNotice(input.key)),
     proposeProfile: (input) =>
       Effect.tryPromise({
         try: () => operations.proposeProfile(input),

@@ -5,6 +5,7 @@ import { Label } from "../details/components.tsx"
 import { Projects } from "./contract.ts"
 import type { ProfileRevisionView, ProfileView, ProjectView } from "./contract.ts"
 import type { ProjectProfile } from "./profile.ts"
+import { startSetupInSession } from "./setup-notice.tsx"
 
 type Ctx = Parameters<Plugin.Setup>[0]
 type Proof = ProfileRevisionView["proofs"][number]
@@ -110,6 +111,27 @@ export function VerificationGroup(props: {
     const current = view()
     const source = current?.pending?.profile ?? current?.active?.profile ?? TEMPLATE
     return JSON.stringify(source, null, 2)
+  }
+  /** Starts setup through a session of one of the project's checkouts, which the server can answer for. */
+  const runSetup = async () => {
+    const own = props.project.checkouts
+    const found = ctx.sessions
+      .list()
+      .find((ref) => ref.location?.directory !== undefined && own.includes(ref.location.directory))
+    if (!found?.location) {
+      ctx.toast.show({
+        title: "Open a session in this project first",
+        description: "Setup starts from a session of the project.",
+      })
+      return
+    }
+    await startSetupInSession(ctx, {
+      id: found.id,
+      server: found.server,
+      directory: found.location.directory,
+    })
+    await load()
+    props.refresh()
   }
   const openEditor = () => {
     setText(seed())
@@ -275,8 +297,11 @@ export function VerificationGroup(props: {
       >
         <div class="lazers-projects-controls">
           <Show when={!editing()}>
-            <Ui.Button size="small" onClick={openEditor}>
-              {view()?.active || view()?.pending ? "Edit" : "Set up"}
+            <Ui.Button size="small" onClick={() => void runSetup()}>
+              {props.project.profile.state === "none" ? "Set up" : "Run setup again"}
+            </Ui.Button>
+            <Ui.Button size="small" variant="ghost" onClick={openEditor}>
+              Edit
             </Ui.Button>
           </Show>
         </div>

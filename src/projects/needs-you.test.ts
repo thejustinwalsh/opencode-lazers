@@ -1,8 +1,15 @@
 import { afterEach, expect, test } from "bun:test"
 import { RECOVERY_BUNDLE_EVENT } from "../runner/recovery-bundle.ts"
 import { threeProjects } from "../../test/projects/three-projects.ts"
-import { needsYouPage, ownerHolds, openRecoveryBundle, architectQuestions } from "./needs-you.ts"
+import {
+  needsYouPage,
+  ownerHolds,
+  openRecoveryBundle,
+  architectQuestions,
+  profileEntries,
+} from "./needs-you.ts"
 import { projectUnits } from "./scope.ts"
+import { setProjectSetting } from "./settings.ts"
 import type { NeedsYouItem } from "./needs-you.ts"
 
 const cleanups: (() => void)[] = []
@@ -14,6 +21,9 @@ async function fixture() {
   const three = await threeProjects()
   cleanups.push(() => three.close())
   const [a, b, c] = three.projects
+  // These cases are about holds and bundles; each project's setup notice is dismissed here.
+  for (const project of three.projects)
+    setProjectSetting(project.repository, project.key, "setupDismissedAt", 1)
   // Beta: its task is held for the owner. Gamma: an undelivered recovery bundle.
   b!.repository.atomic((db) =>
     db
@@ -181,4 +191,68 @@ test("a963208e-1: a page says whether native questions were read for its checkou
   expect((await own(three.projects[0]!.directory))!.questionsRead).toBe(true)
   // Without any session reader nothing is read, and the page says so.
   expect((await pages(three))[0]!.questionsRead).toBe(false)
+})
+
+test("a project with no profile lists one setup item on its first checkout only", async () => {
+  const three = await threeProjects()
+  cleanups.push(() => three.close())
+  const [a] = three.projects
+  for (const project of three.projects.slice(1))
+    setProjectSetting(project.repository, project.key, "setupDismissedAt", 1)
+  const units = projectUnits(a!.repository, () => [])
+  const first = units.find((unit) => unit.project.key === a!.key)!
+  const withSecond = [
+    first,
+    { project: first.project, directory: `${first.directory}.second` },
+    ...units.filter((unit) => unit.project.key !== a!.key),
+  ]
+  const items = async () => {
+    const result: NeedsYouItem[] = []
+    let cursor: string | undefined
+    do {
+      const page = await needsYouPage({
+        repository: a!.repository,
+        units: withSecond,
+        ownDirectory: a!.directory,
+        ...(cursor ? { cursor } : {}),
+      })
+      if (!page) break
+      result.push(...page.items)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    return result
+  }
+  expect((await items()).filter((item) => item.kind === "project-setup")).toEqual([
+    expect.objectContaining({ id: a!.key, title: "Set up LAZERS", project: expect.anything() }),
+  ])
+  setProjectSetting(a!.repository, a!.key, "setupDismissedAt", Date.now())
+  expect(await items()).toEqual([])
+})
+
+test("a proposed profile is a confirmation item, and a confirmed one clears everything", async () => {
+  const three = await threeProjects()
+  cleanups.push(() => three.close())
+  const [a] = three.projects
+  const profile = {
+    toolchains: [],
+    verify: [{ id: "t", command: "true" }],
+    fix: [],
+    env: [],
+    audit: "off" as const,
+    source: { include: ["src/**"], exclude: [] },
+  }
+  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
+  proposeRevision(a!.repository, {
+    projectKey: a!.key,
+    profile,
+    author: { kind: "owner" },
+    reason: "t",
+    proofs: [],
+  })
+  const entries = () => a!.repository.read((db) => profileEntries(db, a!.key))
+  expect(entries()).toEqual([
+    expect.objectContaining({ kind: "profile-confirmation", id: `${a!.key}:r1` }),
+  ])
+  confirmRevision(a!.repository, { projectKey: a!.key, revision: 1, by: "owner" })
+  expect(entries()).toEqual([])
 })
