@@ -34,7 +34,7 @@ export const tasksListSource = defineSource({
   table: `(SELECT t.project_directory AS project_directory, t.id AS id, t.rowid AS position,
       r.reference AS reference,
       json_extract(t.body,'$.proposal.objective') AS objective,
-      json_extract(t.body,'$.createdAt') AS createdAt,
+      t.created_at AS createdAt,
       json_extract(t.body,'$.provenance.sessionID') AS sessionID,
       json_extract(t.body,'$.revision') AS revision,
       ${latestNode("n.state")} AS nodeState,
