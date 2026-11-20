@@ -8,6 +8,10 @@ Define workflow states and transitions in XState. Reuse `lifecycleMachines` for
 runner lifecycles; do not introduce SQL-only transitions or implicit workflow
 states. See [runtime state machines](design/runtime-state-machines.md).
 
+Treat the database as the working set: query and page instead of loading history,
+store derived views and update them incrementally, read the host by cursor, and own
+per-project resources on the project core. See [data handling](design/data-handling.md).
+
 New isolated runner, adoption, retained-verification and combined-check worktrees
 use the OpenCode native API under `<canonical-project-root>.worktrees`. The canonical
 root is the OpenCode project root, not the current participant checkout or plugin
