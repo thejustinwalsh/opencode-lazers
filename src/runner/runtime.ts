@@ -11558,8 +11558,11 @@ export class TaskRuntime {
   private scopeOwners(plan: PlanRow, taskID: string): ScopeOwner[] {
     const finished = new Set(["accepted", "incorporated", "cancelled", "failed", "exhausted"])
     const ids = new Set<string>()
-    for (const node of this.store.nodes(plan.id))
-      if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
+    // Every unfinished plan of the project: a queued task has reserved its scope with no attempt yet.
+    for (const other of this.store.plans())
+      if (!["integrated", "cancelled"].includes(other.state))
+        for (const node of this.store.nodes(other.id))
+          if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
     for (const active of this.store.activeProjectAttempts())
       if (active.task_id !== taskID) ids.add(active.task_id)
     return [...ids].map((id) => ({
