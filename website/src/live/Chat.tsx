@@ -132,8 +132,11 @@ export function LiveChat() {
     <figure class="lc-figure">
       <LiveChatBody />
       <figcaption class="lc-note">
-        Nothing you type or say leaves this tab: the page only downloads the model, once, from
-        Hugging Face. The microphone is used only after you click it, only here.
+        Nothing you type or say leaves this tab: the page only downloads{" "}
+        <a href="https://huggingface.co/LiquidAI/LFM3-Omni-2B-GGUF">LFM3-Omni-2B</a> once from{" "}
+        <a href="https://huggingface.co">Hugging Face</a> and runs it locally on{" "}
+        <a href="https://docs.swmansion.com/runntime/">ruNNtime</a>. The microphone is used only
+        after you click it, only here.
       </figcaption>
     </figure>
   )

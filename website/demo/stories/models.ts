@@ -174,22 +174,23 @@ export default defineStory<ModelsData>({
     {
       name: "compare",
       caption:
-        "Compare plots each model by what its accepted tasks cost at the price source's rates, measured from your own runs.",
+        "Compare plots each model by real cost per accepted task—including retries—priced from your measured runs.",
     },
     {
       name: "inspect",
-      caption: "Selecting a model opens its cost per accepted task and the runs behind it.",
+      caption:
+        "Click any model point to inspect its average cost per accepted task and the individual task runs behind it.",
     },
     {
       name: "refresh",
       caption:
-        "A fresh price snapshot re-prices the same recorded usage: DeepSeek V4 Pro's tokens stay and its cost changes.",
+        "Refreshing prices re-evaluates recorded token usage against the latest catalog: DeepSeek V4 Pro's tokens stay fixed while its cost updates.",
       setup: [...deepseekOpen],
     },
     {
       name: "assign",
       caption:
-        "Assignments routes each agent to a model. Moving Implementor off Claude Opus 5.5 changes what its accepted tasks cost.",
+        "Assignments routes each role or persona to a provider and model—moving Implementor off Claude Opus 5.5 immediately shifts execution cost.",
       setup: [...deepseekOpen],
     },
   ],

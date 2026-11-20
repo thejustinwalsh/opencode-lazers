@@ -10,7 +10,9 @@ run() { name=$1; shift; printf '== %s\n' "$name"; if "$@" > "/tmp/lazers-gate-$n
 run verify bun run verify
 run runtime bun test $T src/runner/runtime.test.ts
 run runner sh -c "bun test $T \$(find src/runner -name '*.test.ts' -o -name '*.test.tsx' | grep -v '^src/runner/runtime.test.ts\$' | sort)"
-run audit bun test $T src/audit
+run audit sh -c "bun test $T \$(find src/audit -name '*.test.ts' | grep -v 'fallow-memory.test.ts' | sort)"
+# Measures the process's resident memory, so it needs a process of its own.
+run audit-memory bun test $T src/audit/wasm/fallow-memory.test.ts
 run src sh -c "bun test $T \$(find src -name '*.test.ts' -o -name '*.test.tsx' | grep -v -e '^src/runner/' -e '^src/audit/' | sort)"
 run test-scripts bun test $T ./test/ ./scripts/
 run website sh -c "cd website && bun test $T demo/test test"

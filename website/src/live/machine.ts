@@ -109,11 +109,11 @@ export const MODEL_SIZE_LABEL = gigabytes(MODEL_BYTES)
  *  is useful for; the transcript on screen is never trimmed. */
 export const CONTEXT_MESSAGES = 12
 
-export const INTRO_TEXT = `This is the local model running for real, in this tab. It is a small model, about 2 billion parameters, so expect short, plain answers and the odd mistake.
+export const INTRO_TEXT = `This is Liquid AI's LFM3-Omni-2B running live in this browser tab on WebGPU through ruNNtime. Because it's a compact ~2B-parameter model built for fast local assistance, expect brisk, plain answers—and the occasional small-model quirk.
 
-Type a message below, or click the microphone, talk, and click it again: your words are transcribed on this device and put in the message box. Replies are read aloud. Shift-click the speaker to turn that off.
+Type a prompt below, or click the microphone, talk, and click again: your speech is transcribed on this device and placed in the message box. Replies are read aloud automatically (Shift-click the speaker to mute auto-read).
 
-The first message downloads the model weights, ${MODEL_SIZE_LABEL}, once into this browser's storage. After that everything runs on this device's GPU. Nothing you type or say is sent to a server.`
+Your first action downloads the model weights (${MODEL_SIZE_LABEL}) once into browser storage. After that, text, speech-to-text, and text-to-speech run entirely on your GPU—nothing you type or say is ever sent to a server.`
 
 export function initialState(): ChatState {
   return {
