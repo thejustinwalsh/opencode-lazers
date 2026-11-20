@@ -71,7 +71,7 @@ export const DEMOS = {
   trajectory: {
     story: "trajectory",
     panel: "trajectory",
-    size: { width: 440, height: 660 },
+    size: { width: 440, height: 700 },
     summary:
       "The Trajectory panel: one task's recorded attempts on a timeline. The first attempt fails its tests, the second fills in and is accepted.",
     steps: [
@@ -79,14 +79,18 @@ export const DEMOS = {
         name: "pick",
         caption: "Trajectory opens on a task: the picker follows the session or the whole project.",
       },
-      { name: "live", caption: "A retry attempt fills in as the worker's calls are recorded." },
+      {
+        name: "live",
+        caption:
+          "A retry attempt fills in as the worker's calls are recorded; both checks pass and it is accepted.",
+      },
       {
         name: "inspect",
         caption: "Every mark opens its recorded detail; zoom separates calls seconds apart.",
       },
       {
         name: "settle",
-        caption: "Both checks pass and the attempt is accepted; its events stay filterable.",
+        caption: "Select the accepted attempt to read its summary; its events stay filterable.",
       },
     ],
   },
@@ -121,7 +125,7 @@ export const DEMOS = {
   local: {
     story: "local",
     panel: "local",
-    size: { width: 560, height: 150 },
+    size: { width: 560, height: 176 },
     summary:
       "The local inference indicator in the session header: hidden while off, then downloading, available, and working while a local decision runs.",
     steps: [

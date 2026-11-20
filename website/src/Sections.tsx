@@ -793,10 +793,11 @@ export function Checked() {
                 the suite and captures the receipt.
               </p>
               <p {...stylex.props(s.body)}>
-                LAZERS gates every task on executable verification commands and Fallow static
-                analysis for dead code, duplication, and complexity. Only after mechanical checks
-                pass does Architect review the diff and integrate it into your branch&mdash;under
-                your normal OpenCode permissions.
+                LAZERS runs your executable verification commands and a Fallow static-analysis audit
+                (dead code, duplication, complexity) on every task. A failing command stops the task
+                before review. Fallow findings go back to the worker once for a repair, and what
+                remains is reported to the Architect, who reviews the diff and integrates it into
+                your branch&mdash;under your normal OpenCode permissions.
               </p>
             </div>
           </div>
@@ -912,8 +913,15 @@ export function Local() {
             <p {...stylex.props(lc.statement)}>Optional. Off until you turn it on.</p>
             <div {...stylex.props(lc.copy)}>
               <p {...stylex.props(s.lead)}>
-                LAZERS can run a small model locally in OpenCode Desktop, on WebGPU through
-                ruNNtime. Architect, tasks and the panels work without it.
+                LAZERS can run a small model on your own GPU. It runs inside the OpenCode Desktop
+                window, on WebGPU through ruNNtime. Architect, tasks and the panels work without it.
+              </p>
+              <p {...stylex.props(s.body)}>
+                Nothing is installed or launched beside it: no separate process, no local server or
+                port, no native binary, no Python or llama runtime, no account or API key. The
+                weights download once into the plugin&rsquo;s cache and can be removed. It starts
+                and stops with the app, uses the GPU the machine already has, and turns off with one
+                switch.
               </p>
               <p {...stylex.props(s.body)}>
                 Local models take the small jobs: answering a question, making a typed decision,
@@ -929,6 +937,14 @@ export function Local() {
           <Demo def={DEMOS.local} label="Live demo of the local inference indicator" />
         </div>
         <dl aria-label="What local inference does" {...stylex.props(lc.facts)}>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>How it runs</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              OpenCode Desktop window &rarr; WebGPU (ruNNtime) &rarr; your GPU. No server, no extra
+              process. Inference runs on the device; only the one-time weight download uses the
+              network.
+            </dd>
+          </div>
           <div {...stylex.props(lc.fact)}>
             <dt {...stylex.props(lc.factKey)}>Switch</dt>
             <dd {...stylex.props(lc.factDef)}>

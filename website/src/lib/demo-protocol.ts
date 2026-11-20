@@ -12,6 +12,9 @@ export interface ChapterInfo {
   ms: number
 }
 
+/** The cursor shapes the page draws. */
+export type PointerKind = "default" | "pointer" | "text"
+
 /** iframe -> page */
 export type DemoMessage =
   | {
@@ -31,6 +34,8 @@ export type DemoMessage =
       y: number
       down: boolean
       off: boolean
+      /** The computed cursor kind under the pointer tip in the panel. */
+      cursor: PointerKind
     }
   | { demo: true; story: string; type: "end" }
 

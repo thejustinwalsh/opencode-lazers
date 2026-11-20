@@ -234,7 +234,7 @@ export default defineStory<TrajectoryData>({
   id: "trajectory",
   panel: "trajectory",
   title: "Trajectory",
-  size: { width: 440, height: 660 },
+  size: { width: 440, height: 700 },
   initial,
   chapters: [
     {
@@ -243,7 +243,9 @@ export default defineStory<TrajectoryData>({
     },
     {
       name: "live",
-      caption: "A retry attempt fills in as the worker's calls are recorded.",
+      caption:
+        "A retry attempt fills in as the worker's calls are recorded; both checks pass and it is accepted.",
+      setup: pick,
     },
     {
       name: "inspect",
@@ -252,23 +254,26 @@ export default defineStory<TrajectoryData>({
     },
     {
       name: "settle",
-      caption: "Both checks pass and the attempt is accepted; its events stay filterable.",
+      caption: "Select the accepted attempt to read its summary; its events stay filterable.",
       setup: [...pick, ...inspect],
     },
   ],
   steps: [
     { at: 0, chapter: "pick", data: frame(0, 0, 1), actions: [{ do: "wait", ms: 700 }, ...pick] },
+    // Data arrives only here, with no pointer. Everything has settled before the next chapter.
     { at: 6500, chapter: "live", data: frame(2, 0, 2) },
-    { at: 8000, data: frame(4, 0, 3) },
-    { at: 9500, data: frame(6, 0, 4) },
-    { at: 11000, data: frame(8, 0, 5) },
-    { at: 12500, data: frame(10, 0, 6) },
-    { at: 14000, chapter: "inspect", actions: inspect },
-    { at: 24000, chapter: "settle", data: frame(10, 1, 7) },
-    { at: 25500, data: frame(10, 2, 8) },
-    { at: 27000, data: frame(10, 3, 9) },
+    { at: 7500, data: frame(4, 0, 3) },
+    { at: 8500, data: frame(6, 0, 4) },
+    { at: 9500, data: frame(8, 0, 5) },
+    { at: 10500, data: frame(10, 0, 6) },
+    { at: 11500, data: frame(10, 1, 7) },
+    { at: 12500, data: frame(10, 2, 8) },
+    { at: 13500, data: frame(10, 3, 9) },
+    // The data is frozen from here: the pointer only inspects and zooms.
+    { at: 14500, chapter: "inspect", actions: inspect },
     {
-      at: 28000,
+      at: 24500,
+      chapter: "settle",
       actions: [
         { do: "click", sel: ".lazers-trajectory-attempt", nth: 1 },
         { do: "click", sel: ".lazers-kit-disclosure-toggle", nth: 0 },
@@ -276,5 +281,5 @@ export default defineStory<TrajectoryData>({
       ],
     },
   ],
-  end: 33500,
+  end: 31500,
 })

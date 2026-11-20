@@ -145,7 +145,7 @@ const c = stylex.create({
     display: "flex",
     alignItems: "center",
     justifyContent: { default: "center", [bp.wide]: "flex-start" },
-    minHeight: { default: 52, [bp.wide]: u(3.6) },
+    minHeight: { default: 52, [bp.wide]: `max(44px, ${u(3.6)})` },
     fontFamily: type.face,
     fontStretch: "68%",
     fontWeight: 800,

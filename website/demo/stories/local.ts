@@ -8,7 +8,7 @@ export default defineStory<LocalData>({
   id: "local",
   panel: "local",
   title: "Local inference",
-  size: { width: 560, height: 150 },
+  size: { width: 560, height: 176 },
   initial: { session, visible: false, phase: "disabled" },
   chapters: [
     {
