@@ -30,7 +30,7 @@ export function LiveChat() {
       ref={host}
       class="lc-hold"
       aria-hidden="true"
-      style={{ height: "clamp(480px, 74svh, 660px)" }}
+      style={{ height: "var(--lc-height)", maxHeight: "calc(100svh - 24px)" }}
     />
   )
 }

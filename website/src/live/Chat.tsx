@@ -4,7 +4,7 @@ import { ChatFrame } from "./ChatFrame"
 import type { Meter } from "./ChatFrame"
 import { primeAudio } from "./audio-context"
 import type { Controller } from "./controller"
-import { initialState, reduce } from "./machine"
+import { initialState, MODEL_SIZE_LABEL, reduce } from "./machine"
 import type { ChatEvent, ChatState, Effect } from "./machine"
 
 const Recorded = lazy(() => import("./Recorded"))
@@ -24,6 +24,18 @@ function useChat() {
   const run = useCallback((effect: Effect) => {
     if (effect.t === "focusComposer") {
       document.querySelector<HTMLTextAreaElement>(".lc-input")?.focus()
+      return
+    }
+    if (effect.t === "removeWeights") {
+      void import("./weights")
+        .then((m) => m.removeWeights())
+        .then((bytes) => dispatch({ t: "removed", bytes }))
+        .catch((error: unknown) =>
+          dispatch({
+            t: "removeFailed",
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        )
       return
     }
     if (!controller.current) {
@@ -57,6 +69,17 @@ function useChat() {
     },
     [run],
   )
+
+  // Development only (stripped from the build): layout tests put the chat into any state directly.
+  if (import.meta.env.DEV)
+    (window as unknown as { __lazersChat?: unknown }).__lazersChat = {
+      set(next: ChatState, nextMeter: Meter = null) {
+        live.current = next
+        setState(next)
+        setMeter(nextMeter)
+      },
+      get: () => live.current,
+    }
 
   // WebGPU is a synchronous property check; no runtime code is needed to say it is missing.
   useEffect(() => {
@@ -181,11 +204,29 @@ function LiveChatBody() {
         listRef={list}
         recordedOffer
         barExtra={
-          state.phase.name === "ready" ? (
-            <button type="button" class="lc-link" onClick={() => dispatch({ t: "unload" })}>
-              Unload
-            </button>
-          ) : null
+          <>
+            {state.phase.name === "ready" ? (
+              <button type="button" class="lc-link" onClick={() => dispatch({ t: "unload" })}>
+                Unload
+              </button>
+            ) : null}
+            {["idle", "ready", "failed"].includes(state.phase.name) ? (
+              <button
+                type="button"
+                class="lc-link"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Remove the downloaded model (${MODEL_SIZE_LABEL}) from this browser? It will download again the next time you use the chat.`,
+                    )
+                  )
+                    dispatch({ t: "removeModel" })
+                }}
+              >
+                Remove model
+              </button>
+            ) : null}
+          </>
         }
         onDraft={(text) => dispatch({ t: "draft", text })}
         onSend={() => {

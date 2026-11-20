@@ -10,6 +10,8 @@
   :root {
     /* Composition unit for the cover: 1vw, capped so the stage keeps a 16:10 height. */
     --u: min(1vw, 1.6svh);
+    /* The live chat frame (and its placeholder before it loads): 82% of the viewport, 300 to 680px. */
+    --lc-height: min(680px, max(300px, 82svh));
     color-scheme: light;
   }
   html {
