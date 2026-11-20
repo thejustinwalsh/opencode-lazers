@@ -1,3 +1,6 @@
+import type { RetainedVerificationPreparation } from "./retained-verification-preparation.ts"
+import type { RuntimeJournal } from "./runtime-journal.ts"
+import type { CheckActivities } from "./check-activities.ts"
 import { sameProject } from "../project-key.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs"
@@ -84,7 +87,7 @@ type RetainedCheckRun = {
   fence: number
   parentSignal: AbortSignal | undefined
   effectiveCheck: TaskProposal["verification"][number]
-  deadline: ReturnType<TaskRuntime["verificationDeadline"]>
+  deadline: ReturnType<CheckActivities["verificationDeadline"]>
   procedurePlan: Extract<ReturnType<typeof retainedProcedurePlan>, { status: "supported" }>["plan"]
   activityID: string
 }
@@ -110,28 +113,28 @@ function isTerminalRetainedState(state: string) {
 export class RetainedVerificationExecution {
   constructor(
     private readonly runtime: {
-      checkActivity: TaskRuntime["checkActivity"]
+      checkActivity: CheckActivities["checkActivity"]
       dataDirectory: TaskRuntime["dataDirectory"]
       directory: TaskRuntime["directory"]
       host: TaskRuntime["host"]
       now: TaskRuntime["now"]
-      observeRetainedRepairCandidate: TaskRuntime["observeRetainedRepairCandidate"]
-      outcome: TaskRuntime["outcome"]
+      observeRetainedRepairCandidate: RetainedVerificationPreparation["observeRetainedRepairCandidate"]
+      outcome: RuntimeJournal["outcome"]
       owner: TaskRuntime["owner"]
       projectID: TaskRuntime["projectID"]
       beforeRetainedCheckBegin: TaskRuntime["beforeRetainedCheckBegin"]
-      recoverCancelledRetainedChecks: TaskRuntime["recoverCancelledRetainedChecks"]
+      recoverCancelledRetainedChecks: CheckActivities["recoverCancelledRetainedChecks"]
       retainedDependencyInstaller: TaskRuntime["retainedDependencyInstaller"]
-      retainedRepairCandidateCurrent: TaskRuntime["retainedRepairCandidateCurrent"]
+      retainedRepairCandidateCurrent: RetainedVerificationPreparation["retainedRepairCandidateCurrent"]
       retainedVerificationAborts: TaskRuntime["retainedVerificationAborts"]
-      retainedVerificationWorkspacePath: TaskRuntime["retainedVerificationWorkspacePath"]
-      runVerificationCheck: TaskRuntime["runVerificationCheck"]
-      startCheckActivity: TaskRuntime["startCheckActivity"]
+      retainedVerificationWorkspacePath: RetainedVerificationPreparation["retainedVerificationWorkspacePath"]
+      runVerificationCheck: CheckActivities["runVerificationCheck"]
+      startCheckActivity: CheckActivities["startCheckActivity"]
       store: TaskRuntime["store"]
       terminalRetainedVerificationCleanupChecks: TaskRuntime["terminalRetainedVerificationCleanupChecks"]
       validArchitect: TaskRuntime["validArchitect"]
-      verificationDeadline: TaskRuntime["verificationDeadline"]
-      verificationTarget: TaskRuntime["verificationTarget"]
+      verificationDeadline: CheckActivities["verificationDeadline"]
+      verificationTarget: CheckActivities["verificationTarget"]
     },
   ) {}
 

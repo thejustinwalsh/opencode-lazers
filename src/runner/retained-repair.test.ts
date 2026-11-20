@@ -682,12 +682,12 @@ test("authorized interrupted-repair recovery uses the original mapped route and 
       .run(JSON.stringify(legacyPayload), firstResumeEvent.id),
   )
 
-  const internals = f.runtime as unknown as {
+  const internals = Reflect.get(f.runtime, "repairRecords") as {
     retainedRepairForAttempt: (candidate: AttemptRow) => { repairMessageID?: unknown } | undefined
   }
   const currentLookup = internals.retainedRepairForAttempt
   internals.retainedRepairForAttempt = (candidate) => {
-    const repair = currentLookup.call(f.runtime, candidate)
+    const repair = currentLookup.call(internals, candidate)
     return repair?.repairMessageID === candidate.message_id ? repair : undefined
   }
   try {

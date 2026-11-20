@@ -3,7 +3,7 @@ import { terminalPlanStates as terminal } from "./plan-control.ts"
 
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import { checkSettlementProblem, errorText } from "./runtime-helpers.ts"
-import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
+
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -280,9 +280,12 @@ export class TaskRuntime {
       progress: this.progress,
     }
     this.journal = new RuntimeJournal(this.core, {
-      workerObservationCurrent: (...args) => this.workerObservationCurrent(...args),
-      startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
-      startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
+      workerObservationCurrent: (...args) =>
+        this.workerObservation.workerObservationCurrent(...args),
+      startupRecoveryAuthorization: (...args) =>
+        this.startupSettlement.startupRecoveryAuthorization(...args),
+      startupRecoveryAuthorityCurrent: (...args) =>
+        this.startupSettlement.startupRecoveryAuthorityCurrent(...args),
       holdAdoption: (...args) => this.adoptionExecution.holdAdoption(...args),
     })
     this.checkActivities = new CheckActivities(this.core, {
@@ -291,43 +294,44 @@ export class TaskRuntime {
       retainedVerificationAborts: this.retainedVerificationAborts,
       retainedVerificationExecution: () => this.retainedVerificationExecution,
       adoptionExecution: () => this.adoptionExecution,
-      reconcileEffect: (...args) => this.reconcileEffect(...args),
+      reconcileEffect: (...args) => this.effectReconciliation.reconcileEffect(...args),
       checkProfile: (revisionID) => this.activeCheckProfile(revisionID),
     })
     this.verificationCandidate = new VerificationCandidate(this.core, {
-      hold: (...args) => this.hold(...args),
-      effect: (...args) => this.effect(...args),
-      outcome: (...args) => this.outcome(...args),
-      uncertain: (...args) => this.uncertain(...args),
-      checkActivity: (...args) => this.checkActivity(...args),
-      startCheckActivity: (...args) => this.startCheckActivity(...args),
-      verificationDeadline: (...args) => this.verificationDeadline(...args),
-      deadlineAwaitingTaskContinuation: (...args) => this.deadlineAwaitingTaskContinuation(...args),
-      verificationTarget: (...args) => this.verificationTarget(...args),
-      runVerificationCheck: (...args) => this.runVerificationCheck(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
-      failAttempt: (...args) => this.failAttempt(...args),
-      startAuditorReport: (...args) => this.startAuditorReport(...args),
+      hold: (...args) => this.journal.hold(...args),
+      effect: (...args) => this.journal.effect(...args),
+      outcome: (...args) => this.journal.outcome(...args),
+      uncertain: (...args) => this.journal.uncertain(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
+      startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
+      verificationDeadline: (...args) => this.checkActivities.verificationDeadline(...args),
+      deadlineAwaitingTaskContinuation: (...args) =>
+        this.checkActivities.deadlineAwaitingTaskContinuation(...args),
+      verificationTarget: (...args) => this.checkActivities.verificationTarget(...args),
+      runVerificationCheck: (...args) => this.checkActivities.runVerificationCheck(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      retainedRepairGeneration: (...args) => this.repairRecords.retainedRepairGeneration(...args),
+      failAttempt: (...args) => this.verificationReview.failAttempt(...args),
+      startAuditorReport: (...args) => this.verificationReview.startAuditorReport(...args),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
       activeProfile: () => activeProfile(this.store.repository, this.directory),
       profileRevision: (id) => profileRevisionByID(this.store.repository, id),
     })
     this.effectReconciliation = new EffectReconciliation(this.core, {
-      supersedeEffect: (...args) => this.supersedeEffect(...args),
-      uncertain: (...args) => this.uncertain(...args),
-      receipt: (...args) => this.receipt(...args),
-      checkActivity: (...args) => this.checkActivity(...args),
-      resumeStartupRecovery: (...args) => this.resumeStartupRecovery(...args),
+      supersedeEffect: (...args) => this.journal.supersedeEffect(...args),
+      uncertain: (...args) => this.journal.uncertain(...args),
+      receipt: (...args) => this.journal.receipt(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
+      resumeStartupRecovery: (...args) => this.startupSettlement.resumeStartupRecovery(...args),
       requestRetick: () => {
         this.tickRequested = true
       },
     })
     this.verificationReview = new VerificationReview(this.core, {
-      hold: (...args) => this.hold(...args),
-      effect: (...args) => this.effect(...args),
-      checkActivity: (...args) => this.checkActivity(...args),
-      startCheckActivity: (...args) => this.startCheckActivity(...args),
+      hold: (...args) => this.journal.hold(...args),
+      effect: (...args) => this.journal.effect(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
+      startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
       acceptVerifiedAttempt: (...args) => this.verificationCandidate.acceptVerifiedAttempt(...args),
       captureAutomaticFixes: (...args) => this.verificationCandidate.captureAutomaticFixes(...args),
       collectCheckReceipts: (...args) => this.verificationCandidate.collectCheckReceipts(...args),
@@ -340,8 +344,8 @@ export class TaskRuntime {
         this.verificationCandidate.verificationAwaitsTaskContinuation(...args),
       verificationCurrentGuard: (...args) =>
         this.verificationCandidate.verificationCurrentGuard(...args),
-      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      retainedRepairGeneration: (...args) => this.repairRecords.retainedRepairGeneration(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
       stampIdentity: (...args) => this.stampIdentity(...args),
       fallowReviewEnabled: this.fallowReviewEnabled,
       delegatedAgentCapacity: this.delegatedAgentCapacity,
@@ -350,19 +354,19 @@ export class TaskRuntime {
       auditorReportRun: options.auditorReportRun ?? defaultAuditorReport,
     })
     this.planFinish = new PlanFinish(this.core, {
-      effect: (...args) => this.effect(...args),
-      hold: (...args) => this.hold(...args),
-      outcome: (...args) => this.outcome(...args),
-      receipt: (...args) => this.receipt(...args),
-      uncertain: (...args) => this.uncertain(...args),
-      checkActivity: (...args) => this.checkActivity(...args),
-      startCheckActivity: (...args) => this.startCheckActivity(...args),
-      runVerificationCheck: (...args) => this.runVerificationCheck(...args),
-      verificationDeadline: (...args) => this.verificationDeadline(...args),
-      verificationTarget: (...args) => this.verificationTarget(...args),
-      missingEvidence: (...args) => this.missingEvidence(...args),
-      planFallowReview: (...args) => this.planFallowReview(...args),
-      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
+      effect: (...args) => this.journal.effect(...args),
+      hold: (...args) => this.journal.hold(...args),
+      outcome: (...args) => this.journal.outcome(...args),
+      receipt: (...args) => this.journal.receipt(...args),
+      uncertain: (...args) => this.journal.uncertain(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
+      startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
+      runVerificationCheck: (...args) => this.checkActivities.runVerificationCheck(...args),
+      verificationDeadline: (...args) => this.checkActivities.verificationDeadline(...args),
+      verificationTarget: (...args) => this.checkActivities.verificationTarget(...args),
+      missingEvidence: (...args) => this.verificationReview.missingEvidence(...args),
+      planFallowReview: (...args) => this.verificationReview.planFallowReview(...args),
+      retainedRepairGeneration: (...args) => this.repairRecords.retainedRepairGeneration(...args),
     })
     this.ownership = new ArchitectOwnership(this.core, {
       architectRouting: this.architectRouting,
@@ -370,26 +374,29 @@ export class TaskRuntime {
     })
     this.repairRecords = new RetainedRepairRecords(this.core, {
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
     })
     this.retainedVerificationPrep = new RetainedVerificationPreparation(this.core, {
-      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
-      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
-      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      retainedAttemptModel: (...args) => this.repairRecords.retainedAttemptModel(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
+      retainedRepairObservation: (...args) => this.repairRecords.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) =>
+        this.repairRecords.retainedRepairWorkerProblem(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.retainedRepairPreparation = new RetainedRepairPreparation(this.core, {
-      transitionHistory: (...args) => this.transitionHistory(...args),
-      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
-      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
-      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
-      retainedRepairBackgroundProblem: (...args) => this.retainedRepairBackgroundProblem(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
+      transitionHistory: (...args) => this.repairRecords.transitionHistory(...args),
+      retainedAttemptModel: (...args) => this.repairRecords.retainedAttemptModel(...args),
+      retainedRepairObservation: (...args) => this.repairRecords.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) =>
+        this.repairRecords.retainedRepairWorkerProblem(...args),
+      retainedRepairBackgroundProblem: (...args) =>
+        this.repairRecords.retainedRepairBackgroundProblem(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      matchesWorkerInput: (...args) => this.workerObservation.matchesWorkerInput(...args),
       parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
@@ -398,37 +405,39 @@ export class TaskRuntime {
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.startupSettlement = new StartupSettlement(this.core, {
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      effect: (...args) => this.effect(...args),
-      uncertain: (...args) => this.uncertain(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      effect: (...args) => this.journal.effect(...args),
+      uncertain: (...args) => this.journal.uncertain(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.continuationPreparation = new ContinuationPreparation(this.core, {
-      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
-      interruptedChecksFor: (...args) => this.interruptedChecksFor(...args),
-      prepareRetainedRepairRecovery: (...args) => this.prepareRetainedRepairRecovery(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      matchesWorkerInput: (...args) => this.workerObservation.matchesWorkerInput(...args),
+      interruptedChecksFor: (...args) => this.planStep.interruptedChecksFor(...args),
+      prepareRetainedRepairRecovery: (...args) =>
+        this.retainedRepairPreparation.prepareRetainedRepairRecovery(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.workerPreparation = new WorkerPreparation(this.core, {
-      effect: (...args) => this.effect(...args),
-      hold: (...args) => this.hold(...args),
-      receipt: (...args) => this.receipt(...args),
-      uncertain: (...args) => this.uncertain(...args),
-      promptAdmissionAllowed: (...args) => this.promptAdmissionAllowed(...args),
-      repairFailureBrief: (...args) => this.repairFailureBrief(...args),
-      startAuditorReport: (...args) => this.startAuditorReport(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
-      retainedRepairPromptCurrent: (...args) => this.retainedRepairPromptCurrent(...args),
-      sessionTitle: (...args) => this.sessionTitle(...args),
-      startupWorkspaceReady: (...args) => this.startupWorkspaceReady(...args),
-      workerEvent: (...args) => this.workerEvent(...args),
+      effect: (...args) => this.journal.effect(...args),
+      hold: (...args) => this.journal.hold(...args),
+      receipt: (...args) => this.journal.receipt(...args),
+      uncertain: (...args) => this.journal.uncertain(...args),
+      promptAdmissionAllowed: (...args) => this.dispatchModule.promptAdmissionAllowed(...args),
+      repairFailureBrief: (...args) => this.verificationReview.repairFailureBrief(...args),
+      startAuditorReport: (...args) => this.verificationReview.startAuditorReport(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
+      retainedRepairPromptCurrent: (...args) =>
+        this.repairRecords.retainedRepairPromptCurrent(...args),
+      sessionTitle: (...args) => this.ownership.sessionTitle(...args),
+      startupWorkspaceReady: (...args) => this.startupSettlement.startupWorkspaceReady(...args),
+      workerEvent: (...args) => this.workerObservation.workerEvent(...args),
       parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
-      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
+      ensureArchitectOwner: (...args) => this.ownership.ensureArchitectOwner(...args),
       host: this.host,
       owner: this.owner,
       projectID: this.projectID,
@@ -438,7 +447,7 @@ export class TaskRuntime {
     })
     this.queueReview = new QueueReview(this.core, {
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
-      outcome: (...args) => this.outcome(...args),
+      outcome: (...args) => this.journal.outcome(...args),
       fallowGate: (...args) => this.fallowGate(...args),
       outcomeDelivery: this.outcomeDelivery,
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
@@ -458,7 +467,7 @@ export class TaskRuntime {
       validArchitect: this.validArchitect.bind(this),
       handoff: new HandoffStore(this.store.repository),
       notify: (planID, result) =>
-        this.outcome(planID, { status: "takeover-ready", takeover: result }, true),
+        this.journal.outcome(planID, { status: "takeover-ready", takeover: result }, true),
       holdSlot: (db, attempt, attemptID, fromAttemptID) =>
         this.delegatedAgentCapacity.holdTaskSlotInTransaction(
           db,
@@ -475,9 +484,10 @@ export class TaskRuntime {
       ...(options.takeoverPollMs === undefined ? {} : { pollMs: options.takeoverPollMs }),
     })
     this.commandsControl = new CommandsControl(this.core, {
-      hold: (...args) => this.hold(...args),
-      resolveTaskDispatchRoute: (...args) => this.resolveTaskDispatchRoute(...args),
-      assertNoDispatchedDependents: (...args) => this.assertNoDispatchedDependents(...args),
+      hold: (...args) => this.journal.hold(...args),
+      resolveTaskDispatchRoute: (...args) => this.dispatchModule.resolveTaskDispatchRoute(...args),
+      assertNoDispatchedDependents: (...args) =>
+        this.retainedRepairPreparation.assertNoDispatchedDependents(...args),
       requestRetick: () => {
         this.tickRequested = true
       },
@@ -487,64 +497,82 @@ export class TaskRuntime {
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.commandsScope = new CommandsScope(this.core, {
-      repairAvailable: (...args) => this.repairAvailable(...args),
+      repairAvailable: (...args) => this.verificationReview.repairAvailable(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.commandsRetained = new CommandsRetained(this.core, {
-      assertNoDispatchedDependents: (...args) => this.assertNoDispatchedDependents(...args),
-      retainedRepairAttemptAccepted: (...args) => this.retainedRepairAttemptAccepted(...args),
-      retainedRepairRecoveryCurrent: (...args) => this.retainedRepairRecoveryCurrent(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
+      assertNoDispatchedDependents: (...args) =>
+        this.retainedRepairPreparation.assertNoDispatchedDependents(...args),
+      retainedRepairAttemptAccepted: (...args) =>
+        this.retainedRepairPreparation.retainedRepairAttemptAccepted(...args),
+      retainedRepairRecoveryCurrent: (...args) =>
+        this.retainedRepairPreparation.retainedRepairRecoveryCurrent(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      retainedAttemptModel: (...args) => this.repairRecords.retainedAttemptModel(...args),
       assertRetainedVerificationScopeAvailable: (...args) =>
-        this.assertRetainedVerificationScopeAvailable(...args),
-      retainedRepairCandidateCurrent: (...args) => this.retainedRepairCandidateCurrent(...args),
+        this.retainedVerificationPrep.assertRetainedVerificationScopeAvailable(...args),
+      retainedRepairCandidateCurrent: (...args) =>
+        this.retainedVerificationPrep.retainedRepairCandidateCurrent(...args),
       retainedVerificationWorkspacePath: (...args) =>
-        this.retainedVerificationWorkspacePath(...args),
-      assertStartupSettlementCurrent: (...args) => this.assertStartupSettlementCurrent(...args),
+        this.retainedVerificationPrep.retainedVerificationWorkspacePath(...args),
+      assertStartupSettlementCurrent: (...args) =>
+        this.startupSettlement.assertStartupSettlementCurrent(...args),
       delegatedAgentCapacity: this.delegatedAgentCapacity,
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.commandsRecovery = new CommandsRecovery(this.core, {
-      assertTerminalContinuation: (...args) => this.assertTerminalContinuation(...args),
-      commandRecoverRetainedRepair: (...args) => this.commandRecoverRetainedRepair(...args),
-      interruptedChecksFor: (...args) => this.interruptedChecksFor(...args),
-      settledStartupEffect: (...args) => this.settledStartupEffect(...args),
-      hasMeaningfulWorkerProgress: (...args) => this.hasMeaningfulWorkerProgress(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      assertTerminalContinuation: (...args) =>
+        this.continuationPreparation.assertTerminalContinuation(...args),
+      commandRecoverRetainedRepair: (...args) =>
+        this.commandsRetained.commandRecoverRetainedRepair(...args),
+      interruptedChecksFor: (...args) => this.planStep.interruptedChecksFor(...args),
+      settledStartupEffect: (...args) => this.startupSettlement.settledStartupEffect(...args),
+      hasMeaningfulWorkerProgress: (...args) =>
+        this.startupSettlement.hasMeaningfulWorkerProgress(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
       delegatedAgentCapacity: this.delegatedAgentCapacity,
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.commandPipeline = new CommandPipeline(this.core, {
-      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
-      assertSchedulerActive: (...args) => this.assertSchedulerActive(...args),
-      cleanupAuditDiagnostics: (...args) => this.cleanupAuditDiagnostics(...args),
-      assertCombinedVerificationResume: (...args) => this.assertCombinedVerificationResume(...args),
-      prepareResumeContinuation: (...args) => this.prepareResumeContinuation(...args),
-      prepareStartupSettlement: (...args) => this.prepareStartupSettlement(...args),
-      prepareAdoption: (...args) => this.prepareAdoption(...args),
-      prepareRetainedRepair: (...args) => this.prepareRetainedRepair(...args),
-      prepareReviewInputReconciliation: (...args) => this.prepareReviewInputReconciliation(...args),
-      retainedRepairRecoveryCurrent: (...args) => this.retainedRepairRecoveryCurrent(...args),
-      prepareRetainedVerification: (...args) => this.prepareRetainedVerification(...args),
-      observeRetainedRepairCandidate: (...args) => this.observeRetainedRepairCandidate(...args),
-      retainedRepairBackgroundProblem: (...args) => this.retainedRepairBackgroundProblem(...args),
-      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
-      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      commandRun: (...args) => this.commandRun(...args),
-      commandCancel: (...args) => this.commandCancel(...args),
-      commandReassign: (...args) => this.commandReassign(...args),
-      commandTakeoverSubmit: (...args) => this.commandTakeoverSubmit(...args),
-      commandAmendScope: (...args) => this.commandAmendScope(...args),
-      commandSendBackDivergence: (...args) => this.commandSendBackDivergence(...args),
-      divergenceHold: (...args) => this.divergenceHold(...args),
-      commandAdoptDescendant: (...args) => this.commandAdoptDescendant(...args),
-      commandVerifyRetained: (...args) => this.commandVerifyRetained(...args),
-      commandSettleStartup: (...args) => this.commandSettleStartup(...args),
-      commandRetainedRepair: (...args) => this.commandRetainedRepair(...args),
-      commandReconcile: (...args) => this.commandReconcile(...args),
-      commandResumeOrRetry: (...args) => this.commandResumeOrRetry(...args),
+      ensureArchitectOwner: (...args) => this.ownership.ensureArchitectOwner(...args),
+      assertSchedulerActive: (...args) => this.sources.assertSchedulerActive(...args),
+      cleanupAuditDiagnostics: (...args) => this.cleanupAudit.cleanupAuditDiagnostics(...args),
+      assertCombinedVerificationResume: (...args) =>
+        this.continuationPreparation.assertCombinedVerificationResume(...args),
+      prepareResumeContinuation: (...args) =>
+        this.continuationPreparation.prepareResumeContinuation(...args),
+      prepareStartupSettlement: (...args) =>
+        this.startupSettlement.prepareStartupSettlement(...args),
+      prepareAdoption: (...args) => this.adoptionPreparation.prepareAdoption(...args),
+      prepareRetainedRepair: (...args) =>
+        this.retainedRepairPreparation.prepareRetainedRepair(...args),
+      prepareReviewInputReconciliation: (...args) =>
+        this.retainedRepairPreparation.prepareReviewInputReconciliation(...args),
+      retainedRepairRecoveryCurrent: (...args) =>
+        this.retainedRepairPreparation.retainedRepairRecoveryCurrent(...args),
+      prepareRetainedVerification: (...args) =>
+        this.retainedVerificationPrep.prepareRetainedVerification(...args),
+      observeRetainedRepairCandidate: (...args) =>
+        this.retainedVerificationPrep.observeRetainedRepairCandidate(...args),
+      retainedRepairBackgroundProblem: (...args) =>
+        this.repairRecords.retainedRepairBackgroundProblem(...args),
+      retainedRepairObservation: (...args) => this.repairRecords.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) =>
+        this.repairRecords.retainedRepairWorkerProblem(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      commandRun: (...args) => this.commandsControl.commandRun(...args),
+      commandCancel: (...args) => this.commandsControl.commandCancel(...args),
+      commandReassign: (...args) => this.commandsControl.commandReassign(...args),
+      commandTakeoverSubmit: (...args) => this.commandsControl.commandTakeoverSubmit(...args),
+      commandAmendScope: (...args) => this.commandsScope.commandAmendScope(...args),
+      commandSendBackDivergence: (...args) => this.commandsScope.commandSendBackDivergence(...args),
+      divergenceHold: (...args) => this.commandsScope.divergenceHold(...args),
+      commandAdoptDescendant: (...args) => this.commandsRetained.commandAdoptDescendant(...args),
+      commandVerifyRetained: (...args) => this.commandsRetained.commandVerifyRetained(...args),
+      commandSettleStartup: (...args) => this.commandsRetained.commandSettleStartup(...args),
+      commandRetainedRepair: (...args) => this.commandsRetained.commandRetainedRepair(...args),
+      commandReconcile: (...args) => this.commandsRecovery.commandReconcile(...args),
+      commandResumeOrRetry: (...args) => this.commandsRecovery.commandResumeOrRetry(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
       requestTick: this.requestTick,
       wakeScheduler: this.wakeScheduler,
@@ -558,7 +586,7 @@ export class TaskRuntime {
       now: this.now,
       validArchitect: this.validArchitect.bind(this),
       ensureArchitectOwner: (plan, previous, adopt) =>
-        this.ensureArchitectOwner(plan, previous, adopt),
+        this.ownership.ensureArchitectOwner(plan, previous, adopt),
     })
     this.worktreeCleanup = new WorktreeCleanup({
       adoptionCheckReceiptMatches: (...args) =>
@@ -567,10 +595,10 @@ export class TaskRuntime {
         this.adoptionExecution.adoptionCheckInputMatches(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
       directory: this.directory,
-      effect: (...args) => this.effect(...args),
+      effect: (...args) => this.journal.effect(...args),
       host: this.host,
       now: (...args) => this.now(...args),
-      outcome: (...args) => this.outcome(...args),
+      outcome: (...args) => this.journal.outcome(...args),
       owner: this.owner,
       progress: this.progress,
       projectID: this.projectID,
@@ -578,81 +606,92 @@ export class TaskRuntime {
       timed: (name, run) => this.timed(name, run),
     })
     this.adoptionExecution = new AdoptionExecution({
-      adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
-      adoptionWorkerIdle: (...args) => this.adoptionWorkerIdle(...args),
-      checkActivity: (...args) => this.checkActivity(...args),
+      adoptionArtifactScopeViolations: (...args) =>
+        this.adoptionPreparation.adoptionArtifactScopeViolations(...args),
+      adoptionWorkerIdle: (...args) => this.adoptionPreparation.adoptionWorkerIdle(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
       checkProfile: () => this.activeCheckProfile(),
-      conflictingActiveAttempt: (...args) => this.conflictingActiveAttempt(...args),
-      currentAdoptionInputFingerprint: (...args) => this.currentAdoptionInputFingerprint(...args),
+      conflictingActiveAttempt: (...args) =>
+        this.adoptionPreparation.conflictingActiveAttempt(...args),
+      currentAdoptionInputFingerprint: (...args) =>
+        this.adoptionPreparation.currentAdoptionInputFingerprint(...args),
       dataDirectory: this.dataDirectory,
       directory: this.directory,
-      effect: (...args) => this.effect(...args),
+      effect: (...args) => this.journal.effect(...args),
       host: this.host,
-      missingEvidence: (...args) => this.missingEvidence(...args),
-      outcome: (...args) => this.outcome(...args),
+      missingEvidence: (...args) => this.verificationReview.missingEvidence(...args),
+      outcome: (...args) => this.journal.outcome(...args),
       owner: this.owner,
       projectID: this.projectID,
-      receipt: (...args) => this.receipt(...args),
-      reconcileEffect: (...args) => this.reconcileEffect(...args),
-      reviewedAdoptionBaseline: (...args) => this.reviewedAdoptionBaseline(...args),
-      startCheckActivity: (...args) => this.startCheckActivity(...args),
+      receipt: (...args) => this.journal.receipt(...args),
+      reconcileEffect: (...args) => this.effectReconciliation.reconcileEffect(...args),
+      reviewedAdoptionBaseline: (...args) =>
+        this.adoptionPreparation.reviewedAdoptionBaseline(...args),
+      startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
     })
     this.retainedVerificationExecution = new RetainedVerificationExecution({
-      checkActivity: (...args) => this.checkActivity(...args),
+      checkActivity: (...args) => this.checkActivities.checkActivity(...args),
       dataDirectory: this.dataDirectory,
       directory: this.directory,
       host: this.host,
       now: (...args) => this.now(...args),
-      observeRetainedRepairCandidate: (...args) => this.observeRetainedRepairCandidate(...args),
-      outcome: (...args) => this.outcome(...args),
+      observeRetainedRepairCandidate: (...args) =>
+        this.retainedVerificationPrep.observeRetainedRepairCandidate(...args),
+      outcome: (...args) => this.journal.outcome(...args),
       owner: this.owner,
       projectID: this.projectID,
       beforeRetainedCheckBegin: this.beforeRetainedCheckBegin,
-      recoverCancelledRetainedChecks: (...args) => this.recoverCancelledRetainedChecks(...args),
+      recoverCancelledRetainedChecks: (...args) =>
+        this.checkActivities.recoverCancelledRetainedChecks(...args),
       retainedDependencyInstaller: this.retainedDependencyInstaller,
-      retainedRepairCandidateCurrent: (...args) => this.retainedRepairCandidateCurrent(...args),
+      retainedRepairCandidateCurrent: (...args) =>
+        this.retainedVerificationPrep.retainedRepairCandidateCurrent(...args),
       retainedVerificationAborts: this.retainedVerificationAborts,
       retainedVerificationWorkspacePath: (...args) =>
-        this.retainedVerificationWorkspacePath(...args),
-      runVerificationCheck: (...args) => this.runVerificationCheck(...args),
-      startCheckActivity: (...args) => this.startCheckActivity(...args),
+        this.retainedVerificationPrep.retainedVerificationWorkspacePath(...args),
+      runVerificationCheck: (...args) => this.checkActivities.runVerificationCheck(...args),
+      startCheckActivity: (...args) => this.checkActivities.startCheckActivity(...args),
       store: this.store,
       terminalRetainedVerificationCleanupChecks: this.terminalRetainedVerificationCleanupChecks,
       validArchitect: this.validArchitect.bind(this),
-      verificationDeadline: (...args) => this.verificationDeadline(...args),
-      verificationTarget: (...args) => this.verificationTarget(...args),
+      verificationDeadline: (...args) => this.checkActivities.verificationDeadline(...args),
+      verificationTarget: (...args) => this.checkActivities.verificationTarget(...args),
     })
     this.planStep = new PlanStep(this.core, {
-      advanceAttempt: (...args) => this.advanceAttempt(...args),
-      architectRoute: (...args) => this.architectRoute(...args),
-      recordArchitectRoute: (...args) => this.recordArchitectRoute(...args),
-      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
-      cancelCheckActivities: (...args) => this.cancelCheckActivities(...args),
+      advanceAttempt: (...args) => this.attemptAdvance.advanceAttempt(...args),
+      architectRoute: (...args) => this.ownership.architectRoute(...args),
+      recordArchitectRoute: (...args) => this.ownership.recordArchitectRoute(...args),
+      ensureArchitectOwner: (...args) => this.ownership.ensureArchitectOwner(...args),
+      cancelCheckActivities: (...args) => this.checkActivities.cancelCheckActivities(...args),
       reconcileCancelledCheckActivities: (...args) =>
-        this.reconcileCancelledCheckActivities(...args),
-      recoverCancelledRetainedChecks: (...args) => this.recoverCancelledRetainedChecks(...args),
-      retainedCheckSettlementProblem: (...args) => this.retainedCheckSettlementProblem(...args),
-      cancelReservedAttempt: (...args) => this.cancelReservedAttempt(...args),
-      cancelWorkers: (...args) => this.cancelWorkers(...args),
+        this.checkActivities.reconcileCancelledCheckActivities(...args),
+      recoverCancelledRetainedChecks: (...args) =>
+        this.checkActivities.recoverCancelledRetainedChecks(...args),
+      retainedCheckSettlementProblem: (...args) =>
+        this.checkActivities.retainedCheckSettlementProblem(...args),
+      cancelReservedAttempt: (...args) => this.cancellation.cancelReservedAttempt(...args),
+      cancelWorkers: (...args) => this.cancellation.cancelWorkers(...args),
       command: (...args) => this.command(...args),
-      considerArchitectRenewal: (...args) => this.considerArchitectRenewal(...args),
-      continueArchitectRenewal: (...args) => this.continueArchitectRenewal(...args),
-      dispatch: (...args) => this.dispatch(...args),
-      integratedPrerequisiteBaseline: (...args) => this.integratedPrerequisiteBaseline(...args),
-      preparationAllowed: (...args) => this.preparationAllowed(...args),
-      taskDependencyIDs: (...args) => this.taskDependencyIDs(...args),
-      taskDependencyIntegration: (...args) => this.taskDependencyIntegration(...args),
-      finish: (...args) => this.finish(...args),
-      hold: (...args) => this.hold(...args),
-      outcome: (...args) => this.outcome(...args),
-      holdAbandonedTakeover: (...args) => this.holdAbandonedTakeover(...args),
-      reconcileEffect: (...args) => this.reconcileEffect(...args),
-      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
-      settledStartupEffect: (...args) => this.settledStartupEffect(...args),
-      verify: (...args) => this.verify(...args),
+      considerArchitectRenewal: (...args) => this.renewal.considerArchitectRenewal(...args),
+      continueArchitectRenewal: (...args) => this.renewal.continueArchitectRenewal(...args),
+      dispatch: (...args) => this.dispatchModule.dispatch(...args),
+      integratedPrerequisiteBaseline: (...args) =>
+        this.dispatchModule.integratedPrerequisiteBaseline(...args),
+      preparationAllowed: (...args) => this.dispatchModule.preparationAllowed(...args),
+      taskDependencyIDs: (...args) => this.dispatchModule.taskDependencyIDs(...args),
+      taskDependencyIntegration: (...args) =>
+        this.dispatchModule.taskDependencyIntegration(...args),
+      finish: (...args) => this.planFinish.finish(...args),
+      hold: (...args) => this.journal.hold(...args),
+      outcome: (...args) => this.journal.outcome(...args),
+      holdAbandonedTakeover: (...args) => this.commandsControl.holdAbandonedTakeover(...args),
+      reconcileEffect: (...args) => this.effectReconciliation.reconcileEffect(...args),
+      retainedRepairForAttempt: (...args) => this.repairRecords.retainedRepairForAttempt(...args),
+      settledStartupEffect: (...args) => this.startupSettlement.settledStartupEffect(...args),
+      verify: (...args) => this.verificationReview.verify(...args),
       requestRetick: () => {
         this.tickRequested = true
       },
@@ -676,13 +715,15 @@ export class TaskRuntime {
       modelMappingResolver: this.modelMappingResolver,
       fallowReviewEnabled: this.fallowReviewEnabled,
       fallowGate: () => this.fallowGate(),
-      prepareWorker: (...args) => this.prepareWorker(...args),
-      startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
-      startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
+      prepareWorker: (...args) => this.workerPreparation.prepareWorker(...args),
+      startupRecoveryAuthorization: (...args) =>
+        this.startupSettlement.startupRecoveryAuthorization(...args),
+      startupRecoveryAuthorityCurrent: (...args) =>
+        this.startupSettlement.startupRecoveryAuthorityCurrent(...args),
       journal: this.journal,
     })
     this.workerObservation = new WorkerObservation(this.core, {
-      sameModel: (...args) => this.sameModel(...args),
+      sameModel: (...args) => this.repairRecords.sameModel(...args),
       journal: this.journal,
     })
     this.cleanupAudit = new CleanupAudit(this.core)
@@ -690,17 +731,17 @@ export class TaskRuntime {
       autoResumeInterrupted: this.autoResumeInterrupted,
       workerNoProgressWindowMs: this.workerNoProgressWindowMs,
       command: (...args) => this.command(...args),
-      prepareWorker: (...args) => this.prepareWorker(...args),
-      verify: (...args) => this.verify(...args),
-      failAttempt: (...args) => this.failAttempt(...args),
+      prepareWorker: (...args) => this.workerPreparation.prepareWorker(...args),
+      verify: (...args) => this.verificationReview.verify(...args),
+      failAttempt: (...args) => this.verificationReview.failAttempt(...args),
       validArchitect: this.validArchitect.bind(this),
-      observeUsage: (...args) => this.observeUsage(...args),
+      observeUsage: (...args) => this.dispatchModule.observeUsage(...args),
       journal: this.journal,
       workerObservation: this.workerObservation,
     })
     this.cancellation = new Cancellation(this.core, {
       cancelIdleWaitMs: this.cancelIdleWaitMs,
-      observeUsage: (...args) => this.observeUsage(...args),
+      observeUsage: (...args) => this.dispatchModule.observeUsage(...args),
       journal: this.journal,
       workerObservation: this.workerObservation,
     })
@@ -749,10 +790,6 @@ export class TaskRuntime {
     return join(dirname(this.store.repository.path), "runner")
   }
 
-  private startCheckActivity(...args: Parameters<CheckActivities["startCheckActivity"]>) {
-    return this.checkActivities.startCheckActivity(...args)
-  }
-
   /** The profile for a check run: a verify effect's pinned revision, else the active one. */
   private activeCheckProfile(revisionID?: number) {
     const active =
@@ -762,232 +799,12 @@ export class TaskRuntime {
     return active ? checkRunProfile(active) : undefined
   }
 
-  private checkActivity(...args: Parameters<CheckActivities["checkActivity"]>) {
-    return this.checkActivities.checkActivity(...args)
-  }
-
-  private verificationDeadline(...args: Parameters<CheckActivities["verificationDeadline"]>) {
-    return this.checkActivities.verificationDeadline(...args)
-  }
-
-  private deadlineAwaitingTaskContinuation(
-    ...args: Parameters<CheckActivities["deadlineAwaitingTaskContinuation"]>
-  ) {
-    return this.checkActivities.deadlineAwaitingTaskContinuation(...args)
-  }
-
-  private verificationTarget(...args: Parameters<CheckActivities["verificationTarget"]>) {
-    return this.checkActivities.verificationTarget(...args)
-  }
-
-  private runVerificationCheck(...args: Parameters<CheckActivities["runVerificationCheck"]>) {
-    return this.checkActivities.runVerificationCheck(...args)
-  }
-
-  private cancelCheckActivities(...args: Parameters<CheckActivities["cancelCheckActivities"]>) {
-    return this.checkActivities.cancelCheckActivities(...args)
-  }
-
-  private retainedCheckSettlementProblem(
-    ...args: Parameters<CheckActivities["retainedCheckSettlementProblem"]>
-  ) {
-    return this.checkActivities.retainedCheckSettlementProblem(...args)
-  }
-
-  private reconcileCancelledCheckActivities(
-    ...args: Parameters<CheckActivities["reconcileCancelledCheckActivities"]>
-  ) {
-    return this.checkActivities.reconcileCancelledCheckActivities(...args)
-  }
-
-  private settleCancelledRetainedActivity(
-    ...args: Parameters<CheckActivities["settleCancelledRetainedActivity"]>
-  ) {
-    return this.checkActivities.settleCancelledRetainedActivity(...args)
-  }
-
-  private recoverCancelledRetainedChecks(
-    ...args: Parameters<CheckActivities["recoverCancelledRetainedChecks"]>
-  ) {
-    return this.checkActivities.recoverCancelledRetainedChecks(...args)
-  }
-
   readScheduling(input: SchedulingInput): Promise<SchedulingPage> {
     return this.schedulingRead.read(input)
   }
 
-  private retainedVerificationWorkspacePath(
-    ...args: Parameters<RetainedVerificationPreparation["retainedVerificationWorkspacePath"]>
-  ) {
-    return this.retainedVerificationPrep.retainedVerificationWorkspacePath(...args)
-  }
-
-  private currentAdoptionInputFingerprint(
-    ...args: Parameters<AdoptionPreparation["currentAdoptionInputFingerprint"]>
-  ) {
-    return this.adoptionPreparation.currentAdoptionInputFingerprint(...args)
-  }
-
-  private conflictingActiveAttempt(
-    ...args: Parameters<AdoptionPreparation["conflictingActiveAttempt"]>
-  ) {
-    return this.adoptionPreparation.conflictingActiveAttempt(...args)
-  }
-
-  private reviewedAdoptionBaseline(
-    ...args: Parameters<AdoptionPreparation["reviewedAdoptionBaseline"]>
-  ) {
-    return this.adoptionPreparation.reviewedAdoptionBaseline(...args)
-  }
-
-  private adoptionArtifactScopeViolations(
-    ...args: Parameters<AdoptionPreparation["adoptionArtifactScopeViolations"]>
-  ) {
-    return this.adoptionPreparation.adoptionArtifactScopeViolations(...args)
-  }
-
-  private adoptionWorkerIdle(...args: Parameters<AdoptionPreparation["adoptionWorkerIdle"]>) {
-    return this.adoptionPreparation.adoptionWorkerIdle(...args)
-  }
-
-  private prepareAdoption(...args: Parameters<AdoptionPreparation["prepareAdoption"]>) {
-    return this.adoptionPreparation.prepareAdoption(...args)
-  }
-
-  private retainedRepairCandidateCurrent(
-    ...args: Parameters<RetainedVerificationPreparation["retainedRepairCandidateCurrent"]>
-  ) {
-    return this.retainedVerificationPrep.retainedRepairCandidateCurrent(...args)
-  }
-
-  private observeRetainedRepairCandidate(
-    ...args: Parameters<RetainedVerificationPreparation["observeRetainedRepairCandidate"]>
-  ) {
-    return this.retainedVerificationPrep.observeRetainedRepairCandidate(...args)
-  }
-
-  private assertRetainedVerificationScopeAvailable(
-    ...args: Parameters<RetainedVerificationPreparation["assertRetainedVerificationScopeAvailable"]>
-  ) {
-    return this.retainedVerificationPrep.assertRetainedVerificationScopeAvailable(...args)
-  }
-
-  private prepareRetainedVerification(
-    ...args: Parameters<RetainedVerificationPreparation["prepareRetainedVerification"]>
-  ) {
-    return this.retainedVerificationPrep.prepareRetainedVerification(...args)
-  }
-
-  private sameModel(...args: Parameters<RetainedRepairRecords["sameModel"]>) {
-    return this.repairRecords.sameModel(...args)
-  }
-
-  private retainedAttemptModel(...args: Parameters<RetainedRepairRecords["retainedAttemptModel"]>) {
-    return this.repairRecords.retainedAttemptModel(...args)
-  }
-
-  private retainedRepairObservation(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairObservation"]>
-  ) {
-    return this.repairRecords.retainedRepairObservation(...args)
-  }
-
-  private retainedRepairWorkerProblem(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairWorkerProblem"]>
-  ) {
-    return this.repairRecords.retainedRepairWorkerProblem(...args)
-  }
-
-  private retainedRepairBackgroundProblem(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairBackgroundProblem"]>
-  ) {
-    return this.repairRecords.retainedRepairBackgroundProblem(...args)
-  }
-
-  private transitionHistory(...args: Parameters<RetainedRepairRecords["transitionHistory"]>) {
-    return this.repairRecords.transitionHistory(...args)
-  }
-
-  private parseTransitionPayload<T>(transition: RunnerTransitionRecord | undefined): T | undefined {
-    return this.repairRecords.parseTransitionPayload<T>(transition)
-  }
-
-  private prepareRetainedRepairRecovery(
-    ...args: Parameters<RetainedRepairPreparation["prepareRetainedRepairRecovery"]>
-  ) {
-    return this.retainedRepairPreparation.prepareRetainedRepairRecovery(...args)
-  }
-
-  private retainedRepairRecoveryCurrent(
-    ...args: Parameters<RetainedRepairPreparation["retainedRepairRecoveryCurrent"]>
-  ) {
-    return this.retainedRepairPreparation.retainedRepairRecoveryCurrent(...args)
-  }
-
-  private assertNoDispatchedDependents(
-    ...args: Parameters<RetainedRepairPreparation["assertNoDispatchedDependents"]>
-  ) {
-    return this.retainedRepairPreparation.assertNoDispatchedDependents(...args)
-  }
-
-  private retainedRepairAttemptAccepted(
-    ...args: Parameters<RetainedRepairPreparation["retainedRepairAttemptAccepted"]>
-  ) {
-    return this.retainedRepairPreparation.retainedRepairAttemptAccepted(...args)
-  }
-
-  private prepareRetainedRepair(
-    ...args: Parameters<RetainedRepairPreparation["prepareRetainedRepair"]>
-  ) {
-    return this.retainedRepairPreparation.prepareRetainedRepair(...args)
-  }
-
-  private prepareReviewInputReconciliation(
-    ...args: Parameters<RetainedRepairPreparation["prepareReviewInputReconciliation"]>
-  ) {
-    return this.retainedRepairPreparation.prepareReviewInputReconciliation(...args)
-  }
-
-  private hasMeaningfulWorkerProgress(
-    ...args: Parameters<StartupSettlement["hasMeaningfulWorkerProgress"]>
-  ) {
-    return this.startupSettlement.hasMeaningfulWorkerProgress(...args)
-  }
-
-  private settledStartupEffect(...args: Parameters<StartupSettlement["settledStartupEffect"]>) {
-    return this.startupSettlement.settledStartupEffect(...args)
-  }
-
-  private assertStartupSettlementCurrent(
-    ...args: Parameters<StartupSettlement["assertStartupSettlementCurrent"]>
-  ) {
-    return this.startupSettlement.assertStartupSettlementCurrent(...args)
-  }
-
-  private startupRecoveryAuthorization(
-    ...args: Parameters<StartupSettlement["startupRecoveryAuthorization"]>
-  ) {
-    return this.startupSettlement.startupRecoveryAuthorization(...args)
-  }
-
-  private startupRecoveryAuthorityCurrent(
-    ...args: Parameters<StartupSettlement["startupRecoveryAuthorityCurrent"]>
-  ) {
-    return this.startupSettlement.startupRecoveryAuthorityCurrent(...args)
-  }
-
-  private startupWorkspaceReady(...args: Parameters<StartupSettlement["startupWorkspaceReady"]>) {
-    return this.startupSettlement.startupWorkspaceReady(...args)
-  }
-
-  private assertCombinedVerificationResume(
-    ...args: Parameters<ContinuationPreparation["assertCombinedVerificationResume"]>
-  ) {
-    return this.continuationPreparation.assertCombinedVerificationResume(...args)
-  }
-
   async command(input: unknown, caller: string): Promise<unknown> {
-    return this.runCommand(input, caller, false)
+    return this.commandPipeline.runCommand(input, caller, false)
   }
 
   /**
@@ -995,65 +812,11 @@ export class TaskRuntime {
    * admitted when it is submitted or started, whoever submitted it.
    */
   private admitPlan(plan: PlanRow, requestID: string) {
-    return this.runCommand({ requestID, planID: plan.id, action: "run" }, plan.owner, true)
-  }
-
-  private runCommand(...args: Parameters<CommandPipeline["runCommand"]>) {
-    return this.commandPipeline.runCommand(...args)
-  }
-
-  private prepareResumeContinuation(
-    ...args: Parameters<ContinuationPreparation["prepareResumeContinuation"]>
-  ) {
-    return this.continuationPreparation.prepareResumeContinuation(...args)
-  }
-
-  private prepareStartupSettlement(
-    ...args: Parameters<StartupSettlement["prepareStartupSettlement"]>
-  ) {
-    return this.startupSettlement.prepareStartupSettlement(...args)
-  }
-
-  private commandRetainedRepair(...args: Parameters<CommandsRetained["commandRetainedRepair"]>) {
-    return this.commandsRetained.commandRetainedRepair(...args)
-  }
-
-  private commandAmendScope(...args: Parameters<CommandsScope["commandAmendScope"]>) {
-    return this.commandsScope.commandAmendScope(...args)
-  }
-
-  private divergenceHold(...args: Parameters<CommandsScope["divergenceHold"]>) {
-    return this.commandsScope.divergenceHold(...args)
-  }
-
-  private commandSendBackDivergence(
-    ...args: Parameters<CommandsScope["commandSendBackDivergence"]>
-  ) {
-    return this.commandsScope.commandSendBackDivergence(...args)
-  }
-
-  private commandAdoptDescendant(...args: Parameters<CommandsRetained["commandAdoptDescendant"]>) {
-    return this.commandsRetained.commandAdoptDescendant(...args)
-  }
-
-  private commandVerifyRetained(...args: Parameters<CommandsRetained["commandVerifyRetained"]>) {
-    return this.commandsRetained.commandVerifyRetained(...args)
-  }
-
-  private commandSettleStartup(...args: Parameters<CommandsRetained["commandSettleStartup"]>) {
-    return this.commandsRetained.commandSettleStartup(...args)
-  }
-
-  private commandReassign(...args: Parameters<CommandsControl["commandReassign"]>) {
-    return this.commandsControl.commandReassign(...args)
-  }
-
-  private commandTakeoverSubmit(...args: Parameters<CommandsControl["commandTakeoverSubmit"]>) {
-    return this.commandsControl.commandTakeoverSubmit(...args)
-  }
-
-  private holdAbandonedTakeover(...args: Parameters<CommandsControl["holdAbandonedTakeover"]>) {
-    return this.commandsControl.holdAbandonedTakeover(...args)
+    return this.commandPipeline.runCommand(
+      { requestID, planID: plan.id, action: "run" },
+      plan.owner,
+      true,
+    )
   }
 
   /**
@@ -1068,34 +831,6 @@ export class TaskRuntime {
   /** `lz-takeover-handoff`: the worker's slim handoff for an open takeover; never rejected for shape. */
   takeoverHandoff(input: unknown, sessionID: string) {
     return this.takeovers.recordWorkerHandoff(input, sessionID)
-  }
-
-  private commandCancel(...args: Parameters<CommandsControl["commandCancel"]>) {
-    return this.commandsControl.commandCancel(...args)
-  }
-
-  private commandResumeOrRetry(...args: Parameters<CommandsRecovery["commandResumeOrRetry"]>) {
-    return this.commandsRecovery.commandResumeOrRetry(...args)
-  }
-
-  private commandRecoverRetainedRepair(
-    ...args: Parameters<CommandsRetained["commandRecoverRetainedRepair"]>
-  ) {
-    return this.commandsRetained.commandRecoverRetainedRepair(...args)
-  }
-
-  private assertTerminalContinuation(
-    ...args: Parameters<ContinuationPreparation["assertTerminalContinuation"]>
-  ) {
-    return this.continuationPreparation.assertTerminalContinuation(...args)
-  }
-
-  private commandReconcile(...args: Parameters<CommandsRecovery["commandReconcile"]>) {
-    return this.commandsRecovery.commandReconcile(...args)
-  }
-
-  private commandRun(...args: Parameters<CommandsControl["commandRun"]>) {
-    return this.commandsControl.commandRun(...args)
   }
 
   /**
@@ -1113,7 +848,7 @@ export class TaskRuntime {
         .get(sessionID),
     )
     const attempt = row && this.store.attempts(row.plan_id).find((a) => a.id === row.id)
-    return attempt ? this.taskChainBase(attempt) : undefined
+    return attempt ? this.verificationReview.taskChainBase(attempt) : undefined
   }
 
   /** The refusal to queue work while the review is on and the project has no Fallow config. */
@@ -1223,10 +958,6 @@ export class TaskRuntime {
     return this.ownership.validArchitect(session)
   }
 
-  private ensureArchitectOwner(...args: Parameters<ArchitectOwnership["ensureArchitectOwner"]>) {
-    return this.ownership.ensureArchitectOwner(...args)
-  }
-
   observeArchitectPrompt(...args: Parameters<ArchitectSources["observeArchitectPrompt"]>) {
     return this.sources.observeArchitectPrompt(...args)
   }
@@ -1241,10 +972,6 @@ export class TaskRuntime {
     return this.sources.sourceResyncPending
   }
 
-  private assertSchedulerActive(...args: Parameters<ArchitectSources["assertSchedulerActive"]>) {
-    return this.sources.assertSchedulerActive(...args)
-  }
-
   flushSourceInvalidations(...args: Parameters<ArchitectSources["flushSourceInvalidations"]>) {
     return this.sources.flushSourceInvalidations(...args)
   }
@@ -1257,66 +984,6 @@ export class TaskRuntime {
     ...args: Parameters<ArchitectSources["inspectArchitectSourceMessages"]>
   ) {
     return this.sources.inspectArchitectSourceMessages(...args)
-  }
-
-  private reconcileArchitectSources(
-    ...args: Parameters<ArchitectSources["reconcileArchitectSources"]>
-  ) {
-    return this.sources.reconcileArchitectSources(...args)
-  }
-
-  private sessionTitle(...args: Parameters<ArchitectOwnership["sessionTitle"]>) {
-    return this.ownership.sessionTitle(...args)
-  }
-
-  private architectRoute(...args: Parameters<ArchitectOwnership["architectRoute"]>) {
-    return this.ownership.architectRoute(...args)
-  }
-
-  private recordArchitectRoute(...args: Parameters<ArchitectOwnership["recordArchitectRoute"]>) {
-    return this.ownership.recordArchitectRoute(...args)
-  }
-
-  private considerArchitectRenewal(
-    ...args: Parameters<ArchitectRenewal["considerArchitectRenewal"]>
-  ) {
-    return this.renewal.considerArchitectRenewal(...args)
-  }
-
-  private continueArchitectRenewal(
-    ...args: Parameters<ArchitectRenewal["continueArchitectRenewal"]>
-  ) {
-    return this.renewal.continueArchitectRenewal(...args)
-  }
-
-  private hold(...args: Parameters<RuntimeJournal["hold"]>) {
-    return this.journal.hold(...args)
-  }
-
-  private terminalWorkerObservation(
-    ...args: Parameters<RuntimeJournal["terminalWorkerObservation"]>
-  ) {
-    return this.journal.terminalWorkerObservation(...args)
-  }
-
-  private outcome(...args: Parameters<RuntimeJournal["outcome"]>) {
-    return this.journal.outcome(...args)
-  }
-
-  private effect(...args: Parameters<RuntimeJournal["effect"]>) {
-    return this.journal.effect(...args)
-  }
-
-  private receipt(...args: Parameters<RuntimeJournal["receipt"]>) {
-    return this.journal.receipt(...args)
-  }
-
-  private supersedeEffect(...args: Parameters<RuntimeJournal["supersedeEffect"]>) {
-    return this.journal.supersedeEffect(...args)
-  }
-
-  private uncertain(...args: Parameters<RuntimeJournal["uncertain"]>) {
-    return this.journal.uncertain(...args)
   }
 
   async tick() {
@@ -1402,14 +1069,6 @@ export class TaskRuntime {
     }
   }
 
-  private requestQueueReview(...args: Parameters<QueueReview["requestQueueReview"]>) {
-    return this.queueReview.requestQueueReview(...args)
-  }
-
-  private releaseFallowConfigHolds(...args: Parameters<QueueReview["releaseFallowConfigHolds"]>) {
-    return this.queueReview.releaseFallowConfigHolds(...args)
-  }
-
   private async runTick() {
     this.slowRecorded.clear()
     this.running = true
@@ -1445,7 +1104,7 @@ export class TaskRuntime {
       )) {
         try {
           await sectionAsync("tick:continueArchitectRenewal", () =>
-            this.continueArchitectRenewal(renewal, fence),
+            this.renewal.continueArchitectRenewal(renewal, fence),
           )
         } catch (error) {
           // A recorded native recovery failure stays retryable without blocking
@@ -1462,7 +1121,7 @@ export class TaskRuntime {
       }
       if (heartbeatFailed) throw heartbeatError
       await sectionAsync("tick:reconcileArchitectSources", () =>
-        this.reconcileArchitectSources(fence),
+        this.sources.reconcileArchitectSources(fence),
       )
       const retainedOperations = section("tick:activeRetained", () =>
         this.store.atomic((db) => activeRetainedVerifications(db, this.directory)),
@@ -1515,12 +1174,14 @@ export class TaskRuntime {
       await sectionAsync("tick:reconcileTerminalRetained", () =>
         this.retainedVerificationExecution.reconcileTerminalRetainedVerifications(fence),
       )
-      await sectionAsync("tick:settleStaleAttempts", () => this.settleStaleAttempts(fence))
+      await sectionAsync("tick:settleStaleAttempts", () =>
+        this.attemptAdvance.settleStaleAttempts(fence),
+      )
       for (const planID of section("tick:closeoutReviewPlanIDs", () =>
         this.store.closeoutReviewPlanIDs(),
       )) {
         const plan = this.store.plan(planID)!
-        this.outcome(
+        this.journal.outcome(
           planID,
           {
             status: plan.state,
@@ -1531,8 +1192,10 @@ export class TaskRuntime {
           true,
         )
       }
-      await sectionAsync("tick:fallowConfigHolds", () => this.releaseFallowConfigHolds(fence))
-      const waits: Parameters<TaskRuntime["requestQueueReview"]>[0] = []
+      await sectionAsync("tick:fallowConfigHolds", () =>
+        this.queueReview.releaseFallowConfigHolds(fence),
+      )
+      const waits: Parameters<QueueReview["requestQueueReview"]>[0] = []
       let closeoutDelivered = false
       for (const candidate of section("tick:runnablePlans", () =>
         this.store.runnablePlans(terminal),
@@ -1560,14 +1223,14 @@ export class TaskRuntime {
               .length > 0
           )
             return
-          const wait = await sectionAsync("tick:step", () => this.step(plan, fence))
+          const wait = await sectionAsync("tick:step", () => this.planStep.step(plan, fence))
           if (wait) waits.push(wait)
         })
         if (heartbeatFailed) throw heartbeatError
       }
       if (waits.length)
         await this.reconcilePlan(waits[0]!.planID, fence, "step", () =>
-          this.requestQueueReview(waits, fence),
+          this.queueReview.requestQueueReview(waits, fence),
         )
       // Worktree cleanup of cancelled and blocked plans holds no dispatch reservation, so it runs
       // after the plans that can make progress: a slow removal delays only itself.
@@ -1622,7 +1285,7 @@ export class TaskRuntime {
       )) {
         activities.set(activity.key, activity)
         if (activity.metadata.kind === "retained")
-          await this.settleCancelledRetainedActivity(activity)
+          await this.checkActivities.settleCancelledRetainedActivity(activity)
       }
     }
     await abortOwnedActivities()
@@ -1638,132 +1301,8 @@ export class TaskRuntime {
       )
   }
 
-  private interruptedChecksFor(...args: Parameters<PlanStep["interruptedChecksFor"]>) {
-    return this.planStep.interruptedChecksFor(...args)
-  }
-
-  private step(...args: Parameters<PlanStep["step"]>) {
-    return this.planStep.step(...args)
-  }
-
-  private cancelWorkers(...args: Parameters<Cancellation["cancelWorkers"]>) {
-    return this.cancellation.cancelWorkers(...args)
-  }
-
-  private cancelReservedAttempt(...args: Parameters<Cancellation["cancelReservedAttempt"]>) {
-    return this.cancellation.cancelReservedAttempt(...args)
-  }
-
-  private workerEvent(...args: Parameters<WorkerObservation["workerEvent"]>) {
-    return this.workerObservation.workerEvent(...args)
-  }
-
-  private matchesWorkerInput(...args: Parameters<WorkerObservation["matchesWorkerInput"]>) {
-    return this.workerObservation.matchesWorkerInput(...args)
-  }
-
-  private isPriorContinuationInput(
-    ...args: Parameters<WorkerObservation["isPriorContinuationInput"]>
-  ) {
-    return this.workerObservation.isPriorContinuationInput(...args)
-  }
-
-  private approvalWait(...args: Parameters<WorkerObservation["approvalWait"]>) {
-    return this.workerObservation.approvalWait(...args)
-  }
-
-  private holdApprovalObservation(
-    ...args: Parameters<WorkerObservation["holdApprovalObservation"]>
-  ) {
-    return this.workerObservation.holdApprovalObservation(...args)
-  }
-
-  private workerObservationFence(...args: Parameters<WorkerObservation["workerObservationFence"]>) {
-    return this.workerObservation.workerObservationFence(...args)
-  }
-
-  private workerObservationCurrent(
-    ...args: Parameters<WorkerObservation["workerObservationCurrent"]>
-  ) {
-    return this.workerObservation.workerObservationCurrent(...args)
-  }
-
-  private approvalWaitReason(...args: Parameters<WorkerObservation["approvalWaitReason"]>) {
-    return this.workerObservation.approvalWaitReason(...args)
-  }
-
-  private resumeTransientObservationWait(
-    ...args: Parameters<WorkerObservation["resumeTransientObservationWait"]>
-  ) {
-    return this.workerObservation.resumeTransientObservationWait(...args)
-  }
-
-  private backgroundWait(...args: Parameters<WorkerObservation["backgroundWait"]>) {
-    return this.workerObservation.backgroundWait(...args)
-  }
-
   backgroundBlockReason(session: HostSession): string | undefined {
     return this.workerObservation.backgroundBlockReason(session)
-  }
-
-  private cleanupAuditDiagnostics(...args: Parameters<CleanupAudit["cleanupAuditDiagnostics"]>) {
-    return this.cleanupAudit.cleanupAuditDiagnostics(...args)
-  }
-
-  private async dispatch(...args: Parameters<Dispatch["dispatch"]>) {
-    return this.dispatchModule.dispatch(...args)
-  }
-
-  private preparationAllowed(...args: Parameters<Dispatch["preparationAllowed"]>) {
-    return this.dispatchModule.preparationAllowed(...args)
-  }
-
-  private promptAdmissionAllowed(...args: Parameters<Dispatch["promptAdmissionAllowed"]>) {
-    return this.dispatchModule.promptAdmissionAllowed(...args)
-  }
-
-  private observeUsage(...args: Parameters<Dispatch["observeUsage"]>) {
-    return this.dispatchModule.observeUsage(...args)
-  }
-
-  private taskDependencyIDs(...args: Parameters<Dispatch["taskDependencyIDs"]>) {
-    return this.dispatchModule.taskDependencyIDs(...args)
-  }
-
-  private taskDependencyIntegration(...args: Parameters<Dispatch["taskDependencyIntegration"]>) {
-    return this.dispatchModule.taskDependencyIntegration(...args)
-  }
-
-  private integratedPrerequisiteBaseline(
-    ...args: Parameters<Dispatch["integratedPrerequisiteBaseline"]>
-  ) {
-    return this.dispatchModule.integratedPrerequisiteBaseline(...args)
-  }
-
-  private resolveTaskDispatchRoute(...args: Parameters<Dispatch["resolveTaskDispatchRoute"]>) {
-    return this.dispatchModule.resolveTaskDispatchRoute(...args)
-  }
-
-  private retainedRepairForAttempt(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairForAttempt"]>
-  ) {
-    return this.repairRecords.retainedRepairForAttempt(...args)
-  }
-
-  private retainedRepairGeneration(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairGeneration"]>
-  ) {
-    return this.repairRecords.retainedRepairGeneration(...args)
-  }
-
-  private retainedRepairPromptCurrent(
-    ...args: Parameters<RetainedRepairRecords["retainedRepairPromptCurrent"]>
-  ) {
-    return this.repairRecords.retainedRepairPromptCurrent(...args)
-  }
-
-  private prepareWorker(...args: Parameters<WorkerPreparation["prepareWorker"]>) {
-    return this.workerPreparation.prepareWorker(...args)
   }
 
   /**
@@ -1777,103 +1316,4 @@ export class TaskRuntime {
    *   `cancelled`.
    * A live session, or an intended or uncertain effect of the attempt, is never settled.
    */
-  private settleStaleAttempts(...args: Parameters<AttemptAdvance["settleStaleAttempts"]>) {
-    return this.attemptAdvance.settleStaleAttempts(...args)
-  }
-
-  private advanceAttempt(...args: Parameters<AttemptAdvance["advanceAttempt"]>) {
-    return this.attemptAdvance.advanceAttempt(...args)
-  }
-
-  private prepareVerificationCandidate(
-    ...args: Parameters<VerificationCandidate["prepareVerificationCandidate"]>
-  ) {
-    return this.verificationCandidate.prepareVerificationCandidate(...args)
-  }
-
-  private verificationCurrentGuard(
-    ...args: Parameters<VerificationCandidate["verificationCurrentGuard"]>
-  ) {
-    return this.verificationCandidate.verificationCurrentGuard(...args)
-  }
-
-  private verificationAwaitsTaskContinuation(
-    ...args: Parameters<VerificationCandidate["verificationAwaitsTaskContinuation"]>
-  ) {
-    return this.verificationCandidate.verificationAwaitsTaskContinuation(...args)
-  }
-
-  private commitVerificationCandidate(
-    ...args: Parameters<VerificationCandidate["commitVerificationCandidate"]>
-  ) {
-    return this.verificationCandidate.commitVerificationCandidate(...args)
-  }
-
-  private recordAttemptArtifact(
-    ...args: Parameters<VerificationCandidate["recordAttemptArtifact"]>
-  ) {
-    return this.verificationCandidate.recordAttemptArtifact(...args)
-  }
-
-  private collectCheckReceipts(...args: Parameters<VerificationCandidate["collectCheckReceipts"]>) {
-    return this.verificationCandidate.collectCheckReceipts(...args)
-  }
-
-  private captureAutomaticFixes(
-    ...args: Parameters<VerificationCandidate["captureAutomaticFixes"]>
-  ) {
-    return this.verificationCandidate.captureAutomaticFixes(...args)
-  }
-
-  private acceptVerifiedAttempt(
-    ...args: Parameters<VerificationCandidate["acceptVerifiedAttempt"]>
-  ) {
-    return this.verificationCandidate.acceptVerifiedAttempt(...args)
-  }
-
-  private verify(...args: Parameters<VerificationReview["verify"]>) {
-    return this.verificationReview.verify(...args)
-  }
-
-  private fallowReviewResult(...args: Parameters<VerificationReview["fallowReviewResult"]>) {
-    return this.verificationReview.fallowReviewResult(...args)
-  }
-
-  private startAuditorReport(...args: Parameters<VerificationReview["startAuditorReport"]>) {
-    return this.verificationReview.startAuditorReport(...args)
-  }
-
-  private planFallowReview(...args: Parameters<VerificationReview["planFallowReview"]>) {
-    return this.verificationReview.planFallowReview(...args)
-  }
-
-  private taskChainBase(...args: Parameters<VerificationReview["taskChainBase"]>) {
-    return this.verificationReview.taskChainBase(...args)
-  }
-
-  private repairAvailable(...args: Parameters<VerificationReview["repairAvailable"]>) {
-    return this.verificationReview.repairAvailable(...args)
-  }
-
-  private missingEvidence(...args: Parameters<VerificationReview["missingEvidence"]>) {
-    return this.verificationReview.missingEvidence(...args)
-  }
-
-  private repairFailureBrief(...args: Parameters<VerificationReview["repairFailureBrief"]>) {
-    return this.verificationReview.repairFailureBrief(...args)
-  }
-  private failAttempt(...args: Parameters<VerificationReview["failAttempt"]>) {
-    return this.verificationReview.failAttempt(...args)
-  }
-
-  private finish(...args: Parameters<PlanFinish["finish"]>) {
-    return this.planFinish.finish(...args)
-  }
-  private reconcileEffect(...args: Parameters<EffectReconciliation["reconcileEffect"]>) {
-    return this.effectReconciliation.reconcileEffect(...args)
-  }
-
-  private resumeStartupRecovery(...args: Parameters<StartupSettlement["resumeStartupRecovery"]>) {
-    return this.startupSettlement.resumeStartupRecovery(...args)
-  }
 }

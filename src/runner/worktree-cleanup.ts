@@ -1,3 +1,4 @@
+import type { RuntimeJournal } from "./runtime-journal.ts"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
@@ -52,10 +53,10 @@ export class WorktreeCleanup {
       adoptionCheckInputMatches: AdoptionExecution["adoptionCheckInputMatches"]
       backgroundBlockReason: TaskRuntime["backgroundBlockReason"]
       directory: TaskRuntime["directory"]
-      effect: TaskRuntime["effect"]
+      effect: RuntimeJournal["effect"]
       host: TaskRuntime["host"]
       now: TaskRuntime["now"]
-      outcome: TaskRuntime["outcome"]
+      outcome: RuntimeJournal["outcome"]
       owner: TaskRuntime["owner"]
       progress: TaskRuntime["progress"]
       projectID: TaskRuntime["projectID"]

@@ -2284,12 +2284,12 @@ async function reproduceLegacyRetainedRepairFenceFailure() {
       .run(JSON.stringify(legacyPayload), firstResume.id),
   )
 
-  const legacyRuntime = reopened.runtime as unknown as {
+  const legacyRuntime = Reflect.get(reopened.runtime, "repairRecords") as {
     retainedRepairForAttempt: (candidate: AttemptRow) => unknown
   }
   const currentLookup = legacyRuntime.retainedRepairForAttempt
   legacyRuntime.retainedRepairForAttempt = function (candidate) {
-    const found = currentLookup.call(reopened.runtime, candidate) as
+    const found = currentLookup.call(legacyRuntime, candidate) as
       { repairMessageID?: unknown } | undefined
     return found?.repairMessageID === candidate.message_id ? found : undefined
   }
@@ -2928,10 +2928,10 @@ test("runtime stop aborts checks admitted by its draining tick before storage di
   const verificationAdmitted = new Promise<void>((resolve) => (admitted = resolve))
   let drain!: () => void
   const drainRelease = new Promise<void>((resolve) => (drain = resolve))
-  const runtimeInternals = f.runtime as unknown as {
+  const runtimeInternals = Reflect.get(f.runtime, "verificationReview") as {
     verify: (...args: unknown[]) => Promise<void>
   }
-  const originalVerify = runtimeInternals.verify.bind(f.runtime)
+  const originalVerify = runtimeInternals.verify.bind(runtimeInternals)
   runtimeInternals.verify = async (...args) => {
     await originalVerify(...args)
     admitted()
@@ -4797,8 +4797,10 @@ test("fallow findings alone send one repair carrying the guidance, then accept w
     db.query("UPDATE runner_attempts SET base_commit=? WHERE id=?").run(f.base, repair!.id),
   )
   const fresh = f.store.attempts(planID)[1]!
-  expect(f.runtime["taskChainBase"](fresh)).toBe(f.base)
-  expect(f.runtime["taskChainBase"](f.store.attempts(planID)[0]!)).toBe(first!.base_commit)
+  expect(Reflect.get(f.runtime, "verificationReview").taskChainBase(fresh)).toBe(f.base)
+  expect(
+    Reflect.get(f.runtime, "verificationReview").taskChainBase(f.store.attempts(planID)[0]!),
+  ).toBe(first!.base_commit)
 })
 
 test("fallow findings and a failing check give exactly one repair carrying both", async () => {
@@ -13868,7 +13870,9 @@ function architectBacklog(f: ReturnType<typeof fixture>, size: number) {
   })
   const emit = (planID: string, payload: Record<string, unknown>) =>
     (
-      f.runtime as unknown as { outcome(id: string, payload: unknown, resume: boolean): void }
+      Reflect.get(f.runtime, "journal") as {
+        outcome(id: string, payload: unknown, resume: boolean): void
+      }
     ).outcome(planID, payload, true)
   const deliver = async () => {
     const fence = f.store.claim(f.runtime.owner)!
@@ -14111,7 +14115,9 @@ test("a write-scope overlap during mechanical preparation is a warning and never
   })
   // Another active attempt reserves an overlapping scope.
   ;(
-    f.runtime as unknown as { preparationAllowed: (attempt: { state: string }) => boolean }
+    Reflect.get(f.runtime, "dispatchModule") as {
+      preparationAllowed: (attempt: { state: string }) => boolean
+    }
   ).preparationAllowed = (attempt) => attempt.state !== "verifying"
   await runPlan(f)
   await drive(f.runtime, 18)
@@ -14688,7 +14694,7 @@ test("a review recorded under the old effect kind verify:lazers-fallow is still 
   expect(effect).toBeDefined()
   const payload = JSON.parse(effect.payload) as { artifact: string; identity: string }
   const attempt = f.store.attempts(planID).find((a) => a.id === effect.attempt_id)!
-  const known = await f.runtime["fallowReviewResult"](
+  const known = await Reflect.get(f.runtime, "verificationReview").fallowReviewResult(
     f.store.plan(planID)!,
     attempt,
     { commit: payload.artifact, identity: payload.identity },

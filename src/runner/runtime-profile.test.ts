@@ -146,10 +146,10 @@ test("a revision confirmed while a check runs never disturbs it; the next verify
   })
   const { key } = await confirm(f, cargoProfile)
   const gate = deferred<void>()
-  const runtime = f.runtime as unknown as {
+  const runtime = Reflect.get(f.runtime, "checkActivities") as {
     startCheckActivity: (input: { run(signal: AbortSignal): Promise<unknown> }) => unknown
   }
-  const original = runtime.startCheckActivity.bind(f.runtime)
+  const original = runtime.startCheckActivity.bind(runtime)
   let held = false
   runtime.startCheckActivity = (input) => {
     if (held) return original(input)
@@ -290,9 +290,6 @@ test("a fix that changes a file it was not given holds the plan", async () => {
   ])
   await runPlan(f)
   await drive(f.runtime, 14)
-  console.log(
-    preparation(f).map((e) => [e.state, e.payload.slice(0, 400), (e.receipt ?? "").slice(0, 600)]),
-  )
   expect(f.store.plan(f.receipt.planID)?.reason).toContain(
     "Mechanical candidate preparation changed files it was not given: other.rs",
   )
@@ -308,10 +305,10 @@ test("a later revision with another fix command never changes a running preparat
     [proof("fix:0")],
   )
   const gate = deferred<void>()
-  const runtime = f.runtime as unknown as {
+  const runtime = Reflect.get(f.runtime, "checkActivities") as {
     startCheckActivity: (input: { run(signal: AbortSignal): Promise<unknown> }) => unknown
   }
-  const original = runtime.startCheckActivity.bind(f.runtime)
+  const original = runtime.startCheckActivity.bind(runtime)
   let held = false
   runtime.startCheckActivity = (input) => {
     if (held) return original(input)
