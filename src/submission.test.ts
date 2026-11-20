@@ -5,8 +5,9 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { keyedProposal, validProposal } from "../test/proposal.ts"
+import { nativeTools } from "../test/retry-process.ts"
 import type { RetryProcessOptions } from "../test/retry-process.ts"
-import { TaskRepository } from "./storage.ts"
+import { SQLITE_BUSY_TIMEOUT_MS, TaskRepository } from "./storage.ts"
 import { submitTask } from "./submission.ts"
 import type { TaskSpec } from "./task.ts"
 import { fingerprint } from "./identity.ts"
@@ -413,6 +414,24 @@ test("independent native-tool connections racing the same content commit one tas
   const results = await race([options, { ...options, session: "other" }], path)
   expect(results[0].status).toBe("submitted")
   expect(results[1]).toEqual(results[0])
+}, 30_000)
+
+test("native submit waits out another process's write lock beyond the synchronous busy budget", async () => {
+  const { path, directory } = fixture()
+  expect(spawnSync("git", ["init", "--initial-branch=main", directory]).status).toBe(0)
+  const repository = open(path, directory)
+  // Another process (second service, CLI) holds the write lock longer than SQLITE_BUSY_TIMEOUT_MS.
+  const holder = new Database(path, { strict: true })
+  holder.exec("BEGIN IMMEDIATE")
+  setTimeout(() => holder.exec("COMMIT"), SQLITE_BUSY_TIMEOUT_MS * 2)
+  try {
+    const { call } = await nativeTools(repository, { workspace: directory })
+    const receipt = await call("lz-submit-task", keyedProposal())
+    expect(receipt.status).toBe("submitted")
+    expect(repository.list()).toHaveLength(1)
+  } finally {
+    holder.close()
+  }
 }, 30_000)
 
 test("independent native-tool connections racing changed content produce one winner and one conflict", async () => {
