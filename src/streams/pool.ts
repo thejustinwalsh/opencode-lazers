@@ -1,5 +1,7 @@
 import { Worker } from "node:worker_threads"
+import { moduleGeneration } from "../core/generation.ts"
 import { workerURL } from "../worker-url.ts"
+import { connectRevisions } from "./revisions.ts"
 import type { Anchor, FromReader, ReaderStats, ToReader } from "./protocol.ts"
 
 /**
@@ -35,8 +37,8 @@ export type ReaderPool = {
   readonly databasePath: string
   /** Open a stream. The listener receives every message the reader sends for it. */
   attach(request: OpenRequest, listener: (message: FromReader) => void): PoolStream
-  /** The main thread committed `revision`; every worker refreshes its open streams. */
-  revision(revision: number): void
+  /** The main thread committed `revision` after writing `tables` (all when omitted); each worker refreshes the open streams whose sources read them. */
+  revision(revision: number, tables?: readonly string[]): void
   stats(): Promise<ReaderStats[]>
   /** Fault injection for tests: terminate the worker serving `stream` as a crash would. */
   terminateWorkerOf(stream: number): Promise<void>
@@ -66,24 +68,75 @@ type Tracked = {
 
 const MAX_RESTARTS = 5
 const SHUTDOWN_GRACE_MS = 2_000
-const poolsKey = Symbol.for("lazers.streams.reader-pools.v1")
-const host = globalThis as typeof globalThis & { [poolsKey]?: Map<string, ReaderPool> }
+const registryKey = Symbol.for("lazers.streams.reader-pools.v2")
+type Entry = { key: string; pool: ReaderPool; refs: number; disconnect(): void }
+const host = globalThis as typeof globalThis & { [registryKey]?: Map<string, Entry> }
+const entries = () => (host[registryKey] ??= new Map())
 
 const defaultWorkers = () => {
   const configured = Number(process.env.LAZERS_STREAM_READERS)
   return Number.isInteger(configured) && configured > 0 ? configured : 2
 }
 
-/** The reader pool of one database in this process, created on first use. */
+const entryFor = (databasePath: string, options: ReaderPoolOptions): Entry => {
+  // OpenCode loads every plugin location with its own module copy, so the registry hangs off
+  // globalThis; a reload that changes the code gets its own pool and the old one closes when its
+  // last holder releases it, as the decision worker does.
+  const key = `${moduleGeneration()}\u0000${databasePath}\u0000${options.workerURL?.href ?? ""}`
+  const all = entries()
+  let entry = all.get(key)
+  if (!entry) {
+    let created: Entry
+    const pool = createReaderPool(databasePath, options, () => {
+      created.disconnect()
+      if (all.get(key) === created) all.delete(key)
+    })
+    let disconnect = () => {}
+    try {
+      disconnect = connectRevisions(pool, databasePath)
+    } catch {
+      // A database that does not exist yet has no writer to follow; revisions can be sent by hand.
+    }
+    created = { key, pool, refs: 0, disconnect }
+    all.set(key, created)
+    entry = created
+  }
+  return entry
+}
+
+/** The reader pool of one database in this process, created on first use and never auto-closed. */
 export function readerPool(databasePath: string, options: ReaderPoolOptions = {}): ReaderPool {
-  const pools = (host[poolsKey] ??= new Map())
-  const existing = pools.get(databasePath)
-  if (existing) return existing
-  const pool = createReaderPool(databasePath, options, () => {
-    if (pools.get(databasePath) === pool) pools.delete(databasePath)
-  })
-  pools.set(databasePath, pool)
-  return pool
+  return entryFor(databasePath, options).pool
+}
+
+export type ReaderPoolLease = {
+  readonly pool: ReaderPool
+  /** Drops this holder; the last release closes the workers. Idempotent. */
+  release(): void
+}
+
+/** Hold the pool of a database; the last release closes it (its workers close their databases first). */
+export function acquireReaderPool(
+  databasePath: string,
+  options: ReaderPoolOptions = {},
+): ReaderPoolLease {
+  const entry = entryFor(databasePath, options)
+  entry.refs++
+  let released = false
+  return {
+    pool: entry.pool,
+    release() {
+      if (released) return
+      released = true
+      if (--entry.refs > 0) return
+      void entry.pool.close()
+    },
+  }
+}
+
+/** Diagnostic: live pools and their holders. */
+export function readerPoolSnapshot() {
+  return [...entries().values()].map(({ key, refs }) => ({ key, refs }))
 }
 
 function createReaderPool(
@@ -233,10 +286,14 @@ function createReaderPool(
         },
       }
     },
-    revision(revision) {
+    revision(revision, tables) {
       latestRevision = revision
       for (const slot of slots)
-        slot.worker?.postMessage({ type: "revision", revision } satisfies ToReader)
+        slot.worker?.postMessage({
+          type: "revision",
+          revision,
+          ...(tables ? { tables } : {}),
+        } satisfies ToReader)
     },
     stats() {
       return Promise.all(

@@ -393,6 +393,10 @@ const withStream = (id: number, op: number | undefined, act: (stream: Stream) =>
 
 let refreshing = false
 let refreshAgain = false
+/** Tables written since the last pass finished; `"all"` when a revision named none. */
+let dirty: Set<string> | "all" = new Set()
+const affected = (stream: Stream, tables: Set<string> | "all") =>
+  tables === "all" || stream.source.readsTables.some((table) => tables.has(table))
 const yieldToMessages = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 /** Re-read every open stream's window; send a frame only where the rows or counts differ. */
@@ -405,7 +409,10 @@ const refreshAll = async () => {
   try {
     do {
       refreshAgain = false
+      const tables = dirty
+      dirty = new Set()
       for (const stream of [...streams.values()]) {
+        if (!affected(stream, tables)) continue
         if (Atomics.load(stopFlag, 0) !== 0) return
         if (!streams.has(stream.id)) continue
         if (stopped(stream)) {
@@ -461,6 +468,7 @@ const handle = (message: ToReader) => {
       })
     case "revision":
       revision = message.revision
+      dirty = message.tables && dirty !== "all" ? new Set([...dirty, ...message.tables]) : "all"
       return void refreshAll()
     case "return":
       if (message.buffer.byteLength > 0) pool.push(message.buffer)

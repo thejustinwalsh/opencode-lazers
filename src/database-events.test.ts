@@ -144,3 +144,34 @@ test("revision publishers hand off a failed pending emission and keep project to
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test("table subscribers hear every table written in one turn once, after the turn", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-db-tables-"))
+  const path = join(directory, "tasks.sqlite")
+  const db = new Database(path)
+  db.exec("PRAGMA journal_mode=WAL; CREATE TABLE a(v INTEGER); CREATE TABLE b(v INTEGER)")
+  const hub = new DatabaseChangeHub()
+  hub.track(db, path)
+  const heard: string[][] = []
+  const stop = hub.subscribeTables(path, (tables) => heard.push([...tables].sort()))
+  try {
+    for (let i = 0; i < 100; i++) db.exec(`INSERT INTO a VALUES(${i})`)
+    db.exec("UPDATE b SET v = 1")
+    db.exec("INSERT INTO b VALUES(1)")
+    expect(heard).toEqual([])
+    await until(() => heard.length > 0)
+    await Bun.sleep(30)
+    expect(heard).toEqual([["a", "b"]])
+    db.exec("DELETE FROM b WHERE v = 1")
+    await until(() => heard.length > 1)
+    expect(heard[1]).toEqual(["b"])
+    stop()
+    db.exec("INSERT INTO a VALUES(1)")
+    await Bun.sleep(30)
+    expect(heard.length).toBe(2)
+  } finally {
+    stop()
+    db.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
