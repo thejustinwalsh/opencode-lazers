@@ -1,4 +1,4 @@
-import { pagedMessages, type HostMessageClient } from "../core/host-messages.ts"
+import { eachMessagePage, type HostMessageClient } from "../core/host-messages.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
@@ -32,9 +32,16 @@ export type TrajectorySession = {
 
 type OwnedAttempt = { id: string; workspace: string }
 
+/** Receives the transcript one page at a time, oldest first; the host keeps no page it has passed. */
+export type MessageSink = (page: ReadonlyArray<SessionMessage.Info>) => void
+
 export interface TrajectoryHost {
-  /** Called only with an ID obtained from an owned runner_attempt row. */
-  session(id: string, attempt?: OwnedAttempt): Promise<TrajectorySession | null>
+  /**
+   * Called only with an ID obtained from an owned runner_attempt row. With a `sink` the transcript
+   * is handed to it page by page and the returned session carries `messages: null`: no more than
+   * one page is ever held. Without one the pages are collected into `messages`.
+   */
+  session(id: string, attempt?: OwnedAttempt, sink?: MessageSink): Promise<TrajectorySession | null>
   /** Reads live session metadata without loading transcript context. */
   status?(id: string, attempt?: OwnedAttempt): Promise<TrajectorySession | null>
 }
@@ -58,7 +65,12 @@ export function nativeTrajectoryHost(
   ownsRecordedWorkspace: ((directory: string) => boolean) | undefined,
   hostMessages: HostMessageClient,
 ): TrajectoryHost {
-  async function loadSession(id: string, includeContext: boolean, attempt?: OwnedAttempt) {
+  async function loadSession(
+    id: string,
+    includeContext: boolean,
+    attempt?: OwnedAttempt,
+    sink?: MessageSink,
+  ) {
     const session = await Effect.runPromise(
       ctx.session
         .get({ sessionID: Session.ID.make(id) })
@@ -84,17 +96,27 @@ export function nativeTrajectoryHost(
       : "not-read"
     let messageError: string | null = null
     if (includeContext) {
+      // A report, not a model prompt: the transcript is paged in, never read whole. A sink's own
+      // failure is the caller's to see, not a host read failure.
+      const collected: SessionMessage.Info[] = []
+      let sinkError: { error: unknown } | undefined
       try {
-        // A report, not a model prompt: the transcript is paged in, never read whole.
-        messages = (await pagedMessages(
-          hostMessages,
-          session.id,
-          MAX_CONTEXT_MESSAGES + 1,
-        )) as unknown as ReadonlyArray<SessionMessage.Info>
+        await eachMessagePage(hostMessages, session.id, MAX_CONTEXT_MESSAGES + 1, (page) => {
+          const typed = page as unknown as ReadonlyArray<SessionMessage.Info>
+          if (!sink) collected.push(...typed)
+          else if (!sinkError)
+            try {
+              sink(typed)
+            } catch (error) {
+              sinkError = { error }
+            }
+        })
+        if (!sink) messages = collected
       } catch (error) {
         messageStatus = "unavailable"
         messageError = safeError(error, privacyStats())
       }
+      if (sinkError) throw sinkError.error
     }
 
     const busy = session.time.busy ? DateTime.toEpochMillis(session.time.busy) : null
@@ -133,7 +155,7 @@ export function nativeTrajectoryHost(
     }
   }
   return {
-    session: (id, attempt) => loadSession(id, true, attempt),
+    session: (id, attempt, sink) => loadSession(id, true, attempt, sink),
     status: (id, attempt) => loadSession(id, false, attempt),
   }
 }
