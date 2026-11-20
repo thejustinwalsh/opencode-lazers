@@ -278,8 +278,10 @@ export const KINDS: Kind[] = [
         table: "runner_outbox",
         where: `plan_id IN ${inPlans} AND state IN ('delivered','superseded')`,
         bind: [ctx.retiredJSON],
+        // Receipt histories are child rows (deleted with the notice by ON DELETE CASCADE); the
+        // legacy `receipt` column is NULL once migrated. 56 bytes is a child row's key and header.
         bytes:
-          "length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,''))+length(session_id)+length(message_id)+length(id)+96",
+          "length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,''))+length(session_id)+length(message_id)+length(id)+96+COALESCE((SELECT SUM(length(r.body)+56) FROM runner_outbox_receipts r WHERE r.outbox_id=runner_outbox.id),0)",
       },
     ],
   },
