@@ -134,3 +134,21 @@ Changes taken from them:
   open window, so the GUI raises it.
 - **Each build step states its acceptance check;** the first is a profile for this repository,
   for an npm fixture and for a cargo fixture, each proven by running its commands.
+
+## Final pass outcomes, 2026-11-20
+
+One Readiness pass on the revised design. Its blocker: no build step states its acceptance check.
+That lives in the implementation plan, `.agents/plans/project-profile.md`. Answers to the rest:
+
+- **A project with a stored source filter and no profile:** the row stays in use until init writes
+  a profile; then it becomes the profile's `source` and the row is dropped. No source-only profile
+  is created.
+- **Two toolchains:** `verify` commands run in listed order; all run and every failure is
+  reported. A `fix` chain runs in listed order and stops at its first failure.
+- **Changed paths reach a `fix` command** appended as arguments, filtered by the command's `files`
+  globs when given; with no matching file the command does not run.
+- **Setup notice:** dismissal is stored per project; Settings can raise it again; an abandoned or
+  failed setup session leaves the notice in place.
+- **Confirmation:** each stored command records when the owner confirmed it and its last proven
+  result. An edit is stored as a pending revision; the runtime keeps running the last confirmed
+  revision until the owner confirms the new one.

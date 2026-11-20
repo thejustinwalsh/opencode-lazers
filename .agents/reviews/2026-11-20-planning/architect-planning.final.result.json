@@ -1,0 +1,229 @@
+{
+  "agent": "readiness",
+  "status": "reviewed",
+  "checked": [
+    "Build order: each step 'works alone'; independence and the pre-build host check (child session, plan link) are stated and already confirmed in the outcomes section.",
+    "Failed agent: retried once then recorded 'not run', never clean; sound as a rule (but see f4 for what counts as failed).",
+    "Stalled plan: stays open, nothing on a timer; explicit and consistent with 'no spend ceiling'.",
+    "Stale findings: carry reviewed revision, shown stale not dropped; behaviour stated.",
+    "Machine name `planning` vs existing `plan` machine; collision resolved.",
+    "'None' derived from threshold, never offered as a choice; fully specified in the decision-step rules.",
+    "Planning agent list and the five useWhen sentences exist in src/planning/index.ts, so the ranking list for the five agents is concrete.",
+    "Read-only permissions, hidden agents, shared route: registered per outcomes section; no open behaviour choice.",
+    "Owner-leaves, restart mid-review and plan-edited-after-ready are named cases with stated outcomes.",
+    "Final pass agent chosen (Readiness) as an explicit default."
+  ],
+  "findings": [
+    {
+      "id": "f1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "The ranking list is 'the fixed list of planning agents and question skills', but question skills are defined nowhere in the plan, the design folder or src (grep 'question skill' hits only design/architect-planning.md:50). The five agents with useWhen sentences exist in src/planning/index.ts; no skill list does.",
+      "failureScenario": "One builder ranks only the five agents, another invents skills; the choice count, the systemOne question shape (20-choice limit) and the 'picked for nearly every piece' backtest all differ.",
+      "evidence": [
+        "design/architect-planning.md:50 'question skills'",
+        "src/planning/index.ts planningAgents (five entries only)"
+      ],
+      "suggestion": "Either delete 'and question skills' from the decision step or list the skills and where they live."
+    },
+    {
+      "id": "f2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "How per-piece results combine is unspecified: 'Combines across pieces into one ranked list; each entry keeps its score'. Not stated: max, mean or sum per agent; how two runs ('twice') merge; and which size wins when pieces disagree (one task vs a large effort). Size decides whether the whole flow runs.",
+      "failureScenario": "A builder takes the mean score, so a Grounding-relevant sentence in a long ask is diluted below the threshold and the agent is cut; another takes max and all five always pass. A multi-paragraph ask with one 'large effort' piece is classed simple by majority and skips planning.",
+      "evidence": [
+        "'Combines across pieces into one ranked list'",
+        "'size: one task / a few tasks / a large effort'"
+      ],
+      "suggestion": "State the combine rule per agent (suggest max over pieces) and the size rule (suggest the largest size any piece gets), and how the two runs merge."
+    },
+    {
+      "id": "f3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "The threshold has no defined scale or comparison. The outcomes say it 'sits just above unsure' and is a hand-chosen starting value, but not whether it applies to each agent's score, the top score or a spread measure, nor what 'unsure' is numerically for systemOne probabilities.",
+      "failureScenario": "Builder A compares top score to a constant, B cuts each agent below it; with the same constant 'only an agent that clearly cannot help is cut' holds for one and not the other, and every recorded decision is measured on a different rule, so the later backtest is incomparable.",
+      "evidence": [
+        "'The threshold sits just above \"unsure\", so in practice all five run and only an agent that clearly cannot help is cut'",
+        "'probabilities per choice'"
+      ],
+      "suggestion": "Define: per-agent probability >= T keeps the agent; 'below threshold' for the Architect means no agent clears T; give the starting T and its basis (for example 1/N plus a margin)."
+    },
+    {
+      "id": "f4",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Planning agents / Review outcomes", "field": "design-decision" },
+      "what": "'Failed agent' is undefined while 'nothing times a tool call out' and 'nothing proceeds on a timer'. A hung or silent child session never fails, so the plan waits forever on one reviewer; an invalid or truncated JSON result (parsePlanningResult exists) may or may not count as failure.",
+      "failureScenario": "One reviewer's session stalls; the planning state stays 'in review' indefinitely with no visible reason and the owner only recovers via 'just task it'. Or a builder treats unparseable output as a clean pass, violating 'never as clean'.",
+      "evidence": [
+        "'nothing times a tool call out, and the tool must cancel its own children'",
+        "'A failed agent is retried once, then recorded as not run'",
+        "src/planning/contract.ts parsePlanningResult"
+      ],
+      "suggestion": "List what counts as failed (session error, unparseable result, no progress for a stated inactivity span) and show a stuck agent in the owner view."
+    },
+    {
+      "id": "f5",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Flow / Structure", "field": "design-decision" },
+      "what": "The stored plan has no defined format, yet the chat breakdown is 'generated from it, never written separately' (tasks, one line each with dependencies, open decisions). Plan structure (structured fields vs markdown), the two tables' columns, and the three Architect tools' inputs and outputs are not given.",
+      "failureScenario": "Builder stores free markdown and the breakdown generator cannot extract tasks or dependencies reliably; another stores JSON tasks and the reviewers receive a different text than the owner's link shows. Findings point at 'task and field' that the stored shape may not have.",
+      "evidence": [
+        "'tasks first, one line each with dependencies, then open decisions'",
+        "'two tables (plan draft, findings)'",
+        "'Store the plan draft; review the plan; resolve a finding.'"
+      ],
+      "suggestion": "Name the plan's structure (tasks with id, dependencies, scope, acceptance, verification; open decisions) and revision handling (every revision kept or only latest), plus the finding row fields."
+    },
+    {
+      "id": "f6",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Flow (step 11)", "field": "design-decision" },
+      "what": "After the final pass the Architect 'updates the plan once' and makes tasks. Not stated: what happens to a blocker or new owner question the final Readiness pass raises, whether those go to the owner, and whether the Architect may proceed to tasks over an unresolved blocker.",
+      "failureScenario": "Final pass returns a blocker; builder either tasks anyway (the wrong plan this flow exists to prevent) or loops another round (contradicting 'one final pass' and the no-round-cap stance).",
+      "evidence": [
+        "'one final planning agent pass; the Architect updates the plan once; the Architect makes tasks'",
+        "'ready (returns to drafted)' only for edits after ready"
+      ],
+      "suggestion": "State: final-pass questions go to the owner as in step 10, or are shown alongside the task list without blocking."
+    },
+    {
+      "id": "f7",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Structure", "field": "write-scope" },
+      "what": "The plan link opens a LAZERS panel view (outcomes section), but no layer in Structure or step in Build order covers the panel or link handler for plans (task links use src/tasks/links.ts). The build is scoped only to runtime, agents, guidance, tools and settings.",
+      "failureScenario": "Step 2 delivers 'the plan link' as a markdown link whose click handler does nothing or the owner sees a dead link; reviewers' stated deliverable passes because the link string exists.",
+      "evidence": [
+        "'A plan link is a markdown link routed by a link handler to a LAZERS panel, as task links are today'",
+        "Structure table has no GUI row",
+        "src/tasks/links.ts createTaskLinkHandler"
+      ],
+      "suggestion": "Add a GUI row (plan view panel plus link handler) and state what it shows (plan, findings, stale marks)."
+    },
+    {
+      "id": "f8",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Structure", "field": "design-decision" },
+      "what": "New tables and a new `planning` machine in lifecycleMachines have no stated handling for retention, the radar/statechart projection or the existing plan-state sets (src/retention/retention.ts TERMINAL_PLAN_STATES = integrated, cancelled). Whether `tasked` is terminal and when plan drafts are purged is open.",
+      "failureScenario": "Retention treats planning plans as unclassified or never purges drafts and findings; or the radar projection rejects an unknown machine.",
+      "evidence": [
+        "src/retention/retention.ts:17",
+        "design/architect-planning.md 'two tables (plan draft, findings)'"
+      ],
+      "suggestion": "One sentence: planning rows follow the retention of the plan they produced, and `tasked` is terminal."
+    },
+    {
+      "id": "f9",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": { "unit": "Settings / Planning agents", "field": "design-decision" },
+      "what": "Per-project 'auto-dispatch of planning agents' has no default or off behaviour, and the one deterministic rule that adds an agent ('plan writes a migration') has no definition of how a migration is detected in the plan. The path-not-in-map check's severity and its map (frozenPlanMap?) are unspecified.",
+      "failureScenario": "Default off means no agents ever run and the flow silently reduces to the Architect alone; or builders detect 'migration' by different keywords and Critic's inclusion differs.",
+      "evidence": [
+        "'per-project auto-dispatch of planning agents'",
+        "'for example the plan writes a migration, so add Critic'"
+      ],
+      "suggestion": "State the default (on), what off does (Architect calls review manually), and the rule's exact trigger text."
+    },
+    {
+      "id": "f10",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Build order", "field": "acceptance" },
+      "what": "No build step has acceptance or verification; the plan defers it ('Each build step states its own acceptance check before it starts'), and 'How it is judged' is outcome metrics over many plans, which cannot catch a stub. The backtest and threshold are the riskiest step and have no pass condition (backtest must run on the 27 submitted tasks; threshold constant must carry its measurement).",
+      "failureScenario": "Step 1 ships with a hard-coded threshold and a backtest script that exits 0 on an empty sample; nothing fails. Machine ships with 'just task it' missing from one state; no check iterates all states.",
+      "evidence": [
+        "'Each build step states its own acceptance check before it starts.'",
+        "'How it is judged' section: before/after rates only"
+      ],
+      "suggestion": "Add one concrete check per step, at least: test that 'just task it' succeeds from every planning state; backtest fails on an empty or unlabeled sample and prints the recorded counts; an agent failure yields 'not run' in the shown result."
+    }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "Which score rule decides whether a planning agent runs: each agent's own score against the threshold, or only the top score?",
+      "why": "Decides whether weak agents are cut individually or all-or-nothing, and what the backtest measures.",
+      "options": [
+        "Per-agent: keep every agent whose combined score clears the threshold",
+        "Top score only: if the best clears, all five run",
+        "Per-agent plus always keep the top two"
+      ],
+      "relatedFinding": "f3",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "q2",
+      "question": "How are piece scores combined across a long ask: maximum per agent, mean, or sum?",
+      "why": "Max keeps any single-sentence trigger alive; mean dilutes it; changes which agents run on long asks.",
+      "options": ["Maximum over pieces", "Mean over pieces", "Sum, capped at one"],
+      "relatedFinding": "f2",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "q3",
+      "question": "When pieces disagree on size, which wins?",
+      "why": "Decides whether a multi-part ask with one large piece runs the planning flow.",
+      "options": [
+        "Largest size any piece gets",
+        "Majority of pieces",
+        "Size of the piece with the highest-confidence answer"
+      ],
+      "relatedFinding": "f2",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "q4",
+      "question": "What are the 'question skills' the decision model ranks beside the agents, or should they be removed from this design?",
+      "why": "Changes the choice list, the ranking prompt and whether a skills registry is in scope.",
+      "options": [
+        "Remove; rank the five agents only",
+        "Keep, and define the list now",
+        "Defer to a later version, rank agents only for now"
+      ],
+      "relatedFinding": "f1",
+      "weight": "changes-scope"
+    },
+    {
+      "id": "q5",
+      "question": "When a planning agent session hangs with no result, may it be failed after an inactivity span, or does the plan wait for it indefinitely?",
+      "why": "Contradicts or refines 'nothing proceeds on a timer'; decides whether a stuck reviewer is ever recorded as 'not run'.",
+      "options": [
+        "Fail after an inactivity span (suggest 10 minutes without progress), retry once",
+        "Wait forever; owner uses 'just task it'",
+        "Show a stuck marker after an inactivity span but never fail it"
+      ],
+      "relatedFinding": "f4",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "q6",
+      "question": "If the final pass raises a blocker or question, what happens to it?",
+      "why": "Decides whether the flow can end with unresolved blockers or needs another owner round.",
+      "options": [
+        "Goes to the owner as in step 10, then tasks",
+        "Shown with the task list, does not block",
+        "Blocks tasking until the owner answers"
+      ],
+      "relatedFinding": "f6",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "q7",
+      "question": "Should auto-dispatch of planning agents default to on or off per project?",
+      "why": "Off silently disables the reviewing half of the flow until configured.",
+      "options": ["On by default", "Off by default, owner enables per project"],
+      "relatedFinding": "f9",
+      "weight": "changes-detail"
+    }
+  ]
+}

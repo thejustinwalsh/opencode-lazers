@@ -1,0 +1,104 @@
+{
+  "agent": "readiness",
+  "status": "reviewed",
+  "checked": [
+    "Readers table covers every Bun assumption named in the intent, plus the two recognisers added in review outcomes",
+    "No-profile fallback is stated exactly (built-in derived filter, Architect commands, Fallow as now)",
+    "Unproven-command handling: stored with recorded result, never run unattended",
+    "Owner confirmation of commands is defined for init and for later changes",
+    "Build order dependencies against the runtime split are stated",
+    "src/runner/quality-failure.ts:16-19 confirms the Bun-only recogniser the plan says to replace"
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocker",
+      "confidence": "confirmed",
+      "target": {
+        "unit": "Review outcomes: Each build step states its acceptance check",
+        "field": "acceptance"
+      },
+      "what": "No build step has an acceptance check or verification command; the plan says each step states one and names only a first check (a profile for this repo, an npm fixture and a cargo fixture, each proven by running its commands).",
+      "failureScenario": "A builder ships steps 2-5 with unit tests that mock the profile. The recognisers, auto-fix, isolated recheck and Fallow still behave as Bun-only when run against the npm or cargo fixture, and nothing fails. 'Proven by running its commands' also passes with a stub that records exit 0 without executing anything.",
+      "evidence": [
+        "\"Each build step states its acceptance check; the first is a profile for this repository, for an npm fixture and for a cargo fixture\""
+      ],
+      "suggestion": "Per step, give an observable check on the npm and cargo fixtures: step 2 refused/misclassified commands now accepted and a failing cargo test classified as a test failure; step 4 isolated cargo recheck gets its dependencies and runs; step 5 audit off or on per profile, map built from source."
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "One source store", "field": "design-decision" },
+      "what": "The plan migrates repo_map_sources into the profile and removes it, but also says no profile means today's behaviour and validation rejects empty verify. A project with an existing source row and no verify commands has no valid profile to migrate into.",
+      "failureScenario": "Builder either creates profiles with empty verify (violating validation, and ending the 'no profile' fallback), or drops existing custom source filters, silently changing repository maps for those projects.",
+      "evidence": [
+        "\"It is migrated into the profile (keyed by project key) and removed\"",
+        "src/context/repo-map-store.ts:20,46 repo_map_sources keyed by project_directory",
+        "\"validation on save (empty `verify`, empty `source.include`, unknown `audit`)\""
+      ],
+      "suggestion": "State what migration produces for rows without a profile: keep rows until init writes a profile, or allow a source-only profile."
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Fields made precise in the build", "field": "design-decision" },
+      "what": "Behaviour-changing fields are deferred to the build: how changed paths reach a fix command, ordering and scope across two toolchains, and whether a failing verify command stops later ones.",
+      "failureScenario": "Builder picks one: fix runs on the whole tree instead of changed files, or mixed-toolchain verify runs in an arbitrary order. Different observable edits to worker commits and different failure classification.",
+      "evidence": [
+        "\"how changed paths are passed to a `fix` command; ordering and scope of commands across two toolchains\"",
+        "`fix: { command: string; files?: string[] }[]`"
+      ],
+      "suggestion": "Decide: files substituted as appended arguments vs placeholder; verify runs in array order, all commands run even after a failure or stop at first."
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "Dismissal of the setup notice has no stated scope or storage (per project, per user, resettable), and it is unstated whether init prompts again after a failed or abandoned setup session.",
+      "failureScenario": "Dismiss is held in GUI memory and the notice returns on every window open, or dismiss is global and hides setup for all projects.",
+      "evidence": ["\"The notice stays until the owner sets up or dismisses it.\""],
+      "suggestion": "State: per project key, stored with the profile store, cleared by 'Run setup again'."
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Review outcomes: owner-confirmed commands", "field": "design-decision" },
+      "what": "Confirmation state is not defined: where the confirmed flag lives, what happens to unconfirmed edits (stored as a pending revision or not at all), and whether the runtime runs the last confirmed revision while a change is pending.",
+      "failureScenario": "Builder stores the Architect's proposal directly as active with a confirmed boolean never checked by the runtime, so unattended commands run unreviewed.",
+      "evidence": [
+        "\"a later change to a command, including a re-run of setup, shows the difference and needs the owner's confirm\""
+      ],
+      "suggestion": "Say: revisions are append-only; only the latest confirmed revision is read by the runtime; a proposal is a pending revision."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "For a project that has a stored repo_map_sources row but no profile, what should the migration produce?",
+      "why": "Decides whether the map filter survives and whether a source-only profile is a valid state.",
+      "options": [
+        "Keep the row until init writes a profile, then drop it",
+        "Create a source-only profile with empty verify allowed",
+        "Drop the row; the built-in derived filter applies"
+      ],
+      "relatedFinding": "F2",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "When a profile has two toolchains, do verify commands run in array order and stop at the first failure?",
+      "why": "Changes failure classification and cost per check run.",
+      "options": [
+        "Array order, stop at first failure",
+        "Array order, run all and report every failure",
+        "Grouped by toolchain, run in parallel"
+      ],
+      "relatedFinding": "F3",
+      "weight": "changes-detail"
+    }
+  ]
+}
