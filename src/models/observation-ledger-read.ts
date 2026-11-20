@@ -477,7 +477,8 @@ function readDecisionProgress(
   return { facts, fingerprint: digest.digest("hex"), invalidCount, notes }
 }
 
-function boundedNotes(values: string[]) {
+/** Distinct notes in first-seen order; nothing is dropped. */
+function uniqueNotes(values: string[]) {
   return [...new Set(values)]
 }
 
@@ -526,7 +527,6 @@ function readTaskRows(
   db: Database,
   projectDirectory: string,
   tableInfo: Record<string, TableInfo>,
-  tasks: RawTask[],
   notes: string[],
 ) {
   let references: RawReference[] = []
@@ -802,7 +802,6 @@ function readCaptureRows(
     db,
     projectDirectory,
     tableInfo,
-    tasks,
     notes,
   )
   const runner = readRunnerRows(db, projectDirectory, statuses, options, notes)
@@ -848,7 +847,7 @@ function readCaptureRows(
       sourceStatuses: statuses,
       decisionProgressFacts,
       decisionProgressFingerprint,
-      notes: boundedNotes(notes),
+      notes: uniqueNotes(notes),
       fingerprint,
       effectiveClassifications: snapshots,
     },
@@ -1583,7 +1582,7 @@ function emptyOutput(
     pin: null,
     completeness: {
       status: incomplete ? "incomplete" : unavailable ? "unavailable" : "partial",
-      reasons: boundedNotes(notes),
+      reasons: uniqueNotes(notes),
       sources,
     },
     classificationCoverage: {
@@ -2009,7 +2008,7 @@ function decisionProjection(
     }),
     sourceRevision,
     sources: capture.sourceStatuses,
-    notes: boundedNotes(capture.notes),
+    notes: uniqueNotes(capture.notes),
     tasks,
     progressFacts,
     classificationCoverage: {
@@ -2243,7 +2242,7 @@ function outputFromCapture(
           ? `${status.name} is absent from this legacy schema.`
           : `${status.name} is ${status.status}${status.missingColumns.length ? `; missing ${status.missingColumns.join(", ")}` : ""}.`,
       )
-  const uniqueReasons = boundedNotes(completenessReasons)
+  const uniqueReasons = uniqueNotes(completenessReasons)
   const partial = uniqueReasons.length > 0
   const nextOffset = offset + pageRows.length
   const nextCursor =
