@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
-import { join } from "node:path"
+import { execFileSync } from "node:child_process"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import {
   makeFixture,
   moduleKinds,
@@ -243,28 +245,52 @@ describe("both modules answer alike", () => {
 
 describe("this repository (invariants only; its findings change daily)", () => {
   test("every report runs without error, is deterministic, and has plausible counts, on both modules", () => {
-    const sections = [
-      "deadCode",
-      "cycles",
-      "architecture",
-      "featureFlagReport",
-      "duplicationReport",
-      "health",
-    ]
-    const seen = new Map<string, string>()
-    for (const kind of moduleKinds)
-      for (const name of sections) {
-        const first = runOp(name, repoRoot, {}, {}, kind).report
-        expect(first.kind ?? first.summary ?? first, `${kind} ${name}`).toBeTruthy()
-        const text = JSON.stringify(strip(first))
-        // Same module twice, and the other module, give the same bytes.
-        expect(JSON.stringify(strip(runOp(name, repoRoot, {}, {}, kind).report))).toBe(text)
-        const other = seen.get(name)
-        if (other !== undefined) expect(text, `${name} differs between modules`).toBe(other)
-        seen.set(name, text)
-        if (name === "deadCode") expect(first.total_issues).toBeGreaterThanOrEqual(0)
-        if (name === "duplicationReport")
-          expect(first.clone_groups.length).toBeGreaterThanOrEqual(0)
+    // Analyse a snapshot: the live tree changes while the gate runs, and the comparison between
+    // the two modules needs both analyses to see the same files (214 vs 218 dead-code issues).
+    const snapshot = realpathSync(mkdtempSync(join(tmpdir(), "fallow-repo-snapshot-")))
+    try {
+      for (const path of trackedSources(repoRoot)) {
+        if (!existsSync(join(repoRoot, path))) continue
+        mkdirSync(dirname(join(snapshot, path)), { recursive: true })
+        cpSync(join(repoRoot, path), join(snapshot, path), { verbatimSymlinks: true })
       }
+      const git = (...args: string[]) =>
+        execFileSync(
+          "git",
+          ["-c", "user.name=fixture", "-c", "user.email=fixture@example.com", ...args],
+          { cwd: snapshot, stdio: "pipe" },
+        )
+      git("init", "-q", "-b", "main")
+      git("add", ".")
+      git("commit", "-q", "-m", "snapshot")
+      checkReports(snapshot)
+    } finally {
+      rmSync(snapshot, { recursive: true, force: true })
+    }
   }, 280_000)
 })
+
+function checkReports(root: string) {
+  const sections = [
+    "deadCode",
+    "cycles",
+    "architecture",
+    "featureFlagReport",
+    "duplicationReport",
+    "health",
+  ]
+  const seen = new Map<string, string>()
+  for (const kind of moduleKinds)
+    for (const name of sections) {
+      const first = runOp(name, root, {}, {}, kind).report
+      expect(first.kind ?? first.summary ?? first, `${kind} ${name}`).toBeTruthy()
+      const text = JSON.stringify(strip(first))
+      // Same module twice, and the other module, give the same bytes.
+      expect(JSON.stringify(strip(runOp(name, root, {}, {}, kind).report))).toBe(text)
+      const other = seen.get(name)
+      if (other !== undefined) expect(text, `${name} differs between modules`).toBe(other)
+      seen.set(name, text)
+      if (name === "deadCode") expect(first.total_issues).toBeGreaterThanOrEqual(0)
+      if (name === "duplicationReport") expect(first.clone_groups.length).toBeGreaterThanOrEqual(0)
+    }
+}
