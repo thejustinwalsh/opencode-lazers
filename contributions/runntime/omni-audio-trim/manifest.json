@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "stage": "omni-audio-trim",
+  "base": {
+    "repository": "https://github.com/thejustinwalsh/runntime.git",
+    "commit": "a3718c80f959b8e86d1b2abf056fb578f532aeb9",
+    "tree": "0955db900d7b537727676aa5034623331db98b17"
+  },
+  "tip": {
+    "commit": "70ab1be9c16571b777b0321073e230e1873b1a4b",
+    "tree": "6e7b65bf27d11cc3676be9ac4349c840a6b0e1c4"
+  },
+  "patches": [
+    {
+      "commit": "675eaf26d26fe99e1d43f781e819263c65670cbc",
+      "parent": "a3718c80f959b8e86d1b2abf056fb578f532aeb9",
+      "tree": "b1b4f74762fea87a13d2a1fe9ceef9756ae4796f",
+      "path": "patches/0001-trim-executor-pool-per-audio-operation.patch",
+      "sha256": "de7cba20b7b8305819d96e6a0419c42326ec6203a4c624b68a0fb79ea1066925"
+    },
+    {
+      "commit": "70ab1be9c16571b777b0321073e230e1873b1a4b",
+      "parent": "675eaf26d26fe99e1d43f781e819263c65670cbc",
+      "tree": "6e7b65bf27d11cc3676be9ac4349c840a6b0e1c4",
+      "path": "patches/0002-memory-check-across-repeated-audio-runs.patch",
+      "sha256": "ba4994e6a976f291d89df66f3a9ccadc28efcde9c05c6ea48e77b89c97c7ed5e"
+    }
+  ],
+  "checks": [
+    {
+      "kind": "unit",
+      "command": "pnpm --filter runntime test:unit",
+      "exitCode": 0,
+      "path": "evidence/unit.log",
+      "sha256": "c369c44fc4401dd001fedda3fa4b92350525343a4252c885fa358ab69323dd62"
+    },
+    {
+      "kind": "typecheck",
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "path": "evidence/typecheck.log",
+      "sha256": "d318868863d485d2e56d27a308a51707e9a89df1f93891e266052da2fa7c1899"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm lint",
+      "exitCode": 0,
+      "path": "evidence/lint.log",
+      "sha256": "b543827ce56a63357c629028555ecec2cc964dda33dbbf2a9a2872b1a2ab20f8"
+    },
+    {
+      "kind": "lint",
+      "command": "pnpm format:check",
+      "exitCode": 0,
+      "path": "evidence/format.log",
+      "sha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2"
+    },
+    {
+      "kind": "build",
+      "command": "pnpm build",
+      "exitCode": 0,
+      "path": "evidence/build.log",
+      "sha256": "420e44a02b4463634fadfb0bc3d3ee1a21f94585b1d29bc20bae66d38adda775"
+    },
+    {
+      "kind": "gpu",
+      "command": "cd packages/runntime && VITE_LFM3_MODEL_URL=/test/.weights/LFM3-Omni-2B-Q4_K_M.gguf VITE_LFM3_PROJECTOR_URL=/test/.weights/mmproj-LFM3-Omni-2B-Q8_0.gguf VITE_LFM3_TOKENIZER_URL=/test/.weights/lfm3-tokenizer.json VITE_LFM3_AUDIO_INPUT_BASE_URL=/test/.weights/audio-fixtures VITE_LFM3_QUALIFICATION_MODE=audio-trim pnpm exec vitest run --project gpu test/zoo/lfm3/audio-trim.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/gpu-audio-trim.log",
+      "sha256": "3bee327f2f8584ed614f8a2c255948467cff1416907e7eac25b2d30fca601035"
+    },
+    {
+      "kind": "gpu",
+      "command": "cd packages/runntime && VITE_LFM3_MODEL_URL=/test/.weights/LFM3-Omni-2B-Q4_K_M.gguf VITE_LFM3_PROJECTOR_URL=/test/.weights/mmproj-LFM3-Omni-2B-Q8_0.gguf VITE_LFM3_TOKENIZER_URL=/test/.weights/lfm3-tokenizer.json VITE_LFM3_AUDIO_INPUT_BASE_URL=/test/.weights/audio-fixtures VITE_LFM3_QUALIFICATION_MODE=audio pnpm exec vitest run --project gpu test/zoo/lfm3/public-audio.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/gpu-public-audio.log",
+      "sha256": "6fda7cf740ff930ffb4daa433d8dc4667ba707bd5a7a2be1b3dedd242be654f6"
+    },
+    {
+      "kind": "gpu",
+      "command": "cd packages/runntime && VITE_LFM3_MODEL_URL=/test/.weights/LFM3-Omni-2B-Q4_K_M.gguf VITE_LFM3_PROJECTOR_URL=/test/.weights/mmproj-LFM3-Omni-2B-Q8_0.gguf VITE_LFM3_TOKENIZER_URL=/test/.weights/lfm3-tokenizer.json VITE_LFM3_AUDIO_INPUT_BASE_URL=/test/.weights/audio-fixtures VITE_LFM3_QUALIFICATION_MODE=q4 pnpm exec vitest run --project gpu test/zoo/lfm3/public.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/gpu-public-q4.log",
+      "sha256": "65d92a38bc269b3444d3f47a08b537ffbea5b762fe9251799f472d7bd5af38de"
+    },
+    {
+      "kind": "gpu",
+      "command": "cd packages/runntime && VITE_LFM3_MODEL_URL=/test/.weights/LFM3-Omni-2B-Q4_K_M.gguf VITE_LFM3_PROJECTOR_URL=/test/.weights/mmproj-LFM3-Omni-2B-Q8_0.gguf VITE_LFM3_TOKENIZER_URL=/test/.weights/lfm3-tokenizer.json VITE_LFM3_AUDIO_INPUT_BASE_URL=/test/.weights/audio-fixtures VITE_LFM3_QUALIFICATION_MODE=q4-recovery pnpm exec vitest run --project gpu test/zoo/lfm3/recovery.gpu.test.ts",
+      "exitCode": 0,
+      "path": "evidence/gpu-recovery-q4.log",
+      "sha256": "1d595b9d7b6e55d959a32fbf297d52b67e336352243af0830d4c487641e70bd0"
+    },
+    {
+      "kind": "package",
+      "command": "pnpm --filter runntime pack",
+      "exitCode": 0,
+      "path": "evidence/package.log",
+      "sha256": "7959729891e0bd7952f461ad65c4f15909b437b29ec344e3edbfa8cff61a307d"
+    }
+  ]
+}
