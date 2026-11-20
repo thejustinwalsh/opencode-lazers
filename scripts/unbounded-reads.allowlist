@@ -13,13 +13,6 @@ src/retention/audit-runs.ts:138 | all | audit_sections | children of one audit r
 src/context/repository-snapshots.ts:384 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT snapshot_id,file,bytes FROM context_repo_snapshots ORDER BY created_at ASC,rowid AS
 src/context/repository-snapshots.ts:415 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT file FROM context_repo_snapshots
 src/managed-usage/store.ts:144 | star | managed_usage_boundaries | all columns are mapped; LIMIT 100000 in the statement | SELECT * FROM managed_usage_boundaries WHERE project_directory=? ORDER BY session_id,revis
-src/models/market-range-evidence.ts:193 | all | model_endpoint_pricing_refreshes | todo: src/models is changing in another lane | SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id, latest
-src/models/market-range-evidence.ts:263 | all | model_endpoint_pricing_refreshes | todo: src/models is changing in another lane | SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id, latest
-src/models/observation-ledger-read.ts:648 | star | runner_adoptions | todo: src/models is changing in another lane | SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id JOIN tasks t ON t
-src/models/observation-ledger-read.ts:669 | star | runner_progress | todo: src/models is changing in another lane | SELECT r.* FROM runner_progress r JOIN runner_plans p ON p.id=r.plan_id JOIN tasks t ON t.
-src/models/source-store.ts:546 | all | model_endpoint_pricing_refreshes | todo: src/models is changing in another lane | SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id, latest
-src/models/source-store.ts:642 | all | model_evidence_refreshes | todo: src/models is changing in another lane | SELECT r.source, r.state, r.generation, r.started_at, r.completed_at, r.latest_snapshot_id
-src/models/source-store.ts:774 | all | model_evidence_refreshes | todo: src/models is changing in another lane | SELECT r.source, r.state, r.generation, r.started_at, r.completed_at, r.latest_snapshot_id
 src/observability/associations.ts:19 | all | tasks | todo | SELECT id FROM tasks WHERE project_directory=? AND CASE WHEN json_valid(body) THEN json_ex
 src/observability/associations.ts:27 | all | runner_plans | one session's rows | SELECT id FROM runner_plans WHERE project_directory=? AND owner=?
 src/observability/associations.ts:36 | all | runner_attempts | todo | SELECT DISTINCT a.task_id,a.plan_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.p

@@ -32,7 +32,12 @@ import {
 } from "./decision-progress-fact.ts"
 import type { DecisionProgressSource, JsonObject, Route } from "./decision-progress-fact.ts"
 import { projectProgressFact } from "../progress/projection.ts"
-import type { AdoptionRow, AttemptRow, PlanRow, ProgressRow } from "../runner/store.ts"
+import type {
+  AdoptionRow as StoredAdoptionRow,
+  AttemptRow,
+  PlanRow,
+  ProgressRow,
+} from "../runner/store.ts"
 import { classificationSnapshotFor } from "../tasks/classification.ts"
 import type { ClassificationAnnotationRow } from "../tasks/classification.ts"
 import {
@@ -83,6 +88,22 @@ type RawTransition = {
   payload: string
   created_at: number
 }
+/** The adoption columns the ledger reads; the table carries many more. */
+type AdoptionRow = Pick<
+  StoredAdoptionRow,
+  | "id"
+  | "plan_id"
+  | "task_id"
+  | "attempt_id"
+  | "attempt_state"
+  | "old_artifact"
+  | "descendant_commit"
+  | "combined_artifact"
+  | "reason"
+  | "state"
+  | "created_at"
+  | "updated_at"
+>
 type RawProgress = ProgressRow
 type RawCapture = {
   tasks: RawTask[]
@@ -677,7 +698,9 @@ function readRunnerRows(
   if (plansAvailable && sourceAvailable(statuses, "runner_adoptions")) {
     adoptions = queryAll<AdoptionRow>(
       db,
-      `SELECT a.* FROM runner_adoptions a
+      `SELECT a.id,a.plan_id,a.task_id,a.attempt_id,a.attempt_state,a.old_artifact,a.descendant_commit,
+                a.combined_artifact,a.reason,a.state,a.created_at,a.updated_at
+         FROM runner_adoptions a
          JOIN runner_plans p ON p.id=a.plan_id
          JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? ORDER BY a.created_at,a.id`,
@@ -698,7 +721,9 @@ function readRunnerRows(
     } else {
       progress = queryAll<RawProgress>(
         db,
-        `SELECT r.* FROM runner_progress r
+        `SELECT r.seq,r.project_directory,r.project_id,r.dedupe_key,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
+                r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.payload
+           FROM runner_progress r
            JOIN runner_plans p ON p.id=r.plan_id
            JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
            WHERE r.project_directory=? AND p.project_directory=?
