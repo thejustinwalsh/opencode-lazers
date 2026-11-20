@@ -563,3 +563,15 @@ Architect-contact pause is a separate switch that stops notices, not work.
 Active attempts, takeovers in progress, verification, retained repair of an owned attempt and
 reservations are not dispatch and ignore pause. A project not yet registered has no key, so only
 the global pause applies to it until its registration lands.
+
+## Project profile revisions
+
+`profileRevisionMachine` (`src/projects/profile-machine.ts`, key `profile` in `lifecycleMachines`) has
+three states: `proposed`, `confirmed` and `discarded`. A proposal leaves `proposed` by exactly one of
+`OWNER_CONFIRMED` (the owner confirms it in Settings), `OWNER_DISCARDED` (the owner rejects it) or
+`REPLACED` (a newer proposal for the same project arrives). `confirmed` and `discarded` are final.
+That a newer confirmed revision supersedes an older one is not a transition: the runtime reads the
+latest `confirmed` row. Rows live in `lazers_profile_revisions` (append-only: only `state`,
+`decided_at` and `decided_by` change) with their command proofs in `lazers_profile_proofs`
+(`src/projects/profile-store.ts`). No agent tool confirms; the owner's controls are the two
+`OWNER_*` events. Dismissing the setup notice is the project setting `setupDismissedAt`, not a state.

@@ -162,5 +162,6 @@ test("a database written before structured values reads unchanged", () => {
     weight: 2.5,
     spendCeilingTokens: null,
     planningAutoDispatch: true,
+    setupDismissedAt: null,
   })
 })
