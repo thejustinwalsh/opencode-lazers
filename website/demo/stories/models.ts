@@ -119,9 +119,10 @@ const deepseekAfter: DemoModel = {
   priceOut: 6.5,
   priceCache: 0.12,
 }
+// A recorded native model of the openrouter provider: opencode-go lists no Muse Ember.
 const ember: DemoModel = {
-  providerID: "opencode-go",
-  id: "muse-ember",
+  providerID: "openrouter",
+  id: "meta/muse-ember",
   name: "Muse Ember",
   openrouterID: "meta/muse-ember",
   priceIn: 0.1,
