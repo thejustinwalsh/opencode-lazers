@@ -6,6 +6,8 @@ import type { VerificationActivity } from "./verification-activities.ts"
 
 export const messageID = () => `msg_${crypto.randomUUID().replaceAll("-", "")}`
 
+export const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
+
 export const isCommitID = (value: unknown): value is string =>
   typeof value === "string" && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value)
 

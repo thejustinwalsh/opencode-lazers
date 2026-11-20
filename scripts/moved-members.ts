@@ -48,6 +48,26 @@ export function memberKey(line: string): string | undefined {
   return name ? prefix + name : undefined
 }
 
+/**
+ * A signature that wraps over several lines may fit on one once `private` is gone, so the
+ * header (up to the line that opens the body) is joined and its spacing normalised.
+ */
+function normalizeHeader(text: string[]) {
+  const first = text[0] as string
+  if (!first.includes("(") || first.trimEnd().endsWith("{")) return
+  const end = text.findIndex(
+    (line, index) => index > 0 && /^ {2}\S/.test(line) && line.trimEnd().endsWith("{"),
+  )
+  if (end < 0 || end > 20) return
+  const header = text
+    .slice(0, end + 1)
+    .map((line) => line.trim())
+    .join(" ")
+    .replace(/\( /g, "(")
+    .replace(/,? \)/g, ")")
+  text.splice(0, end + 1, `  ${header}`)
+}
+
 export function classMembers(source: string): Member[] {
   const lines = source.split("\n")
   const members: Member[] = []
@@ -82,7 +102,7 @@ export function classMembers(source: string): Member[] {
         continue
       }
       // A parameter list closes at two spaces and still opens the body: `  ): Row {`.
-      if (indent === 2 && /^ {2}[})\]]/.test(next)) {
+      if (indent === 2 && /^ {2}[})\]>]/.test(next)) {
         end = j
         if (next.trimEnd().endsWith("{")) continue
       }
@@ -90,6 +110,7 @@ export function classMembers(source: string): Member[] {
     }
     const text = lines.slice(i, end + 1)
     text[0] = (text[0] as string).replace(/^( {2})private /, "$1")
+    normalizeHeader(text)
     const count = seen.get(key) ?? 0
     seen.set(key, count + 1)
     members.push({ key: count === 0 ? key : `${key}#${count + 1}`, text: text.join("\n") })

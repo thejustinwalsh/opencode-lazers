@@ -1,4 +1,3 @@
-import { sessionTitle } from "./session-title.ts"
 import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
@@ -18,10 +17,14 @@ import {
   checkSettlementProblem,
   errorText,
   isRerunnableEffect,
+  sessionID,
 } from "./runtime-helpers.ts"
 import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
+import { ArchitectOwnership } from "./architect-ownership.ts"
+import { ArchitectSources } from "./architect-sources.ts"
+import { ArchitectRenewal } from "./architect-renewal.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -30,7 +33,7 @@ import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
-import { agentRouteReader, architectSessionModel } from "../models/agent-route-apply.ts"
+
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
@@ -44,7 +47,7 @@ import {
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, extname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
-import { NoCapabilityProviderError } from "../core/capabilities.ts"
+
 import {
   effectiveVerificationCheck,
   verificationDeadline as resolveVerificationDeadline,
@@ -114,10 +117,7 @@ import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attri
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
   architectCacheWindowMs,
-  architectContextTokens,
   architectReuseMaxContextTokens,
-  routeArchitect,
-  type ArchitectRoute,
   type ArchitectRoutingOptions,
 } from "./architect-routing.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
@@ -134,13 +134,7 @@ import type { ArtifactEvidenceLookup } from "./prerequisite-proof.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
 import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
-import {
-  ArchitectContinuityInput,
-  CommandInput,
-  ModelPolicy,
-  PlanInput,
-  WorkerPersona,
-} from "./schema.ts"
+import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
 import {
   PLAN_MOVED_RETRIES,
@@ -155,12 +149,10 @@ import type {
   EffectRow,
   OutboxRow,
   AdoptionRow,
-  ArchitectRenewalRow,
   ProgressRow,
 } from "./store.ts"
-import { appendRunnerEffectReceipt, RENEWAL_SUCCESSOR_FOREIGN, RunnerStore } from "./store.ts"
-import { outcomeText } from "./outcome.ts"
-import type { OutcomeOwnership } from "./inbox.ts"
+import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
+
 import {
   resolveRetainedRepairInputLineage,
   RETAINED_REPAIR_FENCE_FAILURE_REASON,
@@ -183,7 +175,7 @@ import {
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
-import { SourceMessagesInspectPlanSchema } from "./inspection.ts"
+
 import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
 import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
@@ -236,7 +228,6 @@ import {
 } from "./retained-verification/procedure.ts"
 import { sameProject } from "../project-key.ts"
 
-const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 
 /** Activity completion means a receipt exists, not that its process tree is idle. */
@@ -671,12 +662,14 @@ export class TaskRuntime {
   readonly progress: ProgressRecorder
   private readonly core: RuntimeCore
   private readonly journal: RuntimeJournal
+  private readonly ownership: ArchitectOwnership
+  private readonly sources: ArchitectSources
+  private readonly renewal: ArchitectRenewal
   private running = false
   private stopped = false
   private tickRequested = false
   private tickPromise: Promise<void> | undefined
   private readonly idleWaiters: (() => void)[] = []
-  private readonly renewalLocks = new Map<string, Promise<void>>()
   private readonly retainedVerificationAborts = new Map<string, AbortController>()
   private readonly retainedVerificationRuns = new Map<string, Promise<void>>()
   private readonly terminalRetainedVerificationCleanupChecks = new Map<
@@ -704,8 +697,6 @@ export class TaskRuntime {
   private readonly retainedDependencyInstaller: RetainedDependencyInstaller | undefined
   private readonly beforeRetainedCheckBegin: TaskRuntimeOptions["beforeRetainedCheckBegin"]
   private readonly modelMappingResolver: ModelMappingResolver
-  private readonly sourceEpochs = new Map<string, number>()
-  private sourceResyncPending = false
   private readonly schedulingRead: TaskSchedulingRead
   readonly delegatedAgentCapacity: DelegatedAgentCapacity
   constructor(
@@ -769,6 +760,10 @@ export class TaskRuntime {
       startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
       startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
       holdAdoption: (...args) => this.adoptionExecution.holdAdoption(...args),
+    })
+    this.ownership = new ArchitectOwnership(this.core, {
+      architectRouting: this.architectRouting,
+      journal: this.journal,
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -886,7 +881,19 @@ export class TaskRuntime {
       verificationDeadline: (...args) => this.verificationDeadline(...args),
       verificationTarget: (...args) => this.verificationTarget(...args),
     })
-    for (const id of store.architectSourceSessionIDs()) this.sourceEpochs.set(id, 0)
+    this.renewal = new ArchitectRenewal(this.core, {
+      architectPromptHook: this.architectPromptHook,
+      ownership: this.ownership,
+      sources: {
+        inspectArchitectSourcePage: (...args) => this.sources.inspectArchitectSourcePage(...args),
+        inspectArchitectSourceSweep: (...args) => this.sources.inspectArchitectSourceSweep(...args),
+      },
+    })
+    this.sources = new ArchitectSources(this.core, {
+      isStopped: () => this.stopped,
+      ownership: this.ownership,
+      renewalEvent: (...args) => this.renewal.renewalEvent(...args),
+    })
   }
   get directory() {
     return this.store.repository.projectDirectory
@@ -5859,1116 +5866,73 @@ export class TaskRuntime {
   }
 
   private validArchitect(session: HostSession | null | undefined): session is HostSession {
-    return Boolean(
-      session &&
-      !session.archived &&
-      session.agent === "architect" &&
-      session.projectID === this.projectID,
-    )
+    return this.ownership.validArchitect(session)
   }
 
-  private async ensureArchitectOwner(
-    plan: PlanRow,
-    previous: HostSession | null | undefined,
-    adopt = true,
-  ): Promise<HostSession> {
-    const current = await this.host.session(plan.owner)
-    if (this.validArchitect(current)) return current
-    // A user-set pause: never create, resume or fork an Architect session.
-    if (this.store.architectContactPaused()) throw new Error("Architect contact is paused")
-
-    let continuation = this.store.continuation(plan.id)
-    let priorContinuation: HostSession | null = null
-    if (continuation) {
-      priorContinuation = await this.host.session(continuation.session_id)
-      if (
-        this.validArchitect(priorContinuation) &&
-        this.matchesContinuation(priorContinuation, plan.id)
-      ) {
-        if (adopt) this.adoptArchitectOwner(plan, priorContinuation.id)
-        return priorContinuation
-      }
-    }
-
-    let next:
-      | { session_id: string; parent_id: string | null; directory: string; model: string | null }
-      | undefined
-    if (!continuation || priorContinuation) {
-      const source = previous?.projectID === this.projectID ? previous : current
-      const model = source?.projectID === this.projectID ? source.model : undefined
-      next = {
-        session_id: sessionID(),
-        parent_id: null,
-        directory: this.directory,
-        model: model ? JSON.stringify(model) : (continuation?.model ?? null),
-      }
-      continuation = continuation
-        ? this.store.replaceContinuation(plan.id, continuation.session_id, next)
-        : this.store.ensureContinuation(plan.id, next)
-    }
-
-    // A concurrent scheduler may already have selected a different stable ID.
-    if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
-      const adopted = await this.host.session(continuation.session_id)
-      if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
-        if (adopt) this.adoptArchitectOwner(plan, adopted.id)
-        return adopted
-      }
-    }
-
-    let session = await this.host.session(continuation.session_id)
-    if (session && !this.matchesContinuation(session, plan.id))
-      throw new Error("Native Architect continuation ID belongs to another session")
-    if (!session) {
-      try {
-        await this.host.createArchitect({
-          id: continuation.session_id,
-          ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
-          directory: continuation.directory,
-          ...(() => {
-            const model = this.architectSessionModel(
-              continuation.model ? JSON.parse(continuation.model) : undefined,
-            )
-            return model ? { model } : {}
-          })(),
-          title: this.sessionTitle(`continue ${plan.id.slice(0, 8)}`),
-          planID: plan.id,
-          sourceSessionID: plan.owner,
-        })
-      } catch (error) {
-        const recovered = await this.host.session(continuation.session_id)
-        if (!this.matchesContinuation(recovered, plan.id)) throw error
-        session = recovered
-      }
-      session ??= await this.host.session(continuation.session_id)
-    }
-    if (!this.validArchitect(session) || !this.matchesContinuation(session, plan.id))
-      throw new Error("Native Architect continuation is unavailable or foreign")
-    this.store.record(plan.id, null, "ARCHITECT_CONTINUATION_READY", {
-      sessionID: session.id,
-      parentID: continuation.parent_id,
-      generation: continuation.generation,
-    })
-    if (adopt) this.adoptArchitectOwner(plan, session.id)
-    return session
+  private ensureArchitectOwner(...args: Parameters<ArchitectOwnership["ensureArchitectOwner"]>) {
+    return this.ownership.ensureArchitectOwner(...args)
   }
 
-  private adoptArchitectOwner(plan: PlanRow, sessionID: string) {
-    this.store.atomic(() => {
-      if (!this.store.adoptPlanOwner(plan.id, plan.owner, sessionID)) return
-      // Persist the replacement's wake with ownership so a restart cannot split them.
-      this.wakeRecoveredArchitect(plan.id)
-    })
+  observeArchitectPrompt(...args: Parameters<ArchitectSources["observeArchitectPrompt"]>) {
+    return this.sources.observeArchitectPrompt(...args)
   }
 
-  private wakeRecoveredArchitect(planID: string) {
-    const plan = this.store.plan(planID)!
-    if (!["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) return
-    const pending = this.store.atomic((db) =>
-      db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM runner_outbox WHERE plan_id=? AND state='pending' LIMIT 1",
-        )
-        .get(planID),
-    )
-    // A consumed notice does not mean its unresolved plan was repaired.
-    if (!pending) this.outcome(planID, { status: plan.state, reason: plan.reason }, true)
-  }
-
-  private matchesContinuation(session: HostSession | null | undefined, planID: string) {
-    const continuation = this.store.continuation(planID)
-    const listedPlans = session?.metadata?.lazersPlanIDs
-    return (
-      Boolean(continuation) &&
-      session?.agent === "architect" &&
-      session.projectID === this.projectID &&
-      session.directory === this.directory &&
-      session.parentID === (continuation?.parent_id ?? undefined) &&
-      session.metadata?.lazersContinuation === true &&
-      (session.metadata.lazersPlanID === planID ||
-        (Array.isArray(listedPlans) && listedPlans.includes(planID)))
-    )
-  }
-
-  /** Called by the native prompt hook before OpenCode admits the input to its inbox. */
-  async observeArchitectPrompt(sessionID: string, nativeMessageID: string) {
-    const observed = this.store.observeArchitectInput(sessionID, nativeMessageID, this.now(), {
-      type: "user",
-      disposition: "prompt",
-      userPrompt: true,
-    })
-    if (observed.role === "predecessor") {
-      this.sourceEpochs.set(sessionID, (this.sourceEpochs.get(sessionID) ?? 0) + 1)
-      this.store.invalidateArchitectSource(sessionID, this.now())
-    }
-  }
-
-  private readonly sourceInvalidations = new Map<
-    string,
-    { timer: ReturnType<typeof setTimeout>; dirty: boolean }
-  >()
-
-  /**
-   * Called for every native event. O(1) for sessions that are not Architect
-   * sources; for sources the epoch bumps in memory at once and the durable
-   * invalidation is coalesced (250ms) off the event path.
-   */
-  observeArchitectSourceEvent(sessionID?: string) {
-    if (sessionID) {
-      if (!this.sourceEpochs.has(sessionID)) return
-      this.scheduleSourceInvalidation(sessionID)
-      return
-    }
-    this.sourceResyncPending = true
-    for (const id of this.store.architectSourceSessionIDs())
-      if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
-    for (const id of [...this.sourceEpochs.keys()]) this.scheduleSourceInvalidation(id)
-    this.sourceResyncPending = false
-  }
-
-  /** Leading edge writes at once; further events in the 250ms window coalesce into one trailing write. */
-  private scheduleSourceInvalidation(sessionID: string) {
-    this.sourceEpochs.set(sessionID, (this.sourceEpochs.get(sessionID) ?? 0) + 1)
-    const pending = this.sourceInvalidations.get(sessionID)
-    if (pending) {
-      pending.dirty = true
-      return
-    }
-    this.store.invalidateArchitectSource(sessionID, this.now())
-    const entry = {
-      dirty: false,
-      timer: setTimeout(() => {
-        this.sourceInvalidations.delete(sessionID)
-        if (!entry.dirty) return
-        try {
-          this.store.invalidateArchitectSource(sessionID, this.now())
-        } catch {
-          // The next event or tick re-requests the invalidation.
-        }
-      }, 250),
-    }
-    entry.timer.unref?.()
-    this.sourceInvalidations.set(sessionID, entry)
-  }
-
-  /** Apply pending coalesced invalidations before a decision reads source state. */
-  private assertSchedulerActive() {
-    if (this.stopped) throw new Error("Scheduler registration was disposed")
-  }
-
-  flushSourceInvalidations() {
-    for (const [id, entry] of [...this.sourceInvalidations]) {
-      if (!entry.dirty) continue
-      entry.dirty = false
-      this.store.invalidateArchitectSource(id, this.now())
-    }
-  }
-
-  async recordArchitectContinuity(sessionID: string, input: unknown) {
-    const continuity = ArchitectContinuityInput.parse(input)
-    const session = await this.host.session(sessionID)
-    if (!this.validArchitect(session))
-      throw new Error("Architect continuity can only be recorded by the current active Architect")
-    if (!this.host.architectInputPage)
-      throw new Error("Architect continuity requires public input/history coverage")
-    const coverageInputs: Array<{ id: string; type: string; metadata?: Record<string, unknown> }> =
-      []
-    const seenCursors = new Set<string>()
-    let cursor: string | undefined
-    for (;;) {
-      const page = await this.host.architectInputPage(sessionID, cursor)
-      coverageInputs.push(...page.inbox, ...page.messages)
-      if (!page.nextCursor) break
-      if (seenCursors.has(page.nextCursor))
-        throw new Error("Architect continuity history pagination did not advance")
-      seenCursors.add(page.nextCursor)
-      cursor = page.nextCursor
-    }
-    const saved = this.store.saveArchitectContinuity({
-      sessionID,
-      decisions: continuity.decisions,
-      unresolvedQuestions: continuity.unresolvedQuestions,
-      coverageInputs,
-      now: this.now(),
-    })
-    return {
-      status: "recorded",
-      sessionID,
-      revision: saved.revision,
-      decisionCount: continuity.decisions.length,
-      unresolvedQuestionCount: continuity.unresolvedQuestions.length,
-    }
-  }
-
-  async inspectArchitectSourceMessages(rawInput: unknown, caller: string) {
-    const input = SourceMessagesInspectPlanSchema.parse(rawInput)
-    const plan = this.store.plan(input.planID)
-    if (!plan || plan.owner !== caller)
-      throw new Error("Selected source-message retrieval requires the current plan owner")
-    const owner = await this.host.session(caller)
-    if (!this.validArchitect(owner))
-      throw new Error("Selected source-message retrieval requires the active Architect owner")
-    if (!this.host.architectSourceMessage)
-      throw new Error("Authenticated native source-message retrieval is unavailable")
-    const references = this.store.architectSourceMessageReferences(
-      input.planID,
-      input.sourceSessionID,
-      input.messageIDs,
-    )
-    if (references.length !== input.messageIDs.length)
-      throw new Error("Every selected message ID must identify a journaled source input or result")
-    const messages = []
-    for (const reference of references) {
-      const message = await this.host.architectSourceMessage(
-        input.sourceSessionID,
-        reference.messageID,
-      )
-      if (message.id !== reference.messageID || message.type !== reference.type)
-        throw new Error("Native source-message identity or journal type changed during retrieval")
-      messages.push({ ...message, kind: reference.kind })
-    }
-    const current = this.store.plan(input.planID)
-    if (!current || current.owner !== caller || current.version !== plan.version)
-      throw new Error("Plan owner or version changed during selected source-message retrieval")
-    return {
-      mode: "source-messages" as const,
-      planID: input.planID,
-      sourceSessionID: input.sourceSessionID,
-      selected: messages.length,
-      coverage: {
-        authenticatedNativeRead: true,
-        privacyFiltered: true,
-        metadataAndAttachmentsOmitted: true,
-        transcriptCompleteness: "unknown" as const,
-        nativeConsumption: "unknown" as const,
-      },
-      messages,
-    }
-  }
-
-  private async inspectArchitectSourcePage(renewal: ArchitectRenewalRow, fence: number) {
-    if (!this.host.architectInputPage)
-      throw new Error("Native Architect input/history observation is unavailable")
-    this.flushSourceInvalidations()
-    const source = this.store.architectSource(renewal.previous_session_id)
-    if (!source) throw new Error("Durable Architect predecessor source is unavailable")
-    if (!this.sourceEpochs.has(source.session_id)) this.sourceEpochs.set(source.session_id, 0)
-    const epoch = this.sourceEpochs.get(source.session_id)
-    let known: import("./host.ts").ArchitectSourceObservation | undefined
-    try {
-      if (source.scan_complete_at !== null && source.observation_json !== null)
-        known = JSON.parse(source.observation_json)
-    } catch {
-      // A damaged cache hint requests a fresh scan; retained history remains usable.
-    }
-    const page = await this.host.architectInputPage(
-      renewal.previous_session_id,
-      source.scan_cursor ?? undefined,
-      known,
-    )
-    const result = this.store.recordArchitectSourcePage({
-      schedulerOwner: this.owner,
-      fence,
-      sessionID: renewal.previous_session_id,
-      cursor: source.scan_cursor,
-      nextCursor: page.nextCursor,
-      inbox: page.inbox,
-      messages: page.messages,
-      now: this.now(),
-      projectID: this.projectID,
-      ...(page.observation ? { observation: page.observation } : {}),
-      unchanged: page.unchanged,
-      cacheCurrent: epoch === this.sourceEpochs.get(source.session_id),
-    })
-    if (!result) throw new Error("Architect predecessor source changed during reconciliation")
-    if (result.changedInputs.length)
-      this.renewalEvent(
-        renewal,
-        "ARCHITECT_RENEWAL_NATIVE_INPUT_OBSERVED",
-        {
-          renewalID: renewal.id,
-          sourceRevision: result.revision,
-          inputs: result.changedInputs,
-          nextCursor: result.nextCursor,
-        },
-        fence,
-      )
-    if (result.changedResults.length)
-      this.renewalEvent(
-        renewal,
-        "ARCHITECT_RENEWAL_SOURCE_RESULT_OBSERVED",
-        {
-          renewalID: renewal.id,
-          sourceRevision: result.revision,
-          results: result.changedResults,
-          nextCursor: result.nextCursor,
-        },
-        fence,
-      )
-    if (
-      result.nextCursor === null &&
-      epoch === this.sourceEpochs.get(source.session_id) &&
-      this.store.architectRenewal(renewal.id)?.state === "committed"
-    ) {
-      const archived = page.archived ?? (await this.host.session(source.session_id))?.archived
-      if (archived === true && epoch === this.sourceEpochs.get(source.session_id))
-        this.store.retireArchitectSource(source.session_id, this.owner, fence, this.now())
-    }
-    return result
-  }
-
-  private async inspectArchitectSourceSweep(renewal: ArchitectRenewalRow, fence: number) {
-    const requestedCursors = new Set<string>()
-    for (;;) {
-      const source = this.store.architectSource(renewal.previous_session_id)
-      if (!source) throw new Error("Durable Architect predecessor source is unavailable")
-      const cursor = source.scan_cursor
-      if (cursor !== null) {
-        if (requestedCursors.has(cursor))
-          throw new Error("Native Architect input/history pagination did not advance")
-        requestedCursors.add(cursor)
-      }
-      try {
-        const result = await this.inspectArchitectSourcePage(renewal, fence)
-        if (result.nextCursor === null) return
-        if (result.nextCursor === cursor || requestedCursors.has(result.nextCursor))
-          throw new Error("Native Architect input/history pagination did not advance")
-      } catch (error) {
-        // A prompt hook can defer preparation between the page read and its journal
-        // write. That expected state change ends the sweep without masking read errors.
-        if (this.store.architectRenewal(renewal.id)?.state !== "creating") return
-        throw error
-      }
-    }
-  }
-
-  private readonly sourceScanFailures = new Map<string, string>()
-
-  private async reconcileArchitectSources(fence: number) {
-    if (!this.host.architectInputPage) return
-    for (const source of this.store.architectSources()) {
-      const renewal = this.store.architectRenewal(source.renewal_id)
-      if (!renewal) continue
-      try {
-        await this.inspectArchitectSourcePage(renewal, fence)
-        this.sourceScanFailures.delete(source.session_id)
-      } catch (error) {
-        // No live location is the plugin booting or reloading, not a property of the
-        // source: retry on the next tick and record nothing.
-        if (error instanceof NoCapabilityProviderError) continue
-        const cause = errorText(error)
-        if (this.sourceScanFailures.get(source.session_id) === cause) continue
-        this.sourceScanFailures.set(source.session_id, cause)
-        // A persistent failure is one durable fact, not one row per tick or per process
-        // start: record only when the cause differs from this source's newest failure.
-        this.store.fenced(this.owner, fence, () =>
-          this.store.recordSourceScanFailure(renewal.anchor_plan_id, {
-            renewalID: renewal.id,
-            sourceSessionID: source.session_id,
-            error: cause,
-          }),
-        )
-      }
-    }
-  }
-
-  private async withRenewalLock<T>(key: string, run: () => Promise<T>): Promise<T> {
-    const previous = this.renewalLocks.get(key) ?? Promise.resolve()
-    let release!: () => void
-    const current = new Promise<void>((resolve) => (release = resolve))
-    this.renewalLocks.set(key, current)
-    await previous
-    try {
-      return await run()
-    } finally {
-      release()
-      if (this.renewalLocks.get(key) === current) this.renewalLocks.delete(key)
-    }
-  }
-
-  private async restorePredecessorForInput(renewal: ArchitectRenewalRow, fence?: number) {
-    if (!this.host.updateSession)
-      throw new Error(
-        "Cannot preserve input during Architect renewal: native session update is unavailable",
-      )
-    const predecessor = await this.host.session(renewal.previous_session_id)
-    if (!predecessor)
-      throw new Error(
-        "Cannot preserve input during Architect renewal: predecessor session is unavailable",
-      )
-    if (predecessor.archived) {
-      await this.host.updateSession({ sessionID: predecessor.id, archived: false })
-      const restored = await this.host.session(predecessor.id)
-      if (!restored || restored.archived)
-        throw new Error(
-          "Cannot preserve input during Architect renewal: predecessor did not unarchive",
-        )
-    }
-    if (fence !== undefined) {
-      const changed = this.store.rollbackArchitectRenewal(
-        this.owner,
-        fence,
-        renewal.id,
-        "deferred",
-        null,
-      )
-      if (!changed) {
-        const current = this.store.architectRenewal(renewal.id)
-        if (current && ["archiving", "recovering-input", "rolling-back"].includes(current.state))
-          throw new Error(
-            "Cannot preserve input during Architect renewal: ownership rollback was not recorded",
-          )
-      }
-    }
-  }
-
-  private renewalSuccessorMatches(
-    session: HostSession | null,
-    renewal: ArchitectRenewalRow,
-    allowArchived = false,
+  observeArchitectSourceEvent(
+    ...args: Parameters<ArchitectSources["observeArchitectSourceEvent"]>
   ) {
-    const model = JSON.parse(renewal.model) as NonNullable<HostSession["model"]>
-    const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
-    const metadataPlanIDs = session?.metadata?.lazersPlanIDs
-    // Metadata is the identity snapshot taken when native creation began. Later
-    // plans may be admitted to the predecessor while creation is in flight; the
-    // durable transfer attaches those plans without changing successor identity.
-    const anchorIdentity =
-      session?.metadata?.lazersPlanID === renewal.anchor_plan_id &&
-      (!Array.isArray(metadataPlanIDs) ||
-        (metadataPlanIDs.includes(renewal.anchor_plan_id) &&
-          metadataPlanIDs.every((id) => planIDs.includes(String(id)))))
-    return Boolean(
-      session &&
-      (allowArchived || !session.archived) &&
-      session.agent === "architect" &&
-      session.id === renewal.successor_session_id &&
-      session.projectID === this.projectID &&
-      session.directory === renewal.directory &&
-      (session.parentID === undefined || session.parentID === renewal.previous_session_id) &&
-      sameNativeModel(session.model, model) &&
-      session.metadata?.lazersContinuation === true &&
-      session.metadata.lazersSourceSessionID === renewal.previous_session_id &&
-      anchorIdentity,
-    )
+    return this.sources.observeArchitectSourceEvent(...args)
   }
 
-  private renewalLabel(renewal: ArchitectRenewalRow) {
-    const plan = this.store.plan(renewal.anchor_plan_id)
-    if (!plan) return `Continue LAZERS plan ${renewal.anchor_plan_id.slice(0, 8)}`
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    return input.title ?? input.objective.slice(0, 120)
+  private get sourceResyncPending() {
+    return this.sources.sourceResyncPending
   }
 
-  private renewalContinuity(renewal: ArchitectRenewalRow) {
-    if (!renewal.continuity_json)
-      throw new Error("Architect renewal has no explicit continuity checkpoint")
-    const parsed = JSON.parse(renewal.continuity_json) as { revision?: unknown }
-    const content = ArchitectContinuityInput.parse({
-      decisions: (parsed as Record<string, unknown>).decisions,
-      unresolvedQuestions: (parsed as Record<string, unknown>).unresolvedQuestions,
-    })
-    if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision))
-      throw new Error("Architect continuity checkpoint revision is invalid")
-    return { revision: parsed.revision, ...content }
+  private assertSchedulerActive(...args: Parameters<ArchitectSources["assertSchedulerActive"]>) {
+    return this.sources.assertSchedulerActive(...args)
   }
 
-  /** `<CODE> · <text>`; `LAZERS` stands in until the project has a code. */
-  private sessionTitle(text: string): string {
-    return sessionTitle(this.store.repository.projectCode() ?? "LAZERS", text)
+  flushSourceInvalidations(...args: Parameters<ArchitectSources["flushSourceInvalidations"]>) {
+    return this.sources.flushSourceInvalidations(...args)
   }
 
-  private renewalContinuityCoverage(renewal: ArchitectRenewalRow) {
-    const coverage = this.store.architectRenewalCoverageEvidence(renewal.id)
-    if (!coverage) throw new Error("Architect renewal continuity coverage is unavailable")
-    return {
-      revision: coverage.revision,
-      inputCount: coverage.inputCount,
-      inputFingerprint: coverage.inputFingerprint,
-    }
+  recordArchitectContinuity(...args: Parameters<ArchitectSources["recordArchitectContinuity"]>) {
+    return this.sources.recordArchitectContinuity(...args)
   }
 
-  private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
-    const text = outcomeText(JSON.stringify(payload), this.store.repository.projectCode())
-    return {
-      bytes: new TextEncoder().encode(text).byteLength,
-      tokens: null,
-      tokenProvenance:
-        "unknown: OpenCode exposes session-cumulative token counts, not a message-level count for this wake",
-      cache: {
-        uncachedInput: null,
-        read: null,
-        write: null,
-        provenance:
-          "unknown until the native successor reports a public session usage snapshot; no cache hit or savings are inferred",
-      },
-      sessionID: renewal.successor_session_id,
-      sessionUsageProvenance: "OpenCode 2.2.5 session.get cumulative snapshot, not wake-attributed",
-    }
-  }
-
-  private renewalEvent(
-    renewal: ArchitectRenewalRow,
-    event: string,
-    payload: unknown,
-    fence: number,
+  inspectArchitectSourceMessages(
+    ...args: Parameters<ArchitectSources["inspectArchitectSourceMessages"]>
   ) {
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(renewal.anchor_plan_id, null, event, payload),
-    )
+    return this.sources.inspectArchitectSourceMessages(...args)
   }
 
-  private renewalIssue(
-    renewal: ArchitectRenewalRow,
-    event: string,
-    error: string,
-    payload: Record<string, unknown>,
-    fence: number,
+  private reconcileArchitectSources(
+    ...args: Parameters<ArchitectSources["reconcileArchitectSources"]>
   ) {
-    this.store.setArchitectRenewalState(
-      this.owner,
-      fence,
-      renewal.id,
-      [renewal.state],
-      renewal.state,
-      error,
-    )
-    this.renewalEvent(renewal, event, { renewalID: renewal.id, error, ...payload }, fence)
+    return this.sources.reconcileArchitectSources(...args)
   }
 
-  /** The single routing decision: reuse a warm or small Architect, otherwise create a fresh one. */
-  private architectRoute(session: HostSession | null | undefined): ArchitectRoute {
-    return routeArchitect(
-      this.validArchitect(session) ? session : null,
-      this.now(),
-      this.architectRouting,
-    )
+  private sessionTitle(...args: Parameters<ArchitectOwnership["sessionTitle"]>) {
+    return this.ownership.sessionTitle(...args)
   }
 
-  /** Record the routing decision once per change, with its reason, before acting on it. */
-  private recordArchitectRoute(
-    plan: PlanRow,
-    route: ArchitectRoute,
-    session: HostSession | null | undefined,
+  private architectRoute(...args: Parameters<ArchitectOwnership["architectRoute"]>) {
+    return this.ownership.architectRoute(...args)
+  }
+
+  private recordArchitectRoute(...args: Parameters<ArchitectOwnership["recordArchitectRoute"]>) {
+    return this.ownership.recordArchitectRoute(...args)
+  }
+
+  private considerArchitectRenewal(
+    ...args: Parameters<ArchitectRenewal["considerArchitectRenewal"]>
   ) {
-    const previous = this.store.latestTransition<{ sessionID: string | null; reason: string }>(
-      plan.id,
-      null,
-      "ARCHITECT_ROUTED",
-    )
-    if (previous?.sessionID === route.sessionID && previous.reason === route.reason) return
-    this.store.record(plan.id, null, "ARCHITECT_ROUTED", {
-      action: route.action,
-      reason: route.reason,
-      sessionID: route.sessionID,
-      owner: plan.owner,
-      contextTokens: session ? architectContextTokens(session) : null,
-      cacheWindowMs: this.architectRouting.architectCacheWindowMs,
-      reuseMaxContextTokens: this.architectRouting.architectReuseMaxContextTokens,
-    })
+    return this.renewal.considerArchitectRenewal(...args)
   }
 
-  /**
-   * The one model decision for an Architect session LAZERS creates. A renewal records it and the
-   * host creates exactly it, so the successor check compares the session with what was asked for.
-   */
-  private architectSessionModel(carried: ModelPolicy | undefined) {
-    return architectSessionModel(agentRouteReader(this.store.repository)("architect"), carried)
-  }
-
-  private architectWaitingForHuman(session: HostSession) {
-    return (session.pendingForms ?? 0) > 0 || (session.pendingPermissions ?? 0) > 0
-  }
-
-  private async considerArchitectRenewal(plan: PlanRow, owner: HostSession, fence: number) {
-    if (
-      this.store.architectContactPaused() ||
-      !this.architectPromptHook ||
-      !this.host.updateSession ||
-      !this.host.architectInputPage ||
-      owner.idleAt === undefined ||
-      owner.busy ||
-      this.architectWaitingForHuman(owner) ||
-      !owner.model ||
-      this.architectRoute(owner).action !== "fresh"
-    )
-      return false
-    if (!this.store.architectContinuity(owner.id)) return false
-    const labelPlan = PlanInput.parse(JSON.parse(plan.body))
-    const label = labelPlan.title ?? labelPlan.objective.slice(0, 120)
-    const renewal = this.store.beginArchitectRenewal({
-      schedulerOwner: this.owner,
-      fence,
-      anchorPlanID: plan.id,
-      previousSessionID: owner.id,
-      directory: owner.directory,
-      model: JSON.stringify(this.architectSessionModel(owner.model)),
-      idleAt: owner.idleAt,
-      now: this.now(),
-      handoffMessageID: messageID(),
-    })
-    if (!renewal) return false
-    await this.continueArchitectRenewal(renewal, fence, label)
-    return true
-  }
-
-  private async continueArchitectRenewal(
-    initial: ArchitectRenewalRow,
-    fence: number,
-    knownLabel?: string,
+  private continueArchitectRenewal(
+    ...args: Parameters<ArchitectRenewal["continueArchitectRenewal"]>
   ) {
-    // While Architect contact is paused no renewal may create, archive or resume a session.
-    if (this.store.architectContactPaused()) return
-    try {
-      return await this.withRenewalLock(initial.id, async () => {
-        let renewal = this.store.architectRenewal(initial.id)
-        if (!renewal) return
-        if (
-          !this.architectPromptHook ||
-          !this.host.updateSession ||
-          !this.host.architectInputPage
-        ) {
-          const reason = "Native Architect source reconciliation or archival is unavailable"
-          if (renewal.state === "creating") {
-            this.store.setArchitectRenewalState(
-              this.owner,
-              fence,
-              renewal.id,
-              ["creating"],
-              "deferred",
-              reason,
-            )
-            this.renewalEvent(
-              renewal,
-              "ARCHITECT_RENEWAL_DEFERRED",
-              { renewalID: renewal.id, reason },
-              fence,
-            )
-            return
-          }
-          if (renewal.state === "archiving") {
-            this.renewalIssue(renewal, "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN", reason, {}, fence)
-            return
-          }
-        }
-        if (["recovering-input", "rolling-back"].includes(renewal.state)) {
-          await this.restorePredecessorForInput(renewal, fence)
-          return
-        }
-        if (renewal.state === "committed" || renewal.state === "deferred") return
-        if (!renewal.continuity_json) {
-          if (renewal.state === "creating") {
-            this.store.setArchitectRenewalState(
-              this.owner,
-              fence,
-              renewal.id,
-              ["creating"],
-              "deferred",
-              "No explicit Architect decisions/questions checkpoint was recorded",
-            )
-            this.renewalEvent(
-              renewal,
-              "ARCHITECT_RENEWAL_DEFERRED",
-              {
-                renewalID: renewal.id,
-                reason: "No explicit Architect decisions/questions checkpoint was recorded",
-              },
-              fence,
-            )
-            return
-          }
-          if (renewal.state === "archiving") {
-            this.renewalIssue(
-              renewal,
-              "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-              "No explicit Architect decisions/questions checkpoint was recorded",
-              {},
-              fence,
-            )
-            return
-          }
-        }
-        if (renewal.state === "creating") {
-          // Fail unavailable/foreign successor reads before scanning all source
-          // history. Re-read after the sweep below; this is not a cached proof.
-          const available = await this.host.session(renewal.successor_session_id)
-          if (available && !this.renewalSuccessorMatches(available, renewal))
-            return this.deferForeignSuccessor(renewal, fence)
-          // A checkpoint is only safe to transfer after its complete current history
-          // sweep has been journaled and checked for uncovered user input.
-          await this.inspectArchitectSourceSweep(renewal, fence)
-          renewal = this.store.architectRenewal(renewal.id)!
-          if (renewal.state !== "creating") return
-          let successor = await this.host.session(renewal.successor_session_id)
-          if (successor && !this.renewalSuccessorMatches(successor, renewal))
-            return this.deferForeignSuccessor(renewal, fence)
-          if (!successor) {
-            const predecessor = await this.host.session(renewal.previous_session_id)
-            if (predecessor && this.architectWaitingForHuman(predecessor)) {
-              this.store.setArchitectRenewalState(
-                this.owner,
-                fence,
-                renewal.id,
-                ["creating"],
-                "deferred",
-                "Predecessor is waiting for human input",
-              )
-              return
-            }
-            const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
-            await this.host
-              .createArchitect({
-                id: renewal.successor_session_id,
-                directory: renewal.directory,
-                model: JSON.parse(renewal.model),
-                title: this.sessionTitle(knownLabel ?? this.renewalLabel(renewal)),
-                planID: renewal.anchor_plan_id,
-                planIDs,
-                sourceSessionID: renewal.previous_session_id,
-              })
-              .catch(async (error) => {
-                const recovered = await this.host.session(renewal!.successor_session_id)
-                if (!this.renewalSuccessorMatches(recovered, renewal!)) throw error
-                successor = recovered
-              })
-            successor ??= await this.host.session(renewal.successor_session_id)
-          }
-          if (successor && !this.renewalSuccessorMatches(successor, renewal))
-            return this.deferForeignSuccessor(renewal, fence)
-          if (!this.renewalSuccessorMatches(successor, renewal))
-            throw new Error("Native Architect renewal is unavailable or foreign")
-          renewal = this.store.architectRenewal(renewal.id)!
-          if (renewal.state !== "creating") return
-          // Repeat the complete sweep after successor creation to include inputs
-          // observed while the native create call was in flight, before transfer.
-          await this.inspectArchitectSourceSweep(renewal, fence)
-          renewal = this.store.architectRenewal(renewal.id)!
-          if (renewal.state !== "creating") return
-
-          const predecessor = await this.host.session(renewal.previous_session_id)
-          const tooRecent =
-            predecessor?.idleAt === undefined || this.architectRoute(predecessor).action !== "fresh"
-          if (
-            !this.validArchitect(predecessor) ||
-            predecessor.busy ||
-            this.architectWaitingForHuman(predecessor) ||
-            tooRecent
-          ) {
-            this.store.setArchitectRenewalState(
-              this.owner,
-              fence,
-              renewal.id,
-              ["creating"],
-              "deferred",
-            )
-            this.renewalEvent(
-              renewal,
-              "ARCHITECT_RENEWAL_DEFERRED",
-              {
-                renewalID: renewal.id,
-                busy: predecessor?.busy ?? null,
-              },
-              fence,
-            )
-            return
-          }
-
-          const planIDs = this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id)
-          const label = knownLabel ?? this.renewalLabel(renewal)
-          const continuity = this.renewalContinuity(renewal)
-          const anchor = this.store.plan(renewal.anchor_plan_id)
-          if (!anchor) throw new Error("Architect renewal plan disappeared")
-          const source = this.store.architectSource(renewal.previous_session_id)
-          if (!source) throw new Error("Architect predecessor source disappeared before handoff")
-          const payload = {
-            status: "architect-handoff",
-            planID: renewal.anchor_plan_id,
-            version: anchor.version + 1,
-            planIDs,
-            label,
-            continuity,
-            continuityCoverage: this.renewalContinuityCoverage(renewal),
-            predecessorSessionID: renewal.previous_session_id,
-            successorSessionID: renewal.successor_session_id,
-            sourceRevision: source?.revision ?? 0,
-            sourceCoverage: {
-              sourceSessionID: renewal.previous_session_id,
-              cursor: source?.scan_cursor ?? null,
-              complete: (source?.scan_sweep ?? 0) > 0 && source?.scan_cursor === null,
-            },
-          }
-          const outboxID = fingerprint({
-            kind: "architect-handoff",
-            renewalID: renewal.id,
-            messageID: renewal.handoff_message_id,
-          })
-          const metadata: OutcomeOwnership = {
-            lazersKind: "runner-outcome",
-            lazersProjectID: this.projectID,
-            lazersProjectDirectory: this.directory,
-            lazersPlanID: renewal.anchor_plan_id,
-            lazersOutboxID: outboxID,
-            lazersMessageID: renewal.handoff_message_id,
-            lazersSessionID: renewal.successor_session_id,
-            lazersStatus: "architect-handoff",
-            lazersVersion: anchor.version + 1,
-          }
-          if (
-            !this.store.transferArchitectRenewal({
-              schedulerOwner: this.owner,
-              fence,
-              renewalID: renewal.id,
-              outboxID,
-              payload: JSON.stringify(payload),
-              metadata: JSON.stringify(metadata),
-            })
-          ) {
-            renewal = this.store.architectRenewal(renewal.id)
-            if (renewal?.state === "deferred") return
-            throw new Error("Architect ownership transfer lost its durable compare-and-swap")
-          }
-          renewal = this.store.architectRenewal(renewal.id)!
-        }
-
-        if (renewal.state !== "archiving") return
-        await this.inspectArchitectSourcePage(renewal, fence)
-        renewal = this.store.architectRenewal(renewal.id)!
-        if (renewal.state !== "archiving") return
-        let successor: HostSession | null
-        try {
-          successor = await this.host.session(renewal.successor_session_id)
-        } catch (error) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
-            errorText(error),
-            { successorSessionID: renewal.successor_session_id },
-            fence,
-          )
-          return
-        }
-        if (!successor || !this.renewalSuccessorMatches(successor, renewal, true)) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
-            "Durable Architect successor is missing or has a conflicting identity",
-            { successorSessionID: renewal.successor_session_id },
-            fence,
-          )
-          return
-        }
-        if (successor.archived) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_SUCCESSOR_UNAVAILABLE",
-            "Durable Architect successor was archived before renewal recovery",
-            { successorSessionID: renewal.successor_session_id },
-            fence,
-          )
-          return
-        }
-        const predecessorBeforeArchive = await this.host.session(renewal.previous_session_id)
-        if (!predecessorBeforeArchive) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-            "Predecessor session is unavailable before archival",
-            {},
-            fence,
-          )
-          return
-        }
-        if (
-          predecessorBeforeArchive.agent !== "architect" ||
-          predecessorBeforeArchive.projectID !== this.projectID ||
-          predecessorBeforeArchive.directory !== renewal.directory
-        ) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-            "Predecessor identity changed before archival",
-            {},
-            fence,
-          )
-          return
-        }
-        if (
-          predecessorBeforeArchive.busy ||
-          this.architectWaitingForHuman(predecessorBeforeArchive) ||
-          predecessorBeforeArchive.idleAt === undefined ||
-          this.architectRoute(predecessorBeforeArchive).action !== "fresh"
-        ) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_DEFERRED",
-            "Predecessor became busy, recent, or started waiting for human input before archival",
-            { busy: predecessorBeforeArchive.busy, idleAt: predecessorBeforeArchive.idleAt },
-            fence,
-          )
-          return
-        }
-        let archiveError: string | null = null
-        if (!predecessorBeforeArchive.archived) {
-          try {
-            await this.host.updateSession!({
-              sessionID: renewal.previous_session_id,
-              archived: true,
-            })
-          } catch (error) {
-            archiveError = errorText(error)
-          }
-        }
-
-        let predecessor: HostSession | null
-        try {
-          predecessor = await this.host.session(renewal.previous_session_id)
-        } catch (error) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-            errorText(error),
-            { archiveError },
-            fence,
-          )
-          return
-        }
-        if (!predecessor) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-            "Predecessor session is unavailable",
-            { archiveError },
-            fence,
-          )
-          return
-        }
-        if (!predecessor.archived) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_UNCERTAIN",
-            archiveError ?? "Native archive was not observed",
-            { predecessorSessionID: renewal.previous_session_id },
-            fence,
-          )
-          return
-        }
-        if (archiveError) {
-          this.renewalEvent(
-            renewal,
-            "ARCHITECT_RENEWAL_ARCHIVE_RECONCILED",
-            { renewalID: renewal.id, error: archiveError, archived: true },
-            fence,
-          )
-        }
-        try {
-          await this.inspectArchitectSourcePage(renewal, fence)
-        } catch (error) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_SOURCE_SCAN_FAILED",
-            `Native inbox could not be verified after archival: ${errorText(error)}`,
-            { sourceSessionID: renewal.previous_session_id },
-            fence,
-          )
-          return
-        }
-        const source = this.store.architectSource(renewal.previous_session_id)
-        if (!source) throw new Error("Architect predecessor source disappeared before commit")
-        const payload = {
-          status: "architect-handoff",
-          planID: renewal.anchor_plan_id,
-          planIDs: this.store.architectRenewalPlans(renewal.id).map((item) => item.plan_id),
-          label: knownLabel ?? this.renewalLabel(renewal),
-          continuity: this.renewalContinuity(renewal),
-          continuityCoverage: this.renewalContinuityCoverage(renewal),
-          predecessorSessionID: renewal.previous_session_id,
-          successorSessionID: renewal.successor_session_id,
-          sourceRevision: source?.revision ?? 0,
-          sourceCoverage: {
-            sourceSessionID: renewal.previous_session_id,
-            cursor: source?.scan_cursor ?? null,
-            complete: source.scan_sweep > 0 && source.scan_cursor === null,
-          },
-        }
-        const committed = this.store.finishArchitectRenewal(
-          this.owner,
-          fence,
-          renewal.id,
-          this.renewalWakeContext(renewal, payload),
-        )
-        if (!committed) {
-          this.renewalIssue(
-            renewal,
-            "ARCHITECT_RENEWAL_COMMIT_UNCERTAIN",
-            "Durable renewal commit was not confirmed after native archival",
-            { predecessorSessionID: renewal.previous_session_id },
-            fence,
-          )
-        }
-      })
-    } catch (error) {
-      const current = this.store.architectRenewal(initial.id)
-      if (
-        current &&
-        ["creating", "archiving", "recovering-input", "rolling-back"].includes(current.state)
-      ) {
-        const reason = errorText(error)
-        const previous = this.store.latestTransition<{
-          renewalID: string
-          state: string
-          error: string
-        }>(current.anchor_plan_id, null, "ARCHITECT_RENEWAL_RECOVERY_FAILED")
-        // Retry recovery normally, but an unchanged durable failure is not a new
-        // observation. Publishing it on every tick rebuilds all watching panels.
-        if (
-          current.error !== reason ||
-          previous?.renewalID !== current.id ||
-          previous.state !== current.state ||
-          previous.error !== reason
-        ) {
-          this.store.setArchitectRenewalState(
-            this.owner,
-            fence,
-            current.id,
-            [current.state],
-            current.state,
-            reason,
-          )
-          this.renewalEvent(
-            current,
-            "ARCHITECT_RENEWAL_RECOVERY_FAILED",
-            { renewalID: current.id, state: current.state, error: reason },
-            fence,
-          )
-        }
-      }
-      throw error
-    }
-  }
-
-  /**
-   * A successor that exists under the renewal's ID but is not the session it asked for never
-   * becomes it: its identity does not change between ticks. The renewal defers once, the
-   * predecessor keeps its plans, and the deferred row is not retried onto that session.
-   */
-  private deferForeignSuccessor(renewal: ArchitectRenewalRow, fence: number) {
-    if (
-      !this.store.setArchitectRenewalState(
-        this.owner,
-        fence,
-        renewal.id,
-        ["creating"],
-        "deferred",
-        RENEWAL_SUCCESSOR_FOREIGN,
-      )
-    )
-      return
-    this.renewalEvent(
-      renewal,
-      "ARCHITECT_RENEWAL_DEFERRED",
-      { renewalID: renewal.id, reason: RENEWAL_SUCCESSOR_FOREIGN },
-      fence,
-    )
+    return this.renewal.continueArchitectRenewal(...args)
   }
 
   private hold(...args: Parameters<RuntimeJournal["hold"]>) {
