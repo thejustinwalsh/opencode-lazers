@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { publishCache, seedCache } from "../fallow-cache.ts"
 import { moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
 
@@ -145,7 +145,8 @@ describe("sharing a cache between checkouts", () => {
     git(canonical, "worktree", "add", "-q", worktree, "-b", "feature")
   })
   afterAll(() => {
-    rmSync(worktree, { recursive: true, force: true })
+    // The worktree is `<temp>/wt`: the temp directory goes with it.
+    rmSync(dirname(worktree), { recursive: true, force: true })
     rmSync(canonical, { recursive: true, force: true })
   })
 

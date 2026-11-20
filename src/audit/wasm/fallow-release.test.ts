@@ -34,7 +34,8 @@ test("repeated threaded runs in one process do not accumulate shared memories", 
         },
         "threads",
       )
-      // Let the engine drop objects kept alive for the current turn.
+      // Let the engine drop objects kept alive for the current turn, and the helpers rejoin.
+      await testThreadPool.settled()
       await Bun.sleep(0)
     }
     expect(aliveAtCreation).toHaveLength(runs)

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { AnalysisScheduler, PREEMPT_AFTER_MS, type AnalysisExecutor } from "./analysis-scheduler.ts"
 
 type Run = { request: string; resolve: (value: string) => void; reject: (error: Error) => void }
@@ -26,12 +26,29 @@ function fake() {
     failNextRun: (error: Error) => (throwOnRun = error),
   }
 }
+/** Every request a test leaves unanswered is cancelled at its end, so no timer fires later. */
+const open: AbortController[] = []
+afterEach(() => {
+  for (const controller of open.splice(0)) controller.abort(new Error("test ended"))
+})
+class TrackedScheduler<Request, Response> extends AnalysisScheduler<Request, Response> {
+  override submit(
+    request: Request,
+    options: Parameters<AnalysisScheduler<Request, Response>["submit"]>[1],
+  ): Promise<Response> {
+    const controller = new AbortController()
+    open.push(controller)
+    const promise = super.submit(request, { signal: controller.signal, ...options })
+    promise.catch(() => undefined)
+    return promise
+  }
+}
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe("priority order", () => {
   test("the next request is the oldest of the highest priority waiting", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 60_000)
+    const scheduler = new TrackedScheduler(f.executor, 60_000)
     const done: string[] = []
     const submit = (name: string, priority: "interactive" | "verification" | "background") =>
       scheduler.submit(name, { priority, timeoutMs: 10_000 }).then((value) => void done.push(value))
@@ -55,7 +72,7 @@ describe("priority order", () => {
 
   test("a request without a priority is interactive", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 60_000)
+    const scheduler = new TrackedScheduler(f.executor, 60_000)
     void scheduler.submit("first", { priority: "background", timeoutMs: 10_000 })
     void scheduler.submit("later-background", { priority: "background", timeoutMs: 10_000 })
     void scheduler.submit("default", { timeoutMs: 10_000 })
@@ -68,7 +85,7 @@ describe("priority order", () => {
 describe("yielding to a higher priority", () => {
   test("a running request that a higher priority has waited behind is stopped, then runs again after it", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 40)
+    const scheduler = new TrackedScheduler(f.executor, 40)
     const background = scheduler.submit("section", { priority: "background", timeoutMs: 10_000 })
     const tool = scheduler.submit("tool", { timeoutMs: 10_000 })
     expect(f.started()).toEqual(["section"])
@@ -89,7 +106,7 @@ describe("yielding to a higher priority", () => {
 
   test("a request that finishes within the budget is never stopped", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 200)
+    const scheduler = new TrackedScheduler(f.executor, 200)
     const background = scheduler.submit("section", { priority: "background", timeoutMs: 10_000 })
     const tool = scheduler.submit("tool", { timeoutMs: 10_000 })
     await tick(20)
@@ -104,7 +121,7 @@ describe("yielding to a higher priority", () => {
 
   test("the same priority never stops a running request, and a lower one never does", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 20)
+    const scheduler = new TrackedScheduler(f.executor, 20)
     void scheduler.submit("tool-1", { timeoutMs: 10_000 })
     void scheduler.submit("tool-2", { timeoutMs: 10_000 })
     void scheduler.submit("background", { priority: "background", timeoutMs: 10_000 })
@@ -121,7 +138,7 @@ describe("yielding to a higher priority", () => {
 describe("time limits and cancellation", () => {
   test("the time limit covers the wait in the queue: a request that never started times out", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 60_000)
+    const scheduler = new TrackedScheduler(f.executor, 60_000)
     void scheduler.submit("long", { timeoutMs: 10_000 })
     const queued = scheduler.submit("queued", { timeoutMs: 30 })
     await expect(queued).rejects.toThrow("timeout: analyzer call exceeded 30ms")
@@ -134,7 +151,7 @@ describe("time limits and cancellation", () => {
 
   test("a request that is running when its limit passes stops the worker, and the next one runs", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 60_000)
+    const scheduler = new TrackedScheduler(f.executor, 60_000)
     const slow = scheduler.submit("slow", { timeoutMs: 30 })
     const next = scheduler.submit("next", { timeoutMs: 10_000 })
     await expect(slow).rejects.toThrow("timeout")
@@ -146,7 +163,7 @@ describe("time limits and cancellation", () => {
 
   test("aborting a queued request removes it; aborting a running one stops the worker", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor, 60_000)
+    const scheduler = new TrackedScheduler(f.executor, 60_000)
     const running = new AbortController(),
       queued = new AbortController()
     const first = scheduler.submit("first", { signal: running.signal, timeoutMs: 10_000 })
@@ -164,7 +181,7 @@ describe("time limits and cancellation", () => {
 
   test("an already-aborted request is refused before it is queued", () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor)
+    const scheduler = new TrackedScheduler(f.executor)
     const controller = new AbortController()
     controller.abort(new Error("stop"))
     expect(() => scheduler.submit("x", { signal: controller.signal, timeoutMs: 10 })).toThrow()
@@ -173,7 +190,7 @@ describe("time limits and cancellation", () => {
 
   test("an executor that throws fails that request and does not poison the queue", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor)
+    const scheduler = new TrackedScheduler(f.executor)
     f.failNextRun(new Error("cannot start"))
     await expect(scheduler.submit("bad", { timeoutMs: 10_000 })).rejects.toThrow("cannot start")
     f.failNextRun(undefined as never)
@@ -184,7 +201,7 @@ describe("time limits and cancellation", () => {
 
   test("a failed run rejects its request and the next one starts", async () => {
     const f = fake()
-    const scheduler = new AnalysisScheduler(f.executor)
+    const scheduler = new TrackedScheduler(f.executor)
     const first = scheduler.submit("first", { timeoutMs: 10_000 })
     const second = scheduler.submit("second", { timeoutMs: 10_000 })
     f.runs[0]!.reject(new Error("analyzer-panic: boom"))

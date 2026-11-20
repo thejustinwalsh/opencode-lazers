@@ -396,7 +396,7 @@ async function readers(history: AuditHistory, runID: string, withList = true) {
       history.detail(runID),
       history.detail(runID, { analysis: "deadCode", limit: 7, offset: 5 }),
       history.detail(runID, { path: "src/f3.ts" }),
-      history.detail(runID, { includeReports: true, limit: 1 }),
+      history.detail(runID, { limit: 1 }),
     ],
     sections: history.sections(runID),
     exported,
@@ -501,4 +501,27 @@ test("list reads the sections of every run in one query", () => {
     Database.prototype.query = original
   }
   expect(sql.filter((text) => /FROM audit_sections\s+WHERE run_id/.test(text))).toHaveLength(1)
+})
+
+test("a finished run is exported once; a missing or older file is written again; no read returns whole reports", async () => {
+  const f = fixture()
+  const run = f.history.start({ requestID: "export-once", workspace: f.workspace }, f.actor).run
+  f.history.section(run.runID, "deadCode", many(3))
+  // A run still collecting is exported as far as it has got, every time.
+  const early = await f.history.exportOnce(run.runID)
+  expect(JSON.parse(readFileSync(early, "utf8")).state).toBe("collecting")
+  f.history.finish(run.runID)
+  // The partial file is older than the end of the run, so the finished run replaces it.
+  await Bun.sleep(5)
+  expect(JSON.parse(readFileSync(await f.history.exportOnce(run.runID), "utf8")).state).toBe(
+    "completed",
+  )
+  const written = statSync(early).mtimeMs
+  await Bun.sleep(20)
+  expect(await f.history.exportOnce(run.runID)).toBe(early)
+  expect(statSync(early).mtimeMs).toBe(written)
+  rmSync(early)
+  await f.history.exportOnce(run.runID)
+  expect(statSync(early).mtimeMs).toBeGreaterThan(written)
+  expect(f.history.detail(run.runID)).not.toHaveProperty("reports")
 })

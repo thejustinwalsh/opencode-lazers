@@ -1,5 +1,5 @@
 import { canonical } from "../identity.ts"
-import { realpathSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { chmod, mkdir, rename, rm } from "node:fs/promises"
@@ -647,7 +647,6 @@ export class AuditHistory {
       path?: string
       offset?: number
       limit?: number
-      includeReports?: boolean
     } = {},
   ) {
     const run = this.get(runID)
@@ -712,11 +711,6 @@ export class AuditHistory {
       })),
       totalFindings: total,
       nextOffset: offset + limit < total ? offset + limit : null,
-      ...(input.includeReports
-        ? {
-            reports: Object.fromEntries(this.sections(runID).map((s) => [s.analysis, s.report])),
-          }
-        : {}),
     }
   }
   decide(input: AuditDecision, actor: AuditActor) {
@@ -768,6 +762,19 @@ export class AuditHistory {
   }
   reportPath(runID: string) {
     return join(dirname(this.repository.path), "audits", `${runID}.json`)
+  }
+  /**
+   * The export of a finished run is written once: while the file is newer than the run's end it
+   * is returned as it is (the whole millisecond of the finish must be behind it, as the clock
+   * of a file and the clock of the run differ below a millisecond), so a replayed request or a second read rewrites nothing. A run still
+   * collecting, a missing file and a file older than the end of the run are written again.
+   */
+  async exportOnce(runID: string) {
+    const run = this.get(runID)
+    const path = this.reportPath(runID)
+    if (run.finishedAt !== null && existsSync(path) && statSync(path).mtimeMs >= run.finishedAt + 1)
+      return path
+    return this.export(runID)
   }
   /**
    * Writes the export section by section: one report is read, serialized and written at a time,

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { AuditHistory } from "./history.ts"
+import { AnalyzerError } from "./wasm-analyzer.ts"
 import { setFallowConfig } from "./config.ts"
 import { dryRunFallowConfig, suggestFallowConfig } from "./fallow-config-tools.ts"
 import { fallowHealthRun, healthRunOutput } from "./health.ts"
@@ -156,7 +157,7 @@ test("a project too large for the duplication index still gets a score, marked d
   const memory: ReportRunners = {
     ...real,
     combined: () =>
-      Promise.reject(new Error("analyzer-memory: the project is too large for analysis")),
+      Promise.reject(new AnalyzerError("analyzer-memory", "the project is too large for analysis")),
   }
   const run = await fallowHealthRun(
     history,

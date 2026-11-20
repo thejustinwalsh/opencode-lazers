@@ -40,6 +40,16 @@ export interface FallowAnalyzer {
   cycles(scope: AnalyzerScope): Promise<DeadCodeReport>
   /** The engine's own `fallow audit`: attribution, verdict and diff-risk rules are Fallow's. */
   audit(scope: AuditScope): Promise<unknown>
+  /**
+   * Dead code, the health report and duplication from one engine run, which shares the
+   * duplication report. The health report is the engine's own, so it also lists CRAP-only
+   * findings (`exceeded: "crap"`) that `complexity` leaves out.
+   */
+  combined?(scope: AnalyzerScope): Promise<{
+    deadCode: DeadCodeReport
+    health: HealthReport
+    duplication: DuplicationReport
+  }>
   /** Detected plugins, entry points and workspaces (`fallow list`), for config suggestions. */
   projectInfo(scope: AnalyzerScope): Promise<Record<string, unknown>>
 }

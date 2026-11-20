@@ -155,7 +155,7 @@ export function registerAuditTools(
     editor.add({
       name: "lz-get-audit",
       description:
-        "Read a durable audit run and paged structured findings, optionally filtered by analysis or source path. Finding IDs remain stable within the run. Each finding includes its append-only decisions. includeReports=true returns full original Fallow JSON. export=true regenerates the JSON file from SQLite after file/worktree cleanup. A run marked collecting has only its saved results; do not assume its scanner is still alive.",
+        "Read a durable audit run and paged structured findings, optionally filtered by analysis or source path. Finding IDs remain stable within the run. Each finding includes its append-only decisions. The original Fallow JSON is never returned inline: it is the file at run.reportPath, written once when the run finishes (includeReports=true makes sure it exists). export=true rewrites that file from the stored reports after file/worktree cleanup. A run marked collecting has only its saved results; do not assume its scanner is still alive.",
       input: z.strictObject({
         ...paging,
         runID: z.uuid(),
@@ -179,6 +179,7 @@ export function registerAuditTools(
               Effect.tryPromise({
                 try: async () => {
                   if (input.export) await history.export(input.runID)
+                  else if (input.includeReports) await history.exportOnce(input.runID)
                   const output = history.detail(input.runID, input)
                   return { content: JSON.stringify(output), output }
                 },

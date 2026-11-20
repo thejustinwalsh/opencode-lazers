@@ -47,7 +47,8 @@ type WasmDuplication = {
   }
 }
 
-class AnalyzerError extends Error {
+/** A failure of the analyzer with a typed `code` (`analyzer-memory`, `analyzer-panic`, ...). */
+export class AnalyzerError extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -261,7 +262,15 @@ async function call(
   )
   if ("error" in response) throw new AnalyzerError(response.error.code, response.error.message)
   if (response.fallback !== undefined) noteFallback(response.fallback)
-  return response.report
+  if (response.envelope) {
+    const parsed = JSON.parse(new TextDecoder().decode(response.envelope)) as {
+      report?: Record<string, unknown>
+      error?: { code: string; message: string }
+    }
+    if (parsed.error) throw new AnalyzerError(parsed.error.code, parsed.error.message)
+    return parsed.report ?? {}
+  }
+  return response.report ?? {}
 }
 
 /** The report sections `lz-fallow-report` stores, each as the native binding would return it. */
@@ -315,6 +324,13 @@ export const wasmFallowAnalyzer: FallowAnalyzer = {
   },
   async projectInfo(scope) {
     return await call("projectInfo", scope)
+  },
+  async combined(scope) {
+    return (await fallowCombined(scope)) as unknown as {
+      deadCode: DeadCodeReport
+      health: HealthReport
+      duplication: DuplicationReport
+    }
   },
   async audit(scope) {
     return await call("audit", scope, {}, scope)
