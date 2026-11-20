@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
 import { execFileSync } from "node:child_process"
 import {
   existsSync,
@@ -15,6 +15,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { publishCache, seedCache } from "../fallow-cache.ts"
 import { disposeFixture, moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 /**
  * Fallow's own cache, in `<root>/.fallow`. It is the only place the module may write; it carries

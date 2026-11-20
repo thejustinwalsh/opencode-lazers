@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
 import { existsSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import {
@@ -11,6 +11,13 @@ import {
   wasmModule,
 } from "./test-support.ts"
 import { MAX_FALLOW_THREADS, runFallowModule, ThreadPool } from "../fallow-wasi.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 const ALLOWED_IMPORTS = new Set([
   "lazers_host.git_result",

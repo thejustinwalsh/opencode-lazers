@@ -5,6 +5,7 @@ import {
   type WasiOutcome,
   type WasiRequest,
 } from "../../fallow-wasi.ts"
+import { currentDirectAnalysisTestLifetime } from "./direct-analysis-test-context.ts"
 import { directAnalysisScopeFor } from "./direct-analysis-scope.ts"
 
 /**
@@ -17,7 +18,9 @@ export function runDirectFallowModule(
   options: RunOptions = {},
 ): Promise<WasiOutcome> {
   const scope = directAnalysisScopeFor(request.root)
+  const testLifetime = currentDirectAnalysisTestLifetime()
   return scope.run(async () => {
+    testLifetime?.assertActive()
     const pool = options.threadPool ?? new ThreadPool(undefined, false)
     try {
       const executionStarted = performance.now()

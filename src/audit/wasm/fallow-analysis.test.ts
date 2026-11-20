@@ -1,5 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
 import { join } from "node:path"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
 import {
   disposeFixture,
   makeFixture,
@@ -8,6 +12,9 @@ import {
   runOp,
   trackedSources,
 } from "./test-support.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 /**
  * What LAZERS asks of Fallow, on small fixture projects with expectations written by hand, on

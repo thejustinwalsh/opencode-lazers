@@ -17,6 +17,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { MAX_FALLOW_THREADS, type GitCall, type RunOptions } from "../fallow-wasi.ts"
 import { runDirectFallowModule } from "./resource-lifetime/direct-analysis.ts"
+import { currentDirectAnalysisTestLifetime } from "./resource-lifetime/direct-analysis-test-context.ts"
 import {
   closeDirectAnalysisScope,
   openDirectAnalysisScope,
@@ -43,10 +44,12 @@ export function runOp(
   options: RunOptions = {},
   kind: ModuleKind = "single",
 ): Promise<OpResult> {
+  const testLifetime = currentDirectAnalysisTestLifetime()
   const completion = (async () => {
+    testLifetime?.assertActive()
     const git: GitCall[] = []
     const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
-    const outcome = await runDirectFallowModule(
+    const directCompletion = runDirectFallowModule(
       kind === "threads" ? threadedWasmModule : wasmModule,
       {
         op,
@@ -60,6 +63,9 @@ export function runOp(
         onGit: (call) => (git.push(call), options.onGit?.(call)),
       },
     )
+    const outcome = testLifetime
+      ? await testLifetime.waitFor(directCompletion)
+      : await directCompletion
     const parsed = JSON.parse(outcome.stdout) as {
       report?: Record<string, any>
       error?: { code: string; message: string }
@@ -77,9 +83,15 @@ export function errorCode(
   root: string,
   extra: Record<string, unknown> = {},
 ): Promise<string | undefined> {
-  const completion = runDirectFallowModule(wasmModule, { op, root, ...extra }).then(
-    (outcome) => (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code,
-  )
+  const testLifetime = currentDirectAnalysisTestLifetime()
+  const completion = (async () => {
+    testLifetime?.assertActive()
+    const directCompletion = runDirectFallowModule(wasmModule, { op, root, ...extra })
+    const outcome = testLifetime
+      ? await testLifetime.waitFor(directCompletion)
+      : await directCompletion
+    return (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code
+  })()
   void completion.catch(() => {})
   return completion
 }

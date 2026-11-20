@@ -1,7 +1,14 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test as bunTest } from "bun:test"
 import { ThreadPool } from "../../fallow-wasi.ts"
 import { DirectAnalysisScopeClosedError, directAnalysisScopeFor } from "./direct-analysis-scope.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./direct-analysis-test-lifetime.ts"
 import { disposeFixture, makeFixture, runOp } from "../test-support.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 test("fixture teardown drains gated work and cancels later analyses", async () => {
   const fixture = makeFixture()
