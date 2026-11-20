@@ -39,6 +39,7 @@ const Completion = portable(
 )
 const RelayEvent = portable(Schema.Struct({ requestID }))
 const nothing = portable(Schema.Struct({}))
+const ownership = portable(Schema.Struct({ requestID, claimToken }))
 
 /** Ephemeral per-location handoff; notifications contain IDs, never inference payloads. */
 export const InferenceRelay = Rpc.define({
@@ -50,11 +51,11 @@ export const InferenceRelay = Rpc.define({
   methods: {
     discover: { input: nothing, output: Discovery },
     claim: {
-      input: portable(Schema.Struct({ requestID, claimToken })),
+      input: ownership,
       output: portable(Schema.NullOr(RequestEnvelopeSchema)),
     },
     begin: {
-      input: portable(Schema.Struct({ requestID, claimToken })),
+      input: ownership,
       output: portable(Schema.NullOr(RequestEnvelopeSchema)),
     },
     complete: {
@@ -62,9 +63,10 @@ export const InferenceRelay = Rpc.define({
       output: portable(Schema.Boolean),
     },
     recover: {
-      input: portable(Schema.Struct({ requestID, claimToken })),
+      input: ownership,
       output: portable(Schema.Boolean),
     },
+    renew: { input: ownership, output: portable(Schema.Boolean) },
     acknowledge: {
       input: portable(Schema.Struct({ requestID })),
       output: portable(Schema.Boolean),

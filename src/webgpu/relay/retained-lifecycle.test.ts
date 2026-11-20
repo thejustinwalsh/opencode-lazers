@@ -1,83 +1,16 @@
 import { expect, test } from "bun:test"
 import type { OpenCodeClient } from "@opencode/client/promise"
 import { setupMain } from "../main.ts"
-import { RendererInference } from "../rpc.ts"
 import { DesktopInferenceRelay } from "./desktop.ts"
 import { LocationInferenceRelay } from "./location.ts"
-import { InferenceRelay } from "./protocol.ts"
+import { makeClient, waitUntil } from "./relay-client.fixture.ts"
 
-const directory = "/workspace/project"
 const result = {
   ok: true,
   text: "forwarded once",
   error: "",
   promptTokens: 3,
   completionTokens: 2,
-}
-
-type ClientHooks = {
-  afterClaim?: () => void
-  beforeBegin?: () => Promise<void>
-  recover?: (requestID: string) => Promise<boolean>
-}
-
-function makeClient(
-  relay: LocationInferenceRelay,
-  infer: () => Promise<unknown>,
-  hooks: ClientHooks = {},
-): OpenCodeClient {
-  return {
-    rpc(definition: { id: string }) {
-      if (definition.id === InferenceRelay.id)
-        return {
-          discover: async () => relay.discover(),
-          claim: async ({ requestID, claimToken }: { requestID: string; claimToken: string }) => {
-            const request = relay.claim(requestID, claimToken)
-            hooks.afterClaim?.()
-            return request
-          },
-          begin: async ({ requestID, claimToken }: { requestID: string; claimToken: string }) => {
-            await hooks.beforeBegin?.()
-            return relay.begin(requestID, claimToken)
-          },
-          complete: async ({
-            requestID,
-            claimToken,
-            completion,
-          }: {
-            requestID: string
-            claimToken: string
-            completion: Parameters<typeof relay.complete>[2]
-          }) => relay.complete(requestID, claimToken, completion),
-          recover: ({ requestID, claimToken }: { requestID: string; claimToken: string }) =>
-            hooks.recover?.(requestID) ?? Promise.resolve(relay.recover(requestID, claimToken)),
-          acknowledge: async ({ requestID }: { requestID: string }) => relay.acknowledge(requestID),
-        }
-      if (definition.id === RendererInference.id) return { ask: infer }
-      throw new Error(`Unexpected RPC: ${definition.id}`)
-    },
-    debug: {
-      location: { list: async () => [{ directory }] },
-    },
-    event: {
-      subscribe: ({ signal }: { signal: AbortSignal }) =>
-        (async function* () {
-          if (signal.aborted) return
-          await new Promise<void>((resolve) =>
-            signal.addEventListener("abort", () => resolve(), { once: true }),
-          )
-          yield undefined
-        })(),
-    },
-  } as unknown as OpenCodeClient
-}
-
-const waitUntil = async (predicate: () => boolean) => {
-  for (let i = 0; i < 200; i++) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
-  throw new Error("Timed out waiting for retained relay state")
 }
 
 test("source rejects completion after its absolute deadline before timer callbacks run", async () => {

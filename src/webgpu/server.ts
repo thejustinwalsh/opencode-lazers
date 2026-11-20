@@ -74,6 +74,7 @@ export function registerLocalInference(
           Effect.sync(() => relay.complete(requestID, claimToken, completion)),
         recover: ({ requestID, claimToken }) =>
           Effect.sync(() => relay.recover(requestID, claimToken)),
+        renew: ({ requestID, claimToken }) => Effect.sync(() => relay.renew(requestID, claimToken)),
         acknowledge: ({ requestID }) => Effect.sync(() => relay.acknowledge(requestID)),
       })
       emitRelayEvent = (event, requestID) => {

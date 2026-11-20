@@ -4,6 +4,7 @@ import type {
   RelayRequestMethod,
   RelayRequestState,
 } from "./protocol.ts"
+import { CLAIM_LEASE_MS } from "./lease.ts"
 
 export const MAX_LOCATION_REQUESTS = 8
 const CANCELLED_RETENTION_MS = 30_000
@@ -14,6 +15,8 @@ type Entry = {
   request: RelayRequestEnvelope | undefined
   state: RelayRequestState
   claimToken: string | undefined
+  claimExpiresAt?: number
+  leaseTimer?: ReturnType<typeof setTimeout>
   finish: (completion: RelayCompletion) => void
   cancel: (reason: string) => void
   deadline: ReturnType<typeof setTimeout> | undefined
@@ -66,6 +69,8 @@ export class LocationInferenceRelay {
         settled = true
         if (entry.deadline) clearTimeout(entry.deadline)
         if (entry.retention) clearTimeout(entry.retention)
+        if (entry.leaseTimer) clearTimeout(entry.leaseTimer)
+        entry.claimExpiresAt = undefined
         entry.removeAbort()
         if (completion.status === "result") resolve(completion.value)
         else reject(new Error(completion.error))
@@ -119,12 +124,26 @@ export class LocationInferenceRelay {
     if (entry.state === "pending") {
       entry.state = "claimed"
       entry.claimToken = claimToken
+      this.renewLease(entry)
     } else if (
       (entry.state !== "claimed" && entry.state !== "delivered") ||
       entry.claimToken !== claimToken
     )
       return null
     return entry.request
+  }
+
+  renew(requestID: string, claimToken: string) {
+    const entry = this.entries.get(requestID)
+    if (
+      !entry ||
+      this.expireIfDue(entry) ||
+      entry.claimToken !== claimToken ||
+      (entry.state !== "claimed" && entry.state !== "delivered")
+    )
+      return false
+    this.renewLease(entry)
+    return true
   }
 
   begin(requestID: string, claimToken: string) {
@@ -153,7 +172,7 @@ export class LocationInferenceRelay {
 
   recover(requestID: string, claimToken: string) {
     const entry = this.entries.get(requestID)
-    if (!entry || entry.claimToken !== claimToken) return false
+    if (!entry || this.expireIfDue(entry) || entry.claimToken !== claimToken) return false
     if (entry.state !== "claimed" && entry.state !== "delivered") return false
     const delivered = entry.state === "delivered"
     this.remove(requestID, entry)
@@ -195,6 +214,7 @@ export class LocationInferenceRelay {
   private remove(id: string, entry: Entry) {
     if (entry.deadline) clearTimeout(entry.deadline)
     if (entry.retention) clearTimeout(entry.retention)
+    if (entry.leaseTimer) clearTimeout(entry.leaseTimer)
     entry.removeAbort()
     this.entries.delete(id)
   }
@@ -205,8 +225,33 @@ export class LocationInferenceRelay {
 
   private expireIfDue(entry: Entry) {
     const deadlineAt = entry.request?.deadlineAt
-    if (deadlineAt === null || deadlineAt === undefined || deadlineAt > this.now()) return false
-    entry.cancel("Local inference deadline exceeded")
+    if (deadlineAt !== null && deadlineAt !== undefined && deadlineAt <= this.now()) {
+      entry.cancel("Local inference deadline exceeded")
+      return true
+    }
+    if (entry.claimExpiresAt === undefined || entry.claimExpiresAt > this.now()) return false
+    const requestID = entry.request?.requestID
+    if (!requestID || this.entries.get(requestID) !== entry) return false
+    const delivered = entry.state === "delivered"
+    this.remove(requestID, entry)
+    entry.finish({
+      status: "error",
+      uncertain: delivered,
+      error: delivered
+        ? "Desktop relay ownership expired after forwarding; completion is uncertain and the request was not replayed"
+        : "Desktop relay ownership expired before inference delivery; the request was not replayed",
+    })
+    this.notify("cancelled", requestID)
     return true
+  }
+
+  private renewLease(entry: Entry) {
+    entry.claimExpiresAt = this.now() + CLAIM_LEASE_MS
+    if (entry.leaseTimer) clearTimeout(entry.leaseTimer)
+    const expire = () => {
+      if (!this.expireIfDue(entry) && entry.claimExpiresAt !== undefined)
+        entry.leaseTimer = setTimeout(expire, Math.max(1, entry.claimExpiresAt - this.now()))
+    }
+    entry.leaseTimer = setTimeout(expire, CLAIM_LEASE_MS)
   }
 }

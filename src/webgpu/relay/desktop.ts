@@ -24,11 +24,13 @@ type ActiveRequest = {
   claimToken: string
   controller: AbortController
   phase: "claiming" | "delivering"
+  claimed: boolean
   working: boolean
   workerStarted: boolean
   client?: OpenCodeClient
   finishing: boolean
   settled: boolean
+  terminal?: { kind: "recover" } | { kind: "complete"; completion: RelayCompletion }
 }
 
 type RelayRpcOptions = { location: { directory: string }; signal: AbortSignal }
@@ -187,6 +189,8 @@ export class DesktopInferenceRelay {
     this.resyncing = true
     const controller = this.watchController
     try {
+      await this.reconcileActive(client)
+      if (this.currentClient() !== client || this.closed) return
       const signal = timeoutSignal(controller?.signal ?? this.signal)
       const locations = await boundedRpc(client.debug.location.list({ signal }))
       if (this.currentClient() !== client || this.closed) return
@@ -232,7 +236,11 @@ export class DesktopInferenceRelay {
         return this.recover(entry)
       }
     })
-    this.closing = Promise.allSettled(cleanup).then(() => {})
+    this.closing = Promise.allSettled(cleanup).then(() => {
+      // A disconnected shutdown cannot acknowledge the source. Its ownership
+      // lease expires there independently, including deadline-free controls.
+      for (const entry of this.active.values()) if (!entry.working) this.forget(entry)
+    })
     return this.closing
   }
 
@@ -258,7 +266,11 @@ export class DesktopInferenceRelay {
     this.rescanRequested.clear()
     if (this.closed) return
     for (const entry of this.active.values()) {
-      if (entry.client !== current) {
+      if (entry.terminal) {
+        // Reconnection can return the very same client object. Terminal intent
+        // belongs to the request, not to a client-identity change.
+        void this.flushTerminal(entry)
+      } else if (entry.client !== current) {
         const reason = current
           ? "Desktop connection changed after forwarding"
           : "Desktop connection disconnected after forwarding"
@@ -407,6 +419,7 @@ export class DesktopInferenceRelay {
       claimToken: crypto.randomUUID(),
       controller: new AbortController(),
       phase: "claiming",
+      claimed: false,
       working: false,
       workerStarted: false,
       finishing: false,
@@ -422,6 +435,8 @@ export class DesktopInferenceRelay {
     entry.working = true
     void this.run(entry).finally(() => {
       entry.working = false
+      if (entry.settled || this.closed) this.forget(entry)
+      else if (entry.terminal) void this.flushTerminal(entry)
     })
   }
 
@@ -451,6 +466,7 @@ export class DesktopInferenceRelay {
       this.forget(entry)
       return
     }
+    entry.claimed = true
     return client
   }
 
@@ -523,9 +539,11 @@ export class DesktopInferenceRelay {
   ) {
     if (entry.settled) return
     if (entry.controller.signal.aborted) {
-      await this.acknowledge(entry.directory, entry.requestID)
-      entry.settled = true
-      this.forget(entry)
+      await this.settle(entry, {
+        status: "error",
+        uncertain: true,
+        error: "Inference was cancelled after forwarding; completion was not replayed",
+      })
       return
     }
     if (signal.aborted || (deadlineAt !== null && this.now() >= deadlineAt)) {
@@ -602,53 +620,72 @@ export class DesktopInferenceRelay {
   }
 
   private settle(entry: ActiveRequest, completion: RelayCompletion) {
-    return this.finish(entry, (client, options) =>
-      client
-        .rpc(InferenceRelay)
-        .complete(
-          { requestID: entry.requestID, claimToken: entry.claimToken, completion },
-          options,
-        ),
-    )
+    return this.finish(entry, { kind: "complete", completion })
   }
 
   private recover(entry: ActiveRequest) {
-    return this.finish(entry, (client, options) =>
-      client
-        .rpc(InferenceRelay)
-        .recover({ requestID: entry.requestID, claimToken: entry.claimToken }, options),
-    )
+    return this.finish(entry, { kind: "recover" })
   }
 
-  private async finish(
-    entry: ActiveRequest,
-    invoke: (client: OpenCodeClient, options: RelayRpcOptions) => Promise<unknown>,
-  ) {
-    if (entry.settled || entry.finishing) return
-    const client = this.currentClient()
-    if (!client) {
-      if (this.closed) {
-        entry.settled = true
-        entry.controller.abort()
-        this.forget(entry)
-      }
-      return
-    }
-    entry.finishing = true
+  private finish(entry: ActiveRequest, terminal: NonNullable<ActiveRequest["terminal"]>) {
+    if (entry.settled) return Promise.resolve()
+    // Preserve the first terminal decision and the only source ownership token
+    // until an authoritative response, not merely a failed transport attempt.
+    entry.terminal ??= terminal
     entry.controller.abort()
-    let retryWithCurrentClient = false
+    return this.flushTerminal(entry)
+  }
+
+  private async flushTerminal(entry: ActiveRequest) {
+    if (entry.settled || entry.finishing) return
+    const terminal = entry.terminal
+    if (!terminal) return
+    const client = this.currentClient()
+    if (!client) return
+    entry.finishing = true
     try {
-      const response = await this.sourceRpc(entry.directory, invoke, client)
-      if (response === undefined && !this.closed && this.currentClient() !== client)
-        retryWithCurrentClient = true
-      else {
+      const response = await this.sourceRpc(
+        entry.directory,
+        (target, options) => {
+          const relay = target.rpc(InferenceRelay)
+          const input = { requestID: entry.requestID, claimToken: entry.claimToken }
+          return terminal.kind === "recover"
+            ? relay.recover(input, options)
+            : relay.complete({ ...input, completion: terminal.completion }, options)
+        },
+        client,
+      )
+      if (response !== undefined) {
         entry.settled = true
-        this.forget(entry)
+        // A source acknowledgement does not prove an aborted renderer promise
+        // has settled. Keep that physical execution's slot until run() ends.
+        if (!entry.working) this.forget(entry)
       }
     } finally {
       entry.finishing = false
     }
-    if (retryWithCurrentClient) void this.finish(entry, invoke)
+  }
+
+  private async reconcileActive(client: OpenCodeClient) {
+    await Promise.allSettled(
+      [...this.active.values()].map(async (entry) => {
+        if (entry.terminal) return this.flushTerminal(entry)
+        if (!entry.claimed || entry.settled || entry.finishing) return
+        const owned = await this.sourceRpc(
+          entry.directory,
+          (target, options) =>
+            target
+              .rpc(InferenceRelay)
+              .renew({ requestID: entry.requestID, claimToken: entry.claimToken }, options),
+          client,
+        )
+        if (owned === false) {
+          entry.settled = true
+          entry.controller.abort(new Error("Source relay ownership ended"))
+          if (!entry.working) this.forget(entry)
+        }
+      }),
+    )
   }
 
   private async acknowledge(directory: string, requestID: string) {
