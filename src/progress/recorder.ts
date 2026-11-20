@@ -163,6 +163,31 @@ type JsonObject = Record<string, unknown>
 type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
 
 const MAX_RECONCILE_STATES = 256
+
+type AssignmentRow = {
+  plan_id: string
+  task_id: string
+  attempt_id: string
+  attempt_state: string
+  session_id: string
+  message_id: string
+  workspace: string
+  project_directory: string
+}
+
+/**
+ * Per-task project verdicts, shared by every recorder copy in the process. An entry is the
+ * task key (about 90 characters) plus a project id string, measured near 200 bytes in the
+ * heap; 50_000 entries is therefore about 10 MB. Eviction only costs one body parse.
+ */
+const TASK_VERDICT_ENTRIES = 50_000
+const verdictsKey = Symbol.for("opencode-lazers.progress-task-verdicts.v1")
+const verdictHost = globalThis as typeof globalThis & {
+  [verdictsKey]?: Map<string, string | false>
+}
+const taskVerdicts: Map<string, string | false> = (verdictHost[verdictsKey] ??= new Map())
+/** Task bodies parsed by assignment reads; tests and diagnostics only. */
+export const verdictStats = { parses: 0 }
 /** One synchronous slice of reconcile work stays near this long before yielding. */
 const RECONCILE_SLICE_MS = 20
 const RECONCILE_CHUNK_MESSAGES = 25
@@ -1394,6 +1419,7 @@ export class ProgressRecorder {
   /** Work counters for tests and diagnostics; never persisted. */
   readonly reconcileStats = { stamped: 0, messages: 0, parts: 0 }
   private owners: SessionOwners | undefined
+  private assignmentScan: { revision: number; assignments: ProgressAssignment[] } | undefined
 
   constructor(
     readonly store: RunnerStore,
@@ -1420,28 +1446,48 @@ export class ProgressRecorder {
     return this.owners.has(sessionID)
   }
 
-  private assignmentFromRow(row: {
-    plan_id: string
-    task_id: string
-    attempt_id: string
-    attempt_state: string
-    session_id: string
-    message_id: string
-    workspace: string
-    project_directory: string
-    task_body: string
-  }): ProgressAssignment | undefined {
+  /**
+   * Task bodies are insert-only, so whether a task belongs to this project is decided once per
+   * task and cached; no scan or lookup re-parses a body it has already judged.
+   */
+  private taskProject(db: Database, row: AssignmentRow): string | false {
+    const key = `${this.store.repository.path}\0${this.projectID}\0${row.task_id}`
+    const cached = taskVerdicts.get(key)
+    if (cached !== undefined) {
+      taskVerdicts.delete(key)
+      taskVerdicts.set(key, cached)
+      return cached
+    }
+    verdictStats.parses++
+    const body = db
+      .query<{ body: string }, [string, string]>(
+        "SELECT body FROM tasks WHERE id=? AND project_directory=?",
+      )
+      .get(row.task_id, row.project_directory)?.body
+    if (body === undefined) return false
+    const task = TaskSpecSchema.parse(JSON.parse(body))
+    const belongs =
+      task.id === row.task_id &&
+      sameProject(task.provenance.projectID, this.projectID) &&
+      task.provenance.projectDirectory === row.project_directory
+        ? task.provenance.projectID
+        : (false as const)
+    taskVerdicts.set(key, belongs)
+    while (taskVerdicts.size > TASK_VERDICT_ENTRIES) {
+      const oldest = taskVerdicts.keys().next().value
+      if (oldest === undefined) break
+      taskVerdicts.delete(oldest)
+    }
+    return belongs
+  }
+
+  private assignmentFromRow(db: Database, row: AssignmentRow): ProgressAssignment | undefined {
     if (row.project_directory !== this.store.repository.projectDirectory) return undefined
-    const task = TaskSpecSchema.parse(JSON.parse(row.task_body))
-    if (
-      task.id !== row.task_id ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== row.project_directory
-    )
-      return undefined
+    const projectID = this.taskProject(db, row)
+    if (projectID === false) return undefined
     return {
-      projectID: task.provenance.projectID,
-      taskID: task.id,
+      projectID,
+      taskID: row.task_id,
       planID: row.plan_id,
       attemptID: row.attempt_id,
       attemptState: row.attempt_state,
@@ -1464,19 +1510,18 @@ export class ProgressRecorder {
           message_id: string
           workspace: string
           project_directory: string
-          task_body: string
         },
         [string, string, string]
       >(
         `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
-                a.session_id,a.message_id,a.workspace,p.project_directory,t.body AS task_body
+                a.session_id,a.message_id,a.workspace,p.project_directory
          FROM runner_attempts a
          JOIN runner_plans p ON p.id=a.plan_id
          JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? AND t.project_directory=? AND ${condition}`,
       )
       .get(this.store.repository.projectDirectory, this.store.repository.projectDirectory, value)
-    const assignment = row ? this.assignmentFromRow(row) : undefined
+    const assignment = row ? this.assignmentFromRow(db, row) : undefined
     if (assignment && where === "session")
       (this.owners ??= sessionOwners(this.store.repository)).markOwned(assignment.sessionID)
     return assignment
@@ -1539,35 +1584,49 @@ export class ProgressRecorder {
     })
   }
 
+  /** Revision of the project's observation stamp, or undefined when it cannot be read. */
+  private observationRevision(db: Database): number | undefined {
+    try {
+      return (
+        db
+          .query<{ revision: number }, [string]>(
+            "SELECT revision FROM observation_revisions WHERE project_directory=?",
+          )
+          .get(this.store.repository.projectDirectory)?.revision ?? 0
+      )
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Every attempt's assignment. Rows carry no task body: project membership comes from the
+   * per-task verdict cache, so a scan parses only tasks it has never seen. When the project's
+   * observation revision has not moved since the previous scan, the previous result is returned
+   * without a query.
+   */
   assignments(): ProgressAssignment[] {
+    // TODO: replace this local gate with src/core/stamp-gate.ts when it lands.
     return this.store.atomic((db) => {
+      const revision = this.observationRevision(db)
+      const last = this.assignmentScan
+      if (revision !== undefined && last?.revision === revision) return [...last.assignments]
       const rows = db
-        .query<
-          {
-            plan_id: string
-            task_id: string
-            attempt_id: string
-            attempt_state: string
-            session_id: string
-            message_id: string
-            workspace: string
-            project_directory: string
-            task_body: string
-          },
-          [string, string]
-        >(
+        .query<AssignmentRow, [string, string]>(
           `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
-                  a.session_id,a.message_id,a.workspace,p.project_directory,t.body AS task_body
+                  a.session_id,a.message_id,a.workspace,p.project_directory
            FROM runner_attempts a
            JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
            WHERE p.project_directory=? AND t.project_directory=? ORDER BY a.started_at,a.number`,
         )
         .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
-      return rows.flatMap((row) => {
-        const assignment = this.assignmentFromRow(row)
+      const assignments = rows.flatMap((row) => {
+        const assignment = this.assignmentFromRow(db, row)
         return assignment ? [assignment] : []
       })
+      this.assignmentScan = revision === undefined ? undefined : { revision, assignments }
+      return [...assignments]
     })
   }
 
