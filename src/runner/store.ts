@@ -493,11 +493,16 @@ export function addOutboxReceipt(db: Database, outboxID: string, entry: unknown)
  * row, keeping its meaning (order, content, a non-history document as the single first entry).
  */
 function migrateOutboxReceipts(db: Database) {
-  const legacy = db
-    .query<{ id: string; receipt: string }, []>(
-      "SELECT id,receipt FROM runner_outbox WHERE receipt IS NOT NULL AND receipt_count=0",
-    )
-    .all()
+  // Page the legacy histories (60 MB across 19.7 k notices on the live database, 2026-11-20):
+  // a moved row leaves the predicate, so each page reads the next 200 without holding them all.
+  const page = db.query<{ id: string; receipt: string }, []>(
+    "SELECT id,receipt FROM runner_outbox WHERE receipt IS NOT NULL AND receipt_count=0 LIMIT 200",
+  )
+  for (let legacy = page.all(); legacy.length > 0; legacy = page.all())
+    moveLegacyReceipts(db, legacy)
+}
+
+function moveLegacyReceipts(db: Database, legacy: { id: string; receipt: string }[]) {
   for (const row of legacy) {
     let entries: unknown[]
     try {
