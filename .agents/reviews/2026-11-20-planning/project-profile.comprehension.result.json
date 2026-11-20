@@ -1,0 +1,115 @@
+{
+  "agent": "comprehension",
+  "status": "reviewed",
+  "checked": [
+    "Intent and profile type restated: one stored per-project record replaces Bun/TS assumptions; fields are coherent individually.",
+    "Init flow restated: notice at load, Architect session proposes, proves each command once, reports map numbers, owner confirms then stored; consistent with bullets under it.",
+    "Readers table rows for guidance, auto-fix, tool lookup and Bun hang guard restate cleanly against the type.",
+    "Build order steps 1-5 are sequenced consistently with the reader table, except for the items in findings."
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers / Build order", "field": "design-decision" },
+      "what": "With no profile the plan says work runs 'as today', yet step 5 replaces deriveSourceDefinition and the Fallow config demand with profile-driven reads. My restatement: either an absent profile keeps a built-in default source filter and Fallow gate, or those readers need a profile and the no-profile path changes.",
+      "failureScenario": "One builder removes deriveSourceDefinition so a project without a profile gets no map or audit; another keeps a hard-coded fallback, leaving the special-casing the plan says should not remain.",
+      "evidence": [
+        "\"Not a gate: with no profile, work runs with the Architect's own commands as today.\"",
+        "\"Repository map (paths plus exported names) | `source` (replaces `deriveSourceDefinition`)\""
+      ],
+      "suggestion": "State what each reader does when the profile is absent (map, audit, Fallow gate, recheck)."
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "The plan says LAZERS 'becomes a profile with Bun commands' but not how: seeded by migration, or the init notice and Architect setup run on LAZERS itself. The Bun test hang guard also 'becomes part of a Bun profile's commands' without saying where the guard text lives.",
+      "failureScenario": "Existing projects, including LAZERS, silently lose the hang guard and Fallow gate until someone runs setup; or a builder hard-codes a seed that contradicts the Architect-proves-it flow.",
+      "evidence": [
+        "\"LAZERS itself becomes a profile with Bun commands; nothing special stays in the code.\"",
+        "\"Bun test hang guard | becomes part of a Bun profile's commands\""
+      ],
+      "suggestion": "Say whether existing projects are seeded or must go through init, and what happens between deploy and setup."
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "Several fields do not say how they work. `fix.files` is undefined (what is matched, per command?). `source.exports` is one string but the text says it names a method 'per language'. `verify` entries carry no toolchain link although two toolchains share one profile. The 'lockfile' used by the recheck is read from nowhere in the type.",
+      "failureScenario": "Builders implement fix.files as a staged-file filter, a glob or a run-once flag; exports as a single scanner name or a language map; the recheck guesses lockfiles by name, defeating 'one definition'.",
+      "evidence": [
+        "\"fix: { command: string; files?: string[] }[]\"",
+        "\"exports?: string // how exported names are found, per language\"",
+        "\"Isolated recheck | `install`, `env`, the project's lockfile\""
+      ],
+      "suggestion": "Define fix.files, make exports a language-keyed map or say it is one scanner, and say how lockfiles are determined (derived from toolchains or listed in profile)."
+    },
+    {
+      "id": "F4",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "'Dismiss' appears only in the last bullet; the flow diagram, store and Settings group have no dismissed state, and 'records the result' of each command has no field in ProjectProfile.",
+      "failureScenario": "A builder either has no way to dismiss (notice nags forever) or invents a store for dismissal and for run results with no home in the profile.",
+      "evidence": [
+        "\"The notice stays until the owner sets up or dismisses it.\"",
+        "\"runs each command once and records the result\""
+      ],
+      "suggestion": "Name where dismissal and per-command proof results are stored."
+    },
+    {
+      "id": "F5",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Build order", "field": "dependencies" },
+      "what": "The closing paragraph makes steps 2 and 4 depend on a split of src/runner/runtime.ts whose 'effect reconciliation' and 'verification candidate' modules are named nowhere else in design/; no plan for the split was found (grep of design/ for 'runtime-split' and 'verification modules' returned only this file).",
+      "failureScenario": "The profile builders either do the split themselves, widening scope, or start step 2 against the old monolith and conflict with the parallel split.",
+      "evidence": [
+        "\"The split of `src/runner/runtime.ts` moves the verification modules first (check activities, verification candidate, effect reconciliation)\""
+      ],
+      "suggestion": "Link the split plan or say whether it is a prerequisite or part of this work."
+    },
+    {
+      "id": "F6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "`audit` is one flag per project and `source` one filter, but a project with two toolchains (the plan's own example) may have Fallow-readable and unreadable parts. It is unclear whether 'fallow' then applies to the whole tree or only to files matching source.include.",
+      "failureScenario": "A TypeScript plus Rust project gets Fallow run over, or refused on, the whole tree depending on the builder's reading.",
+      "evidence": [
+        "\"audit: \\\"fallow\\\" | \\\"off\\\" // Fallow only where it can read the code\"",
+        "\"A project with two toolchains carries both in one profile.\""
+      ],
+      "suggestion": "State that Fallow reads only files matching source.include, or that audit applies per project."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Should existing projects, including LAZERS, be seeded with a profile on upgrade, or all go through the init notice?",
+      "why": "Seeding needs a migration and a Bun default; init-only means no hang guard or Fallow gate until setup.",
+      "options": [
+        "Seed LAZERS only",
+        "Seed any project that has Bun tooling",
+        "All projects go through init"
+      ],
+      "relatedFinding": "F2",
+      "weight": "changes-scope"
+    },
+    {
+      "id": "Q2",
+      "question": "With no profile, do the map, audit and recheck keep today's built-in behavior?",
+      "why": "Decides whether deriveSourceDefinition and the Fallow gate are deleted or kept as the fallback.",
+      "options": [
+        "Keep built-in behavior as fallback",
+        "Delete it; no profile means map paths only and audit off"
+      ],
+      "relatedFinding": "F1",
+      "weight": "changes-design"
+    }
+  ]
+}

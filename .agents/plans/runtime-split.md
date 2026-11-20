@@ -553,3 +553,12 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - Lint reports leftover imports as warnings, not errors, so `bun run verify` stays green with unused imports in `runtime.ts`; run `bun lint <files>` and remove them by hand.
 - The test `missing and permission-denied skill suggestions never block admission or dispatch` has its own 20 s timeout and runs 14 s on a quiet machine. It also fails on the commit before S14 when the load average is about 35 (21.8 s). Treat it as load-sensitive, not as a regression.
 - `reload-safe` can report one verification running for over 10 minutes; the plan's wait rule then lets the run go ahead.
+
+## 10. Corrections found while doing S3, S9 and S8
+
+- Top-level helpers in `runtime.ts` follow their users. `effectSuperseded` and `fallowAcceptance` (used by the verification candidate and by `verify`/`finish`) went to `runtime-helpers.ts`. `boundedScopeReport` went into `verification-candidate.ts`. `WORKTREE_EFFECT_KINDS`, `startupWorktreeRecoveryReason`, `worktreeReconcileCandidates`, `readCheckReceipt` and `unsettledCheckError` went into `effect-reconciliation.ts`; nothing else used them.
+- Members of `TaskRuntime` that are still private (`preparationAllowed`, `retainedRepairGeneration`, `failAttempt`, `startAuditorReport`, `resumeStartupRecovery`) cannot be named with `TaskRuntime[...]`, so the dependency types spell their signatures out. A string-literal type would count as a new literal, so the auditor phase is `Parameters<AuditorReport>[0] extends { phase: infer P } ? P : never`. Later steps that move those members replace these hand-written types with the module's own.
+- `resumeStartupRecovery` stays in the coordinator until S12; `EffectReconciliation` reaches it through a lazy callback. `settleMatchedCheck` has no coordinator forwarder, because only the rewritten `check-settlement.test.ts` reaches it, through `Reflect.get(EffectReconciliation.prototype, ...)`.
+- The `startCheckActivity` test seam still works: `VerificationCandidate` and the executions call the coordinator forwarder through lazy arrows, so a patch on the runtime instance still intercepts.
+- Allowed rewrite in S8: `this.tickRequested = true` became `this.requestRetick()` in `reconcileEffect` and `settleMatchedCheck`.
+- Shell note for the gates: in zsh an unquoted `$FILES` is one argument, so `scripts/runtime-split-fallow.ts` silently reports 0 findings. Pass the file names literally or use bash.

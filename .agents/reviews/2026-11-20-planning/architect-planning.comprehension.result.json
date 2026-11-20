@@ -1,0 +1,135 @@
+{
+  "agent": "comprehension",
+  "status": "reviewed",
+  "checked": [
+    "Decision step: pieces, forced-choice twice, combine, threshold, derived none, measured threshold, backtest reports restate consistently",
+    "Planning agents table (five jobs, read-only, hidden, no conversation access) restates consistently",
+    "Overlap check runs with no model and always; deterministic add-one-agent rule restates consistently",
+    "Two-forms rule (stored plan vs chat breakdown generated from it) is consistent",
+    "Build order parts 1-4 map onto Structure layers; pre-build confirmations (agent session from a tool call, what the plan link opens) are stated",
+    "Steps 4-8 (draft, harden, batch questions, store, steer/LGTM) restate consistently",
+    "Repo term search: 'D1' not found in code or docs by grep of *.md/*.ts (the grep with --include globs errored under zsh, so this is unverified); 'attention-control style' appears only in this plan file; 'self-review tool' is lz-verify-task in src/webgpu/server.ts:328 (limit of three rounds), a general-engineering-level existing tool"
+  ],
+  "findings": [
+    {
+      "id": "C1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Flow", "field": "design-decision" },
+      "what": "The Flow branches on 'simple', 'complex and unclear' and 'complex and clear', but the decision step only produces size (one task / a few tasks / a large effort) and an agent ranking. 'Simple', 'complex' and 'clear' are never mapped to size values or to any scorer.",
+      "failureScenario": "One builder maps 'one task' to simple and the rest to complex; another treats 'a few tasks' as simple. Nobody builds a clarity signal, so the brainstorm branch has no trigger and falls to Architect judgement or never fires.",
+      "evidence": [
+        "\"simple ask -> task\"",
+        "\"complex and unclear -> Architect recommends a brainstorm\"",
+        "\"size: `one task` / `a few tasks` / `a large effort`\""
+      ],
+      "suggestion": "State the size-to-row mapping and say who judges 'unclear' (the Architect, not the decision model)."
+    },
+    {
+      "id": "C2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "When scores do not clear the threshold 'the Architect is told so and decides for itself'. What it decides is not stated: whether to enter the planning flow at all, which agents run, or both. The threshold is also only described against agent scores, while the flow entry depends on size.",
+      "failureScenario": "Builders can implement below-threshold as 'skip planning flow', 'run all five agents', or 'Architect picks agents', each giving different behaviour for the same ask.",
+      "evidence": [
+        "\"If the scores do not clear the threshold, the quick decision is not trusted: the Architect is told so and decides for itself.\"",
+        "\"With local inference off and no external model set, the Architect picks from the same list itself.\""
+      ],
+      "suggestion": "State that below-threshold means the Architect chooses the row and the agent subset, and say whether the threshold covers size scores too."
+    },
+    {
+      "id": "C3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Flow", "field": "design-decision" },
+      "what": "Step 9 uses 'the pre-selected planning agents' but step 11 has 'one final planning agent pass' with no stated set. It could be the same agents, all five, or only agents that still had open findings. The 'final review' state in the machine does not say either.",
+      "failureScenario": "The final pass is built as all five agents (costly, contrary to the ranked selection) or as the same set; the cost and the state machine differ.",
+      "evidence": [
+        "\"the pre-selected planning agents review the stored plan\"",
+        "\"one final planning agent pass; the Architect updates the plan once\""
+      ],
+      "suggestion": "Say which agents run in the final pass and whether the plan is updated before or after it (the wording lets the update precede or follow the pass)."
+    },
+    {
+      "id": "C4",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": { "unit": "Flow / Structure", "field": "design-decision" },
+      "what": "Findings and questions are handled by two different descriptions: step 10 sorts only 'questions', while 'Planning agents' says the Architect answers each finding (revised, contested, passed to owner), and a separate 'resolve a finding' tool exists. How a finding without a question is routed in step 10 is not stated, and 'passed to the owner' overlaps with 'every other question goes to the owner'.",
+      "failureScenario": "Builder implements step 10 over questions only and findings with no attached question are never resolved or surfaced; or builds two owner-asking paths.",
+      "evidence": [
+        "\"Architect sorts the questions\"",
+        "\"The Architect answers each finding: revised; contested with evidence the reviewer could read; or passed to the owner.\""
+      ],
+      "suggestion": "State that step 10 resolves every finding, using the three outcomes, and that 'passed to the owner' is the question path."
+    },
+    {
+      "id": "C5",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Structure", "field": "design-decision" },
+      "what": "'Review the plan' (Architect tool) is undescribed, and the closing paragraph about 'the self-review tool's limits on checks, evidence and rounds' names an existing tool (lz-verify-task, three rounds) without saying how it relates to the planning flow or to the new 'review the plan' tool. One thing may have two names, or two tools may be one.",
+      "failureScenario": "Builder either reuses lz-verify-task for plan review or builds a separate tool, or changes the limits that the plan says must stay.",
+      "evidence": [
+        "\"Store the plan draft; review the plan; resolve a finding.\"",
+        "\"The self-review tool's limits on checks, evidence and rounds are deliberate\"",
+        "src/webgpu/server.ts:328"
+      ],
+      "suggestion": "Name the existing tool and say that 'review the plan' starts the planning agents (not self-review), and where the refusal message change lands."
+    },
+    {
+      "id": "C6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "What the owner sees", "field": "design-decision" },
+      "what": "'In the owner's attention-control style' is a project-specific term defined nowhere in the plan (appears only in this file by grep). 'Hardens' (step 5) is also only defined indirectly via a 'hardening runbook'.",
+      "failureScenario": "The breakdown generator is built with an arbitrary format.",
+      "evidence": ["\"in the owner's attention-control style\""],
+      "suggestion": "Point to the doc or give the format (an example breakdown)."
+    },
+    {
+      "id": "C7",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Flow", "field": "design-decision" },
+      "what": "After step 11 the Architect updates the plan once and then makes tasks, with no owner view of the updated plan; LGTM happens only at step 8. 'Just task it' is allowed at every step, but whether the owner sees or confirms the final plan before tasks are created is unstated.",
+      "failureScenario": "Tasks are created from a plan changed after the owner's LGTM without a look; or a builder adds an unplanned approval step the Intent forbids.",
+      "evidence": [
+        "\"the Architect updates the plan once; the Architect makes tasks with the existing task tools\"",
+        "\"human approval gates per stage\""
+      ],
+      "suggestion": "Say whether the owner sees the post-step-11 breakdown, and that it is informational, not a gate."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Which size answers count as 'simple' (skip the planning flow) and who judges 'unclear' for the brainstorm recommendation?",
+      "why": "Decides whether 'a few tasks' enters the planning flow and whether the decision model needs a third scored dimension.",
+      "options": [
+        "Only 'one task' is simple; the Architect judges unclear",
+        "'one task' and 'a few tasks' are simple; the Architect judges unclear",
+        "Add a clarity score to the decision step"
+      ],
+      "relatedFinding": "C1",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "When scores fall below the threshold, does the Architect choose only the agents, or also whether to run the planning flow at all?",
+      "why": "Different entry rules for the flow.",
+      "options": ["Choose agents only; flow entry follows size", "Choose both"],
+      "relatedFinding": "C2",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q3",
+      "question": "Which agents run in the final pass at step 11?",
+      "why": "Cost and the 'final review' state behaviour.",
+      "options": ["Same pre-selected set", "Only agents that raised open findings", "All five"],
+      "relatedFinding": "C3",
+      "weight": "changes-detail"
+    }
+  ]
+}

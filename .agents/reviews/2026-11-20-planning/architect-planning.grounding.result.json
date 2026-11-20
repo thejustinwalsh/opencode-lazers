@@ -1,0 +1,92 @@
+{
+  "agent": "grounding",
+  "status": "reviewed",
+  "checked": [
+    "Related docs exist: design/project-profile.md, design/runtime-state-machines.md; research files .agents/research/elephant-goldfish-review.md and rediscovery-measurements.md exist",
+    "lifecycleMachines is exported at src/runner/lifecycle-machines.ts:209 and lifecycleTransition(domain,state,event) resolves by domain key, so a new machine entry fits the mechanism",
+    "src/guidance/index.ts:15 has a runbooks map plus a GuidanceLedger delivering by topic and scope, so the brainstorm, hardening and show-the-plan runbooks have a home",
+    "Architect tooling exists: lz-submit-task, lz-submit-plan, lz-plan-command, lz-verify-task (src/architect.md:84,137-143), so 'existing task tools' holds",
+    "Self-review tool exists as lz-verify-task with a three-round limit (src/webgpu/server.ts:328) and schema max limits (src/webgpu/task-review.ts:12,18)",
+    "Local D1 model exists in the repo (src/webgpu/manifest.ts:57; design/runntime-execution.md:6) and Settings exposes local inference (src/gui.tsx:160-201)",
+    "OpenCode API doc lists session.hook prompt admission and session.wait, supporting 'runtime observes every prompt' and 'a tool call can start a session and wait' as feasible (.agents/docs/opencode-api.md:39,57); the plan itself marks the second as to-confirm",
+    "Plugin agents list is LAZERS_AGENTS (architect, lazers-implementor, auditor), matching 'beside Implementor and Auditor' (src/models/agent-ids.ts:5-9)"
+  ],
+  "findings": [
+    {
+      "id": "G1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Planning agents / Build order", "field": "other" },
+      "what": "The plan says 'Not built' and Build order step 3 implies the agents are new, but src/planning already holds a typed result contract, five agent prompts, a shared prompt and an index with useWhen ranking sentences (the five-agent set and prompt script landed in recent commits).",
+      "failureScenario": "A builder rewrites contract and prompts, or duplicates the typed finding shape, instead of reusing src/planning/contract.ts and src/planning/index.ts planningAgents.",
+      "evidence": [
+        "src/planning/contract.ts:1-30",
+        "src/planning/index.ts:11-40",
+        "src/planning/agents/{comprehension,critic,grounding,readiness,zoom-out}.md",
+        "plan line: 'Status: design approved ... Not built.'"
+      ],
+      "suggestion": "State that contract, prompts and the useWhen list exist; scope build steps 3 and 4 to registration, routing and the overlap check only."
+    },
+    {
+      "id": "G2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Structure / Settings", "field": "write-scope" },
+      "what": "Agent identity and routes are closed enums of three agents: LAZERS_AGENTS, AgentRouteID and ModelMappingSubject. Adding five planning agents with a Settings route and hiding them from the picker requires changing these plus agent-routes, agent-route-apply and their tests.",
+      "failureScenario": "A builder registers agents but the planning-agent route cannot be saved or applied, because isAgentSubject rejects the ids and the mapping store schema excludes them.",
+      "evidence": [
+        "src/models/agent-ids.ts:5-9",
+        "src/models/agent-ids.ts:11-20",
+        "src/models/agent-ids.ts:22-24"
+      ],
+      "suggestion": "Name the agent-ids, agent-routes and agent-route-apply files and the choice between five subjects or one shared planning-agent subject in the Settings row."
+    },
+    {
+      "id": "G3",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": { "unit": "Structure / Runtime", "field": "design-decision" },
+      "what": "lifecycleMachines already has a `plan` machine (the runner plan lifecycle). A new `planning` machine beside it is a near-duplicate name for a different concept, and the two tables also need registration in src/database-schema.ts schemaModules.",
+      "failureScenario": "Builders confuse plan vs planning states in SQL calling lz_runner_transition, or add tables without registering the schema module.",
+      "evidence": [
+        "src/runner/lifecycle-machines.ts:209-228",
+        "src/database-schema.ts (schemaModules in map)"
+      ],
+      "suggestion": "Pick a distinct name (e.g. plan-review) and list database-schema.ts in the runtime write scope."
+    },
+    {
+      "id": "G4",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Structure", "field": "other" },
+      "what": "The plan refers to 'the self-review tool' without naming it, and plans a new 'review the plan' Architect tool. The existing self-review tool is lz-verify-task, registered in src/webgpu/server.ts and src/webgpu/task-review.ts, with its guidance in src/architect.md; the refusal-message change would touch those, which no step lists.",
+      "failureScenario": "The new review-the-plan tool collides in purpose and naming with lz-verify-task, or the refusal wording change is missed.",
+      "evidence": [
+        "src/webgpu/server.ts:328",
+        "src/webgpu/task-review.ts:94",
+        "src/architect.md:84"
+      ],
+      "suggestion": "Name lz-verify-task and list its files in the step that changes its refusal message."
+    },
+    {
+      "id": "G5",
+      "severity": "minor",
+      "confidence": "suspicion",
+      "target": { "unit": "How it is judged", "field": "assumption" },
+      "what": "The 'baseline over 219 plans: 23% repaired, 20% scope-amended' figures are not found in the research files I grepped (.agents/research, design).",
+      "failureScenario": "The baseline cannot be reproduced for the before/after comparison.",
+      "evidence": [],
+      "suggestion": "Cite the source or the query that produced the baseline."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Should planning agents be five separate model-route subjects in Settings or one shared planning-agent route?",
+      "why": "Changes how many entries the closed agent enums and the mapping store grow by, and what the Settings UI shows.",
+      "options": ["one shared route", "five routes", "shared default with per-agent override"],
+      "relatedFinding": "G2",
+      "weight": "changes-detail"
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "agent": "readiness",
+  "status": "reviewed",
+  "checked": [
+    "Flow steps 1-11 ordering and the 'just task it' exit are stated",
+    "Planning agent tool restrictions (read, grep, glob only) are explicit",
+    "No-none rule and derived-none behaviour are stated",
+    "Backtest measurements are listed with the constant written beside the measurement",
+    "Build order dependencies (parts work alone) and the pre-build confirmation about agent sessions and plan link are stated"
+  ],
+  "findings": [
+    {
+      "id": "R1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "How it is judged", "field": "verification" },
+      "what": "The design names outcome metrics (repairs, scope amendments, takeovers) but gives no per-build-step acceptance check; nothing says how a builder or reviewer knows the decision step, plan tool, overlap check or each agent works.",
+      "failureScenario": "A decision step that always returns the same ranking, an overlap check that never flags anything, or a plan tool storing an empty plan all pass, since the only judgement is aggregate outcomes measured after release.",
+      "evidence": [
+        "\"Per plan, before and after: repairs, scope amendments, scope stops, takeovers, failed combined verification\"",
+        "\"Each part works alone.\""
+      ],
+      "suggestion": "Add one concrete pass/fail check per build step (e.g. overlap check flags a seeded two-writer plan and a path absent from the map; derived-none fires when scores are below threshold; unreachable reviewer recorded as not run)."
+    },
+    {
+      "id": "R2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "Open behaviour choices: how scores across pieces combine into one ranked list (max, sum, mean), what the threshold compares (top score, per-choice, spread), how the two forced-choice runs per piece are reconciled, and how size is combined across pieces.",
+      "failureScenario": "One builder sums scores so long asks always clear the bar; another takes the max so they never do; the routed agent set and the simple/complex decision differ for the same ask.",
+      "evidence": [
+        "\"Combines across pieces into one ranked list; each entry keeps its score and the text behind it.\"",
+        "\"Applies a threshold.\""
+      ],
+      "suggestion": "State the combine rule (default max per choice) and what the threshold applies to, and let the backtest choose between candidates; state how the two runs are merged and how size across pieces resolves."
+    },
+    {
+      "id": "R3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "The 'complex and clear' vs 'complex and unclear' split and the 'simple ask' row have no stated source; the size forced choice has three values and clarity is not scored anywhere.",
+      "failureScenario": "Builder derives clarity ad hoc (or never), so the brainstorm recommendation never fires or fires on all complex asks.",
+      "evidence": [
+        "\"complex and unclear   -> Architect recommends a brainstorm; the owner decides\"",
+        "\"size: `one task` / `a few tasks` / `a large effort`\""
+      ],
+      "suggestion": "Say who judges clarity (the Architect, told the size) and which size values count as simple and complex."
+    },
+    {
+      "id": "R4",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Planning agents", "field": "design-decision" },
+      "what": "What the review tool does when an agent fails, times out, returns malformed JSON, or the plan is edited mid-review, and how many final passes run, is open; only 'recorded as not run' is stated.",
+      "failureScenario": "A builder retries forever, or treats malformed output as clean, or reviews a stale plan version while the Architect has since edited it.",
+      "evidence": [
+        "\"A reviewer that fails is recorded as `not run`, never as clean.\"",
+        "\"one final planning agent pass\""
+      ],
+      "suggestion": "Specify: plan version pinned per review, one failure recorded as not run without retry (or N retries), malformed output counts as failure, and which agents run in the final pass (all, or those with open findings)."
+    },
+    {
+      "id": "R5",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Structure", "field": "design-decision" },
+      "what": "The planning machine's states are listed but not transitions, and what happens to stored plans, findings and the machine when the owner abandons a conversation, restarts, or when a plan is edited after 'ready' are open. Also whether 'just task it' mid-review cancels running agents.",
+      "failureScenario": "Findings arrive after 'just task it' and are applied or tasks are created twice; plan edits after tasked silently diverge from created tasks.",
+      "evidence": [
+        "\"`planning` machine in `lifecycleMachines` (drafted, in review, questions open, final review, ready, tasked; \\\"just task it\\\" exits from every state)\""
+      ],
+      "suggestion": "List transitions and say late findings after exit are recorded and ignored; state the retention of plan and findings tables."
+    },
+    {
+      "id": "R6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Planning agents", "field": "design-decision" },
+      "what": "The deterministic rule that adds one agent, the 'contested with evidence the reviewer could read' standard, and how questions are ordered by weight and deduplicated are described but not specified (how duplicates are detected, who judges evidence).",
+      "failureScenario": "The rule list stays at the single example; duplicate questions reach the owner or distinct ones get merged.",
+      "evidence": ["\"merges duplicates; orders by weight\""],
+      "suggestion": "Name the rule set (one entry for the migration example) and the duplicate test (same target unit and field)."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "How are per-piece scores combined and compared to the threshold?",
+      "why": "Decides which asks trigger planning agents and the backtest design.",
+      "options": [
+        "Max score per choice across pieces, threshold on the top score",
+        "Mean per choice, threshold on top score",
+        "Score spread (top minus second) against the threshold",
+        "Leave to the backtest, compare all three"
+      ],
+      "relatedFinding": "R2",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "Q2",
+      "question": "Who decides 'clear' versus 'unclear' for a complex ask?",
+      "why": "Decides whether the brainstorm recommendation is runtime-driven or Architect-driven.",
+      "options": [
+        "Architect judges, told the size pick",
+        "A third forced-choice by the decision model",
+        "Owner is always asked"
+      ],
+      "relatedFinding": "R3",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "Q3",
+      "question": "When a planning agent fails or returns malformed output, retry or record not run once?",
+      "why": "Changes review cost and how reliably the final pass has full coverage.",
+      "options": [
+        "Record not run, no retry",
+        "One retry then not run",
+        "Ask the owner whether to retry"
+      ],
+      "relatedFinding": "R4",
+      "weight": "changes-detail"
+    }
+  ]
+}

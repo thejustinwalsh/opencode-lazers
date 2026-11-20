@@ -35,8 +35,10 @@ export async function readAgentRoutes(
     LAZERS_AGENTS.map(async ({ agentID, label }): Promise<AgentRoute> => {
       try {
         const set = lazers(agentID)
+        // The planning route is shared by five host agents; one of them shows its effect.
+        const hostID = agentID === "lazers-planning" ? "lazers-planning-comprehension" : agentID
         const { data } = await Effect.runPromise(
-          ctx.agent.get({ agentID: Agent.ID.make(agentID) }),
+          ctx.agent.get({ agentID: Agent.ID.make(hostID) }),
           signal ? { signal } : undefined,
         )
         const ref = data.model

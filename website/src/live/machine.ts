@@ -71,6 +71,7 @@ export type Effect =
   | { t: "stopRecording" }
   | { t: "cancelRecording" }
   | { t: "unload" }
+  | { t: "removeWeights" }
   | { t: "focusComposer" }
 
 export type ChatEvent =
@@ -81,6 +82,9 @@ export type ChatEvent =
   | { t: "stop" }
   | { t: "retry" }
   | { t: "unload" }
+  | { t: "removeModel" }
+  | { t: "removed"; bytes: number }
+  | { t: "removeFailed"; message: string }
   | { t: "unsupported"; message: string }
   // From the controller:
   | { t: "download"; files: FileProgress[] }
@@ -103,6 +107,8 @@ export type ChatEvent =
   | { t: "transcribeFailed"; message: string }
 
 export const gigabytes = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`
+const sizeLabel = (bytes: number) =>
+  bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : gigabytes(bytes)
 export const MODEL_SIZE_LABEL = gigabytes(MODEL_BYTES)
 
 /** Oldest messages leave the prompt first once the chat grows past what a small model's context
@@ -324,6 +330,25 @@ export function reduce(state: ChatState, event: ChatEvent): Result {
       next = markCurrentStopped(state, next)
       return [next, effects]
     }
+
+    case "removeModel": {
+      if (state.phase.name === "unsupported" || loadActive(state.phase)) return [state, []]
+      const [next, effects] = reduce(state, { t: "unload" })
+      return [next, [...effects, { t: "removeWeights" }]]
+    }
+
+    case "removed":
+      return [
+        patch(state, {
+          notice: event.bytes
+            ? `Removed the downloaded model and freed ${sizeLabel(event.bytes)}.`
+            : "No downloaded model was stored in this browser.",
+        }),
+        [],
+      ]
+
+    case "removeFailed":
+      return [patch(state, { notice: `Could not remove the model: ${event.message}` }), []]
 
     case "unsupported":
       return [

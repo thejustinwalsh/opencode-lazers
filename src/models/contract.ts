@@ -81,8 +81,8 @@ const ModelPersonaSettingsSchema = z.strictObject({
 export const ModelSettingsOutputSchema = z.strictObject({
   projectDirectory: z.string().min(1),
   taskID: z.uuid().nullable(),
-  // The three personas, then the three agents (Architect, Implementor, Auditor).
-  personas: z.array(ModelPersonaSettingsSchema).min(3).max(6),
+  // The three personas, then the four agents (Architect, Implementor, Auditor, Planning agents).
+  personas: z.array(ModelPersonaSettingsSchema).min(3).max(7),
   /**
    * Every agent LAZERS starts, with the model native OpenCode resolves for it: a LAZERS route
    * (project, then all projects) when one is set, else the agent's native configuration, else
@@ -91,7 +91,7 @@ export const ModelSettingsOutputSchema = z.strictObject({
   agents: z
     .array(
       z.strictObject({
-        agentID: z.enum(["architect", "lazers-implementor", "auditor"]),
+        agentID: z.enum(["architect", "lazers-implementor", "auditor", "lazers-planning"]),
         label: z.string().min(1),
         /** The effective model; null when the agent pins none and uses the session's. */
         model: ModelPolicy.nullable(),

@@ -9,6 +9,7 @@ import { agentRouteReader } from "./models/agent-route-apply.ts"
 import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
+import { registerPlanningAgents } from "./planning/register.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import {
   architectContextStubsMode,
@@ -126,6 +127,7 @@ export default Plugin.define({
           core.wake(),
         ),
       )
+      yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
       const stubsMode = architectContextStubsMode(ctx.options.architectContextStubs)
       if (stubsMode !== "off")
         yield* sectionEffect("setup:ContextStubs", () =>

@@ -1,3 +1,6 @@
+import { fallowOutcome } from "./fallow-check.ts"
+import type { FallowReviewResult } from "../audit/review.ts"
+import type { FallowDisposition } from "../audit/contract.ts"
 import { lstatSync } from "node:fs"
 import { fingerprint } from "../identity.ts"
 import { checkResourcesSettled, type CheckReceipt } from "./artifacts.ts"
@@ -104,4 +107,23 @@ export type WorkerObservationFence = {
   policy: string
   nodeState: string
   nodeVersion: number
+}
+
+/** A re-runnable effect that was replaced for lack of a receipt; it no longer holds anything. */
+export function effectSuperseded(effect: EffectRow): boolean {
+  if (effect.state !== "failed" || !effect.receipt) return false
+  try {
+    return (JSON.parse(effect.receipt) as { superseded?: unknown }).superseded === true
+  } catch {
+    return false
+  }
+}
+
+/** The `task-accepted` outcome's Fallow field: only when something remains to report. */
+export function fallowAcceptance(
+  review: FallowReviewResult | undefined,
+  dispositions?: FallowDisposition[],
+) {
+  const fallow = fallowOutcome(review, dispositions)
+  return fallow ? { fallow } : {}
 }
