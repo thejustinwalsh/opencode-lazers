@@ -85,6 +85,12 @@ test("worker personas retain read-only catalog access but cannot delegate", asyn
       effect: "deny",
     })
   }
+  for (const role of [agent, auditor])
+    expect(role.permissions).toContainEqual({
+      action: "lz-project-profile",
+      resource: "*",
+      effect: "deny",
+    })
   // The Implementor may self-check with lz-fallow-audit; the config setter stays out of its hands.
   expect(agent.permissions).not.toContainEqual({
     action: "lz-fallow-audit",

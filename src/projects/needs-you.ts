@@ -4,11 +4,17 @@ import type { TaskRepository } from "../storage.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { canonicalPath, pickUnit } from "./scope.ts"
+import { projectSettingsIn } from "./settings.ts"
 import type { ProjectRef, ProjectUnit } from "./scope.ts"
 
 /** One thing that waits on the owner, without its project (the page names that). */
 export type NeedsYouEntry = {
-  kind: "owner-hold" | "recovery-bundle" | "architect-question"
+  kind:
+    | "owner-hold"
+    | "recovery-bundle"
+    | "architect-question"
+    | "project-setup"
+    | "profile-confirmation"
   /** Task id, outbox id or session id. */
   id: string
   title: string
@@ -97,6 +103,32 @@ export function openRecoveryBundle(db: Database, directory: string): NeedsYouEnt
   }
 }
 
+/**
+ * What the project's profile asks of the owner: set one up (none stored, none proposed, notice
+ * not dismissed) or confirm the proposed one. Read from recorded rows only.
+ */
+export function profileEntries(db: Database, projectKey: string): NeedsYouEntry[] {
+  const rows = db
+    .query<{ revision: number; state: string; created_at: number }, [string]>(
+      `SELECT revision,state,created_at FROM lazers_profile_revisions
+        WHERE project_key=? AND state IN ('proposed','confirmed') ORDER BY revision DESC`,
+    )
+    .all(projectKey)
+  const proposed = rows.find((row) => row.state === "proposed")
+  if (proposed)
+    return [
+      {
+        kind: "profile-confirmation",
+        id: `${projectKey}:r${proposed.revision}`,
+        title: "Confirm the profile",
+        since: proposed.created_at,
+      },
+    ]
+  if (rows.some((row) => row.state === "confirmed")) return []
+  if (projectSettingsIn(db, projectKey).setupDismissedAt !== null) return []
+  return [{ kind: "project-setup", id: projectKey, title: "Set up LAZERS" }]
+}
+
 /** Owners of the checkout's open plans: the sessions that may hold an Architect question. */
 export function planOwners(db: Database, directory: string): string[] {
   return db
@@ -162,7 +194,14 @@ export async function needsYouPage(input: {
   const { entries, owners } = input.repository.read((db) => {
     const bundle = openRecoveryBundle(db, unit.directory)
     return {
-      entries: [...ownerHolds(db, unit.directory), ...(bundle ? [bundle] : [])],
+      entries: [
+        ...ownerHolds(db, unit.directory),
+        ...(bundle ? [bundle] : []),
+        // The profile is the project's, so only its first checkout lists it.
+        ...(input.units.find((candidate) => candidate.project.key === unit.project.key) === unit
+          ? profileEntries(db, unit.project.key)
+          : []),
+      ],
       owners: questionsRead ? planOwners(db, unit.directory) : [],
     }
   })

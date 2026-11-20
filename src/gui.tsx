@@ -39,6 +39,7 @@ import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
+import { setupNotice } from "./projects/setup-notice.tsx"
 import { setupProjects } from "./projects/gui.tsx"
 import { setupRetention } from "./retention/gui.tsx"
 
@@ -103,6 +104,7 @@ export default Plugin.define({
     const BudgetSection = setupBudget(ctx, ctx.stores.budget, pageID)
     const ProjectsSection = setupProjects(ctx)
     const RetentionSection = setupRetention(ctx)
+    setupNotice(ctx)
     ctx.add(Style, nativeBusyStyles)
     ctx.add(Style, panelStatusStyles)
     ctx.add(Style, detailsPaneStyles)

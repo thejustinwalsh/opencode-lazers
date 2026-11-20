@@ -322,3 +322,72 @@ test("credential-looking env names are listed with the revision", async () => {
   })
   expect(f.ops.profile(f.key).pending?.credentialLikeEnv).toEqual(["NPM_TOKEN"])
 })
+
+// --- setup notice ---
+
+test("setupStatus answers for this project's sessions only, and startSetup opens a prompted session", async () => {
+  const f = await profileFixture()
+  const calls: { method: string; input: Record<string, any> }[] = []
+  const { Effect } = await import("effect")
+  const ops = projectsOperations(f.repository, {
+    loaded: () => [f.directory],
+    sessionOf: async (id) => (id === "mine" ? { id, agent: "architect", archived: false } : null),
+    setupSession: {
+      create: (input: any) => Effect.sync(() => void calls.push({ method: "create", input })),
+      prompt: (input: any) => Effect.sync(() => void calls.push({ method: "prompt", input })),
+    } as never,
+  })
+  expect(await ops.setupStatus("mine")).toMatchObject({
+    ok: true,
+    key: f.key,
+    state: "none",
+    dismissed: false,
+  })
+  expect(await ops.setupStatus("foreign")).toMatchObject({
+    ok: false,
+    refusal: "PROJECT_NOT_LOADED",
+  })
+  expect(ops.dismissSetup(f.key)).toEqual({ ok: true })
+  expect(await ops.setupStatus("mine")).toMatchObject({ dismissed: true })
+  const started = await ops.startSetup("mine")
+  expect(started).toMatchObject({ ok: true })
+  expect(calls[0]!.input).toMatchObject({
+    agent: "architect",
+    metadata: { lazersProjectSetup: f.key },
+  })
+  expect(calls[1]!.input.text.startsWith("## Setting up this project's verification profile")).toBe(
+    true,
+  )
+  expect((await ops.setupStatus("mine")) as never).toMatchObject({ dismissed: false })
+  expect(await ops.startSetup("foreign")).toMatchObject({ ok: false })
+})
+
+test("a setup session that cannot be prompted leaves the dismissal in place", async () => {
+  const f = await profileFixture()
+  const { Effect } = await import("effect")
+  const ops = projectsOperations(f.repository, {
+    loaded: () => [f.directory],
+    sessionOf: async (id) => ({ id, agent: "architect", archived: false }),
+    setupSession: {
+      create: () => Effect.void,
+      prompt: () => Effect.fail(new Error("no model")),
+    } as never,
+  })
+  ops.dismissSetup(f.key)
+  expect(await ops.startSetup("s")).toMatchObject({ ok: false, refusal: "PROJECT_NOT_LOADED" })
+  expect(await ops.setupStatus("s")).toMatchObject({ dismissed: true })
+  expect(ops.resumeSetupNotice(f.key)).toEqual({ ok: true })
+  expect(await ops.setupStatus("s")).toMatchObject({ dismissed: false })
+})
+
+test("setupStatus reports a pending proposal", async () => {
+  const f = await profileFixture()
+  const ops = projectsOperations(f.repository, {
+    loaded: () => [f.directory],
+    sessionOf: async (id) => ({ id, agent: "architect", archived: false }),
+    proofWorkspace: undefined as never,
+  })
+  const withWorkspace = f.ops
+  await withWorkspace.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
+  expect(await ops.setupStatus("s")).toMatchObject({ state: "pending", pendingRevision: 1 })
+})

@@ -8,7 +8,13 @@ import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { TaskRepository } from "../storage.ts"
 import { parseProfile } from "./profile.ts"
 import { confirmRevision, proposeRevision } from "./profile-store.ts"
-import { architectProfileKey, ensureArchitectProfileGuidance } from "./profile-guidance.ts"
+import {
+  architectProfileKey,
+  ensureArchitectProfileGuidance,
+  ensureSetupPointer,
+  setupPointerKey,
+} from "./profile-guidance.ts"
+import { setProjectSetting } from "./settings.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -30,6 +36,7 @@ async function fixture() {
   })
   const { key } = await registerProject(repository, { directory: root, opencodeProjectID: "p" })
   const agents = new Map<string, string>()
+  const metadata = new Map<string, Record<string, unknown>>()
   const entries = new Map<string, Map<string, string>>()
   const puts: string[] = []
   const session = {
@@ -37,6 +44,7 @@ async function fixture() {
       Effect.succeed({
         id: sessionID,
         agent: agents.get(sessionID),
+        metadata: metadata.get(sessionID),
         location: { directory: root },
       }),
     instructions: {
@@ -72,6 +80,8 @@ async function fixture() {
   return {
     repository,
     agents,
+    metadata,
+    key,
     entries,
     puts,
     confirm,
@@ -109,5 +119,33 @@ test("workers are skipped, and an existing entry is left alone", async () => {
   f.agents.set("ses_a3", "architect")
   f.entries.set("ses_a3", new Map([[architectProfileKey, "existing"]]))
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_a3")).toBe(false)
+  expect(f.puts).toEqual([])
+})
+
+test("a hand-started Architect session in a project without a profile gets the pointer once", async () => {
+  const f = await fixture()
+  f.agents.set("ses_p1", "architect")
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_p1")).toBe(true)
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_p1")).toBe(false)
+  expect(f.puts).toEqual(["ses_p1"])
+  const text = f.entries.get("ses_p1")!.get(setupPointerKey)!
+  expect(text.split("\n")).toHaveLength(2)
+  expect(text).toContain("lz-project-profile")
+})
+
+test("no pointer after dismissal, after confirmation, in a setup session, or for a worker", async () => {
+  const f = await fixture()
+  f.agents.set("ses_d", "architect")
+  setProjectSetting(f.repository, f.key, "setupDismissedAt", 1)
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_d")).toBe(false)
+  setProjectSetting(f.repository, f.key, "setupDismissedAt", undefined)
+  f.agents.set("ses_setup", "architect")
+  f.metadata.set("ses_setup", { lazersProjectSetup: f.key })
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_setup")).toBe(false)
+  f.agents.set("ses_w2", "lazers-implementor")
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_w2")).toBe(false)
+  f.confirm()
+  f.agents.set("ses_c", "architect")
+  expect(await ensureSetupPointer(f.session, f.repository, "ses_c")).toBe(false)
   expect(f.puts).toEqual([])
 })

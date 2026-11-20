@@ -165,6 +165,8 @@ export function registerWorker(
             { action: "lz-submit-task", resource: "*", effect: "deny" },
             // lz-fallow-config stays read/suggest/dry-run for workers; only the set effect is denied.
             { action: "lz-fallow-config-set", resource: "*", effect: "deny" },
+            // The profile is proposed by the Architect and confirmed by the owner, never by a worker.
+            { action: "lz-project-profile", resource: "*", effect: "deny" },
           ]
           agent.permissions = permissions.filter(
             (rule, index) =>
