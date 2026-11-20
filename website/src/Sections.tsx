@@ -913,8 +913,15 @@ export function Local() {
             <p {...stylex.props(lc.statement)}>Optional. Off until you turn it on.</p>
             <div {...stylex.props(lc.copy)}>
               <p {...stylex.props(s.lead)}>
-                LAZERS can run a small model locally in OpenCode Desktop, on WebGPU through
-                ruNNtime. Architect, tasks and the panels work without it.
+                LAZERS can run a small model on your own GPU. It runs inside the OpenCode Desktop
+                window, on WebGPU through ruNNtime. Architect, tasks and the panels work without it.
+              </p>
+              <p {...stylex.props(s.body)}>
+                Nothing is installed or launched beside it: no separate process, no local server or
+                port, no native binary, no Python or llama runtime, no account or API key. The
+                weights download once into the plugin&rsquo;s cache and can be removed. It starts
+                and stops with the app, uses the GPU the machine already has, and turns off with one
+                switch.
               </p>
               <p {...stylex.props(s.body)}>
                 Local models take the small jobs: answering a question, making a typed decision,
@@ -930,6 +937,14 @@ export function Local() {
           <Demo def={DEMOS.local} label="Live demo of the local inference indicator" />
         </div>
         <dl aria-label="What local inference does" {...stylex.props(lc.facts)}>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>How it runs</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              OpenCode Desktop window &rarr; WebGPU (ruNNtime) &rarr; your GPU. No server, no extra
+              process. Inference runs on the device; only the one-time weight download uses the
+              network.
+            </dd>
+          </div>
           <div {...stylex.props(lc.fact)}>
             <dt {...stylex.props(lc.factKey)}>Switch</dt>
             <dd {...stylex.props(lc.factDef)}>
