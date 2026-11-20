@@ -35,7 +35,11 @@ export function ensureArchitectMap(
       installed.add(sessionID)
       return false
     }
-    const map = await currentRepoMap(repository, info.location.directory)
+    const map = await currentRepoMap(
+      repository,
+      info.location.directory,
+      repository.projectDirectory,
+    )
     await Effect.runPromise(
       session.instructions.entry.put({
         sessionID: id,

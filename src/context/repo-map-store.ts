@@ -1,4 +1,6 @@
+import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
+import { activeProfile } from "../projects/profile-store.ts"
 import type { TaskRepository } from "../storage.ts"
 import {
   buildRepoMap,
@@ -55,32 +57,24 @@ export function repoMapSource(
   }
 }
 
-export function setRepoMapSource(
-  repository: Storage,
-  directory: string,
-  definition: SourceDefinition | undefined,
-): void {
-  repository.atomic((db) => {
-    if (!definition)
-      db.query("DELETE FROM repo_map_sources WHERE project_directory=?").run(directory)
-    else
-      db.query(
-        `INSERT INTO repo_map_sources VALUES(?,?,?,?) ON CONFLICT(project_directory)
-         DO UPDATE SET include=excluded.include,exclude=excluded.exclude,updated_at=excluded.updated_at`,
-      ).run(
-        directory,
-        JSON.stringify(definition.include),
-        JSON.stringify(definition.exclude),
-        Date.now(),
-      )
-  })
+/** Removes the stored source filters of a project's checkouts; a confirmed profile replaces them. */
+export function dropLegacySources(db: Database, paths: readonly string[]): void {
+  for (const path of paths)
+    db.query("DELETE FROM repo_map_sources WHERE project_directory=?").run(path)
 }
 
-/** Build the map for a checkout from its stored source definition, else the derived default. */
+/**
+ * Build the map for a checkout. The source is, in order: the project's confirmed profile (any
+ * language, exported names for TypeScript only), a stored source filter, else the derived default.
+ * `projectDirectory` names the project whose profile applies; it defaults to the checkout.
+ */
 export async function currentRepoMap(
   repository: Pick<TaskRepository, "read">,
   directory: string,
+  projectDirectory: string = directory,
 ): Promise<RepoMap> {
+  const profile = activeProfile(repository, projectDirectory)
+  if (profile) return await buildRepoMap(directory, profile.profile.source, { anyExtension: true })
   const definition =
     repoMapSource(repository, directory) ?? (await deriveSourceDefinition(directory))
   return await buildRepoMap(directory, definition)
@@ -117,10 +111,11 @@ export async function freezePlanMap(
   repository: Storage,
   planID: string,
   directory: string,
+  projectDirectory: string = directory,
 ): Promise<RepoMap> {
   const existing = frozenPlanMap(repository, planID)
   if (existing) return existing
-  const map = await currentRepoMap(repository, directory)
+  const map = await currentRepoMap(repository, directory, projectDirectory)
   repository.atomic((db) => {
     db.query("INSERT OR IGNORE INTO repo_maps VALUES(?,?,?,?,?,?,?)").run(
       planID,

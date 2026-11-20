@@ -202,7 +202,7 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:RunnerTools", () =>
         registerRunnerTools(ctx, runtime, (planID) =>
-          freezePlanMap(repository, planID, ctx.location.directory),
+          freezePlanMap(repository, planID, ctx.location.directory, repository.projectDirectory),
         ),
       )
       yield* sectionEffect("setup:Progress", () =>
