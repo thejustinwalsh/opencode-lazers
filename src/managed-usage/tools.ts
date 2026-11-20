@@ -41,6 +41,23 @@ async function authorizeArchitectCaller(
   return caller
 }
 
+function managedTargetAllowed(
+  target: Awaited<ReturnType<typeof readSession>>,
+  targetID: string,
+  projectID: string,
+  store: ManagedUsageStore,
+): target is Awaited<ReturnType<typeof readSession>> & { agent: string } {
+  return (
+    String(target.id) === targetID &&
+    target.projectID === projectID &&
+    target.time.archived === undefined &&
+    typeof target.agent === "string" &&
+    target.agent.length > 0 &&
+    !isWorkerAgent(target.agent) &&
+    !store.isWorkerSession(targetID)
+  )
+}
+
 async function authorizeManagedTarget(
   ctx: ManagedUsageToolContext,
   caller: Awaited<ReturnType<typeof readSession>>,
@@ -50,16 +67,7 @@ async function authorizeManagedTarget(
   signal: AbortSignal,
 ): Promise<{ agent: string; busy: boolean }> {
   const target = await readSession(ctx, targetID, signal)
-  if (
-    String(target.id) !== targetID ||
-    target.projectID !== projectID ||
-    target.time.archived !== undefined ||
-    typeof target.agent !== "string" ||
-    !target.agent.length ||
-    isWorkerAgent(target.agent) ||
-    store.isWorkerSession(targetID)
-  )
-    throw new Error(UNAVAILABLE)
+  if (!managedTargetAllowed(target, targetID, projectID, store)) throw new Error(UNAVAILABLE)
 
   if (
     String(caller.id) !== targetID &&
@@ -67,6 +75,23 @@ async function authorizeManagedTarget(
   )
     throw new Error(UNAVAILABLE)
   return { agent: target.agent, busy: target.time.busy !== undefined }
+}
+
+async function lineageParent(
+  ctx: ManagedUsageToolContext,
+  parentID: string,
+  projectID: string,
+  store: ManagedUsageStore,
+  signal: AbortSignal,
+) {
+  const parent = await readSession(ctx, parentID, signal)
+  const valid =
+    String(parent.id) === parentID &&
+    parent.projectID === projectID &&
+    !isWorkerAgent(parent.agent) &&
+    !store.isWorkerSession(parentID)
+  if (!valid) throw new Error(UNAVAILABLE)
+  return parent
 }
 
 async function hasArchitectLineage(
@@ -80,21 +105,129 @@ async function hasArchitectLineage(
   const callerID = String(caller.id)
   const visited = new Set([String(target.id)])
   let parentID = target.parentID ? String(target.parentID) : undefined
-  for (let depth = 0; parentID && depth < 32; depth++) {
-    if (visited.has(parentID)) throw new Error(UNAVAILABLE)
+  while (parentID) {
+    if (visited.has(parentID) || visited.size >= 33) throw new Error(UNAVAILABLE)
     visited.add(parentID)
-    const parent = await readSession(ctx, parentID, signal)
-    if (
-      String(parent.id) !== parentID ||
-      parent.projectID !== projectID ||
-      isWorkerAgent(parent.agent) ||
-      store.isWorkerSession(parentID)
-    )
-      throw new Error(UNAVAILABLE)
+    const parent = await lineageParent(ctx, parentID, projectID, store, signal)
     if (parentID === callerID) return true
     parentID = parent.parentID ? String(parent.parentID) : undefined
   }
   return false
+}
+
+type EnrollmentCall = { sessionID: string; agent: string; messageID: string }
+type EnrollmentAuthority = {
+  caller: Awaited<ReturnType<typeof readSession>>
+  target: { agent: string; busy: boolean }
+}
+
+async function authorizeEnrollment(
+  ctx: ManagedUsageToolContext,
+  store: ManagedUsageStore,
+  projectID: string,
+  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
+  call: EnrollmentCall,
+  signal: AbortSignal,
+): Promise<EnrollmentAuthority> {
+  const caller = await authorizeArchitectCaller(ctx, call, projectID, store, signal)
+  const target = await authorizeManagedTarget(
+    ctx,
+    caller,
+    request.sessionID,
+    projectID,
+    store,
+    signal,
+  )
+  if (String(caller.id) !== request.sessionID && target.busy) throw new Error(UNAVAILABLE)
+  return { caller, target }
+}
+
+function stableEnrollmentAuthority(
+  initial: EnrollmentAuthority,
+  current: EnrollmentAuthority,
+  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
+) {
+  const sameCaller = String(current.caller.id) === String(initial.caller.id)
+  const sameAgent = current.target.agent === initial.target.agent
+  const targetIsIdle = String(current.caller.id) === request.sessionID || !current.target.busy
+  if (!sameCaller || !sameAgent || !targetIsIdle) throw new Error(UNAVAILABLE)
+}
+
+function existingEnrollmentResult(
+  store: ManagedUsageStore,
+  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
+) {
+  const retry = store.findEnrollmentRequest(request.requestID, request)
+  if (retry) return retry
+  const currentRevision = store.sessionRevision(request.sessionID)
+  if (request.expectedRevision === currentRevision) return null
+  return {
+    status: "conflict" as const,
+    reason: "stale-revision" as const,
+    expectedRevision: request.expectedRevision,
+    currentRevision,
+  }
+}
+
+async function commitEnrollment(input: {
+  ctx: ManagedUsageToolContext
+  store: ManagedUsageStore
+  capture: ManagedUsageCapture
+  projectID: string
+  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>
+  call: EnrollmentCall
+  initial: EnrollmentAuthority
+  signal: AbortSignal
+}) {
+  const { ctx, store, capture, projectID, request, call, initial, signal } = input
+  const pending = capture.beginEnrollment(request.sessionID)
+  let boundarySequence = capture.boundarySequence(request.sessionID)
+  try {
+    const current = await authorizeEnrollment(ctx, store, projectID, request, call, signal)
+    stableEnrollmentAuthority(initial, current, request)
+    signal.throwIfAborted()
+    boundarySequence = capture.boundarySequence(request.sessionID)
+    const result = store.enroll({
+      request,
+      agent: initial.target.agent,
+      boundarySequence,
+      excludedAssistantMessageID:
+        String(current.caller.id) === request.sessionID ? call.messageID : null,
+    })
+    const committed = result.status === "enrolled"
+    pending.finish(committed ? result.boundarySequence : boundarySequence, committed)
+    return result
+  } finally {
+    pending.finish(boundarySequence, false)
+  }
+}
+
+async function executeManagedUsageEnrollment(input: {
+  ctx: ManagedUsageToolContext
+  store: ManagedUsageStore
+  capture: ManagedUsageCapture
+  projectID: string
+  projectDirectory: string
+  raw: unknown
+  call: EnrollmentCall
+  signal: AbortSignal
+}) {
+  const request = ManagedUsageEnrollmentInputSchema.parse(input.raw)
+  assertProject(request, input.ctx)
+  const initial = await authorizeEnrollment(
+    input.ctx,
+    input.store,
+    input.projectID,
+    request,
+    input.call,
+    input.signal,
+  )
+  input.signal.throwIfAborted()
+  const existing = existingEnrollmentResult(input.store, request)
+  if (existing) return { content: JSON.stringify(existing), output: existing }
+  input.store.validateAssociation(request.association)
+  const result = await commitEnrollment({ ...input, request, initial })
+  return { content: JSON.stringify(result), output: result }
 }
 
 function validateReadScope(
@@ -150,90 +283,17 @@ export function registerManagedUsageTools(input: {
           .pipe(
             Effect.flatMap(() =>
               Effect.tryPromise({
-                try: async (signal) => {
-                  const request = ManagedUsageEnrollmentInputSchema.parse(raw)
-                  assertProject(request, input.ctx)
-                  const caller = await authorizeArchitectCaller(
-                    input.ctx,
-                    { sessionID: String(call.sessionID), agent: String(call.agent) },
-                    input.projectID,
-                    input.store,
+                try: (signal) =>
+                  executeManagedUsageEnrollment({
+                    ...input,
+                    raw,
+                    call: {
+                      sessionID: String(call.sessionID),
+                      agent: String(call.agent),
+                      messageID: String(call.messageID),
+                    },
                     signal,
-                  )
-                  const target = await authorizeManagedTarget(
-                    input.ctx,
-                    caller,
-                    request.sessionID,
-                    input.projectID,
-                    input.store,
-                    signal,
-                  )
-                  if (String(caller.id) !== request.sessionID && target.busy)
-                    throw new Error(UNAVAILABLE)
-                  signal.throwIfAborted()
-
-                  const retry = input.store.findEnrollmentRequest(request.requestID, request)
-                  if (retry) return { content: JSON.stringify(retry), output: retry }
-                  const currentRevision = input.store.sessionRevision(request.sessionID)
-                  if (request.expectedRevision !== currentRevision) {
-                    const conflict = {
-                      status: "conflict" as const,
-                      reason: "stale-revision" as const,
-                      expectedRevision: request.expectedRevision,
-                      currentRevision,
-                    }
-                    return { content: JSON.stringify(conflict), output: conflict }
-                  }
-                  input.store.validateAssociation(request.association)
-
-                  const pending = input.capture.beginEnrollment(request.sessionID)
-                  let boundarySequence = input.capture.boundarySequence(request.sessionID)
-                  try {
-                    const currentCaller = await authorizeArchitectCaller(
-                      input.ctx,
-                      { sessionID: String(call.sessionID), agent: String(call.agent) },
-                      input.projectID,
-                      input.store,
-                      signal,
-                    )
-                    const currentTarget = await authorizeManagedTarget(
-                      input.ctx,
-                      currentCaller,
-                      request.sessionID,
-                      input.projectID,
-                      input.store,
-                      signal,
-                    )
-                    if (
-                      String(currentCaller.id) !== String(caller.id) ||
-                      currentTarget.agent !== target.agent
-                    )
-                      throw new Error(UNAVAILABLE)
-                    if (String(currentCaller.id) !== request.sessionID && currentTarget.busy)
-                      throw new Error(UNAVAILABLE)
-                    signal.throwIfAborted()
-                    // Capture the newest durable event immediately before the atomic write.
-                    // observe() updates its watermark before awaiting host session reads.
-                    boundarySequence = input.capture.boundarySequence(request.sessionID)
-                    const result = input.store.enroll({
-                      request,
-                      agent: target.agent,
-                      boundarySequence,
-                      excludedAssistantMessageID:
-                        String(currentCaller.id) === request.sessionID
-                          ? String(call.messageID)
-                          : null,
-                    })
-                    const committed = result.status === "enrolled"
-                    pending.finish(
-                      committed ? result.boundarySequence : boundarySequence,
-                      committed,
-                    )
-                    return { content: JSON.stringify(result), output: result }
-                  } finally {
-                    pending.finish(boundarySequence, false)
-                  }
-                },
+                  }),
                 catch: (error) => new Tool.Error({ message: safeError(error, privacyStats()) }),
               }),
             ),

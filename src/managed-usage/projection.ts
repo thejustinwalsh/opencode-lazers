@@ -7,7 +7,7 @@ import type {
   ManagedUsageRoute,
 } from "./contract.ts"
 import { ManagedUsageCategoriesSchema } from "./contract.ts"
-import type { ManagedUsageSnapshot, ManagedUsageStoredFact } from "./store.ts"
+import type { ManagedUsageBoundary, ManagedUsageSnapshot, ManagedUsageStoredFact } from "./store.ts"
 
 export type ManagedUsageGeneration = {
   sessionID: string
@@ -61,6 +61,48 @@ function unknownCategories(status: "missing" | "unavailable"): ManagedUsageCateg
   )
 }
 
+function emptyAssociation(reason: string) {
+  return {
+    association: { kind: "unallocated" as const },
+    associationRevision: null,
+    associationBoundarySequence: null,
+    associationReason: reason,
+  }
+}
+
+function uniqueStart(facts: readonly ManagedUsageNativeFact[]) {
+  const semantic = new Map(facts.map((fact) => [semanticStart(fact), fact]))
+  return semantic.size === 1 ? [...semantic.values()][0]! : null
+}
+
+type BoundarySelection =
+  { kind: "selected"; boundary: ManagedUsageBoundary } | { kind: "rejected"; reason: string }
+
+function explicitBoundary(
+  start: ManagedUsageNativeFact,
+  boundaries: ManagedUsageSnapshot["boundaries"],
+): BoundarySelection {
+  const boundary = boundaries
+    .filter(
+      (candidate) =>
+        candidate.sessionID === start.sessionID && candidate.boundarySequence < start.sequence!,
+    )
+    .sort(
+      (left, right) =>
+        left.boundarySequence - right.boundarySequence || left.revision - right.revision,
+    )
+    .reverse()
+    .find((candidate) => candidate.excludedAssistantMessageID !== start.assistantMessageID)
+  if (!boundary)
+    return { kind: "rejected", reason: "Generation began before an explicit enrollment boundary" }
+  if (boundary.agent !== start.agent)
+    return {
+      kind: "rejected",
+      reason: "Generation agent differs from the explicitly enrolled session role",
+    }
+  return { kind: "selected", boundary }
+}
+
 function terminalCategories(facts: readonly ManagedUsageNativeFact[]): {
   categories: ManagedUsageCategories
   outcome: ManagedUsageGeneration["outcome"]
@@ -92,34 +134,17 @@ function associationForStart(
   ManagedUsageGeneration,
   "association" | "associationRevision" | "associationBoundarySequence" | "associationReason"
 > {
-  const empty = (reason: string) => ({
-    association: { kind: "unallocated" as const },
-    associationRevision: null,
-    associationBoundarySequence: null,
-    associationReason: reason,
-  })
-  if (sourceConflict) return empty("Conflicting native event identity")
-  if (facts.length === 0) return empty("Native generation start was not observed")
-  const semantic = new Map(facts.map((fact) => [semanticStart(fact), fact]))
-  if (semantic.size !== 1) return empty("Native generation start evidence conflicts")
-  const start = [...semantic.values()][0]!
-  if (start.sequence === null) return empty("Native generation start has no durable sequence")
+  if (sourceConflict) return emptyAssociation("Conflicting native event identity")
+  if (!facts.length) return emptyAssociation("Native generation start was not observed")
+  const start = uniqueStart(facts)
+  if (!start) return emptyAssociation("Native generation start evidence conflicts")
+  if (start.sequence === null)
+    return emptyAssociation("Native generation start has no durable sequence")
   if (!start.agent || isWorkerAgent(start.agent))
-    return empty("Native generation agent is not an authorized managed role")
-  const boundary = boundaries
-    .filter(
-      (candidate) =>
-        candidate.sessionID === start.sessionID && candidate.boundarySequence < start.sequence!,
-    )
-    .sort(
-      (left, right) =>
-        left.boundarySequence - right.boundarySequence || left.revision - right.revision,
-    )
-    .reverse()
-    .find((candidate) => candidate.excludedAssistantMessageID !== start.assistantMessageID)
-  if (!boundary) return empty("Generation began before an explicit enrollment boundary")
-  if (boundary.agent !== start.agent)
-    return empty("Generation agent differs from the explicitly enrolled session role")
+    return emptyAssociation("Native generation agent is not an authorized managed role")
+  const selected = explicitBoundary(start, boundaries)
+  if (selected.kind === "rejected") return emptyAssociation(selected.reason)
+  const { boundary } = selected
   return {
     association: boundary.association,
     associationRevision: boundary.revision,
@@ -145,8 +170,24 @@ function generationStatus(input: {
 }): ManagedUsageGeneration["status"] {
   if (input.sourceConflict || input.terminals.some((fact) => !fact.categories)) return "unavailable"
   if (!input.terminals.length) return "partial"
-  if (Object.values(input.categories).some((category) => category.status === "unavailable"))
-    return "unavailable"
+  if (hasCategoryStatus(input.categories, "unavailable")) return "unavailable"
+  if (completeGenerationEvidence(input)) return "observed"
+  return allCategoriesMissing(input.categories) ? "missing" : "partial"
+}
+
+function hasCategoryStatus(categories: ManagedUsageCategories, status: string) {
+  return Object.values(categories).some((category) => category.status === status)
+}
+
+function allCategoriesMissing(categories: ManagedUsageCategories) {
+  return Object.values(categories).every((category) => category.status === "missing")
+}
+
+function completeGenerationEvidence(input: {
+  categories: ManagedUsageCategories
+  routeStatus: ManagedUsageGeneration["routeStatus"]
+  association: ManagedUsageAssociation
+}) {
   const allCategoriesObserved = Object.values(input.categories).every(
     (category) => category.status === "observed",
   )
@@ -155,11 +196,7 @@ function generationStatus(input: {
   )
   const routeResolved = input.routeStatus === "observed"
   const associated = input.association.kind !== "unallocated"
-  if (allCategoriesObserved && (!routeRequired || routeResolved) && associated) return "observed"
-  if (allCategoriesObserved && !routeRequired && !associated) return "partial"
-  return Object.values(input.categories).every((category) => category.status === "missing")
-    ? "missing"
-    : "partial"
+  return allCategoriesObserved && (!routeRequired || routeResolved) && associated
 }
 
 type GenerationFacts = {
@@ -182,26 +219,25 @@ function groupGenerationFacts(snapshot: ManagedUsageSnapshot) {
 }
 
 function routeEvidence(starts: readonly ManagedUsageNativeFact[], sourceConflict: boolean) {
-  const semantics = new Map(starts.map((fact) => [semanticStart(fact), fact]))
-  const exactStart = semantics.size === 1 ? [...semantics.values()][0] : undefined
-  let route = exactStart?.route ?? null
-  let status: ManagedUsageGeneration["routeStatus"] = exactStart
-    ? exactStart.routeStatus === "observed"
-      ? "observed"
-      : exactStart.routeStatus === "missing"
-        ? "missing"
-        : "invalid"
-    : starts.length
-      ? "conflicting"
-      : "missing"
-  if (
+  const exactStart = uniqueStart(starts) ?? undefined
+  const status = startRouteStatus(exactStart, starts)
+  const route = exactStart?.route ?? null
+  const conflicts =
     sourceConflict ||
     starts.some((fact) => routeKey(fact.route, fact.routeStatus) !== routeKey(route, status))
-  ) {
-    route = null
-    status = "conflicting"
-  }
-  return { exactStart, route, status }
+  return conflicts
+    ? { exactStart, route: null, status: "conflicting" as const }
+    : { exactStart, route, status }
+}
+
+function startRouteStatus(
+  exactStart: ManagedUsageNativeFact | undefined,
+  starts: readonly ManagedUsageNativeFact[],
+): ManagedUsageGeneration["routeStatus"] {
+  if (!exactStart) return starts.length ? "conflicting" : "missing"
+  if (exactStart.routeStatus === "observed") return "observed"
+  if (exactStart.routeStatus === "missing") return "missing"
+  return "invalid"
 }
 
 function terminalEvidence(

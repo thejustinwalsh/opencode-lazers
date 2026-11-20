@@ -186,12 +186,18 @@ test("stale cached rates remain a labelled subtotal rather than a complete curre
     valueUSD: null,
     subtotalUSD: 0.000037,
     status: "partial",
+    categories: {
+      uncachedInput: { valueUSD: null, subtotalUSD: 0.00001, status: "unknown" },
+    },
   })
   expect(result.currentPrice?.freshness).toBe("stale")
   expect(managedUsageTotals(result.calls)).toMatchObject({
     valueUSD: null,
     subtotalUSD: 0.000037,
     status: "partial",
+    marketCategories: {
+      uncachedInput: { valueUSD: null, subtotalUSD: 0.00001, status: "partial" },
+    },
   })
 })
 

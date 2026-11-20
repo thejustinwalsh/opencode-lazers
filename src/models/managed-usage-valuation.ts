@@ -230,6 +230,12 @@ type CategoryPriceInput = {
   priceUnavailable: boolean
 }
 
+type PriceCategoryInput = CategoryPriceInput & {
+  tokens: number | null
+  usageStatus: string
+  freshness: "current" | "stale" | "unknown" | "unavailable"
+}
+
 type CategoryPriceBlocker = { reason: string; status: "unknown" | "unavailable" }
 
 function unknownPrice(reason: string): CategoryPriceBlocker {
@@ -259,21 +265,60 @@ function categoryPriceBlocker(input: CategoryPriceInput) {
   return { pin, rate }
 }
 
-function priceCategory(input: {
-  category: ManagedUsageCategory
-  tokens: number | null
-  usageStatus: string
-  route: ManagedUsageRoute | null
-  routeStatus: string
-  candidates: readonly CurrentPricePin[]
-  priceUnavailable: boolean
-  freshness: "current" | "stale" | "unknown" | "unavailable"
-}) {
+function missingUsagePrice(input: PriceCategoryInput) {
   if (input.usageStatus === "unavailable")
     return unknownCategory(input.tokens, "Native token category is unavailable.", "unavailable")
   if (input.tokens === null)
     return unknownCategory(input.tokens, "Native token category is missing; missing is not zero.")
   if (input.tokens === 0) return zeroValue(input.tokens, input.usageStatus)
+  return null
+}
+
+function calculateCategoryValue(tokens: number | null, rate: Decimal) {
+  const rateUSDPerToken = decimalNumber(rate)
+  const amount = tokens === null ? null : decimal(tokens)
+  const value = amount ? multiplyDecimal(amount, rate) : null
+  const valueUSD = value ? decimalNumber(value) : null
+  if (rateUSDPerToken === null || valueUSD === null) return null
+  return { rateUSDPerToken, valueUSD }
+}
+
+function categoryValueReason(input: PriceCategoryInput, stale: boolean) {
+  if (stale) return "Cached price evidence is not current; the market subtotal is diagnostic only."
+  return input.usageStatus === "observed"
+    ? null
+    : "Priced observed native-token subtotal; category coverage is partial."
+}
+
+function pricedCategoryOutput(
+  input: PriceCategoryInput,
+  value: NonNullable<ReturnType<typeof calculateCategoryValue>>,
+) {
+  const stale = input.freshness !== "current"
+  return {
+    tokens: input.tokens,
+    rateUSDPerToken: value.rateUSDPerToken,
+    valueUSD: stale ? null : value.valueUSD,
+    subtotalUSD: value.valueUSD,
+    status: stale ? ("unknown" as const) : ("valued" as const),
+    reason: categoryValueReason(input, stale),
+  }
+}
+
+function valuedCategory(input: PriceCategoryInput, rate: Decimal) {
+  const value = calculateCategoryValue(input.tokens, rate)
+  if (!value)
+    return unknownCategory(
+      input.tokens,
+      "Usage-times-rate overflowed the finite USD output range.",
+      "unavailable",
+    )
+  return pricedCategoryOutput(input, value)
+}
+
+function priceCategory(input: PriceCategoryInput) {
+  const usageBlocker = missingUsagePrice(input)
+  if (usageBlocker) return usageBlocker
   const pricing = categoryPriceBlocker({
     category: input.category,
     route: input.route,
@@ -282,30 +327,7 @@ function priceCategory(input: {
     priceUnavailable: input.priceUnavailable,
   })
   if ("reason" in pricing) return unknownCategory(input.tokens, pricing.reason, pricing.status)
-  const { rate } = pricing
-  const rateUSDPerToken = decimalNumber(rate)
-  const amount = decimal(input.tokens)
-  const value = amount ? multiplyDecimal(amount, rate) : null
-  const valueUSD = value ? decimalNumber(value) : null
-  if (rateUSDPerToken === null || valueUSD === null)
-    return unknownCategory(
-      input.tokens,
-      "Usage-times-rate overflowed the finite USD output range.",
-      "unavailable",
-    )
-  const stale = input.freshness !== "current"
-  return {
-    tokens: input.tokens,
-    rateUSDPerToken,
-    valueUSD: stale ? null : valueUSD,
-    subtotalUSD: valueUSD,
-    status: stale ? ("unknown" as const) : ("valued" as const),
-    reason: stale
-      ? "Cached price evidence is not current; the market subtotal is diagnostic only."
-      : input.usageStatus === "observed"
-        ? null
-        : "Priced observed native-token subtotal; category coverage is partial.",
-  }
+  return valuedCategory(input, pricing.rate)
 }
 
 function decimalSum(values: readonly (number | null)[]): number | null {

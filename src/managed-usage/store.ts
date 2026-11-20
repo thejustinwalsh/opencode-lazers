@@ -130,6 +130,109 @@ function associationColumns(association: ManagedUsageAssociation) {
       : { kind: association.kind, planID: null, taskID: null }
 }
 
+function snapshotCounts(db: Database, projectDirectory: string) {
+  const count = (table: string) =>
+    db
+      .query<{ count: number }, [string]>(
+        `SELECT count(*) AS count FROM ${table} WHERE project_directory=?`,
+      )
+      .get(projectDirectory)?.count ?? 0
+  return {
+    revision:
+      db
+        .query<{ revision: number }, [string]>(
+          "SELECT revision FROM managed_usage_meta WHERE project_directory=?",
+        )
+        .get(projectDirectory)?.revision ?? 0,
+    boundaryCount: count("managed_usage_boundaries"),
+    factCount: count("managed_usage_facts"),
+    factConflictCount: count("managed_usage_fact_conflicts"),
+    listenerGapCount: count("managed_usage_capture_gaps"),
+  }
+}
+
+function snapshotBoundaries(db: Database, projectDirectory: string) {
+  return db
+    .query<BoundaryRow, [string]>(
+      `SELECT * FROM managed_usage_boundaries WHERE project_directory=?
+       ORDER BY session_id,revision LIMIT 100_000`,
+    )
+    .all(projectDirectory)
+    .map((row) => ({
+      sessionID: row.session_id,
+      revision: row.revision,
+      requestID: row.request_id,
+      boundarySequence: row.boundary_sequence,
+      excludedAssistantMessageID: row.excluded_assistant_message_id,
+      agent: row.managed_agent,
+      association: associationFromRow(row),
+      createdAt: row.created_at,
+    }))
+}
+
+function snapshotFacts(db: Database, projectDirectory: string) {
+  const rows = (table: string) =>
+    db
+      .query<FactRow, [string, number]>(
+        `SELECT session_id,event_key,fingerprint,fact_json FROM ${table}
+         WHERE project_directory=? ORDER BY id LIMIT ?`,
+      )
+      .all(projectDirectory, MAX_SNAPSHOT_FACTS + 1)
+      .slice(0, MAX_SNAPSHOT_FACTS)
+      .map(parseFact)
+  return {
+    facts: rows("managed_usage_facts"),
+    factConflicts: rows("managed_usage_fact_conflicts"),
+  }
+}
+
+function snapshotGaps(db: Database, projectDirectory: string) {
+  const listenerGaps = db
+    .query<{ session_id: string; kind: string; recorded_at: number }, [string, number]>(
+      `SELECT session_id,kind,recorded_at FROM managed_usage_capture_gaps
+       WHERE project_directory=? ORDER BY id LIMIT ?`,
+    )
+    .all(projectDirectory, MAX_SNAPSHOT_GAPS + 1)
+    .slice(0, MAX_SNAPSHOT_GAPS)
+    .map((row) => ({
+      sessionID: row.session_id,
+      kind: row.kind,
+      recordedAt: row.recorded_at,
+    }))
+  const gapCounts = db
+    .query<{ session_id: string; count: number }, [string, number]>(
+      `SELECT session_id,count(*) AS count FROM managed_usage_capture_gaps
+       WHERE project_directory=? GROUP BY session_id ORDER BY session_id LIMIT ?`,
+    )
+    .all(projectDirectory, 100_001)
+  const listenerGapCounts = gapCounts
+    .slice(0, 100_000)
+    .map((row) => ({ sessionID: row.session_id, count: row.count }))
+  return {
+    listenerGaps,
+    listenerGapCounts,
+    listenerGapCountsTruncated: gapCounts.length > 100_000,
+  }
+}
+
+function snapshotInDatabase(db: Database, projectDirectory: string): ManagedUsageSnapshot {
+  const counts = snapshotCounts(db, projectDirectory)
+  const boundaries = snapshotBoundaries(db, projectDirectory)
+  const facts = snapshotFacts(db, projectDirectory)
+  const gaps = snapshotGaps(db, projectDirectory)
+  return {
+    ...counts,
+    ...facts,
+    ...gaps,
+    boundaries,
+    boundariesTruncated: counts.boundaryCount > 100_000,
+    factsTruncated: counts.factCount > MAX_SNAPSHOT_FACTS,
+    factConflictsTruncated: counts.factConflictCount > MAX_SNAPSHOT_FACTS,
+    gapsTruncated: counts.listenerGapCount > MAX_SNAPSHOT_GAPS,
+    listenerGapCountsTruncated: gaps.listenerGapCountsTruncated,
+  }
+}
+
 export class ManagedUsageStore {
   constructor(readonly repository: TaskRepository) {
     const tables = managedUsageSchemaModule.tables
@@ -581,104 +684,7 @@ export class ManagedUsageStore {
 
   snapshot(): ManagedUsageSnapshot {
     return this.repository.read((db) =>
-      db
-        .transaction(() => {
-          const projectDirectory = this.repository.projectDirectory
-          const revision =
-            db
-              .query<{ revision: number }, [string]>(
-                "SELECT revision FROM managed_usage_meta WHERE project_directory=?",
-              )
-              .get(projectDirectory)?.revision ?? 0
-          const rawBoundaries = db
-            .query<BoundaryRow, [string]>(
-              `SELECT * FROM managed_usage_boundaries WHERE project_directory=?
-               ORDER BY session_id,revision LIMIT 100_000`,
-            )
-            .all(projectDirectory)
-          const boundaryCount =
-            db
-              .query<{ count: number }, [string]>(
-                "SELECT count(*) AS count FROM managed_usage_boundaries WHERE project_directory=?",
-              )
-              .get(projectDirectory)?.count ?? 0
-          const factCount =
-            db
-              .query<{ count: number }, [string]>(
-                "SELECT count(*) AS count FROM managed_usage_facts WHERE project_directory=?",
-              )
-              .get(projectDirectory)?.count ?? 0
-          const factRows = db
-            .query<FactRow, [string, number]>(
-              `SELECT session_id,event_key,fingerprint,fact_json FROM managed_usage_facts
-               WHERE project_directory=? ORDER BY id LIMIT ?`,
-            )
-            .all(projectDirectory, MAX_SNAPSHOT_FACTS + 1)
-          const conflictRows = db
-            .query<FactRow, [string, number]>(
-              `SELECT session_id,event_key,fingerprint,fact_json FROM managed_usage_fact_conflicts
-               WHERE project_directory=? ORDER BY id LIMIT ?`,
-            )
-            .all(projectDirectory, MAX_SNAPSHOT_FACTS + 1)
-          const listenerGapCount =
-            db
-              .query<{ count: number }, [string]>(
-                "SELECT count(*) AS count FROM managed_usage_capture_gaps WHERE project_directory=?",
-              )
-              .get(projectDirectory)?.count ?? 0
-          const factConflictCount =
-            db
-              .query<{ count: number }, [string]>(
-                "SELECT count(*) AS count FROM managed_usage_fact_conflicts WHERE project_directory=?",
-              )
-              .get(projectDirectory)?.count ?? 0
-          const gapRows = db
-            .query<{ session_id: string; kind: string; recorded_at: number }, [string, number]>(
-              `SELECT session_id,kind,recorded_at FROM managed_usage_capture_gaps
-               WHERE project_directory=? ORDER BY id LIMIT ?`,
-            )
-            .all(projectDirectory, MAX_SNAPSHOT_GAPS + 1)
-          const gapCounts = db
-            .query<{ session_id: string; count: number }, [string, number]>(
-              `SELECT session_id,count(*) AS count FROM managed_usage_capture_gaps
-               WHERE project_directory=? GROUP BY session_id ORDER BY session_id LIMIT ?`,
-            )
-            .all(projectDirectory, 100_001)
-          return {
-            revision,
-            boundaries: rawBoundaries.map((row) => ({
-              sessionID: row.session_id,
-              revision: row.revision,
-              requestID: row.request_id,
-              boundarySequence: row.boundary_sequence,
-              excludedAssistantMessageID: row.excluded_assistant_message_id,
-              agent: row.managed_agent,
-              association: associationFromRow(row),
-              createdAt: row.created_at,
-            })),
-            boundaryCount,
-            boundariesTruncated: boundaryCount > 100_000,
-            facts: factRows.slice(0, MAX_SNAPSHOT_FACTS).map(parseFact),
-            factConflicts: conflictRows.slice(0, MAX_SNAPSHOT_FACTS).map(parseFact),
-            factCount,
-            factConflictCount,
-            factsTruncated: factCount > MAX_SNAPSHOT_FACTS,
-            factConflictsTruncated: factConflictCount > MAX_SNAPSHOT_FACTS,
-            listenerGaps: gapRows.slice(0, MAX_SNAPSHOT_GAPS).map((row) => ({
-              sessionID: row.session_id,
-              kind: row.kind,
-              recordedAt: row.recorded_at,
-            })),
-            listenerGapCount,
-            gapsTruncated: listenerGapCount > MAX_SNAPSHOT_GAPS,
-            listenerGapCounts: gapCounts.slice(0, 100_000).map((row) => ({
-              sessionID: row.session_id,
-              count: row.count,
-            })),
-            listenerGapCountsTruncated: gapCounts.length > 100_000,
-          }
-        })
-        .deferred(),
+      db.transaction(() => snapshotInDatabase(db, this.repository.projectDirectory)).deferred(),
     )
   }
 

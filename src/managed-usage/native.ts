@@ -3,7 +3,13 @@ import { Session } from "@opencode/schema/session"
 import { Effect, Stream } from "effect"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { ManagedUsageNativeFact } from "./contract.ts"
-import { ManagedUsageNativeFactSchema } from "./contract.ts"
+import {
+  managedUsageEventSequence,
+  managedUsageEventSessionID,
+  managedUsageEventType,
+  managedUsageFactFromEvent,
+  nativeObject,
+} from "./native-facts.ts"
 import { ManagedUsageStore } from "./store.ts"
 
 type ManagedUsageNativeContext = Pick<Plugin.Context, "event" | "session" | "location">
@@ -14,133 +20,9 @@ const MANAGED_USAGE_EVENT_TYPES = [
   "session.step.failed",
 ] as const
 const MAX_BUFFERED_ENROLLMENT_FACTS = 1_000
+const MAX_IN_FLIGHT_OBSERVATIONS = 1_000
 
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-function text(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null
-}
-
-function sequence(value: unknown, sessionID: string): number | null {
-  const durable = object(object(value)?.durable)
-  return durable?.aggregateID === sessionID &&
-    typeof durable.seq === "number" &&
-    Number.isSafeInteger(durable.seq) &&
-    durable.seq >= 0
-    ? durable.seq
-    : null
-}
-
-function nativeEventType(value: unknown): ManagedUsageNativeFact["eventType"] | null {
-  if (value === "session.step.started") return "started"
-  if (value === "session.step.ended") return "ended"
-  if (value === "session.step.failed") return "failed"
-  return null
-}
-
-function category(value: unknown) {
-  if (value === undefined || value === null) return { tokens: null, status: "missing" as const }
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-    return { tokens: null, status: "unavailable" as const }
-  return { tokens: value, status: "observed" as const }
-}
-
-function nativeFactIdentity(event: unknown) {
-  const envelope = object(event)
-  const data = object(envelope?.data)
-  const sessionID = text(data?.sessionID)
-  const messageID = text(data?.assistantMessageID)
-  const eventType = nativeEventType(envelope?.type)
-  if (!envelope || !data || !sessionID || !messageID || !eventType) return null
-  const rawSequence = sequence(event, sessionID)
-  const nativeEventID = text(envelope?.id)
-  const eventKey = nativeEventID
-    ? `id:${nativeEventID}`
-    : rawSequence !== null
-      ? `seq:${rawSequence}:${envelope.type}`
-      : null
-  if (!eventKey) return null
-  return {
-    envelope,
-    data,
-    sessionID,
-    messageID,
-    eventType,
-    sequence: rawSequence,
-    nativeEventID,
-    eventKey,
-  }
-}
-
-function startEvidence(data: Record<string, unknown>) {
-  const model = object(data?.model)
-  const providerID = text(model?.providerID)
-  const modelID = text(model?.id)
-  const variant = model?.variant
-  const routeIsValid =
-    providerID !== null &&
-    modelID !== null &&
-    (variant === undefined || variant === null || typeof variant === "string")
-  return {
-    agent: text(data.agent),
-    route: routeIsValid
-      ? { providerID, modelID, variant: typeof variant === "string" ? variant : null }
-      : null,
-    routeStatus: routeIsValid
-      ? ("observed" as const)
-      : model === undefined
-        ? ("missing" as const)
-        : ("invalid" as const),
-    categories: null,
-  }
-}
-
-function terminalEvidence(data: Record<string, unknown>) {
-  const tokens = object(data.tokens)
-  const cache = object(tokens?.cache)
-  return {
-    agent: null,
-    route: null,
-    routeStatus: "not-applicable" as const,
-    categories: {
-      uncachedInput: category(tokens?.input),
-      output: category(tokens?.output),
-      reasoning: category(tokens?.reasoning),
-      cacheRead: category(cache?.read),
-      cacheWrite: category(cache?.write),
-    },
-  }
-}
-
-function factFromEvent(event: unknown): ManagedUsageNativeFact | null {
-  const identity = nativeFactIdentity(event)
-  if (!identity) return null
-  const evidence =
-    identity.eventType === "started"
-      ? startEvidence(identity.data)
-      : terminalEvidence(identity.data)
-  const created = identity.envelope.created
-  return ManagedUsageNativeFactSchema.parse({
-    schemaVersion: 1,
-    sessionID: identity.sessionID,
-    eventKey: identity.eventKey,
-    nativeEventID: identity.nativeEventID,
-    eventType: identity.eventType,
-    assistantMessageID: identity.messageID,
-    sequence: identity.sequence,
-    eventCreatedAt: typeof created === "number" && Number.isFinite(created) ? created : null,
-    recordedAt: Date.now(),
-    ...evidence,
-  })
-}
-
-export function managedUsageEventFact(event: unknown) {
-  return factFromEvent(event)
-}
+export const managedUsageEventFact = managedUsageFactFromEvent
 
 type PendingEnrollment = {
   tokens: Set<symbol>
@@ -192,6 +74,10 @@ function bufferEnrollmentFact(state: PendingEnrollment, fact: ManagedUsageNative
   else state.overflow = true
 }
 
+function authorizedStartFact(fact: ManagedUsageNativeFact, agent: string) {
+  return fact.eventType !== "started" || (fact.agent === agent && !isWorkerAgent(fact.agent))
+}
+
 async function authorizedManagedFact(
   ctx: ManagedUsageNativeContext,
   store: ManagedUsageStore,
@@ -208,13 +94,22 @@ async function authorizedManagedFact(
     !isWorkerAgent(session.agent) &&
     store.enrolledAgent(fact.sessionID) === session.agent &&
     !store.isWorkerSession(fact.sessionID) &&
-    (fact.eventType !== "started" || (fact.agent === session.agent && !isWorkerAgent(fact.agent)))
+    authorizedStartFact(fact, session.agent)
   )
+}
+
+type ObservationInput = {
+  event: unknown
+  ctx: ManagedUsageNativeContext
+  projectID: string
+  listenerID: string
 }
 
 export class ManagedUsageCapture {
   private readonly pending = new Map<string, PendingEnrollment>()
   private readonly latestSequences = new Map<string, number>()
+  private readonly activeObservers = new Set<string>()
+  private inFlightObservations = 0
 
   constructor(readonly store: ManagedUsageStore) {}
 
@@ -223,12 +118,80 @@ export class ManagedUsageCapture {
   }
 
   private rememberSequence(event: unknown, sessionID: string) {
-    const rawSequence = sequence(event, sessionID)
+    const rawSequence = managedUsageEventSequence(event, sessionID)
     if (rawSequence === null) return
     this.latestSequences.set(
       sessionID,
       Math.max(this.latestSequences.get(sessionID) ?? -1, rawSequence),
     )
+  }
+
+  startObserver(observerID: string) {
+    if (this.activeObservers.has(observerID)) return
+    const wasUncovered = this.activeObservers.size === 0
+    this.activeObservers.add(observerID)
+    if (wasUncovered)
+      this.store.recordGapForAll({ listenerID: observerID, kind: "listener-started" })
+  }
+
+  stopObserver(observerID: string, reason: "stream-failed" | "stream-ended" | "listener-stopped") {
+    if (!this.activeObservers.delete(observerID) || this.activeObservers.size > 0) return
+    this.store.recordGapForAll({ listenerID: observerID, kind: reason })
+  }
+
+  private noteUnidentifiedEvent(listenerID: string) {
+    for (const enrollment of this.pending.values()) enrollment.unidentifiedEvent = true
+    this.store.recordGapForAll({ listenerID, kind: "unidentified-event" })
+  }
+
+  private enrollmentFact(
+    input: ObservationInput,
+    sessionID: string,
+  ): ManagedUsageNativeFact | null {
+    const enrolled = this.store.hasEnrollment(sessionID)
+    const pending = this.pending.get(sessionID)
+    if (!enrolled && !pending) return null
+    const fact = managedUsageFactFromEvent(input.event)
+    if (!fact) {
+      noteUnidentifiedEvent(this.store, input.listenerID, sessionID, enrolled, pending)
+      return null
+    }
+    this.recordUnsequencedFact(input.listenerID, sessionID, enrolled, pending, fact)
+    if (!enrolled && pending) {
+      bufferEnrollmentFact(pending, fact)
+      return null
+    }
+    return fact
+  }
+
+  private recordUnsequencedFact(
+    listenerID: string,
+    sessionID: string,
+    enrolled: boolean,
+    pending: PendingEnrollment | undefined,
+    fact: ManagedUsageNativeFact,
+  ) {
+    if (fact.sequence !== null) return
+    if (enrolled) this.store.recordGap({ listenerID, sessionID, kind: "unsequenced-event" })
+    else if (pending) pending.unsequencedEvent = true
+  }
+
+  private authorizationTask(
+    input: ObservationInput,
+    sessionID: string,
+    fact: ManagedUsageNativeFact,
+  ) {
+    return async () => {
+      if (!(await authorizedManagedFact(input.ctx, this.store, fact, input.projectID))) {
+        this.store.recordGap({
+          listenerID: input.listenerID,
+          sessionID,
+          kind: "authority-changed",
+        })
+        return
+      }
+      this.store.appendFact(fact)
+    }
   }
 
   beginEnrollment(sessionID: string) {
@@ -259,44 +222,49 @@ export class ManagedUsageCapture {
     }
   }
 
+  private prepareObservation(input: ObservationInput): (() => Promise<void>) | null {
+    if (!managedUsageEventType(nativeObject(input.event)?.type)) return null
+    const sessionID = managedUsageEventSessionID(input.event)
+    if (!sessionID) {
+      this.noteUnidentifiedEvent(input.listenerID)
+      return null
+    }
+    this.rememberSequence(input.event, sessionID)
+    const fact = this.enrollmentFact(input, sessionID)
+    return fact ? this.authorizationTask(input, sessionID, fact) : null
+  }
+
   async observe(
     event: unknown,
     ctx: ManagedUsageNativeContext,
     projectID: string,
     listenerID: string,
   ) {
-    const envelope = object(event)
-    if (!nativeEventType(envelope?.type)) return
-    const sessionID = text(object(envelope?.data)?.sessionID)
-    if (!sessionID) {
-      for (const enrollment of this.pending.values()) enrollment.unidentifiedEvent = true
-      this.store.recordGapForAll({ listenerID, kind: "unidentified-event" })
-      return
-    }
-    this.rememberSequence(event, sessionID)
-    const enrolled = this.store.hasEnrollment(sessionID)
-    const pending = this.pending.get(sessionID)
-    if (!enrolled && !pending) return
-    const fact = factFromEvent(event)
-    if (!fact) {
-      noteUnidentifiedEvent(this.store, listenerID, sessionID, enrolled, pending)
-      return
-    }
-    if (fact.sequence === null) {
-      if (enrolled) this.store.recordGap({ listenerID, sessionID, kind: "unsequenced-event" })
-      else if (pending) pending.unsequencedEvent = true
-    }
+    const process = this.prepareObservation({ event, ctx, projectID, listenerID })
+    if (process) await process()
+  }
 
-    if (!enrolled && pending) {
-      bufferEnrollmentFact(pending, fact)
+  observeDetached(
+    event: unknown,
+    ctx: ManagedUsageNativeContext,
+    projectID: string,
+    listenerID: string,
+  ) {
+    const process = this.prepareObservation({ event, ctx, projectID, listenerID })
+    if (!process) return
+    const sessionID = managedUsageEventSessionID(event)
+    if (this.inFlightObservations >= MAX_IN_FLIGHT_OBSERVATIONS) {
+      if (sessionID) this.store.recordGap({ listenerID, sessionID, kind: "buffer-overflow" })
       return
     }
-
-    if (!(await authorizedManagedFact(ctx, this.store, fact, projectID))) {
-      this.store.recordGap({ listenerID, sessionID, kind: "authority-changed" })
-      return
-    }
-    this.store.appendFact(fact)
+    this.inFlightObservations++
+    void process()
+      .catch(() => {
+        if (sessionID) this.store.recordGap({ listenerID, sessionID, kind: "observation-failed" })
+      })
+      .finally(() => {
+        this.inFlightObservations--
+      })
   }
 }
 
@@ -307,40 +275,34 @@ export function registerManagedUsageNative(
 ) {
   return Effect.gen(function* () {
     const listenerID = crypto.randomUUID()
-    capture.store.recordGapForAll({ listenerID, kind: "listener-started" })
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        capture.store.recordGapForAll({ listenerID, kind: "listener-stopped" })
-      }),
-    )
+    let activeObserverID: string | undefined
+    const startObserver = () => {
+      const observerID = crypto.randomUUID()
+      activeObserverID = observerID
+      capture.startObserver(observerID)
+    }
+    const stopObserver = (reason: "stream-failed" | "stream-ended" | "listener-stopped") => {
+      if (!activeObserverID) return
+      const observerID = activeObserverID
+      activeObserverID = undefined
+      capture.stopObserver(observerID, reason)
+    }
+    yield* Effect.addFinalizer(() => Effect.sync(() => stopObserver("listener-stopped")))
 
     const listen = Effect.forever(
-      Effect.suspend(() =>
-        Stream.runForEach(ctx.event.subscribe({ types: MANAGED_USAGE_EVENT_TYPES }), (event) =>
-          Effect.tryPromise({
-            try: () => capture.observe(event, ctx, projectID, listenerID),
-            catch: () => new Error("Managed usage native observation failed"),
-          }).pipe(
-            Effect.catch(() =>
-              Effect.sync(() => {
-                const sessionID = text(object(object(event)?.data)?.sessionID)
-                if (sessionID)
-                  capture.store.recordGap({ listenerID, sessionID, kind: "observation-failed" })
-              }),
-            ),
-          ),
+      Effect.suspend(() => {
+        startObserver()
+        return Stream.runForEach(
+          ctx.event.subscribe({ types: MANAGED_USAGE_EVENT_TYPES }),
+          (event) => Effect.sync(() => capture.observeDetached(event, ctx, projectID, listenerID)),
         ).pipe(
           Effect.match({
-            onFailure: () => {
-              capture.store.recordGapForAll({ listenerID, kind: "stream-failed" })
-            },
-            onSuccess: () => {
-              capture.store.recordGapForAll({ listenerID, kind: "stream-ended" })
-            },
+            onFailure: () => stopObserver("stream-failed"),
+            onSuccess: () => stopObserver("stream-ended"),
           }),
           Effect.andThen(Effect.sleep(1_000)),
-        ),
-      ),
+        )
+      }),
     )
     yield* Effect.forkScoped(listen)
   })

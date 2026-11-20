@@ -143,7 +143,7 @@ function currentIndex(route: NonNullable<ManagedUsageNativeFact["route"]>): Curr
   }
 }
 
-function fact(input: {
+type FactInput = {
   sessionID?: string
   eventKey: string
   type: "started" | "ended" | "failed"
@@ -154,9 +154,11 @@ function fact(input: {
   route?: ManagedUsageNativeFact["route"]
   routeStatus?: ManagedUsageNativeFact["routeStatus"]
   categories?: ManagedUsageNativeFact["categories"]
-}): ManagedUsageNativeFact {
+}
+
+function factIdentity(input: FactInput) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 1 as const,
     sessionID: input.sessionID ?? "ses-managed",
     eventKey: input.eventKey,
     nativeEventID: input.eventKey.startsWith("id:") ? input.eventKey.slice(3) : null,
@@ -165,13 +167,35 @@ function fact(input: {
     sequence: input.sequence,
     eventCreatedAt: input.sequence ?? null,
     recordedAt: input.recordedAt ?? 100,
-    agent: input.type === "started" ? (input.agent ?? "explore") : null,
-    route:
-      input.type === "started"
-        ? (input.route ?? { providerID: "openai", modelID: "gpt-test", variant: "fast" })
-        : null,
-    routeStatus: input.type === "started" ? (input.routeStatus ?? "observed") : "not-applicable",
-    categories: input.type === "started" ? null : (input.categories ?? categories()),
+  }
+}
+
+function startedFactEvidence(input: FactInput) {
+  return {
+    agent: input.agent ?? "explore",
+    route: input.route ?? { providerID: "openai", modelID: "gpt-test", variant: "fast" },
+    routeStatus: input.routeStatus ?? ("observed" as const),
+    categories: null,
+  }
+}
+
+function terminalFactEvidence(input: FactInput) {
+  return {
+    agent: null,
+    route: null,
+    routeStatus: "not-applicable" as const,
+    categories: input.categories ?? categories(),
+  }
+}
+
+function factEvidence(input: FactInput) {
+  return input.type === "started" ? startedFactEvidence(input) : terminalFactEvidence(input)
+}
+
+function fact(input: FactInput): ManagedUsageNativeFact {
+  return {
+    ...factIdentity(input),
+    ...factEvidence(input),
   }
 }
 
