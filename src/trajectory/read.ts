@@ -726,33 +726,45 @@ function rawPlanInput(row: PlanRow) {
 
 function snapshots(store: RunnerStore, task: TaskSpec): PlanSnapshot[] {
   const directory = store.repository.projectDirectory
-  const rows = store.atomic((db) =>
-    db
-      .query<PlanRow, [string]>(
-        "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY rowid",
+  // Filtered in SQL by task: only the plans that hold the task, and within them only its
+  // node, attempts, effects and transitions. No pass over every plan's rows.
+  return store.atomic((db) => {
+    const rows = db
+      .query<PlanRow, [string, string]>(
+        `SELECT p.* FROM runner_plans p
+         WHERE p.project_directory=?
+           AND EXISTS (SELECT 1 FROM runner_nodes n WHERE n.plan_id=p.id AND n.task_id=?)
+         ORDER BY p.rowid`,
       )
-      .all(directory),
-  )
-  const output: PlanSnapshot[] = []
-  for (const row of rows) {
-    const node = store.nodes(row.id).find((item) => item.task_id === task.id)
-    if (!node) continue
-    const attempts = store.attempts(row.id).filter((item) => item.task_id === task.id)
-    const effects = store
-      .effects(row.id)
-      .filter(
-        (item) => item.task_id === task.id || (item.task_id === null && item.attempt_id === null),
-      )
-    const transitions = store.atomic((db) =>
-      db
+      .all(directory, task.id)
+    const output: PlanSnapshot[] = []
+    for (const row of rows) {
+      const node = db
+        .query<NodeRow, [string, string]>(
+          "SELECT * FROM runner_nodes WHERE plan_id=? AND task_id=? ORDER BY ordinal LIMIT 1",
+        )
+        .get(row.id, task.id)
+      if (!node) continue
+      const attempts = db
+        .query<AttemptRow, [string, string]>(
+          "SELECT * FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY started_at,number",
+        )
+        .all(row.id, task.id)
+      const effects = db
+        .query<EffectRow, [string, string]>(
+          `SELECT * FROM runner_effects WHERE plan_id=?
+             AND (task_id=? OR (task_id IS NULL AND attempt_id IS NULL)) ORDER BY rowid`,
+        )
+        .all(row.id, task.id)
+      const transitions = db
         .query<TransitionRow, [string, string]>(
           "SELECT id,plan_id,task_id,version,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id",
         )
-        .all(row.id, task.id),
-    )
-    output.push({ row, node, input: rawPlanInput(row), attempts, effects, transitions })
-  }
-  return output
+        .all(row.id, task.id)
+      output.push({ row, node, input: rawPlanInput(row), attempts, effects, transitions })
+    }
+    return output
+  })
 }
 
 function makeCursor(secret: Uint8Array, data: Record<string, unknown>) {
@@ -961,22 +973,20 @@ function hasAttempt(plans: PlanSnapshot[], attemptID: string) {
   return plans.some((snapshot) => snapshot.attempts.some((attempt) => attempt.id === attemptID))
 }
 
-/** The project-owned task that holds the attempt, scanning every plan of the project. */
+/** The project-owned task that holds the attempt: one indexed lookup, not a scan of every plan. */
 function taskOfAttempt(store: RunnerStore, projectID: string, attemptID: string) {
-  const projectPlans = store.atomic((db) =>
+  const taskIDs = store.atomic((db) =>
     db
-      .query<PlanRow, [string]>(
-        "SELECT * FROM runner_plans WHERE project_directory=? ORDER BY rowid",
+      .query<{ task_id: string }, [string, string]>(
+        `SELECT a.task_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+         WHERE p.project_directory=? AND a.id=? ORDER BY p.rowid`,
       )
-      .all(store.repository.projectDirectory),
+      .all(store.repository.projectDirectory, attemptID),
   )
   let task: TaskSpec | undefined
-  for (const row of projectPlans) {
-    for (const attempt of store.attempts(row.id)) {
-      if (attempt.id !== attemptID) continue
-      const found = store.repository.get(attempt.task_id)
-      if (found && ownedByProject(found, store, projectID)) task = found
-    }
+  for (const { task_id } of taskIDs) {
+    const found = store.repository.get(task_id)
+    if (found && ownedByProject(found, store, projectID)) task = found
   }
   return task
 }
