@@ -3571,6 +3571,8 @@ test("ModelsDecision serves an all-projects overview and rows, a page per projec
       ),
     )
     expect(rows.project.key).toBe(first.key)
+    // Looking at one's own projects in a panel never asks for a permission.
+    expect(harness.permissionCalls).toEqual([])
     await expect(
       Effect.runPromise(
         methods.rowsAll({ sessionID: "ses-native", unit: "0".repeat(32), filters, limit: 10 }),

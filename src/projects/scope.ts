@@ -98,33 +98,23 @@ export function unitIndex(units: readonly ProjectUnit[], cursor?: UnitCursor): n
   return index
 }
 
-/** Whether the caller may read a unit; asked lazily, only for the unit about to be read. */
-export type CanRead = (unit: ProjectUnit) => Promise<boolean>
-export const allowAll: CanRead = async () => true
+/** The checkouts an all-projects read covers: every registered project, in registry order. */
+export type UnitAccess = { units: readonly ProjectUnit[] }
 
-/**
- * The first readable unit at or after the cursor and the cursor that follows it. An unreadable
- * unit is skipped without a trace; the follow-up cursor names the next unit whether or not it is
- * readable (it is checked when its page is asked for).
- */
-export async function pickUnit(
+/** The unit the cursor names (the first without one) and the cursor of the unit after it. */
+export function pickUnit(
   units: readonly ProjectUnit[],
   cursor: string | undefined,
-  canRead: CanRead,
-): Promise<
-  { unit: ProjectUnit; index: number; inner?: string; nextCursor: string | null } | undefined
-> {
+): { unit: ProjectUnit; index: number; inner?: string; nextCursor: string | null } | undefined {
   const position = cursor ? decodeUnitCursor(cursor) : undefined
-  for (let index = unitIndex(units, position); index < units.length; index++) {
-    const unit = units[index]!
-    if (!(await canRead(unit))) continue
-    const next = units[index + 1]
-    return {
-      unit,
-      index,
-      ...(position?.inner && index === unitIndex(units, position) ? { inner: position.inner } : {}),
-      nextCursor: next ? encodeUnitCursor({ directory: next.directory }) : null,
-    }
+  const index = unitIndex(units, position)
+  const unit = units[index]
+  if (!unit) return undefined
+  const next = units[index + 1]
+  return {
+    unit,
+    index,
+    ...(position?.inner ? { inner: position.inner } : {}),
+    nextCursor: next ? encodeUnitCursor({ directory: next.directory }) : null,
   }
-  return undefined
 }

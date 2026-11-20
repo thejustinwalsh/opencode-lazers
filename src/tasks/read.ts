@@ -3,12 +3,13 @@ import { PlanInput } from "../runner/schema.ts"
 import { taskAuditHistory } from "../audit/history.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
-import { TaskRepository } from "../storage.ts"
+import { ReadOnlyTaskRepository } from "../storage.ts"
+import type { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
-import { allowAll, encodeUnitCursor, pickUnit } from "../projects/scope.ts"
-import type { CanRead, ProjectRef, ProjectUnit } from "../projects/scope.ts"
+import { encodeUnitCursor, pickUnit } from "../projects/scope.ts"
+import type { ProjectRef, UnitAccess } from "../projects/scope.ts"
 import { findOwner } from "../projects/resolve.ts"
 import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
@@ -105,10 +106,22 @@ function summarize(
   }
 }
 
+/** Reads of another checkout of the shared database that cannot write; `close` releases it. */
+function readsAt(path: string, directory: string) {
+  const repository = new ReadOnlyTaskRepository(path, directory)
+  return {
+    reads: new TaskReads(repository, RunnerStore.readOnly(repository)),
+    close: () => repository.close(),
+  }
+}
+
 export class TaskReads {
   readonly runner: RunnerStore
-  constructor(readonly repository: TaskRepository) {
-    this.runner = new RunnerStore(repository)
+  constructor(
+    readonly repository: TaskRepository,
+    runner?: RunnerStore,
+  ) {
+    this.runner = runner ?? new RunnerStore(repository)
   }
 
   /**
@@ -117,20 +130,16 @@ export class TaskReads {
    * across pages; a checkout with no matching task is skipped. `units` are the checkouts the
    * caller may read and `sessionID` is the caller, not a filter.
    */
-  async queryAll(
-    input: unknown,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
-  ): Promise<TaskPage> {
+  async queryAll(input: unknown, access: UnitAccess): Promise<TaskPage> {
     const { allProjects, sessionID: _caller, cursor, ...rest } = QueryInput.parse(input)
     if (!allProjects) throw new Error("Not an all-projects query")
-    const canRead = access.canRead ?? allowAll
     let from = cursor
     for (;;) {
-      const picked = await pickUnit(access.units, from, canRead)
+      const picked = await pickUnit(access.units, from)
       if (!picked) break
-      const repository = new TaskRepository(this.repository.path, picked.unit.directory)
+      const at = readsAt(this.repository.path, picked.unit.directory)
       try {
-        const page = new TaskReads(repository).query({
+        const page = at.reads.query({
           ...rest,
           ...(picked.inner ? { cursor: picked.inner } : {}),
         })
@@ -146,7 +155,7 @@ export class TaskReads {
         if (!picked.nextCursor) break
         from = picked.nextCursor
       } finally {
-        repository.close()
+        at.close()
       }
     }
     return {
@@ -238,47 +247,45 @@ export class TaskReads {
 
   /**
    * A task of any readable project by id or `<CODE>-<n>` reference, read from its own checkout.
-   * A task that does not exist and one the caller may not read both come back `not_found`.
+   * An unknown task comes back `not_found`.
    */
-  async getAll(input: unknown, access: { units: readonly ProjectUnit[]; canRead?: CanRead }) {
+  async getAll(input: unknown, access: UnitAccess) {
     const { allProjects, sessionID: _caller, ...rest } = GetInput.parse(input)
     if (!allProjects) throw new Error("Not an all-projects read")
     const query = /^[0-9a-f]{8}-/i.test(rest.taskID)
       ? { taskID: rest.taskID }
       : { reference: rest.taskID }
-    const owner = await findOwner(this.repository, access.units, access.canRead ?? allowAll, query)
+    const owner = findOwner(this.repository, access.units, query)
     if (!owner) return GetOutput.parse({ status: "not_found" })
-    const repository = new TaskRepository(this.repository.path, owner.directory)
+    const at = readsAt(this.repository.path, owner.unit.directory)
     try {
-      const found = new TaskReads(repository).get(rest)
-      return found.status === "found" ? { ...found, project: owner.project } : found
+      const found = at.reads.get(rest)
+      return found.status === "found" ? { ...found, project: owner.unit.project } : found
     } finally {
-      repository.close()
+      at.close()
     }
   }
 
-  /** Targets for tasks of any readable project; one that is not readable is unavailable. */
+  /** Targets for tasks of any readable project; an unknown one is unavailable. */
   async currentActivityTargetsAll(
     taskIDs: readonly string[],
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<CurrentActivityTarget[]> {
     if (taskIDs.length > 40 || new Set(taskIDs).size !== taskIDs.length)
       throw new Error("Current activity task selection is invalid")
     const targets: CurrentActivityTarget[] = []
     for (const taskID of taskIDs) {
-      const owner = await findOwner(this.repository, access.units, access.canRead ?? allowAll, {
-        taskID,
-      })
+      const owner = findOwner(this.repository, access.units, { taskID })
       if (!owner) {
         targets.push(unavailableTarget(taskID))
         continue
       }
-      const repository = new TaskRepository(this.repository.path, owner.directory)
+      const at = readsAt(this.repository.path, owner.unit.directory)
       try {
-        const [target] = new TaskReads(repository).currentActivityTargets([taskID])
-        targets.push({ ...target!, project: owner.project })
+        const [target] = at.reads.currentActivityTargets([taskID])
+        targets.push({ ...target!, project: owner.unit.project })
       } finally {
-        repository.close()
+        at.close()
       }
     }
     return targets

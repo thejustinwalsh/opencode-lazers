@@ -57,7 +57,6 @@ import {
   ModelDecisionRowsRPCInputSchema,
 } from "./decision-contract.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
-import { lazyGate, readAssertion } from "../projects/read-access.ts"
 import { canonicalPath, pickUnit, projectUnits, unitToken } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
@@ -94,6 +93,34 @@ function isSessionNotFound(error: unknown): boolean {
   )
 }
 
+/** The caller's session: it exists, is not archived, belongs to this project and has an agent. */
+async function eligibleSession(
+  ctx: ModelsContext,
+  sessionID: string,
+  projectID: string,
+  signal: AbortSignal,
+) {
+  const session = await Effect.runPromise(
+    ctx.session
+      .get({ sessionID: Session.ID.make(sessionID) })
+      .pipe(
+        Effect.catch((error) =>
+          isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
+        ),
+      ),
+    { signal },
+  )
+  if (
+    !session ||
+    String(session.id) !== sessionID ||
+    session.projectID !== projectID ||
+    session.time.archived !== undefined ||
+    !session.agent
+  )
+    throw new Error("Models scope is unavailable")
+  return { session, agent: session.agent }
+}
+
 async function authorize(
   ctx: ModelsContext,
   sessionID: string,
@@ -102,27 +129,7 @@ async function authorize(
   resources: string[],
   signal: AbortSignal,
 ) {
-  const readEligibleSession = async () => {
-    const session = await Effect.runPromise(
-      ctx.session
-        .get({ sessionID: Session.ID.make(sessionID) })
-        .pipe(
-          Effect.catch((error) =>
-            isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
-          ),
-        ),
-      { signal },
-    )
-    if (
-      !session ||
-      String(session.id) !== sessionID ||
-      session.projectID !== projectID ||
-      session.time.archived !== undefined ||
-      !session.agent
-    )
-      throw new Error("Models scope is unavailable")
-    return { session, agent: session.agent }
-  }
+  const readEligibleSession = () => eligibleSession(ctx, sessionID, projectID, signal)
 
   const eligible = await readEligibleSession()
 
@@ -394,31 +401,17 @@ export function registerModelsServer(
         )
       return { reader, directory: unit.directory }
     }
-    /** The caller's session and its own project's assertion, then a lazy gate over the others. */
+    /**
+     * The all-projects Models reads: the caller's session is checked, and no permission is
+     * asserted, so the owner is never prompted for looking at their own projects in a panel.
+     */
     const decisionAccess = async (sessionID: string, signal: AbortSignal) => {
-      const session = await authorize(
-        ctx,
-        sessionID,
-        projectID,
-        "lz-read-model-decision",
-        [projectDirectory],
-        signal,
-      )
+      await eligibleSession(ctx, sessionID, projectID, signal)
       const registry = new TaskRepository(path, projectDirectory)
-      let units: ProjectUnit[]
       try {
-        units = projectUnits(registry, options.loaded ?? loadedProjectDirectories)
+        return { units: projectUnits(registry, options.loaded ?? loadedProjectDirectories) }
       } finally {
         registry.close()
-      }
-      const asked = { id: String(session.id), agent: String(session.agent) }
-      return {
-        units,
-        canRead: lazyGate(
-          readAssertion(ctx, asked, "lz-read-model-decision"),
-          units,
-          projectDirectory,
-        ),
       }
     }
     if (options.prewarmDecision) {
@@ -765,7 +758,7 @@ export function registerModelsServer(
           try: async (signal) => {
             const request = ModelDecisionOverviewAllRPCInputSchema.parse(input)
             const access = await decisionAccess(request.sessionID, signal)
-            const picked = await pickUnit(access.units, request.cursor, access.canRead)
+            const picked = pickUnit(access.units, request.cursor)
             if (!picked) throw new Error("No project is readable in this scope")
             signal.throwIfAborted()
             const target = readerFor(picked.unit)
@@ -793,8 +786,7 @@ export function registerModelsServer(
             const request = ModelDecisionRowsAllRPCInputSchema.parse(input)
             const access = await decisionAccess(request.sessionID, signal)
             const unit = access.units.find((item) => unitToken(item.directory) === request.unit)
-            if (!unit || !(await access.canRead(unit)))
-              throw new Error("Models scope is unavailable")
+            if (!unit) throw new Error("Models scope is unavailable")
             signal.throwIfAborted()
             const target = readerFor(unit)
             const rows = await target.reader.rows(

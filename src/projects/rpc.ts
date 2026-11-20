@@ -166,7 +166,6 @@ export function registerProjects(
           const page = await needsYouPage({
             repository,
             units: access.units,
-            canRead: access.canRead,
             ownDirectory: repository.projectDirectory,
             ...(input.cursor ? { cursor: input.cursor } : {}),
             ...(options.sessionOf ? { sessionOf: options.sessionOf } : {}),

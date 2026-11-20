@@ -254,17 +254,12 @@ test("a task, an attempt and a worker session of another project resolve under a
   expect(history.project?.code).toBe("BBB")
   expect(history.scope).toEqual({ kind: "all" })
 
-  // Unknown, and a project the caller may not read, are the same refusal.
-  const none = "No observation in this scope"
+  // An unknown task or worker session is refused plainly.
   await expect(
     reads.trajectoryAll({ scope: all, limit: 5, reference: "BBB-9999" }, tracker, signal, access),
-  ).rejects.toThrow(none)
-  const deny = { units: units(), canRead: async (unit: ProjectUnit) => unit.project.code !== "BBB" }
+  ).rejects.toThrow("No observation in this scope")
   await expect(
-    reads.trajectoryAll({ scope: all, limit: 5, reference }, tracker, signal, deny),
-  ).rejects.toThrow(none)
-  await expect(
-    reads.liveAttemptAll({ scope: all, sessionID: "ses-beta-worker" }, tracker, signal, deny),
+    reads.liveAttemptAll({ scope: all, sessionID: "ses-nobody" }, tracker, signal, access),
   ).rejects.toThrow("Observation scope is unavailable")
 })
 
@@ -275,11 +270,11 @@ test("a reference resolves in its own project, and an old code resolves only whe
   const old = b!.repository.referenceFor(b!.taskIDs[0]!)!
   setProjectCode(b!.repository, b!.key, "BBX")
   const { findOwner } = await import("../projects/resolve.ts")
-  const owner = (reference: string) =>
-    findOwner(a!.repository, units(), async () => true, { reference })
-  expect((await owner("BBX-1"))?.project.key).toBe(b!.key)
-  expect((await owner(old))?.project.key).toBe(b!.key)
-  expect(await owner("QQQ-1")).toBeUndefined()
+  const owner = (reference: string) => findOwner(a!.repository, units(), { reference })
+  expect(owner("BBX-1")?.unit.project.key).toBe(b!.key)
+  expect(owner(old)?.unit.project.key).toBe(b!.key)
+  expect(owner(old)?.taskID).toBe(b!.taskIDs[0])
+  expect(owner("QQQ-1")).toBeUndefined()
 })
 
 test("Tasks get and current activity for another project's task", async () => {
@@ -295,11 +290,11 @@ test("Tasks get and current activity for another project's task", async () => {
     )
     expect(found.status === "found" && found.project?.code).toBe("BBB")
   }
-  const denied = await reads.getAll(
-    { allProjects: true, sessionID: "ses-caller", taskID: reference },
-    { units: units(), canRead: async () => false },
+  const unknown = await reads.getAll(
+    { allProjects: true, sessionID: "ses-caller", taskID: "QQQ-1" },
+    { units: units() },
   )
-  expect(denied.status).toBe("not_found")
+  expect(unknown.status).toBe("not_found")
   const targets = await reads.currentActivityTargetsAll([taskID, crypto.randomUUID()], {
     units: units(),
   })
@@ -308,14 +303,14 @@ test("Tasks get and current activity for another project's task", async () => {
   expect(() => reads.get({ allProjects: true, sessionID: "s", taskID })).toThrow()
 })
 
-test("a cursor for another unit's directory is refused once that unit is not allowed", async () => {
-  const { three, reads, tracker, units } = await fixture(() => [])
+test("a cursor names a checkout by hash, and a checkout that is gone is refused", async () => {
+  const { reads, tracker, units } = await fixture(() => [])
   const first = await reads.topologyAll({ scope: all }, tracker, { units: units() })
-  const allowed = units().filter((unit) => unit.project.code !== "BBB")
+  expect(Buffer.from(first.nextCursor!, "base64url").toString()).not.toContain("/")
+  const without = units().filter((unit) => unit.project.code !== "BBB")
   await expect(
-    reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: allowed }),
+    reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: without }),
   ).rejects.toThrow("Invalid project cursor")
-  expect(three.projects).toHaveLength(3)
 })
 
 test("tasks across projects carry the project and a reference with its code, paged by project", async () => {
@@ -358,20 +353,14 @@ test("a task page reports the project's loaded flag and skips a project with no 
   expect(page.projectDirectory).toBe(three.projects[1]!.directory)
 })
 
-type Handlers = {
-  topology(input: unknown): Effect.Effect<unknown>
-  snapshot(input: unknown): Effect.Effect<unknown>
-}
+type Handlers = Record<string, (input: unknown, context?: unknown) => Effect.Effect<unknown>>
 type Page = { project?: { code: string; loaded: boolean }; nextCursor?: string | null }
 
-/** The RPC over three projects; `deny` lists the codes whose checkouts fail the permission check. */
-async function rpcFixture(deny: string[], sessionProjectID = "project") {
+/** The observability RPC over three projects; every permission call is recorded. */
+async function rpcFixture(sessionProjectID = "project") {
   const f = await fixture(() => [])
-  const denied = new Set(
-    f.three.projects.filter((p) => deny.includes(p.code)).map((p) => p.directory),
-  )
   let handlers: Handlers | undefined
-  const asserts: string[][] = []
+  const asserts: unknown[] = []
   const ctx = {
     rpc: {
       register: (_definition: unknown, methods: Handlers) => {
@@ -389,11 +378,9 @@ async function rpcFixture(deny: string[], sessionProjectID = "project") {
         }),
     },
     permission: {
-      assert: (input: { resources: string[] }) => {
-        asserts.push(input.resources)
-        return input.resources.some((resource) => denied.has(resource))
-          ? Effect.fail(new Error("permission denied"))
-          : Effect.void
+      assert: (input: unknown) => {
+        asserts.push(input)
+        return Effect.fail(new Error("a permission check would prompt the owner"))
       },
     },
     event: { subscribe: () => Stream.never },
@@ -403,76 +390,129 @@ async function rpcFixture(deny: string[], sessionProjectID = "project") {
       registerObservability(ctx, f.reads, "project", { loaded: () => [] }).pipe(Effect.asVoid),
     ),
   )
-  const call = (cursor?: string) =>
+  const call = <T = Page>(method: string, input: unknown) =>
     Effect.runPromise(
-      handlers!.topology({ scope: all, ...(cursor ? { cursor } : {}) }),
-    ) as Promise<Page>
-  return { ...f, handlers: handlers!, asserts, call }
+      handlers![method]!(input, {
+        error: (type: string, message: string) => new Error(`${type}: ${message}`),
+      }),
+    ) as Promise<T>
+  const walk = async (method: string, extra: object = {}) => {
+    const pages: Page[] = []
+    let cursor: string | undefined
+    do {
+      const page = await call(method, { scope: all, ...extra, ...(cursor ? { cursor } : {}) })
+      pages.push(page)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    return pages
+  }
+  return { ...f, asserts, call, walk }
 }
 
-test("rpc: all asserts the caller's own project as before and every other project on its checkouts", async () => {
-  const f = await rpcFixture([])
-  const codes: (string | undefined)[] = []
-  let cursor: string | undefined
-  do {
-    const page = await f.call(cursor)
-    codes.push(page.project?.code)
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(codes).toEqual(["AAA", "BBB", "CCC"])
-  const [a, b, c] = f.three.projects
-  // The caller's own project is asserted on every page; another project only on its own page.
-  expect(f.asserts.filter((resources) => resources[0] === a!.directory)).toHaveLength(3)
-  expect(f.asserts.filter((resources) => resources[0] !== a!.directory)).toEqual([
-    [b!.directory],
-    [c!.directory],
-  ])
+test("rpc: every all-projects read lists every project and asserts no permission", async () => {
+  const f = await rpcFixture()
+  for (const [method, extra] of [
+    ["topology", {}],
+    ["snapshot", {}],
+    ["liveRadar", { includeUnmanagedSessions: false }],
+    ["radar", { includeUnmanagedSessions: false }],
+    ["liveGroup", { group: "queued" }],
+    ["progressDiagnostics", {}],
+  ] as const) {
+    const pages = await f.walk(method, extra)
+    if (method !== "progressDiagnostics")
+      expect(pages.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
+    else expect(pages).toHaveLength(3)
+  }
+  expect(f.asserts).toEqual([])
 })
 
-test("rpc: a project the caller may not read never appears in a page or a cursor", async () => {
-  const f = await rpcFixture(["BBB"])
-  const codes: (string | undefined)[] = []
-  let cursor: string | undefined
-  let afterAlpha: string | undefined
-  do {
-    const page = await f.call(cursor)
-    codes.push(page.project?.code)
-    if (page.project?.code === "AAA") afterAlpha = page.nextCursor ?? undefined
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(codes).toEqual(["AAA", "CCC"])
-  expect(Buffer.from(afterAlpha!, "base64url").toString()).not.toContain("/")
-  const beta = encodeUnitCursor({ directory: f.three.projects[1]!.directory })
-  // A cursor at the refused unit moves on to the next readable one, saying nothing about it.
-  expect((await f.call(beta)).project?.code).toBe("CCC")
-})
-
-test("rpc: all from a session of another OpenCode project is refused like the other scopes", async () => {
-  const f = await rpcFixture([], "foreign-project")
-  await expect(f.call()).rejects.toThrow("Observation scope is unavailable")
-})
-
-test("rpc: snapshot pages by project through the same gate", async () => {
-  const f = await rpcFixture(["BBB"])
-  const codes: (string | undefined)[] = []
-  let cursor: string | undefined
-  do {
-    const page = (await Effect.runPromise(
-      f.handlers.snapshot({ scope: all, ...(cursor ? { cursor } : {}) }),
-    )) as Page
-    codes.push(page.project?.code)
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(codes).toEqual(["AAA", "CCC"])
-})
-
-type TaskHandlers = { query(input: unknown): Effect.Effect<unknown> }
-
-async function tasksRpc(deny: string[], sessionProjectID = "project") {
-  const f = await fixture(() => [])
-  const denied = new Set(
-    f.three.projects.filter((p) => deny.includes(p.code)).map((p) => p.directory),
+test("rpc: all from a session of another OpenCode project is refused", async () => {
+  const f = await rpcFixture("foreign-project")
+  await expect(f.call("topology", { scope: all })).rejects.toThrow(
+    "Observation scope is unavailable",
   )
+})
+
+test("rpc: trajectory by reference, live attempt and live history resolve across projects", async () => {
+  const f = await rpcFixture()
+  const [, b] = f.three.projects
+  const taskID = b!.taskIDs[0]!
+  const reference = b!.repository.referenceFor(taskID)!
+  addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
+  const trajectory = await f.call<{ project: { code: string }; scope: unknown }>("trajectory", {
+    scope: all,
+    reference,
+    limit: 5,
+  })
+  expect(trajectory).toMatchObject({ project: { code: "BBB" }, scope: { kind: "all" } })
+  const attempt = await f.call<{ project: { code: string } }>("liveAttempt", {
+    scope: all,
+    sessionID: "ses-beta-worker",
+  })
+  expect(attempt.project.code).toBe("BBB")
+  const history = await f.call<{ project: { code: string } }>("liveHistory", {
+    scope: all,
+    sessionID: "ses-beta-worker",
+    limit: 5,
+  })
+  expect(history.project.code).toBe("BBB")
+  await expect(
+    f.call("trajectory", { scope: all, reference: "BBB-9999", limit: 5 }),
+  ).rejects.toThrow("No observation in this scope")
+  expect(f.asserts).toEqual([])
+})
+
+test("all-projects pages are reads: they take no write lock, so a writer elsewhere does not stop them", async () => {
+  const f = await rpcFixture()
+  const [a, b] = f.three.projects
+  const taskID = b!.taskIDs[0]!
+  const reference = b!.repository.referenceFor(taskID)!
+  addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
+  const tasks = await tasksRpc(f, { sessionProjectID: "project" })
+  const { Database } = await import("bun:sqlite")
+  const writer = new Database(f.three.path)
+  writer.exec("BEGIN IMMEDIATE")
+  try {
+    for (const [method, extra] of [
+      ["topology", {}],
+      ["snapshot", {}],
+      ["liveRadar", { includeUnmanagedSessions: false }],
+      ["radar", { includeUnmanagedSessions: false }],
+      ["liveGroup", { group: "queued" }],
+    ] as const)
+      expect((await f.walk(method, extra)).length).toBe(3)
+    await f.call("trajectory", { scope: all, reference, limit: 5 })
+    await f.call("liveAttempt", { scope: all, sessionID: "ses-beta-worker" })
+    await f.call("liveHistory", { scope: all, sessionID: "ses-beta-worker", limit: 5 })
+    const pages: unknown[] = []
+    let cursor: string | undefined
+    do {
+      const page = await tasks.query({
+        allProjects: true,
+        sessionID: "ses-caller",
+        ...(cursor ? { cursor } : {}),
+      })
+      pages.push(page)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    expect(pages.length).toBeGreaterThanOrEqual(3)
+    await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
+    await tasks.currentActivity({ sessionID: "ses-caller", scope: "all", taskIDs: [taskID] })
+  } finally {
+    writer.exec("ROLLBACK")
+    writer.close()
+  }
+  expect(a).toBeDefined()
+}, 30_000)
+
+type TaskHandlers = Record<string, (input: unknown) => Effect.Effect<unknown>>
+
+/** The Tasks RPC over the same three projects; its own project is the first one. */
+async function tasksRpc(
+  f: Awaited<ReturnType<typeof fixture>>,
+  options: { sessionProjectID?: string; asserts?: unknown[] } = {},
+) {
   let handlers: TaskHandlers | undefined
   const ctx = {
     rpc: {
@@ -485,40 +525,50 @@ async function tasksRpc(deny: string[], sessionProjectID = "project") {
       get: ({ sessionID }: { sessionID: string }) =>
         Effect.succeed({
           id: sessionID,
-          projectID: sessionProjectID,
+          projectID: options.sessionProjectID ?? "project",
           agent: "architect",
           time: {},
+          location: { directory: "/caller" },
         }),
     },
     permission: {
-      assert: (input: { resources: string[] }) =>
-        input.resources.some((resource) => denied.has(resource))
-          ? Effect.fail(new Error("permission denied"))
-          : Effect.void,
+      assert: (input: unknown) => {
+        options.asserts?.push(input)
+        return Effect.void
+      },
     },
   } as unknown as Parameters<typeof registerTaskReads>[0]
   const reads = new AssociationTaskReads(f.three.projects[0]!.repository)
+  const runtime = { projectID: "project", host: { session: async () => null } }
   await Effect.runPromise(
     Effect.scoped(
-      registerTaskReads(ctx, reads, { projectID: "project" } as never, {
+      registerTaskReads(ctx, reads, runtime as never, {
         loaded: () => [f.three.projects[2]!.directory],
       }).pipe(Effect.asVoid),
     ),
   )
-  return (input: unknown) =>
-    Effect.runPromise(handlers!.query(input)) as Promise<{
+  const call = (name: string) => (input: unknown) => Effect.runPromise(handlers![name]!(input))
+  return {
+    query: call("query") as (input: unknown) => Promise<{
       project?: { code: string; loaded: boolean }
       tasks: { project?: { code: string } }[]
       nextCursor: string | null
-    }>
+    }>,
+    get: call("get") as (input: unknown) => Promise<{ status: string; project?: { code: string } }>,
+    currentActivity: call("currentActivity") as (input: unknown) => Promise<{
+      activities: { taskID: string; project?: { code: string }; foreground: string }[]
+    }>,
+  }
 }
 
-test("rpc: Tasks query in all lists readable projects only and marks the loaded one", async () => {
-  const query = await tasksRpc(["BBB"])
+test("rpc: Tasks query, get and current activity across projects", async () => {
+  const f = await fixture(() => [])
+  const asserts: unknown[] = []
+  const tasks = await tasksRpc(f, { asserts })
   const seen: string[] = []
   let cursor: string | undefined
   do {
-    const page = await query({
+    const page = await tasks.query({
       allProjects: true,
       sessionID: "ses-caller",
       ...(cursor ? { cursor } : {}),
@@ -526,14 +576,47 @@ test("rpc: Tasks query in all lists readable projects only and marks the loaded 
     seen.push(`${page.project?.code}:${page.project?.loaded}`)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
-  expect(seen).toEqual(["AAA:false", "CCC:true"])
+  expect(seen).toEqual(["AAA:false", "BBB:false", "CCC:true"])
+  const [, b] = f.three.projects
+  const taskID = b!.taskIDs[0]!
+  const reference = b!.repository.referenceFor(taskID)!
+  const found = await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
+  expect(found).toMatchObject({ status: "found", project: { code: "BBB" } })
+  const activity = await tasks.currentActivity({
+    sessionID: "ses-caller",
+    scope: "all",
+    taskIDs: [taskID],
+  })
+  expect(activity.activities[0]).toMatchObject({ taskID, project: { code: "BBB" } })
+  expect(activity.activities[0]?.foreground).toBe("unknown")
+  expect(asserts).toEqual([])
 })
 
-test("rpc: Tasks query in all needs a calling session of this project and names it", async () => {
-  const foreign = await tasksRpc([], "foreign-project")
-  await expect(foreign({ allProjects: true, sessionID: "ses-caller" })).rejects.toThrow(
-    "Task scope is unavailable",
+test("rpc: Tasks reads in all need a calling session of this project", async () => {
+  const f = await fixture(() => [])
+  const foreign = await tasksRpc(f, { sessionProjectID: "foreign-project" })
+  await expect(foreign.query({ allProjects: true, sessionID: "ses-caller" })).rejects.toThrow()
+  await expect(
+    foreign.get({ allProjects: true, sessionID: "ses-caller", taskID: crypto.randomUUID() }),
+  ).rejects.toThrow()
+  const own = await tasksRpc(f)
+  await expect(own.query({ allProjects: true })).rejects.toThrow()
+})
+
+test("agent tools never offer all projects: their schemas have no such field and the reads refuse it", async () => {
+  const { AgentGetInput, AgentQueryInput } = await import("../tasks/contract.ts")
+  expect(AgentQueryInput.safeParse({ allProjects: true, sessionID: "ses-x" }).success).toBe(false)
+  expect(
+    AgentGetInput.safeParse({ allProjects: true, sessionID: "ses-x", taskID: crypto.randomUUID() })
+      .success,
+  ).toBe(false)
+  expect(AgentQueryInput.safeParse({ limit: 5 }).success).toBe(true)
+  const { three } = await fixture(() => [])
+  const reads = new AssociationTaskReads(three.projects[0]!.repository)
+  expect(() => reads.query({ allProjects: true, sessionID: "ses-x" })).toThrow(
+    "An all-projects query is read with queryAll",
   )
-  const query = await tasksRpc([])
-  await expect(query({ allProjects: true })).rejects.toThrow()
+  expect(() =>
+    reads.get({ allProjects: true, sessionID: "ses-x", taskID: three.projects[0]!.taskIDs[0] }),
+  ).toThrow("An all-projects read is read with getAll")
 })

@@ -47,10 +47,11 @@ import type {
 import { singleScope } from "./contract.ts"
 import { findOwner } from "../projects/resolve.ts"
 import type { OwnerQuery } from "../projects/resolve.ts"
-import { allowAll, canonicalPath, pickUnit } from "../projects/scope.ts"
-import type { CanRead, ProjectRef, ProjectUnit } from "../projects/scope.ts"
+import { canonicalPath, pickUnit } from "../projects/scope.ts"
+import type { ProjectRef, ProjectUnit, UnitAccess } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
-import { TaskRepository } from "../storage.ts"
+import { ReadOnlyTaskRepository } from "../storage.ts"
+import type { TaskRepository } from "../storage.ts"
 import { ObservationChangeTracker } from "./changes.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
@@ -2198,8 +2199,8 @@ export class ObservationReads {
     const directory = this.store.repository.projectDirectory
     if (canonicalPath(unit.directory) === canonicalPath(directory))
       return { reads: this, tracker: ownTracker, release() {} }
-    const repository = new TaskRepository(this.store.repository.path, unit.directory)
-    const store = new RunnerStore(repository)
+    const repository = new ReadOnlyTaskRepository(this.store.repository.path, unit.directory)
+    const store = RunnerStore.readOnly(repository)
     const projectID = opencodeProjectIDFor(repository, unit.project.key) ?? unit.project.key
     const reads = new ObservationReads(
       store,
@@ -2257,27 +2258,18 @@ export class ObservationReads {
   async allPage<T extends object>(
     input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
     ownTracker: ObservationChangeTracker,
-    access: { units: readonly ProjectUnit[]; canRead: CanRead },
+    access: UnitAccess,
     read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
   ): Promise<Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }> {
-    const picked = await pickUnit(access.units, input.cursor, access.canRead)
+    const picked = await pickUnit(access.units, input.cursor)
     if (!picked) throw new Error("No project is readable in this scope")
     const page = await this.atUnit(picked.unit, input.scope.sessionID, ownTracker, read)
     return { ...page, nextCursor: picked.nextCursor }
   }
 
-  /** The unit owning what an all-projects read names, or a refusal that does not say which. */
-  private async ownerOf(
-    query: OwnerQuery,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
-    unavailable: string,
-  ) {
-    const owner = await findOwner(
-      this.store.repository,
-      access.units,
-      access.canRead ?? allowAll,
-      query,
-    )
+  /** The unit owning what an all-projects read names, or a refusal when nothing does. */
+  private ownerOf(query: OwnerQuery, access: UnitAccess, unavailable: string) {
+    const owner = findOwner(this.store.repository, access.units, query)
     if (!owner) throw new Error(unavailable)
     return owner
   }
@@ -2286,7 +2278,7 @@ export class ObservationReads {
     input: TrajectoryRequest,
     tracker: ObservationChangeTracker,
     signal: AbortSignal | undefined,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<TrajectoryResponse> {
     if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
     const query: OwnerQuery = input.reference
@@ -2294,12 +2286,9 @@ export class ObservationReads {
       : input.taskID
         ? { taskID: input.taskID }
         : { attemptID: input.attemptID! }
-    const owner = await this.ownerOf(query, access, "No observation in this scope")
-    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) => {
-      const taskID = input.reference
-        ? unit.reads.store.repository.resolveTaskID(input.reference)
-        : input.taskID
-      if (input.reference && !taskID) throw new Error("No observation in this scope")
+    const owner = this.ownerOf(query, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) => {
+      const taskID = owner.taskID ?? input.taskID
       const { reference: _reference, ...rest } = input
       return unit.reads.trajectory(
         { ...rest, scope, ...(taskID ? { taskID } : {}) },
@@ -2313,15 +2302,11 @@ export class ObservationReads {
     input: TrajectoryHistoryRequest,
     tracker: ObservationChangeTracker,
     signal: AbortSignal | undefined,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<TrajectoryHistoryResponse> {
     if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = await this.ownerOf(
-      { taskID: input.taskID },
-      access,
-      "No observation in this scope",
-    )
-    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
       unit.reads.trajectoryHistory({ ...input, scope }, unit.tracker, signal),
     ) as Promise<TrajectoryHistoryResponse>
   }
@@ -2329,15 +2314,11 @@ export class ObservationReads {
   async trajectoryStatusAll(
     input: TrajectoryStatusRequest,
     tracker: ObservationChangeTracker,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<TrajectoryResponse> {
     if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = await this.ownerOf(
-      { taskID: input.taskID },
-      access,
-      "No observation in this scope",
-    )
-    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
       unit.reads.trajectoryStatus({ ...input, scope }, unit.tracker),
     ) as Promise<TrajectoryResponse>
   }
@@ -2347,15 +2328,15 @@ export class ObservationReads {
     input: LiveAttemptRequestInput,
     tracker: ObservationChangeTracker,
     signal: AbortSignal,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<LiveAttemptResponse> {
     if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = await this.ownerOf(
+    const owner = this.ownerOf(
       { sessionID: input.sessionID },
       access,
       "Observation scope is unavailable",
     )
-    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
       unit.reads.liveAttempt({ ...input, scope }, signal),
     ) as Promise<LiveAttemptResponse>
   }
@@ -2364,15 +2345,15 @@ export class ObservationReads {
     input: LiveHistoryRequestInput,
     tracker: ObservationChangeTracker,
     signal: AbortSignal,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<LiveHistoryResponse> {
     if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = await this.ownerOf(
+    const owner = this.ownerOf(
       { sessionID: input.sessionID },
       access,
       "Observation scope is unavailable",
     )
-    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
       unit.reads.liveHistory({ ...input, scope }, signal),
     ) as Promise<LiveHistoryResponse>
   }
@@ -2380,14 +2361,11 @@ export class ObservationReads {
   async snapshotAll(
     input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
     tracker: ObservationChangeTracker,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
     signal?: AbortSignal,
   ): Promise<SnapshotResponse> {
-    const page = await this.allPage(
-      input,
-      tracker,
-      { units: access.units, canRead: access.canRead ?? allowAll },
-      (unit, scope) => unit.reads.snapshot(scope, unit.tracker, signal),
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.snapshot(scope, unit.tracker, signal),
     )
     return {
       ...page,
@@ -2405,18 +2383,14 @@ export class ObservationReads {
     },
     tracker: ObservationChangeTracker,
     signal: AbortSignal,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<RadarResponse> {
-    const page = await this.allPage(
-      input,
-      tracker,
-      { units: access.units, canRead: access.canRead ?? allowAll },
-      (unit, scope) =>
-        unit.reads.radar(
-          { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
-          unit.tracker,
-          signal,
-        ),
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.radar(
+        { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+        unit.tracker,
+        signal,
+      ),
     )
     return { ...page, scope: { kind: "all" } }
   }
@@ -2429,19 +2403,15 @@ export class ObservationReads {
     },
     tracker: ObservationChangeTracker,
     signal: AbortSignal,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<LiveRadarResponse> {
-    const page = await this.allPage(
-      input,
-      tracker,
-      { units: access.units, canRead: access.canRead ?? allowAll },
-      async (unit, scope) =>
-        unit.reads.liveRadar(
-          { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
-          unit.tracker,
-          signal,
-          unit.tracker.streamEpoch,
-        ),
+    const page = await this.allPage(input, tracker, access, async (unit, scope) =>
+      unit.reads.liveRadar(
+        { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+        unit.tracker,
+        signal,
+        unit.tracker.streamEpoch,
+      ),
     )
     return { ...page, scope: { kind: "all" } }
   }
@@ -2454,26 +2424,20 @@ export class ObservationReads {
     },
     tracker: ObservationChangeTracker,
     signal: AbortSignal,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<LiveGroupResponse> {
-    return this.allPage(
-      input,
-      tracker,
-      { units: access.units, canRead: access.canRead ?? allowAll },
-      async (unit, scope) => unit.reads.liveGroup({ scope, group: input.group }, signal),
+    return this.allPage(input, tracker, access, async (unit, scope) =>
+      unit.reads.liveGroup({ scope, group: input.group }, signal),
     )
   }
 
   async topologyAll(
     input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
     tracker: ObservationChangeTracker,
-    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    access: UnitAccess,
   ): Promise<TopologyResponse> {
-    const page = await this.allPage(
-      input,
-      tracker,
-      { units: access.units, canRead: access.canRead ?? allowAll },
-      (unit, scope) => unit.reads.topology(scope, unit.tracker),
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.topology(scope, unit.tracker),
     )
     return {
       ...page,

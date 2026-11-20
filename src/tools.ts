@@ -10,10 +10,10 @@ import {
 } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
 import {
-  GetInput,
+  AgentGetInput,
   GetInstructionsOutput,
   GetOutput,
-  QueryInput,
+  AgentQueryInput,
   QueryOutput,
 } from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
@@ -368,7 +368,7 @@ export function registerTaskTools(
       name: "lz-get-task",
       description:
         "Get a task by ID or project reference. Workers receive the complete readable task, advice, optional skill summaries and focused cached Repomix source in one call; other agents receive structured task/execution data. Optional format overrides that default. Read source directly as needed.",
-      input: GetInput.extend({
+      input: AgentGetInput.extend({
         format: z.enum(["instructions", "structured"]).optional(),
       }),
       output: z.union([GetOutput, GetInstructionsOutput]),
@@ -476,7 +476,7 @@ export function registerTaskTools(
       name: "lz-query-tasks",
       description:
         "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
-      input: QueryInput,
+      input: AgentQueryInput,
       output: QueryOutput,
       options: { codemode: true, pinned: true, permission: "lz-query-tasks" },
       execute: (input, context) =>

@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
 import { threeProjects } from "../../test/projects/three-projects.ts"
-import { lazyGate } from "./read-access.ts"
 import {
   decodeUnitCursor,
   encodeUnitCursor,
@@ -59,26 +58,16 @@ test("a cursor round-trips, a gone unit is refused, and garbage is refused", asy
   expect(() => decodeUnitCursor("not-a-cursor")).toThrow("Invalid project cursor")
 })
 
-test("the gate asks lazily, once per project, never for the caller's own, and a refusal is skipped", async () => {
+test("paging walks every unit in order, names the next by hash, and ends with null", async () => {
   const three = await fixture()
-  const [a, b, c] = three.projects
-  const units = projectUnits(a!.repository, () => [])
-  const asked: string[][] = []
-  const gate = lazyGate(
-    async (resources) => {
-      asked.push(resources)
-      return !resources.includes(b!.directory)
-    },
-    units,
-    a!.directory,
-  )
-  const first = await pickUnit(units, undefined, gate)
-  expect(first?.unit.project.code).toBe("AAA")
-  expect(asked).toEqual([])
-  const second = await pickUnit(units, first!.nextCursor!, gate)
-  expect(second?.unit.project.code).toBe("CCC")
-  expect(asked).toEqual([[b!.directory], [c!.directory]])
-  expect(second!.nextCursor).toBeNull()
-  await pickUnit(units, first!.nextCursor!, gate)
-  expect(asked).toHaveLength(2)
+  const units = projectUnits(three.projects[0]!.repository, () => [])
+  const walked: string[] = []
+  let cursor: string | undefined
+  do {
+    const picked = pickUnit(units, cursor)
+    walked.push(picked!.unit.project.code)
+    cursor = picked!.nextCursor ?? undefined
+  } while (cursor)
+  expect(walked).toEqual(["AAA", "BBB", "CCC"])
+  expect(pickUnit([], undefined)).toBeUndefined()
 })

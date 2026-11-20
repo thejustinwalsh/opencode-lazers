@@ -85,7 +85,7 @@ export function registerTaskReads(
                 const sessionService = ctx.session
                 if (!sessionService) throw new Error("Task scope is unavailable")
                 const access = await allProjectsAccess(
-                  { permission: ctx.permission, session: sessionService },
+                  { session: sessionService },
                   {
                     sessionID: input.sessionID!,
                     projectID: runtime.projectID,
@@ -116,7 +116,7 @@ export function registerTaskReads(
                 reads.getAll(
                   input,
                   await allProjectsAccess(
-                    { permission: ctx.permission, session: requireSession(ctx.session) },
+                    { session: requireSession(ctx.session) },
                     {
                       sessionID: input.sessionID!,
                       projectID: runtime.projectID,
@@ -175,13 +175,13 @@ export function registerTaskReads(
             }
 
             signal.throwIfAborted()
-            const initialScope = await readScope(true)
+            const initialScope = await readScope(request.scope !== "all")
             signal.throwIfAborted()
             const sessionScope = request.scope === "session" ? request.sessionID : undefined
             const everyProject =
               request.scope === "all"
                 ? await allProjectsAccess(
-                    { permission: ctx.permission, session: sessionService },
+                    { session: sessionService },
                     {
                       sessionID: request.sessionID,
                       projectID: runtime.projectID,

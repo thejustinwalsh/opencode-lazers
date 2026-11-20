@@ -3,8 +3,8 @@ import { RECOVERY_BUNDLE_EVENT } from "../runner/recovery-bundle.ts"
 import type { TaskRepository } from "../storage.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
 import { taskTitle } from "../tasks/presentation.ts"
-import { allowAll, canonicalPath, pickUnit } from "./scope.ts"
-import type { CanRead, ProjectRef, ProjectUnit } from "./scope.ts"
+import { canonicalPath, pickUnit } from "./scope.ts"
+import type { ProjectRef, ProjectUnit } from "./scope.ts"
 
 /** One thing that waits on the owner, without its project (the page names that). */
 export type NeedsYouEntry = {
@@ -140,12 +140,11 @@ export function architectQuestions(sessions: readonly NeedsYouSession[]): NeedsY
 export async function needsYouPage(input: {
   repository: TaskRepository
   units: readonly ProjectUnit[]
-  canRead?: CanRead
   cursor?: string
   ownDirectory: string
   sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
 }): Promise<{ project: ProjectRef; items: NeedsYouItem[]; nextCursor: string | null } | undefined> {
-  const picked = await pickUnit(input.units, input.cursor, input.canRead ?? allowAll)
+  const picked = pickUnit(input.units, input.cursor)
   if (!picked) return undefined
   const { unit } = picked
   const { entries, owners } = input.repository.read((db) => {

@@ -96,12 +96,6 @@ test("a delivered bundle is not the owner's, and a resolved hold disappears on t
   b.repository.read((db) => expect(ownerHolds(db, b.directory)).toEqual([]))
 })
 
-test("a project the caller may not read contributes nothing", async () => {
-  const { three } = await fixture()
-  const result = await pages(three, { canRead: async (unit) => unit.project.code !== "BBB" })
-  expect(result.map((page) => page.project.code)).toEqual(["AAA", "CCC"])
-})
-
 test("native questions come only from the caller's own checkout", async () => {
   const { three, a } = await fixture()
   a.repository.read((db) => expect(db).toBeDefined())
@@ -121,13 +115,13 @@ test("native questions come only from the caller's own checkout", async () => {
   expect(architectQuestions([{ id: "s", archived: true, pendingForms: 3 }])).toEqual([])
 })
 
-test("lz.projects needsYou asserts like the other all-projects reads and pages by project", async () => {
+test("lz.projects needsYou pages every project and asserts no permission", async () => {
   const { Effect } = await import("effect")
   const { registerProjects } = await import("./rpc.ts")
   const { three } = await fixture()
   const [a, b] = three.projects
   let handlers: { needsYou(input: unknown): import("effect").Effect.Effect<unknown> } | undefined
-  const asserted: string[][] = []
+  const asserted: unknown[] = []
   const ctx = {
     rpc: {
       register: (_definition: unknown, methods: NonNullable<typeof handlers>) => {
@@ -165,6 +159,6 @@ test("lz.projects needsYou asserts like the other all-projects reads and pages b
     if (page.project) seen.push(page.project.code)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
-  expect(seen).toEqual(["AAA", "CCC"])
-  expect(asserted.some((resources) => resources.includes(b!.directory))).toBe(true)
+  expect(seen).toEqual(["AAA", "BBB", "CCC"])
+  expect(asserted).toEqual([])
 })

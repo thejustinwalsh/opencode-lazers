@@ -94,7 +94,11 @@ export function registerObservability(
   } = {},
 ) {
   const loaded = options.loaded ?? loadedProjectDirectories
-  /** The checkouts an all-projects read may show this caller; see `readableUnits`. */
+  /**
+   * The checkouts an all-projects read covers. A read over this RPC is the owner looking at their
+   * own machine's projects, so no permission is asserted here (nothing can prompt); the session
+   * check only guards against a malformed call. Agent tools never reach these reads.
+   */
   const accessFor = (scope: { sessionID: string }) =>
     allProjectsAccess(ctx, {
       sessionID: scope.sessionID,
@@ -354,13 +358,6 @@ export function registerObservability(
         Effect.tryPromise({
           try: async (signal) => {
             if (input.scope.kind === "all") {
-              await authorize(
-                ctx,
-                input.scope,
-                projectID,
-                reads.store.repository.projectDirectory,
-                "lz-inspect-trajectory",
-              )
               return reads.trajectoryAll(input, tracker, signal, await accessFor(input.scope))
             }
             await authorize(
@@ -379,13 +376,6 @@ export function registerObservability(
         Effect.tryPromise({
           try: async (signal) => {
             if (input.scope.kind === "all") {
-              await authorize(
-                ctx,
-                input.scope,
-                projectID,
-                reads.store.repository.projectDirectory,
-                "lz-inspect-trajectory",
-              )
               return reads.trajectoryHistoryAll(
                 input,
                 tracker,
@@ -420,13 +410,6 @@ export function registerObservability(
         Effect.tryPromise({
           try: async () => {
             if (input.scope.kind === "all") {
-              await authorize(
-                ctx,
-                input.scope,
-                projectID,
-                reads.store.repository.projectDirectory,
-                "lz-inspect-trajectory",
-              )
               return reads.trajectoryStatusAll(input, tracker, await accessFor(input.scope))
             }
             await authorize(

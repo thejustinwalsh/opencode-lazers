@@ -10,23 +10,26 @@ import { TaskStateFilter } from "./state-filter.ts"
 import { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 import { ProjectRef } from "../projects/scope.ts"
 
+const QueryFields = {
+  sort: z.enum(["recent", "schedule"]).default("recent"),
+  search: z.string().max(200).default(""),
+  scopePath: z.string().min(1).max(1_024).optional(),
+  sessionID: z.string().min(1).max(200).optional(),
+  limit: z.int().min(1).max(100).default(30),
+  cursor: z.string().min(1).max(2_048).optional(),
+  state: TaskStateFilter.optional(),
+  includeCompleted: z.boolean().default(false),
+  includeRetired: z.boolean().default(false),
+}
+/** The query an agent tool offers: this project, optionally one session. Never all projects. */
+export const AgentQueryInput = z.strictObject(QueryFields)
+/**
+ * The Tasks RPC query. `allProjects` reads every registered project, a page per checkout, for the
+ * owner's panel; `sessionID` then names the calling session and does not filter, and `cursor` is a
+ * project cursor. Agent tools use `AgentQueryInput`, which has no such field.
+ */
 export const QueryInput = z
-  .strictObject({
-    /**
-     * Read every project the caller may see, a page per checkout. `sessionID` then names the caller
-     * for authorisation and does not filter; `cursor` is a project cursor.
-     */
-    allProjects: z.literal(true).optional(),
-    sort: z.enum(["recent", "schedule"]).default("recent"),
-    search: z.string().max(200).default(""),
-    scopePath: z.string().min(1).max(1_024).optional(),
-    sessionID: z.string().min(1).max(200).optional(),
-    limit: z.int().min(1).max(100).default(30),
-    cursor: z.string().min(1).max(2_048).optional(),
-    state: TaskStateFilter.optional(),
-    includeCompleted: z.boolean().default(false),
-    includeRetired: z.boolean().default(false),
-  })
+  .strictObject({ allProjects: z.literal(true).optional(), ...QueryFields })
   .superRefine((input, ctx) => {
     if (input.allProjects && !input.sessionID)
       ctx.addIssue({
@@ -36,15 +39,17 @@ export const QueryInput = z
       })
   })
 export type TaskQuery = z.input<typeof QueryInput>
+const GetFields = {
+  taskID: z.union([z.uuid(), TaskReferenceSchema]),
+  revision: z.int().positive().optional(),
+  classificationRevision: z.int().nonnegative().optional(),
+  sessionID: z.string().min(1).max(200).optional(),
+}
+/** The get an agent tool offers: a task of this project. Never another project. */
+export const AgentGetInput = z.strictObject(GetFields)
+/** The Tasks RPC get; `allProjects` reads a task of any registered project for the owner's panel. */
 export const GetInput = z
-  .strictObject({
-    /** A task of any project the caller may read; `sessionID` then names the caller, not a filter. */
-    allProjects: z.literal(true).optional(),
-    taskID: z.union([z.uuid(), TaskReferenceSchema]),
-    revision: z.int().positive().optional(),
-    classificationRevision: z.int().nonnegative().optional(),
-    sessionID: z.string().min(1).max(200).optional(),
-  })
+  .strictObject({ allProjects: z.literal(true).optional(), ...GetFields })
   .superRefine((input, ctx) => {
     if (input.allProjects && !input.sessionID)
       ctx.addIssue({
