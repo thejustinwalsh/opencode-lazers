@@ -99,6 +99,28 @@ to another. Two papers the scout found by abstract only: swapping yes and no fli
 the hosted model's answers (arXiv:2610.00346), and answers depend on option order more as options
 grow (arXiv:2610.18233). The spike saw both effects.
 
+## The local D1 in ruNNtime (code scout, 2026-11-20)
+
+- Prompt layout: state, then one question, then one masked slot per option; the head scores each
+  slot (`packages/runntime/src/zoo/d1/prompt.ts:4-6`). A noul's default options read "false: no,
+  the statement does not hold" and "true: yes, the statement holds".
+- **Each question is its own pass and repeats the state** (`decider.ts:216-226`). Several questions
+  in one request cost several passes here, unlike the hosted model, so the state must stay small.
+- Criteria are supported and render as "label: description" per option. Score is supported.
+- The demos ask what is in the text or image: "Is the customer angry or frustrated?", "Is the
+  customer asking for money back?", "Is this comment spam, an ad or self-promotion?", "Is someone
+  holding a phone?" (`playground/d1/triage.ts`, `mod.ts`, `webcam.ts`).
+- Two authoring notes in the demos: a two-option choice caught what a yes/no missed ("As a yes/no
+  this misses most real questions; as a choice it catches them", `mod.ts:48`); and option text that
+  states the consequence lets the model compare descriptions instead of inferring (`snake.ts:109`).
+- Only one demo asks what to do next (the snake move), and it puts the consequence of each move in
+  the option text and keeps guards in code.
+- The product's own task-review and handoff questions are long compound sentences ("Does the
+  handoff preserve the source task's authorized outcome and current contract, while distinguishing
+  ..."). They break the same rule and are worth the same rework later.
+- Open discrepancy: LAZERS names the model "d1-omni-2b" with an 8,192-token context
+  (`src/webgpu/system-one.ts:31`); ruNNtime calls it D1 Omni 600M with 16,384 positions.
+
 ## Not yet known
 
 - Whether the local D1 in ruNNtime accepts `criteria` with true/false descriptions and the Score
