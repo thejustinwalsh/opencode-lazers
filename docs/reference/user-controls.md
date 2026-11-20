@@ -58,6 +58,19 @@ The section header shows the model's current state. The Omni download uses about
 
 **Voice** chooses the Read aloud voice. **Preview** speaks one sentence in the selected voice.
 
+### Speaker pill
+
+With **Read aloud** on, one speaker pill sits in the composer lane with the dictation pill. Click it to hear the last completed response, or to stop speech that is playing. Shift-click it, or press `ctrl+shift+alt+s`, to turn automatic read aloud on or off. The pill's accessible name states the current setting.
+
+| State               | Pill                             |
+| ------------------- | -------------------------------- |
+| Idle, automatic off | Speaker                          |
+| Idle, automatic on  | Speaker with green waveform bars |
+| Preparing           | Spinner                          |
+| Speaking            | Stop square                      |
+
+The pill stays visible before the first response so you can turn automatic read aloud on.
+
 **Remove** beside **Downloaded models** clears the local model cache. The next local request downloads the files again.
 
 ### Provider usage in the session header
