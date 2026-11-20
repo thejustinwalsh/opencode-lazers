@@ -29,6 +29,18 @@ export class TrajectoryLiveCache {
     }
   }
 
+  /** Raise or lower the byte budget; shrinking evicts least recently used baselines at once. */
+  setMaxBytes(maxBytes: number) {
+    this.limits.maxBytes = maxBytes
+    while (this.entries.size > 0 && this.bytes > maxBytes)
+      this.remove(this.entries.keys().next().value!)
+  }
+
+  /** Bytes held now; exposed for measurement. */
+  get size() {
+    return this.bytes
+  }
+
   project<T extends Record<string, unknown>>(
     identity: string,
     events: readonly T[],
@@ -45,12 +57,10 @@ export class TrajectoryLiveCache {
     }
     const serialized = new Map<string, string>()
     const changed: T[] = []
-    let bytes = 0
     for (const event of events) {
       if (typeof event.id !== "string") throw new Error("Live event identity is missing")
       const value = JSON.stringify(event)
       serialized.set(event.id, value)
-      bytes += Buffer.byteLength(event.id) + Buffer.byteLength(value)
       if (previous?.events.get(event.id) !== value) changed.push(event)
     }
     const removed = previous ? [...previous.events.keys()].filter((id) => !serialized.has(id)) : []
@@ -60,6 +70,10 @@ export class TrajectoryLiveCache {
         live: { mode: "patch" as const, baseCursor: cursor!, cursor: cursor!, removed },
       }
 
+    // Bytes are counted once, only for a baseline that is about to be stored; an unchanged
+    // read above returns without sizing anything.
+    let bytes = 0
+    for (const [id, value] of serialized) bytes += Buffer.byteLength(id) + Buffer.byteLength(value)
     const next = randomUUID()
     // Keep old baselines until eviction: a lost response must be safe to retry. One larger
     // than the whole budget is not kept; the next read resets from the full data.

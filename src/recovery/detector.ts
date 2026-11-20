@@ -322,17 +322,17 @@ export function openConcerns(
     .get()
   if (!exists) return []
   const rows = db
-    .query<{ payload: string; node_state: string | null }, [string]>(
+    .query<{ payload: string; node_state: string | null }, string[]>(
       `SELECT v.payload,n.state AS node_state FROM recovery_concern_versions v
          LEFT JOIN runner_nodes n ON n.plan_id=v.plan_id AND n.task_id=v.task_id
-        WHERE v.project_directory=?
+        WHERE v.project_directory=? ${filter?.taskID ? "AND v.task_id=?" : ""}
           AND v.version=(SELECT max(version) FROM recovery_concern_versions
                           WHERE project_directory=v.project_directory AND concern_id=v.concern_id)
           AND NOT EXISTS (SELECT 1 FROM recovery_concern_dispositions d
                            WHERE d.project_directory=v.project_directory
                              AND d.concern_id=v.concern_id AND d.version=v.version)`,
     )
-    .all(projectDirectory)
+    .all(projectDirectory, ...(filter?.taskID ? [filter.taskID] : []))
   const open: OpenConcern[] = []
   for (const row of rows) {
     if (row.node_state !== null && !canStruggle(row.node_state)) continue
@@ -346,7 +346,6 @@ export function openConcerns(
       evidence: { reference: string; note?: string }[]
       createdAt: string
     }
-    if (filter?.taskID && record.source.taskID !== filter.taskID) continue
     const advised = ADVICE_NOTE.exec(record.evidence[0]?.note ?? "")
     open.push({
       concernID: record.concernID,

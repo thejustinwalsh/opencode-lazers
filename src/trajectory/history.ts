@@ -46,10 +46,18 @@ export type TrajectoryHistoryIdentity = {
   limit: number
 }
 
+/**
+ * One capture, stored serialized once: each event is its own JSON string and the report
+ * without its events is another. A page parses only the events it returns, so a read never
+ * clones or restringifies the whole capture, and `bytes` is the sum of the string sizes
+ * counted once at capture.
+ */
 type HistoryEntry = {
   id: string
   identity: TrajectoryHistoryIdentity
-  report: TrajectoryHistoryProjection
+  /** The report with `trajectory.events` removed, serialized. */
+  rest: string
+  events: string[]
   boundary: Boundary
   eventIDs: string[]
   capturedAt: number
@@ -161,17 +169,18 @@ export class TrajectoryHistoryCache {
     if (eventIDs.length !== events.length || new Set(eventIDs).size !== eventIDs.length)
       throw new Error("Trajectory history contains invalid event identities")
 
-    const safeReport = structuredClone(report)
-    const safeBoundary = structuredClone(boundary)
-    const bytes = Buffer.byteLength(
-      JSON.stringify({ report: safeReport, boundary: safeBoundary, eventIDs }),
-      "utf8",
-    )
+    const serializedEvents = events.map((event) => JSON.stringify(event))
+    const rest = JSON.stringify({ ...report, trajectory: { ...trajectory, events: [] } })
+    const safeBoundary: Boundary = { ...boundary }
+    let bytes = Buffer.byteLength(rest) + Buffer.byteLength(JSON.stringify(safeBoundary))
+    for (const [index, value] of serializedEvents.entries())
+      bytes += Buffer.byteLength(value) + Buffer.byteLength(eventIDs[index]!)
 
     const entry: HistoryEntry = {
       id: randomUUID(),
-      identity: structuredClone(identity),
-      report: safeReport,
+      identity: { ...identity, scope: { ...identity.scope } },
+      rest,
+      events: serializedEvents,
       boundary: safeBoundary,
       eventIDs,
       capturedAt: now,
@@ -179,13 +188,14 @@ export class TrajectoryHistoryCache {
       bytes,
     }
     // Larger than the whole budget: serve every event in one page and keep nothing.
-    if (entry.bytes > this.limits.maxBytes) return this.page(entry, 0, true, true)
+    if (entry.bytes > this.limits.maxBytes) return this.page(entry, 0, true, true, events)
     // Least recently used first (the map is in recency order; `continue` refreshes it).
     while (this.entries.size > 0 && this.bytes + entry.bytes > this.limits.maxBytes)
       this.evictOldest()
     this.entries.set(entry.id, entry)
     this.bytes += entry.bytes
-    return this.page(entry, 0, true)
+    // The caller's own objects are the first page; the cache holds only the strings.
+    return this.page(entry, 0, true, false, events)
   }
 
   continue(
@@ -210,7 +220,7 @@ export class TrajectoryHistoryCache {
       entry.expiresAt !== parsed.expiresAt ||
       identityKey(entry.identity) !== identityKey(identity) ||
       parsed.offset < identity.limit ||
-      parsed.offset >= entry.eventIDs.length
+      parsed.offset >= entry.events.length
     )
       throw new TrajectoryHistoryUnavailableError("invalid-cursor")
     this.entries.delete(entry.id)
@@ -218,22 +228,36 @@ export class TrajectoryHistoryCache {
     return this.page(entry, parsed.offset, false)
   }
 
+  /** Raise or lower the byte budget; shrinking evicts least recently used captures at once. */
+  setMaxBytes(maxBytes: number) {
+    this.limits.maxBytes = maxBytes
+    while (this.entries.size > 0 && this.bytes > maxBytes) this.evictOldest()
+  }
+
+  /** Bytes held now; exposed for measurement. */
+  get size() {
+    return this.bytes
+  }
+
   private page(
     entry: HistoryEntry,
     offset: number,
     includeEventIDs: boolean,
     whole = false,
+    original?: readonly unknown[],
   ): TrajectoryHistoryPage {
-    const report = structuredClone(entry.report)
+    const report = JSON.parse(entry.rest) as TrajectoryHistoryProjection
     const trajectory = object(report.trajectory)
-    const events = trajectory?.events
-    if (!trajectory || !Array.isArray(events))
-      throw new Error("Cached trajectory history is invalid")
-    const size = whole ? Math.max(events.length, entry.identity.limit) : entry.identity.limit
-    const pageEvents = events.slice(offset, offset + size)
+    if (!trajectory) throw new Error("Cached trajectory history is invalid")
+    const total = entry.events.length
+    const size = whole ? Math.max(total, entry.identity.limit) : entry.identity.limit
+    const end = Math.min(total, offset + size)
+    const pageEvents: unknown[] = original
+      ? original.slice(offset, end)
+      : entry.events.slice(offset, end).map((value) => JSON.parse(value) as unknown)
     const nextOffset = offset + pageEvents.length
     const nextCursor =
-      nextOffset < events.length
+      nextOffset < total
         ? this.makeCursor({
             v: 1,
             id: entry.id,
@@ -246,7 +270,7 @@ export class TrajectoryHistoryCache {
       schemaVersion: 1,
       projectID: entry.identity.projectID,
       scope: viewScope(entry.identity.scope),
-      boundary: structuredClone(entry.boundary),
+      boundary: { ...entry.boundary },
       capturedAt: entry.capturedAt,
       expiresAt: entry.expiresAt,
       ...(includeEventIDs ? { eventIDs: [...entry.eventIDs] } : {}),
@@ -256,7 +280,7 @@ export class TrajectoryHistoryCache {
           ...trajectory,
           page: Math.floor(offset / size) + 1,
           limit: size,
-          totalEvents: events.length,
+          totalEvents: total,
           events: pageEvents,
           nextCursor,
           hasMore: nextCursor !== null,

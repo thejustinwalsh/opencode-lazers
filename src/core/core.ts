@@ -13,6 +13,7 @@ import { createModelsTaskValuationProvider } from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
+import { trajectoryCachePair } from "../trajectory/cache-pair.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { projectKeyFor, registerProject } from "../project-key.ts"
 import { globalSettings, spendCeilingFor } from "../projects/settings.ts"
@@ -199,21 +200,25 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   )
   const radarSessionHost = nativeRadarSessionHost(host)
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
+  // Sized once at load; a value set in Settings wins over the plugin option on the next load.
+  const historyBytes = historyCacheBytes(
+    globalSettings(repository, {
+      ...(typeof info.options.historyCacheMB === "number"
+        ? { historyCacheMB: info.options.historyCacheMB }
+        : {}),
+    }).historyCacheMB,
+  )
+  const observationSecret = crypto.getRandomValues(new Uint8Array(32))
   const reads = new ObservationReads(
     runnerStore,
     trajectoryHost,
     projectID,
-    crypto.getRandomValues(new Uint8Array(32)),
+    observationSecret,
     radarSessionHost,
     taskValuationProvider,
-    // Sized once at load; a value set in Settings wins over the plugin option on the next load.
-    historyCacheBytes(
-      globalSettings(repository, {
-        ...(typeof info.options.historyCacheMB === "number"
-          ? { historyCacheMB: info.options.historyCacheMB }
-          : {}),
-      }).historyCacheMB,
-    ),
+    undefined,
+    // One cache pair under one budget, owned by this per-project core.
+    trajectoryCachePair(observationSecret, historyBytes),
   )
   built("observationReads")
   const taskReads = new AssociationTaskReads(repository)

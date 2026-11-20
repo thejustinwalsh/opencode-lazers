@@ -26,6 +26,7 @@ export type Executed<T> = {
 export class FallowModules {
   private disabled: string | undefined
   private threaded: Promise<WebAssembly.Module> | undefined
+  private singleModule: Promise<WebAssembly.Module> | undefined
 
   constructor(
     private readonly single: ModuleLoader,
@@ -51,7 +52,12 @@ export class FallowModules {
         this.disabled = fallback
       }
     }
-    const result = run(await this.single(), 1)
+    // Compiled once: the single-threaded module is 24 MB of wasm, and a rejected load is retried.
+    this.singleModule ??= this.single().catch((error) => {
+      this.singleModule = undefined
+      throw error
+    })
+    const result = run(await this.singleModule, 1)
     return fallback === undefined ? { result } : { result, fallback }
   }
 }
