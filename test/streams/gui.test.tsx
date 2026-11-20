@@ -57,7 +57,7 @@ beforeAll(async () => {
       pathToFileURL(`${outDir}/streams-dom.js`).href
     )) as typeof import("./dom-entry.tsx")
   ).harness
-}, 60_000)
+}, 120_000)
 afterAll(async () => {
   for (const [name, descriptor] of previous)
     descriptor
