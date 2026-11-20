@@ -7,5 +7,4 @@ export const panels = {
   radar: () => import("../src/panels/radar.ts"),
   trajectory: () => import("../src/panels/trajectory.ts"),
   models: () => import("../src/panels/models.ts"),
-  local: () => import("../src/panels/local.tsx"),
 }
