@@ -1,0 +1,37 @@
+5cf4baa2 (diff f1c7f4f1..5cf4baa2):   Merge branch 'refactor/complexity-pass': split the nine functions over cognitive 100 and verify()
+79d81fe6 (diff 5cf4baa2..79d81fe6):   Merge branch 'refactor/complexity-pass-2': no function at cognitive 100 or above remains
+94811653 (diff 79d81fe6..94811653):  docs(design): mark the four panel design docs whose mockup images were removed
+32a982bc (diff 94811653..32a982bc):  docs(design): before and after screenshots of the four details panes
+a93c3e40 (diff 32a982bc..a93c3e40):   refactor(observability): integrate JSON byte visitor simplification
+437f56ea (diff a93c3e40..437f56ea):   Merge branch 'feat/fallow-wasm-threads': Fallow threads on by default behind fallowThreads, speed-first build, native package remove
+f51cf0d1 (diff 437f56ea..f51cf0d1):   fix(models): integrate assignment reconnect recovery
+ee0203de (diff f51cf0d1..ee0203de):   Merge branch 'fix/radar-flow-pulses': Flow pulses on one frame loop; no-change updates recreate no nodes; coalesced live reads
+c20db866 (diff ee0203de..c20db866):   Merge branch 'perf/radar-flow-animation': flow pulses as compositor-only HTML dots at 30 fps
+3bb090ac (diff c20db866..3bb090ac):   Merge branch 'perf/fallow-memory': compacted summaries, Fallow cache in .fallow, memory collected between runs, analyzer-memory erro
+9261988a (diff 3bb090ac..9261988a):  test(audit): cancel the terminate probe early enough to land with a warm cache
+70a0f10e (diff 9261988a..70a0f10e):   Merge branch 'perf/radar-flow-animation-2': flow pulses as compositor animations; Feed rows keyed by id
+a41cf93a (diff 70a0f10e..a41cf93a):   fix(runner): integrate mapped retained repair routes
+93bb4046 (diff a41cf93a..93bb4046):   Merge branch 'feat/recovery-bundle': stale held and failed work goes to an Architect as one recovery bundle
+42c5ff4a (diff 93bb4046..42c5ff4a):   Merge branch 'feat/fallow-audit-review': fallow-audit as the runtime review, one typed package with warnings, required config, lz-fa
+8d153eaf (diff 42c5ff4a..8d153eaf):   Merge pull request #4 from thejustinwalsh/docs/website-copy-refresh
+581cf7e8 (diff 8d153eaf..581cf7e8):   Merge branch 'feat/fallow-suppression-flow': reasoned suppression for code added ahead of its consumer, stale and unconsumed suppres
+8c276019 (diff 581cf7e8..8c276019):   Merge branch 'feat/scope-divergence': scope as boundary and expected structure; divergence reviewed by the Architect before acceptan
+84e85b0f (diff 8c276019..84e85b0f):   Merge branch 'fix/task-churn': trajectory concerns raised to the Architect, blocking takeover with worker handoff, Architect renewal
+7abe4acd (diff 84e85b0f..7abe4acd):   Merge branch 'fix/task-churn': slim worker takeover handoff, resubmit after a failed takeover check, shutdown-aborted step is not a 
+47f2ffb0 (diff 7abe4acd..47f2ffb0):   Merge branch 'fix/trajectory-history': trajectory history never refuses a large task, tunable LRU cache, Details stays open, failed 
+91b29dd4 (diff 47f2ffb0..91b29dd4):  docs(design): many projects in one OpenCode — project codes, pause levels, all-projects views, fair global scheduling
+95fc4327 (diff 91b29dd4..95fc4327):   Merge branch 'feat/project-pause': global and project settings store, dispatch pause for one project or for all
+1add0595 (diff 95fc4327..1add0595):   Merge branch 'feat/project-codes': a stored code per project; task references, session titles and notices carry it
+9b057818 (diff 1add0595..9b057818):   Merge branch 'fix/takeover-resubmit': every takeover submission is a fresh candidate; a takeover attempt is never settled as stale; 
+49f6a84a (diff 9b057818..49f6a84a):   Merge branch 'feat/projects-settings': Projects section in Settings for codes, pause and limits
+81b1d6ba (diff 49f6a84a..81b1d6ba):   Merge branch 'feat/retention-purge': Storage section in Settings to preview and retire recorded history of finished work
+d93f6681 (diff 81b1d6ba..d93f6681):   Merge branch 'fix/ledger-paging': the observation ledger and live trajectory cache read everything; no ceiling marks a task incomple
+8a10ed88 (diff d93f6681..8a10ed88):   Merge branch 'feat/timeline-zoom': wheel, pinch, drag and keyboard navigation with an expandable trajectory timeline
+38534dad (diff 8a10ed88..38534dad):   Merge branch 'fix/website-native-scroll': the website scrolls natively; Lenis removed
+e978094a (diff 38534dad..e978094a):  docs(research): pine and classcad-ai reviews, pine site demos, ruNNtime upstream readiness
+9337fab3 (diff e978094a..9337fab3):   Merge branch 'fix/submission-lock-race': native tools wait out another process's write lock and report a retryable busy result
+a963208e (diff 9337fab3..a963208e):   Merge branch 'feat/all-projects-reads': every panel read has an all-projects form; the owner's panels are never prompted and reads t
+e21a3734 (diff a963208e..e21a3734):   Merge branch 'feat/architect-guidance-on-demand': situational runbooks travel with the notice or result that opens each situation
+d34968b0 (diff e21a3734..d34968b0):  docs(research): mock model server groundwork
+2ddad907 (diff d34968b0..2ddad907):  docs(runntime): record the owner's prep and D1 decisions; context hook findings
+aa3c498c (diff 2ddad907..aa3c498c):   Merge branch 'feat/website-panel-demos': live panel demos from the real panels with pointer replay; embedded model section
