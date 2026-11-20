@@ -119,6 +119,40 @@ and reports bytes reclaimed.
 - A source check fails on new `SELECT *` or unbounded `.all()` against history tables
   outside migrations.
 
+## Models valuation by session
+
+A decision snapshot values every retained step and usage-snapshot fact. Facts and tasks
+are already stored projections; the valuation over them is still rebuilt whole after each
+revision. It is made incremental by session.
+
+- **Unit.** One worker session. Every quantity the valuation derives from facts (usage
+  selection, route evidence, cost evidence, per-call usage rows, route candidates) is a
+  function of that session's facts alone; attempts only select and label. The *fact
+  digest* of a session is that attempt-independent reduction; per-session results that
+  also read the session's attempts are memoized on the digest, keyed by a hash of those
+  attempts.
+- **Stored.** `model_decision_progress` gains `session_id` (indexed with `seq`). A small
+  table `model_decision_session(project, session_id, changed)` holds a per-project change
+  clock: a fold that writes or removes a fact stamps its old and new session with the next
+  clock value. A read asks only for sessions with `changed` above the clock it last saw
+  (O(changed), not O(facts)) and reads the facts of exactly those sessions through the
+  index. Rows above the watermark and queued rows are read live as before; a session they
+  touch is keyed by a hash of those live facts. Digests are *not* stored: they live in a
+  process-wide byte-budgeted LRU (`decision-session-digest`, evicting only, a miss
+  re-reads that session). After a restart the cache is cold and one pass reads every
+  session once, then reads are incremental again.
+- **Composition.** Totals are recomposed from per-session pieces by the same fold the full
+  rebuild used, over the same sorted session order: category sums add the same numbers in
+  the same order (IEEE results are bit-identical, nothing is reassociated), costs and
+  market values are exact decimals, per-call rows are merged by the global fact sequence
+  they were first seen at, and route candidates are replayed by sequence. Price changes
+  recompute the market value of every session from the stored usage pieces without
+  touching facts. If a refactor ever changes a total, the parity tests (golden hashes
+  taken on the pre-change code, plus full-versus-incremental equality) fail.
+- **Cost.** Reads: facts of changed sessions only. Compute: digests of changed sessions,
+  then O(sessions + attempts) arithmetic to recompose. An unchanged revision still reads
+  nothing (the snapshot is returned as is).
+
 ## Applying it
 
 The lanes in `.agents/plans/memory-audit.md` implement this design area by area:
