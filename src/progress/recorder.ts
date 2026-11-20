@@ -696,7 +696,7 @@ function mergeObservations(previous: unknown, incoming: unknown, kind: ProgressK
     const prior = unique.get(identity)
     unique.set(identity, prior ? preferObservation(kind, prior, item) : item)
   }
-  return [...unique.values()].slice(-25)
+  return [...unique.values()]
 }
 
 const toolStatusRank: Record<string, number> = {

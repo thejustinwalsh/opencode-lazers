@@ -2324,3 +2324,27 @@ test("retained recovery reprojects after same- and other-connection native updat
     fixture.close()
   }
 })
+
+test("more than 25 distinct observations on one fact are all stored and read back", () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) =>
+      db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(firstAttemptID),
+    )
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const base = { assistantMessageID: "msg-many", id: "call-many", name: "bash" }
+    for (let index = 0; index < 40; index++)
+      recorder.recordNativeEvent(
+        toolEvent("session.tool.input.started", `many-${index}`, base, 20_000 + index),
+      )
+    const facts = fixture.store
+      .progressFacts([firstAttemptID])
+      .filter((fact) => fact.call_id === "call-many")
+    expect(facts).toHaveLength(1)
+    const observations = JSON.parse(facts[0]!.payload).observations as Array<{ eventID: string }>
+    expect(new Set(observations.map((item) => item.eventID)).size).toBe(40)
+    expect(projectProgressFact(facts[0]!).observations).toHaveLength(40)
+  } finally {
+    fixture.close()
+  }
+})
