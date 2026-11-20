@@ -16,7 +16,10 @@
     ".claude/**",
     "contributions/**",
     "vendor/**",
-    "crates/**"
+    "crates/**",
+    ".agents/**",
+    "dist/**",
+    "website/public/**"
   ],
   "rules": {
     "unused-class-members": "off"
