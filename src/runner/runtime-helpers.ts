@@ -199,3 +199,21 @@ export type RetainedRepairSeed = {
   model: ModelPolicy
   workerObservation: string
 }
+
+export type AdoptionSeed = {
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  nodeState: string
+  attemptState: string
+  oldArtifact: string
+  descendantCommit: string
+  targetBranch: string
+  landingHead: string
+  reviewedBaseline: string
+  candidateTree: string
+  environmentIdentity: string
+  inputFingerprint: string
+  reason: string
+  combinedArtifact: string
+}
