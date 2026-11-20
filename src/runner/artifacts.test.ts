@@ -343,8 +343,8 @@ test("continuous recognized phases share the total hard backstop and cancellatio
       join(root, "package.json"),
       JSON.stringify({
         scripts: {
-          first: "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf x; sleep 0.04; done",
-          second: "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf y; sleep 0.04; done",
+          first: "for i in 1 2 3 4 5; do printf x; sleep 0.04; done",
+          second: "for i in $(seq 1 200); do printf y; sleep 0.04; done",
         },
       }),
     )
@@ -354,8 +354,10 @@ test("continuous recognized phases share the total hard backstop and cancellatio
       {
         id: "shared-hard-timeout",
         command: "bun run first && bun run second",
-        inactivityTimeoutMs: 300,
-        hardTimeoutMs: 800,
+        // Wide margins: the second phase must start before the backstop even when process
+        // start-up is slow under load; it then outlives the backstop by a wide margin.
+        inactivityTimeoutMs: 3000,
+        hardTimeoutMs: 3500,
       },
       join(root, "noisy.json"),
     )
@@ -407,6 +409,10 @@ test("identical check modules retain the same environment identity across reload
       .replace(
         '"./quality-failure.ts"',
         JSON.stringify(fileURLToPath(new URL("./quality-failure.ts", import.meta.url))),
+      )
+      .replace(
+        '"./test-hang-guard.ts"',
+        JSON.stringify(fileURLToPath(new URL("./test-hang-guard.ts", import.meta.url))),
       )
       .replace(
         '"./scope.ts"',

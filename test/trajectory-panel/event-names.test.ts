@@ -68,6 +68,8 @@ async function recordedTransitions() {
     "HEAD",
     "LC_ALL",
     "LC_CTYPE",
+    // The fallback project code in session titles, not a transition.
+    "LAZERS",
   ])
   for (const file of [
     ...(await sourceFiles("src/runner/**/*.{ts,tsx}")),
