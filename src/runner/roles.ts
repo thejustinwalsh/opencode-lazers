@@ -188,11 +188,15 @@ export function registerArchitectContextStubs(
   )
 }
 
-/** The `architectContextStubs` plugin option: `"off"`, `"results"` (default) or `"all"`. */
+/**
+ * The `architectContextStubs` plugin option: `"off"` (default), `"results"` or `"all"`. Off by
+ * default: the hook cannot see cache state, so advancing the stub horizon on a guessed-cold cache
+ * turns a possible cache hit into a certain miss of everything after the first stub.
+ */
 export type ContextStubsMode = "off" | "results" | "all"
 
 export function architectContextStubsMode(value: unknown): ContextStubsMode {
-  if (value === undefined) return "results"
+  if (value === undefined) return "off"
   if (value === "off" || value === "results" || value === "all") return value
   throw new Error('architectContextStubs must be "off", "results" or "all"')
 }

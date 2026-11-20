@@ -605,7 +605,7 @@ test("synthetic session shaped like the measured one: 551 notices over 75 plans"
 })
 
 test("the architectContextStubs option defaults to results and rejects anything else", () => {
-  expect(architectContextStubsMode(undefined)).toBe("results")
+  expect(architectContextStubsMode(undefined)).toBe("off")
   for (const mode of ["off", "results", "all"] as const)
     expect(architectContextStubsMode(mode)).toBe(mode)
   expect(() => architectContextStubsMode("on")).toThrow("architectContextStubs")
