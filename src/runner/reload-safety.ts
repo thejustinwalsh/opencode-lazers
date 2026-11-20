@@ -13,8 +13,13 @@ export type ReloadSafety = {
   verifications: number
   /** Architect sessions whose newest assistant message is unfinished. */
   architectTurns: number
-  /** Operator takeovers that have not reached a terminal state. */
+  /** Takeovers still telling, waiting on or stopping their worker: a reload cuts the handoff. */
   takeovers: number
+  /**
+   * Tasks an Architect has taken over and is finishing (attempts on a `lazers-takeover:` session).
+   * Informational: no worker runs there; the Architect's own turn is counted in `architectTurns`.
+   */
+  architectTakeovers: number
   /** "2 workers running, 1 verification running, 0 Architect turns in flight, safe to reload: no" */
   line: string
 }
@@ -80,7 +85,14 @@ export function reloadSafety(
   const workers = count(
     db,
     `SELECT count(*) AS n FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-     WHERE a.state IN ('preparing','running') AND p.state NOT IN ('cancelled','integrated')`,
+     WHERE a.state IN ('preparing','running') AND p.state NOT IN ('cancelled','integrated')
+       AND a.session_id NOT LIKE 'lazers-takeover:%'`,
+  )
+  const architectTakeovers = count(
+    db,
+    `SELECT count(*) AS n FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+     WHERE a.state IN ('preparing','running','verifying') AND p.state NOT IN ('cancelled','integrated')
+       AND a.session_id LIKE 'lazers-takeover:%'`,
   )
   const verifications =
     // Task, graph, mechanical-fix and Fallow checks are all effects of these kinds.
@@ -107,13 +119,16 @@ export function reloadSafety(
   )
   const safe = workers === 0 && verifications === 0 && architectTurns === 0 && takeovers === 0
   const noun = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
-  const open = takeovers > 0 ? `, ${noun(takeovers, "takeover")} open` : ""
+  const open = takeovers > 0 ? `, ${noun(takeovers, "takeover handoff")} open` : ""
+  const finishing =
+    architectTakeovers > 0 ? `, ${noun(architectTakeovers, "task")} taken over by an Architect` : ""
   return {
     safe,
     workers,
     verifications,
     architectTurns,
     takeovers,
-    line: `${noun(workers, "worker")} running, ${noun(verifications, "verification")} running, ${noun(architectTurns, "Architect turn")} in flight${open}, safe to reload: ${safe ? "yes" : "no"}`,
+    architectTakeovers,
+    line: `${noun(workers, "worker")} running, ${noun(verifications, "verification")} running, ${noun(architectTurns, "Architect turn")} in flight${open}${finishing}, safe to reload: ${safe ? "yes" : "no"}`,
   }
 }
