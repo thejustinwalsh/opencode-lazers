@@ -4,7 +4,7 @@ import { ScopeReport, scopeNotice } from "./scope.ts"
 import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
 
 /** Human action beside durable machine identity, without replaying full check logs. */
-export function outcomeText(serialized: string) {
+export function outcomeText(serialized: string, project?: string) {
   const payload = JSON.parse(serialized)
   let action: string
   switch (payload.status) {
@@ -94,19 +94,24 @@ export function outcomeText(serialized: string) {
         typeof check === "object" && check !== null && "id" in check ? check.id : check,
       )
     : payload.evidence
-  return `LAZERS outcome\n${action}\n${JSON.stringify({ ...payload, ...(evidence ? { evidence } : {}) })}`
+  return `LAZERS outcome${project ? ` · ${project}` : ""}\n${action}\n${JSON.stringify({ ...payload, ...(evidence ? { evidence } : {}) })}`
 }
 
 /**
  * One notice for everything pending on an Architect session: the latest outcome
  * of each plan, never one message per change.
  */
-export function coalescedOutcomeText(entries: ReadonlyArray<{ planID: string; payload: string }>) {
-  if (entries.length === 1) return outcomeText(entries[0]!.payload)
+export function coalescedOutcomeText(
+  entries: ReadonlyArray<{ planID: string; payload: string }>,
+  project?: string,
+) {
+  if (entries.length === 1) return outcomeText(entries[0]!.payload, project)
   const plans = new Set(entries.map((entry) => entry.planID)).size
   return [
-    `LAZERS outcomes: ${entries.length} updates across ${plans} ${plans === 1 ? "plan" : "plans"}, the latest state of each`,
-    ...entries.map((entry) => `--- plan ${entry.planID} ---\n${outcomeText(entry.payload)}`),
+    `LAZERS outcomes${project ? ` · ${project}` : ""}: ${entries.length} updates across ${plans} ${plans === 1 ? "plan" : "plans"}, the latest state of each`,
+    ...entries.map(
+      (entry) => `--- plan ${entry.planID} ---\n${outcomeText(entry.payload, project)}`,
+    ),
   ].join("\n\n")
 }
 
