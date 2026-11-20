@@ -348,6 +348,8 @@ const SOURCE_HEAD_COLUMNS = [
 ] as const
 /** Ids read per page when a list that grows with a session is walked or summarized. */
 const ID_PAGE = 500
+/** Tasks per read when the project's tasks are walked; a page size, not a limit. */
+const TASK_PAGE = 500
 /** Message ids of one coverage list in order, a page per read. The caller supplies the filter. */
 function* pagedMessageIDs(
   db: Database,
@@ -493,6 +495,13 @@ export type SchedulingNodeFact = NodeRow & {
   scope_payload: string | null
 }
 
+/** The scope-bearing fields of a task proposal. */
+type ScopeFields = {
+  writeScope: readonly string[]
+  createScope: readonly { path: string; purpose: string }[]
+  protectedScope: readonly string[]
+}
+type ScopeProposal = ScopeFields
 /** What the scheduling page reads of a live attempt: its identity, task and workspace. */
 export type SchedulingReservationFact = Pick<AttemptRow, "id" | "plan_id" | "task_id" | "workspace">
 /** What the scheduling page reads of an open adoption: which task it holds. */
@@ -3570,36 +3579,86 @@ export class RunnerStore {
         .all(planID, taskID),
     )
   }
+  /** The scope fields of a task's stored proposal, read without parsing the whole record. */
+  private taskScopeFields(taskID: string): ScopeFields {
+    const row = this.read((db) =>
+      db
+        .query<
+          {
+            write_scope: string | null
+            create_scope: string | null
+            protected_scope: string | null
+          },
+          [string, string]
+        >(
+          `SELECT json_extract(body,'$.proposal.writeScope') AS write_scope,
+             json_extract(body,'$.proposal.createScope') AS create_scope,
+             json_extract(body,'$.proposal.protectedScope') AS protected_scope
+           FROM tasks WHERE project_directory=? AND id=?`,
+        )
+        .get(this.repository.projectDirectory, taskID),
+    )
+    if (!row) {
+      // Not an id: a task reference resolves through the repository.
+      const task = this.repository.get(taskID)
+      if (!task) throw new Error("Task not found")
+      return {
+        writeScope: task.proposal.writeScope,
+        createScope: task.proposal.createScope ?? [],
+        protectedScope: task.proposal.protectedScope ?? [],
+      }
+    }
+    const list = <T>(text: string | null): T[] => (text ? (JSON.parse(text) as T[]) : [])
+    return {
+      writeScope: list<string>(row.write_scope),
+      createScope: list<ScopeFields["createScope"][number]>(row.create_scope),
+      protectedScope: list<string>(row.protected_scope),
+    }
+  }
+  /** The plan that holds a task, without its body or the rest of its execution. */
+  private planIDOfTask(taskID: string): string | undefined {
+    return this.read((db) =>
+      db
+        .query<{ plan_id: string }, [string, string]>(
+          `SELECT n.plan_id FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+           WHERE p.project_directory=? AND n.task_id=?`,
+        )
+        .get(this.repository.projectDirectory, taskID),
+    )?.plan_id
+  }
   effectiveWriteScope(
     taskID: string,
-    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
+    task?: { proposal: { writeScope: readonly string[] } },
   ): string[] {
-    if (!task) throw new Error("Task not found")
-    const execution = this.execution(taskID)
-    const amendment = execution
-      ? this.latestTransition<{ writeScope: string[] }>(execution.planID, taskID, "SCOPE_AMENDED")
+    const writeScope = task ? task.proposal.writeScope : this.taskScopeFields(taskID).writeScope
+    const planID = this.planIDOfTask(taskID)
+    const amendment = planID
+      ? this.latestTransition<{ writeScope: string[] }>(planID, taskID, "SCOPE_AMENDED")
       : undefined
     return TaskProposalSchema.shape.writeScope.parse([
-      ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
+      ...new Set([...writeScope, ...(amendment?.writeScope ?? [])]),
     ])
   }
   /**
    * The scope model in force: the task's edit/create/protected plus what Architect amendments added
    * (`amended`) or released (exact paths an amendment named that the task protected).
    */
-  effectiveScope(
-    taskID: string,
-    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
-  ): ScopeModel {
-    if (!task) throw new Error("Task not found")
-    const edit = this.effectiveWriteScope(taskID, task)
-    const original = new Set(task.proposal.writeScope)
+  effectiveScope(taskID: string, task?: { proposal: Partial<ScopeProposal> }): ScopeModel {
+    const fields: ScopeFields = task
+      ? {
+          writeScope: task.proposal.writeScope ?? [],
+          createScope: task.proposal.createScope ?? [],
+          protectedScope: task.proposal.protectedScope ?? [],
+        }
+      : this.taskScopeFields(taskID)
+    const edit = this.effectiveWriteScope(taskID, { proposal: { writeScope: fields.writeScope } })
+    const original = new Set(fields.writeScope)
     const amended = edit.filter((pattern) => !original.has(pattern))
-    const protectedScope = task.proposal.protectedScope ?? []
+    const protectedScope = fields.protectedScope
     return {
       edit,
       amended,
-      create: task.proposal.createScope ?? [],
+      create: fields.createScope,
       protected: protectedScope,
       released: amended.filter((pattern) => !/[*?{}[\]!]/.test(pattern)),
     }
@@ -4109,25 +4168,48 @@ export class RunnerStore {
    * equal the all-pairs result.
    */
   audit(): { watermark: number; findings: Finding[] } {
+    this.ensureContentFingerprints()
     const { tasks, relations, watermark } = this.read((db) => {
-      const rows = db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM tasks WHERE project_directory=? ORDER BY rowid",
-        )
-        .all(this.repository.projectDirectory)
-        .filter((task) => !this.repository.taskDisposition(task.id))
-      const tasks = rows.map(({ id }) => {
-        const record = this.repository.get(id)
-        return {
-          id,
-          planned: !!this.execution(id),
-          content: fingerprint(record!.proposal),
-          scope: reservationPatterns(
-            this.effectiveWriteScope(id, record),
-            record!.proposal.createScope ?? [],
-          ),
+      // One page of tasks at a time: the stored fingerprint and the two scope arrays, not the body.
+      const tasks: { id: string; planned: boolean; content: string; scope: string[] }[] = []
+      let after = 0
+      for (;;) {
+        const page = db
+          .query<
+            {
+              rid: number
+              id: string
+              fingerprint: string | null
+              write_scope: string | null
+              create_scope: string | null
+            },
+            [string, number]
+          >(
+            `SELECT rowid AS rid,id,content_fingerprint AS fingerprint,
+               json_extract(body,'$.proposal.writeScope') AS write_scope,
+               json_extract(body,'$.proposal.createScope') AS create_scope
+             FROM tasks WHERE project_directory=?
+               AND NOT EXISTS (SELECT 1 FROM task_dispositions d
+                 WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
+               AND rowid>? ORDER BY rowid LIMIT ${TASK_PAGE}`,
+          )
+          .all(this.repository.projectDirectory, after)
+        for (const row of page) {
+          const write: string[] = row.write_scope ? JSON.parse(row.write_scope) : []
+          const create: { path: string }[] = row.create_scope ? JSON.parse(row.create_scope) : []
+          tasks.push({
+            id: row.id,
+            planned: this.planIDOfTask(row.id) !== undefined,
+            content: row.fingerprint ?? fingerprint(this.repository.get(row.id)!.proposal),
+            scope: reservationPatterns(
+              this.effectiveWriteScope(row.id, { proposal: { writeScope: write } }),
+              create,
+            ),
+          })
         }
-      })
+        if (page.length < TASK_PAGE) break
+        after = page.at(-1)!.rid
+      }
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
@@ -4206,25 +4288,50 @@ export class RunnerStore {
     }
     return { watermark, findings }
   }
-  /** Admission needs duplicate-content conflicts for its selected tasks, not a project audit. */
-  exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
-    return this.read((db) => {
-      const selected = new Set(taskIDs)
-      if (!selected.size) return { watermark: this.repository.version(), findings: [] }
-      const tasks = db
-        .query<{ id: string }, [string]>(
-          `SELECT id FROM tasks WHERE project_directory=?
-           AND NOT EXISTS (SELECT 1 FROM task_dispositions d
-             WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
-           ORDER BY rowid`,
+  /** Fill any task fingerprint still missing, so the readers below can compare stored values. */
+  private ensureContentFingerprints() {
+    const missing = this.read((db) =>
+      db
+        .query<{ one: number }, [string]>(
+          "SELECT 1 AS one FROM tasks WHERE project_directory=? AND content_fingerprint IS NULL LIMIT 1",
         )
-        .all(this.repository.projectDirectory)
-        .map(({ id }) => ({ id, content: fingerprint(this.repository.get(id)!.proposal) }))
+        .get(this.repository.projectDirectory),
+    )
+    if (missing) this.repository.backfillContentFingerprints()
+  }
+  /**
+   * Admission needs duplicate-content conflicts for its selected tasks, not a project audit. Each
+   * selected task's stored fingerprint finds its duplicates through the project's fingerprint index;
+   * no task body is read or parsed.
+   */
+  exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
+    const selected = new Set(taskIDs)
+    if (!selected.size) return { watermark: this.repository.version(), findings: [] }
+    this.ensureContentFingerprints()
+    return this.read((db) => {
+      const directory = this.repository.projectDirectory
+      const live = `NOT EXISTS (SELECT 1 FROM task_dispositions d
+        WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)`
+      // The selected tasks that are live, in creation order, with their fingerprints.
+      const chosen: { rid: number; id: string; fingerprint: string | null }[] = []
+      const ids = [...selected]
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        const batch = ids.slice(offset, offset + 200)
+        chosen.push(
+          ...db
+            .query<{ rid: number; id: string; fingerprint: string | null }, string[]>(
+              `SELECT rowid AS rid,id,content_fingerprint AS fingerprint FROM tasks
+               WHERE project_directory=? AND ${live} AND id IN (${batch.map(() => "?").join(",")}) LIMIT ${batch.length}`,
+            )
+            .all(directory, ...batch),
+        )
+      }
+      chosen.sort((x, y) => x.rid - y.rid)
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
         )
-        .all(this.repository.projectDirectory)
+        .all(directory)
       const related = new Set(
         relations.flatMap((r) => [
           JSON.stringify([r.task_id, r.other_task_id]),
@@ -4232,27 +4339,35 @@ export class RunnerStore {
         ]),
       )
       const findings: Finding[] = []
-      const byContent = new Map<string, number[]>()
-      tasks.forEach((task, i) => {
-        const group = byContent.get(task.content)
-        if (group) group.push(i)
-        else byContent.set(task.content, [i])
-      })
-      for (let i = 0; i < tasks.length; i++) {
-        const a = tasks[i]!
-        if (!selected.has(a.id)) continue
-        for (const j of byContent.get(a.content)!) {
-          const b = tasks[j]!
-          if (i === j || (j < i && selected.has(b.id)) || related.has(JSON.stringify([a.id, b.id])))
-            continue
-          const pair = i < j ? [a.id, b.id] : [b.id, a.id]
-          findings.push({
-            id: fingerprint({ code: "exact-content", taskIDs: pair }).slice(0, 24),
-            code: "exact-content",
-            taskIDs: pair,
-            evidence: "Validated proposal fingerprints match",
-            actions: ["distinct", "duplicate", "supplements"],
-          })
+      for (const a of chosen) {
+        const content = a.fingerprint ?? fingerprint(this.repository.get(a.id)!.proposal)
+        let after = 0
+        for (;;) {
+          const page = db
+            .query<{ rid: number; id: string }, [string, string, number]>(
+              `SELECT rowid AS rid,id FROM tasks
+               WHERE project_directory=? AND content_fingerprint=? AND ${live} AND rowid>?
+               ORDER BY rowid LIMIT ${TASK_PAGE}`,
+            )
+            .all(directory, content, after)
+          for (const b of page) {
+            if (
+              b.id === a.id ||
+              (b.rid < a.rid && selected.has(b.id)) ||
+              related.has(JSON.stringify([a.id, b.id]))
+            )
+              continue
+            const pair = a.rid < b.rid ? [a.id, b.id] : [b.id, a.id]
+            findings.push({
+              id: fingerprint({ code: "exact-content", taskIDs: pair }).slice(0, 24),
+              code: "exact-content",
+              taskIDs: pair,
+              evidence: "Validated proposal fingerprints match",
+              actions: ["distinct", "duplicate", "supplements"],
+            })
+          }
+          if (page.length < TASK_PAGE) break
+          after = page.at(-1)!.rid
         }
       }
       return { watermark: this.repository.version(), findings }

@@ -263,6 +263,18 @@ function migrateTasks(db: Database): void {
         collapseTaskChanges(db)
         db.exec("PRAGMA user_version=9")
       }
+      if (current < 10) {
+        // The fingerprint of the validated proposal, written with the task; existing rows are
+        // filled in pages by `backfillContentFingerprints` once the schema is installed.
+        const columns = db.query<{ name: string }, []>("PRAGMA table_info(tasks)").all()
+        if (!columns.some((column) => column.name === "content_fingerprint"))
+          db.exec("ALTER TABLE tasks ADD COLUMN content_fingerprint TEXT")
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS tasks_project_fingerprint
+            ON tasks(project_directory, content_fingerprint);
+          PRAGMA user_version=10;
+        `)
+      }
       db.query(
         `INSERT INTO schema_modules VALUES(?,?,?,?) ON CONFLICT(module)
          DO UPDATE SET generation=excluded.generation,tables_json=excluded.tables_json`,
@@ -271,7 +283,7 @@ function migrateTasks(db: Database): void {
 }
 
 /** `PRAGMA user_version` of the tasks module; equals its declared schema generation. */
-const TASKS_VERSION = 9
+const TASKS_VERSION = 10
 
 /**
  * Task change counters. Readers only ever take `MAX(id)` of a project (per `kind`), so one row per
@@ -486,6 +498,10 @@ export class TaskRepository {
     this.shared = shared
     try {
       shared.once(`tasks@${schemaModules.tasks.generation}`, migrateTasks)
+      // Keyed by generation like the schema it follows, so a reload that raises it runs again.
+      shared.once(`tasks-fingerprints@${schemaModules.tasks.generation}`, () =>
+        this.backfillContentFingerprints(),
+      )
       shared.once("task-advice-and-projects", () => {
         installTaskAdviceSchema(this)
         installProjectSchema(this)
@@ -735,12 +751,44 @@ export class TaskRepository {
     if (task.provenance.projectDirectory !== this.projectDirectory) {
       throw new Error("Task provenance does not match this repository")
     }
-    db.query("INSERT INTO tasks (id, project_directory, created_at, body) VALUES (?, ?, ?, ?)").run(
+    db.query(
+      "INSERT INTO tasks (id, project_directory, created_at, body, content_fingerprint) VALUES (?, ?, ?, ?, ?)",
+    ).run(
       task.id,
       this.projectDirectory,
       task.createdAt,
       JSON.stringify(task),
+      fingerprint(task.proposal),
     )
+  }
+
+  /**
+   * Fill `content_fingerprint` for rows written before it existed, a page of tasks per
+   * transaction. A row whose body no longer parses stays empty; readers compute it on demand.
+   */
+  backfillContentFingerprints(pageSize = 200): number {
+    let filled = 0
+    let after = 0
+    for (;;) {
+      const rows = this.db
+        .query<{ rid: number; id: string; body: string }, [number, number]>(
+          `SELECT rowid AS rid,id,body FROM tasks
+           WHERE content_fingerprint IS NULL AND rowid>? ORDER BY rowid LIMIT ?`,
+        )
+        .all(after, pageSize)
+      if (!rows.length) return filled
+      this.atomic((db) => {
+        const set = db.query("UPDATE tasks SET content_fingerprint=? WHERE id=?")
+        for (const row of rows)
+          try {
+            set.run(fingerprint(TaskSpecSchema.parse(JSON.parse(row.body)).proposal), row.id)
+            filled++
+          } catch {
+            // An unreadable body keeps no fingerprint; the audit that reads it reports it.
+          }
+      })
+      after = rows.at(-1)!.rid
+    }
   }
 
   private allocateReference(db: Database, taskID: string): string {

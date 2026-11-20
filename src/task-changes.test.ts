@@ -179,9 +179,9 @@ test("upgrading a populated log keeps what readers see and never reissues an id"
   expect(readers(path, A).rows).toBeLessThanOrEqual(4)
   const check = new Database(path, { readonly: true })
   try {
-    expect(check.query("PRAGMA user_version").get()).toEqual({ user_version: 9 })
+    expect(check.query("PRAGMA user_version").get()).toEqual({ user_version: 10 })
     expect(check.query("SELECT generation FROM schema_modules WHERE module='tasks'").get()).toEqual(
-      { generation: 9 },
+      { generation: 10 },
     )
   } finally {
     check.close()

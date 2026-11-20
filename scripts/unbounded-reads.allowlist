@@ -183,9 +183,7 @@ src/runner/store.ts:3719 | all | runner_dependencies | one plan or task's transi
 src/runner/store.ts:3761 | star | runner_commands | one row by request or review key | SELECT * FROM runner_commands WHERE project_directory=? AND request_id=?
 src/runner/store.ts:4001 | all | runner_transitions | one plan or task's transitions of one event | SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EX
 src/runner/store.ts:4061 | star | runner_leases | one lease row per project | SELECT * FROM runner_leases WHERE project_directory=?
-src/runner/store.ts:4117 | all | tasks | project audit: every task by contract, ids only; the fingerprint pass is a store-layout todo | SELECT id FROM tasks WHERE project_directory=? ORDER BY rowid
 src/runner/store.ts:4135 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
-src/runner/store.ts:4221 | all | tasks | project audit: every task by contract, ids only; the fingerprint pass is a store-layout todo | SELECT id FROM tasks WHERE project_directory=? AND NOT EXISTS (SELECT 1 FROM task_disposit
 src/runner/store.ts:4227 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
 src/runner/store.ts:4266 | star+all | runner_attempts | attempts of one plan | SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number
 src/runner/store.ts:4313 | star | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? AND task_id=?
