@@ -10,7 +10,7 @@ web
 
 ## Stack
 
-Brief-pinned: static Preact + Vite site in `website/`, StyleX for styling (CSS extracted at build), `@chenglou/pretext` for text wrapping, Lenis for scroll motion. Output `website/dist`, portable, no server.
+Brief-pinned: static Preact + Vite site in `website/`, StyleX for styling (CSS extracted at build), `@chenglou/pretext` for text wrapping, native scrolling with CSS scroll-driven animations for motion (no smooth-scroll library). Output `website/dist`, portable, no server.
 
 ## Users
 
