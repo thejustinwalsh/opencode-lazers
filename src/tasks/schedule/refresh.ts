@@ -288,9 +288,10 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   if (plan)
     for (const id of plan.afterPlans) {
       const required = db
-        .query<{ state: string; reason: string | null; body: string }, [string, string]>(
-          "SELECT state,reason,body FROM runner_plans WHERE project_directory=? AND id=?",
-        )
+        .query<
+          { state: string; version: number | null; reason: string | null; body: string },
+          [string, string]
+        >("SELECT state,version,reason,body FROM runner_plans WHERE project_directory=? AND id=?")
         .get(project, id)
       if (required && INTEGRATED_PLAN.has(required.state)) continue
       let title: string | null = null
@@ -305,6 +306,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
         planID: id,
         title,
         state: required?.state.slice(0, 80) ?? null,
+        version: required?.version ?? null,
         reason: required?.reason?.slice(0, 400) ?? null,
       })
     }
@@ -519,6 +521,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
       plan_id: wait.planID,
       title: wait.title,
       state: wait.state,
+      version: wait.version,
       reason: wait.reason,
     })),
   )

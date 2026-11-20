@@ -1,4 +1,4 @@
-import type { TaskSummary } from "./contract.ts"
+import type { TaskConcern, TaskSummary } from "./contract.ts"
 import { taskTitle } from "./presentation.ts"
 
 const optional = <T>(value: unknown): T | undefined =>
@@ -6,11 +6,13 @@ const optional = <T>(value: unknown): T | undefined =>
 
 /**
  * A task summary from the stored columns of a `tasks.schedule` row. `matches` is what the caller
- * found in the stored specification, which the row does not carry.
+ * found in the stored specification, which the row does not carry; `waits` are the prerequisite
+ * plans of the row (`tasks.waits`), which the row counts but does not hold.
  */
 export function summaryOf(
   row: Record<string, unknown>,
   matches: TaskSummary["matches"] = [],
+  waits: TaskSummary["waitingOnPlans"] = undefined,
 ): TaskSummary {
   const taskID = String(row.task_id)
   const reference = String(row.reference)
@@ -32,7 +34,13 @@ export function summaryOf(
     revision: 1,
     status: status as TaskSummary["status"],
     ...(nodeState ? { recordedState: nodeState as never } : {}),
+    ...(waits?.length
+      ? { waitingOnPlans: waits, waitingOnPlansCount: waits.length, waitingOnPlansComplete: true }
+      : {}),
     ...(running && row.started_at != null ? { startedAt: Number(row.started_at) } : {}),
+    ...(row.concern && row.concern_totals
+      ? { concern: { ...(row.concern as object), totals: row.concern_totals } as TaskConcern }
+      : {}),
     ...(row.takeover ? { takeover: true as const } : {}),
     reason: optional<string>(row.reason) ?? null,
     ...(optional(row.disposition) ? { disposition: row.disposition as never } : {}),

@@ -558,7 +558,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-query-tasks",
       description:
-        "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
+        "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor (the id of the last task on the page) using unchanged filters. `count` and `stateCounts` are the stored per-state counters; they are omitted when a search, scopePath, sessionID or includeRetired narrows the list, which no counter stores.",
       input: AgentQueryInput,
       output: AgentQueryOutput,
       options: { codemode: true, pinned: true, permission: "lz-query-tasks" },

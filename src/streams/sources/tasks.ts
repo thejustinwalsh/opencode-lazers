@@ -9,7 +9,6 @@ import {
   taskIndexColumns,
   taskPlanColumns,
   taskScheduleColumns,
-  taskScheduleDetail,
   taskSessionBucketCountColumns,
   taskWaitColumns,
   type TaskChildFilter,
@@ -153,7 +152,6 @@ export const taskScheduleSource = defineSource({
     return { where: clauses.join(" AND "), params }
   },
   columns: taskScheduleColumns,
-  detail: taskScheduleDetail,
 })
 
 /** The dependency children of one task, in the order the list shows them. */

@@ -116,6 +116,7 @@ export const TABLES_SQL = `
     plan_id TEXT NOT NULL,
     title TEXT,
     state TEXT,
+    version INTEGER,
     reason TEXT,
     PRIMARY KEY(task_id, ord)
   );

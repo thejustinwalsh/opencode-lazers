@@ -128,15 +128,14 @@ export const QueryOutput = z.strictObject({
 })
 export type TaskPage = z.infer<typeof QueryOutput>
 /**
- * A page an agent tool returns: one window of the stored list. No total is counted; `nextCursor`
- * is the id of the last task on the page while more follow.
+ * A page an agent tool returns: one window of the stored list. `count` and `stateCounts` are the
+ * stored per-state counters, left out when a search, scope path, creating session or retired
+ * tasks narrow the list; `nextCursor` is the id of the last task on the page while more follow.
  */
 export const AgentQueryOutput = QueryOutput.omit({
   project: true,
   snapshot: true,
-  count: true,
-  stateCounts: true,
-})
+}).extend({ count: QueryOutput.shape.count.optional() })
 const Execution = z.strictObject({
   dispatchPause: DispatchPause.optional(),
   planID: z.uuid(),

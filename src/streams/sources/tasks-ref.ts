@@ -77,6 +77,8 @@ export const taskScheduleColumns = {
   takeover: "bool",
   classification: "json",
   concern: "json",
+  /** The totals of the open concern, across every attempt; null with no open concern. */
+  concern_totals: "json",
   dispatch_pause: "json",
   dispatch_pause_plan_id: "text",
   dependency_count: "int",
@@ -96,7 +98,6 @@ export const taskScheduleColumns = {
   session_id: "text",
   created_at: "text",
 } as const satisfies Columns
-export const taskScheduleDetail = { concern_totals: "json" } as const satisfies Columns
 
 export const taskDependencyColumns = {
   parent_task_id: "text",
@@ -179,6 +180,7 @@ export const taskWaitColumns = {
   plan_id: "text",
   title: "text",
   state: "text",
+  version: "int",
   reason: "text",
 } as const satisfies Columns
 
@@ -224,7 +226,6 @@ export const taskScheduleRef: SourceRef<TaskScheduleFilter, typeof taskScheduleC
   {
     name: TASK_SOURCES.schedule,
     columns: taskScheduleColumns,
-    detail: taskScheduleDetail,
   },
 )
 export const taskDependenciesRef: SourceRef<TaskChildFilter, typeof taskDependencyRowColumns> =

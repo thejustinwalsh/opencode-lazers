@@ -6,6 +6,7 @@ export type PlanWait = {
   planID: string
   title: string | null
   state: string | null
+  version: number | null
   reason: string | null
 }
 
