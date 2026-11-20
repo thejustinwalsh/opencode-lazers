@@ -40,6 +40,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { WorkerPreparation } from "./worker-preparation.ts"
 import { ContinuationPreparation } from "./continuation-preparation.ts"
 import { StartupSettlement } from "./startup-settlement.ts"
 import { AdoptionPreparation } from "./adoption-preparation.ts"
@@ -91,7 +92,7 @@ import {
 import { knownTree } from "./identity-store.ts"
 
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
-import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
+import { CommandInput, ModelPolicy, PlanInput } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
 import {
   PLAN_MOVED_RETRIES,
@@ -107,7 +108,6 @@ import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
 import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
-import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
 
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
@@ -265,6 +265,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly workerPreparation: WorkerPreparation
   private readonly continuationPreparation: ContinuationPreparation
   private readonly startupSettlement: StartupSettlement
   private readonly adoptionPreparation: AdoptionPreparation
@@ -483,6 +484,21 @@ export class TaskRuntime {
       preparationAllowed: (...args) => this.preparationAllowed(...args),
       retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.workerPreparation = new WorkerPreparation(this.core, {
+      effect: (...args) => this.effect(...args),
+      hold: (...args) => this.hold(...args),
+      receipt: (...args) => this.receipt(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      promptAdmissionAllowed: (...args) => this.promptAdmissionAllowed(...args),
+      repairFailureBrief: (...args) => this.repairFailureBrief(...args),
+      startAuditorReport: (...args) => this.startAuditorReport(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      retainedRepairPromptCurrent: (...args) => this.retainedRepairPromptCurrent(...args),
+      sessionTitle: (...args) => this.sessionTitle(...args),
+      startupWorkspaceReady: (...args) => this.startupWorkspaceReady(...args),
+      workerEvent: (...args) => this.workerEvent(...args),
+      parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -4112,285 +4128,8 @@ export class TaskRuntime {
     return this.repairRecords.retainedRepairPromptCurrent(...args)
   }
 
-  /**
-   * A resume reserves a fresh input, but the interruption it answers may have been a stale
-   * observation: the worker is still inside its previous turn. Prompting it again would queue a
-   * second input behind a live turn and the retained-repair fence rightly refuses a busy worker,
-   * leaving the attempt in `preparing` while the worker works. When the session is busy on exactly
-   * the input the attempt had before the resume, the attempt takes that input back and runs.
-   */
-  private async adoptRunningWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const resumed = this.store
-      .activity(plan.id, attempt.task_id)
-      .filter((event) => event.event === "ATTEMPT_RESUMED")
-      .map((event) =>
-        this.parseTransitionPayload<{
-          attemptID?: unknown
-          messageID?: unknown
-          previousMessageID?: unknown
-        }>(event),
-      )
-      .filter((payload) => payload?.attemptID === attempt.id)
-      .at(-1)
-    const previousMessageID = resumed?.previousMessageID
-    if (resumed?.messageID !== attempt.message_id || typeof previousMessageID !== "string")
-      return false
-    const observed = await this.host.session(attempt.session_id, { messages: true })
-    if (
-      !observed ||
-      observed.archived ||
-      !observed.busy ||
-      observed.directory !== attempt.workspace ||
-      observed.turn?.state !== "pending" ||
-      observed.turn.inputID !== previousMessageID ||
-      observed.messages.some((message) => message.id === attempt.message_id)
-    )
-      return false
-    const adopted = this.store.fenced(this.owner, fence, (db) => {
-      if (this.store.plan(plan.id)?.state !== "running") return false
-      const changed =
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),message_id=? WHERE id=? AND state='preparing' AND message_id=?",
-          )
-          .run(previousMessageID, attempt.id, attempt.message_id).changes === 1
-      if (changed)
-        this.store.record(plan.id, attempt.task_id, "WORKER_RESUME_ADOPTED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          inputID: previousMessageID,
-          reservedMessageID: attempt.message_id,
-        })
-      return changed
-    })
-    return adopted
-  }
-
-  private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const admissionPlan = this.store.plan(plan.id)
-    if (!admissionPlan || admissionPlan.state !== "running") return
-    if (!(await this.startupWorkspaceReady(admissionPlan, attempt, fence))) return
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    const retainedRepair = this.retainedRepairForAttempt(attempt)
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      plan.id,
-      attempt.task_id,
-    )
-    if (latestRepair?.attemptID === attempt.id && !retainedRepair) {
-      this.hold(plan, "Retained repair is missing a valid owner/control authorization fence")
-      return
-    }
-    if (retainedRepair && (await this.adoptRunningWorker(plan, attempt, fence))) return
-    const existing = this.store.effects(plan.id)
-    if (
-      retainedRepair &&
-      !existing.some(
-        (effect) =>
-          effect.attempt_id === attempt.id &&
-          effect.kind === "session" &&
-          effect.state === "completed",
-      )
-    ) {
-      this.hold(plan, "Retained repair lost its original native session receipt")
-      return
-    }
-    if (
-      !retainedRepair &&
-      !existing.some((e) => e.attempt_id === attempt.id && e.kind === "session")
-    ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-      const effect = this.effect(
-        plan.id,
-        attempt.task_id,
-        attempt.id,
-        "session",
-        { sessionID: attempt.session_id },
-        fence,
-      )
-      try {
-        await this.host.create({
-          id: attempt.session_id,
-          parentID: plan.owner,
-          agent: workerAgent(JSON.parse(attempt.policy).agent),
-          model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
-          directory: attempt.workspace,
-          title: this.sessionTitle(
-            this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100),
-          ),
-          attemptID: attempt.id,
-        })
-        this.receipt(effect, { sessionID: attempt.session_id }, fence)
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    this.startAuditorReport(attempt, "baseline")
-    const repairPrompt = retainedRepair
-      ? existing.find(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            (() => {
-              try {
-                return (
-                  (JSON.parse(effect.payload) as { repairID?: unknown }).repairID ===
-                    retainedRepair.operationID &&
-                  (JSON.parse(effect.payload) as { messageID?: unknown }).messageID ===
-                    attempt.message_id
-                )
-              } catch {
-                return false
-              }
-            })(),
-        )
-      : undefined
-    const conflictingPrompt = retainedRepair
-      ? existing.find(
-          (effect) =>
-            effect.attempt_id === attempt.id &&
-            effect.kind === "prompt" &&
-            (() => {
-              try {
-                return (
-                  (JSON.parse(effect.payload) as { messageID?: unknown }).messageID ===
-                  attempt.message_id
-                )
-              } catch {
-                return false
-              }
-            })(),
-        )
-      : undefined
-    if (retainedRepair && conflictingPrompt && !repairPrompt) {
-      this.hold(plan, "Retained repair prompt receipt is not bound to its operation")
-      return
-    }
-    if (retainedRepair && repairPrompt?.state === "failed") {
-      this.hold(
-        plan,
-        "Retained repair prompt was conclusively rejected; explicit review is required",
-      )
-      return
-    }
-    if (retainedRepair && repairPrompt && repairPrompt.state !== "completed") {
-      this.hold(plan, "Retained repair prompt effect is unresolved; automatic replay is unsafe")
-      return
-    }
-    if (
-      !repairPrompt &&
-      !existing.some(
-        (e) =>
-          e.attempt_id === attempt.id &&
-          e.kind === "prompt" &&
-          JSON.parse(e.payload).messageID === attempt.message_id,
-      )
-    ) {
-      if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-      if (
-        retainedRepair &&
-        !(await this.retainedRepairPromptCurrent(plan, attempt, retainedRepair))
-      ) {
-        this.hold(plan, "Retained worker ownership or input changed before repair prompt admission")
-        return
-      }
-      const effect = this.effect(
-        plan.id,
-        attempt.task_id,
-        attempt.id,
-        "prompt",
-        {
-          sessionID: attempt.session_id,
-          messageID: attempt.message_id,
-          workspace: attempt.workspace,
-          ...(retainedRepair
-            ? {
-                repairID: retainedRepair.operationID,
-                previousMessageID: retainedRepair.previousMessageID,
-                nativeInputID: retainedRepair.nativeInputID,
-                nativeAssignmentID: retainedRepair.nativeAssignmentID,
-                admissionInputID: retainedRepair.admissionInputID,
-                repairMessageID: retainedRepair.repairMessageID,
-                ...(retainedRepair.continued
-                  ? {
-                      continuedFromInputID: retainedRepair.nativeInputID,
-                      continuedFromOutcome: retainedRepair.terminalOutcome,
-                    }
-                  : {}),
-                defect: retainedRepair.defect,
-              }
-            : {}),
-        },
-        fence,
-      )
-      try {
-        const selectedPersona = WorkerPersona.safeParse(JSON.parse(attempt.policy).persona)
-        const personaGuidance = selectedPersona.success
-          ? `\n\nSelected ${workerPersonaLabels[selectedPersona.data]} persona (advisory, independent of model/provider):\n${workerPersonaOverlay(selectedPersona.data)}`
-          : ""
-        await this.host.prompt({
-          sessionID: attempt.session_id,
-          id: attempt.message_id,
-          directory: attempt.workspace,
-          attemptID: attempt.id,
-          model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
-          ...(retainedRepair ? { moveIfNeeded: false } : {}),
-          text: retainedRepair
-            ? `${retainedRepair.continued ? `Continue the interrupted retained repair task ${attempt.task_id} from its exact prior native input ${retainedRepair.nativeInputID}.` : `Repair task ${attempt.task_id}`} Continue in the same retained workspace ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role and task guidance. Preserve all valid prior work, usage, session, workspace and route; do not create or move a worker. Concrete defect to repair: ${retainedRepair.defect}. Commit the repair and report concise results.${personaGuidance}`
-            : `Implement task ${attempt.task_id} in ${attempt.workspace}. Fetch the task and source bundle once with lz-get-task before editing. Follow your assigned worker role, use the task's code-grounded guidance, and finish with a commit and concise results. If continuing an earlier attempt, preserve its progress in this assigned workspace.${this.repairFailureBrief(attempt)}${personaGuidance}`,
-        })
-        this.receipt(
-          effect,
-          {
-            messageID: attempt.message_id,
-            taskID: attempt.task_id,
-            instructions: "readable; lz-get-task",
-            ...(retainedRepair
-              ? {
-                  repairID: retainedRepair.operationID,
-                  repairMessageID: retainedRepair.repairMessageID,
-                  ...(retainedRepair.continued
-                    ? { continuedFromInputID: retainedRepair.nativeInputID }
-                    : {}),
-                }
-              : {}),
-          },
-          fence,
-        )
-      } catch (error) {
-        this.uncertain(effect, error, fence)
-        return
-      }
-    }
-    if (!(await this.promptAdmissionAllowed(plan.id, attempt))) return
-    const started = this.store.fenced(this.owner, fence, (db) => {
-      const currentPlan = this.store.plan(plan.id)
-      const currentAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
-      const currentNode = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      if (
-        currentPlan?.state !== "running" ||
-        currentAttempt?.state !== "preparing" ||
-        currentAttempt.message_id !== attempt.message_id ||
-        (retainedRepair
-          ? currentNode?.state !== (retainedRepair.continued ? "running" : "ready") ||
-            this.retainedRepairForAttempt(currentAttempt)?.operationID !==
-              retainedRepair.operationID
-          : false)
-      )
-        return false
-      if (retainedRepair && !retainedRepair.continued)
-        this.store.move(plan.id, attempt.task_id, "DISPATCH")
-      return (
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running') WHERE id=? AND state='preparing' AND message_id=?",
-          )
-          .run(attempt.id, attempt.message_id).changes === 1
-      )
-    })
-    if (!started) return
-    this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
+  private prepareWorker(...args: Parameters<WorkerPreparation["prepareWorker"]>) {
+    return this.workerPreparation.prepareWorker(...args)
   }
 
   /**
