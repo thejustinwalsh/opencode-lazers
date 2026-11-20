@@ -117,3 +117,51 @@ test("the audit is off only when a confirmed profile says so", async () => {
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("a recheck keeps the revision it started with, across a newer confirmation", async () => {
+  const { mkdtempSync, realpathSync, rmSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
+  const { TaskRepository } = await import("../storage.ts")
+  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
+  const { retainedProfileInput } = await import("./profile-runtime.ts")
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-pin-")))
+  Bun.spawnSync(["git", "-C", root, "init", "-q", "-b", "main"])
+  Bun.spawnSync(["git", "-C", root, "remote", "add", "origin", "git@h.com:a/pin.git"])
+  const repository = new TaskRepository(join(root, "db.sqlite"), root)
+  try {
+    const { key } = await registerProject(repository, { directory: root, opencodeProjectID: "p" })
+    const parsed = parseProfile({
+      verify: [{ id: "t", command: "true" }],
+      source: { include: ["src/**"] },
+    })
+    if (!parsed.ok) throw new Error("bad fixture")
+    const confirm = (revision: number) => {
+      proposeRevision(repository, {
+        projectKey: key,
+        profile: parsed.profile,
+        author: { kind: "owner" },
+        reason: "t",
+        proofs: [],
+      })
+      confirmRevision(repository, { projectKey: key, revision, by: "owner" })
+    }
+    const revisionOf = (operation: string) =>
+      retainedProfileInput(repository, root, root, operation).profile?.revision
+    // A run that started with no profile stays without one.
+    expect(revisionOf("before")).toBeUndefined()
+    confirm(1)
+    expect(revisionOf("first")).toBe(1)
+    confirm(2)
+    expect(revisionOf("first")).toBe(1)
+    expect(revisionOf("second")).toBe(2)
+    expect(revisionOf("before")).toBeUndefined()
+    // Without an operation the active revision is read every time.
+    expect(retainedProfileInput(repository, root, root).profile?.revision).toBe(2)
+  } finally {
+    resetProjectAliasCache()
+    repository.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

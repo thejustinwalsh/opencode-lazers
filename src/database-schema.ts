@@ -45,9 +45,9 @@ export const schemaModules = {
     tables: ["lazers_settings", "lazers_dispatch_pause"],
   },
   "project-profile": {
-    generation: 1,
+    generation: 2,
     source: "src/projects/profile-store.ts",
-    tables: ["lazers_profile_revisions", "lazers_profile_proofs"],
+    tables: ["lazers_profile_revisions", "lazers_profile_proofs", "lazers_profile_pins"],
   },
   runner: {
     generation: 13,

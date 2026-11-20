@@ -56,10 +56,10 @@ Conventional Commits. Never add Claude, Codex or any other AI attribution or
 
 Finish code and evidence notes. Run the project's formatter and linter with
 automatic fixes before verification, then commit those fixes with the code.
-For LAZERS, use `bun run verify` (format, lint --fix, format, typecheck) and the
-task's behavior tests. Run tests as `bun test --timeout 120000 <files>` (or
-`bun run test <files>`): Bun's 5 s per-test default fails correct work on a loaded
-machine, and only the command-line flag applies to every test file. Correct remaining substantive failures; do not hand
+Use the project's verification commands, as the task and its project verification
+section list them, and the task's behavior tests. When tests run under Bun, run them as
+`bun test --timeout 120000 <files>`: Bun's 5 s per-test default fails correct work on a
+loaded machine, and only the command-line flag applies to every test file. Correct remaining substantive failures; do not hand
 formatting or fixable lint failures back to another model.
 
 When you finish, the runtime runs `fallow audit` on what you changed (dead code,

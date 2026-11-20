@@ -144,3 +144,12 @@ test("a scope divergence hold notice carries the decision runbook; other holds d
     outcomeText(JSON.stringify({ status: "blocked", reason: "Dispatch failed" })),
   ).not.toContain(runbook("scope-divergence"))
 })
+
+test("no standing prompt, tool description or task instruction names this repository's commands", () => {
+  const files = ["../architect.md", "../implementor.md", "../tasks/instructions.ts", "../task.ts"]
+  for (const file of files) {
+    const text = readFileSync(join(here, file), "utf8")
+    for (const phrase of ["bun run verify", "For LAZERS", "In LAZERS"])
+      expect(text, `${file} contains "${phrase}"`).not.toContain(phrase)
+  }
+})

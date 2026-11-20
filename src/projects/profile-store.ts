@@ -98,6 +98,8 @@ export function installProfileSchema(repository: TaskRepository): void {
         exit_code INTEGER, timed_out INTEGER NOT NULL, duration_ms INTEGER NOT NULL, reason TEXT,
         stdout_tail TEXT NOT NULL, stderr_tail TEXT NOT NULL, tool_version TEXT, ran_at INTEGER NOT NULL,
         PRIMARY KEY(revision_id, command_key));
+      CREATE TABLE IF NOT EXISTS lazers_profile_pins (
+        scope TEXT PRIMARY KEY, revision_id INTEGER NOT NULL, created_at INTEGER NOT NULL);
     `)
   })
 }
@@ -433,5 +435,36 @@ export function profileRevisionByID(repository: Reader, id: number): ActiveProfi
         )
         .get(id),
     ),
+  )
+}
+
+/**
+ * The revision an unattended run was started with, recorded once per scope (for example
+ * `retained:<operation id>`) so a restart resumes with it and not with whatever is active then.
+ * `0` records that the run started with no profile. Returns the recorded value, or undefined.
+ */
+export function pinnedProfileRevision(repository: Reader, scope: string): number | undefined {
+  return repository.read(
+    (db) =>
+      db
+        .query<{ revision_id: number }, [string]>(
+          "SELECT revision_id FROM lazers_profile_pins WHERE scope=?",
+        )
+        .get(scope)?.revision_id,
+  )
+}
+
+/** Records the pin; an earlier pin of the same scope is kept. */
+export function pinProfileRevision(
+  repository: Pick<TaskRepository, "atomic">,
+  scope: string,
+  revisionID: number,
+): void {
+  repository.atomic((db) =>
+    db
+      .query(
+        "INSERT OR IGNORE INTO lazers_profile_pins(scope,revision_id,created_at) VALUES(?,?,?)",
+      )
+      .run(scope, revisionID, Date.now()),
   )
 }

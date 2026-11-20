@@ -60,6 +60,10 @@ The five planning agents (`lazers-planning-comprehension`, `-grounding`, `-readi
 
 The runtime records check commands, outcomes, timestamps, and observed environment. A failed check may trigger one configured repair attempt. Resume and retry keep earlier attempts and usage. Acceptance records required checks and the Architect's reviewed decision. There is no human-evidence gate; `kind: "human"` evidence in stored tasks is ignored. Integration remains a separate action.
 
+### Project profile
+
+Each project stores at most one confirmed profile (`src/projects/profile.ts`): its toolchains, verify commands, fix commands, install, kept environment names, audit setting and source filter. It is one JSON document with one schema: the Architect's `lz-project-profile` tool proposes it, the runtime proves each command once in a native worktree, and only the owner confirms it, in Settings. Revisions are append-only; the runtime reads the latest confirmed one, and unattended runs pin the revision they started with. An unproven fix or install never runs unattended. The profile replaces the Bun and TypeScript assumptions in guidance, tool lookup, mechanical auto-fix, command recognition, the isolated recheck, the Fallow audit and the repository map. A project with no confirmed profile behaves as it did before, and no profile ever holds or refuses work. Setup is a notice and a "Needs you" entry; the owner can dismiss it per project. See [the design](../../design/project-profile.md).
+
 ## Ownership, routing and holds
 
 - The plan owner is advisory. Any live Architect session of the project may issue commands and is adopted as owner. Do not add owner-equality or owner-epoch authorizations.

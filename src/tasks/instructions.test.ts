@@ -348,13 +348,13 @@ function activeCargoProfile(unprovenFix = false): ActiveProfile {
 test("with no profile the instructions are unchanged, and with one they name the profile's commands", () => {
   const without = taskInstructions(detail)
   expect(taskInstructions(detail, undefined)).toBe(without)
-  expect(without).toContain("In LAZERS use `bun run verify`")
+  expect(without).toContain("Run the project's formatter and linter automatic fixes")
   const withProfile = taskInstructions(detail, activeCargoProfile())
   expect(withProfile).toContain("## Project verification (profile revision 1)")
   expect(withProfile).toContain("- tests: cargo test --locked")
   expect(withProfile).toContain("cargo fmt --")
   expect(withProfile).not.toContain("bun run verify")
-  expect(withProfile.startsWith(without.split("\n\nRun project formatter")[0]!)).toBe(true)
+  expect(withProfile.startsWith(without.split("\n\nRun the project's formatter")[0]!)).toBe(true)
 })
 
 test("an unproven verify command is marked with its exit code", () => {

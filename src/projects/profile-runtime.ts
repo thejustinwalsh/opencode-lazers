@@ -2,7 +2,12 @@ import type { ProfileIdentity } from "../runner/artifacts.ts"
 import type { ActiveProfile } from "./profile-store.ts"
 import type { RetainedCheckProfile } from "../runner/retained-verification/isolation.ts"
 import type { TaskRepository } from "../storage.ts"
-import { activeProfile } from "./profile-store.ts"
+import {
+  activeProfile,
+  pinnedProfileRevision,
+  pinProfileRevision,
+  profileRevisionByID,
+} from "./profile-store.ts"
 import { effectiveInstall, type EffectiveInstall } from "./toolchains.ts"
 
 /**
@@ -66,15 +71,27 @@ export function runnableInstall(active: ActiveProfile, workspace: string): Effec
 }
 
 /**
- * The profile an isolated recheck is set up with: the active revision, read once, with only its
- * proven installs. Spread into `createRetainedCheckContext`'s input; empty when no profile exists.
+ * The profile an isolated recheck is set up with, with only its proven installs. Spread into
+ * `createRetainedCheckContext`'s input; empty when the run has no profile. With an `operationID`
+ * the revision is pinned on first use, so a recheck resumed after a restart keeps the revision it
+ * started with, even if a newer one was confirmed meanwhile.
  */
 export function retainedProfileInput(
-  repository: Pick<TaskRepository, "read">,
+  repository: Pick<TaskRepository, "read" | "atomic">,
   projectDirectory: string,
   workspace: string,
+  operationID?: string,
 ): { profile?: RetainedCheckProfile } {
-  const active = activeProfile(repository, projectDirectory)
+  const scope = operationID === undefined ? undefined : `retained:${operationID}`
+  const pinned = scope === undefined ? undefined : pinnedProfileRevision(repository, scope)
+  const active =
+    pinned === undefined
+      ? activeProfile(repository, projectDirectory)
+      : pinned === 0
+        ? undefined
+        : profileRevisionByID(repository, pinned)
+  if (scope !== undefined && pinned === undefined)
+    pinProfileRevision(repository, scope, active?.revisionID ?? 0)
   if (!active) return {}
   return {
     profile: {
