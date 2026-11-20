@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, rmSync, symlinkSync } from "node:fs"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
+import { existsSync, symlinkSync } from "node:fs"
 import { join } from "node:path"
 import {
   makeFixture,
+  disposeFixture,
   repoRoot,
   runOp,
   snapshot,
@@ -10,6 +11,13 @@ import {
   wasmModule,
 } from "./test-support.ts"
 import { MAX_FALLOW_THREADS, runFallowModule, ThreadPool } from "../fallow-wasi.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 const ALLOWED_IMPORTS = new Set([
   "lazers_host.git_result",
@@ -55,7 +63,7 @@ describe("read-only analysis", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
   test("no analysis changes the tree: no new, changed or removed file, no .fallow cache", async () => {
     const before = snapshot(dir)
@@ -131,7 +139,7 @@ describe("fallow-threads.wasm", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
   test("imports the shared memory and thread spawn on top of the single-threaded surface", () => {
     const imports = WebAssembly.Module.imports(threadedWasmModule).map(

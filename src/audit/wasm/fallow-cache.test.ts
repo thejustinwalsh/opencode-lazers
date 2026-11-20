@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test as bunTest } from "bun:test"
 import { execFileSync } from "node:child_process"
 import {
   existsSync,
@@ -14,7 +14,14 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { publishCache, seedCache } from "../fallow-cache.ts"
-import { moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
+import { disposeFixture, moduleKinds, makeFixture, runOp, snapshot } from "./test-support.ts"
+import {
+  closeOutstandingDirectAnalysisTestLifetimes,
+  createDirectAnalysisTestRegistrar,
+} from "./resource-lifetime/direct-analysis-test-lifetime.ts"
+
+afterEach(closeOutstandingDirectAnalysisTestLifetimes)
+const test = createDirectAnalysisTestRegistrar(bunTest)
 
 /**
  * Fallow's own cache, in `<root>/.fallow`. It is the only place the module may write; it carries
@@ -38,7 +45,7 @@ describe("cache writes are confined to .fallow", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
   test("nothing outside .fallow changes, and git sees a clean tree", async () => {
     const before = outsideCache(dir)
@@ -83,7 +90,7 @@ describe("cache writes are confined to .fallow", () => {
       expect(strip(linked)).toBe(strip(cold))
       expect(readdirSync(elsewhere)).toEqual([])
     } finally {
-      rmSync(fresh, { recursive: true, force: true })
+      await disposeFixture(fresh)
       rmSync(elsewhere, { recursive: true, force: true })
     }
   })
@@ -95,7 +102,7 @@ for (const kind of moduleKinds)
     beforeAll(() => {
       dir = makeFixture()
     })
-    afterAll(() => rmSync(dir, { recursive: true, force: true }))
+    afterAll(async () => disposeFixture(dir))
     const ops = [
       "deadCode",
       "cycles",
@@ -142,9 +149,9 @@ describe("sharing a cache between checkouts", () => {
     worktree = join(mkdtempSync(join(tmpdir(), "fallow-wt-")), "wt")
     git(canonical, "worktree", "add", "-q", worktree, "-b", "feature")
   })
-  afterAll(() => {
-    rmSync(worktree, { recursive: true, force: true })
-    rmSync(canonical, { recursive: true, force: true })
+  afterAll(async () => {
+    await disposeFixture(worktree)
+    await disposeFixture(canonical)
   })
 
   test("a worktree seeded from the canonical checkout answers as a cold run does", async () => {
@@ -178,7 +185,9 @@ describe("sharing a cache between checkouts", () => {
       expect(await publishCache(source, source)).toBe(0)
       mkdirSync(join(elsewhere, "x"))
     } finally {
-      for (const path of [target, elsewhere, source]) rmSync(path, { recursive: true, force: true })
+      await disposeFixture(target)
+      rmSync(elsewhere, { recursive: true, force: true })
+      await disposeFixture(source)
     }
   }, 60_000)
 })
@@ -207,8 +216,8 @@ describe("what a module keeps, and what a warm run reads", () => {
         expect(withRule.unused_files).toEqual(normal.unused_files)
         expect(withRule.unused_exports).toEqual(normal.unused_exports)
       } finally {
-        rmSync(plain, { recursive: true, force: true })
-        rmSync(strict, { recursive: true, force: true })
+        await disposeFixture(plain)
+        await disposeFixture(strict)
       }
     }, 60_000)
 
@@ -255,7 +264,7 @@ describe("what a module keeps, and what a warm run reads", () => {
       expect(await sourceBytes()).toBeGreaterThan(0)
       expect(await sourceBytes()).toBe(0)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      await disposeFixture(dir)
     }
   }, 60_000)
 })
