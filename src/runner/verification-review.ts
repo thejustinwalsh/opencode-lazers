@@ -38,6 +38,7 @@ import { needsRepair } from "../audit/audit-findings.ts"
 import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attribution.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
 import type { PlanRow } from "./store.ts"
+import { planStateNames } from "./lifecycle-machines.ts"
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
 import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import type { CheckActivities } from "./check-activities.ts"
@@ -312,10 +313,11 @@ export class VerificationReview {
     const finished = new Set(["accepted", "incorporated", "cancelled", "failed", "exhausted"])
     const ids = new Set<string>()
     // Every unfinished plan of the project: a queued task has reserved its scope with no attempt yet.
-    for (const other of this.store.plans())
-      if (!["integrated", "cancelled"].includes(other.state))
-        for (const node of this.store.nodes(other.id))
-          if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
+    for (const other of this.store.planHeads(
+      planStateNames.filter((state) => !["integrated", "cancelled"].includes(state)),
+    ))
+      for (const node of this.store.nodes(other.id))
+        if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
     for (const active of this.store.activeProjectAttempts())
       if (active.task_id !== taskID) ids.add(active.task_id)
     return [...ids].map((id) => ({

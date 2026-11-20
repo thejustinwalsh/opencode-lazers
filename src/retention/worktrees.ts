@@ -168,12 +168,21 @@ export async function removalBlocker(
 ): Promise<string | null> {
   const probe = input.probe ?? defaultProbe
   const path = real(finding.path)
-  const attempts = db
-    .query<{ plan_id: string; session_id: string; state: string; workspace: string }, []>(
-      "SELECT plan_id, session_id, state, workspace FROM runner_attempts",
-    )
+  // Distinct workspaces first (attempts of shared serial execution all name one checkout), then
+  // only the attempts that name the finding's path, instead of every attempt ever recorded.
+  const workspaces = db
+    .query<{ workspace: string }, []>("SELECT DISTINCT workspace FROM runner_attempts")
     .all()
-    .filter((attempt) => real(attempt.workspace) === path)
+    .map((row) => row.workspace)
+    .filter((workspace) => real(workspace) === path)
+  const attempts = workspaces.length
+    ? db
+        .query<{ plan_id: string; session_id: string; state: string; workspace: string }, [string]>(
+          `SELECT plan_id, session_id, state, workspace FROM runner_attempts
+            WHERE workspace IN (SELECT value FROM json_each(?)) ORDER BY rowid`,
+        )
+        .all(JSON.stringify(workspaces))
+    : []
   for (const attempt of attempts) {
     if (!input.retired.has(attempt.plan_id)) return "also recorded by work that is not finished"
     if (["preparing", "running", "verifying"].includes(attempt.state))

@@ -310,10 +310,10 @@ export class TakeoverExecution {
         .get(this.directory, parsed.attemptID, takeoverIDFor(parsed.requestID ?? "")),
     )
     if (existing && (existing.state !== "cancelled" || parsed.requestID)) return existing
-    const attempt = store
-      .plans()
-      .flatMap((plan) => store.attempts(plan.id))
-      .find((candidate) => candidate.id === parsed.attemptID)
+    const attemptPlanID = store.planIDOfAttempt(parsed.attemptID)
+    const attempt = attemptPlanID
+      ? store.attempts(attemptPlanID).find((candidate) => candidate.id === parsed.attemptID)
+      : undefined
     if (!attempt) throw new Error("No attempt of this project matches attemptID")
     const plan = store.plan(attempt.plan_id)!
     const latest = store

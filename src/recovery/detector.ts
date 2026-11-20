@@ -393,8 +393,8 @@ export class RecoveryDetector {
   evaluate(owner: string, fence: number): { concernID: string; ruleID: string; version: number }[] {
     const { store } = this.deps
     const recorded: { concernID: string; ruleID: string; version: number }[] = []
-    for (const plan of store.plans()) {
-      if (plan.state !== "running") continue
+    // Ids of the running plans only: a plan body is not read on a timer.
+    for (const plan of store.planHeads(["running"])) {
       const attempts = store.attempts(plan.id)
       for (const node of store.nodes(plan.id)) {
         if (!canStruggle(node.state) || store.repository.taskDisposition(node.task_id)) continue

@@ -492,6 +492,27 @@ export function setRetainedVerificationCheckCleanup(
   ).run(state, operationID, phase, checkID)
 }
 
+/**
+ * Whether an operation phase (or one check of it) still holds a resource that is not removed.
+ * A settlement test asks this on every cleanup pass; it needs one row, not the resource list.
+ */
+export function hasUnremovedResource(
+  db: Database,
+  operationID: string,
+  phase: string,
+  checkID?: string,
+): boolean {
+  return Boolean(
+    db
+      .query<{ present: number }, string[]>(
+        `SELECT 1 AS present FROM runner_retained_verification_resources
+         WHERE operation_id=? AND phase=? ${checkID === undefined ? "" : "AND check_id=?"}
+           AND state IS NOT 'removed' LIMIT 1`,
+      )
+      .get(operationID, phase, ...(checkID === undefined ? [] : [checkID])),
+  )
+}
+
 export function registerRetainedVerificationResources(
   db: Database,
   projectDirectory: string,

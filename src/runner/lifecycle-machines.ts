@@ -283,5 +283,7 @@ export type PlanningState =
 export type PlanningRunState =
   "starting" | "running" | "reviewed" | "failed" | "stuck" | "cancelled"
 export type PlanLifecycleState = keyof typeof planStates
+/** Every plan state, for a read that names the states it does not want. */
+export const planStateNames = Object.keys(planStates) as PlanLifecycleState[]
 export type AttemptLifecycleState = keyof typeof attemptStates
 export type EffectLifecycleState = keyof typeof effectStates

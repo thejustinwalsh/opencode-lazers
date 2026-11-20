@@ -378,7 +378,7 @@ test("8c276019-1: a queued task of another plan is named as a scope owner", () =
   }
   const fake = {
     store: {
-      plans: () => plans,
+      planHeads: (states: string[]) => plans.filter((plan) => states.includes(plan.state)),
       nodes: (id: string) => nodes[id] ?? [],
       activeProjectAttempts: () => [],
       effectiveReservationScope: (id: string) => [`src/${id}.ts`],
