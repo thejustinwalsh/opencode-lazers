@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
 import { join } from "node:path"
 import {
+  disposeFixture,
   makeFixture,
   moduleKinds,
   repoRoot,
   runOp,
   trackedSources,
-  type ModuleKind,
 } from "./test-support.ts"
 
 /**
@@ -28,8 +27,8 @@ const strip = (value: unknown): unknown =>
 
 for (const kind of moduleKinds) {
   describe(`${kind} module`, () => {
-    const op = (dir: string, name: string, extra: Record<string, unknown> = {}) =>
-      runOp(name, dir, extra, {}, kind).report
+    const op = async (dir: string, name: string, extra: Record<string, unknown> = {}) =>
+      (await runOp(name, dir, extra, {}, kind)).report
 
     describe("dead code", () => {
       let dir: string
@@ -46,10 +45,10 @@ export const main = () => shout(ping(), alpha([1], reexported))
           "src/inner.ts": `export const reexported = 1\nexport const leftover = 2\n`,
         })
       })
-      afterAll(() => rmSync(dir, { recursive: true, force: true }))
+      afterAll(async () => disposeFixture(dir))
 
-      test("reports exactly the unused file, export and dependency, and nothing that is used", () => {
-        const dead = op(dir, "deadCode")
+      test("reports exactly the unused file, export and dependency, and nothing that is used", async () => {
+        const dead = await op(dir, "deadCode")
         expect(names(dead.unused_files, (f: { path: string }) => f.path)).toEqual([
           "src/b.ts",
           "src/c.ts",
@@ -68,8 +67,8 @@ export const main = () => shout(ping(), alpha([1], reexported))
         ).toEqual(["never-used"])
       })
 
-      test("a dependency reached through a symlinked node_modules entry resolves", () => {
-        const dead = op(dir, "deadCode")
+      test("a dependency reached through a symlinked node_modules entry resolves", async () => {
+        const dead = await op(dir, "deadCode")
         expect(dead.unresolved_imports).toEqual([])
         expect(
           names(dead.unused_dependencies, (f: { package_name: string }) => f.package_name),
@@ -84,22 +83,22 @@ export const main = () => shout(ping(), alpha([1], reexported))
         cyclic = makeFixture()
         broken = makeFixture({ "src/pong.ts": `export const pong = (): number => 1\n` })
       })
-      afterAll(() => {
-        rmSync(cyclic, { recursive: true, force: true })
-        rmSync(broken, { recursive: true, force: true })
+      afterAll(async () => {
+        await disposeFixture(cyclic)
+        await disposeFixture(broken)
       })
 
-      test("one import cycle is reported with its files, and none once it is broken", () => {
-        const cycles = op(cyclic, "cycles").circular_dependencies
+      test("one import cycle is reported with its files, and none once it is broken", async () => {
+        const cycles = (await op(cyclic, "cycles")).circular_dependencies
         expect(cycles.map((c: { files: string[] }) => c.files)).toEqual([
           ["src/ping.ts", "src/pong.ts"],
         ])
-        expect(op(broken, "cycles").circular_dependencies).toEqual([])
+        expect((await op(broken, "cycles")).circular_dependencies).toEqual([])
       })
 
-      test("the architecture report carries the same cycle", () => {
-        expect(op(cyclic, "architecture").circular_dependencies).toHaveLength(1)
-        expect(op(broken, "architecture").circular_dependencies).toEqual([])
+      test("the architecture report carries the same cycle", async () => {
+        expect((await op(cyclic, "architecture")).circular_dependencies).toHaveLength(1)
+        expect((await op(broken, "architecture")).circular_dependencies).toEqual([])
       })
     })
 
@@ -120,7 +119,7 @@ export const main = () => shout(ping(), alpha([1], reexported))
           }),
         })
       })
-      afterAll(() => rmSync(dir, { recursive: true, force: true }))
+      afterAll(async () => disposeFixture(dir))
 
       type Group = { instances: { file: string; start_line: number; end_line: number }[] }
       const groups = (report: Record<string, any>) =>
@@ -128,32 +127,32 @@ export const main = () => shout(ping(), alpha([1], reexported))
           g.instances.map((i) => `${i.file}:${i.start_line}-${i.end_line}`).sort(),
         )
 
-      test("three copies of one function are one clone group with the right ranges", () => {
-        const report = op(dir, "duplicationReport")
+      test("three copies of one function are one clone group with the right ranges", async () => {
+        const report = await op(dir, "duplicationReport")
         expect(groups(report)).toEqual([["src/a.ts:1-14", "src/b.ts:1-14", "src/view.vue:2-15"]])
         expect(report.clone_groups[0].line_count).toBe(14)
       })
 
-      test("below the token threshold there is no group", () => {
+      test("below the token threshold there is no group", async () => {
         expect(
-          op(dir, "duplicationReport", { configPath: join(dir, "config/strict.json") })
+          (await op(dir, "duplicationReport", { configPath: join(dir, "config/strict.json") }))
             .clone_groups,
         ).toEqual([])
       })
 
-      test("the in-memory clone operation finds the same group, and a changed set filters it", () => {
+      test("the in-memory clone operation finds the same group, and a changed set filters it", async () => {
         const paths = trackedSources(dir)
-        const all = op(dir, "duplication", { paths, options: {} })
+        const all = await op(dir, "duplication", { paths, options: {} })
         expect(all.groups).toHaveLength(1)
-        const only = op(dir, "duplication", { paths, files: ["src/a.ts"], options: {} })
+        const only = await op(dir, "duplication", { paths, files: ["src/a.ts"], options: {} })
         expect(only.groups).toHaveLength(1)
-        const none = op(dir, "duplication", { paths, files: ["src/orphan.ts"], options: {} })
+        const none = await op(dir, "duplication", { paths, files: ["src/orphan.ts"], options: {} })
         expect(none.groups).toEqual([])
       })
 
-      test("a function above the threshold is reported with its name and line, one below is not", () => {
+      test("a function above the threshold is reported with its name and line, one below is not", async () => {
         const paths = trackedSources(dir)
-        const report = op(dir, "complexity", { paths, options: {} })
+        const report = await op(dir, "complexity", { paths, options: {} })
         expect(
           report.functions.map((f: { file: string; name: string; line: number }) => [
             f.file,
@@ -161,7 +160,7 @@ export const main = () => shout(ping(), alpha([1], reexported))
             f.line,
           ]),
         ).toEqual([["src/c.ts", "route", 1]])
-        const health = op(dir, "health")
+        const health = await op(dir, "health")
         const route = health.findings.find((f: { name: string }) => f.name === "route")
         expect(route).toMatchObject({ path: "src/c.ts", line: 1 })
         expect(route.cyclomatic).toBeGreaterThan(report.thresholds.maxCyclomatic)
@@ -169,8 +168,8 @@ export const main = () => shout(ping(), alpha([1], reexported))
         expect(report.functions.map((f: { name: string }) => f.name)).not.toContain("alpha")
       })
 
-      test("a feature flag in the source is found with its name and place", () => {
-        const flags = op(dir, "featureFlagReport")
+      test("a feature flag in the source is found with its name and place", async () => {
+        const flags = await op(dir, "featureFlagReport")
         expect(flags.total_flags).toBe(2)
         expect(
           names(
@@ -181,29 +180,29 @@ export const main = () => shout(ping(), alpha([1], reexported))
         ).toEqual(["ENABLE_BETA_PANEL@src/flags.ts:3", "FEATURE_NEW_CHECKOUT@src/flags.ts:2"])
       })
 
-      test("a local extends resolves through the filesystem and changes the result", () => {
-        const without = op(dir, "duplicationReport")
-        const withBase = op(dir, "duplicationReport", {
+      test("a local extends resolves through the filesystem and changes the result", async () => {
+        const without = await op(dir, "duplicationReport")
+        const withBase = await op(dir, "duplicationReport", {
           configPath: join(dir, "config/local.json"),
         })
         expect(without.clone_groups.length).toBe(1)
         expect(withBase.clone_groups).toEqual([])
       })
 
-      test("a remote extends and an invalid file are explicit errors", () => {
+      test("a remote extends and an invalid file are explicit errors", async () => {
         const bad = makeFixture({
           "config/remote.json": JSON.stringify({ extends: ["https://example.com/base.json"] }),
           "config/bad.json": "{ nope",
         })
         try {
-          expect(() =>
+          await expect(
             op(bad, "duplicationReport", { configPath: join(bad, "config/remote.json") }),
-          ).toThrow(/extends/i)
-          expect(() =>
+          ).rejects.toThrow(/extends/i)
+          await expect(
             op(bad, "duplicationReport", { configPath: join(bad, "config/bad.json") }),
-          ).toThrow(/config/i)
+          ).rejects.toThrow(/config/i)
         } finally {
-          rmSync(bad, { recursive: true, force: true })
+          await disposeFixture(bad)
         }
       })
     })
@@ -215,9 +214,9 @@ describe("both modules answer alike", () => {
   beforeAll(() => {
     dir = makeFixture()
   })
-  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+  afterAll(async () => disposeFixture(dir))
 
-  test("every report on the fixture is identical, apart from timing", () => {
+  test("every report on the fixture is identical, apart from timing", async () => {
     for (const name of [
       "deadCode",
       "cycles",
@@ -226,23 +225,21 @@ describe("both modules answer alike", () => {
       "duplicationReport",
       "health",
     ]) {
-      const [single, threads] = moduleKinds.map((kind: ModuleKind) =>
-        strip(runOp(name, dir, {}, {}, kind).report),
-      )
+      const single = strip((await runOp(name, dir, {}, {}, "single")).report)
+      const threads = strip((await runOp(name, dir, {}, {}, "threads")).report)
       expect(threads, name).toEqual(single)
     }
     const paths = trackedSources(dir)
     for (const name of ["complexity", "duplication"]) {
-      const [single, threads] = moduleKinds.map((kind: ModuleKind) =>
-        strip(runOp(name, dir, { paths, options: {} }, {}, kind).report),
-      )
+      const single = strip((await runOp(name, dir, { paths, options: {} }, {}, "single")).report)
+      const threads = strip((await runOp(name, dir, { paths, options: {} }, {}, "threads")).report)
       expect(threads, name).toEqual(single)
     }
   }, 120_000)
 })
 
 describe("this repository (invariants only; its findings change daily)", () => {
-  test("every report runs without error, is deterministic, and has plausible counts, on both modules", () => {
+  test("every report runs without error, is deterministic, and has plausible counts, on both modules", async () => {
     const sections = [
       "deadCode",
       "cycles",
@@ -254,11 +251,11 @@ describe("this repository (invariants only; its findings change daily)", () => {
     const seen = new Map<string, string>()
     for (const kind of moduleKinds)
       for (const name of sections) {
-        const first = runOp(name, repoRoot, {}, {}, kind).report
+        const first = (await runOp(name, repoRoot, {}, {}, kind)).report
         expect(first.kind ?? first.summary ?? first, `${kind} ${name}`).toBeTruthy()
         const text = JSON.stringify(strip(first))
         // Same module twice, and the other module, give the same bytes.
-        expect(JSON.stringify(strip(runOp(name, repoRoot, {}, {}, kind).report))).toBe(text)
+        expect(JSON.stringify(strip((await runOp(name, repoRoot, {}, {}, kind)).report))).toBe(text)
         const other = seen.get(name)
         if (other !== undefined) expect(text, `${name} differs between modules`).toBe(other)
         seen.set(name, text)
