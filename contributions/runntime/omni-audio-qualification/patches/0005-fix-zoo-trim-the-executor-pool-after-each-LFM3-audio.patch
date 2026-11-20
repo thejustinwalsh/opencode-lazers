@@ -1,0 +1,82 @@
+From bff786d94529c949f20f33a1195486d64f062f23 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <contact.me@thejustinwalsh.com>
+Date: Fri, 20 Nov 2026 01:39:37 -0500
+Subject: [PATCH 05/10] fix(zoo): trim the executor pool after each LFM3 audio
+ call
+
+---
+ packages/runntime/src/zoo/tasks/audio/lfm3.ts         |  7 ++++++-
+ .../test/zoo/lfm3/audio-qualification.gpu.test.ts     | 11 +++++++++--
+ .../test/zoo/lfm3/audio/qualification/thresholds.ts   |  8 ++++++++
+ 3 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/packages/runntime/src/zoo/tasks/audio/lfm3.ts b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+index c74d2d9..a9478f7 100644
+--- a/packages/runntime/src/zoo/tasks/audio/lfm3.ts
++++ b/packages/runntime/src/zoo/tasks/audio/lfm3.ts
+@@ -267,7 +267,12 @@ export async function createLfm3Audio(
+       const run = queue.then(async () => {
+         guard();
+         checkAborted(linked.signal);
+-        return operation();
++        try {
++          return await operation();
++        } finally {
++          // Clip and prompt lengths vary, so the pool would keep a buffer set per length seen.
++          executor.trim();
++        }
+       });
+       queue = run.then(
+         () => undefined,
+diff --git a/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts b/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
+index c6c652e..c860cb7 100644
+--- a/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
+@@ -25,7 +25,7 @@ import {
+   levels,
+   sine,
+ } from './audio/qualification/signals.ts';
+-import { WER_LIMITS } from './audio/qualification/thresholds.ts';
++import { MEMORY_LIMITS, WER_LIMITS } from './audio/qualification/thresholds.ts';
+ import { wordErrorRate } from './audio/qualification/wer.ts';
+ 
+ let loaded: LoadedAudio;
+@@ -408,7 +408,7 @@ describe.skipIf(MODE !== 'audio-input')(
+ describe.skipIf(MODE !== 'audio-memory')('GPU memory across repeated audio runs', () => {
+   useModel('audio-memory');
+ 
+-  it('reports GPU memory across repeated runs and releases everything on dispose', async () => {
++  it('returns to the same size when the same inputs repeat and releases everything on dispose', async () => {
+     const cycles = 12;
+     const rows: {
+       cycle: number;
+@@ -442,6 +442,13 @@ describe.skipIf(MODE !== 'audio-memory')('GPU memory across repeated audio runs'
+       storageBuffersAfterDispose: storage.length,
+       rootCacheBytesAfterDispose: remaining.reduce((sum, buffer) => sum + buffer.size, 0),
+     });
++    // The second pass over the same sentences must land where the first pass did: nothing accumulates.
++    for (const row of rows.slice(SENTENCES.length)) {
++      const first = rows[row.cycle - SENTENCES.length]!;
++      expect(Math.abs(row.gpuBytes - first.gpuBytes)).toBeLessThanOrEqual(
++        MEMORY_LIMITS.repeatSlackBytes,
++      );
++    }
+     expect(storage).toEqual([]);
+   }, 1_800_000);
+ });
+diff --git a/packages/runntime/test/zoo/lfm3/audio/qualification/thresholds.ts b/packages/runntime/test/zoo/lfm3/audio/qualification/thresholds.ts
+index c136dcb..c2a0ff5 100644
+--- a/packages/runntime/test/zoo/lfm3/audio/qualification/thresholds.ts
++++ b/packages/runntime/test/zoo/lfm3/audio/qualification/thresholds.ts
+@@ -11,3 +11,11 @@ export const WER_LIMITS = {
+   /** One 8-sentence clip of 29 s: 0 of 71 words wrong. Same per-item limit. */
+   longWer: 2 / 7,
+ } as const;
++
++/** Twelve cycles over eight sentences (clip lengths 2.2 to 4.2 s): GPU bytes sit between 1.843 and
++ *  1.886 GB, against 1.825 GB right after load, and the second pass over the same eight sentences
++ *  differs from the first by at most 6 KB. Before the pool was trimmed per call it grew from 1.97 to
++ *  2.17 GB in six cycles. */
++export const MEMORY_LIMITS = {
++  repeatSlackBytes: 64 * 1024,
++} as const;

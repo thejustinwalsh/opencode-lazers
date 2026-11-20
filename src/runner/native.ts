@@ -26,6 +26,13 @@ import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { sameProject } from "../project-key.ts"
+import {
+  nativeProjectMatches,
+  nativeWorkerHasUnsettledActivity,
+  nativeWorkerIdentityMatches,
+  projectCanonicalDirectory,
+} from "./cleanup/native-project.ts"
+import { sameCanonicalProjectDirectory } from "./cleanup/canonical-ownership.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -46,6 +53,7 @@ export type NativeInboxClient = {
   message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
   shell: Pick<ReturnType<typeof OpenCode.make>["shell"], "list">
   debug: Pick<ReturnType<typeof OpenCode.make>["debug"], "location">
+  project?: Pick<ReturnType<typeof OpenCode.make>["project"], "list">
 }
 export type NativeInboxDependencies = {
   discover: typeof Service.discover
@@ -574,6 +582,7 @@ export function nativeHost(
   dependencies: NativeInboxDependencies = nativeInboxDependencies,
 ): RunnerHost & {
   retainedInputID(sessionID: string): Promise<string | undefined>
+  nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -617,6 +626,11 @@ export function nativeHost(
     const client = await connectedClient()
     return runNative(client, () => retainedNativeInputID(client, sessionID))
   }
+  const nativeProjectCanonicalDirectory = async (projectID: string) => {
+    const client = await connectedClient()
+    await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
+    return runNative(client, () => projectCanonicalDirectory(client, projectID))
+  }
   /** The exact retained current input, read when a compacted context window no longer lists it. */
   const readRetainedCurrentInput = async (
     client: NativeInboxClient,
@@ -640,8 +654,10 @@ export function nativeHost(
   }
   const host: RunnerHost & {
     retainedInputID(sessionID: string): Promise<string | undefined>
+    nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
   } = {
     retainedInputID,
+    nativeProjectCanonicalDirectory,
     async workerModel(agentID = "lazers-implementor") {
       const agent = await Effect.runPromise(ctx.agent.get({ agentID: Agent.ID.make(agentID) }))
       return agent.data.model
@@ -886,35 +902,31 @@ export function nativeHost(
       })
     },
     async retireIntegratedWorker(input) {
+      if (
+        input.projectID !== ctx.location.project.id ||
+        !sameCanonicalProjectDirectory(repository.projectDirectory, ctx.location.project.canonical)
+      )
+        throw new Error("Integrated worker cleanup is not bound to this canonical project")
       const client = await connectedClient()
       await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       await runNative(client, async () => {
         const read = () => client.session.get({ sessionID: Session.ID.make(input.sessionID) })
         const observe = async () => {
           const session = await read()
+          const projectMatches = await nativeProjectMatches(
+            client,
+            repository.projectDirectory,
+            input.projectID,
+            session.projectID,
+          )
           const [active, inventory] = await Promise.all([
             activeSessionLineage(client, input.sessionID, input.workspace),
             workerObservation(client, input.sessionID, input.workspace),
           ])
           const after = await read()
           if (
-            session.id !== input.sessionID ||
-            session.projectID !== input.projectID ||
-            session.location.directory !== input.workspace ||
-            session.metadata?.lazersAttemptID !== input.attemptID ||
-            !isWorkerAgent(session.agent) ||
-            !session.outcome ||
-            !session.time.idle ||
-            (session.time.busy ?? 0) >= session.time.idle ||
-            JSON.stringify(session) !== JSON.stringify(after) ||
-            active.activeRoot ||
-            active.activeDescendants.length ||
-            active.activeAtWorkspace.length ||
-            inventory.active ||
-            inventory.pendingInput ||
-            inventory.locationPendingForms ||
-            inventory.locationPendingPermissions ||
-            inventory.runningShells
+            !nativeWorkerIdentityMatches(session, input, after, projectMatches) ||
+            nativeWorkerHasUnsettledActivity(active, inventory)
           )
             throw new Error(
               "Integrated worker or its workspace still has unsettled native activity",

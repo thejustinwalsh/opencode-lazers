@@ -1,0 +1,67 @@
+From deb7692cf862cc44cd71299877e0b9bde8071df5 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <contact.me@thejustinwalsh.com>
+Date: Fri, 20 Nov 2026 01:50:17 -0500
+Subject: [PATCH 09/10] test(zoo): let the Liquid round trip skip retaining
+ speech without a capture server
+
+---
+ .../test/zoo/lfm3/audio-qualification.mjs     |  1 +
+ .../zoo/lfm3/liquid-reference.gpu.test.ts     | 19 ++++++++++++-------
+ 2 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/packages/runntime/test/zoo/lfm3/audio-qualification.mjs b/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
+index 3d5c9ab..0478edf 100644
+--- a/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
++++ b/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
+@@ -183,6 +183,7 @@ for (const mode of modes) {
+               : 'audio-reference',
+         VITE_LFM3_AUDIO_INPUT_BASE_URL: '/test/.weights/audio-fixtures',
+         VITE_LFM3_LIQUID_AUDIO_CAPTURE: '1',
++        VITE_LFM3_LIQUID_SKIP_SPEECH_RETENTION: '1',
+         VITE_LFM3_LIQUID_ENGINE_URL: `/test/.weights/${LIQUID_ENGINE.instrumentedFile}`,
+         VITE_LFM3_LIQUID_MODEL_URL: `/test/.weights/${WEIGHTS.model}`,
+         VITE_LFM3_LIQUID_PROJECTOR_URL: `/test/.weights/${WEIGHTS.projector}`,
+diff --git a/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts b/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+index 0595ba4..ffb5b7a 100644
+--- a/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+@@ -99,6 +99,7 @@ declare global {
+     readonly VITE_LFM3_LIQUID_PROJECTOR_URL?: string;
+     readonly VITE_LFM3_LIQUID_AUDIO_INPUT_BASE_URL?: string;
+     readonly VITE_LFM3_LIQUID_AUDIO_CAPTURE?: string;
++    readonly VITE_LFM3_LIQUID_SKIP_SPEECH_RETENTION?: string;
+     readonly VITE_LFM3_LIQUID_LEVEL_DIAGNOSTIC?: string;
+     readonly VITE_LFM3_NATIVE_SPEECH_URL?: string;
+   }
+@@ -116,6 +117,8 @@ const LIQUID_MODEL_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_MODEL_URL);
+ const LIQUID_PROJECTOR_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_PROJECTOR_URL);
+ const AUDIO_INPUT_BASE_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_AUDIO_INPUT_BASE_URL);
+ const AUDIO_CAPTURE = import.meta.env.VITE_LFM3_LIQUID_AUDIO_CAPTURE === '1';
++// The packed consumer retains generated speech through its capture middleware; a plain run has none.
++const RETAIN_SPEECH = import.meta.env.VITE_LFM3_LIQUID_SKIP_SPEECH_RETENTION !== '1';
+ const LEVEL_DIAGNOSTIC = import.meta.env.VITE_LFM3_LIQUID_LEVEL_DIAGNOSTIC === '1';
+ const NATIVE_SPEECH_URL = import.meta.env.VITE_LFM3_NATIVE_SPEECH_URL;
+ const ENGINE_REVISION = '9c2fb176f4c222da394e8037d3c0d0837f70b978';
+@@ -469,13 +472,15 @@ async function captureAudioReferences(
+     const speechBytes = encodeFloat32Wav(speechSamples, speechSampleRate);
+     const speechDigest = await sha256(speechBytes);
+     const speechFilename = `liquid-speech-${testCase.id}.wav`;
+-    const saved = await fetch(`/__liquid-audio-output/${speechFilename}`, {
+-      method: 'POST',
+-      headers: { 'content-type': 'audio/wav' },
+-      body: speechBytes,
+-    });
+-    if (saved.status !== 204)
+-      throw new Error(`failed to save Liquid speech fixture: HTTP ${saved.status}`);
++    if (RETAIN_SPEECH) {
++      const saved = await fetch(`/__liquid-audio-output/${speechFilename}`, {
++        method: 'POST',
++        headers: { 'content-type': 'audio/wav' },
++        body: speechBytes,
++      });
++      if (saved.status !== 204)
++        throw new Error(`failed to save Liquid speech fixture: HTTP ${saved.status}`);
++    }
+ 
+     const speechTranscriptionSamples = await resampleAudio(speechSamples, speechSampleRate);
+     const speechTranscription = await streamLiquidTokens(audioModel, reference, {

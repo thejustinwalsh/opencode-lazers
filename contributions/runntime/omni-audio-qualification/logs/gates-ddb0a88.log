@@ -1,0 +1,19 @@
+== typecheck
+packages/runntime typecheck$ tsc --noEmit
+packages/runntime typecheck: Done
+== lint
+$ eslint . --max-warnings=0
+== format:check
+Checking formatting...
+All matched files use Prettier code style!
+== test:unit
+
+ Test Files  79 passed (79)
+      Tests  1370 passed (1370)
+   Start at  02:25:40
+   Duration  4.61s (import 58%, tests 27%, transform 13%, worker 1%)
+
+== build
+apps/docs build: 02:26:15 [build] 155 page(s) built in 25.90s
+apps/docs build: 02:26:15 [build] Complete!
+apps/docs build: Done

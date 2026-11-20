@@ -1,0 +1,220 @@
+From 0af7337087ec9bcf21fef1d9d6a5c7b27da74f26 Mon Sep 17 00:00:00 2001
+From: Justin Walsh <contact.me@thejustinwalsh.com>
+Date: Fri, 20 Nov 2026 01:43:22 -0500
+Subject: [PATCH 07/10] test(zoo): add Liquid's own speech round trip as a
+ qualification baseline
+
+---
+ packages/runntime/test/zoo/lfm3/README.md     |  2 ++
+ .../lfm3/audio-liquid-reference.gpu.test.ts   | 17 ++++++++-----
+ .../zoo/lfm3/audio-qualification.gpu.test.ts  | 20 ++++++++++++++-
+ .../test/zoo/lfm3/audio-qualification.mjs     | 25 +++++++++++++++----
+ .../zoo/lfm3/audio/qualification/harness.ts   |  1 +
+ .../zoo/lfm3/liquid-reference.gpu.test.ts     | 11 +++++---
+ 6 files changed, 60 insertions(+), 16 deletions(-)
+
+diff --git a/packages/runntime/test/zoo/lfm3/README.md b/packages/runntime/test/zoo/lfm3/README.md
+index 2871fb3..17e4144 100644
+--- a/packages/runntime/test/zoo/lfm3/README.md
++++ b/packages/runntime/test/zoo/lfm3/README.md
+@@ -24,6 +24,7 @@ pnpm test:audio                                   # the four modes below, one JS
+ pnpm test:audio --mode audio-roundtrip            # one mode
+ pnpm test:audio --mode audio-roundtrip --voices american-female --seeds 1234,7 --out result.json
+ pnpm test:audio --mode audio-liquid-reference     # against the pinned Liquid engine, named only
++pnpm test:audio --mode audio-liquid-roundtrip     # Liquid's own speech round trip, the baseline for ours
+ ```
+ 
+ The script hashes the weights, runs each mode in headless Chromium, and prints JSON: per-test status
+@@ -38,6 +39,7 @@ left the page's origin (the page's `fetch` and `XMLHttpRequest` refuse other ori
+ | `audio-input`            | Padded-graph boundaries, the 32 s maximum and one sample more, silence and very short clips, `resampleAudio` and `decodeAudio` at 24 and 48 kHz, a spoken question answered through `transcribe` and `generate`. |
+ | `audio-memory`           | GPU bytes over twelve repeated speak and transcribe cycles, and no storage buffer left after `dispose`.                                                                                                          |
+ | `audio-liquid-reference` | The audio encoder, the depth decoder's codes and one codec frame against Liquid's engine on the same inputs.                                                                                                     |
++| `audio-liquid-roundtrip` | Liquid's own transcription of the frozen clips and its speech recovered by its own transcriber: the baseline the native round trip is read against.                                                              |
+ 
+ `speak` is seeded, so the speech inputs are produced by the model itself: no recorded audio is stored.
+ `audio-liquid-reference` needs two frozen 16 kHz clips; the script regenerates them on macOS with
+diff --git a/packages/runntime/test/zoo/lfm3/audio-liquid-reference.gpu.test.ts b/packages/runntime/test/zoo/lfm3/audio-liquid-reference.gpu.test.ts
+index 5ff1acc..896572f 100644
+--- a/packages/runntime/test/zoo/lfm3/audio-liquid-reference.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/audio-liquid-reference.gpu.test.ts
+@@ -1,19 +1,24 @@
+-/** Runs the pinned Liquid engine comparisons (audio encoder, depth codes, codec PCM) from local
+- *  files only: the engine bundle, the GGUF pair and the regenerated frozen clips are all same-origin. */
++/** Runs the pinned Liquid engine comparisons from local files only: the engine bundle, the GGUF pair
++ *  and the regenerated frozen clips are all same-origin. VITE_LFM3_LIQUID_TEST picks the comparison:
++ *  `audio-reference` (encoder, depth codes and codec PCM against this implementation) or
++ *  `liquid-reference` (Liquid's own transcription and speech round trip on the frozen clips). */
+ 
+ import { afterAll, it } from 'vitest';
+ import { MODE, installNetworkGuard, report } from './audio/qualification/harness.ts';
+ 
+-if (MODE === 'liquid-reference') {
++const TEST = import.meta.env.VITE_LFM3_LIQUID_TEST;
++
++if (MODE === 'liquid-reference' && (TEST === 'audio-reference' || TEST === 'liquid-reference')) {
+   const guard = installNetworkGuard();
+   afterAll(() => {
+     report('network', {
+-      mode: 'audio-liquid-reference',
++      mode: `audio-${TEST}`,
+       sameOriginRequests: guard.requests.length,
+       blocked: guard.blocked,
+     });
+   });
+-  await import('./audio-reference.gpu.test.ts');
++  if (TEST === 'audio-reference') await import('./audio-reference.gpu.test.ts');
++  else await import('./liquid-reference.gpu.test.ts');
+ } else {
+-  it.skip('needs VITE_LFM3_QUALIFICATION_MODE=liquid-reference');
++  it.skip('needs VITE_LFM3_QUALIFICATION_MODE=liquid-reference and VITE_LFM3_LIQUID_TEST');
+ }
+diff --git a/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts b/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
+index c860cb7..b49c5ba 100644
+--- a/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/audio-qualification.gpu.test.ts
+@@ -26,7 +26,7 @@ import {
+   sine,
+ } from './audio/qualification/signals.ts';
+ import { MEMORY_LIMITS, WER_LIMITS } from './audio/qualification/thresholds.ts';
+-import { wordErrorRate } from './audio/qualification/wer.ts';
++import { normalizeWords, wordErrorRate } from './audio/qualification/wer.ts';
+ 
+ let loaded: LoadedAudio;
+ 
+@@ -157,6 +157,24 @@ describe.skipIf(MODE !== 'audio-streaming')('speech streaming, cancellation and
+     expect(result.audioFrames).toBe(3);
+   }, 120_000);
+ 
++  it('reports a text longer than the frame budget as length, not as a finished utterance', async () => {
++    const text = SENTENCES.join(' ');
++    const generation = loaded.audio.speak(text, { seed: STREAM_SEED });
++    for await (const chunk of generation) expect(chunk.length).toBeGreaterThan(0);
++    const result = await generation.result;
++    const heard = await loaded.audio.transcribe(await resampleAudio(result.samples, 24_000));
++    report('streaming-frame-budget', {
++      finishReason: result.finishReason,
++      audioFrames: result.audioFrames,
++      seconds: round(result.samples.length / 24_000, 2),
++      wordsSpoken: normalizeWords(heard).length,
++      wordsRequested: normalizeWords(text).length,
++    });
++    expect(result.audioFrames).toBeLessThanOrEqual(256);
++    expect(result.finishReason).toBe('length');
++    expect(result.audioFrames).toBe(256);
++  }, 600_000);
++
+   it('cancels on an early break, frees its buffers and the next speech is unchanged', async () => {
+     const reference = await speakAll(FOX);
+     const bytesAfterSuccess = gpuBufferBytes();
+diff --git a/packages/runntime/test/zoo/lfm3/audio-qualification.mjs b/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
+index 76a3026..d5a91bc 100644
+--- a/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
++++ b/packages/runntime/test/zoo/lfm3/audio-qualification.mjs
+@@ -1,7 +1,8 @@
+ /** Runs the audio qualification from local weights and prints one JSON result.
+  *  Usage: node test/zoo/lfm3/audio-qualification.mjs [--mode <name>]... [--voices a,b] [--seeds 1,2] [--out file]
+  *  Modes: audio-roundtrip, audio-streaming, audio-input, audio-memory (default: these four) and
+- *  audio-liquid-reference, which compares against the pinned Liquid engine and runs only when named.
++ *  two modes against the pinned Liquid engine that run only when named: audio-liquid-reference
++ *  (encoder, depth codes, codec PCM) and audio-liquid-roundtrip (the engine's own speech round trip).
+  *  Run from packages/runntime. Exits non-zero when any mode fails or a request would leave the machine. */
+ 
+ import { spawnSync } from 'node:child_process';
+@@ -20,7 +21,8 @@ import { join } from 'node:path';
+ import { parseArgs } from 'node:util';
+ 
+ const DEFAULT_MODES = ['audio-roundtrip', 'audio-streaming', 'audio-input', 'audio-memory'];
+-const MODES = [...DEFAULT_MODES, 'audio-liquid-reference'];
++const LIQUID_MODES = ['audio-liquid-reference', 'audio-liquid-roundtrip'];
++const MODES = [...DEFAULT_MODES, ...LIQUID_MODES];
+ const LIQUID_ENGINE = {
+   file: 'lfm3-engine.js',
+   instrumentedFile: 'lfm3-engine-instrumented.js',
+@@ -51,6 +53,7 @@ const WEIGHTS = {
+ const MARKER = 'LFM3_AUDIO_QUALIFICATION ';
+ // The Liquid comparison test prints its own line; it is carried under the name `operator-reference`.
+ const OPERATOR_MARKER = 'LFM3_AUDIO_OPERATOR_REFERENCE ';
++const LIQUID_MARKER = 'LFM3_LIQUID_AUDIO_REFERENCE ';
+ 
+ const { values } = parseArgs({
+   options: {
+@@ -136,7 +139,9 @@ async function prepareLiquid() {
+     clips: FROZEN_CLIPS,
+   };
+ }
+-const liquidInputs = modes.includes('audio-liquid-reference') ? await prepareLiquid() : undefined;
++const liquidInputs = modes.some((mode) => LIQUID_MODES.includes(mode))
++  ? await prepareLiquid()
++  : undefined;
+ 
+ const results = [];
+ for (const mode of modes) {
+@@ -151,7 +156,7 @@ for (const mode of modes) {
+       'run',
+       '--project',
+       'gpu',
+-      mode === 'audio-liquid-reference'
++      LIQUID_MODES.includes(mode)
+         ? 'test/zoo/lfm3/audio-liquid-reference.gpu.test.ts'
+         : 'test/zoo/lfm3/audio-qualification.gpu.test.ts',
+       '--reporter=default',
+@@ -163,7 +168,10 @@ for (const mode of modes) {
+       maxBuffer: 1 << 28,
+       env: {
+         ...process.env,
+-        VITE_LFM3_QUALIFICATION_MODE: mode === 'audio-liquid-reference' ? 'liquid-reference' : mode,
++        VITE_LFM3_QUALIFICATION_MODE: LIQUID_MODES.includes(mode) ? 'liquid-reference' : mode,
++        VITE_LFM3_LIQUID_TEST:
++          mode === 'audio-liquid-roundtrip' ? 'liquid-reference' : 'audio-reference',
++        VITE_LFM3_LIQUID_AUDIO_CAPTURE: '1',
+         VITE_LFM3_LIQUID_ENGINE_URL: `/test/.weights/${LIQUID_ENGINE.instrumentedFile}`,
+         VITE_LFM3_LIQUID_MODEL_URL: `/test/.weights/${WEIGHTS.model}`,
+         VITE_LFM3_LIQUID_PROJECTOR_URL: `/test/.weights/${WEIGHTS.projector}`,
+@@ -181,6 +189,13 @@ for (const mode of modes) {
+   for (const line of log.split('\n')) {
+     const at = line.indexOf(MARKER);
+     if (at >= 0) reports.push(JSON.parse(line.slice(at + MARKER.length)));
++    const liquid = line.indexOf(LIQUID_MARKER);
++    if (liquid >= 0) {
++      reports.push({
++        name: 'liquid-round-trip',
++        cases: JSON.parse(line.slice(liquid + LIQUID_MARKER.length)),
++      });
++    }
+     const operator = line.indexOf(OPERATOR_MARKER);
+     if (operator >= 0) {
+       reports.push({
+diff --git a/packages/runntime/test/zoo/lfm3/audio/qualification/harness.ts b/packages/runntime/test/zoo/lfm3/audio/qualification/harness.ts
+index b6e3d93..6daaf00 100644
+--- a/packages/runntime/test/zoo/lfm3/audio/qualification/harness.ts
++++ b/packages/runntime/test/zoo/lfm3/audio/qualification/harness.ts
+@@ -17,6 +17,7 @@ declare global {
+     readonly VITE_LFM3_TOKENIZER_URL?: string;
+     readonly VITE_LFM3_AUDIO_SEEDS?: string;
+     readonly VITE_LFM3_AUDIO_VOICES?: string;
++    readonly VITE_LFM3_LIQUID_TEST?: string;
+   }
+   interface ImportMeta {
+     readonly env: ImportMetaEnv;
+diff --git a/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts b/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+index f0227a0..0595ba4 100644
+--- a/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
++++ b/packages/runntime/test/zoo/lfm3/liquid-reference.gpu.test.ts
+@@ -108,10 +108,13 @@ declare global {
+ }
+ 
+ const MODE = import.meta.env.VITE_LFM3_QUALIFICATION_MODE;
+-const ENGINE_URL = import.meta.env.VITE_LFM3_LIQUID_ENGINE_URL;
+-const LIQUID_MODEL_URL = import.meta.env.VITE_LFM3_LIQUID_MODEL_URL;
+-const LIQUID_PROJECTOR_URL = import.meta.env.VITE_LFM3_LIQUID_PROJECTOR_URL;
+-const AUDIO_INPUT_BASE_URL = import.meta.env.VITE_LFM3_LIQUID_AUDIO_INPUT_BASE_URL;
++// The engine resolves a bare path against the model's directory, so every URL is made absolute.
++const absolute = (url: string | undefined): string | undefined =>
++  url === undefined ? undefined : new URL(url, location.href).href;
++const ENGINE_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_ENGINE_URL);
++const LIQUID_MODEL_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_MODEL_URL);
++const LIQUID_PROJECTOR_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_PROJECTOR_URL);
++const AUDIO_INPUT_BASE_URL = absolute(import.meta.env.VITE_LFM3_LIQUID_AUDIO_INPUT_BASE_URL);
+ const AUDIO_CAPTURE = import.meta.env.VITE_LFM3_LIQUID_AUDIO_CAPTURE === '1';
+ const LEVEL_DIAGNOSTIC = import.meta.env.VITE_LFM3_LIQUID_LEVEL_DIAGNOSTIC === '1';
+ const NATIVE_SPEECH_URL = import.meta.env.VITE_LFM3_NATIVE_SPEECH_URL;
