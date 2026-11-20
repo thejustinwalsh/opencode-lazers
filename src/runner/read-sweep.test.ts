@@ -156,7 +156,7 @@ test("a recovery pass over the running plans reads their ids, not a thousand pla
   expect(detector.evaluate("scheduler", fence)).toEqual([])
   after.stop()
 
-  expect(f.store.planHeads(["running"]).map((plan) => plan.id)).toEqual(oldIDs)
+  expect([...f.store.planHeads(["running"])].map((plan) => plan.id)).toEqual(oldIDs)
   expect(after.of(/runner_plans/).rows).toBeLessThanOrEqual(before.of(/runner_plans/).rows)
   expect(before.of(/runner_plans/).bytes).toBeGreaterThan(13 * PADDING.length)
   show("detector", before.of(/runner_plans/), after.of(/runner_plans/))

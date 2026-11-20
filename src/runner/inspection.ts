@@ -561,7 +561,7 @@ export function inspectPlan(
   if (input.full) {
     if (!input.planID)
       return {
-        plans: store.plans().map((plan) => {
+        plans: Array.from(store.eachPlan(), (plan) => {
           const prerequisiteFacts = waitingOnPlans(store, plan)
           return {
             ...plan,

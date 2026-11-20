@@ -806,6 +806,8 @@ function retireUnusedIndexes(db: Database) {
 }
 
 const DETAIL_PAGE_LIMIT = 200
+/** Plans per read when walking every plan: a page size, not a limit on how many are walked. */
+const PLAN_PAGE = 1_000
 export type DetailPage = {
   limit?: number
   activityBefore?: number
@@ -1431,29 +1433,55 @@ export class RunnerStore {
       })
     })
   }
-  plans() {
-    return this.read((db) =>
-      db
-        .query<PlanRow, [string]>(
-          `SELECT * FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
-        )
-        .all(this.repository.projectDirectory),
-    )
+  /**
+   * Walk plans in display order, one page per read, resuming from the last row's (priority, rowid)
+   * key. `columns` are the plan columns the caller uses; `states` filters in SQL. No plan is
+   * skipped however many the project holds.
+   */
+  private *planPages<Row extends object>(
+    columns: string,
+    states?: readonly string[],
+  ): Generator<Row> {
+    if (states && !states.length) return
+    const priority = planPrioritySortSQL("body")
+    const filter = states ? ` AND state IN (${states.map(() => "?").join(",")})` : ""
+    let cursor: { key: number; rowid: number } | undefined
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<Row & { plan_key: number; plan_rowid: number }, (string | number)[]>(
+            `SELECT ${columns},${priority} AS plan_key,rowid AS plan_rowid FROM runner_plans
+             WHERE project_directory=?${filter}
+             ${cursor ? `AND (${priority}>? OR (${priority}=? AND rowid>?))` : ""}
+             ORDER BY ${priority},rowid LIMIT ${PLAN_PAGE}`,
+          )
+          .all(
+            this.repository.projectDirectory,
+            ...(states ?? []),
+            ...(cursor ? [cursor.key, cursor.key, cursor.rowid] : []),
+          ),
+      )
+      for (const { plan_key, plan_rowid, ...row } of page) yield row as unknown as Row
+      if (page.length < PLAN_PAGE) return
+      const last = page.at(-1)!
+      cursor = { key: last.plan_key, rowid: last.plan_rowid }
+    }
+  }
+  /** Every plan of the project with its body, in display order, a page at a time. */
+  eachPlan(): Generator<PlanRow> {
+    return this.planPages<PlanRow>("*")
+  }
+  /** Every plan of the project; materializes all bodies, so tests and small tools only. */
+  plans(): PlanRow[] {
+    return [...this.eachPlan()]
   }
   /**
-   * Ids and states of the project's plans in the given states, in display order. A tick that only
-   * filters by state reads this instead of materializing every plan body; load one body with plan().
+   * Ids and states of the project's plans in the given states, in display order, a page at a
+   * time. A tick that only filters by state walks this instead of materializing plan bodies;
+   * load one body with plan().
    */
-  planHeads(states: readonly string[]): { id: string; state: PlanLifecycleState }[] {
-    if (!states.length) return []
-    return this.read((db) =>
-      db
-        .query<{ id: string; state: PlanLifecycleState }, string[]>(
-          `SELECT id,state FROM runner_plans WHERE project_directory=? AND state IN (${states.map(() => "?").join(",")})
-           ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
-        )
-        .all(this.repository.projectDirectory, ...states),
-    )
+  planHeads(states: readonly string[]): Generator<{ id: string; state: PlanLifecycleState }> {
+    return this.planPages<{ id: string; state: PlanLifecycleState }>("id,state", states)
   }
   /** The first plan id in display order, without its body. */
   anchorPlanID(): string | null {

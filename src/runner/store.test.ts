@@ -991,7 +991,7 @@ test("F-S4-2 live reservations and runnable pages survive more than 1000 retaine
       VALUES('hidden-live',?,?,1,'session','message',?,'base','{}','running',1)`,
     ).run(receipt.planID, taskID, f.projectDirectory)
   })
-  expect(f.store.plans().some((plan) => plan.id === receipt.planID)).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === receipt.planID)).toBe(true)
   expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual(["hidden-live"])
   const rows = [...f.store.runnablePlans(new Set(["integrated", "cleanup-blocked"]))]
   expect(rows).toHaveLength(1006)
@@ -1040,7 +1040,7 @@ test("F-S4-2 transitive dependent ownership is found outside the display window"
       VALUES('old-attempt','dependent',?,1,'session','message',?,'base','{}','accepted',1)`,
     ).run(task.id, f.projectDirectory)
   })
-  expect(f.store.plans().some((plan) => plan.id === "dependent")).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === "dependent")).toBe(true)
   expect(f.store.startedDependentPlan(receipt.planID)?.id).toBe("dependent")
   f.store.atomic((db) =>
     db.query("UPDATE runner_plans SET project_directory='/foreign' WHERE id='dependent'").run(),
@@ -1074,9 +1074,9 @@ test("terminal cleanup discovery includes plans outside the display limit", () =
     db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(cancelled)
   })
 
-  expect(f.store.plans()).toHaveLength(1_000)
-  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cleanupBlocked)
-  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cancelled)
+  expect(f.store.plans()).toHaveLength(1_003)
+  expect(f.store.plans().map((plan) => plan.id)).toContain(cleanupBlocked)
+  expect(f.store.plans().map((plan) => plan.id)).toContain(cancelled)
   expect(f.store.terminalCleanupPlanIDs()).toEqual([cleanupBlocked, cancelled])
 })
 

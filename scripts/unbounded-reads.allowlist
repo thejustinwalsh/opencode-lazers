@@ -161,7 +161,6 @@ src/runner/startup-settlement.ts:346 | star | runner_effects | one row by primar
 src/runner/store.ts:434 | all | runner_nodes | batch of at most 100 plan ids | SELECT task_id FROM runner_nodes WHERE plan_id IN (${batch.map(() => "?").join(",")})
 src/runner/store.ts:1328 | star | runner_plans | one row by primary key | SELECT * FROM runner_plans WHERE id=? AND project_directory=?
 src/runner/store.ts:1348 | star+all | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal
-src/runner/store.ts:1438 | star | runner_plans | plans() for the inspection full view; LIMIT 1000 | SELECT * FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL(
 src/runner/store.ts:1528 | star | runner_plans | LIMIT 1 | SELECT p.* FROM runner_plans p JOIN dependents d ON d.id=p.id WHERE p.id<>? AND EXISTS (SE
 src/runner/store.ts:1554 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT p.id FROM runner_plans p WHERE p.project_directory=? AND p.artifact IS NOT NULL AND
 src/runner/store.ts:1564 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT id FROM runner_plans WHERE project_directory=? AND state IN ('cleanup-blocked','can
