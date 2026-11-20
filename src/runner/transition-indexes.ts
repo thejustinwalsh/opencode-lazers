@@ -40,25 +40,26 @@ const inFlightKey = Symbol.for("lazers.transition-indexes.v1")
 type GlobalWithGuard = typeof globalThis & { [inFlightKey]?: Map<string, Promise<void>> }
 const inFlight = ((globalThis as GlobalWithGuard)[inFlightKey] ??= new Map<string, Promise<void>>())
 
+type Options = { inlineRowLimit?: number; workerURL?: URL; onSpawn?: () => void }
+
 /**
- * Ensure the indexes exist. Small tables are indexed inline; large ones are built by a
- * worker on its own connection while the main connection (busy_timeout=0, yielding
- * retries) keeps serving. The returned promise settles when the indexes exist or the
- * background build failed (failure is non-fatal: queries stay correct, only slower).
+ * Inside the caller's write transaction: build small tables inline, and report whether a
+ * worker is needed. The worker is never spawned here, because it would wait on the lock
+ * this transaction holds.
  */
-export function ensureTransitionIndexes(
-  db: Database,
-  path: string,
-  options: { inlineRowLimit?: number; workerURL?: URL; onSpawn?: () => void } = {},
-): Promise<void> {
-  if (!missingTransitionIndexes(db).length) return Promise.resolve()
+function planTransitionIndexes(db: Database, path: string, options: Options): boolean {
+  if (!missingTransitionIndexes(db).length) return false
   // AUTOINCREMENT ids make MAX(id) an O(1) upper bound on the row count.
   const rows =
     db.query<{ n: number | null }, []>("SELECT MAX(id) AS n FROM runner_transitions").get()?.n ?? 0
   if (rows <= (options.inlineRowLimit ?? INLINE_INDEX_ROW_LIMIT) || path === ":memory:") {
     createTransitionIndexes(db)
-    return Promise.resolve()
+    return false
   }
+  return true
+}
+
+function spawnTransitionIndexBuild(path: string, options: Options): Promise<void> {
   const running = inFlight.get(path)
   if (running) return running
   const build = new Promise<void>((resolve) => {
@@ -80,4 +81,19 @@ export function ensureTransitionIndexes(
   }).finally(() => inFlight.delete(path))
   inFlight.set(path, build)
   return build
+}
+
+/**
+ * Ensure the indexes exist. Small tables are indexed inline in one write transaction; large
+ * ones are built by a worker on its own connection, spawned only after that transaction has
+ * committed, while the main connection (busy_timeout=0, yielding retries) keeps serving. The
+ * returned promise settles when the indexes exist or the background build failed (failure is
+ * non-fatal: queries stay correct, only slower).
+ */
+export function ensureTransitionIndexes(
+  repository: { readonly path: string; atomic<T>(run: (db: Database) => T): T },
+  options: Options = {},
+): Promise<void> {
+  const needsWorker = repository.atomic((db) => planTransitionIndexes(db, repository.path, options))
+  return needsWorker ? spawnTransitionIndexBuild(repository.path, options) : Promise.resolve()
 }
