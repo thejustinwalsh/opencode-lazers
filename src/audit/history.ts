@@ -2,7 +2,7 @@ import { canonical } from "../identity.ts"
 import { realpathSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
-import { mkdir, writeFile, rename } from "node:fs/promises"
+import { chmod, mkdir, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 export type AuditActor = { sessionID: string; agent: string }
@@ -268,6 +268,31 @@ function runStartTransaction(
   return { created: true, run }
 }
 
+function insertFindings(
+  db: Database,
+  runID: string,
+  analysis: string,
+  capturedAt: number,
+  findings: AuditFinding[],
+) {
+  const insert = db.query(
+    "INSERT OR REPLACE INTO audit_findings(run_id,analysis,ordinal,finding_id,section_at,category,path,line,details) VALUES(?,?,?,?,?,?,?,?,?)",
+  )
+  findings.forEach((f, ordinal) =>
+    insert.run(
+      runID,
+      analysis,
+      ordinal,
+      f.findingID,
+      capturedAt,
+      f.category,
+      f.path,
+      f.line,
+      JSON.stringify(f.details),
+    ),
+  )
+}
+
 /** The task database is authoritative. JSON files are replaceable exports. */
 export class AuditHistory {
   constructor(readonly repository: TaskRepository) {
@@ -293,6 +318,13 @@ export class AuditHistory {
         created_at INTEGER NOT NULL, UNIQUE(project_directory,session_id,request_id)
       );
       CREATE INDEX IF NOT EXISTS audit_decisions_finding ON audit_decisions(run_id,finding_id,id);
+      CREATE TABLE IF NOT EXISTS audit_findings (
+        run_id TEXT NOT NULL REFERENCES audit_runs(id), analysis TEXT NOT NULL,
+        ordinal INTEGER NOT NULL, finding_id TEXT NOT NULL, section_at INTEGER NOT NULL,
+        category TEXT NOT NULL, path TEXT, line INTEGER, details TEXT NOT NULL,
+        PRIMARY KEY(run_id,analysis,ordinal)
+      );
+      CREATE INDEX IF NOT EXISTS audit_findings_id ON audit_findings(run_id,finding_id);
     `),
     )
   }
@@ -326,31 +358,64 @@ export class AuditHistory {
     if (run.state !== "collecting") throw new Error("Audit run is already finished")
     const data = object(report)
     const summary = data?.summary ?? data?.stats ?? { totalFlags: data?.total_flags ?? null }
-    this.repository.atomic((db) =>
-      db
-        .query("INSERT INTO audit_sections VALUES(?,?,?,?,?,?,?)")
-        .run(
+    const findings = auditFindings(runID, analysis, report)
+    const capturedAt = Date.now()
+    this.repository.atomic((db) => {
+      db.query("INSERT INTO audit_sections VALUES(?,?,?,?,?,?,?)").run(
+        runID,
+        analysis,
+        JSON.stringify(report ?? null),
+        JSON.stringify(summary),
+        error ?? null,
+        capturedAt,
+        findings.length,
+      )
+      insertFindings(db, runID, analysis, capturedAt, findings)
+    })
+  }
+
+  /**
+   * Findings are indexed once, when their section is stored. A run stored before the index
+   * existed is indexed on first read: its sections are parsed once, then never again.
+   */
+  private indexFindings(runID: string) {
+    this.repository.atomic((db) => {
+      const stale = db
+        .query<{ analysis: string; payload: string; captured_at: number }, [string]>(
+          `SELECT s.analysis,s.payload,s.captured_at FROM audit_sections s WHERE s.run_id=?
+           AND s.finding_count != (SELECT COUNT(*) FROM audit_findings f WHERE f.run_id=s.run_id AND f.analysis=s.analysis)`,
+        )
+        .all(runID)
+      for (const row of stale) {
+        db.query("DELETE FROM audit_findings WHERE run_id=? AND analysis=?").run(
           runID,
-          analysis,
-          JSON.stringify(report ?? null),
-          JSON.stringify(summary),
-          error ?? null,
-          Date.now(),
-          auditFindings(runID, analysis, report).length,
-        ),
-    )
+          row.analysis,
+        )
+        insertFindings(
+          db,
+          runID,
+          row.analysis,
+          row.captured_at,
+          auditFindings(runID, row.analysis, JSON.parse(row.payload)),
+        )
+      }
+    })
   }
   finish(runID: string, interrupted?: string, finishedAt = Date.now()) {
     const run = this.get(runID)
     if (run.state !== "collecting") return run
-    const sections = this.sections(runID)
+    // Existence in SQL: no section report is read or parsed to learn whether one failed.
+    const failed = this.repository.atomic(
+      (db) =>
+        db
+          .query<{ one: number }, [string]>(
+            "SELECT 1 AS one FROM audit_sections WHERE run_id=? AND error IS NOT NULL LIMIT 1",
+          )
+          .get(runID) !== null,
+    )
     run.finishedAt = finishedAt
     run.error = interrupted ?? null
-    run.state = interrupted
-      ? "interrupted"
-      : sections.some((s) => s.error)
-        ? "partial"
-        : "completed"
+    run.state = interrupted ? "interrupted" : failed ? "partial" : "completed"
     this.repository.atomic((db) => {
       db.query("UPDATE audit_runs SET payload=? WHERE id=? AND project_directory=?").run(
         JSON.stringify(run),
@@ -451,16 +516,48 @@ export class AuditHistory {
       includeReports?: boolean
     } = {},
   ) {
-    const run = this.get(runID),
-      sections = this.sections(runID)
-    const findings = sections
-      .filter((s) => !input.analysis || s.analysis === input.analysis)
-      .flatMap((s) =>
-        auditFindings(runID, s.analysis, s.report).map((f) => ({ ...f, observedAt: s.capturedAt })),
-      )
-      .filter((f) => !input.path || JSON.stringify(f.details).includes(input.path))
+    const run = this.get(runID)
+    this.indexFindings(runID)
     const offset = input.offset ?? 0,
       limit = input.limit ?? 50
+    const where = `run_id=? ${input.analysis ? "AND analysis=?" : ""} ${input.path ? "AND instr(details,?)>0" : ""}`
+    const filter = [
+      runID,
+      ...(input.analysis ? [input.analysis] : []),
+      ...(input.path ? [input.path] : []),
+    ]
+    // Paged in SQL: only the requested window is read and parsed.
+    const { rows, total } = this.repository.atomic((db) => ({
+      total: db
+        .query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM audit_findings WHERE ${where}`)
+        .get(...filter)!.n,
+      rows: db
+        .query<
+          {
+            finding_id: string
+            analysis: string
+            category: string
+            path: string | null
+            line: number | null
+            details: string
+            section_at: number
+          },
+          (string | number)[]
+        >(
+          `SELECT finding_id,analysis,category,path,line,details,section_at FROM audit_findings
+           WHERE ${where} ORDER BY section_at,analysis,ordinal LIMIT ? OFFSET ?`,
+        )
+        .all(...filter, limit, offset),
+    }))
+    const findings = rows.map((row) => ({
+      findingID: row.finding_id,
+      analysis: row.analysis,
+      category: row.category,
+      path: row.path,
+      line: row.line,
+      details: JSON.parse(row.details) as unknown,
+      observedAt: row.section_at,
+    }))
     const decisions = this.repository.atomic((db) =>
       db
         .query<{ payload: string; created_at: number; session_id: string }, [string]>(
@@ -475,24 +572,31 @@ export class AuditHistory {
     )
     return {
       run: this.summary(run),
-      findings: findings
-        .slice(offset, offset + limit)
-        .map((f) => ({ ...f, decisions: decisions.filter((d) => d.findingID === f.findingID) })),
-      totalFindings: findings.length,
-      nextOffset: offset + limit < findings.length ? offset + limit : null,
+      findings: findings.map((f) => ({
+        ...f,
+        decisions: decisions.filter((d) => d.findingID === f.findingID),
+      })),
+      totalFindings: total,
+      nextOffset: offset + limit < total ? offset + limit : null,
       ...(input.includeReports
-        ? { reports: Object.fromEntries(sections.map((s) => [s.analysis, s.report])) }
+        ? {
+            reports: Object.fromEntries(this.sections(runID).map((s) => [s.analysis, s.report])),
+          }
         : {}),
     }
   }
   decide(input: AuditDecision, actor: AuditActor) {
     const run = this.get(input.runID)
-    if (
-      !this.sections(run.runID).some((s) =>
-        auditFindings(run.runID, s.analysis, s.report).some((f) => f.findingID === input.findingID),
-      )
+    this.indexFindings(run.runID)
+    const known = this.repository.atomic(
+      (db) =>
+        db
+          .query<{ one: number }, [string, string]>(
+            "SELECT 1 AS one FROM audit_findings WHERE run_id=? AND finding_id=? LIMIT 1",
+          )
+          .get(run.runID, input.findingID) !== null,
     )
-      throw new Error("Finding not found in this audit run")
+    if (!known) throw new Error("Finding not found in this audit run")
     if (input.followupRunID) {
       const followup = this.get(input.followupRunID)
       if (followup.taskID !== run.taskID) throw new Error("Follow-up belongs to a different task")
@@ -531,17 +635,50 @@ export class AuditHistory {
   reportPath(runID: string) {
     return join(dirname(this.repository.path), "audits", `${runID}.json`)
   }
+  /**
+   * Writes the export section by section: one report is read, serialized and written at a time,
+   * so the file's size is never held in memory. The bytes equal `JSON.stringify(value, null, 2)`
+   * of `{ ...run, schemaVersion: 2, reports }`.
+   */
   async export(runID: string) {
     const run = this.summary(this.get(runID))
-    const reports = Object.fromEntries(this.sections(runID).map((s) => [s.analysis, s.report]))
     const path = this.reportPath(runID),
       temporary = `${path}.${crypto.randomUUID()}.tmp`
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    await writeFile(
-      temporary,
-      JSON.stringify({ ...run, schemaVersion: 2, reports }, null, 2) + "\n",
-      { mode: 0o600 },
-    )
+    const head = JSON.stringify({ ...run, schemaVersion: 2 }, null, 2)
+    const writer = Bun.file(temporary).writer()
+    try {
+      writer.write(`${head.slice(0, -2)},\n  "reports": {`)
+      let first = true
+      const names = this.repository.atomic((db) =>
+        db
+          .query<{ analysis: string }, [string]>(
+            "SELECT analysis FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
+          )
+          .all(runID)
+          .map((row) => row.analysis),
+      )
+      for (const analysis of names) {
+        const payload = this.repository.atomic(
+          (db) =>
+            db
+              .query<{ payload: string }, [string, string]>(
+                "SELECT payload FROM audit_sections WHERE run_id=? AND analysis=?",
+              )
+              .get(runID, analysis)!.payload,
+        )
+        const body = JSON.stringify(JSON.parse(payload), null, 2).replaceAll("\n", "\n    ")
+        writer.write(`${first ? "\n" : ",\n"}    ${JSON.stringify(analysis)}: ${body}`)
+        first = false
+      }
+      writer.write(first ? "}\n}\n" : "\n  }\n}\n")
+      await writer.end()
+    } catch (error) {
+      await Promise.resolve(writer.end()).catch(() => 0)
+      await rm(temporary, { force: true })
+      throw error
+    }
+    await chmod(temporary, 0o600)
     await rename(temporary, path)
     return path
   }

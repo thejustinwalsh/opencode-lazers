@@ -97,6 +97,100 @@ function fixture() {
     open,
   }
 }
+const many = (count: number) => ({
+  summary: { total_issues: count },
+  unused_exports: Array.from({ length: count }, (_, index) => ({
+    path: `src/f${index}.ts`,
+    line: index + 1,
+    export_name: `e${index}`,
+  })),
+})
+
+test("finish, detail, decide and export read findings from an index and never reparse every section", async () => {
+  const f = fixture()
+  const start = f.history.start({ requestID: "indexed", workspace: f.workspace }, f.actor)
+  const runID = start.run.runID
+  f.history.section(runID, "deadCode", many(30))
+  f.history.section(runID, "health", { summary: {}, complexity: [{ path: "src/x.ts", line: 2 }] })
+
+  const parses: string[] = []
+  const parse = JSON.parse
+  JSON.parse = ((text: string, ...rest: []) => {
+    parses.push(text.slice(0, 40))
+    return parse(text, ...rest)
+  }) as typeof JSON.parse
+  try {
+    const finished = f.history.finish(runID)
+    expect(finished.state).toBe("completed")
+    // finish parses the run payload only: no section report.
+    expect(parses.filter((text) => text.includes("unused_exports"))).toEqual([])
+
+    parses.length = 0
+    const page = f.history.detail(runID, { analysis: "deadCode", limit: 5, offset: 10 })
+    expect(page.totalFindings).toBe(30)
+    expect(page.findings.map((x) => x.path)).toEqual(
+      [10, 11, 12, 13, 14].map((index) => `src/f${index}.ts`),
+    )
+    expect(page.nextOffset).toBe(15)
+    // Five findings were parsed, not 31 findings in two whole reports.
+    expect(parses.filter((text) => text.startsWith('{"path"'))).toHaveLength(5)
+    expect(parses.some((text) => text.includes("unused_exports"))).toBe(false)
+
+    parses.length = 0
+    f.history.decide(
+      {
+        requestID: "d1",
+        runID,
+        findingID: page.findings[0]!.findingID,
+        disposition: "fixed",
+        note: "Removed the export; behavior tests passed",
+      },
+      f.actor,
+    )
+    expect(parses.some((text) => text.includes("unused_exports"))).toBe(false)
+  } finally {
+    JSON.parse = parse
+  }
+  expect(f.history.detail(runID, { path: "f2.ts" }).totalFindings).toBe(1)
+  expect(() =>
+    f.history.decide(
+      {
+        requestID: "d2",
+        runID,
+        findingID: `${runID}/deadCode/unused_exports/999`,
+        disposition: "fixed",
+        note: "Removed the export; behavior tests passed",
+      },
+      f.actor,
+    ),
+  ).toThrow("Finding not found")
+
+  const path = await f.history.export(runID)
+  const expected = JSON.stringify(
+    {
+      ...f.history.summary(f.history.get(runID)),
+      schemaVersion: 2,
+      reports: Object.fromEntries(f.history.sections(runID).map((s) => [s.analysis, s.report])),
+    },
+    null,
+    2,
+  )
+  expect(readFileSync(path, "utf8")).toBe(`${expected}\n`)
+})
+
+test("a run stored before the findings index existed is indexed on first read", () => {
+  const f = fixture()
+  const start = f.history.start({ requestID: "legacy", workspace: f.workspace }, f.actor)
+  f.history.section(start.run.runID, "deadCode", many(4))
+  f.repository.atomic((db) => db.query("DELETE FROM audit_findings").run())
+  expect(f.history.detail(start.run.runID).totalFindings).toBe(4)
+  expect(
+    f.repository.atomic(
+      (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_findings").get()!.n,
+    ),
+  ).toBe(4)
+})
+
 const report = {
   schema_version: 1,
   summary: { total_issues: 2 },
