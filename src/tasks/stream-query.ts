@@ -14,6 +14,7 @@ import { bucketsFor } from "./schedule/key.ts"
 import { BUCKETS } from "./schedule/buckets.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
 import { TaskStateFilter, effectiveTaskStateFilter as effective } from "./state-filter.ts"
+import { backfillPage } from "./schedule/backfill.ts"
 import { summaryOf } from "./summary-row.ts"
 
 /**
@@ -123,19 +124,25 @@ async function waitsOf(pool: StreamPool, project: string, taskID: string, count:
 }
 
 export async function queryTaskPage(
-  repository: Pick<TaskRepository, "path" | "projectDirectory" | "get" | "read">,
+  repository: Pick<TaskRepository, "path" | "projectDirectory" | "get" | "read" | "atomic">,
   input: unknown,
 ): Promise<TaskToolPage> {
   const query = AgentQueryInput.parse(input)
-  const indexed = repository.read(
-    (db) =>
-      db
-        .query<{ ready: number }, [string]>(
-          "SELECT ready FROM task_schedule_state WHERE project_directory=?",
-        )
-        .get(repository.projectDirectory)?.ready === 1,
-  )
-  if (!indexed) throw new Error("Tasks are being indexed; ask again shortly.")
+  // A fresh process has no schedule owner yet: index the project here, a page per write
+  // transaction, so a tool never answers that tasks which exist are missing.
+  const ready = () =>
+    repository.read(
+      (db) =>
+        db
+          .query<{ ready: number }, [string]>(
+            "SELECT ready FROM task_schedule_state WHERE project_directory=?",
+          )
+          .get(repository.projectDirectory)?.ready === 1,
+    )
+  while (!ready())
+    repository.atomic((db) => {
+      backfillPage(db, repository.projectDirectory)
+    })
   const lease = acquireReaderPool(repository.path)
   try {
     const stream = openStream(lease.pool, taskScheduleSource, {
