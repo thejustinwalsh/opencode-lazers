@@ -1,4 +1,3 @@
-import { sessionTitle } from "./session-title.ts"
 import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
@@ -18,10 +17,12 @@ import {
   checkSettlementProblem,
   errorText,
   isRerunnableEffect,
+  sessionID,
 } from "./runtime-helpers.ts"
 import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
+import { ArchitectOwnership } from "./architect-ownership.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -30,7 +31,7 @@ import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
-import { agentRouteReader, architectSessionModel } from "../models/agent-route-apply.ts"
+
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
@@ -114,10 +115,7 @@ import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attri
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
   architectCacheWindowMs,
-  architectContextTokens,
   architectReuseMaxContextTokens,
-  routeArchitect,
-  type ArchitectRoute,
   type ArchitectRoutingOptions,
 } from "./architect-routing.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
@@ -236,7 +234,6 @@ import {
 } from "./retained-verification/procedure.ts"
 import { sameProject } from "../project-key.ts"
 
-const sessionID = () => `ses_${crypto.randomUUID().replaceAll("-", "")}`
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 
 /** Activity completion means a receipt exists, not that its process tree is idle. */
@@ -671,6 +668,7 @@ export class TaskRuntime {
   readonly progress: ProgressRecorder
   private readonly core: RuntimeCore
   private readonly journal: RuntimeJournal
+  private readonly ownership: ArchitectOwnership
   private running = false
   private stopped = false
   private tickRequested = false
@@ -769,6 +767,10 @@ export class TaskRuntime {
       startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
       startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
       holdAdoption: (...args) => this.adoptionExecution.holdAdoption(...args),
+    })
+    this.ownership = new ArchitectOwnership(this.core, {
+      architectRouting: this.architectRouting,
+      journal: this.journal,
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -5859,135 +5861,11 @@ export class TaskRuntime {
   }
 
   private validArchitect(session: HostSession | null | undefined): session is HostSession {
-    return Boolean(
-      session &&
-      !session.archived &&
-      session.agent === "architect" &&
-      session.projectID === this.projectID,
-    )
+    return this.ownership.validArchitect(session)
   }
 
-  private async ensureArchitectOwner(
-    plan: PlanRow,
-    previous: HostSession | null | undefined,
-    adopt = true,
-  ): Promise<HostSession> {
-    const current = await this.host.session(plan.owner)
-    if (this.validArchitect(current)) return current
-    // A user-set pause: never create, resume or fork an Architect session.
-    if (this.store.architectContactPaused()) throw new Error("Architect contact is paused")
-
-    let continuation = this.store.continuation(plan.id)
-    let priorContinuation: HostSession | null = null
-    if (continuation) {
-      priorContinuation = await this.host.session(continuation.session_id)
-      if (
-        this.validArchitect(priorContinuation) &&
-        this.matchesContinuation(priorContinuation, plan.id)
-      ) {
-        if (adopt) this.adoptArchitectOwner(plan, priorContinuation.id)
-        return priorContinuation
-      }
-    }
-
-    let next:
-      | { session_id: string; parent_id: string | null; directory: string; model: string | null }
-      | undefined
-    if (!continuation || priorContinuation) {
-      const source = previous?.projectID === this.projectID ? previous : current
-      const model = source?.projectID === this.projectID ? source.model : undefined
-      next = {
-        session_id: sessionID(),
-        parent_id: null,
-        directory: this.directory,
-        model: model ? JSON.stringify(model) : (continuation?.model ?? null),
-      }
-      continuation = continuation
-        ? this.store.replaceContinuation(plan.id, continuation.session_id, next)
-        : this.store.ensureContinuation(plan.id, next)
-    }
-
-    // A concurrent scheduler may already have selected a different stable ID.
-    if (next && continuation.session_id !== next.session_id && continuation.generation > 1) {
-      const adopted = await this.host.session(continuation.session_id)
-      if (this.validArchitect(adopted) && this.matchesContinuation(adopted, plan.id)) {
-        if (adopt) this.adoptArchitectOwner(plan, adopted.id)
-        return adopted
-      }
-    }
-
-    let session = await this.host.session(continuation.session_id)
-    if (session && !this.matchesContinuation(session, plan.id))
-      throw new Error("Native Architect continuation ID belongs to another session")
-    if (!session) {
-      try {
-        await this.host.createArchitect({
-          id: continuation.session_id,
-          ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
-          directory: continuation.directory,
-          ...(() => {
-            const model = this.architectSessionModel(
-              continuation.model ? JSON.parse(continuation.model) : undefined,
-            )
-            return model ? { model } : {}
-          })(),
-          title: this.sessionTitle(`continue ${plan.id.slice(0, 8)}`),
-          planID: plan.id,
-          sourceSessionID: plan.owner,
-        })
-      } catch (error) {
-        const recovered = await this.host.session(continuation.session_id)
-        if (!this.matchesContinuation(recovered, plan.id)) throw error
-        session = recovered
-      }
-      session ??= await this.host.session(continuation.session_id)
-    }
-    if (!this.validArchitect(session) || !this.matchesContinuation(session, plan.id))
-      throw new Error("Native Architect continuation is unavailable or foreign")
-    this.store.record(plan.id, null, "ARCHITECT_CONTINUATION_READY", {
-      sessionID: session.id,
-      parentID: continuation.parent_id,
-      generation: continuation.generation,
-    })
-    if (adopt) this.adoptArchitectOwner(plan, session.id)
-    return session
-  }
-
-  private adoptArchitectOwner(plan: PlanRow, sessionID: string) {
-    this.store.atomic(() => {
-      if (!this.store.adoptPlanOwner(plan.id, plan.owner, sessionID)) return
-      // Persist the replacement's wake with ownership so a restart cannot split them.
-      this.wakeRecoveredArchitect(plan.id)
-    })
-  }
-
-  private wakeRecoveredArchitect(planID: string) {
-    const plan = this.store.plan(planID)!
-    if (!["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) return
-    const pending = this.store.atomic((db) =>
-      db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM runner_outbox WHERE plan_id=? AND state='pending' LIMIT 1",
-        )
-        .get(planID),
-    )
-    // A consumed notice does not mean its unresolved plan was repaired.
-    if (!pending) this.outcome(planID, { status: plan.state, reason: plan.reason }, true)
-  }
-
-  private matchesContinuation(session: HostSession | null | undefined, planID: string) {
-    const continuation = this.store.continuation(planID)
-    const listedPlans = session?.metadata?.lazersPlanIDs
-    return (
-      Boolean(continuation) &&
-      session?.agent === "architect" &&
-      session.projectID === this.projectID &&
-      session.directory === this.directory &&
-      session.parentID === (continuation?.parent_id ?? undefined) &&
-      session.metadata?.lazersContinuation === true &&
-      (session.metadata.lazersPlanID === planID ||
-        (Array.isArray(listedPlans) && listedPlans.includes(planID)))
-    )
+  private ensureArchitectOwner(...args: Parameters<ArchitectOwnership["ensureArchitectOwner"]>) {
+    return this.ownership.ensureArchitectOwner(...args)
   }
 
   /** Called by the native prompt hook before OpenCode admits the input to its inbox. */
@@ -6373,9 +6251,8 @@ export class TaskRuntime {
     return { revision: parsed.revision, ...content }
   }
 
-  /** `<CODE> · <text>`; `LAZERS` stands in until the project has a code. */
-  private sessionTitle(text: string): string {
-    return sessionTitle(this.store.repository.projectCode() ?? "LAZERS", text)
+  private sessionTitle(...args: Parameters<ArchitectOwnership["sessionTitle"]>) {
+    return this.ownership.sessionTitle(...args)
   }
 
   private renewalContinuityCoverage(renewal: ArchitectRenewalRow) {
@@ -6436,48 +6313,22 @@ export class TaskRuntime {
     this.renewalEvent(renewal, event, { renewalID: renewal.id, error, ...payload }, fence)
   }
 
-  /** The single routing decision: reuse a warm or small Architect, otherwise create a fresh one. */
-  private architectRoute(session: HostSession | null | undefined): ArchitectRoute {
-    return routeArchitect(
-      this.validArchitect(session) ? session : null,
-      this.now(),
-      this.architectRouting,
-    )
+  private architectRoute(...args: Parameters<ArchitectOwnership["architectRoute"]>) {
+    return this.ownership.architectRoute(...args)
   }
 
-  /** Record the routing decision once per change, with its reason, before acting on it. */
-  private recordArchitectRoute(
-    plan: PlanRow,
-    route: ArchitectRoute,
-    session: HostSession | null | undefined,
+  private recordArchitectRoute(...args: Parameters<ArchitectOwnership["recordArchitectRoute"]>) {
+    return this.ownership.recordArchitectRoute(...args)
+  }
+
+  private architectSessionModel(...args: Parameters<ArchitectOwnership["architectSessionModel"]>) {
+    return this.ownership.architectSessionModel(...args)
+  }
+
+  private architectWaitingForHuman(
+    ...args: Parameters<ArchitectOwnership["architectWaitingForHuman"]>
   ) {
-    const previous = this.store.latestTransition<{ sessionID: string | null; reason: string }>(
-      plan.id,
-      null,
-      "ARCHITECT_ROUTED",
-    )
-    if (previous?.sessionID === route.sessionID && previous.reason === route.reason) return
-    this.store.record(plan.id, null, "ARCHITECT_ROUTED", {
-      action: route.action,
-      reason: route.reason,
-      sessionID: route.sessionID,
-      owner: plan.owner,
-      contextTokens: session ? architectContextTokens(session) : null,
-      cacheWindowMs: this.architectRouting.architectCacheWindowMs,
-      reuseMaxContextTokens: this.architectRouting.architectReuseMaxContextTokens,
-    })
-  }
-
-  /**
-   * The one model decision for an Architect session LAZERS creates. A renewal records it and the
-   * host creates exactly it, so the successor check compares the session with what was asked for.
-   */
-  private architectSessionModel(carried: ModelPolicy | undefined) {
-    return architectSessionModel(agentRouteReader(this.store.repository)("architect"), carried)
-  }
-
-  private architectWaitingForHuman(session: HostSession) {
-    return (session.pendingForms ?? 0) > 0 || (session.pendingPermissions ?? 0) > 0
+    return this.ownership.architectWaitingForHuman(...args)
   }
 
   private async considerArchitectRenewal(plan: PlanRow, owner: HostSession, fence: number) {
