@@ -5905,18 +5905,6 @@ export class TaskRuntime {
     return this.sources.inspectArchitectSourceMessages(...args)
   }
 
-  private inspectArchitectSourcePage(
-    ...args: Parameters<ArchitectSources["inspectArchitectSourcePage"]>
-  ) {
-    return this.sources.inspectArchitectSourcePage(...args)
-  }
-
-  private inspectArchitectSourceSweep(
-    ...args: Parameters<ArchitectSources["inspectArchitectSourceSweep"]>
-  ) {
-    return this.sources.inspectArchitectSourceSweep(...args)
-  }
-
   private reconcileArchitectSources(
     ...args: Parameters<ArchitectSources["reconcileArchitectSources"]>
   ) {
@@ -5933,16 +5921,6 @@ export class TaskRuntime {
 
   private recordArchitectRoute(...args: Parameters<ArchitectOwnership["recordArchitectRoute"]>) {
     return this.ownership.recordArchitectRoute(...args)
-  }
-
-  private architectSessionModel(...args: Parameters<ArchitectOwnership["architectSessionModel"]>) {
-    return this.ownership.architectSessionModel(...args)
-  }
-
-  private architectWaitingForHuman(
-    ...args: Parameters<ArchitectOwnership["architectWaitingForHuman"]>
-  ) {
-    return this.ownership.architectWaitingForHuman(...args)
   }
 
   private considerArchitectRenewal(
