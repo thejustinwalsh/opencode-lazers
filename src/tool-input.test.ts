@@ -55,6 +55,10 @@ test("a correct call, or a failure that is not about the arguments, explains not
 function hooked(listed = [...tools.entries()].map(([name, tool]) => ({ ...tool, id: name }))) {
   let handler: ((event: never) => Effect.Effect<void>) | undefined
   const ctx = {
+    location: { directory: "/project" },
+    session: {
+      get: () => Effect.succeed({ projectID: "project", location: { directory: "/project" } }),
+    },
     tool: {
       hook: (_name: string, callback: typeof handler) =>
         Effect.sync(() => {
@@ -64,7 +68,7 @@ function hooked(listed = [...tools.entries()].map(([name, tool]) => ({ ...tool, 
       list: () => Effect.succeed(listed),
     },
   }
-  Effect.runSync(Effect.scoped(registerToolResults(ctx as never)))
+  Effect.runSync(Effect.scoped(registerToolResults(ctx as never, "project")))
   return (event: object) => Effect.runPromise(handler!(event as never))
 }
 

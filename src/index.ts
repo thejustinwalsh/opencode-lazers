@@ -171,7 +171,7 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:RecoveryTools", () => registerRecoveryTools(ctx, repository))
       yield* sectionEffect("setup:ToolSignatures", () => registerToolSignatures(ctx))
-      yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx))
+      yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx, projectID))
       yield* sectionEffect("setup:ToolCallWrappers", () =>
         registerToolCallWrappers(ctx, progress, projectID),
       )
