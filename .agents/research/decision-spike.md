@@ -13,12 +13,12 @@ Status: throwaway measurement, stopped early on the owner's direction ("build th
 
 `labels.json` was written by `build-set.ts` before any model ran. 44 asks: 16 `one task`, 14 `a few tasks`, 14 `a large effort`.
 
-| Source | n | Size label |
-|---|---|---|
-| Hand-written, developer voice (typos, renames, bugs, one-area features, pasted code, stack trace and test log, large multi-part, large vague) | 25 | by me |
-| `runner_plans` in the live DB (task objectives) | 8 | nodes in the plan: 1 -> one task, 2-4 -> a few tasks, 5+ -> a large effort (7 plans of 1-3 nodes, one of 5) |
-| `design/architect-planning.md`, `design/project-profile.md` | 2 | number of build-order steps (4 -> a few, 5 -> a large effort) |
-| `.agents/plans/*.md` (9 plans, 6 KB to 144 KB) | 9 | by reading headings (task or phase count) |
+| Source                                                                                                                                        | n   | Size label                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | --- | ----------------------------------------------------------------------------------------------------------- |
+| Hand-written, developer voice (typos, renames, bugs, one-area features, pasted code, stack trace and test log, large multi-part, large vague) | 25  | by me                                                                                                       |
+| `runner_plans` in the live DB (task objectives)                                                                                               | 8   | nodes in the plan: 1 -> one task, 2-4 -> a few tasks, 5+ -> a large effort (7 plans of 1-3 nodes, one of 5) |
+| `design/architect-planning.md`, `design/project-profile.md`                                                                                   | 2   | number of build-order steps (4 -> a few, 5 -> a large effort)                                               |
+| `.agents/plans/*.md` (9 plans, 6 KB to 144 KB)                                                                                                | 9   | by reading headings (task or phase count)                                                                   |
 
 Agent labels (helpful yes/no) are my judgement from the five use-when lines, with a one-line reason per ask in `labels.json` (`why`). The two design files use the real result files in `.agents/reviews/2026-11-20-planning/`: an agent counts as helpful when it reported a major or blocker finding (all five did, on both). Base rate: 131 of 210 ask-agent pairs (62%) are labelled helpful (comprehension 23, grounding 31, readiness 31, critic 27, zoom-out 29 of 44). The nine plan files are labelled all-yes, which is permissive and makes negatives rare outside short asks.
 
@@ -26,14 +26,14 @@ Limits of this experiment: 44 asks (42 in most tables; the two 120 KB+ plans wer
 
 ## Approaches: what finished
 
-| Approach | State |
-|---|---|
-| A whole text, flat (7 questions batched) | finished on fixed device, 42/44 (P08, P09 dropped); also on the default-limit device, 42/44 |
-| C sliced flat, ~4 sentences with one-sentence overlap, one question per request | finished, 42/44 (P08, P09 dropped as 7+ minutes each) |
-| C1 sliced flat, one sentence per piece | 41/44 (P07, P08, P09 not run) |
-| B whole tree, D sliced tree, E uncertainty, F outline walk, G halving, H filter/beam, C2 (two-sentence slices) | **implemented in `lib.ts`, not run to completion** (stopped by the owner before any produced results). No numbers are claimed for them. |
-| Option-order and mirrored-wording tests | measured inside A, C and C1 (below) |
-| Stability (run twice) | 32 asks under 700 chars, 224 question pairs, run twice: maximum probability difference 0.000. D1 is deterministic on this machine, so repeat runs add nothing. |
+| Approach                                                                                                       | State                                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A whole text, flat (7 questions batched)                                                                       | finished on fixed device, 42/44 (P08, P09 dropped); also on the default-limit device, 42/44                                                                    |
+| C sliced flat, ~4 sentences with one-sentence overlap, one question per request                                | finished, 42/44 (P08, P09 dropped as 7+ minutes each)                                                                                                          |
+| C1 sliced flat, one sentence per piece                                                                         | 41/44 (P07, P08, P09 not run)                                                                                                                                  |
+| B whole tree, D sliced tree, E uncertainty, F outline walk, G halving, H filter/beam, C2 (two-sentence slices) | **implemented in `lib.ts`, not run to completion** (stopped by the owner before any produced results). No numbers are claimed for them.                        |
+| Option-order and mirrored-wording tests                                                                        | measured inside A, C and C1 (below)                                                                                                                            |
+| Stability (run twice)                                                                                          | 32 asks under 700 chars, 224 question pairs, run twice: maximum probability difference 0.000. D1 is deterministic on this machine, so repeat runs add nothing. |
 
 The sliced runs obey the owner's budget of 400 input tokens per request: one question per request (batching gave no saving: 7 questions on a 52-token state took 282 ms, 1 question 42 ms), state at most 650 characters (longer pieces are split). The 4-sentence run had a median of 106 tokens per request, maximum 345; 0 of 6,361 requests over 400. C1: median 73, max 257, 0 of 10,254 over 400.
 
@@ -41,22 +41,22 @@ The sliced runs obey the owner's budget of 400 input tokens per request: one que
 
 Size is judged on the given option order. "Simple vs complex" is `one task` against the other two.
 
-| Approach | Size exact | Simple vs complex | Agent AUC W1 / W2 | Requests per ask (median / max) | Model seconds per ask (median / p90 / worst) |
-|---|---|---|---|---|---|
-| A whole, fixed device | 20/42 | 29/42 | 0.66 / 0.63 | 2 batched / 2 | 1.4 / 37 / 223 |
-| A whole, default limits (7,000-char chunks) | 20/42 | 29/42 | 0.69 / 0.66 | 2 / 8 | 1.4 / 37 / 90 |
-| C sliced, 4 sentences | 18/42 | 27/42 | 0.71 / 0.70 | 18 / 1,841 | 1.4 / 29 / 142 |
-| C1 sliced, 1 sentence | 13/41 | 25/41 | 0.71 / 0.71 | 36 / 1,561 | 2.5 / 56 / 93 |
+| Approach                                    | Size exact | Simple vs complex | Agent AUC W1 / W2 | Requests per ask (median / max) | Model seconds per ask (median / p90 / worst) |
+| ------------------------------------------- | ---------- | ----------------- | ----------------- | ------------------------------- | -------------------------------------------- |
+| A whole, fixed device                       | 20/42      | 29/42             | 0.66 / 0.63       | 2 batched / 2                   | 1.4 / 37 / 223                               |
+| A whole, default limits (7,000-char chunks) | 20/42      | 29/42             | 0.69 / 0.66       | 2 / 8                           | 1.4 / 37 / 90                                |
+| C sliced, 4 sentences                       | 18/42      | 27/42             | 0.71 / 0.70       | 18 / 1,841                      | 1.4 / 29 / 142                               |
+| C1 sliced, 1 sentence                       | 13/41      | 25/41             | 0.71 / 0.71       | 36 / 1,561                      | 2.5 / 56 / 93                                |
 
 AUC is the chance a helpful ask-agent pair outscores an unhelpful one (0.5 is chance). Combining: maximum over pieces per agent, largest size over pieces. Whole text (A) worst case is dominated by the 45 KB plan (223 s); sliced worst case by plans too (C 142 s, C1 93 s, seconds roughly 3 per KB). For asks of 2,000 characters or less (33 asks) the median is 1.3 s for A and C, 2.4 s for C1; the worst small ask is 4.9 s (A), 8.9 s (C) and 16.7 s (C1). **C and C1 exceed 5 seconds on 10 and 13 of the 42 asks**; all those are the long plans, plus a few pasted-log asks.
 
 Size confusion (rows truth one / few / large, columns pick one / few / large):
 
-| | one | few | large |
-|---|---|---|---|
+|         | one    | few   | large |
+| ------- | ------ | ----- | ----- |
 | A fixed | 10 6 0 | 6 4 4 | 1 5 6 |
-| C | 8 8 0 | 6 2 6 | 1 3 8 |
-| C1 | 3 12 1 | 3 4 7 | 0 5 6 |
+| C       | 8 8 0  | 6 2 6 | 1 3 8 |
+| C1      | 3 12 1 | 3 4 7 | 0 5 6 |
 
 Size is poor everywhere. The model rarely says `one task` for a one-line ask (A: 6 of 16 simple asks called `a few tasks`; C1: 12 of 16), and `a few tasks` is close to a coin flip. Slicing hurt size: one sentence cannot show the size of the whole ask. The size worst cases in all three: H17 (a large effort, picked one task), and the typo, rename and dependency-bump asks (H01, H02, H05) picked `a few tasks`.
 
@@ -67,19 +67,19 @@ Helpful pairs 131, unhelpful 79. At each threshold, hits (helpful kept), false (
 W1 (yes/no per agent):
 
 | Approach | Threshold | Hits | False | Missed | Precision | Asks all-below |
-|---|---|---|---|---|---|---|
-| A | 0.05 | 113 | 57 | 18 | 0.66 | 1/42 |
-| A | 0.10 | 100 | 34 | 31 | 0.75 | 3/42 |
-| A | 0.20 | 65 | 23 | 66 | 0.74 | 8/42 |
-| A | 0.50 | 30 | 8 | 101 | 0.79 | 19/42 |
-| C | 0.05 | 119 | 60 | 12 | 0.66 | 1/42 |
-| C | 0.10 | 104 | 37 | 27 | 0.74 | 3/42 |
-| C | 0.20 | 81 | 28 | 50 | 0.74 | 6/42 |
-| C | 0.50 | 54 | 9 | 77 | 0.86 | 17/42 |
-| C1 | 0.05 | 122 | 64 | 4 | 0.66 | 1/41 |
-| C1 | 0.10 | 114 | 46 | 12 | 0.71 | 2/41 |
-| C1 | 0.20 | 94 | 36 | 32 | 0.72 | 3/41 |
-| C1 | 0.50 | 50 | 12 | 76 | 0.81 | 14/41 |
+| -------- | --------- | ---- | ----- | ------ | --------- | -------------- |
+| A        | 0.05      | 113  | 57    | 18     | 0.66      | 1/42           |
+| A        | 0.10      | 100  | 34    | 31     | 0.75      | 3/42           |
+| A        | 0.20      | 65   | 23    | 66     | 0.74      | 8/42           |
+| A        | 0.50      | 30   | 8     | 101    | 0.79      | 19/42          |
+| C        | 0.05      | 119  | 60    | 12     | 0.66      | 1/42           |
+| C        | 0.10      | 104  | 37    | 27     | 0.74      | 3/42           |
+| C        | 0.20      | 81   | 28    | 50     | 0.74      | 6/42           |
+| C        | 0.50      | 54   | 9     | 77     | 0.86      | 17/42          |
+| C1       | 0.05      | 122  | 64    | 4      | 0.66      | 1/41           |
+| C1       | 0.10      | 114  | 46    | 12     | 0.71      | 2/41           |
+| C1       | 0.20      | 94   | 36    | 32     | 0.72      | 3/41           |
+| C1       | 0.50      | 50   | 12    | 76     | 0.81      | 14/41          |
 
 W2 (five-way choice, per-agent probability): C1 at 0.10 gives 108 hits, 57 false, 18 missed (precision 0.65, all-below 0/41); at 0.20, 90 / 30 / 36 (precision 0.75); at 0.5 only 42 hits. A at 0.10: 94 / 45 / 37.
 
@@ -96,15 +96,15 @@ Reading:
 
 Measured on asks of 2,000 characters or less (asks over 2,000 skipped the extra orders for cost): size and five-way choice each asked in the given order, reversed and two shuffles; yes/no asked again in a mirrored wording ("Would a review aimed at plans that ... be irrelevant to this request?", answer flipped).
 
-| | A | C | C1 |
-|---|---|---|---|
-| Size answer changes with option order | 15/38 asks | 12/33 | 10/33 |
-| Mean spread of a size class probability across 4 orders | 0.19 | 0.18 | 0.19 |
-| Size accuracy: given order -> averaged over 4 orders | 20 -> 16 of 42 | 18 -> 17 of 42 | 13 -> 13 of 41 |
-| Top reviewer changes with option order | 14/38 | 13/33 | 15/33 |
-| Choice AUC: given -> averaged over 4 orders | 0.62 -> 0.60 | 0.60 -> 0.60 | 0.63 -> 0.62 |
-| Yes/no mirror flips across 0.5 | 158/190 pairs | 139/165 | 132/165 |
-| Yes/no AUC: original -> averaged with mirror | 0.64 -> 0.58 | 0.59 -> 0.52 | 0.61 -> 0.57 |
+|                                                         | A              | C              | C1             |
+| ------------------------------------------------------- | -------------- | -------------- | -------------- |
+| Size answer changes with option order                   | 15/38 asks     | 12/33          | 10/33          |
+| Mean spread of a size class probability across 4 orders | 0.19           | 0.18           | 0.19           |
+| Size accuracy: given order -> averaged over 4 orders    | 20 -> 16 of 42 | 18 -> 17 of 42 | 13 -> 13 of 41 |
+| Top reviewer changes with option order                  | 14/38          | 13/33          | 15/33          |
+| Choice AUC: given -> averaged over 4 orders             | 0.62 -> 0.60   | 0.60 -> 0.60   | 0.63 -> 0.62   |
+| Yes/no mirror flips across 0.5                          | 158/190 pairs  | 139/165        | 132/165        |
+| Yes/no AUC: original -> averaged with mirror            | 0.64 -> 0.58   | 0.59 -> 0.52   | 0.61 -> 0.57   |
 
 Option order moves the size answer in roughly a third of asks and moves a class probability by about 0.19 on average. Averaging over four orders did not improve accuracy on any measure (equal or slightly worse), so it is **not worth its four-fold calls**. The mirrored wording is not an answer-preserving rephrase for this model: it flips the decision in about 80% of pairs (the model says "no" to the mirror almost always, so 1 - p lands high). Mirror averaging lowered AUC. Use one fixed wording and one fixed option order, and put the option order in the recorded decision so it can be compared.
 
@@ -117,9 +117,9 @@ Option order moves the size answer in roughly a third of asks and moves a class 
 
 Latency by prompt size, single question, fixed device unless noted (state plus question tokens):
 
-| Tokens | 52 | 216 | 285 | 972 | 1,142 | 1,978 | 2,792 | 3,342 | 4,442 | 6,642 | 9,942 | 13,846 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Seconds | 0.04 | 0.13 | 0.15 | 0.76 | 1.0 | 2.3 | 3.9 | 5.6 | 8.9 | 18.4 | 39.0 | device lost at 44 s |
+| Tokens  | 52   | 216  | 285  | 972  | 1,142 | 1,978 | 2,792 | 3,342 | 4,442 | 6,642 | 9,942 | 13,846              |
+| ------- | ---- | ---- | ---- | ---- | ----- | ----- | ----- | ----- | ----- | ----- | ----- | ------------------- |
+| Seconds | 0.04 | 0.13 | 0.15 | 0.76 | 1.0   | 2.3   | 3.9   | 5.6   | 8.9   | 18.4  | 39.0  | device lost at 44 s |
 
 The first four points are from the default-limit device (identical at these sizes); the rest from the fixed device. Cost grows faster than linearly: about 0.2 ms per token at 200 tokens, 1.1 ms at 2,000, 3.9 ms at 10,000. Question overhead is 58 to 66 tokens for yes/no and size, 167 for the five-way choice.
 

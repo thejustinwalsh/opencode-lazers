@@ -77,6 +77,8 @@ export type PlanDraftResult =
       validation: Validation
       deferred: typeof DEFERRED_TO_TASKING
       runbook?: string
+      /** After `finalize`: findings and questions still open, listed as they were left. */
+      open?: number
     }
   | { status: "conflict"; currentRevision: number }
   | { status: "invalid"; errors: { path: string; message: string }[] }
@@ -257,7 +259,23 @@ export class PlanDrafts {
     }
     this.store.move(row.id, "ready", this.now())
     const stored = JSON.parse(this.store.revision(row.id, revision)!.body) as PlanningBody
-    return this.stored(row.id, PlanningBody.parse(stored), revision, delivery)
+    const result = this.stored(row.id, PlanningBody.parse(stored), revision, delivery)
+    if (result.status !== "stored") return result
+    // Informational, never a gate: tasking follows unless the owner says stop.
+    return {
+      ...result,
+      breakdown: `${result.breakdown}\nFinal r${revision} — tasking next. Reply "stop" to keep it open.`,
+      open: this.openCount(row.id),
+    }
+  }
+
+  /** Findings still open plus questions not yet answered or merged. */
+  private openCount(planningID: string): number {
+    return (
+      this.store.findings(planningID).filter((f) => f.resolution === "open").length +
+      this.store.questions(planningID).filter((q) => q.route === "open" || q.route === "owner")
+        .length
+    )
   }
 
   private abandon(planningID: string): PlanDraftResult {
@@ -332,6 +350,9 @@ export function registerPlanningTools(
   })
 }
 
+/** The one agent of the final pass (the owner's decision). */
+export const FINAL_PASS_AGENT: AgentID = "readiness"
+
 export const PlanReviewInput = z.strictObject({
   planningID: z.uuid(),
   stage: z.enum(["review", "final"]).default("review"),
@@ -345,7 +366,7 @@ export const PlanReviewInput = z.strictObject({
 export type PlanReviewInput = z.infer<typeof PlanReviewInput>
 
 export type PlanReviewResult =
-  | ReviewResult
+  | (ReviewResult & { note?: string })
   | { status: "needs-agents"; scores?: Record<string, number>; reason: string }
   | { status: "invalid"; errors: { path: string; message: string }[] }
 
@@ -391,6 +412,37 @@ export class PlanReviewer {
     })
   }
 
+  /** One agent, Readiness, on the current revision, after the owner's answers. */
+  private async final(
+    planningID: string,
+    caller: { sessionID: string },
+    signal: AbortSignal | undefined,
+    delivery: Delivery,
+    input: PlanReviewInput,
+  ): Promise<PlanReviewResult> {
+    const planning = this.store.planning(planningID)!
+    if (!["questions-open", "final-review"].includes(planning.state))
+      return invalid(
+        "planningID",
+        `plan is ${planning.state}; the final pass follows the review`,
+      ) as PlanReviewResult
+    const review = await this.reviews.start({
+      planningID,
+      stage: "final",
+      agents: [{ agent: FINAL_PASS_AGENT, source: "final" }],
+      parentSessionID: caller.sessionID,
+      directory: this.directory,
+    })
+    const result = await this.reviews.run(review.id, signal)
+    return {
+      ...result,
+      runbook: delivery.once("planning-resolve"),
+      ...(input.agents?.length
+        ? { note: "agents is ignored for the final pass; only Readiness ran" }
+        : {}),
+    }
+  }
+
   async call(
     input: PlanReviewInput,
     caller: { sessionID: string },
@@ -400,8 +452,7 @@ export class PlanReviewer {
     const planning = this.store.planning(input.planningID)
     if (!planning || planning.projectKey !== this.projectID)
       return invalid("planningID", "no such plan in this project") as PlanReviewResult
-    if (input.stage === "final")
-      return invalid("stage", "the final pass is not available yet") as PlanReviewResult
+    if (input.stage === "final") return this.final(planning.id, caller, signal, delivery, input)
     if (!["drafted", "questions-open", "in-review"].includes(planning.state))
       return invalid(
         "planningID",
