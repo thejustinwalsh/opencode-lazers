@@ -244,6 +244,7 @@ export default defineStory<TrajectoryData>({
     {
       name: "live",
       caption: "A retry attempt fills in as the worker's calls are recorded.",
+      setup: pick,
     },
     {
       name: "inspect",
