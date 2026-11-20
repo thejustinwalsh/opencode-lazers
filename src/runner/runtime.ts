@@ -17,16 +17,20 @@ import {
   checkSettlementProblem,
   errorText,
   isRerunnableEffect,
-  sessionID,
   effectSuperseded,
   fallowAcceptance,
 } from "./runtime-helpers.ts"
-import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
+import type { StartupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
 import { ArchitectSources } from "./architect-sources.ts"
 import { ArchitectRenewal } from "./architect-renewal.ts"
+import { Dispatch } from "./dispatch.ts"
+import { WorkerObservation } from "./worker-observation.ts"
+import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { AttemptAdvance } from "./attempt-advance.ts"
+import { Cancellation } from "./cancellation.ts"
 import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
@@ -42,13 +46,6 @@ import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
-import {
-  evaluatePrerequisiteIntegration,
-  evaluateTaskPrerequisiteIntegration,
-  type IntegrationDecision,
-  type PrerequisiteIntegrationRow,
-  type TaskPrerequisiteIntegrationRow,
-} from "./prerequisite-proof.ts"
 import { existsSync, lstatSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
@@ -64,7 +61,6 @@ import {
   artifactExists,
   artifactUnchanged,
   commitIsAncestor,
-  changedPaths,
   checkResourcesSettled,
   canonicalCombinedArtifact,
   combineArtifacts,
@@ -101,7 +97,7 @@ import {
   type FallowReview,
 } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
-import { fallowConfigGate, hasStoredFallowConfig } from "../audit/fallow-gate.ts"
+import { fallowConfigGate } from "../audit/fallow-gate.ts"
 import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
 import { needsRepair } from "../audit/audit-findings.ts"
 
@@ -117,12 +113,10 @@ import { FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
 import {
   baseReachable,
   proofForArtifact,
-  storedEvidence,
   type BaseReach,
   type IntegrationProof,
 } from "./integration-proof.ts"
 import { knownTree } from "./identity-store.ts"
-import type { ArtifactEvidenceLookup } from "./prerequisite-proof.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
 
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
@@ -159,11 +153,7 @@ import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
 import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
-import {
-  DispatchRouteDecisionSchema,
-  resolveDispatchRoute,
-  type DispatchRouteDecision,
-} from "../models/dispatch-resolution.ts"
+import { DispatchRouteDecisionSchema } from "../models/dispatch-resolution.ts"
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -359,57 +349,6 @@ type RunnerTransitionRecord = {
 
 type RetainedVerificationSeed = RetainedVerification
 
-const cleanupObservationStages = [
-  "session-read",
-  "session-id",
-  "project-id",
-  "directory",
-  "agent",
-  "attempt-id",
-  "foreground",
-  "pending-input",
-  "observation-stability",
-  "pending-permissions",
-  "pending-forms",
-  "running-shells",
-  "active-children",
-] as const
-type CleanupObservationStage = (typeof cleanupObservationStages)[number]
-type CleanupObservationCheck = {
-  stage: CleanupObservationStage
-  status: "passed" | "blocked" | "not-evaluated"
-  code?: string
-}
-type CleanupSessionObservation =
-  | { kind: "unavailable"; error: unknown }
-  | { kind: "absent" }
-  | { kind: "observed"; session: HostSession }
-type CleanupWorkerClassification = {
-  binding: {
-    projectID: string
-    planID: string
-    attemptID: string
-    sessionID: string
-    workspace: string
-    assignedMessageID: string
-  }
-  firstBlocker: { stage: CleanupObservationStage; code: string } | null
-  stages: CleanupObservationCheck[]
-}
-type CleanupAuditDiagnostics = {
-  diagnosticOnly: true
-  planID: string
-  planVersion: number
-  sampledAt: number
-  workspace: string
-  workers: Array<
-    CleanupWorkerClassification & {
-      planVersion: number
-      sampledAt: number
-    }
-  >
-}
-
 type PlanFallowContext = {
   workspace: string
   artifact: string
@@ -516,15 +455,6 @@ function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
   }
 }
 
-/** What the pass over one running attempt carries from step to step. */
-type AdvanceContext = {
-  plan: PlanRow
-  attempt: AttemptRow
-  fence: number
-  observation: WorkerObservationFence
-  session: HostSession
-}
-
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
@@ -540,6 +470,11 @@ export class TaskRuntime {
   private readonly ownership: ArchitectOwnership
   private readonly sources: ArchitectSources
   private readonly renewal: ArchitectRenewal
+  private readonly dispatchModule: Dispatch
+  private readonly workerObservation: WorkerObservation
+  private readonly cleanupAudit: CleanupAudit
+  private readonly attemptAdvance: AttemptAdvance
+  private readonly cancellation: Cancellation
   private readonly checkActivities: CheckActivities
   private readonly verificationCandidate: VerificationCandidate
   private readonly effectReconciliation: EffectReconciliation
@@ -567,7 +502,6 @@ export class TaskRuntime {
   private readonly startedAuditorReports = new Set<string>()
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
-  private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
@@ -802,6 +736,39 @@ export class TaskRuntime {
         inspectArchitectSourceSweep: (...args) => this.sources.inspectArchitectSourceSweep(...args),
       },
     })
+    this.dispatchModule = new Dispatch(this.core, {
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      modelMappingResolver: this.modelMappingResolver,
+      fallowReviewEnabled: this.fallowReviewEnabled,
+      fallowGate: () => this.fallowGate(),
+      prepareWorker: (...args) => this.prepareWorker(...args),
+      startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
+      startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
+      journal: this.journal,
+    })
+    this.workerObservation = new WorkerObservation(this.core, {
+      sameModel: (...args) => this.sameModel(...args),
+      journal: this.journal,
+    })
+    this.cleanupAudit = new CleanupAudit(this.core)
+    this.attemptAdvance = new AttemptAdvance(this.core, {
+      autoResumeInterrupted: this.autoResumeInterrupted,
+      workerNoProgressWindowMs: this.workerNoProgressWindowMs,
+      command: (...args) => this.command(...args),
+      prepareWorker: (...args) => this.prepareWorker(...args),
+      verify: (...args) => this.verify(...args),
+      failAttempt: (...args) => this.failAttempt(...args),
+      validArchitect: this.validArchitect.bind(this),
+      observeUsage: (...args) => this.observeUsage(...args),
+      journal: this.journal,
+      workerObservation: this.workerObservation,
+    })
+    this.cancellation = new Cancellation(this.core, {
+      cancelIdleWaitMs: this.cancelIdleWaitMs,
+      observeUsage: (...args) => this.observeUsage(...args),
+      journal: this.journal,
+      workerObservation: this.workerObservation,
+    })
     this.sources = new ArchitectSources(this.core, {
       isStopped: () => this.stopped,
       ownership: this.ownership,
@@ -961,31 +928,6 @@ export class TaskRuntime {
 
   private retainedVerificationWorkspacePath(operationID: string, phase: "task") {
     return canonicalProjectWorktreePath(this.directory, `retained-${operationID}-${phase}`)
-  }
-
-  private resolveTaskDispatchRoute(
-    proposal: PlanInput,
-    taskID: string,
-    persona: NonNullable<PlanInput["nodes"][number]["persona"]>,
-    configuredImplementor: NonNullable<PlanInput["workerModel"]> | null,
-  ): DispatchRouteDecision {
-    return resolveDispatchRoute({
-      schemaVersion: 1,
-      persona,
-      projectDirectory: this.directory,
-      taskID,
-      explicitOverride: proposal.workerModel
-        ? { source: "explicit-plan-selection", route: proposal.workerModel }
-        : null,
-      mappingResolution: {
-        source: "model-mapping-resolver",
-        resolution: this.modelMappingResolver.resolve({ persona, taskID }),
-      },
-      configuredImplementor: {
-        source: "native-implementor-selection",
-        route: proposal.workerModel ? null : configuredImplementor,
-      },
-    })
   }
 
   /**
@@ -6483,1434 +6425,102 @@ export class TaskRuntime {
     }
   }
 
-  private async cancelWorkers(plan: PlanRow, fence: number, allowPlanSettlement = true) {
-    const active = this.store.attempts(plan.id).filter(
-      (attempt) =>
-        ["preparing", "running", "verifying"].includes(attempt.state) ||
-        (attempt.state === "unknown" &&
-          this.store
-            .attempts(plan.id)
-            .filter((candidate) => candidate.task_id === attempt.task_id)
-            .at(-1)?.id === attempt.id),
-    )
-    let waiting = false
-    for (const attempt of active)
-      if (await this.cancelAttemptWorker(plan, attempt, fence)) waiting = true
-    if (!allowPlanSettlement || waiting) return
-    this.settleCancelledPlan(plan, fence)
+  private cancelWorkers(...args: Parameters<Cancellation["cancelWorkers"]>) {
+    return this.cancellation.cancelWorkers(...args)
   }
 
-  /** Stops one attempt's worker for a cancel. True while the attempt still has to be waited on. */
-  private async cancelAttemptWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-  ): Promise<boolean> {
-    let session = await this.host.session(attempt.session_id)
-    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
-    if (session.archived && !session.busy) {
-      // An archived session can never run again: it counts as stopped.
-      this.store.fenced(this.owner, fence, () =>
-        this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WORKER_ARCHIVED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          retainedWorkPreserved: true,
-        }),
-      )
-      return !this.settleCancelledAttempt(plan, attempt, fence, false)
-    }
-    const promptCompleted = this.store
-      .effects(plan.id)
-      .some(
-        (effect) =>
-          effect.attempt_id === attempt.id &&
-          effect.kind === "prompt" &&
-          JSON.parse(effect.payload).messageID === attempt.message_id &&
-          effect.state === "completed",
-      )
-    this.observeUsage(attempt, session, fence)
-    const backgroundReason = this.backgroundBlockReason(session)
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-      this.approvalWait(plan, attempt, session, fence)
-    if (session.busy) {
-      const busySession = session
-      return this.cancelBusyWorker(plan, attempt, fence, () => {
-        if (backgroundReason)
-          this.backgroundWait(plan, attempt, busySession, backgroundReason, fence)
-      })
-    }
-    const blocked = this.cancelBlock(session)
-    if (blocked) return !this.cancelWait(plan, attempt, fence, blocked)
-    if (backgroundReason) {
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
-    }
-    session = await this.host.session(attempt.session_id, { messages: true })
-    if (!session) return !this.cancelMissingWorker(plan, attempt, fence)
-    this.observeUsage(attempt, session, fence)
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-      this.approvalWait(plan, attempt, session, fence)
-    if (session.busy) return this.cancelBusyWorker(plan, attempt, fence)
-    const detailedBlocked = this.cancelBlock(session)
-    if (detailedBlocked) return !this.cancelWait(plan, attempt, fence, detailedBlocked)
-    const detailedBackgroundReason = this.backgroundBlockReason(session)
-    if (detailedBackgroundReason) {
-      this.backgroundWait(plan, attempt, session, detailedBackgroundReason, fence)
-      return !this.cancelWait(plan, attempt, fence, { cause: "background-activity", bounded: true })
-    }
-    return this.settleStoppedWorker(plan, attempt, fence, session, promptCompleted)
+  private cancelReservedAttempt(...args: Parameters<Cancellation["cancelReservedAttempt"]>) {
+    return this.cancellation.cancelReservedAttempt(...args)
   }
 
-  /** A busy worker is interrupted; true (still waiting) unless the bounded wait already elapsed. */
-  private async cancelBusyWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    whileWaiting?: () => void,
+  private workerEvent(...args: Parameters<WorkerObservation["workerEvent"]>) {
+    return this.workerObservation.workerEvent(...args)
+  }
+
+  private matchesWorkerInput(...args: Parameters<WorkerObservation["matchesWorkerInput"]>) {
+    return this.workerObservation.matchesWorkerInput(...args)
+  }
+
+  private isPriorContinuationInput(
+    ...args: Parameters<WorkerObservation["isPriorContinuationInput"]>
   ) {
-    if (await this.interruptForCancel(plan, attempt, fence))
-      return !this.settleCancelledAttempt(plan, attempt, fence, true)
-    whileWaiting?.()
-    return true
+    return this.workerObservation.isPriorContinuationInput(...args)
   }
 
-  /** An idle worker: record its stop when its prompt ran, then settle the attempt as cancelled. */
-  private settleStoppedWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    session: HostSession,
-    promptCompleted: boolean,
-  ) {
-    if (
-      promptCompleted &&
-      (!session.turn ||
-        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
-        (session.turn.state !== "completed" && session.turn.state !== "interrupted"))
-    )
-      return !this.cancelWait(plan, attempt, fence, {
-        cause: "turn-input-mismatch",
-        bounded: true,
-        detail: {
-          turnInputID: session.turn?.inputID ?? null,
-          turnState: session.turn?.state ?? null,
-        },
-      })
-    if (promptCompleted) {
-      this.workerEvent(plan, attempt, "WORKER_STARTED", fence)
-      this.workerEvent(
-        plan,
-        attempt,
-        "WORKER_STOPPED",
-        fence,
-        session.outcome ?? "cancelled",
-        session.turn?.inputID,
-      )
-    }
-    return !this.settleCancelledAttempt(plan, attempt, fence, false)
-  }
-
-  /** Every attempt has settled: supersede stuck effects (after a bounded wait) and cancel the plan. */
-  private settleCancelledPlan(plan: PlanRow, fence: number) {
-    const stuck = this.store
-      .effects(plan.id)
-      .filter((effect) => ["intended", "uncertain"].includes(effect.state))
-    if (stuck.length > 0) {
-      if (
-        !this.cancelWaitElapsed(plan, null, "plan", "unresolved-effect", fence, {
-          effects: stuck.map((effect) => ({
-            id: effect.id,
-            kind: effect.kind,
-            state: effect.state,
-          })),
-        })
-      )
-        return
-      for (const effect of stuck)
-        this.supersedeEffect(effect, "Plan cancelled: effect never resolved", fence)
-    }
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'cancelled'),version=version+1 WHERE id=?",
-        )
-        .run(plan.id),
-    )
-    this.outcome(plan.id, { status: "cancelled" }, true)
-  }
-
-  /**
-   * Interrupt a busy worker during cancellation. True once the bounded wait since
-   * the first interrupt has elapsed: the host may keep listing the session active
-   * with nothing to interrupt, and the worktree is being discarded anyway.
-   */
-  private async interruptForCancel(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const prior = this.store.latestTransition<{ attemptID: string; sessionID: string; at: number }>(
-      plan.id,
-      attempt.task_id,
-      "CANCEL_WORKER_INTERRUPTED",
-    )
-    const first = prior?.attemptID === attempt.id ? prior : undefined
-    await this.host.interrupt(attempt.session_id)
-    if (!first) {
-      this.store.fenced(this.owner, fence, () =>
-        this.store.record(plan.id, attempt.task_id, "CANCEL_WORKER_INTERRUPTED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          at: this.now(),
-        }),
-      )
-      return false
-    }
-    return this.now() - first.at >= this.cancelIdleWaitMs
-  }
-
-  /**
-   * Whether the attempt's unresolved effects no longer block cancel. Effects left in
-   * `intended` or `uncertain` get a bounded wait, then are superseded.
-   */
-  private resolveCancelEffects(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
-    const stuck = this.store
-      .effects(plan.id)
-      .filter(
-        (effect) =>
-          effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-      )
-    if (stuck.length === 0) return true
-    if (
-      !this.cancelWaitElapsed(plan, attempt.task_id, attempt.id, "unresolved-effect", fence, {
-        attemptID: attempt.id,
-        effects: stuck.map((effect) => ({ id: effect.id, kind: effect.kind, state: effect.state })),
-      })
-    )
-      return false
-    for (const effect of stuck)
-      this.supersedeEffect(effect, "Plan cancelled: effect never resolved", fence)
-    return true
-  }
-
-  /** A cancel wait that only the user can end, or one bounded by `cancelIdleWaitMs`. */
-  private cancelBlock(
-    session: HostSession,
-  ): { cause: string; bounded: boolean; detail?: Record<string, unknown> } | undefined {
-    if (session.pendingInput) return { cause: "pending-input", bounded: false }
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0)
-      return {
-        cause: "pending-approval",
-        bounded: false,
-        detail: {
-          pendingPermissions: session.pendingPermissions ?? 0,
-          pendingForms: session.pendingForms ?? 0,
-        },
-      }
-    if (session.observationUnstable) return { cause: "observation-unstable", bounded: true }
-    return undefined
-  }
-
-  /**
-   * Record why a cancel is waiting (once per cause). A bounded cause settles the
-   * attempt after `cancelIdleWaitMs`; true means the attempt settled.
-   */
-  private cancelWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    wait: { cause: string; bounded: boolean; detail?: Record<string, unknown> },
-  ): boolean {
-    const payload = { attemptID: attempt.id, sessionID: attempt.session_id, ...wait.detail }
-    if (!wait.bounded) {
-      this.store.fenced(this.owner, fence, () =>
-        this.store.recordOnce(plan.id, attempt.task_id, "CANCEL_WAIT", {
-          scope: attempt.id,
-          cause: wait.cause,
-          ...payload,
-        }),
-      )
-      return false
-    }
-    if (!this.cancelWaitElapsed(plan, attempt.task_id, attempt.id, wait.cause, fence, payload))
-      return false
-    return this.settleCancelledAttempt(plan, attempt, fence, true)
-  }
-
-  /** Records the cancel-wait cause once and reports whether the bounded wait since its start elapsed. */
-  private cancelWaitElapsed(
-    plan: PlanRow,
-    taskID: string | null,
-    scope: string,
-    cause: string,
-    fence: number,
-    detail: Record<string, unknown>,
-  ): boolean {
-    this.store.fenced(this.owner, fence, () => {
-      this.store.recordOnce(plan.id, taskID, "CANCEL_WAIT", { scope, cause, ...detail })
-      const started = this.store.latestTransition<{ scope: string; at: number }>(
-        plan.id,
-        taskID,
-        "CANCEL_WAIT_STARTED",
-      )
-      if (started?.scope !== scope)
-        this.store.record(plan.id, taskID, "CANCEL_WAIT_STARTED", { scope, at: this.now() })
-    })
-    const started = this.store.latestTransition<{ scope: string; at: number }>(
-      plan.id,
-      taskID,
-      "CANCEL_WAIT_STARTED",
-    )
-    return started !== undefined && this.now() - started.at >= this.cancelIdleWaitMs
-  }
-
-  /** Cancel the attempt and its node once its effects resolve or are superseded. The worktree is preserved. */
-  private settleCancelledAttempt(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    workerNeverIdle: boolean,
-  ): boolean {
-    if (!this.resolveCancelEffects(plan, attempt, fence)) return false
-    if (workerNeverIdle)
-      this.store.fenced(this.owner, fence, () =>
-        this.store.record(plan.id, attempt.task_id, "WORKER_CANCEL_WITHOUT_IDLE", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          waitedMs: this.cancelIdleWaitMs,
-          retainedWorkPreserved: true,
-        }),
-      )
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
-        )
-        .run(attempt.id),
-    )
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)!
-    if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
-    return true
-  }
-
-  private cancelMissingWorker(plan: PlanRow, attempt: AttemptRow, fence: number): boolean {
-    if (!this.resolveCancelEffects(plan, attempt, fence)) return false
-    return this.store.fenced(this.owner, fence, () => {
-      const currentPlan = this.store.plan(plan.id)
-      const current = this.store
-        .attempts(plan.id)
-        .filter((candidate) => candidate.task_id === attempt.task_id)
-        .at(-1)
-      if (
-        !currentPlan ||
-        currentPlan.state !== plan.state ||
-        current?.id !== attempt.id ||
-        current.session_id !== attempt.session_id ||
-        !["preparing", "running", "verifying", "unknown"].includes(current.state) ||
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        return false
-      this.cancelReservedAttempt(plan, current, fence)
-      this.store.record(plan.id, attempt.task_id, "WORKER_SESSION_ABSENT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        observedAt: this.now(),
-        action: "cancel",
-        retainedWorkPreserved: true,
-      })
-      return true
-    })
-  }
-
-  private cancelReservedAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
-        )
-        .run(attempt.id),
-    )
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)!
-    if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
-  }
-
-  private workerEvent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    event: "WORKER_STARTED" | "WORKER_STOPPED",
-    fence: number,
-    outcome?: HostSession["outcome"] | "cancelled",
-    inputID?: string | null,
-  ) {
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      outcome?: HostSession["outcome"] | "cancelled"
-      inputID?: string
-    }>(plan.id, attempt.task_id, event)
-    if (
-      previous?.attemptID === attempt.id &&
-      (event === "WORKER_STARTED" || (previous.outcome === outcome && previous.inputID === inputID))
-    )
-      return
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, event, {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        observedAt: Date.now(),
-        ...(outcome ? { outcome } : {}),
-        ...(inputID ? { inputID } : {}),
-      }),
-    )
-  }
-
-  private matchesWorkerInput(attempt: AttemptRow, inputID: string | null | undefined): boolean {
-    if (
-      this.progress.matchesAssignedInput(
-        attempt.id,
-        attempt.session_id,
-        attempt.message_id,
-        inputID,
-      )
-    )
-      return true
-    if (!inputID) return false
-
-    const plan = this.store.plan(attempt.plan_id)
-    const latest = this.store
-      .attempts(attempt.plan_id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-      .at(-1)
-    if (
-      !plan ||
-      !latest ||
-      latest.id !== attempt.id ||
-      latest.session_id !== attempt.session_id ||
-      latest.workspace !== attempt.workspace ||
-      latest.message_id !== attempt.message_id
-    )
-      return false
-
-    const aliases = this.store.atomic((db) =>
-      db
-        .query<{ id: number; payload: string }, [string, string]>(
-          `SELECT id,payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
-           ORDER BY id DESC`,
-        )
-        .all(attempt.plan_id, attempt.task_id),
-    )
-    for (const row of aliases) {
-      let alias: ReturnType<typeof parseReviewInputAlias>
-      try {
-        alias = parseReviewInputAlias(JSON.parse(row.payload))
-      } catch {
-        alias = undefined
-      }
-      if (
-        !alias ||
-        !matchesReviewInputAlias(alias, {
-          projectDirectory: this.directory,
-          projectID: this.projectID,
-          planID: attempt.plan_id,
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          assignedMessageID: attempt.message_id,
-          reviewInputID: inputID,
-        })
-      )
-        continue
-      return true
-    }
-    return false
-  }
-
-  private isPriorContinuationInput(attempt: AttemptRow, inputID: string | null | undefined) {
-    if (!inputID) return false
-    return this.store.activity(attempt.plan_id, attempt.task_id).some((entry) => {
-      if (entry.event !== "ATTEMPT_RESUMED") return false
-      try {
-        const resumed = JSON.parse(entry.payload) as {
-          attemptID?: unknown
-          previousMessageID?: unknown
-          interruptedInputID?: unknown
-          terminalInputID?: unknown
-        }
-        return (
-          resumed.attemptID === attempt.id &&
-          (resumed.previousMessageID === inputID ||
-            resumed.interruptedInputID === inputID ||
-            resumed.terminalInputID === inputID)
-        )
-      } catch {
-        return false
-      }
-    })
-  }
-
-  private async observeCleanupSession(attempt: AttemptRow): Promise<CleanupSessionObservation> {
-    try {
-      const session = await this.host.session(attempt.session_id, { messages: true })
-      return session ? { kind: "observed", session } : { kind: "absent" }
-    } catch (error) {
-      return { kind: "unavailable", error }
-    }
-  }
-
-  private classifyCleanupWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    observation: CleanupSessionObservation,
-  ): CleanupWorkerClassification {
-    const binding = {
-      projectID: this.projectID,
-      planID: plan.id,
-      attemptID: attempt.id,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      assignedMessageID: attempt.message_id,
-    }
-    const stages: CleanupObservationCheck[] = []
-    const fail = (stage: CleanupObservationStage, code: string) => {
-      stages.push({ stage, status: "blocked", code })
-      const index = cleanupObservationStages.indexOf(stage)
-      for (const later of cleanupObservationStages.slice(index + 1))
-        stages.push({ stage: later, status: "not-evaluated" })
-      return { binding, firstBlocker: { stage, code }, stages }
-    }
-    const pass = (stage: CleanupObservationStage) => stages.push({ stage, status: "passed" })
-
-    if (observation.kind === "unavailable") return fail("session-read", "read-unavailable")
-    if (observation.kind === "absent") {
-      // Current cleanup permits authoritative native absence, not a failed read.
-      stages.push({ stage: "session-read", status: "passed", code: "session-absent" })
-      for (const stage of cleanupObservationStages.slice(1))
-        stages.push({ stage, status: "not-evaluated" })
-      return { binding, firstBlocker: null, stages }
-    }
-    pass("session-read")
-
-    const session = observation.session
-    if (session.id !== attempt.session_id) return fail("session-id", "session-id-mismatch")
-    pass("session-id")
-    if (session.projectID !== this.projectID) return fail("project-id", "project-id-mismatch")
-    pass("project-id")
-    if (session.directory !== attempt.workspace) return fail("directory", "directory-mismatch")
-    pass("directory")
-    if (!isWorkerAgent(session.agent)) return fail("agent", "agent-mismatch")
-    pass("agent")
-    if (session.metadata?.lazersAttemptID !== attempt.id)
-      return fail("attempt-id", "attempt-id-mismatch")
-    pass("attempt-id")
-    if (session.busy !== false) return fail("foreground", "foreground-busy")
-    pass("foreground")
-    if (session.pendingInput === true) return fail("pending-input", "pending-input")
-    pass("pending-input")
-    if (session.observationUnstable) return fail("observation-stability", "observation-unstable")
-    pass("observation-stability")
-    if ((session.pendingPermissions ?? 0) !== 0)
-      return fail("pending-permissions", "pending-permissions")
-    pass("pending-permissions")
-    if ((session.pendingForms ?? 0) !== 0) return fail("pending-forms", "pending-forms")
-    pass("pending-forms")
-    if ((session.runningShells ?? 0) !== 0) return fail("running-shells", "running-shells")
-    pass("running-shells")
-    if ((session.activeChildren ?? 0) !== 0) return fail("active-children", "active-children")
-    pass("active-children")
-    return { binding, firstBlocker: null, stages }
-  }
-
-  private async cleanupAuditDiagnostics(
-    plan: PlanRow,
-  ): Promise<CleanupAuditDiagnostics | undefined> {
-    if (plan.state !== "cleanup-blocked") return undefined
-    const effects = this.store.effects(plan.id)
-    let workspace: string | undefined
-    for (const effect of [...effects].reverse()) {
-      if (effect.kind !== "worktree-remove" || !["held", "uncertain"].includes(effect.state))
-        continue
-      try {
-        const payload = JSON.parse(effect.payload) as { workspace?: unknown }
-        if (typeof payload.workspace === "string") {
-          workspace = payload.workspace
-          break
-        }
-      } catch {
-        // Malformed cleanup receipts cannot establish a worker binding.
-      }
-    }
-    if (!workspace) return undefined
-    const source = effects.find((effect) => {
-      if (!["worktree", "worktree-recovery"].includes(effect.kind) || effect.state !== "completed")
-        return false
-      try {
-        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
-      } catch {
-        return false
-      }
-    })
-    if (!source) return undefined
-    const attempts = this.store
-      .attempts(plan.id)
-      .filter((attempt) => attempt.workspace === workspace)
-    if (!attempts.length) return undefined
-
-    const sampledAt = this.now()
-    const workers: CleanupAuditDiagnostics["workers"] = []
-    for (const attempt of attempts) {
-      const observation = await this.observeCleanupSession(attempt)
-      const workerSampledAt = this.now()
-      const classification = this.classifyCleanupWorker(plan, attempt, observation)
-      workers.push({
-        ...classification,
-        planVersion: plan.version,
-        sampledAt: workerSampledAt,
-      })
-      // Cleanup stops at the first worker that is not conclusively quiescent.
-      if (classification.firstBlocker) break
-    }
-    return {
-      diagnosticOnly: true,
-      planID: plan.id,
-      planVersion: plan.version,
-      sampledAt,
-      workspace,
-      workers,
-    }
-  }
-
-  /**
-   * Live idle check: a worker with a running shell in its worktree or an
-   * active child session is not idle. The counts are read from the host at
-   * observation time; there is no report to wait for.
-   */
-  backgroundBlockReason(session: HostSession): string | undefined {
-    const shells = session.runningShells ?? 0
-    const children = session.activeChildren ?? 0
-    if (shells === 0 && children === 0) return undefined
-    return `Worker has ${shells} running shell(s) and ${children} active child session(s)`
-  }
-
-  private approvalWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    fence: number,
-    observation?: WorkerObservationFence,
-  ) {
-    const pendingPermissions = session.pendingPermissions ?? 0
-    const pendingForms = session.pendingForms ?? 0
-    return this.store.fenced(this.owner, fence, () => {
-      if (observation && !this.workerObservationCurrent(observation)) return false
-      const previous = this.store.latestTransition<{
-        attemptID?: string
-        pendingPermissions?: number
-        pendingForms?: number
-      }>(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT")
-      if (
-        previous?.attemptID === attempt.id &&
-        previous.pendingPermissions === pendingPermissions &&
-        previous.pendingForms === pendingForms
-      )
-        return false
-      this.store.record(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        directory: session.directory,
-        pendingPermissions,
-        pendingForms,
-        observedAt: Date.now(),
-      })
-      return true
-    })
+  private approvalWait(...args: Parameters<WorkerObservation["approvalWait"]>) {
+    return this.workerObservation.approvalWait(...args)
   }
 
   private holdApprovalObservation(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-    fence: number,
+    ...args: Parameters<WorkerObservation["holdApprovalObservation"]>
   ) {
-    return this.store.fenced(this.owner, fence, () => {
-      if (!this.workerObservationCurrent(observation)) return false
-      this.approvalWait(plan, attempt, session, fence, observation)
-      this.hold(
-        plan,
-        `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
-        ["audit", "reconcile", "cancel"],
-        undefined,
-        observation,
-      )
-      return true
-    })
+    return this.workerObservation.holdApprovalObservation(...args)
   }
 
-  private reconcileRequestID(planID: string) {
-    return this.store.atomic(
-      (db) =>
-        db
-          .query<{ id: number }, [string]>(
-            `SELECT COALESCE(MAX(id),0) AS id FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event='RECONCILE_REQUESTED'`,
-          )
-          .get(planID)!.id,
-    )
+  private workerObservationFence(...args: Parameters<WorkerObservation["workerObservationFence"]>) {
+    return this.workerObservation.workerObservationFence(...args)
   }
 
-  private workerObservationFence(
-    plan: PlanRow,
-    attempt: AttemptRow,
-  ): WorkerObservationFence | undefined {
-    const currentPlan = this.store.plan(plan.id)
-    const currentAttempt = this.store
-      .attempts(plan.id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-      .at(-1)
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)
-    if (
-      !currentPlan ||
-      currentPlan.version !== plan.version ||
-      currentPlan.state !== plan.state ||
-      !currentAttempt ||
-      currentAttempt.id !== attempt.id ||
-      currentAttempt.state !== attempt.state ||
-      currentAttempt.session_id !== attempt.session_id ||
-      currentAttempt.workspace !== attempt.workspace ||
-      currentAttempt.message_id !== attempt.message_id ||
-      currentAttempt.policy !== attempt.policy ||
-      !node
-    )
-      return undefined
-    return {
-      planID: plan.id,
-      planVersion: plan.version,
-      planState: plan.state,
-      owner: plan.owner,
-      reconcileRequestID: this.reconcileRequestID(plan.id),
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      attemptState: attempt.state,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      messageID: attempt.message_id,
-      policy: attempt.policy,
-      nodeState: node.state,
-      nodeVersion: node.version,
-    }
+  private workerObservationCurrent(
+    ...args: Parameters<WorkerObservation["workerObservationCurrent"]>
+  ) {
+    return this.workerObservation.workerObservationCurrent(...args)
   }
 
-  private workerObservationCurrent(observation: WorkerObservationFence) {
-    const plan = this.store.plan(observation.planID)
-    const attempt = this.store
-      .attempts(observation.planID)
-      .filter((candidate) => candidate.task_id === observation.taskID)
-      .at(-1)
-    const node = this.store
-      .nodes(observation.planID)
-      .find((candidate) => candidate.task_id === observation.taskID)
-    return Boolean(
-      plan &&
-      plan.version === observation.planVersion &&
-      plan.state === observation.planState &&
-      this.reconcileRequestID(observation.planID) === observation.reconcileRequestID &&
-      attempt?.id === observation.attemptID &&
-      attempt.state === observation.attemptState &&
-      attempt.session_id === observation.sessionID &&
-      attempt.workspace === observation.workspace &&
-      attempt.message_id === observation.messageID &&
-      attempt.policy === observation.policy &&
-      node?.state === observation.nodeState &&
-      node.version === observation.nodeVersion,
-    )
-  }
-
-  private approvalWaitReason(reason: string | null | undefined) {
-    return Boolean(
-      reason?.startsWith("Worker at ") &&
-      reason.includes("pending permission request(s)") &&
-      reason.includes("pending form(s)"),
-    )
-  }
-
-  private conclusiveApprovalClear(attempt: AttemptRow, session: HostSession) {
-    if (
-      session.id !== attempt.session_id ||
-      session.projectID !== this.projectID ||
-      session.directory !== attempt.workspace ||
-      !isWorkerAgent(session.agent) ||
-      session.archived ||
-      session.metadata?.lazersAttemptID !== attempt.id ||
-      session.pendingInput !== false ||
-      session.pendingPermissions !== 0 ||
-      session.pendingForms !== 0 ||
-      session.observationUnstable ||
-      !session.turn ||
-      !this.matchesWorkerInput(attempt, session.turn.inputID)
-    )
-      return false
-    try {
-      const policy = ModelPolicy.safeParse(JSON.parse(attempt.policy).model)
-      return policy.success && this.sameModel(session.model, policy.data)
-    } catch {
-      return false
-    }
+  private approvalWaitReason(...args: Parameters<WorkerObservation["approvalWaitReason"]>) {
+    return this.workerObservation.approvalWaitReason(...args)
   }
 
   private resumeTransientObservationWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-    fence: number,
-    allowNonterminal = false,
+    ...args: Parameters<WorkerObservation["resumeTransientObservationWait"]>
   ) {
-    const current = this.store.plan(plan.id)
-    const reason = current?.reason
-    const observationReason = reason?.replace(/^Worker execution (?:failed|completed); /, "")
-    // Legacy holds named the retired experimental.idle report; they clear the same way.
-    const backgroundWait =
-      observationReason?.startsWith("Native idle background observation") ||
-      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "") ||
-      /^Worker has \d+ running shell\(s\) and \d+ active child session\(s\)/.test(
-        observationReason ?? "",
-      )
-    const approvalWait = this.approvalWaitReason(reason)
-    if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
-    if (approvalWait && !this.conclusiveApprovalClear(attempt, session)) return false
-    if (
-      allowNonterminal
-        ? !approvalWait || session.outcome !== undefined
-        : session.busy || session.pendingInput || session.observationUnstable || !session.outcome
-    )
-      return false
-    return this.store.fenced(this.owner, fence, (db) => {
-      if (!this.workerObservationCurrent(observation)) return false
-      const current = db
-        .query<{ state: string; reason: string | null; version: number; owner: string }, [string]>(
-          "SELECT state,reason,version,owner FROM runner_plans WHERE id=?",
-        )
-        .get(plan.id)
-      if (
-        current?.state !== "blocked" ||
-        current.reason !== reason ||
-        current.version !== observation.planVersion
-      )
-        return false
-      const changed =
-        db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=? AND owner=?",
-          )
-          .run(plan.id, reason, observation.planVersion, observation.owner).changes === 1
-      if (changed)
-        this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
-          previousReason: reason,
-          observation: approvalWait ? "worker-approvals" : "live-idle-check",
-        })
-      return changed
-    })
+    return this.workerObservation.resumeTransientObservationWait(...args)
   }
 
-  private backgroundWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    reason: string,
-    fence: number,
+  private backgroundWait(...args: Parameters<WorkerObservation["backgroundWait"]>) {
+    return this.workerObservation.backgroundWait(...args)
+  }
+
+  backgroundBlockReason(session: HostSession): string | undefined {
+    return this.workerObservation.backgroundBlockReason(session)
+  }
+
+  private cleanupAuditDiagnostics(...args: Parameters<CleanupAudit["cleanupAuditDiagnostics"]>) {
+    return this.cleanupAudit.cleanupAuditDiagnostics(...args)
+  }
+
+  private async dispatch(...args: Parameters<Dispatch["dispatch"]>) {
+    return this.dispatchModule.dispatch(...args)
+  }
+
+  private preparationAllowed(...args: Parameters<Dispatch["preparationAllowed"]>) {
+    return this.dispatchModule.preparationAllowed(...args)
+  }
+
+  private promptAdmissionAllowed(...args: Parameters<Dispatch["promptAdmissionAllowed"]>) {
+    return this.dispatchModule.promptAdmissionAllowed(...args)
+  }
+
+  private observeUsage(...args: Parameters<Dispatch["observeUsage"]>) {
+    return this.dispatchModule.observeUsage(...args)
+  }
+
+  private taskDependencyIDs(...args: Parameters<Dispatch["taskDependencyIDs"]>) {
+    return this.dispatchModule.taskDependencyIDs(...args)
+  }
+
+  private taskDependencyIntegration(...args: Parameters<Dispatch["taskDependencyIntegration"]>) {
+    return this.dispatchModule.taskDependencyIntegration(...args)
+  }
+
+  private integratedPrerequisiteBaseline(
+    ...args: Parameters<Dispatch["integratedPrerequisiteBaseline"]>
   ) {
-    const background = {
-      runningShells: session.runningShells ?? 0,
-      activeChildren: session.activeChildren ?? 0,
-    }
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      background?: typeof background
-    }>(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT")
-    if (
-      previous?.attemptID === attempt.id &&
-      JSON.stringify(previous.background) === JSON.stringify(background)
-    )
-      return
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        reason,
-        background,
-      }),
-    )
+    return this.dispatchModule.integratedPrerequisiteBaseline(...args)
   }
 
-  private async dependencySource(plan: PlanRow, input: PlanInput, node: NodeRow): Promise<string> {
-    const prerequisites = this.taskDependencyIDs(input, node)
-    if (!prerequisites.length) return input.baseCommit
-    const proof = await this.taskDependencyIntegration(plan, input, node)
-    if (proof.status !== "ready") throw new Error(proof.reason)
-    return proof.baseline
-  }
-
-  private taskDependencyIDs(input: PlanInput, node: NodeRow): string[] {
-    const dependencies = new Map<string, string[]>()
-    for (const edge of input.dependencies) {
-      const prerequisites = dependencies.get(edge.successor) ?? []
-      prerequisites.push(edge.prerequisite)
-      dependencies.set(edge.successor, prerequisites)
-    }
-    const ancestors = new Set<string>()
-    const visit = (taskID: string) => {
-      for (const prerequisite of dependencies.get(taskID) ?? []) {
-        if (ancestors.has(prerequisite)) continue
-        ancestors.add(prerequisite)
-        visit(prerequisite)
-      }
-    }
-    visit(node.task_id)
-    const order = new Map(input.integrationOrder.map((taskID, index) => [taskID, index]))
-    return [...ancestors].toSorted(
-      (left, right) =>
-        (order.get(left) ?? Number.MAX_SAFE_INTEGER) -
-        (order.get(right) ?? Number.MAX_SAFE_INTEGER),
-    )
-  }
-
-  /** Stored change identity for an artifact SHA, so proof survives a rewritten history. */
-  private artifactEvidence: ArtifactEvidenceLookup = (artifact) =>
-    this.store.repository.read((db) => storedEvidence(db, { artifact }))
-
-  private async taskDependencyIntegration(
-    plan: PlanRow,
-    input: PlanInput,
-    node: NodeRow,
-    candidateBaseline?: string,
-    capturedRows?: readonly TaskPrerequisiteIntegrationRow[],
-    capturedBranch?: string,
-  ): Promise<IntegrationDecision> {
-    const prerequisites = this.taskDependencyIDs(input, node)
-    if (!prerequisites.length)
-      return {
-        status: "ready",
-        baseline: candidateBaseline ?? input.baseCommit,
-      }
-    let branch: string
-    try {
-      branch = capturedBranch ?? (await gitAsync(this.directory, ["branch", "--show-current"]))
-    } catch {
-      return { status: "unknown", reason: "The integrated source branch could not be read." }
-    }
-    if (!branch)
-      return { status: "waiting", reason: "Task source integration requires the reviewed branch." }
-    const rows = capturedRows
-      ? capturedRows.filter((row) => row.plan_id === plan.id && prerequisites.includes(row.task_id))
-      : this.store.taskPrerequisiteIntegrationRows(plan.id, prerequisites)
-    return evaluateTaskPrerequisiteIntegration(
-      this.directory,
-      branch,
-      prerequisites,
-      rows,
-      gitAsync,
-      candidateBaseline,
-      this.artifactEvidence,
-    )
-  }
-
-  private async integratedPrerequisiteBaseline(
-    prerequisites: string[],
-    candidateBaseline?: string,
-  ): Promise<string | undefined> {
-    if (!prerequisites.length || new Set(prerequisites).size !== prerequisites.length)
-      return undefined
-
-    const rows = this.store.atomic((db) => {
-      const result: PrerequisiteIntegrationRow[] = []
-      // Bound each query to one hundred plans while reading the latest acceptance
-      // and combined-integration transitions from one SQLite snapshot.
-      for (let offset = 0; offset < prerequisites.length; offset += 100) {
-        const batch = prerequisites.slice(offset, offset + 100)
-        const placeholders = batch.map(() => "?").join(",")
-        result.push(
-          ...db
-            .query<PrerequisiteIntegrationRow, string[]>(
-              `SELECT p.id AS plan_id,p.project_directory,p.state,p.artifact,
-                      accepted.id AS accepted_id,accepted.version AS accepted_version,
-                      accepted.payload AS accepted_payload,
-                      integration.id AS integration_id,integration.version AS integration_version,
-                      integration.payload AS integration_payload,
-                      -- Lifecycle labels can be stale; a cancellation invalidates
-                      -- older acceptance until a new acceptance/integration pair.
-                      (SELECT t.id FROM runner_transitions t
-                       WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='CANCEL_REQUESTED'
-                       ORDER BY t.id DESC LIMIT 1) AS invalidation_id
-               FROM runner_plans p
-               LEFT JOIN runner_transitions accepted
-                 ON accepted.id=(
-                   SELECT t.id FROM runner_transitions t
-                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='PLAN_ACCEPTED'
-                   ORDER BY t.id DESC LIMIT 1
-                 )
-               LEFT JOIN runner_transitions integration
-                 ON integration.id=(
-                   SELECT t.id FROM runner_transitions t
-                   WHERE t.plan_id=p.id AND t.task_id IS NULL AND t.event='INTEGRATION_RECORDED'
-                   ORDER BY t.id DESC LIMIT 1
-                 )
-               WHERE p.project_directory=? AND p.id IN (${placeholders})
-               ORDER BY p.id`,
-            )
-            .all(this.directory, ...batch),
-        )
-      }
-      return result
-    })
-    return evaluatePrerequisiteIntegration(
-      this.directory,
-      prerequisites,
-      rows,
-      gitAsync,
-      candidateBaseline,
-      this.artifactEvidence,
-    )
-  }
-
-  private async dispatch(plan: PlanRow, node: NodeRow, fence: number, admissionRequestID: string) {
-    // Work queued before the project had a config (or before this rule) must not dead-end: the
-    // plan's Architect gets the same actionable refusal through the hold path, and the tick
-    // releases the hold once a config exists.
-    const refused =
-      !this.fallowReviewEnabled || hasStoredFallowConfig(this.store.repository)
-        ? undefined
-        : await this.fallowGate()
-    if (refused) {
-      this.hold(plan, `FALLOW_CONFIG_REQUIRED: ${refused.missing} ${refused.guidance}`)
-      return
-    }
-    const task = this.store.repository.get(node.task_id)!
-    const attempts = this.store.attempts(plan.id).filter((a) => a.task_id === task.id)
-    const first = attempts[0]
-    const audit = this.store.exactContentConflicts([task.id])
-    if (audit.findings.length) {
-      this.hold(plan, "Overlap audit changed before dispatch")
-      return
-    }
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    if (JSON.parse(plan.body).workspaceMode === undefined && attempts.length)
-      input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
-    const persona = input.nodes.find((candidate) => candidate.taskID === task.id)?.persona
-    const configuredImplementor = input.workerModel
-      ? null
-      : persona
-        ? ((await this.host.workerModel?.(workerAgent(input.workerAgent))) ?? null)
-        : plan.model
-          ? ModelPolicy.parse(JSON.parse(plan.model))
-          : null
-    const routeDecision =
-      persona && input.workerAgent !== "auditor"
-        ? this.resolveTaskDispatchRoute(input, task.id, persona, configuredImplementor)
-        : undefined
-    if (routeDecision?.status === "unavailable") {
-      this.hold(plan, `No native worker route is available for the ${persona} persona`)
-      return
-    }
-    const model =
-      routeDecision?.status === "resolved"
-        ? routeDecision.route
-        : plan.model
-          ? ModelPolicy.parse(JSON.parse(plan.model))
-          : null
-    if (!model) {
-      this.hold(plan, "Select an implementor model in native OpenCode agent configuration")
-      return
-    }
-    const id = crypto.randomUUID()
-    // Isolated work inherits its dependency artifacts. A new shared node
-    // starts at the actual reviewed checkout, so intervening integrated repairs
-    // are input, not attributed to that worker's write scope.
-    const retryRequest = this.store.latestTransition<{
-      attemptID?: string
-      selectedBaseline?: string | null
-    }>(plan.id, task.id, "RETRY_REQUESTED")
-    const selectedBaseline =
-      retryRequest && retryRequest.attemptID === attempts.at(-1)?.id
-        ? retryRequest.selectedBaseline
-        : null
-    const previousBase = selectedBaseline ?? attempts.at(-1)?.artifact ?? undefined
-    const taskPrerequisites = this.taskDependencyIDs(input, node)
-    const base =
-      previousBase ??
-      (input.workspaceMode === "shared" && !taskPrerequisites.length
-        ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
-        : await this.dependencySource(plan, input, node))
-    if (taskPrerequisites.length) {
-      const proof = await this.taskDependencyIntegration(plan, input, node, base)
-      if (proof.status !== "ready") throw new Error(proof.reason)
-      if (proof.baseline !== base)
-        throw new Error("The prerequisite baseline changed before dispatch")
-    }
-    const workspace =
-      input.workspaceMode === "shared"
-        ? this.directory
-        : canonicalProjectWorktreePath(this.directory, id)
-    const text = JSON.stringify({
-      taskID: task.id,
-      revision: task.revision,
-      specification: task.proposal,
-      source: base,
-      previousAttempt: first
-        ? { id: attempts.at(-1)!.id, evidence: this.store.detail(plan.id).evidence }
-        : null,
-    })
-    const policy = {
-      agent: workerAgent(input.workerAgent),
-      workspaceMode: input.workspaceMode,
-      model,
-      ...(routeDecision ? { routeDecision } : {}),
-      ...(persona ? { persona } : {}),
-      source: base,
-      context: text,
-      packet: {
-        recipe: "task-tool/1",
-        taskID: task.id,
-        tool: "lz-get-task",
-      },
-      budget: null,
-      repairAttempt: this.store.atomic(
-        (db) =>
-          db
-            .query<{ event: string }, [string, string]>(
-              "SELECT event FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id DESC LIMIT 1",
-            )
-            .get(plan.id, task.id)?.event === "REPAIR",
-      ),
-      toolPolicy: "inherit host/user/project; delegation forbidden",
-      costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
-    }
-    let attempt!: AttemptRow
-    const admitted = this.store.fencedAtomic(this.owner, fence, (db) => {
-      const current = this.store.plan(plan.id)
-      const currentNode = this.store
-        .nodes(plan.id)
-        .find((candidate) => candidate.task_id === node.task_id)
-      if (
-        !current ||
-        current.state !== "running" ||
-        this.store.effectiveDispatchPause(plan.id) !== undefined ||
-        current.revision !== plan.revision ||
-        current.body !== plan.body ||
-        currentNode?.state !== node.state
-      )
-        return "stale" as const
-      if (
-        this.store
-          .activeAdoptions()
-          .some((adoption) =>
-            scopePatternsConflict(
-              this.store.effectiveReservationScope(task.id),
-              this.store.effectiveReservationScope(adoption.task_id),
-            ),
-          )
-      )
-        throw new Error("A pending descendant adoption reserves this task's scope")
-      if (!this.delegatedAgentCapacity.admitRunnerInTransaction(db, admissionRequestID, id))
-        return "waiting" as const
-      if (node.state === "queued") this.store.move(plan.id, task.id, "READY")
-      this.store.move(plan.id, task.id, "DISPATCH")
-      db.query(
-        "INSERT INTO runner_attempts(id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at) VALUES(?,?,?,?,?,?,?,?,?,'preparing',?)",
-      ).run(
-        id,
-        plan.id,
-        task.id,
-        attempts.length + 1,
-        sessionID(),
-        messageID(),
-        workspace,
-        base,
-        JSON.stringify(policy),
-        Date.now(),
-      )
-      attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
-      return "admitted" as const
-    })
-    if (admitted !== "admitted") {
-      if (admitted === "stale")
-        await this.delegatedAgentCapacity.cancelRunnerRequest(admissionRequestID)
-      return
-    }
-    const admissionPlan = this.store.plan(plan.id)!
-    const admissionOwner = admissionPlan.owner
-    this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
-      attemptID: id,
-      packet: policy.packet,
-      ...(persona ? { persona } : {}),
-    })
-    if (input.workspaceMode === "shared") {
-      const current = this.store.plan(plan.id)
-      if (current?.state !== "running" || current.owner !== admissionOwner) return
-      await this.prepareWorker(plan, attempt, fence)
-      return
-    }
-    const effect = this.effect(plan.id, task.id, id, "worktree", { workspace, base }, fence)
-    try {
-      const actual = await this.host.worktree({ directory: workspace, base })
-      if ((await gitAsync(actual, ["rev-parse", "HEAD"])) !== base)
-        throw new Error("Host worktree did not use the admitted starting revision")
-      this.store.fenced(this.owner, fence, (db) =>
-        db.query("UPDATE runner_attempts SET workspace=? WHERE id=?").run(actual, id),
-      )
-      attempt.workspace = actual
-      this.receipt(effect, { workspace: actual, base }, fence)
-    } catch (error) {
-      this.uncertain(effect, error, fence)
-      return
-    }
-    const current = this.store.plan(plan.id)
-    if (current?.state !== "running" || current.owner !== admissionOwner) return
-    await this.prepareWorker(plan, attempt, fence)
-  }
-  /** Resumes must obey the same checkout/scope admission as fresh dispatch. */
-  private preparationAllowed(attempt: AttemptRow) {
-    const scope = this.store.effectiveReservationScope(attempt.task_id)
-    if (
-      this.store
-        .activeAdoptions()
-        .some(
-          (adoption) =>
-            attempt.workspace === this.directory ||
-            scopePatternsConflict(scope, this.store.effectiveReservationScope(adoption.task_id)),
-        )
-    )
-      return false
-    for (const other of this.store.activeProjectAttempts()) {
-      if (other.id === attempt.id || !["preparing", "running", "verifying"].includes(other.state))
-        continue
-      const promptIntended = this.store
-        .effects(other.plan_id)
-        .some(
-          (effect) =>
-            effect.attempt_id === other.id &&
-            effect.kind === "prompt" &&
-            JSON.parse(effect.payload).messageID === other.message_id &&
-            effect.state !== "failed",
-        )
-      // Stable priority prevents two unsent, conflicting reservations waiting
-      // on each other. A prompt that may already be admitted always wins.
-      if (
-        other.state === "preparing" &&
-        !promptIntended &&
-        (other.started_at > attempt.started_at ||
-          (other.started_at === attempt.started_at && other.id > attempt.id))
-      )
-        continue
-      if (
-        attempt.workspace === this.directory ||
-        other.workspace === this.directory ||
-        scopePatternsConflict(scope, this.store.effectiveReservationScope(other.task_id))
-      )
-        return false
-    }
-    return true
-  }
-
-  private async promptAdmissionAllowed(planID: string, attempt: AttemptRow) {
-    const plan = this.store.plan(planID)
-    const currentAttempt = this.store
-      .attempts(planID)
-      .find((candidate) => candidate.id === attempt.id)
-    if (
-      plan?.state !== "running" ||
-      currentAttempt?.state !== "preparing" ||
-      !this.preparationAllowed(currentAttempt)
-    ) {
-      if (currentAttempt)
-        await this.delegatedAgentCapacity.cancelRunnerAttemptQueue(currentAttempt.id)
-      return false
-    }
-    const recovery = this.startupRecoveryAuthorization(plan, currentAttempt)
-    if (recovery && !this.startupRecoveryAuthorityCurrent(plan, currentAttempt, recovery))
-      return false
-
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const taskNode = this.store
-      .nodes(planID)
-      .find((node) => node.task_id === currentAttempt.task_id)
-    if (!taskNode) return false
-    const taskPrerequisites = this.taskDependencyIDs(input, taskNode)
-    if (taskPrerequisites.length) {
-      const proof = await this.taskDependencyIntegration(
-        plan,
-        input,
-        taskNode,
-        currentAttempt.base_commit,
-      )
-      if (proof.status !== "ready" || proof.baseline !== currentAttempt.base_commit) return false
-      try {
-        const treeHead = await gitAsync(currentAttempt.workspace, ["rev-parse", "HEAD"])
-        if (!isCommitID(treeHead) || !isCommitID(currentAttempt.base_commit)) return false
-        await gitAsync(currentAttempt.workspace, [
-          "merge-base",
-          "--is-ancestor",
-          currentAttempt.base_commit,
-          treeHead,
-        ])
-        const taskChanges = await changedPaths(currentAttempt.workspace, currentAttempt.base_commit)
-        const inputLineage = new Set([currentAttempt.message_id])
-        let inputID = currentAttempt.message_id
-        const resumes = this.store.atomic((db) =>
-          db
-            .query<{ payload: string }, [string, string]>(
-              `SELECT payload FROM runner_transitions
-               WHERE plan_id=? AND task_id=? AND event='ATTEMPT_RESUMED' ORDER BY id DESC`,
-            )
-            .all(planID, currentAttempt.task_id),
-        )
-        for (const { payload } of resumes) {
-          const resume = JSON.parse(payload) as {
-            attemptID?: unknown
-            messageID?: unknown
-            previousMessageID?: unknown
-          }
-          if (resume.attemptID !== currentAttempt.id || resume.messageID !== inputID) continue
-          if (
-            typeof resume.previousMessageID !== "string" ||
-            inputLineage.has(resume.previousMessageID)
-          )
-            break
-          inputID = resume.previousMessageID
-          inputLineage.add(inputID)
-        }
-        const admittedPrompt = this.store.effects(planID).some((effect) => {
-          if (
-            effect.attempt_id !== currentAttempt.id ||
-            effect.kind !== "prompt" ||
-            effect.state !== "completed"
-          )
-            return false
-          const payload = JSON.parse(effect.payload) as {
-            sessionID?: unknown
-            workspace?: unknown
-            messageID?: unknown
-          }
-          return (
-            payload.sessionID === currentAttempt.session_id &&
-            payload.workspace === currentAttempt.workspace &&
-            typeof payload.messageID === "string" &&
-            inputLineage.has(payload.messageID)
-          )
-        })
-        if ((treeHead !== currentAttempt.base_commit || taskChanges.length > 0) && !admittedPrompt)
-          return false
-        if (
-          protectedPaths(taskChanges, this.store.effectiveScope(currentAttempt.task_id)).length >
-            0 ||
-          (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"]))
-        )
-          return false
-      } catch {
-        return false
-      }
-    }
-
-    const prerequisites = input.afterPlans ?? []
-    if (!prerequisites.length)
-      return this.delegatedAgentCapacity.admitRunnerAttempt(
-        {
-          planID,
-          taskID: currentAttempt.task_id,
-          attemptNumber: currentAttempt.number,
-        },
-        currentAttempt.id,
-      )
-
-    try {
-      // The reservation base is immutable prerequisite proof. A later HEAD is
-      // acceptable only as scoped progress from a prompt already admitted to this attempt.
-      const baseline = currentAttempt.base_commit
-      const head = await gitAsync(currentAttempt.workspace, ["rev-parse", "HEAD"])
-      if (!isCommitID(baseline) || !isCommitID(head)) return false
-      const retainedPrompt = this.store.effects(planID).some((effect) => {
-        if (
-          effect.attempt_id !== currentAttempt.id ||
-          effect.kind !== "prompt" ||
-          effect.state !== "completed"
-        )
-          return false
-        const payload = JSON.parse(effect.payload) as {
-          sessionID?: unknown
-          workspace?: unknown
-          messageID?: unknown
-        }
-        return (
-          payload.sessionID === currentAttempt.session_id &&
-          payload.workspace === currentAttempt.workspace &&
-          typeof payload.messageID === "string"
-        )
-      })
-      const changed = await changedPaths(currentAttempt.workspace, baseline)
-      if ((head !== baseline || changed.length > 0) && !retainedPrompt) return false
-      await gitAsync(currentAttempt.workspace, ["merge-base", "--is-ancestor", baseline, head])
-      if (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
-      if (protectedPaths(changed, this.store.effectiveScope(currentAttempt.task_id)).length)
-        return false
-      const eligible =
-        (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
-      return (
-        eligible &&
-        this.delegatedAgentCapacity.admitRunnerAttempt(
-          {
-            planID,
-            taskID: currentAttempt.task_id,
-            attemptNumber: currentAttempt.number,
-          },
-          currentAttempt.id,
-        )
-      )
-    } catch {
-      return false
-    }
-  }
-
-  private observeUsage(attempt: AttemptRow, session: HostSession, fence: number) {
-    if (session.staleActive)
-      this.store.fenced(this.owner, fence, () =>
-        this.store.recordOnce(attempt.plan_id, attempt.task_id, "HOST_ACTIVE_STALE", {
-          attemptID: attempt.id,
-          sessionID: session.id,
-          cause: session.staleActive!.cause,
-        }),
-      )
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query(
-          `UPDATE runner_attempts SET
-          token_count=CASE WHEN ? IS NULL THEN token_count ELSE MAX(COALESCE(token_count,?),?) END,
-          cost=CASE WHEN ? IS NULL THEN cost ELSE MAX(COALESCE(cost,?),?) END,
-          tool_count=MAX(tool_count,?) WHERE id=?`,
-        )
-        .run(
-          session.tokens,
-          session.tokens,
-          session.tokens,
-          session.cost,
-          session.cost,
-          session.cost,
-          session.tools,
-          attempt.id,
-        ),
-    )
+  private resolveTaskDispatchRoute(...args: Parameters<Dispatch["resolveTaskDispatchRoute"]>) {
+    return this.dispatchModule.resolveTaskDispatchRoute(...args)
   }
 
   private retainedRepairForAttempt(attempt: AttemptRow): RetainedRepairRecord | undefined {
@@ -8497,512 +7107,12 @@ export class TaskRuntime {
    *   `cancelled`.
    * A live session, or an intended or uncertain effect of the attempt, is never settled.
    */
-  private static readonly staleAttemptWindowMs = 60_000
-  private readonly staleAttemptProbes = new Map<string, { since: number; probed: number }>()
-  private async settleStaleAttempts(fence: number) {
-    for (const attempt of this.store.activeProjectAttempts()) {
-      const plan = this.store.plan(attempt.plan_id)
-      if (!plan) continue
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((item) => item.task_id === attempt.task_id)
-        .at(-1)
-      if (latest?.id !== attempt.id) continue
-      // The Architect is finishing this task itself. Its attempt has no native session, so absence
-      // says nothing about it: only accept, a plan cancellation, or the abandonment hold ends it.
-      if (isTakeoverAttempt(attempt.policy)) continue
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        continue
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      let target: "accepted" | "failed" | "cancelled" | undefined
-      let cause: string
-      if (node && ["accepted", "incorporated"].includes(node.state)) {
-        if (!["running", "verifying"].includes(attempt.state)) continue
-        target = "accepted"
-        cause = "node-already-accepted"
-      } else if (
-        ["running", "verifying"].includes(attempt.state) &&
-        ["blocked", "cancelled", "failed", "exhausted"].includes(plan.state)
-      ) {
-        // Give the ordinary worker observation time to settle the attempt first, then probe the
-        // host at most once per window so a held plan costs no extra read on every tick.
-        const now = this.now()
-        const seen = this.staleAttemptProbes.get(attempt.id)
-        if (seen === undefined) this.staleAttemptProbes.set(attempt.id, { since: now, probed: now })
-        if (seen === undefined || now - seen.probed < TaskRuntime.staleAttemptWindowMs) continue
-        seen.probed = now
-        const session = attempt.session_id ? await this.host.session(attempt.session_id) : null
-        if (
-          session &&
-          (!session.archived ||
-            session.busy ||
-            session.pendingInput ||
-            (session.pendingPermissions ?? 0) > 0 ||
-            (session.pendingForms ?? 0) > 0 ||
-            session.observationUnstable ||
-            (session.runningShells ?? 0) > 0 ||
-            (session.activeChildren ?? 0) > 0)
-        )
-          continue
-        target = plan.state === "blocked" ? "failed" : "cancelled"
-        cause = session ? "session-archived-and-quiet" : "session-absent"
-      } else continue
-      this.store.fenced(this.owner, fence, (db) => {
-        if (this.store.plan(plan.id)?.version !== plan.version) return
-        const changed = db
-          .query(
-            `UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,?),artifact=COALESCE(artifact,?)
-             WHERE id=? AND state=?`,
-          )
-          .run(target!, node?.artifact ?? null, attempt.id, attempt.state).changes
-        if (changed !== 1) return
-        this.store.record(plan.id, attempt.task_id, "ATTEMPT_STALE_SETTLED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          from: attempt.state,
-          to: target,
-          planState: plan.state,
-          nodeState: node?.state ?? null,
-          cause,
-        })
-      })
-    }
+  private settleStaleAttempts(...args: Parameters<AttemptAdvance["settleStaleAttempts"]>) {
+    return this.attemptAdvance.settleStaleAttempts(...args)
   }
 
-  private failMissingWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    observation?: WorkerObservationFence,
-  ) {
-    this.store.fenced(this.owner, fence, () => {
-      if (observation && !this.workerObservationCurrent(observation)) return
-      const currentPlan = this.store.plan(plan.id)
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((item) => item.task_id === attempt.task_id)
-        .at(-1)
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      if (
-        !currentPlan ||
-        !["running", "blocked"].includes(currentPlan.state) ||
-        latest?.id !== attempt.id ||
-        latest.message_id !== attempt.message_id ||
-        latest.state !== attempt.state ||
-        node?.state !== attempt.state ||
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        return
-      this.failAttempt(currentPlan, latest, "Owned worker session definitively missing")
-      this.store.record(plan.id, attempt.task_id, "WORKER_SESSION_ABSENT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        observedAt: this.now(),
-        action: "fail",
-        retainedWorkPreserved: true,
-      })
-    })
-  }
-
-  /**
-   * A turn that streams nothing for the whole window is stuck: interrupt it once
-   * so the ordinary interrupted-worker path (auto-resume, hold) takes over.
-   * Background shells and child sessions count as progress.
-   */
-  private async interruptStalledWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    fence: number,
-  ) {
-    if (this.workerNoProgressWindowMs <= 0) return
-    const fingerprint = JSON.stringify([
-      session.tokens,
-      session.activityAt,
-      session.idleAt,
-      session.runningShells ?? 0,
-      session.activeChildren ?? 0,
-    ])
-    const now = this.now()
-    const seen = this.workerProgress.get(session.id)
-    if (
-      !seen ||
-      seen.fingerprint !== fingerprint ||
-      (session.runningShells ?? 0) > 0 ||
-      (session.activeChildren ?? 0) > 0
-    ) {
-      this.workerProgress.set(session.id, { fingerprint, since: now })
-      return
-    }
-    if (now - seen.since < this.workerNoProgressWindowMs) return
-    const payload = {
-      attemptID: attempt.id,
-      sessionID: session.id,
-      activityAt: session.activityAt ?? null,
-      windowMs: this.workerNoProgressWindowMs,
-    }
-    const prior = this.store.latestTransition<typeof payload>(
-      plan.id,
-      attempt.task_id,
-      "WORKER_NO_PROGRESS_INTERRUPT",
-    )
-    if (prior && JSON.stringify(prior) === JSON.stringify(payload)) return
-    await this.host.interrupt(session.id)
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, "WORKER_NO_PROGRESS_INTERRUPT", payload),
-    )
-  }
-
-  private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    if (attempt.state === "preparing") {
-      await this.prepareWorker(plan, attempt, fence)
-      return
-    }
-    if (!new Set(["running", "blocked"]).has(plan.state)) return
-    const observation = this.workerObservationFence(plan, attempt)
-    if (!observation) return
-    const session = await this.observeAdvancedSession(plan, attempt, fence, observation)
-    if (!session) return
-    const ctx: AdvanceContext = { plan, attempt, fence, observation, session }
-    if (await this.holdWorkerWaits(ctx)) return
-    if (await this.settleIdleWorker(ctx)) return
-    await this.finishWorkerTurn(ctx)
-  }
-
-  /** The worker's session as the runtime now sees it, or undefined when the pass should stop. */
-  private async observeAdvancedSession(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    observation: WorkerObservationFence,
-  ): Promise<HostSession | undefined> {
-    let session = await this.host.session(attempt.session_id)
-    if (session) this.observeUsage(attempt, session, fence)
-    if (!this.workerObservationCurrent(observation)) return undefined
-    if (!session) {
-      this.failMissingWorker(plan, attempt, fence, observation)
-      return undefined
-    }
-    if (
-      plan.state === "blocked" &&
-      this.approvalWaitReason(plan.reason) &&
-      session.pendingPermissions === 0 &&
-      session.pendingForms === 0 &&
-      session.pendingInput === false &&
-      !session.observationUnstable &&
-      session.outcome === undefined
-    ) {
-      const detailed = await this.host.session(attempt.session_id, { messages: true })
-      if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return undefined
-      if (!detailed) return undefined
-      session = detailed
-    }
-    return session
-  }
-
-  /** The turn belongs to an earlier continuation input, not the one this attempt is waiting on. */
-  private staleContinuationTurn(attempt: AttemptRow, session: HostSession) {
-    return Boolean(
-      session.turn &&
-      !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-      this.isPriorContinuationInput(attempt, session.turn.inputID),
-    )
-  }
-
-  /** The plan is already held on this exact terminal worker observation. */
-  private terminalHoldUnchanged(plan: PlanRow, attempt: AttemptRow, session: HostSession) {
-    const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
-      plan.id,
-      null,
-      "BLOCKED",
-    )?.workerObservation
-    const unchanged =
-      (session.outcome === "failed" || session.outcome === "succeeded") &&
-      (session.outcome === "succeeded" ||
-        (typeof session.idleAt === "number" && Number.isFinite(session.idleAt))) &&
-      previousHold?.kind === "terminal-worker-observation" &&
-      previousHold.attemptID === attempt.id &&
-      previousHold.sessionID === session.id &&
-      previousHold.workspace === attempt.workspace &&
-      previousHold.outcome === session.outcome &&
-      previousHold.idleAt === session.idleAt &&
-      (!session.turn ||
-        (previousHold.inputID === session.turn.inputID &&
-          previousHold.turnState === session.turn.state))
-    return { previousHold, unchanged }
-  }
-
-  /** Holds the plan while the worker waits on approvals, input or background work. True when held. */
-  private async holdWorkerWaits(ctx: AdvanceContext): Promise<boolean> {
-    const { plan, attempt, fence, observation, session } = ctx
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-      this.holdApprovalObservation(plan, attempt, session, observation, fence)
-      return true
-    }
-    if (
-      plan.state === "blocked" &&
-      this.approvalWaitReason(plan.reason) &&
-      session.outcome === undefined
-    ) {
-      this.resumeTransientObservationWait(plan, attempt, session, observation, fence, true)
-      return true
-    }
-    if (this.staleContinuationTurn(attempt, session)) return true
-    if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
-    else this.workerProgress.delete(session.id)
-    const backgroundReason = this.backgroundBlockReason(session)
-    const { previousHold, unchanged } = this.terminalHoldUnchanged(plan, attempt, session)
-    if (
-      !session.busy &&
-      !session.pendingInput &&
-      !session.observationUnstable &&
-      backgroundReason &&
-      session.outcome !== "interrupted" &&
-      ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
-        unchanged ||
-        session.archived ||
-        session.outcome === "succeeded")
-    ) {
-      this.hold(
-        plan,
-        backgroundReason,
-        ["audit", "reconcile", "cancel"],
-        unchanged ? previousHold : undefined,
-        observation,
-      )
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      return true
-    }
-    return false
-  }
-
-  /**
-   * An idle worker with an outcome is read again with its messages before the outcome is trusted.
-   * True when the pass is settled (held, failed or still unstable); false to go on to the outcome.
-   */
-  private async settleIdleWorker(ctx: AdvanceContext): Promise<boolean> {
-    const { plan, attempt, fence, observation } = ctx
-    if (
-      !ctx.session.busy &&
-      !ctx.session.pendingInput &&
-      !ctx.session.observationUnstable &&
-      ctx.session.outcome
-    ) {
-      const detailed = await this.host.session(attempt.session_id, { messages: true })
-      if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return true
-      if (!detailed) {
-        this.failMissingWorker(plan, attempt, fence, observation)
-        return true
-      }
-      ctx.session = detailed
-      const session = detailed
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-        this.holdApprovalObservation(plan, attempt, session, observation, fence)
-        return true
-      }
-      if (session.busy || session.pendingInput || session.observationUnstable) return true
-      if (this.staleContinuationTurn(attempt, session)) return true
-      const detailedBackgroundReason = this.backgroundBlockReason(session)
-      if (session.outcome === "interrupted") {
-        await this.holdInterruptedWorker(ctx, detailedBackgroundReason)
-        return true
-      }
-      if (detailedBackgroundReason) {
-        this.holdDetailedBackground(ctx, detailedBackgroundReason)
-        return true
-      }
-    }
-    const { session } = ctx
-    return Boolean(
-      session.busy || session.pendingInput || session.observationUnstable || !session.outcome,
-    )
-  }
-
-  private async holdInterruptedWorker(ctx: AdvanceContext, backgroundReason: string | undefined) {
-    const { plan, attempt, fence, observation, session } = ctx
-    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "interrupted", session.turn?.inputID)
-    const reason = backgroundReason
-      ? `Worker execution was interrupted; ${backgroundReason}`
-      : "Worker execution was interrupted; the runtime could not resume it"
-    if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-    this.hold(
-      plan,
-      reason,
-      ["audit", "reconcile", "cancel"],
-      this.terminalWorkerObservation(attempt, session),
-      observation,
-    )
-    if (!backgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
-  }
-
-  /** A worker that ended (or is idle) while background work it started is still running. */
-  private holdDetailedBackground(ctx: AdvanceContext, backgroundReason: string) {
-    const { plan, attempt, fence, observation, session } = ctx
-    if (session.outcome === "failed" || session.outcome === "succeeded") {
-      this.workerEvent(
-        plan,
-        attempt,
-        "WORKER_STOPPED",
-        fence,
-        session.outcome,
-        session.turn?.inputID,
-      )
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      this.hold(
-        plan,
-        `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${backgroundReason}`,
-        ["audit", "reconcile", "cancel"],
-        this.terminalWorkerObservation(attempt, session),
-        observation,
-      )
-      return
-    }
-    this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"], undefined, observation)
-    this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-  }
-
-  /** The worker is idle with an outcome: fail, hold, or move the attempt on to verification. */
-  private async finishWorkerTurn(ctx: AdvanceContext) {
-    const { attempt, fence, session } = ctx
-    if (this.resumeTransientObservationWait(ctx.plan, attempt, session, ctx.observation, fence)) {
-      ctx.plan = this.store.plan(ctx.plan.id)!
-      ctx.observation = this.workerObservationFence(ctx.plan, attempt) ?? ctx.observation
-    }
-    const { plan, observation } = ctx
-    if (
-      session.outcome === "succeeded" &&
-      (!session.turn ||
-        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
-        session.turn.state !== "completed")
-    ) {
-      this.settleUnconfirmedSuccess(plan, attempt, session, observation)
-      return
-    }
-    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome, session.turn?.inputID)
-    if (session.outcome !== "succeeded") {
-      if (session.outcome === "interrupted") {
-        this.hold(
-          plan,
-          "Worker execution was interrupted; the runtime could not resume it",
-          ["audit", "reconcile", "resume", "cancel"],
-          this.terminalWorkerObservation(attempt, session),
-          observation,
-        )
-        await this.autoResumeInterruptedWorker(plan.id, attempt.id)
-        return
-      }
-      this.failAttempt(
-        plan,
-        attempt,
-        `Worker ${session.outcome}`,
-        session.outcome === "failed" ? this.terminalWorkerObservation(attempt, session) : undefined,
-      )
-      return
-    }
-    const task = this.store.repository.get(attempt.task_id)!
-    if (attempt.state === "running") {
-      this.store.move(plan.id, task.id, "VERIFY")
-      this.store.atomic((db) =>
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
-          )
-          .run(attempt.id),
-      )
-    }
-    await this.verify(plan, attempt, task.proposal, fence)
-  }
-
-  /** The worker reported success without a completed response to the assigned input. */
-  private settleUnconfirmedSuccess(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-  ) {
-    if (
-      session.turn &&
-      this.matchesWorkerInput(attempt, session.turn.inputID) &&
-      session.turn.state === "pending"
-    )
-      return
-    // A completed turn for a different input is a follow-up the Architect can bind
-    // (reconcile); say so and advertise it.
-    if (session.turn && !this.matchesWorkerInput(attempt, session.turn.inputID)) {
-      this.hold(
-        plan,
-        "Native worker success does not match a completed response to the current assigned input",
-        ["audit", "reconcile", "retry", "cancel"],
-        undefined,
-        observation,
-      )
-      return
-    }
-    // The worker went idle without a completed response to its assigned input:
-    // an observable failure of the attempt, retried through the normal path.
-    this.failAttempt(
-      plan,
-      attempt,
-      "Worker went idle without a completed response to the assigned input",
-    )
-  }
-
-  /**
-   * An interrupted worker resumes from its live state; nobody has to command it.
-   * Bounded per attempt so a worker that keeps being interrupted surfaces in the hold.
-   */
-  private async autoResumeInterruptedWorker(planID: string, attemptID: string) {
-    if (!this.autoResumeInterrupted) return
-    const plan = this.store.plan(planID)
-    const attempt = this.store.attempts(planID).find((candidate) => candidate.id === attemptID)
-    if (!plan || plan.state !== "blocked" || !attempt) return
-    const prior = this.store.activity(planID, attempt.task_id).filter(
-      (event) =>
-        event.event === "WORKER_AUTO_RESUMED" &&
-        (() => {
-          try {
-            return (JSON.parse(event.payload) as { attemptID?: unknown }).attemptID === attempt.id
-          } catch {
-            return false
-          }
-        })(),
-    ).length
-    if (prior >= 3 || !this.validArchitect(await this.host.session(plan.owner))) return
-    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
-      attemptID: attempt.id,
-      messageID: attempt.message_id,
-    })
-    try {
-      await this.command(
-        {
-          requestID: `auto-resume:${attempt.id}:${attempt.message_id}`,
-          planID,
-          action: "resume",
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          reason: "The worker was interrupted; the runtime resumes it from its live state",
-        },
-        plan.owner,
-      )
-    } catch {
-      // The hold stays and advertises resume; the next observation tries again within the bound.
-    }
+  private advanceAttempt(...args: Parameters<AttemptAdvance["advanceAttempt"]>) {
+    return this.attemptAdvance.advanceAttempt(...args)
   }
 
   private prepareVerificationCandidate(

@@ -542,6 +542,18 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - After S6 the coordinator keeps forwarders only for members its remaining code calls: `validArchitect`, `ensureArchitectOwner`, `sessionTitle`, `architectRoute`, `recordArchitectRoute`, `assertSchedulerActive`, `reconcileArchitectSources`, `considerArchitectRenewal`, `continueArchitectRenewal`, the five public source methods, and the `sourceResyncPending` getter.
 - Moved-member check: removing `private` can let a wrapped signature fit on one line, so the check joins the header before comparing. Class members are cut with `>` also counted as a closer (multi-line `Map<...>()` fields).
 
+## 9b. Corrections found while doing S14 and S7
+
+- Compare each step against the commit before it (`--base HEAD` for `moved-members.ts` and `literal-conservation.ts`), not `main`, once `main` and the branch have diverged. `moved-members.ts --allow` takes one member per flag, and a getter's key is `get <name>` (`--allow "get directory"`). The wrapper `--allow a --allow b ...` must not word-split the getter key.
+- Literal check: a `Pick<X, "a" | "b">` type adds string-literal fragments. Write a dependency type as an object of `X["a"]` indexed accesses instead, which the lexer ignores.
+- `Dispatch` takes `delegatedAgentCapacity`, `modelMappingResolver` and `fallowReviewEnabled` as plain values and `fallowGate`, `prepareWorker`, `startupRecoveryAuthorization` and `startupRecoveryAuthorityCurrent` as lazy arrows. The coordinator keeps `modelMappingResolver` (passed in) so the field is still read. LZ-200's capacity admission inside `dispatch` moved as it is.
+- Coordinator forwarders after S14: `dispatch`, `preparationAllowed` (permanent, used by 8 regions), `promptAdmissionAllowed`, `observeUsage`, `taskDependencyIDs`, `taskDependencyIntegration`, `integratedPrerequisiteBaseline`, `resolveTaskDispatchRoute`. `dependencySource` and `artifactEvidence` stay private to the module.
+- `WorkerObservation` needs `sameModel` (still in R06 until S13a) as a lazy arrow. `reconcileRequestID` and `conclusiveApprovalClear` have no caller outside the module, so they have no forwarder. After S7 the coordinator forwards `workerEvent`, `matchesWorkerInput`, `isPriorContinuationInput`, `approvalWait`, `holdApprovalObservation`, `workerObservationFence`, `workerObservationCurrent`, `approvalWaitReason`, `resumeTransientObservationWait`, `backgroundWait`, the public `backgroundBlockReason` (read as `TaskRuntime["backgroundBlockReason"]` by `worktree-cleanup.ts` and `cleanup/worker-ownership.ts`) and `cleanupAuditDiagnostics`.
+- `CleanupAuditDiagnostics` is exported from `cleanup-audit.ts` because `CommandContext` in `runtime.ts` names it; the other cleanup observation types and `cleanupObservationStages` moved there as private.
+- Lint reports leftover imports as warnings, not errors, so `bun run verify` stays green with unused imports in `runtime.ts`; run `bun lint <files>` and remove them by hand.
+- The test `missing and permission-denied skill suggestions never block admission or dispatch` has its own 20 s timeout and runs 14 s on a quiet machine. It also fails on the commit before S14 when the load average is about 35 (21.8 s). Treat it as load-sensitive, not as a regression.
+- `reload-safe` can report one verification running for over 10 minutes; the plan's wait rule then lets the run go ahead.
+
 ## 10. Corrections found while doing S3, S9 and S8
 
 - Top-level helpers in `runtime.ts` follow their users. `effectSuperseded` and `fallowAcceptance` (used by the verification candidate and by `verify`/`finish`) went to `runtime-helpers.ts`. `boundedScopeReport` went into `verification-candidate.ts`. `WORKTREE_EFFECT_KINDS`, `startupWorktreeRecoveryReason`, `worktreeReconcileCandidates`, `readCheckReceipt` and `unsettledCheckError` went into `effect-reconciliation.ts`; nothing else used them.
@@ -550,3 +562,11 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - The `startCheckActivity` test seam still works: `VerificationCandidate` and the executions call the coordinator forwarder through lazy arrows, so a patch on the runtime instance still intercepts.
 - Allowed rewrite in S8: `this.tickRequested = true` became `this.requestRetick()` in `reconcileEffect` and `settleMatchedCheck`.
 - Shell note for the gates: in zsh an unquoted `$FILES` is one argument, so `scripts/runtime-split-fallow.ts` silently reports 0 findings. Pass the file names literally or use bash.
+
+## 11. Corrections found while doing S16 and S17
+
+- `AdvanceContext` moved into `attempt-advance.ts` as a private type. `workerProgress` and `staleAttemptProbes` live in `AttemptAdvance`; `autoResumeInterrupted` and `workerNoProgressWindowMs` stay as coordinator fields and are passed as values. `TaskRuntime.staleAttemptWindowMs` became `AttemptAdvance.staleAttemptWindowMs` (the one expected exception). `settleStaleAttempts` is therefore the only member the moved-member check needs in `--allow`, besides aliases and the constructor.
+- `AttemptAdvance` reaches `command`, `prepareWorker`, `verify` and `failAttempt` through lazy arrows to the coordinator (the last three are private there, so their signatures are written out in `AttemptAdvanceDeps`; they become direct module calls in S21). The coordinator keeps forwarders only for `settleStaleAttempts` and `advanceAttempt`.
+- `Cancellation` takes `cancelIdleWaitMs` as a value, and forwarders remain only for `cancelWorkers` and `cancelReservedAttempt`; `settleCancelledPlan` and the rest have no caller outside the module.
+- Boilerplate matters to Fallow: two modules with the identical `store`/`host`/`owner`/`now` getter block made a 12th clone group. `Cancellation` declares the same four getters in the opposite order. Keep that in mind for later modules, or the clone count rises with every move.
+- Merging `main` into a step branch that conflicts on the import, field and constructor blocks is resolved by keeping both sides; a leftover unused import (`changedPaths`, `sessionID`) shows only as a lint warning.
