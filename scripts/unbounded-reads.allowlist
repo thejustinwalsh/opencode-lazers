@@ -12,31 +12,32 @@ src/audit/history.ts:799 | all | audit_sections | children of one audit run (sec
 src/context/repository-snapshots.ts:384 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT snapshot_id,file,bytes FROM context_repo_snapshots ORDER BY created_at ASC,rowid AS
 src/context/repository-snapshots.ts:415 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT file FROM context_repo_snapshots
 src/managed-usage/store.ts:144 | star | managed_usage_boundaries | all columns are mapped; LIMIT 100000 in the statement | SELECT * FROM managed_usage_boundaries WHERE project_directory=? ORDER BY session_id,revis
-src/observability/associations.ts:19 | all | tasks | todo | SELECT id FROM tasks WHERE project_directory=? AND CASE WHEN json_valid(body) THEN json_ex
-src/observability/associations.ts:27 | all | runner_plans | one session's rows | SELECT id FROM runner_plans WHERE project_directory=? AND owner=?
-src/observability/associations.ts:36 | all | runner_attempts | todo | SELECT DISTINCT a.task_id,a.plan_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.p
-src/observability/associations.ts:46 | all | runner_continuations | one session's rows | SELECT c.plan_id AS id FROM runner_continuations c JOIN runner_plans p ON p.id=c.plan_id W
-src/observability/associations.ts:58 | all | runner_nodes | id list from the session's own tasks or plans | SELECT DISTINCT n.plan_id FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE
-src/observability/associations.ts:69 | all | runner_nodes | id list from the session's own tasks or plans | SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})
-src/observability/associations.ts:80 | all | tasks | todo | SELECT id FROM tasks WHERE project_directory=?
-src/observability/associations.ts:86 | all | runner_plans | todo | SELECT id FROM runner_plans WHERE project_directory=?
-src/observability/associations.ts:99 | all | tasks | todo | SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.provenance.sessionID') END AS
-src/observability/associations.ts:105 | all | runner_plans | plans' owners and continuations' sessions of one project; once per durable revision in changes.ts, per radar read otherwise (todo: gate the radar read) | SELECT owner AS session_id FROM runner_plans WHERE project_directory=?
-src/observability/associations.ts:112 | all | runner_attempts | todo | SELECT a.session_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE p.p
-src/observability/associations.ts:119 | all | runner_continuations | plans' owners and continuations' sessions of one project; once per durable revision in changes.ts, per radar read otherwise (todo: gate the radar read) | SELECT c.session_id,c.parent_id FROM runner_continuations c JOIN runner_plans p ON p.id=c.
-src/observability/associations.ts:198 | all | runner_attempts | rowid delta since the last read (AssociationIndex) | SELECT a.session_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE p.p
-src/observability/associations.ts:237 | all | runner_plans | plans' owners and continuations' sessions of one project; once per durable revision in changes.ts, per radar read otherwise (todo: gate the radar read) | SELECT owner AS session_id FROM runner_plans WHERE project_directory=?
-src/observability/associations.ts:244 | all | runner_continuations | plans' owners and continuations' sessions of one project; once per durable revision in changes.ts, per radar read otherwise (todo: gate the radar read) | SELECT c.session_id,c.parent_id FROM runner_continuations c JOIN runner_plans p ON p.id=c.
+src/observability/associations.ts:20 | all | tasks | one session's tasks by provenance; ids only | SELECT id FROM tasks WHERE project_directory=? AND CASE WHEN json_valid(body) THEN json_ex
+src/observability/associations.ts:28 | all | runner_plans | one session's rows | SELECT id FROM runner_plans WHERE project_directory=? AND owner=?
+src/observability/associations.ts:37 | all | runner_attempts | one session's attempts; distinct task and plan ids | SELECT DISTINCT a.task_id,a.plan_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.p
+src/observability/associations.ts:47 | all | runner_continuations | one session's rows | SELECT c.plan_id AS id FROM runner_continuations c JOIN runner_plans p ON p.id=c.plan_id W
+src/observability/associations.ts:59 | all | runner_nodes | id list from the session's own tasks or plans | SELECT DISTINCT n.plan_id FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE
+src/observability/associations.ts:70 | all | runner_nodes | id list from the session's own tasks or plans | SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})
+src/observability/associations.ts:81 | all | tasks | task or plan ids of one project; runs inside the topology StampGate, once per source stamp (read.ts loadTopologyAssociations) | SELECT id FROM tasks WHERE project_directory=?
+src/observability/associations.ts:87 | all | runner_plans | task or plan ids of one project; runs inside the topology StampGate, once per source stamp (read.ts loadTopologyAssociations) | SELECT id FROM runner_plans WHERE project_directory=?
+src/observability/associations.ts:108 | all | tasks | distinct session ids of one project, rows bounded by sessions not tasks; read through projectSessionIDs, once per observation revision | SELECT DISTINCT session_id FROM ( SELECT CASE WHEN json_valid(body) THEN json_extract(body
+src/observability/associations.ts:114 | all | runner_plans | distinct session ids of one project, rows bounded by sessions not tasks; read through projectSessionIDs, once per observation revision | SELECT DISTINCT owner AS session_id FROM runner_plans WHERE project_directory=?
+src/observability/associations.ts:121 | all | runner_attempts | distinct session ids of one project, rows bounded by sessions not tasks; read through projectSessionIDs, once per observation revision | SELECT DISTINCT a.session_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
+src/observability/associations.ts:129 | all | runner_continuations | distinct session ids of one project, rows bounded by sessions not tasks; read through projectSessionIDs, once per observation revision | SELECT DISTINCT c.session_id FROM runner_continuations c JOIN runner_plans p ON p.id=c.pla
+src/observability/associations.ts:137 | all | runner_continuations | distinct session ids of one project, rows bounded by sessions not tasks; read through projectSessionIDs, once per observation revision | SELECT DISTINCT c.parent_id FROM runner_continuations c JOIN runner_plans p ON p.id=c.plan
+src/observability/associations.ts:243 | all | runner_attempts | rowid delta since the last read (AssociationIndex) | SELECT a.session_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE p.p
+src/observability/associations.ts:282 | all | runner_plans | plans' owners and continuations' sessions of one project (small, updated in place); once per observation revision through changes.ts readAssociatedSessions | SELECT owner AS session_id FROM runner_plans WHERE project_directory=?
+src/observability/associations.ts:289 | all | runner_continuations | plans' owners and continuations' sessions of one project (small, updated in place); once per observation revision through changes.ts readAssociatedSessions | SELECT c.session_id,c.parent_id FROM runner_continuations c JOIN runner_plans p ON p.id=c.
 src/observability/live-store.ts:475 | all | tasks | bounded by an id list or window the caller passes (active assignments, rn<=N, seq IN) | SELECT t.id AS id,substr(json_extract(t.body,'$.proposal.objective'),1,600) AS title, subs
 src/observability/live-store.ts:665 | all | native_tool_calls | bounded by an id list or window the caller passes (active assignments, rn<=N, seq IN) | SELECT session_id,call_id,message_id,tool,first_observed_at,last_observed_at,status,detail
 src/observability/live-store.ts:810 | all | runner_progress | bounded by an id list or window the caller passes (active assignments, rn<=N, seq IN) | SELECT seq,at,recorded_at,substr(source,1,80) AS source,substr(kind,1,80) AS kind, CASE WH
-src/observability/read.ts:277 | all | runner_dispatch_controls | paused plans only | SELECT c.plan_id,c.reason,c.until_plans FROM runner_dispatch_controls c JOIN runner_plans
-src/observability/read.ts:310 | all | runner_plans | plan headers (no body); read once per observation revision through the topology StampGate | SELECT id,revision,version,state,reason FROM runner_plans WHERE project_directory=? ORDER
-src/observability/read.ts:340 | all | runner_nodes | plan-id list; the scope throws past 1000 plans | SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})
-src/observability/read.ts:384 | all | tasks | task-id list from a scope of at most 1000 plans | SELECT t.id,t.body,r.reference FROM tasks t LEFT JOIN task_references r ON r.project_direc
-src/observability/read.ts:399 | all | runner_nodes | plan-id list; the scope throws past 1000 plans | SELECT plan_id,task_id,ordinal,state,version,reason,snapshot,machine_version FROM runner_n
-src/observability/read.ts:407 | all | runner_dependencies | plan-id list; the scope throws past 1000 plans | SELECT plan_id,prerequisite,successor FROM runner_dependencies WHERE plan_id IN (${placeho
-src/observability/read.ts:666 | all | runner_progress | LIMIT 5001 inside the recent CTE | WITH recent AS MATERIALIZED (${recentProgress}) SELECT g.seq,g.project_directory,g.project
+src/observability/read.ts:276 | all | runner_dispatch_controls | paused plans only | SELECT c.plan_id,c.reason,c.until_plans FROM runner_dispatch_controls c JOIN runner_plans
+src/observability/read.ts:309 | all | runner_plans | plan headers (no body); read once per observation revision through the topology StampGate | SELECT id,revision,version,state,reason FROM runner_plans WHERE project_directory=? ORDER
+src/observability/read.ts:339 | all | runner_nodes | plan-id list; the scope throws past 1000 plans | SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})
+src/observability/read.ts:383 | all | tasks | task-id list from a scope of at most 1000 plans | SELECT t.id,t.body,r.reference FROM tasks t LEFT JOIN task_references r ON r.project_direc
+src/observability/read.ts:398 | all | runner_nodes | plan-id list; the scope throws past 1000 plans | SELECT plan_id,task_id,ordinal,state,version,reason,snapshot,machine_version FROM runner_n
+src/observability/read.ts:406 | all | runner_dependencies | plan-id list; the scope throws past 1000 plans | SELECT plan_id,prerequisite,successor FROM runner_dependencies WHERE plan_id IN (${placeho
+src/observability/read.ts:665 | all | runner_progress | LIMIT 5001 inside the recent CTE | WITH recent AS MATERIALIZED (${recentProgress}) SELECT g.seq,g.project_directory,g.project
 src/planning/store.ts:311 | star | planning_decisions | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_decisions WHERE session_id=? AND message_id=?
 src/planning/store.ts:343 | star | planning_decisions | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_decisions WHERE session_id=? ORDER BY created_at, id
 src/planning/store.ts:353 | star | planning_decisions | one row by primary key | SELECT * FROM planning_decisions WHERE id=?
@@ -83,9 +84,9 @@ src/recovery/handoff/store.ts:680 | all | recovery_handoff_rounds | rows of one 
 src/recovery/handoff/store.ts:921 | all | recovery_handoff_events | rows of one handoff request or review (small, request-keyed) | SELECT data FROM recovery_handoff_events WHERE project_directory=? AND request_id=? AND ki
 src/recovery/handoff/store.ts:2489 | all | recovery_handoff_events | rows of one handoff request or review (small, request-keyed) | SELECT data FROM recovery_handoff_events WHERE project_directory=? AND request_id=? AND ki
 src/recovery/handoff/store.ts:2537 | all | recovery_handoff_rounds | rows of one handoff request or review (small, request-keyed) | SELECT payload FROM recovery_handoff_rounds WHERE project_directory=? AND request_id=? AND
-src/recovery/trajectory-facts.ts:99 | all | runner_transitions | one task's transitions, attempts or edits, to the evaluated sequence; todo if a task's history grows large | SELECT event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? AND
-src/recovery/trajectory-facts.ts:148 | all | runner_attempts | one task's transitions, attempts or edits, to the evaluated sequence; todo if a task's history grows large | SELECT id,state,started_at,token_count,tool_count,cost FROM runner_attempts WHERE plan_id=
-src/recovery/trajectory-facts.ts:250 | all | runner_progress | one task's transitions, attempts or edits, to the evaluated sequence; todo if a task's history grows large | SELECT seq,json_extract(payload,'$.fileTargets.paths') AS paths, substr(json_extract(paylo
+src/recovery/trajectory-facts.ts:111 | all | runner_transitions | grouped by event, from-state and block reason: one row per distinct outcome of one task's transitions | SELECT event, CASE WHEN event IN ('REPAIR','RETAINED_REPAIR') THEN json_extract(payload,'$
+src/recovery/trajectory-facts.ts:122 | all | runner_transitions | worker start/stop events of one task: about two small rows per attempt, no payload | SELECT event, CASE WHEN event='WORKER_STOPPED' THEN json_extract(payload,'$.outcome') END
+src/recovery/trajectory-facts.ts:269 | all | runner_progress | one row per distinct edit target list of one attempt, failed edits dropped in SQL; content only for rows without fileTargets | SELECT max(seq) AS seq, json_extract(payload,'$.fileTargets.paths') AS paths, CASE WHEN js
 src/retention/audit-runs.ts:138 | all | audit_sections | children of one audit run (one row per analysis kind) | SELECT analysis FROM audit_sections WHERE run_id=?
 src/retention/retention.ts:144 | all | runner_commands | retention sweep on its own schedule: distinct project list and one aggregate per plan | SELECT DISTINCT project_directory FROM runner_commands
 src/retention/retention.ts:167 | all | tasks | retention sweep on its own schedule: distinct project list and one aggregate per plan | SELECT project_directory FROM tasks UNION SELECT project_directory FROM runner_plans UNION
@@ -146,57 +147,56 @@ src/runner/retire-gates.ts:385 | all | runner_plans | startup gate retirement: o
 src/runner/runtime-journal.ts:243 | star | runner_effects | one effect by key, or the runs of one plan, kind and payload | SELECT * FROM runner_effects WHERE id=?
 src/runner/runtime-journal.ts:254 | all | runner_effects | one effect by key, or the runs of one plan, kind and payload | SELECT id,state FROM runner_effects WHERE plan_id=? AND kind=? AND payload=?
 src/runner/runtime-journal.ts:270 | star | runner_effects | one effect by key, or the runs of one plan, kind and payload | SELECT * FROM runner_effects WHERE id=?
-src/runner/startup-settlement.ts:339 | star | runner_plans | one row by primary key | SELECT * FROM runner_plans WHERE id=? AND project_directory=?
-src/runner/startup-settlement.ts:343 | star | runner_attempts | one row by primary key | SELECT * FROM runner_attempts WHERE id=?
-src/runner/startup-settlement.ts:346 | star | runner_effects | one row by primary key | SELECT * FROM runner_effects WHERE id=?
-src/runner/store.ts:586 | all | runner_nodes | batch of at most 100 plan ids | SELECT task_id FROM runner_nodes WHERE plan_id IN (${batch.map(() => "?").join(",")})
-src/runner/store.ts:1489 | star | runner_plans | one row by primary key | SELECT * FROM runner_plans WHERE id=? AND project_directory=?
-src/runner/store.ts:1509 | star+all | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal
-src/runner/store.ts:1715 | star | runner_plans | LIMIT 1 | SELECT p.* FROM runner_plans p JOIN dependents d ON d.id=p.id WHERE p.id<>? AND EXISTS (SE
-src/runner/store.ts:1741 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT p.id FROM runner_plans p WHERE p.project_directory=? AND p.artifact IS NOT NULL AND
-src/runner/store.ts:1751 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT id FROM runner_plans WHERE project_directory=? AND state IN ('cleanup-blocked','can
-src/runner/store.ts:1759 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:2002 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT rp.* FROM runner_architect_renewal_plans rp JOIN runner_architect_renewals r ON r.i
-src/runner/store.ts:2574 | all | runner_plans | ids of one Architect owner's plans | SELECT id FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid
-src/runner/store.ts:2711 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:2765 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3016 | all | runner_plans | ids of one Architect owner's plans | SELECT id,version FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid
-src/runner/store.ts:3019 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3027 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_architect_renewal_plans WHERE renewal_id=? ORDER BY plan_id
-src/runner/store.ts:3044 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3244 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_architect_renewal_plans WHERE renewal_id=? AND transferred=1 ORDER BY
-src/runner/store.ts:3331 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3342 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3357 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
-src/runner/store.ts:3475 | all | runner_outbox | receipt entries of one outbox row (child rows, append-only) | SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequ
-src/runner/store.ts:3493 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT body FROM runner_outbox_receipts WHERE outbox_id=? ORDER BY seq
-src/runner/store.ts:3505 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT DISTINCT je.value AS value FROM runner_outbox_receipts r, json_each(r.body,'$.coale
-src/runner/store.ts:3579 | all | runner_transitions | one plan or task's transitions of one event | SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND tas
-src/runner/store.ts:3778 | all | runner_dependencies | one plan or task's transitions of one event | SELECT d.prerequisite FROM runner_dependencies d JOIN runner_nodes n ON n.plan_id=d.plan_i
-src/runner/store.ts:3820 | star | runner_commands | one row by request or review key | SELECT * FROM runner_commands WHERE project_directory=? AND request_id=?
-src/runner/store.ts:4060 | all | runner_transitions | one plan or task's transitions of one event | SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EX
-src/runner/store.ts:4120 | star | runner_leases | one lease row per project | SELECT * FROM runner_leases WHERE project_directory=?
-src/runner/store.ts:4217 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
-src/runner/store.ts:4334 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
-src/runner/store.ts:4381 | star+all | runner_attempts | attempts of one plan | SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number
-src/runner/store.ts:4428 | star | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? AND task_id=?
-src/runner/store.ts:4455 | all | runner_attempts | live attempts of one project: preparing, running or verifying, one per delegated agent slot | SELECT ${columnList("a", ATTEMPT_COLUMNS)} FROM runner_attempts a JOIN runner_plans p ON a
-src/runner/store.ts:4567 | all | runner_dependencies | dependencies of the plans in one scheduling page (plan-id IN list) | SELECT d.plan_id,d.prerequisite,d.successor FROM runner_dependencies d JOIN runner_plans p
-src/runner/store.ts:4705 | star | runner_progress | progress rows of a bounded attempt-id list; payload columns are todo | SELECT * FROM runner_progress WHERE project_directory=? AND attempt_id IN (${placeholders}
-src/runner/store.ts:4716 | star+all | runner_effects | effects of one plan | SELECT * FROM runner_effects WHERE plan_id=? ORDER BY rowid
-src/runner/store.ts:4725 | star | runner_adoptions | one row by primary key | SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=? AND
-src/runner/store.ts:4736 | star+all | runner_adoptions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoptions WHERE plan_id=? ORDER BY created_at,id
-src/runner/store.ts:4751 | all | runner_adoptions | open adoptions of one project or plan: pending or in checks, at most one per task | SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON
-src/runner/store.ts:4759 | all | runner_adoptions | open adoptions of one project or plan: pending or in checks, at most one per task | SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON
-src/runner/store.ts:4767 | star | runner_adoptions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoptions WHERE plan_id=? AND task_id=? AND state IN (
-src/runner/store.ts:4805 | all | runner_attempts | live attempts only | SELECT a.id,a.task_id,a.workspace FROM runner_attempts a JOIN runner_plans p ON p.id=a.pla
-src/runner/store.ts:4879 | star | runner_adoptions | one row by primary key | SELECT * FROM runner_adoptions WHERE id=?
-src/runner/store.ts:4937 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? ORDER BY created_at,c
-src/runner/store.ts:4942 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? ORDER BY created_at,phase,check_i
-src/runner/store.ts:4969 | star | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?
-src/runner/store.ts:4994 | star | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?
-src/runner/store.ts:5133 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id WHE
-src/runner/store.ts:5141 | star+all | runner_adoption_evidence | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id W
+src/runner/startup-settlement.ts:337 | star | runner_plans | one row by primary key | SELECT * FROM runner_plans WHERE id=? AND project_directory=?
+src/runner/startup-settlement.ts:341 | star | runner_attempts | one row by primary key | SELECT * FROM runner_attempts WHERE id=?
+src/runner/startup-settlement.ts:344 | star | runner_effects | one row by primary key | SELECT * FROM runner_effects WHERE id=?
+src/runner/store.ts:590 | all | runner_nodes | batch of at most 100 plan ids | SELECT task_id FROM runner_nodes WHERE plan_id IN (${batch.map(() => "?").join(",")})
+src/runner/store.ts:1493 | star | runner_plans | one row by primary key | SELECT * FROM runner_plans WHERE id=? AND project_directory=?
+src/runner/store.ts:1513 | star+all | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? ORDER BY ordinal
+src/runner/store.ts:1719 | star | runner_plans | LIMIT 1 | SELECT p.* FROM runner_plans p JOIN dependents d ON d.id=p.id WHERE p.id<>? AND EXISTS (SE
+src/runner/store.ts:1745 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT p.id FROM runner_plans p WHERE p.project_directory=? AND p.artifact IS NOT NULL AND
+src/runner/store.ts:1755 | all | runner_plans | ids of plans in cleanup states (open set) | SELECT id FROM runner_plans WHERE project_directory=? AND state IN ('cleanup-blocked','can
+src/runner/store.ts:1763 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:2006 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT rp.* FROM runner_architect_renewal_plans rp JOIN runner_architect_renewals r ON r.i
+src/runner/store.ts:2578 | all | runner_plans | ids of one Architect owner's plans | SELECT id FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid
+src/runner/store.ts:2715 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:2769 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3020 | all | runner_plans | ids of one Architect owner's plans | SELECT id,version FROM runner_plans WHERE project_directory=? AND owner=? ORDER BY rowid
+src/runner/store.ts:3023 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3031 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_architect_renewal_plans WHERE renewal_id=? ORDER BY plan_id
+src/runner/store.ts:3048 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3248 | star+all | runner_architect_renewal_plans | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_architect_renewal_plans WHERE renewal_id=? AND transferred=1 ORDER BY
+src/runner/store.ts:3335 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3346 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3361 | star | runner_continuations | one row: plan_id is the key | SELECT * FROM runner_continuations WHERE plan_id=?
+src/runner/store.ts:3479 | all | runner_outbox | receipt entries of one outbox row (child rows, append-only) | SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequ
+src/runner/store.ts:3497 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT body FROM runner_outbox_receipts WHERE outbox_id=? ORDER BY seq
+src/runner/store.ts:3509 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT DISTINCT je.value AS value FROM runner_outbox_receipts r, json_each(r.body,'$.coale
+src/runner/store.ts:3583 | all | runner_transitions | one plan or task's transitions of one event | SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND tas
+src/runner/store.ts:3782 | all | runner_dependencies | one plan or task's transitions of one event | SELECT d.prerequisite FROM runner_dependencies d JOIN runner_nodes n ON n.plan_id=d.plan_i
+src/runner/store.ts:3824 | star | runner_commands | one row by request or review key | SELECT * FROM runner_commands WHERE project_directory=? AND request_id=?
+src/runner/store.ts:4064 | all | runner_transitions | one plan or task's transitions of one event | SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EX
+src/runner/store.ts:4124 | star | runner_leases | one lease row per project | SELECT * FROM runner_leases WHERE project_directory=?
+src/runner/store.ts:4221 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
+src/runner/store.ts:4338 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
+src/runner/store.ts:4385 | star+all | runner_attempts | attempts of one plan | SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number
+src/runner/store.ts:4432 | star | runner_nodes | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_nodes WHERE plan_id=? AND task_id=?
+src/runner/store.ts:4459 | all | runner_attempts | live attempts of one project: preparing, running or verifying, one per delegated agent slot | SELECT ${columnList("a", ATTEMPT_COLUMNS)} FROM runner_attempts a JOIN runner_plans p ON a
+src/runner/store.ts:4571 | all | runner_dependencies | dependencies of the plans in one scheduling page (plan-id IN list) | SELECT d.plan_id,d.prerequisite,d.successor FROM runner_dependencies d JOIN runner_plans p
+src/runner/store.ts:4755 | star+all | runner_effects | effects of one plan | SELECT * FROM runner_effects WHERE plan_id=? ORDER BY rowid
+src/runner/store.ts:4764 | star | runner_adoptions | one row by primary key | SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id WHERE a.id=? AND
+src/runner/store.ts:4775 | star+all | runner_adoptions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoptions WHERE plan_id=? ORDER BY created_at,id
+src/runner/store.ts:4790 | all | runner_adoptions | open adoptions of one project or plan: pending or in checks, at most one per task | SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON
+src/runner/store.ts:4798 | all | runner_adoptions | open adoptions of one project or plan: pending or in checks, at most one per task | SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON
+src/runner/store.ts:4806 | star | runner_adoptions | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoptions WHERE plan_id=? AND task_id=? AND state IN (
+src/runner/store.ts:4844 | all | runner_attempts | live attempts only | SELECT a.id,a.task_id,a.workspace FROM runner_attempts a JOIN runner_plans p ON p.id=a.pla
+src/runner/store.ts:4918 | star | runner_adoptions | one row by primary key | SELECT * FROM runner_adoptions WHERE id=?
+src/runner/store.ts:4976 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? ORDER BY created_at,c
+src/runner/store.ts:4981 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? ORDER BY created_at,phase,check_i
+src/runner/store.ts:5008 | star | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?
+src/runner/store.ts:5033 | star | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT * FROM runner_adoption_checks WHERE adoption_id=? AND phase=? AND check_id=?
+src/runner/store.ts:5172 | star+all | runner_adoption_checks | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT c.* FROM runner_adoption_checks c JOIN runner_adoptions a ON a.id=c.adoption_id WHE
+src/runner/store.ts:5180 | star+all | runner_adoption_evidence | children of one parent row (plan, adoption, planning, review or operation); size follows the parent | SELECT e.* FROM runner_adoption_evidence e JOIN runner_adoptions a ON a.id=e.adoption_id W
 src/runner/takeover.ts:255 | star | runner_takeovers | takeovers of one attempt or plan | SELECT * FROM runner_takeovers WHERE project_directory=? AND plan_id=? AND state IN (
 src/runner/takeover.ts:258 | all | runner_takeovers | takeovers of one attempt or plan | SELECT * FROM runner_takeovers WHERE project_directory=? AND plan_id=? AND state IN ('noti
 src/runner/takeover.ts:270 | star | runner_takeovers | takeovers of one attempt or plan | SELECT * FROM runner_takeovers WHERE id=?
@@ -211,10 +211,8 @@ src/storage.ts:1137 | star | task_classifications | one row by request or review
 src/storage.ts:1164 | star | task_corrections | latest correction per task; correction links of one project | SELECT * FROM task_corrections WHERE project_directory=? AND request_id=?
 src/storage.ts:1220 | all | task_corrections | latest correction per task; correction links of one project | SELECT correction.task_id, correction.original_task_id FROM task_corrections correction JO
 src/storage.ts:1256 | star | task_corrections | latest correction per task; correction links of one project | SELECT * FROM task_corrections WHERE project_directory=? AND request_id=?
-src/storage.ts:1272 | star | task_dispositions | todo | SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC L
-src/storage.ts:1282 | star+all | task_dispositions | todo | SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id
+src/storage.ts:1284 | all | task_dispositions | one task's dispositions: at most one, recordDisposition answers already_disposed for a second | SELECT ${DISPOSITION_COLUMNS} FROM task_dispositions WHERE project_directory=? AND task_id
 src/storage.ts:1298 | star | task_dispositions | one row by request or review key | SELECT * FROM task_dispositions WHERE project_directory=? AND request_id=?
-src/storage.ts:1332 | star | task_dispositions | todo | SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC L
 src/storage.ts:1350 | all | runner_nodes | one task's nodes or attempts | SELECT n.state,p.state AS plan_state FROM runner_nodes n JOIN runner_plans p ON p.id=n.pla
 src/storage.ts:1358 | all | runner_attempts | one task's nodes or attempts | SELECT a.state FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id WHERE p.projec
 src/storage.ts:1433 | star | task_dispositions | one row by request or review key | SELECT * FROM task_dispositions WHERE project_directory=? AND request_id=?

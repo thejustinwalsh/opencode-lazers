@@ -458,6 +458,10 @@ function architectSourceJournalExists(db: Database, sessionID: string) {
   )
 }
 
+/** Every column of a {@link ProgressRow}; `SELECT *` would also return the derived recency column. */
+const PROGRESS_COLUMNS =
+  "seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload"
+
 export type ProgressRow = {
   seq: number
   project_directory: string
@@ -4701,13 +4705,48 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<ProgressRow, [string, ...string[], number]>(
-          `SELECT * FROM (
-             SELECT * FROM runner_progress WHERE project_directory=?
+          `SELECT ${PROGRESS_COLUMNS} FROM (
+             SELECT ${PROGRESS_COLUMNS} FROM runner_progress WHERE project_directory=?
                AND attempt_id IN (${placeholders}) ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq`,
         )
         .all(this.repository.projectDirectory, ...attemptIDs, bounded),
     )
+  }
+  /**
+   * Whether an attempt has progress other than recovery gaps the caller ignores. A row that is not
+   * shaped like a recovery gap decides at once with `LIMIT 1` and no row is read; only gap-shaped
+   * rows (rare) come back, a page at a time, for `ignorable` to judge.
+   */
+  hasProgressBeyond(attemptID: string, ignorable: (gap: ProgressRow) => boolean): boolean {
+    const gapShape = "kind='gap' AND source='recovery' AND call_id IS NULL AND message_id IS NULL"
+    return this.read((db) => {
+      const directory = this.repository.projectDirectory
+      if (
+        db
+          .query<{ one: number }, [string, string]>(
+            `SELECT 1 AS one FROM runner_progress
+              WHERE project_directory=? AND attempt_id=? AND NOT (${gapShape}) LIMIT 1`,
+          )
+          .get(directory, attemptID)
+      )
+        return true
+      // Paging keeps one read small; it does not limit how many gaps are judged.
+      const page = 200
+      let after = 0
+      for (;;) {
+        const rows = db
+          .query<ProgressRow, [string, string, number, number]>(
+            `SELECT ${PROGRESS_COLUMNS} FROM runner_progress
+              WHERE project_directory=? AND attempt_id=? AND seq>? AND ${gapShape}
+              ORDER BY seq LIMIT ?`,
+          )
+          .all(directory, attemptID, after, page)
+        for (const row of rows) if (!ignorable(row)) return true
+        if (rows.length < page) return false
+        after = rows[rows.length - 1]!.seq
+      }
+    })
   }
   effects(planID: string) {
     this.requirePlan(planID)
