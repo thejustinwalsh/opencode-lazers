@@ -130,7 +130,10 @@ export async function proveProfile(input: {
     toolProofs.push({
       key: `tool:${name}`,
       command: `${facts.executable} --version`,
-      outcome: "proven",
+      outcome: version.exitCode === 0 ? "proven" : "failed",
+      ...(version.exitCode === 0
+        ? {}
+        : { reason: `${facts.executable} --version exited with code ${version.exitCode}` }),
       exitCode: version.exitCode,
       timedOut: false,
       durationMs: Date.now() - started,

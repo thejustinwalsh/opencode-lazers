@@ -63,6 +63,7 @@ async function recordedTransitions() {
     "ENOENT",
     "EPERM",
     "ESRCH",
+    "EXDEV",
     "SIGTERM",
     "SIGKILL",
     "HEAD",

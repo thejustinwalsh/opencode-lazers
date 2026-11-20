@@ -60,8 +60,37 @@ function npmCacheAvailability(): Availability {
   }
 }
 
+/** `cargo` can run only if its toolchain resolves here: rustup proxies fail under another HOME. */
+let cargoUsable: Availability | undefined
+function cargoAvailability(): Availability {
+  if (cargoUsable) return cargoUsable
+  const cargo = locate("cargo")
+  if (!cargo) return (cargoUsable = { available: false, reason: "cargo not found on PATH or in its known homes" })
+  const copy = mkdtempSync(join(tmpdir(), "lazers-cargo-probe-"))
+  try {
+    cpSync(join(here, "cargo-min"), copy, {
+      recursive: true,
+      filter: (source) => !EXCLUDED.has(source.split("/").pop() ?? ""),
+    })
+    // Resolves the toolchain and reads the lockfile without touching the network.
+    const result = Bun.spawnSync([cargo, "metadata", "--offline", "--locked", "--format-version", "1"], {
+      cwd: copy,
+      env: { ...process.env, PATH: `${join(cargo, "..")}:${process.env.PATH ?? ""}` },
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 120_000,
+    })
+    if (result.exitCode === 0) return (cargoUsable = { available: true, reason: "" })
+    const detail = result.stderr.toString().split("\n").find((line) => line.trim()) ?? `exit ${result.exitCode}`
+    return (cargoUsable = { available: false, reason: `cargo cannot run here (${detail.trim()})` })
+  } finally {
+    rmSync(copy, { recursive: true, force: true })
+  }
+}
+
 export function toolchainAvailable(name: RequiredToolchain): Availability {
   if (name === "npm-cache") return npmCacheAvailability()
+  if (name === "cargo") return cargoAvailability()
   return locate(name)
     ? { available: true, reason: "" }
     : { available: false, reason: `${name} not found on PATH or in its known homes` }

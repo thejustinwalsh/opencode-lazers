@@ -129,6 +129,15 @@ async function recheck(
   return { context, run, candidate: context.candidateWorkspace }
 }
 
+/** A proof that did not pass fails with what it printed, so a gate failure explains itself. */
+function expectProven(active: ActiveProfile, key: string) {
+  const proof = active.proofs.get(key)
+  expect(
+    proof?.outcome,
+    `${key}: ${proof?.reason ?? ""} exit ${proof?.exitCode} stderr: ${proof?.stderrTail} stdout: ${proof?.stdoutTail}`,
+  ).toBe("proven")
+}
+
 const cargoAvailable = requireToolchain("cargo", "isolated recheck of the cargo-min fixture")
 test.skipIf(!cargoAvailable)(
   "real cargo: the isolated recheck passes, then fails a broken candidate with exit 101",
@@ -148,7 +157,7 @@ test.skipIf(!cargoAvailable)(
         source: { include: ["src/**/*.rs"] },
       }),
     )
-    expect(active.proofs.get("install:0")?.outcome).toBe("proven")
+    expectProven(active, "install:0")
     const good = await recheck(
       fixture.root,
       fixture.base,
@@ -200,7 +209,7 @@ test.skipIf(!npmAvailable)(
       source: { include: ["src/**/*.js"] },
     })
     const active = await confirmed(fixture.root, profile)
-    expect(active.proofs.get("install:0")?.outcome).toBe("proven")
+    expectProven(active, "install:0")
     const good = await recheck(fixture.root, fixture.base, active, "npm run lint")
     const link = join(good.candidate, "node_modules")
     expect(lstatSync(link).isSymbolicLink()).toBe(true)
