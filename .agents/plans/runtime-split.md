@@ -562,3 +562,11 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - The `startCheckActivity` test seam still works: `VerificationCandidate` and the executions call the coordinator forwarder through lazy arrows, so a patch on the runtime instance still intercepts.
 - Allowed rewrite in S8: `this.tickRequested = true` became `this.requestRetick()` in `reconcileEffect` and `settleMatchedCheck`.
 - Shell note for the gates: in zsh an unquoted `$FILES` is one argument, so `scripts/runtime-split-fallow.ts` silently reports 0 findings. Pass the file names literally or use bash.
+
+## 11. Corrections found while doing S16 and S17
+
+- `AdvanceContext` moved into `attempt-advance.ts` as a private type. `workerProgress` and `staleAttemptProbes` live in `AttemptAdvance`; `autoResumeInterrupted` and `workerNoProgressWindowMs` stay as coordinator fields and are passed as values. `TaskRuntime.staleAttemptWindowMs` became `AttemptAdvance.staleAttemptWindowMs` (the one expected exception). `settleStaleAttempts` is therefore the only member the moved-member check needs in `--allow`, besides aliases and the constructor.
+- `AttemptAdvance` reaches `command`, `prepareWorker`, `verify` and `failAttempt` through lazy arrows to the coordinator (the last three are private there, so their signatures are written out in `AttemptAdvanceDeps`; they become direct module calls in S21). The coordinator keeps forwarders only for `settleStaleAttempts` and `advanceAttempt`.
+- `Cancellation` takes `cancelIdleWaitMs` as a value, and forwarders remain only for `cancelWorkers` and `cancelReservedAttempt`; `settleCancelledPlan` and the rest have no caller outside the module.
+- Boilerplate matters to Fallow: two modules with the identical `store`/`host`/`owner`/`now` getter block made a 12th clone group. `Cancellation` declares the same four getters in the opposite order. Keep that in mind for later modules, or the clone count rises with every move.
+- Merging `main` into a step branch that conflicts on the import, field and constructor blocks is resolved by keeping both sides; a leftover unused import (`changedPaths`, `sessionID`) shows only as a lint warning.
