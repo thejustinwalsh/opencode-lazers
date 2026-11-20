@@ -2,7 +2,7 @@ import { registerAuditTools } from "./audit/tools.ts"
 import { registerBudget } from "./budget/server.ts"
 import { registerRetention } from "./retention/rpc.ts"
 import { Plugin } from "@opencode/plugin/effect"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect } from "effect"
 import { registerArchitect } from "./architect.ts"
 import { agentRouteReader } from "./models/agent-route-apply.ts"
@@ -159,6 +159,15 @@ export default Plugin.define({
           },
           loaded: loadedProjectDirectories,
           wake: () => core.wake(),
+          dataDirectory: dirname(taskDatabasePath(dataDirectory)),
+          proofWorkspace: {
+            create: ({ base, name }) =>
+              runtime.host.worktree({
+                base,
+                directory: join(`${repository.projectDirectory}.worktrees`, name),
+              }),
+            remove: (directory) => runtime.host.removeWorktree(directory),
+          },
           defaults: {
             global:
               typeof ctx.options.historyCacheMB === "number"

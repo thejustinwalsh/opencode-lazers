@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { registerProject } from "../project-key.ts"
+import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { effectivePause } from "./pause.ts"
@@ -179,4 +179,146 @@ test("a project's Architect-contact pause is shown with its reason", async () =>
   f.storeA.setArchitectContact("paused", "Fallow run")
   expect(f.ops.list().projects[0]!.architectContact).toEqual({ reason: "Fallow run" })
   expect(f.ops.list().projects[1]!.architectContact).toBeNull()
+})
+
+// --- project profile ---
+
+const goodProfile = {
+  verify: [{ id: "ok", command: "true" }],
+  source: { include: ["*.txt"] },
+}
+
+/** A registered project in a real git repository, with a worktree stand-in for the native API. */
+async function profileFixture() {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "lazers-profile-rpc-")))
+  const directory = join(parent, "project")
+  mkdirSync(directory)
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", directory, ...args], { stdout: "pipe", stderr: "pipe" })
+  git("init", "-q", "-b", "main")
+  git("remote", "add", "origin", "git@h.com:a/p.git")
+  writeFileSync(join(directory, "a.txt"), "x\n")
+  git("add", "-A")
+  git("-c", "user.name=f", "-c", "user.email=f@example.invalid", "commit", "-q", "-m", "base")
+  const repository = new TaskRepository(join(parent, "db.sqlite"), directory)
+  cleanups.push(() => {
+    resetProjectAliasCache()
+    repository.close()
+    rmSync(parent, { recursive: true, force: true })
+  })
+  new RunnerStore(repository)
+  const { key } = await registerProject(repository, { directory, opencodeProjectID: "p" })
+  const other = new TaskRepository(join(parent, "db.sqlite"), join(parent, "other"))
+  cleanups.push(() => other.close())
+  const otherKey = (
+    await registerProject(other, { directory: other.projectDirectory, opencodeProjectID: "o" })
+  ).key
+  const ops = projectsOperations(repository, {
+    loaded: () => [directory],
+    dataDirectory: join(parent, "data"),
+    proofWorkspace: {
+      async create({ base, name }) {
+        const target = join(`${directory}.worktrees`, name)
+        mkdirSync(`${directory}.worktrees`, { recursive: true })
+        git("worktree", "add", "--detach", target, base)
+        return target
+      },
+      async remove(target) {
+        git("worktree", "remove", "--force", target)
+      },
+    },
+  })
+  cleanups.push(() => rmSync(`${directory}.worktrees`, { recursive: true, force: true }))
+  return { repository, directory, key, otherKey, ops }
+}
+
+test("profile: no revisions reads as none, and list gains only the profile and dismissal fields", async () => {
+  const f = await profileFixture()
+  expect(f.ops.profile(f.key)).toEqual({ key: f.key, setupDismissedAt: null })
+  expect(f.ops.list().projects.find((p) => p.key === f.key)).toMatchObject({
+    profile: { state: "none" },
+    settings: { setupDismissedAt: null },
+  })
+})
+
+test("profile: a stored repository-map source filter shows as the legacy source", async () => {
+  const f = await profileFixture()
+  const { setRepoMapSource } = await import("../context/repo-map-store.ts")
+  setRepoMapSource(f.repository, f.directory, { include: ["src/**/*.ts"], exclude: [] })
+  expect(f.ops.profile(f.key).legacySource).toEqual({ include: ["src/**/*.ts"], exclude: [] })
+})
+
+test("propose proves and stores a pending revision; confirm makes it active; discard drops one", async () => {
+  const f = await profileFixture()
+  const outcome = await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "first" })
+  expect(outcome).toMatchObject({ ok: true, revision: 1 })
+  if (!outcome.ok) throw new Error("unreachable")
+  expect(outcome.proofs.map((p) => `${p.key}:${p.outcome}`)).toEqual(["verify:ok:proven"])
+  expect(outcome.changes.every((c) => c.kind === "added")).toBe(true)
+  expect(f.ops.profile(f.key).pending?.revision).toBe(1)
+  expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile).toEqual({
+    state: "pending",
+    pendingRevision: 1,
+  })
+  expect(f.ops.confirmProfile(f.key, 1)).toEqual({ ok: true })
+  expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile).toEqual({
+    state: "active",
+    revision: 1,
+  })
+  expect(f.ops.profile(f.key).active?.profile).toMatchObject({ verify: [{ id: "ok" }] })
+  await f.ops.proposeProfile({
+    key: f.key,
+    profile: { ...goodProfile, verify: [{ id: "ok", command: "true # again" }] },
+    reason: "second",
+  })
+  expect(f.ops.profile(f.key).pending?.changes).toEqual([
+    { field: "verify", kind: "changed", key: "ok", before: "true", after: "true # again" },
+  ])
+  expect(f.ops.discardProfile(f.key, 2)).toEqual({ ok: true })
+  expect(f.ops.profile(f.key).pending).toBeUndefined()
+  expect(f.ops.list().projects.find((p) => p.key === f.key)!.profile.state).toBe("active")
+})
+
+test("an invalid profile is refused with its field and stores nothing", async () => {
+  const f = await profileFixture()
+  const outcome = await f.ops.proposeProfile({
+    key: f.key,
+    profile: { ...goodProfile, verify: [] },
+    reason: "bad",
+  })
+  expect(outcome).toMatchObject({ ok: false, refusal: "PROFILE_INVALID" })
+  expect(!outcome.ok && outcome.message).toContain("verify")
+  expect(f.ops.profile(f.key).pending).toBeUndefined()
+})
+
+test("confirming a discarded or missing revision is refused", async () => {
+  const f = await profileFixture()
+  await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
+  f.ops.discardProfile(f.key, 1)
+  expect(f.ops.confirmProfile(f.key, 1)).toMatchObject({
+    ok: false,
+    refusal: "PROFILE_REVISION_NOT_PENDING",
+  })
+  expect(f.ops.confirmProfile(f.key, 9)).toMatchObject({
+    ok: false,
+    refusal: "PROFILE_REVISION_NOT_PENDING",
+  })
+  expect(f.ops.confirmProfile("nope", 1)).toMatchObject({ ok: false, refusal: "PROJECT_MISSING" })
+})
+
+test("proposing for another project's key is refused as not loaded", async () => {
+  const f = await profileFixture()
+  expect(
+    await f.ops.proposeProfile({ key: f.otherKey, profile: goodProfile, reason: "x" }),
+  ).toMatchObject({ ok: false, refusal: "PROJECT_NOT_LOADED" })
+})
+
+test("credential-looking env names are listed with the revision", async () => {
+  const f = await profileFixture()
+  await f.ops.proposeProfile({
+    key: f.key,
+    profile: { ...goodProfile, env: ["NPM_TOKEN", "CARGO_HOME"] },
+    reason: "x",
+  })
+  expect(f.ops.profile(f.key).pending?.credentialLikeEnv).toEqual(["NPM_TOKEN"])
 })
