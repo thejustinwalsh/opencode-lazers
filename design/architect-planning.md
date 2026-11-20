@@ -177,3 +177,29 @@ questions, 20 choices, probabilities per choice); `decide` returns one answer. T
 needs a Desktop window; headless, the call fails at its timeout and the Architect decides. An
 external decision model works only if the catalogue lists it as a decision model. Planning agents'
 context budget is 256,000 tokens; prompts are capped at 1,500 tokens (measured: about 1,100).
+
+## Final pass outcomes, 2026-11-20
+
+One Readiness pass on the revised design. No blockers; it found that a design is not yet a plan a
+builder can act on. Answers (lead's, from the owner's stated direction unless marked):
+
+- **What is ranked:** the five planning agents only. Question skills are deferred; the Architect's
+  own hardening runbook asks its questions. (Lead's call; the owner's earlier idea of question
+  skills is not dropped, only not in the first version.)
+- **Score rule:** per agent. An agent runs when its own combined score clears the threshold.
+- **Combining pieces:** the maximum over pieces per agent; an agent is needed if any piece needs it.
+- **Size:** the largest size any piece gets.
+- **A hung agent:** after an inactivity span with no progress it is marked stuck, retried once,
+  then recorded as `not run`. The plan itself stays open. The span is measured, like the
+  verification inactivity timeout, and written beside its constant.
+- **A blocker or question from the final pass** goes to the owner as in step 10, then tasks.
+- **Auto-dispatch** of planning agents is on by default per project (the owner: build it, run them,
+  track the metrics); the owner can turn it off.
+- **Stored plan format:** structured fields, the same shapes the task tools take (objective,
+  acceptance, verification, write scope, dependencies), plus open decisions; the chat breakdown and
+  the panel view are both rendered from it.
+- **The plan view** is in scope: a link handler and a panel view for a stored plan, following task
+  links (`src/tasks/links.ts`).
+- **Retention and projections** treat the `planning` machine and its two tables like other
+  finished work: a tasked or abandoned draft is retirable.
+- **Acceptance per step** lives in the implementation plan, `.agents/plans/architect-planning.md`.
