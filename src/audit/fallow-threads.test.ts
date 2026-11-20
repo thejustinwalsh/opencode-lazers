@@ -100,7 +100,7 @@ describe("module choice and fallback", () => {
     const second = await modules.execute("off", (_module, threads) => threads)
     expect([first.result, second.result]).toEqual([1, 1])
     expect(first.fallback).toBeUndefined()
-    expect(loads).toEqual({ single: 2, threaded: 0 })
+    expect(loads).toEqual({ single: 1, threaded: 0 })
   })
 
   test("on runs the threaded module with the pool size and loads it once", async () => {
@@ -123,7 +123,7 @@ describe("module choice and fallback", () => {
     const second = await modules.execute("on", (_m, threads) => threads)
     expect(second).toEqual({ result: 1 })
     expect(modules.disabledReason).toBe("no shared memory")
-    expect(loads).toEqual({ single: 2, threaded: 1 })
+    expect(loads).toEqual({ single: 1, threaded: 1 })
   })
 
   test("a threaded call that traps is answered by the single-threaded module, then threads stay off", async () => {

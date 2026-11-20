@@ -139,6 +139,8 @@ export type RunOptions = {
   trace?: HostTrace
   /** Measurement only: called with the instance once it exists. */
   onInstance?: (instance: WebAssembly.Instance) => void
+  /** Measurement only: called with the shared memory a threaded run allocates. */
+  onMemory?: (memory: WebAssembly.Memory) => void
   /**
    * Let the module write Fallow's cache, and nothing else: `<root>/.fallow` (never a link).
    * Everything outside it stays read-only.
@@ -166,7 +168,8 @@ export type RunOptions = {
 type Helper = { worker: Worker; flag: Int32Array }
 const HELPER_RUNNING = 0
 const HELPER_DONE = 1
-const HELPER_WAIT_MS = 100
+/** A helper collects its own heap before it flags, so allow for that. */
+const HELPER_WAIT_MS = 250
 
 /**
  * Helper workers of the threaded module, kept between runs when a run's pool threads return
@@ -235,7 +238,28 @@ export function isThreadedModule(module: WebAssembly.Module): boolean {
   return WebAssembly.Module.imports(module).some((entry) => entry.kind === "memory")
 }
 
-type Sinks = { input: Uint8Array; inputOffset: number; out: Uint8Array[]; err: Uint8Array[] }
+export type Sinks = {
+  input: Uint8Array
+  inputOffset: number
+  out: Uint8Array[]
+  err: Uint8Array[]
+  /** Bytes held in `err`; maintained by `keepTail`. */
+  errBytes?: number
+}
+
+/**
+ * Diagnostics are the module's stderr; only the end of them is ever read (the worker reports the
+ * last 2000 characters of a panic and finds an out-of-memory line in the tail). Keep the last
+ * STDERR_TAIL_BYTES, so a chatty or looping module cannot grow it without bound. The cap is a
+ * generous multiple of what is read, not a measured size, and it drops old output, never refuses.
+ */
+export const STDERR_TAIL_BYTES = 1 << 20
+export function keepTail(sinks: Sinks, chunk: Uint8Array) {
+  sinks.err.push(chunk)
+  let bytes = (sinks.errBytes ?? 0) + chunk.length
+  while (bytes > STDERR_TAIL_BYTES && sinks.err.length > 1) bytes -= sinks.err.shift()!.length
+  sinks.errBytes = bytes
+}
 
 /**
  * The imports a module asks of its host, for the main thread and for each helper thread. Every
@@ -372,9 +396,9 @@ export function hostImports(
     for (let i = 0; i < count; i++) {
       const pointer = dv.getUint32(iovs + i * 8, true)
       const length = dv.getUint32(iovs + i * 8 + 4, true)
-      ;(fd === 1 ? sinks.out : sinks.err).push(
-        new Uint8Array(getMemory().buffer, pointer, length).slice(),
-      )
+      const chunk = new Uint8Array(getMemory().buffer, pointer, length).slice()
+      if (fd === 1) sinks.out.push(chunk)
+      else keepTail(sinks, chunk)
       total += length
     }
     dv.setUint32(nwritten, total, true)
@@ -552,11 +576,32 @@ export type ThreadStart = {
   flag: Int32Array
 }
 
-/** Instantiate `module` and run one request to completion. Throws `WasiTrap` on a trap. */
+/**
+ * Instantiate `module` and run one request to completion. Throws `WasiTrap` on a trap.
+ *
+ * A threaded run declares a 4 GiB shared memory that only the collector frees, and a process
+ * running several (a test file, a worker analysing many projects) fails with "Out of memory"
+ * once the reservations pile up. The run's frame holds the last reference, so the collection
+ * happens after it returned: the memory is released before this function does, rather than at
+ * the engine's convenience. (Reusing one memory instead would need it zeroed, and its dirty
+ * extent is unknown; growing a shared memory traps in Bun, so it cannot start small either.)
+ */
 export function runFallowModule(
   module: WebAssembly.Module,
   request: WasiRequest,
   options: RunOptions = {},
+): WasiOutcome {
+  try {
+    return runFallowModuleOnce(module, request, options)
+  } finally {
+    if (isThreadedModule(module)) Bun.gc(true)
+  }
+}
+
+function runFallowModuleOnce(
+  module: WebAssembly.Module,
+  request: WasiRequest,
+  options: RunOptions,
 ): WasiOutcome {
   const roots = [request.root, ...(options.extraRoots ?? [])].map((root) => realpathSync(root))
   const sinks: Sinks = {
@@ -577,6 +622,7 @@ export function runFallowModule(
     options.trace,
     options.cache ? join(roots[0]!, ".fallow") : undefined,
   )
+  if (memory) options.onMemory?.(memory)
   const helpers: Helper[] = []
   const pool = options.threadPool ?? new ThreadPool(options.threadScript)
   const allowed = Math.min(options.maxThreads ?? 1, MAX_FALLOW_THREADS)
