@@ -411,6 +411,10 @@ test("identical check modules retain the same environment identity across reload
         JSON.stringify(fileURLToPath(new URL("./quality-failure.ts", import.meta.url))),
       )
       .replace(
+        '"./test-hang-guard.ts"',
+        JSON.stringify(fileURLToPath(new URL("./test-hang-guard.ts", import.meta.url))),
+      )
+      .replace(
         '"./scope.ts"',
         JSON.stringify(fileURLToPath(new URL("./scope.ts", import.meta.url))),
       )
