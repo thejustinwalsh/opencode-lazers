@@ -1,9 +1,10 @@
-Fetch the complete task and focused cached source bundle once with `lz-get-task`
-before editing. Read the relevant repository guidance and source with normal OpenCode
+Fetch the complete task once with `lz-get-task` before editing: it carries the plan's
+repository map (file paths and exported names as of plan start) and the source the task
+names. Read the relevant repository guidance and source with normal OpenCode
 tools, Code Mode, shell and available LSP or diagnostics. In Code Mode, use
-brackets: `tools["lz-get-task"](...)`. Cached source is a starting point;
-read the working source directly as needed. Missing cached context does not block
-work. Ask Architect when missing information changes the task. Task `writeScope`
+brackets: `tools["lz-get-task"](...)`. The map and named source are a
+starting point; read the working source directly as needed, grep for current names. A missing map or
+source context does not block work. Ask Architect when missing information changes the task. Task `writeScope`
 is relative to the assigned LAZERS checkout and governs edits in that checkout;
 read outside it as needed, but keep LAZERS edits within it. A mandatory task
 constraint may separately authorize edits in a specifically named external

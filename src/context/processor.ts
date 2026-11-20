@@ -1,18 +1,11 @@
-import {
-  defaultIgnoreList,
-  mergeConfigs,
-  processFiles,
-  runSecurityCheck,
-  setLogLevel,
-  TokenCounter,
-} from "repomix"
+import { mergeConfigs, processFiles, runSecurityCheck, setLogLevel, TokenCounter } from "repomix"
 import { parentPort } from "node:worker_threads"
 type Source = { path: string; content: string; level?: "compress" | "directory-only" }
 
-if (!parentPort) throw new Error("Project index processor requires a worker thread")
+if (!parentPort) throw new Error("Source context processor requires a worker thread")
 const port = parentPort
 setLogLevel(-1)
-port.postMessage({ patterns: defaultIgnoreList })
+/** Tree-sitter outlines for the few files a task names. One message in, one result out. */
 port.on("message", async (data: { root: string; files: Source[] }) => {
   const counter = new TokenCounter("o200k_base")
   try {
@@ -41,17 +34,7 @@ port.on("message", async (data: { root: string; files: Source[] }) => {
       {},
     )
     const processed = await processFiles(files, config, () => {})
-    const tokens = counter.countTokens(JSON.stringify(processed))
-    if (tokens > 256000)
-      throw new Error("Index exceeds 256,000 packed tokens; narrow the project selection")
-    port.postMessage({
-      ok: true,
-      files: processed,
-      denied: [...denied],
-      tokens,
-      repomix: "1.18.1",
-      encoding: "o200k_base",
-    })
+    port.postMessage({ ok: true, files: processed, denied: [...denied] })
   } catch (error) {
     port.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) })
   } finally {

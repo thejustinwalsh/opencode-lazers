@@ -3,12 +3,14 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Agent, Location } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Schema } from "effect"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { git } from "../runner/artifacts.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProjectIndex } from "./index.ts"
+import { RunnerStore } from "../runner/store.ts"
+import { frozenPlanMap } from "./repo-map-store.ts"
 import { nativeContextPermission, registerContextTools } from "./tools.ts"
 import { registerTaskTools } from "../tools.ts"
 import { validProposal } from "../../test/proposal.ts"
@@ -39,7 +41,12 @@ afterEach(() => {
 async function setup(deniedAction?: string, repositoryWorker?: RepositorySnapshotWorker) {
   const root = mkdtempSync(join(tmpdir(), "lazers-context-tools-"))
   git(root, ["init", "--initial-branch=main"])
-  writeFileSync(join(root, "README.md"), "cached project source")
+  writeFileSync(join(root, "README.md"), "project source")
+  mkdirSync(join(root, "src"))
+  writeFileSync(
+    join(root, "src", "feature.ts"),
+    "export function run() {}\nexport type Options = {}\n",
+  )
   const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
   const deniedPaths = new Set<string>()
   const index = new ProjectIndex(
@@ -47,7 +54,6 @@ async function setup(deniedAction?: string, repositoryWorker?: RepositorySnapsho
     join(root, "cache"),
     repository,
     async (path) => !deniedPaths.has(path),
-    undefined,
     repositoryWorker,
   )
   const tools = new Map<string, RegisteredTool>()
@@ -86,100 +92,161 @@ async function setup(deniedAction?: string, repositoryWorker?: RepositorySnapsho
     repository.close()
     rmSync(root, { recursive: true, force: true })
   })
-  return { root, index, tools, assertions, deniedPaths }
+  return { root, repository, index, tools, assertions, deniedPaths }
 }
 
-test("one canonical worker fetch delivers task and cached source without a discovery or refresh call", async () => {
-  const f = await setup()
+type Fixture = Awaited<ReturnType<typeof setup>>
+
+async function submit(f: Fixture, key = "one-fetch", reference = "README.md:1") {
   const task = await Effect.runPromise(
     f.tools.get("lz-submit-task")!.execute(
       {
         ...validProposal(),
-        idempotencyKey: "one-fetch",
-        context: [{ reference: "README.md:1", revision: null }],
+        idempotencyKey: key,
+        context: [{ reference, revision: null }],
         guidance: "Start from README.md; preserve the existing contract.",
       },
       callContext("architect"),
     ),
   )
-  const taskID = JSON.parse(String(task.content)).taskID as string
-  const fetch = () =>
-    Effect.runPromise(
-      f.tools.get("lz-get-task")!.execute({ taskID }, callContext("lazers-implementor")),
+  return JSON.parse(String(task.content)).taskID as string
+}
+
+/** A real plan over the task, with one attempt per named worker session. */
+function plan(f: Fixture, taskID: string, ...sessions: string[]) {
+  const runner = new RunnerStore(f.repository)
+  const { planID } = runner.submit(
+    {
+      requestID: `plan-${taskID}`,
+      objective: "Map delivery.",
+      baseCommit: "a".repeat(40),
+      nodes: [{ taskID, revision: 1 }],
+      dependencies: [],
+      integrationOrder: [taskID],
+      verification: validProposal().verification,
+      acceptance: validProposal().acceptance,
+    },
+    "architect",
+  )
+  runner.move(planID, taskID, "READY")
+  runner.move(planID, taskID, "DISPATCH")
+  f.repository.atomic((db) => {
+    sessions.forEach((session, index) =>
+      db
+        .query(
+          `INSERT INTO runner_attempts(id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          planID,
+          taskID,
+          index + 1,
+          session,
+          `${session}-m`,
+          "/",
+          "a",
+          "{}",
+          "running",
+          1,
+        ),
     )
-  const absent = await fetch()
-  expect(absent.output).toContain("## Done when")
-  expect(absent.output).toContain("Cached source context is unavailable")
-  const snapshot = await f.index.refresh({ sessionID: "architect", agent: "architect" })
-  writeFileSync(join(f.root, "README.md"), "live checkout changed")
-  f.assertions.length = 0
-  const result = await fetch()
-  expect(typeof result.output).toBe("string")
-  expect(result.output).toContain("## Done when")
-  expect(result.output).toContain("## Verification")
-  expect(result.output).toContain("## Implementation guidance")
-  expect(result.output).toContain("cached project source")
-  expect(result.output).toContain(snapshot.id)
-  expect(result.output).not.toContain("live checkout changed")
-  expect(result.output).not.toContain('"proposal"')
-  expect(f.assertions).toEqual(["lz-get-task"])
-  expect(f.tools.has("lz-get-task-instructions")).toBe(false)
-  f.deniedPaths.add("README.md")
-  expect((await fetch()).output).not.toContain("cached project source")
-})
-
-test("read tools report an absent index without building, and an explicit Architect refresh publishes it", async () => {
-  const f = await setup()
-  const read = f.tools.get("lz-project-read")!
-  await expect(
-    Effect.runPromise(read.execute({ paths: ["src"] }, callContext("lazers-implementor"))),
-  ).rejects.toThrow("Architect must refresh")
-  expect(f.assertions).toEqual(["lz-project-read"])
-
-  const refresh = f.tools.get("lz-project-refresh")!
-  expect(refresh.options).toMatchObject({ codemode: true, pinned: true })
-  const built = await Effect.runPromise(refresh.execute({}, callContext("architect")))
-  expect(f.assertions.at(-1)).toBe("lz-project-refresh")
-  expect(built.output).toMatchObject({
-    snapshotID: expect.any(String),
-    freshness: "as-of-refresh",
-    workspace: f.index.root,
-    totalFiles: 1,
   })
-  const indexTool = f.tools.get("lz-project-index")!
-  expect(indexTool.output).toBeDefined()
-  expect(indexTool.description).toContain(
-    "totalFiles counts authorized matches before the 100-file response limit",
+  return planID
+}
+
+const fetchAs = (f: Awaited<ReturnType<typeof setup>>, taskID: string, session: string) =>
+  Effect.runPromise(
+    f.tools
+      .get("lz-get-task")!
+      .execute({ taskID }, { ...callContext("lazers-implementor"), sessionID: sessionOf(session) }),
   )
-  expect(indexTool.description).toContain("without paths, it counts all currently permitted files")
+const sessionOf = (value: string) =>
+  Schema.decodeUnknownSync(Schema.String.pipe(Schema.brand("SessionID")))(value)
+
+test("one canonical worker fetch delivers task, the plan's map, then the named source read live", async () => {
+  const f = await setup()
+  const taskID = await submit(f)
+  const planID = plan(f, taskID, "worker-1")
+  f.assertions.length = 0
+  writeFileSync(join(f.root, "README.md"), "live checkout text")
+  const result = await fetchAs(f, taskID, "worker-1")
+  const text = String(result.output)
+  expect(text).toContain("## Done when")
+  expect(text).toContain("## Verification")
+  expect(text).toContain("## Implementation guidance")
+  expect(text).not.toContain('"proposal"')
+  expect(text).toContain("## Repository map")
+  expect(text).toContain("as of plan start")
+  expect(text).toContain("src/feature.ts: fn run; type Options")
+  expect(text.indexOf("## Repository map")).toBeLessThan(text.indexOf("## Source context"))
+  expect(text).toContain("live checkout text")
+  expect(f.assertions).toEqual(["lz-get-task"])
+  const row = f.repository.read((db) =>
+    db
+      .query<
+        { plan_id: string; map_hash: string; map_tokens: number; source_context_tokens: number },
+        []
+      >("SELECT plan_id,map_hash,map_tokens,source_context_tokens FROM repo_map_deliveries")
+      .get(),
+  )!
+  expect(row.plan_id).toBe(planID)
+  expect(text).toContain(frozenPlanMap(f.repository, planID)!.text)
+  expect(row.map_hash).toBe(frozenPlanMap(f.repository, planID)!.hash)
+  expect(row.map_tokens).toBeGreaterThan(0)
+  expect(row.source_context_tokens).toBeGreaterThan(0)
+  f.deniedPaths.add("README.md")
+  const denied = String((await fetchAs(f, taskID, "worker-1")).output)
+  expect(denied).not.toContain("live checkout text")
+  expect(denied).toContain("## Repository map")
 })
 
-test("native permission and Architect role both gate refresh; reads remain available to permitted implementors", async () => {
+test("every worker of a plan gets the same map bytes; a new plan gets a fresh one", async () => {
   const f = await setup()
-  const refresh = f.tools.get("lz-project-refresh")!
-  await expect(
-    Effect.runPromise(refresh.execute({}, callContext("lazers-implementor"))),
-  ).rejects.toThrow("Only Architect")
-  expect(f.assertions).toEqual(["lz-project-refresh"])
+  const taskID = await submit(f)
+  const otherID = await submit(f, "second")
+  plan(f, taskID, "worker-a", "worker-b")
+  plan(f, otherID, "worker-c")
+  const block = (text: string) =>
+    text.slice(text.indexOf("## Repository map"), text.indexOf("## Source context"))
+  const first = block(String((await fetchAs(f, taskID, "worker-a")).output))
+  writeFileSync(join(f.root, "src", "added.ts"), "export const added = 1\n")
+  const second = block(String((await fetchAs(f, taskID, "worker-b")).output))
+  const next = block(String((await fetchAs(f, otherID, "worker-c")).output))
+  expect(second).toBe(first)
+  expect(first).not.toContain("src/added.ts")
+  expect(next).toContain("src/added.ts: const added")
+  const hashes = f.repository.read((db) =>
+    db
+      .query<{ session_id: string; map_hash: string }, []>(
+        "SELECT session_id,map_hash FROM repo_map_deliveries ORDER BY session_id",
+      )
+      .all(),
+  )
+  expect(hashes[0]!.map_hash).toBe(hashes[1]!.map_hash)
+  expect(hashes[2]!.map_hash).not.toBe(hashes[0]!.map_hash)
+})
 
-  await Effect.runPromise(refresh.execute({}, callContext("architect")))
-  const read = f.tools.get("lz-project-index")!
-  const output = await Effect.runPromise(
-    read.execute({ paths: [] }, callContext("lazers-implementor")),
-  )
-  expect(output.output).toMatchObject({ freshness: "as-of-refresh" })
-  const source = await Effect.runPromise(
-    f.tools
-      .get("lz-project-read")!
-      .execute({ paths: ["README.md"], level: "full" }, callContext("lazers-implementor")),
-  )
-  expect(source.output.sources[0]!.text).toBe("cached project source")
-  expect(f.assertions).toEqual([
-    "lz-project-refresh",
-    "lz-project-refresh",
-    "lz-project-index",
-    "lz-project-read",
-  ])
+test("named code files arrive as outlines, cited line ranges as exact lines", async () => {
+  const f = await setup()
+  const outline = await submit(f, "outline", "src/feature.ts")
+  plan(f, outline, "worker-o")
+  const text = String((await fetchAs(f, outline, "worker-o")).output)
+  expect(text).toContain("### src/feature.ts (outline)")
+  expect(text).toContain("export function run")
+  const ranged = await submit(f, "ranged", "src/feature.ts:2")
+  plan(f, ranged, "worker-r")
+  const rangedText = String((await fetchAs(f, ranged, "worker-r")).output)
+  expect(rangedText).toContain("[Lines 2-2]\nexport type Options = {}")
+  expect(rangedText).not.toContain("export function run() {}")
+})
+
+test("a session outside any plan gets no map and the retired tools are not registered", async () => {
+  const f = await setup()
+  const taskID = await submit(f)
+  expect(String((await fetchAs(f, taskID, "stray")).output)).not.toContain("## Repository map")
+  for (const name of ["lz-project-index", "lz-project-read", "lz-project-refresh"])
+    expect(f.tools.has(name)).toBe(false)
 })
 
 test("registered repository tool preserves brace filters and long POSIX source paths on reread", async () => {
@@ -257,65 +324,4 @@ test("repository snapshot permission denial prevents any fetch or packing", asyn
   ).rejects.toThrow("Permission denied")
   expect(fetches).toBe(0)
   expect(f.assertions).toEqual(["lz-repo-snapshot"])
-})
-
-test("native permission denial prevents Architect refresh from creating a snapshot", async () => {
-  const f = await setup("lz-project-refresh")
-  const refresh = f.tools.get("lz-project-refresh")!
-  await expect(Effect.runPromise(refresh.execute({}, callContext("architect")))).rejects.toThrow(
-    "Permission denied",
-  )
-  expect(f.assertions).toEqual(["lz-project-refresh"])
-  await expect(f.index.manifest({ sessionID: "architect", agent: "architect" })).rejects.toThrow(
-    "Architect must refresh",
-  )
-})
-
-test("cancelling an index tool interrupts its native permission wait and stops the scan", async () => {
-  const f = await setup()
-  writeFileSync(join(f.root, "second.ts"), "export const value = 2")
-  await f.index.refresh({ sessionID: "architect", agent: "architect" })
-  let enter!: () => void
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve
-  })
-  let finish!: () => void
-  let checks = 0
-  let interrupted = false
-  let principalSignal: AbortSignal | undefined
-  const native = nativeContextPermission({
-    permission: {
-      assert: () =>
-        Effect.callback<void>((resume) => {
-          checks++
-          enter()
-          finish = () => resume(Effect.void)
-          return Effect.sync(() => {
-            interrupted = true
-          })
-        }),
-    },
-  } as unknown as Plugin.Context)
-  Object.defineProperty(f.index, "allow", {
-    value: (path: string, principal: Parameters<typeof native>[1], workspace: string) => {
-      principalSignal = principal.signal
-      return native(path, principal, workspace)
-    },
-  })
-  const controller = new AbortController()
-  const pending = Effect.runPromiseExit(
-    f.tools.get("lz-project-index")!.execute({}, callContext("lazers-implementor")),
-    { signal: controller.signal },
-  )
-  try {
-    await entered
-    controller.abort()
-    await pending
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(principalSignal?.aborted).toBe(true)
-    expect(interrupted).toBe(true)
-    expect(checks).toBe(1)
-  } finally {
-    finish?.()
-  }
 })

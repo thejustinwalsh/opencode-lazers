@@ -4,6 +4,7 @@ import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
 import { installObservedRevisionsSchema } from "./tasks/observed-revisions.ts"
+import { installRepoMapSchema } from "./context/repo-map-store.ts"
 import { mkdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join } from "node:path"
@@ -425,6 +426,7 @@ export class TaskRepository {
       // a schema added later needs its own key or a reloaded service never installs it.
       shared.once("task-observations", () => installObservedRevisionsSchema(this))
       shared.once("project-controls", () => installProjectControlsSchema(this))
+      shared.once("repo-map", () => installRepoMapSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined

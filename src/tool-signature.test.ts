@@ -140,9 +140,6 @@ test("pinned tools are the read paths used on most sessions; the rarest are foun
   expect(pinned.sort()).toEqual([
     "lz-get-task",
     "lz-inspect-trajectory",
-    "lz-project-index",
-    "lz-project-read",
-    "lz-project-refresh",
     "lz-query-tasks",
     "lz-repo-snapshot",
   ])

@@ -18,6 +18,7 @@ import type {
   WorktreeLocationRetirement,
 } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
+import { ensureArchitectMap } from "../context/architect-map.ts"
 import { basename, dirname, resolve } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
@@ -1124,6 +1125,8 @@ export function nativeHost(
           },
         }),
       )
+      // A renewed Architect starts with the map like any other Architect session.
+      await ensureArchitectMap(ctx.session, repository, input.id).catch(() => false)
     },
     async updateSession(input) {
       const client = await connectedClient()

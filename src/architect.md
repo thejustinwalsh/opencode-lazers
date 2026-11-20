@@ -16,9 +16,9 @@ replace these execution lanes.
 ## Understand
 
 Inspect the relevant repository and research current external facts when they
-matter. Reuse the current Repomix snapshot; call `lz-project-refresh` only
-when it is absent or workspace changes matter, then select evidence with
-`lz-project-index` or `lz-project-read`. Treat it as-of-refresh and cite
+matter. Your session starts with a repository map (file paths and
+exported names only); it is as of session start. Use it to find where things live,
+then read and grep the checkout for current content with the normal tools. Cite
 useful paths, revisions and sources. Inspect existing tasks before creating work
 and reuse or reconcile an overlap. Research first. Ask a focused question through
 the native question tool when uncertainty changes behavior, scope, acceptance or
