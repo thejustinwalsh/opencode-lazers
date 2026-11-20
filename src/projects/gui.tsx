@@ -144,19 +144,21 @@ export function setupProjects(ctx: Ctx) {
       return (
         <label class="lazers-projects-field">
           <span>{props.caption}</span>
-          <Ui.TextInput
-            label={props.label}
-            class="lazers-settings-number"
-            value={drafts()[id()] ?? (props.value === null ? "" : String(props.value))}
-            onInput={(text) => {
-              setDraft(id(), text)
-              const parsed = parseField(text, props.whole)
-              if ("error" in parsed) return refuse(scopeKey(props.scope), parsed.error)
-              void setSetting(props.scope, props.name, parsed.value).then((ok) => {
-                if (ok && parsed.value === null) setDraft(id(), undefined)
-              })
-            }}
-          />
+          <span class="lazers-projects-number">
+            <Ui.TextInput
+              label={props.label}
+              class="lazers-settings-number"
+              value={drafts()[id()] ?? (props.value === null ? "" : String(props.value))}
+              onInput={(text) => {
+                setDraft(id(), text)
+                const parsed = parseField(text, props.whole)
+                if ("error" in parsed) return refuse(scopeKey(props.scope), parsed.error)
+                void setSetting(props.scope, props.name, parsed.value).then((ok) => {
+                  if (ok && parsed.value === null) setDraft(id(), undefined)
+                })
+              }}
+            />
+          </span>
         </label>
       )
     }
@@ -222,41 +224,41 @@ export function setupProjects(ctx: Ctx) {
                   </span>
                 )}
               </Show>
+              <span class="lazers-projects-fields">
+                <Field
+                  scope={scope()}
+                  name="limit"
+                  caption="Limit"
+                  label={`Limit of ${props.project.name}`}
+                  value={props.project.settings.limit}
+                  whole
+                />
+                <Field
+                  scope={scope()}
+                  name="weight"
+                  caption="Weight"
+                  label={`Weight of ${props.project.name}`}
+                  value={props.project.settings.weight}
+                  whole={false}
+                />
+                <Field
+                  scope={scope()}
+                  name="spendCeilingTokens"
+                  caption="Spend ceiling"
+                  label={`Spend ceiling of ${props.project.name}`}
+                  value={props.project.settings.spendCeilingTokens}
+                  whole
+                />
+              </span>
             </span>
           }
         >
-          <div class="lazers-projects-controls">
-            <Field
-              scope={scope()}
-              name="limit"
-              caption="Limit"
-              label={`Limit of ${props.project.name}`}
-              value={props.project.settings.limit}
-              whole
-            />
-            <Field
-              scope={scope()}
-              name="weight"
-              caption="Weight"
-              label={`Weight of ${props.project.name}`}
-              value={props.project.settings.weight}
-              whole={false}
-            />
-            <Field
-              scope={scope()}
-              name="spendCeilingTokens"
-              caption="Spend ceiling"
-              label={`Spend ceiling of ${props.project.name}`}
-              value={props.project.settings.spendCeilingTokens}
-              whole
-            />
-            <PauseSwitch
-              label={`Pause ${props.project.name}`}
-              paused={props.project.pause !== null}
-              onPause={(reason) => void setPause(scope(), true, reason)}
-              onResume={() => void setPause(scope(), false)}
-            />
-          </div>
+          <PauseSwitch
+            label={`Pause ${props.project.name}`}
+            paused={props.project.pause !== null}
+            onPause={(reason) => void setPause(scope(), true, reason)}
+            onResume={() => void setPause(scope(), false)}
+          />
         </Ui.SettingsRow>
       )
     }
@@ -320,11 +322,14 @@ const projectsStyles = `
 .lazers-projects-title { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px 8px; min-width:0; }
 .lazers-projects-code { width:64px; font-family:var(--font-family-mono, ui-monospace, monospace); }
 .lazers-projects-name { color:var(--text-strong); }
-.lazers-projects-detail { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.lazers-projects-detail { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.lazers-projects-fields { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:4px; }
+.lazers-projects-number { display:inline-flex; width:96px; min-width:0; }
+.lazers-projects-number > * { width:100%; min-width:0; }
 .lazers-projects-path { color:var(--text-weak); font-family:var(--font-family-mono, ui-monospace, monospace); font-size:12px; overflow-wrap:anywhere; }
 .lazers-projects-note { color:var(--text-weak); font-size:12px; }
 .lazers-projects-refusal { color:var(--text-critical-base, var(--icon-critical-base)); font-size:12px; }
-.lazers-projects-controls { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px 12px; }
+.lazers-projects-controls { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px 12px; max-width:100%; }
 .lazers-projects-field { display:inline-flex; align-items:center; gap:6px; color:var(--text-weak); font-size:12px; }
-.lazers-projects-reason { width:200px; }
+.lazers-projects-reason { width:200px; max-width:100%; }
 `
