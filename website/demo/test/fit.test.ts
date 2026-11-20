@@ -23,5 +23,6 @@ test("the iframe style gives every length a unit (Preact leaves numbers unitless
     expect(style.width).toBe(`${def.size.width}px`)
     expect(style.height).toBe(`${def.size.height}px`)
     expect(style.transform).toBe("scale(0.8)")
+    expect(style.pointerEvents).toBe("none")
   }
 })

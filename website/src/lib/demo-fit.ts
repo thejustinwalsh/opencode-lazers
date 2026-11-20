@@ -30,4 +30,7 @@ export const frameStyle = (design: DesignSize, scale: number) => ({
   width: `${design.width}px`,
   height: `${design.height}px`,
   transform: `scale(${scale})`,
+  // A replay, not a control: the visitor must never scroll or click inside it. `inert` alone does
+  // not stop wheel and trackpad scrolling, and the page draws the replayed pointer itself.
+  pointerEvents: "none",
 })
