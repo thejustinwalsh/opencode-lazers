@@ -17,6 +17,7 @@ import {
   inspectPlan,
 } from "./inspection.ts"
 import { RunnerStore } from "./store.ts"
+import { PlanInput } from "./schema.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -326,6 +327,18 @@ test("compact inspection keeps scheduling signal without serializing logs", () =
     },
   ])
   expect(JSON.stringify(all)).not.toContain("FULL_POLICY_CANARY")
+  expect(all.paging).toEqual({ plans: { next: null, returned: 2, more: false } })
+  // Parity: the waiting-on facts equal the ones the full body parse produced before.
+  for (const row of all.plans) {
+    const stored = f.store.plan(row.id)!
+    const parsed = PlanInput.safeParse(JSON.parse(stored.body))
+    const legacy = f.store.waitingOnPlanFacts(
+      parsed.success ? (parsed.data.afterPlans ?? []) : undefined,
+    )
+    expect(row.waitingOnPlans).toEqual(legacy.plans)
+    expect(row.waitingOnPlansCount).toBe(legacy.count)
+    expect(row.waitingOnPlansComplete).toBe(legacy.complete)
+  }
 
   const full = inspectPlan(f.store, { planID: receipt.planID, full: true })
   expect(JSON.stringify(full)).toContain("FULL_POLICY_CANARY")

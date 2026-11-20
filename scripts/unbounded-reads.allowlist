@@ -112,7 +112,6 @@ src/runner/identity-stamp.ts:250 | all | runner_evidence | anti-join: only rows 
 src/runner/identity-stamp.ts:273 | all | runner_adoptions | anti-join: only rows with no identity row yet; empty once stamped | SELECT a.id,a.${column} AS sha FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_
 src/runner/identity-store.ts:113 | star | runner_change_identity | keyed by subject, tree or sha | SELECT * FROM runner_change_identity WHERE subject=? AND subject_id=?
 src/runner/identity-store.ts:155 | all | runner_change_identity | keyed by subject, tree or sha | SELECT DISTINCT sha FROM runner_change_identity WHERE tree=? AND sha!='' AND sha!=?
-src/runner/inspection.ts:229 | all | runner_plans | inspection read; the full view returns plan bodies by contract | SELECT id,owner,revision,version,state,reason,model,artifact,body, json_extract(body,'$.ti
 src/runner/inspection.ts:240 | all | runner_nodes | inspection of one plan: its nodes, attempts, effects and counts | SELECT task_id FROM runner_nodes WHERE plan_id=?
 src/runner/inspection.ts:254 | all | runner_nodes | inspection of one plan: its nodes, attempts, effects and counts | SELECT task_id,ordinal,state,version,reason,artifact FROM runner_nodes WHERE plan_id=? ORD
 src/runner/inspection.ts:259 | all | runner_dependencies | inspection of one plan: its nodes, attempts, effects and counts | SELECT prerequisite,successor FROM runner_dependencies WHERE plan_id=? ORDER BY prerequisi

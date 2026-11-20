@@ -4,10 +4,15 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
-import { meterReads } from "./read-meter.fixture.ts"
+import { meterReads, meterRepository } from "./read-meter.fixture.ts"
 import { planPrioritySortSQL } from "./priority.ts"
 import { RunnerStore } from "./store.ts"
-import { FULL_VIEW_PLANS_PER_PAGE, inspectPlan } from "./inspection.ts"
+import {
+  COMPACT_PLANS_PER_PAGE,
+  FULL_VIEW_PLANS_PER_PAGE,
+  inspectPlan,
+  type CompactInspectionSummary,
+} from "./inspection.ts"
 
 /**
  * `plans()` and `planHeads()` used to stop at 1,000 rows, so plan 1,001 was invisible to ticks,
@@ -165,4 +170,57 @@ test("a full-view call holds one page of bodies, where the old call read every p
   expect(rows(old).rows).toBe(TOTAL)
   expect(rows(call).rows).toBeLessThan(TOTAL / 4)
   expect(rows(call).bytes).toBeLessThan(rows(old).bytes / 4)
+})
+
+test("the compact project list reads no plan body, keeps every row and order, and marks more plans", () => {
+  const f = seeded()
+  const old = meterReads(f.store)
+  f.store.read((db) =>
+    db
+      .query(
+        `SELECT id,owner,revision,version,state,reason,model,artifact,body,
+          json_extract(body,'$.title') AS title, json_extract(body,'$.objective') AS objective,
+          json_extract(body,'$.priority') AS priority,
+          COALESCE(json_extract(body,'$.workspaceMode'),'shared') AS workspaceMode,
+          json_extract(body,'$.afterPlans') AS afterPlans,
+          json_extract(body,'$.integrationOrder') AS integrationOrder
+         FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid`,
+      )
+      .all(f.root),
+  )
+  old.stop()
+  const everything = allPlans(f.store).map((plan) => plan.id)
+
+  const call = meterRepository(f.repository)
+  const first = inspectPlan(f.store, { full: false, limit: 1000 }) as CompactInspectionSummary
+  call.stop()
+  const planRead = (meter: ReturnType<typeof meterRepository>) => meter.of(/FROM runner_plans/)
+  show("compact list", planRead(old), planRead(call))
+  expect(first.plans.map((plan) => plan.id)).toEqual(everything.slice(0, 1000))
+  expect(first.paging.plans.more).toBe(true)
+  expect(first.paging.plans.next).not.toBeNull()
+  expect(planRead(call).rows).toBeGreaterThan(0)
+  expect(planRead(call).bytes).toBeLessThan(planRead(old).bytes / 8)
+
+  // Pages of 200 walk the same list in the same order; only the last says no more.
+  const ids: string[] = []
+  let after: string | undefined
+  const marks: boolean[] = []
+  for (;;) {
+    const page = inspectPlan(f.store, {
+      full: false,
+      limit: 200,
+      ...(after ? { plansAfter: after } : {}),
+    }) as CompactInspectionSummary
+    ids.push(...page.plans.map((plan) => plan.id))
+    marks.push(page.paging.plans.more)
+    if (!page.paging.plans.next) break
+    after = page.paging.plans.next
+  }
+  expect(ids).toEqual(everything)
+  expect(marks).toEqual([true, true, true, true, true, false])
+  // The default page is not the whole list, and says so.
+  const dflt = inspectPlan(f.store, { full: false }) as CompactInspectionSummary
+  expect(dflt.plans).toHaveLength(COMPACT_PLANS_PER_PAGE)
+  expect(dflt.paging.plans.more).toBe(true)
 })

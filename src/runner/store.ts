@@ -964,10 +964,10 @@ function retireUnusedIndexes(db: Database) {
 const DETAIL_PAGE_LIMIT = 200
 /** Plans per read when walking every plan: a page size, not a limit on how many are walked. */
 const PLAN_PAGE = 1_000
-type PlanCursor = { key: number; rowid: number }
-const encodePlanCursor = (cursor: PlanCursor) =>
+export type PlanCursor = { key: number; rowid: number }
+export const encodePlanCursor = (cursor: PlanCursor) =>
   Buffer.from(JSON.stringify([cursor.key, cursor.rowid])).toString("base64url")
-function decodePlanCursor(value: string | undefined): PlanCursor | undefined {
+export function decodePlanCursor(value: string | undefined): PlanCursor | undefined {
   if (value === undefined) return undefined
   try {
     const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString())
