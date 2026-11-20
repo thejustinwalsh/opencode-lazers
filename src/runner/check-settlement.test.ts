@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { EffectRow } from "./store.ts"
-import { TaskRuntime } from "./runtime.ts"
+import { EffectReconciliation } from "./effect-reconciliation.ts"
 
 type Settle = (
   this: unknown,
@@ -12,14 +12,15 @@ type Settle = (
 ) => boolean
 
 // `settleMatchedCheck` is private; the order of its effects is the contract under test.
-const settleMatchedCheck = Reflect.get(TaskRuntime.prototype, "settleMatchedCheck") as Settle
+const settleMatchedCheck = Reflect.get(
+  EffectReconciliation.prototype,
+  "settleMatchedCheck",
+) as Settle
 
 function harness() {
   const calls: string[] = []
   const runtime = {
-    set tickRequested(value: boolean) {
-      calls.push(`tick:${value}`)
-    },
+    requestRetick: () => calls.push("tick:true"),
     receipt: (_effect: EffectRow, receipt: { reconciled?: boolean }) =>
       calls.push(`receipt:${receipt.reconciled}`),
     uncertain: (_effect: EffectRow, error: unknown) =>
