@@ -49,6 +49,9 @@ import {
   type TaskDispositionRecord as TaskDispositionRecordType,
 } from "./task-disposition.ts"
 import { installProjectSchema } from "./project-key.ts"
+import { REFERENCE_EXACT } from "./projects/code.ts"
+import { projectCodeForDirectoryIn } from "./projects/registry.ts"
+import { installProjectControlsSchema } from "./projects/settings.ts"
 
 export function taskDatabasePath(dataDirectory?: string): string {
   const directory =
@@ -412,6 +415,7 @@ export class TaskRepository {
       // The connection and its `once` keys outlive a plugin reload (they hang off globalThis), so
       // a schema added later needs its own key or a reloaded service never installs it.
       shared.once("task-observations", () => installObservedRevisionsSchema(this))
+      shared.once("project-controls", () => installProjectControlsSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined
@@ -628,14 +632,24 @@ export class TaskRepository {
       )
       .get(this.projectDirectory, taskID)?.reference
     if (existing) return existing
-    const sequence = db
-      .query<{ sequence: number }, [string]>(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM task_references WHERE project_directory=?",
-      )
-      .get(this.projectDirectory)!.sequence
+    // The project's code and one sequence across every checkout of it. A directory no project owns
+    // yet (before registration) keeps the original `LZ` numbering for that directory alone.
+    const project = projectCodeForDirectoryIn(db, this.projectDirectory)
+    const sequence = project
+      ? db
+          .query<{ sequence: number }, [string]>(
+            `SELECT COALESCE(MAX(r.sequence), 0) + 1 AS sequence FROM task_references r
+               JOIN lazers_project_paths pp ON pp.path=r.project_directory WHERE pp.key=?`,
+          )
+          .get(project.key)!.sequence
+      : db
+          .query<{ sequence: number }, [string]>(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM task_references WHERE project_directory=?",
+          )
+          .get(this.projectDirectory)!.sequence
     if (!Number.isSafeInteger(sequence) || sequence < 1)
       throw new Error("Task reference sequence is exhausted")
-    const reference = `LZ-${sequence}`
+    const reference = `${project?.code ?? "LZ"}-${sequence}`
     db.query(
       "INSERT INTO task_references(project_directory, task_id, reference, sequence) VALUES(?,?,?,?)",
     ).run(this.projectDirectory, taskID, reference, sequence)
@@ -652,17 +666,48 @@ export class TaskRepository {
     return TaskReferenceSchema.parse(row.reference)
   }
 
+  /** The code of the project this checkout belongs to; absent before the project registers. */
+  projectCode(): string | undefined {
+    return projectCodeForDirectoryIn(this.db, this.projectDirectory)?.code
+  }
+
   referenceFor(taskID: string): string | undefined {
     return taskReferenceFor(this.db, this.projectDirectory, taskID)
   }
 
-  resolveTaskID(idOrReference: string): string | undefined {
-    if (TaskReferenceSchema.safeParse(idOrReference).success) {
+  /**
+   * The task a reference names in this project: its current code, an earlier code kept as an alias,
+   * any checkout of the project, any letter case. A reference of another project never resolves.
+   */
+  resolveReference(text: string): string | undefined {
+    const reference = text.trim().toUpperCase()
+    if (!REFERENCE_EXACT.test(reference)) return undefined
+    const project = projectCodeForDirectoryIn(this.db, this.projectDirectory)
+    if (!project)
       return this.db
         .query<{ task_id: string }, [string, string]>(
           "SELECT task_id FROM task_references WHERE project_directory=? AND reference=?",
         )
-        .get(this.projectDirectory, idOrReference)?.task_id
+        .get(this.projectDirectory, reference)?.task_id
+    return (
+      this.db
+        .query<{ task_id: string }, [string, string]>(
+          `SELECT r.task_id AS task_id FROM task_references r
+             JOIN lazers_project_paths pp ON pp.path=r.project_directory
+            WHERE pp.key=? AND r.reference=? ORDER BY r.rowid LIMIT 1`,
+        )
+        .get(project.key, reference)?.task_id ??
+      this.db
+        .query<{ task_id: string }, [string, string]>(
+          "SELECT task_id FROM task_reference_aliases WHERE project_key=? AND alias=?",
+        )
+        .get(project.key, reference)?.task_id
+    )
+  }
+
+  resolveTaskID(idOrReference: string): string | undefined {
+    if (REFERENCE_EXACT.test(idOrReference.trim().toUpperCase())) {
+      return this.resolveReference(idOrReference)
     }
     return this.db
       .query<{ id: string }, [string, string]>(

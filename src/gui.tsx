@@ -39,6 +39,7 @@ import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/indicator.tsx"
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
+import { setupProjects } from "./projects/gui.tsx"
 import { setupRetention } from "./retention/gui.tsx"
 
 const NEVER_UNLOAD_MS = -1
@@ -100,6 +101,7 @@ export default Plugin.define({
   setup(ctx) {
     const pageID = "lazers"
     const BudgetSection = setupBudget(ctx, ctx.stores.budget, pageID)
+    const ProjectsSection = setupProjects(ctx)
     const RetentionSection = setupRetention(ctx)
     ctx.add(Style, nativeBusyStyles)
     ctx.add(Style, panelStatusStyles)
@@ -167,6 +169,7 @@ export default Plugin.define({
             description="Architect, tasks and panels work here. Local inference runs in OpenCode Desktop."
           >
             <BudgetSection />
+            <ProjectsSection />
             <RetentionSection />
           </Ui.SettingsLayout>
         ),
@@ -598,6 +601,7 @@ export default Plugin.define({
             </Ui.SettingsRow>
           </Ui.SettingsSection>
           <BudgetSection />
+          <ProjectsSection />
           <RetentionSection />
           <details class="lazers-local lazers-local-diagnostics">
             <summary>

@@ -1,3 +1,4 @@
+import { sessionTitle } from "./session-title.ts"
 import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
@@ -278,7 +279,8 @@ export type TaskRuntimeOptions = {
    * Total tokens of a task past which the recovery detector raises a takeover concern, with
    * stronger wording as the spend doubles. Off when undefined. It never stops the worker.
    */
-  workerSpendCeilingTokens?: number
+  /** A token ceiling, or a read of it taken at each evaluation. */
+  workerSpendCeilingTokens?: number | (() => number | undefined)
   /** Takeover timing; tests shorten it. Defaults in `takeover.ts`. */
   takeoverHandoffWindowMs?: number
   takeoverStopWaitMs?: number
@@ -4842,31 +4844,72 @@ export class TaskRuntime {
       .attempts(plan.id)
       .filter((item) => item.task_id === command.taskID)
       .at(-1)
-    if (!attempt || !isTakeoverAttempt(attempt.policy) || attempt.state !== "running")
+    // A verifying attempt resubmits only when its verification is held: a new candidate then.
+    const resubmitHeld = attempt?.state === "verifying" && plan.state === "blocked"
+    if (
+      !attempt ||
+      !isTakeoverAttempt(attempt.policy) ||
+      (attempt.state !== "running" && !resubmitHeld)
+    )
       throw new Error(
         "takeover-submit needs the task's running takeover attempt; call lz-request-handoff first",
       )
-    this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
+    const submission =
+      this.store
+        .activity(plan.id, attempt.task_id)
+        .filter(
+          (event) =>
+            event.event === "TAKEOVER_SUBMITTED" &&
+            this.parseTransitionPayload<{ attemptID?: unknown }>(event)?.attemptID === attempt.id,
+        ).length + 1
+    const takeoverID = (JSON.parse(attempt.policy) as { takeover: { takeoverID: string } }).takeover
+      .takeoverID
+    if (!resubmitHeld) this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
     this.store.atomic((db) => {
+      // Each submission is a new candidate: its own input identity, so mechanical-fix and check
+      // effects journaled for an earlier submission are never matched or reused (as a repair
+      // attempt's new attempt or a retained repair's new input keys them apart).
       db.query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
-      ).run(attempt.id)
+        `UPDATE runner_attempts SET state=${resubmitHeld ? "state" : "lz_runner_transition('attempt',state,'verifying')"},message_id=?,artifact=NULL WHERE id=?`,
+      ).run(`takeover-${takeoverID}-submission-${submission}`, attempt.id)
       // A resubmission after a failed verification lifts its hold.
       if (plan.state === "blocked")
         db.query(
           "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
     })
-    const submissions = this.store
-      .activity(plan.id, attempt.task_id)
-      .filter((event) => event.event === "TAKEOVER_SUBMITTED").length
     this.store.record(plan.id, attempt.task_id, "TAKEOVER_SUBMITTED", {
       attemptID: attempt.id,
       reason: command.reason,
-      submission: submissions + 1,
+      submission,
     })
     this.tickRequested = true
     return { status: "takeover-submitted", attemptID: attempt.id, version: plan.version }
+  }
+
+  /**
+   * A takeover attempt lives while the Architect session that took it over does. When that session
+   * is gone or archived the work is not failed: the plan holds, advertising takeover-submit (any
+   * live Architect continues in the workspace) and cancel, and the recovery bundle lists it.
+   */
+  private async holdAbandonedTakeover(plan: PlanRow, attempt: AttemptRow) {
+    if (plan.state !== "running") return
+    const takeover = (
+      JSON.parse(attempt.policy) as { takeover: { architectSessionID: string; takeoverID: string } }
+    ).takeover
+    const architect = await this.host.session(takeover.architectSessionID)
+    if (this.validArchitect(architect)) return
+    this.store.recordOnce(plan.id, attempt.task_id, "TAKEOVER_ABANDONED", {
+      takeoverID: takeover.takeoverID,
+      attemptID: attempt.id,
+      architectSessionID: takeover.architectSessionID,
+      cause: architect ? "archived" : "absent",
+    })
+    this.hold(
+      plan,
+      `Takeover abandoned: Architect session ${takeover.architectSessionID} is ${architect ? "archived" : "gone"}; the work stays in ${attempt.workspace}`,
+      ["takeover-submit", "cancel"],
+    )
   }
 
   /**
@@ -5855,7 +5898,7 @@ export class TaskRuntime {
           ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
           directory: continuation.directory,
           ...(continuation.model ? { model: JSON.parse(continuation.model) } : {}),
-          title: `LAZERS · continue ${plan.id.slice(0, 8)}`,
+          title: this.sessionTitle(`continue ${plan.id.slice(0, 8)}`),
           planID: plan.id,
           sourceSessionID: plan.owner,
         })
@@ -6297,6 +6340,11 @@ export class TaskRuntime {
     return { revision: parsed.revision, ...content }
   }
 
+  /** `<CODE> · <text>`; `LAZERS` stands in until the project has a code. */
+  private sessionTitle(text: string): string {
+    return sessionTitle(this.store.repository.projectCode() ?? "LAZERS", text)
+  }
+
   private renewalContinuityCoverage(renewal: ArchitectRenewalRow) {
     const coverage = this.store.architectRenewalCoverageEvidence(renewal.id)
     if (!coverage) throw new Error("Architect renewal continuity coverage is unavailable")
@@ -6308,7 +6356,7 @@ export class TaskRuntime {
   }
 
   private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
-    const text = outcomeText(JSON.stringify(payload))
+    const text = outcomeText(JSON.stringify(payload), this.store.repository.projectCode())
     return {
       bytes: new TextEncoder().encode(text).byteLength,
       tokens: null,
@@ -6532,7 +6580,7 @@ export class TaskRuntime {
                 id: renewal.successor_session_id,
                 directory: renewal.directory,
                 model: JSON.parse(renewal.model),
-                title: `LAZERS · ${knownLabel ?? this.renewalLabel(renewal)}`.slice(0, 120),
+                title: this.sessionTitle(knownLabel ?? this.renewalLabel(renewal)),
                 planID: renewal.anchor_plan_id,
                 planIDs,
                 sourceSessionID: renewal.previous_session_id,
@@ -7244,7 +7292,8 @@ export class TaskRuntime {
     const current = () =>
       waits.filter(
         ({ planID }) =>
-          this.store.plan(planID)?.state === "running" && !this.store.dispatchPause(planID),
+          this.store.plan(planID)?.state === "running" &&
+          !this.store.effectiveDispatchPause(planID),
       )
     const waiting = current()
     const anchor = waiting[0]
@@ -7856,7 +7905,10 @@ export class TaskRuntime {
         active.map((attempt) => {
           // The Architect works its own attempt; it is verified once submitted.
           if (isTakeoverAttempt(attempt.policy)) {
-            if (attempt.state !== "verifying") return
+            if (attempt.state !== "verifying")
+              return this.timed("step:takeoverLiveness", () =>
+                this.holdAbandonedTakeover(this.store.plan(plan!.id)!, attempt),
+              )
             const task = this.store.repository.get(attempt.task_id)!
             return this.timed("step:verifyTakeover", () =>
               this.verify(this.store.plan(plan!.id)!, attempt, task.proposal, fence),
@@ -7915,7 +7967,7 @@ export class TaskRuntime {
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
       if (
-        !this.store.dispatchPause(plan.id) &&
+        !this.store.effectiveDispatchPause(plan.id) &&
         this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
       )
         return { planID: plan.id, prerequisitePlanIDs: prerequisites }
@@ -7957,10 +8009,12 @@ export class TaskRuntime {
       )
       pause = undefined
     }
+    // A project or global pause holds new dispatch whatever the plan's own pause says.
+    const held = this.store.effectiveDispatchPause(plan.id)
     const ready: NodeRow[] = []
     for (const node of nodes) {
       if (
-        pause ||
+        held ||
         !["queued", "ready"].includes(node.state) ||
         this.store.execution(node.task_id)!.waitingOn.length > 0
       )
@@ -8006,7 +8060,7 @@ export class TaskRuntime {
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
     if (outstanding.length) {
-      if (!pause && nodes.some((node) => ["queued", "ready"].includes(node.state)))
+      if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
         return {
           planID: plan.id,
           reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
@@ -9166,7 +9220,7 @@ export class TaskRuntime {
       if (
         !current ||
         current.state !== "running" ||
-        this.store.dispatchPause(plan.id) !== undefined ||
+        this.store.effectiveDispatchPause(plan.id) !== undefined ||
         current.revision !== plan.revision ||
         current.body !== plan.body ||
         currentNode?.state !== node.state
@@ -9837,7 +9891,9 @@ export class TaskRuntime {
           agent: workerAgent(JSON.parse(attempt.policy).agent),
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           directory: attempt.workspace,
-          title: `LAZERS · ${this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100)}`,
+          title: this.sessionTitle(
+            this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100),
+          ),
           attemptID: attempt.id,
         })
         this.receipt(effect, { sessionID: attempt.session_id }, fence)
@@ -10036,8 +10092,9 @@ export class TaskRuntime {
         .filter((item) => item.task_id === attempt.task_id)
         .at(-1)
       if (latest?.id !== attempt.id) continue
-      // The Architect is finishing this task itself; only its submit or a cancel settles it.
-      if (isTakeoverAttempt(attempt.policy) && attempt.state === "running") continue
+      // The Architect is finishing this task itself. Its attempt has no native session, so absence
+      // says nothing about it: only accept, a plan cancellation, or the abandonment hold ends it.
+      if (isTakeoverAttempt(attempt.policy)) continue
       if (
         this.store
           .effects(plan.id)

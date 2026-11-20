@@ -25,9 +25,19 @@ export const schemaModules = {
     tables: ["task_observed_revisions"],
   },
   projects: {
-    generation: 1,
+    generation: 2,
     source: "src/project-key.ts",
-    tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
+    tables: [
+      "lazers_projects",
+      "lazers_project_aliases",
+      "lazers_project_paths",
+      "task_reference_aliases",
+    ],
+  },
+  "project-controls": {
+    generation: 1,
+    source: "src/projects/settings.ts",
+    tables: ["lazers_settings", "lazers_dispatch_pause"],
   },
   runner: {
     generation: 13,

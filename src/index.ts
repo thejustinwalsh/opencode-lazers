@@ -24,7 +24,8 @@ import { registerModelTools } from "./models/tools.ts"
 import { registerModelsServer } from "./models/server.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { acquireLazersCore } from "./core/core.ts"
-import { coreSnapshot } from "./core/registry.ts"
+import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
+import { registerProjects } from "./projects/rpc.ts"
 import { taskDatabasePath } from "./storage.ts"
 
 /**
@@ -109,6 +110,23 @@ export default Plugin.define({
       yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, agentRoutes))
       yield* sectionEffect("setup:ArchitectContact", () =>
         registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
+      )
+      yield* sectionEffect("setup:Projects", () =>
+        registerProjects(ctx, repository, {
+          loaded: loadedProjectDirectories,
+          wake: () => core.wake(),
+          defaults: {
+            global:
+              typeof ctx.options.historyCacheMB === "number"
+                ? { historyCacheMB: ctx.options.historyCacheMB }
+                : {},
+            project:
+              typeof ctx.options.workerSpendCeilingTokens === "number" &&
+              ctx.options.workerSpendCeilingTokens > 0
+                ? { spendCeilingTokens: ctx.options.workerSpendCeilingTokens }
+                : {},
+          },
+        }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RunnerTools", () => registerRunnerTools(ctx, runtime))
       yield* sectionEffect("setup:Progress", () =>

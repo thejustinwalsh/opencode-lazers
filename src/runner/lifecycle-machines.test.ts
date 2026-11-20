@@ -42,6 +42,7 @@ test("runner lifecycle graphs have no accidental sink states", () => {
       dispatch: ["enabled"],
       source: ["active", "retired"],
       contact: ["enabled"],
+      pause: ["enabled"],
       plan: ["integrated", "cancelled"],
       attempt: ["accepted", "cancelled"],
       effect: ["completed", "failed"],

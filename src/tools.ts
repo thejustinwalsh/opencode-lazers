@@ -445,7 +445,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-list-tasks",
       description:
-        "List recent open submitted tasks in this repository, including each stable project-local LZ reference and UUID. Retired records stay available through lz-get-task or lz-query-tasks with includeRetired; use the latter for the full specification list.",
+        "List recent open submitted tasks in this repository, including each stable project-local reference (`<CODE>-<n>`) and UUID. Retired records stay available through lz-get-task or lz-query-tasks with includeRetired; use the latter for the full specification list.",
       input: listInput,
       options: { codemode: true, permission: "lz-list-tasks" },
       execute: (input, context) =>
@@ -470,7 +470,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-query-tasks",
       description:
-        "Search this project's persisted open tasks across sessions, including older records. Literal text, LZ reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
+        "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
       input: QueryInput,
       output: QueryOutput,
       options: { codemode: true, pinned: true, permission: "lz-query-tasks" },

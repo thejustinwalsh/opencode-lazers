@@ -248,6 +248,17 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
     })
     expect((await read()).workload).toEqual(tasksCounts())
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
+    // A global pause holds the same queued work as Paused, with no plan pause involved.
+    fixture.store.atomic((db) => {
+      db.query("DELETE FROM runner_dispatch_controls").run()
+      db.query(
+        "INSERT INTO lazers_dispatch_pause(scope,state,reason,by,updated_at) VALUES('global','paused','test','owner',1)",
+      ).run()
+    })
+    expect((await read()).workload).toEqual(tasksCounts())
+    expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
+    fixture.store.atomic((db) => db.query("DELETE FROM lazers_dispatch_pause").run())
+    expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     // A session without a native parent omits the field rather than carrying null.
     const owner = (await read()).sessions.find((item) => item.sessionID !== "ses-failed")

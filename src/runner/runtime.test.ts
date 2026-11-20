@@ -22,6 +22,10 @@ import { dirname, join } from "node:path"
 import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { registerProject } from "../project-key.ts"
+import { effectivePause, setPause } from "../projects/pause.ts"
+import { inspectPlan } from "./inspection.ts"
+import type { CompactPlanDetail } from "./inspection.ts"
 import { checkResourcesSettled, combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { ArchitectSourceResult, HostSession, RunnerHost } from "./host.ts"
@@ -1826,6 +1830,7 @@ test("a lost continuation-create response is reconciled by stable native session
 
 test("a missing task owner gets a same-project continuation without foreign parent context", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })
+  codeProject(f, "ONS")
   const originalOwner = f.sessions.get("owner")!
   f.sessions.delete("owner")
   f.sessions.set("ses_starter", {
@@ -1849,6 +1854,7 @@ test("a missing task owner gets a same-project continuation without foreign pare
   const continuation = f.store.continuation(plan.id)!
   const owner = f.sessions.get(continuation.session_id)!
   expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(nativeInput?.title).toStartWith("ONS · continue ")
   expect(nativeInput?.parentID).toBeUndefined()
   expect(nativeInput?.model).toBeUndefined()
   expect(continuation.parent_id).toBeNull()
@@ -2452,6 +2458,21 @@ async function runPlan(
   )
 }
 
+test("worker sessions are titled with the project code", async () => {
+  const f = fixture({ delayed: true })
+  codeProject(f, "ONS")
+  const titles: string[] = []
+  const create = f.host.create
+  f.host.create = async (input) => {
+    titles.push(input.title)
+    return create(input)
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(titles.length).toBeGreaterThan(0)
+  for (const title of titles) expect(title).toStartWith("ONS · ")
+})
+
 test("F-S4-1 admission and dispatch do not invoke the full project audit", async () => {
   const f = fixture({ delayed: true })
   f.store.audit = () => {
@@ -3017,6 +3038,23 @@ async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: stri
       state.f.host.worktrees = originalWorktrees
     },
   }
+}
+
+/** Give the fixture's checkout a registered project with `code`, as registration would. */
+function codeProject(f: ReturnType<typeof fixture>, code: string) {
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at,code,name) VALUES(?,?,?,?)").run(
+      `path:${f.root}`,
+      "2026-01-01",
+      code,
+      "fixture",
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.root,
+      `path:${f.root}`,
+      "2026-01-01",
+    )
+  })
 }
 
 function reopenRuntime(
@@ -11655,6 +11693,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
+  codeProject(f, "ONS")
   expect(architectIdleWindowMs(undefined)).toBe(5 * 60 * 1000)
   expect(DEFAULT_ARCHITECT_CACHE_WINDOW_MS).toBe(5 * 60 * 1000)
   expect(() => architectIdleWindowMs(0)).toThrow("positive integer")
@@ -11722,7 +11761,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(createInputs[0]).toMatchObject({
     planID: f.receipt.planID,
     sourceSessionID: "owner",
-    title: expect.stringContaining("Implement a"),
+    title: expect.stringMatching(/^ONS · .*Implement a/),
     model: owner.model,
   })
   expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)
@@ -15830,4 +15869,257 @@ test("takeover: a failed verification goes back to the Architect on the same att
       .activity(f.receipt.planID, worker.task_id)
       .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
   ).toHaveLength(2)
+})
+
+test("takeover: every submission is a fresh candidate; the mechanical fix and checks re-run on the resubmitted tree", async () => {
+  const { f, worker } = await takeoverFixture({
+    taskFiles: [{ name: "a", path: "src/result.ts" }],
+    beforeCheck: "grep -q good src/result.ts",
+    checkCommand: "bun fmt --check src/result.ts",
+    combinedCheckCommand: "test -f src/result.ts",
+  })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const submit = async (requestID: string, source: string) => {
+    writeFileSync(join(worker.workspace, "src/result.ts"), source)
+    git(worker.workspace, ["add", "-A"])
+    git(worker.workspace, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      requestID,
+    ])
+    await f.runtime.command(
+      {
+        requestID,
+        planID: f.receipt.planID,
+        action: "takeover-submit",
+        taskID: worker.task_id,
+        reason: "Architect result",
+      },
+      "owner",
+    )
+    await drive(f.runtime, 18)
+  }
+  // Unformatted and wrong: the mechanical fix formats it, then the check fails.
+  await submit("submit-1", 'export const x="bad"')
+  expect(f.store.plan(f.receipt.planID)!.reason).toStartWith("Takeover verification failed:")
+  // Unformatted again, now right: the fix must run again on this tree, not reuse the first receipt.
+  await submit("submit-2", 'export const x="good"')
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.reason ?? "").not.toContain("Mechanical candidate changed")
+  const mine = f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!
+  expect(mine.state).toBe("accepted")
+  const fixes = f.store
+    .effects(plan.id)
+    .filter((effect) => effect.kind === "mechanical-fix" && effect.attempt_id === mine.id)
+  expect(fixes.length).toBeGreaterThanOrEqual(2)
+})
+
+async function submitTakeover(
+  f: ReturnType<typeof fixture>,
+  taskID: string,
+  requestID: string,
+  sessionID = "owner",
+) {
+  return f.runtime.command(
+    {
+      requestID,
+      planID: f.receipt.planID,
+      action: "takeover-submit",
+      taskID,
+      reason: "Architect result",
+    },
+    sessionID,
+  )
+}
+
+test("takeover: the stale-attempt settler never fails a takeover attempt for its absent synthetic session", async () => {
+  let offset = 0
+  // A check that cannot run holds the verification without journaling new effects each tick,
+  // as the live mechanical-fix hold did.
+  const { f, worker } = await takeoverFixture({
+    now: () => Date.now() + offset,
+    beforeCheck: "lazers-no-such-command",
+  })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  const state = () =>
+    f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!.state
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-1")
+  await drive(f.runtime, 8)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(state()).toBe("verifying")
+  for (let n = 0; n < 4; n++) {
+    offset += 120_000
+    await f.runtime.tick()
+  }
+  expect(state()).toBe("verifying")
+  expect(
+    f.store.latestTransition(f.receipt.planID, worker.task_id, "ATTEMPT_STALE_SETTLED"),
+  ).toBeUndefined()
+  // A held verification is resubmitted as a new candidate.
+  const resubmitted = (await submitTakeover(f, worker.task_id, "submit-2")) as { status: string }
+  expect(resubmitted.status).toBe("takeover-submitted")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(
+    f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!.message_id,
+  ).toEndWith("submission-2")
+})
+
+test("takeover: an abandoned takeover holds for any live Architect, is bundled, and continues on takeover-submit", async () => {
+  let offset = 0
+  const { f, worker } = await takeoverFixture({ now: () => Date.now() + offset })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  f.sessions.get("owner")!.archived = true
+  f.sessions.set("owner-2", {
+    ...structuredClone(f.sessions.get("owner")!),
+    id: "owner-2",
+    archived: false,
+  })
+  await drive(f.runtime, 3)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Takeover abandoned:")
+  expect(f.store.attempts(plan.id).find((a) => a.id === taken.attemptID)!.state).toBe("running")
+  offset += RECOVERY_STALE_MS + 60_000
+  await drive(f.runtime, 3)
+  const bundle = f.notifications.findLast((n) => n.text.includes("LAZERS recovery bundle"))
+  expect(bundle?.text).toContain("Takeover abandoned")
+  expect(bundle?.text).toContain("takeover-submit")
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-by-successor", "owner-2")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(plan.id).find((a) => a.id === taken.attemptID)!.state).toBe("accepted")
+})
+
+test("takeover: from a failed takeover attempt on a held plan, lz-request-handoff and takeover-submit continue the committed work", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.host.steerWorker = async () => {}
+  const first = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  // The live LZ-200 state: the Architect committed its fix, the takeover attempt was failed by the
+  // stale settler while its verification was held, the node stayed verifying.
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  git(worker.workspace, ["add", "-A"])
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Architect fix",
+  ])
+  const architectCommit = git(worker.workspace, ["rev-parse", "HEAD"])
+  f.store.move(f.receipt.planID, worker.task_id, "VERIFY")
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(first.attemptID!)
+    db.query(
+      "UPDATE runner_plans SET state='blocked',reason='Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted' WHERE id=?",
+    ).run(f.receipt.planID)
+  })
+  const steersBefore = f.events.filter((e) => e.startsWith("stop:")).length
+  const again = await f.runtime.takeover(
+    { attemptID: first.attemptID!, reason: "Continue the takeover" },
+    "owner",
+  )
+  expect(again.status).toBe("taken-over")
+  expect(again.handoff?.author).toBe("runtime")
+  expect(again.head).toBe(architectCommit)
+  expect(again.commits?.some((line) => line.includes("Architect fix"))).toBe(true)
+  expect(f.events.filter((e) => e.startsWith("stop:")).length).toBe(steersBefore)
+  const second = f.store.attempts(f.receipt.planID).find((a) => a.id === again.attemptID)!
+  expect(second.workspace).toBe(worker.workspace)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  await submitTakeover(f, worker.task_id, "submit-continued")
+  await drive(f.runtime, 10)
+  const accepted = f.store.attempts(f.receipt.planID).find((a) => a.id === again.attemptID)!
+  expect(accepted.state).toBe("accepted")
+  expect(
+    git(worker.workspace, ["merge-base", "--is-ancestor", architectCommit, accepted.artifact!]),
+  ).toBe("")
+})
+
+async function registeredKey(f: ReturnType<typeof fixture>) {
+  return (await registerProject(f.repository, { directory: f.root, opencodeProjectID: "project" }))
+    .key
+}
+
+test("a project pause holds new dispatch only there; running work is verified; unpause dispatches again", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  // Another project's pause does not touch this one.
+  setPause(
+    f.repository,
+    { kind: "project", key: "github.com/other/project" },
+    {
+      paused: true,
+      reason: "Elsewhere",
+      by: "owner",
+    },
+  )
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  expect(first).toBeDefined()
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  expect(f.sessions.get(first.session_id)!.busy).toBe(true)
+  f.completeWorker(first.session_id)
+  await drive(f.runtime, 5)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  await integrateTaskSource(f, f.receipt.planID, first.task_id)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(effectivePause(f.repository, f.receipt.planID)).toMatchObject({
+    level: "project",
+    reason: "Rebuild",
+  })
+  setPause(f.repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("a global pause holds a project that was never registered, and lifting it dispatches", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  await runPlan(f)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  expect(effectivePause(f.repository, f.receipt.planID)?.level).toBe("global")
+  setPause(f.repository, { kind: "global" }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test("a paused project's waiting task names the level in the execution read and the plan inspection", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  await runPlan(f)
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  await drive(f.runtime, 3)
+  const waiting = f.store.nodes(f.receipt.planID)[0]!
+  expect(f.store.execution(waiting.task_id)?.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  const compact = inspectPlan(f.store, {
+    planID: f.receipt.planID,
+    full: false,
+  }) as CompactPlanDetail
+  expect(compact.plan.schedule.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  expect(f.store.execution(waiting.task_id)?.dispatchPause?.reason).toBe("Global pause: Away")
 })

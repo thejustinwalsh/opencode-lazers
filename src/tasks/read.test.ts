@@ -8,6 +8,8 @@ import { spawnSync } from "node:child_process"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { TaskReads } from "./read.ts"
+import { registerProject } from "../project-key.ts"
+import { setPause } from "../projects/pause.ts"
 import { Schema } from "effect"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { recordTaskAdvice } from "./advice.ts"
@@ -705,6 +707,54 @@ test("paused dispatch is durable, filterable and distinct from active worker lif
   reads.runner.setDispatchPause(plan.planID, null, { caller: "session-a" })
   expect(reopened.query({ state: "paused" }).count).toBe(0)
   expect(reopened.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
+})
+
+test("a project or global pause lists the waiting task as paused and names the level", async () => {
+  const repository = fixture().open()
+  const key = (
+    await registerProject(repository, {
+      directory: repository.projectDirectory,
+      opencodeProjectID: "project",
+    })
+  ).key
+  const active = insert(repository, "Already running")
+  const waiting = insert(repository, "Wait for dispatch")
+  const reads = new TaskReads(repository)
+  const proposal = validProposal()
+  const plan = reads.runner.submit(
+    {
+      requestID: "project-pause-reads",
+      objective: "Pause by project",
+      baseCommit: "a".repeat(40),
+      nodes: [active, waiting].map((task) => ({ taskID: task.id, revision: 1 })),
+      dependencies: [],
+      integrationOrder: [active.id, waiting.id],
+      verification: proposal.verification,
+      acceptance: proposal.acceptance,
+    },
+    "session-a",
+  )
+  repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID),
+  )
+  reads.runner.move(plan.planID, active.id, "READY")
+  reads.runner.move(plan.planID, active.id, "DISPATCH")
+  expect(reads.query({ state: "paused" }).count).toBe(0)
+  setPause(repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  expect(reads.query({ state: "paused" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
+  expect(reads.query({ state: "paused" }).tasks[0]).toMatchObject({
+    recordedState: "queued",
+    dispatchPause: { reason: "Project pause: Rebuild", untilPlans: [], level: "project" },
+  })
+  expect(reads.query({ state: "running" }).tasks.map((task) => task.taskID)).toEqual([active.id])
+  setPause(repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
+  setPause(repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  expect(reads.query({ state: "paused" }).tasks[0]?.dispatchPause?.reason).toBe(
+    "Global pause: Away",
+  )
+  setPause(repository, { kind: "global" }, { paused: false, reason: "", by: "owner" })
+  expect(reads.query({ state: "paused" }).count).toBe(0)
+  expect(reads.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
 })
 
 test("a running task that trips a detector rule shows its open concern with totals across attempts", () => {
