@@ -57,6 +57,7 @@ import { registerNativeInteraction } from "./verification/opencode/native-intera
 import { registerModelTools } from "./models/tools.ts"
 import { createModelsManagedUsagePriceProvider, registerModelsServer } from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
+import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { acquireLazersCore } from "./core/core.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
@@ -78,8 +79,13 @@ export default Plugin.define({
       }
       const probe = stallProbe()
       probe.locations++
+      const diagnosticsRoot = dirname(taskDatabasePath(dataDirectory))
+      startHeapSampler({
+        directory: join(diagnosticsRoot, "diagnostics"),
+        context: () => ({ locations: probe.locations, cores: coreSnapshot().length }),
+      })
       probe.configure({
-        dataDirectory: dirname(taskDatabasePath(dataDirectory)),
+        dataDirectory: diagnosticsRoot,
         log: (message, fields) => void Effect.runFork(Effect.logWarning(message, fields)),
         cores: () => coreSnapshot().length,
       })
