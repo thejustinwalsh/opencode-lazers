@@ -1,3 +1,8 @@
+import type { RuntimeJournal } from "./runtime-journal.ts"
+import type { CheckActivities } from "./check-activities.ts"
+import type { AdoptionPreparation } from "./adoption-preparation.ts"
+import type { VerificationReview } from "./verification-review.ts"
+import type { EffectReconciliation } from "./effect-reconciliation.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -31,24 +36,24 @@ import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 export class AdoptionExecution {
   constructor(
     private readonly runtime: {
-      adoptionArtifactScopeViolations: TaskRuntime["adoptionArtifactScopeViolations"]
-      adoptionWorkerIdle: TaskRuntime["adoptionWorkerIdle"]
-      checkActivity: TaskRuntime["checkActivity"]
+      adoptionArtifactScopeViolations: AdoptionPreparation["adoptionArtifactScopeViolations"]
+      adoptionWorkerIdle: AdoptionPreparation["adoptionWorkerIdle"]
+      checkActivity: CheckActivities["checkActivity"]
       checkProfile: () => CheckRunProfile | undefined
-      conflictingActiveAttempt: TaskRuntime["conflictingActiveAttempt"]
-      currentAdoptionInputFingerprint: TaskRuntime["currentAdoptionInputFingerprint"]
+      conflictingActiveAttempt: AdoptionPreparation["conflictingActiveAttempt"]
+      currentAdoptionInputFingerprint: AdoptionPreparation["currentAdoptionInputFingerprint"]
       dataDirectory: TaskRuntime["dataDirectory"]
       directory: TaskRuntime["directory"]
-      effect: TaskRuntime["effect"]
+      effect: RuntimeJournal["effect"]
       host: TaskRuntime["host"]
-      missingEvidence: TaskRuntime["missingEvidence"]
-      outcome: TaskRuntime["outcome"]
+      missingEvidence: VerificationReview["missingEvidence"]
+      outcome: RuntimeJournal["outcome"]
       owner: TaskRuntime["owner"]
       projectID: TaskRuntime["projectID"]
-      receipt: TaskRuntime["receipt"]
-      reconcileEffect: TaskRuntime["reconcileEffect"]
-      reviewedAdoptionBaseline: TaskRuntime["reviewedAdoptionBaseline"]
-      startCheckActivity: TaskRuntime["startCheckActivity"]
+      receipt: RuntimeJournal["receipt"]
+      reconcileEffect: EffectReconciliation["reconcileEffect"]
+      reviewedAdoptionBaseline: AdoptionPreparation["reviewedAdoptionBaseline"]
+      startCheckActivity: CheckActivities["startCheckActivity"]
       store: TaskRuntime["store"]
       validArchitect: TaskRuntime["validArchitect"]
       verificationTimeoutDefaults: VerificationTimeoutDefaults

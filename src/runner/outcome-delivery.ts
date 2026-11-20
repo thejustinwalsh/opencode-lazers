@@ -1,3 +1,4 @@
+import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { HostSession } from "./host.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
 import { appendOutboxReceipt } from "./store.ts"
@@ -41,7 +42,7 @@ export class OutcomeDelivery {
   constructor(
     private readonly runtime: {
       directory: TaskRuntime["directory"]
-      ensureArchitectOwner: TaskRuntime["ensureArchitectOwner"]
+      ensureArchitectOwner: ArchitectOwnership["ensureArchitectOwner"]
       host: TaskRuntime["host"]
       owner: TaskRuntime["owner"]
       projectID: TaskRuntime["projectID"]
