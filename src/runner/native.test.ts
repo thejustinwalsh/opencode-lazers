@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { assertHostListQuery } from "../../test/host-list-fake.ts"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -987,8 +988,7 @@ function nativeOutcomeFixture(options: {
         limit?: number
       }) => {
         messageQueries.push(structuredClone(input))
-        if (input.cursor !== undefined && input.order !== undefined)
-          throw new Error("Cursor cannot be combined with order")
+        assertHostListQuery(input)
         return options.messagePage?.(input.cursor) ?? { data: [], cursor: { next: null } }
       },
     },
@@ -1898,7 +1898,9 @@ test("an Architect's context size is the newest request's prompt, not its cumula
 
 /** The turn reads: descending, untyped pages. The tool tally pages ascending on its own cursor. */
 function turnReads(fixture: ReturnType<typeof nativeLivenessFixture>) {
-  return fixture.messageListCalls.filter((call) => call.order === "desc" && !call.type)
+  return fixture.messageListCalls.filter(
+    (call) => (call.order === "desc" || call.cursor?.startsWith("d:")) && !call.type,
+  )
 }
 
 function assistantMessage(id: string, text: string) {
@@ -2029,6 +2031,15 @@ test("the tally pages long histories and counts a tool-heavy turn once per call"
   expect(fixture.messageListCalls.length - before).toBe(turnReadsPerCall + 1)
 })
 const turnReadsPerCall = 3
+
+test("a turn longer than one host page is read by cursor without repeating the order", async () => {
+  const messages = Array.from({ length: 130 }, (_, index) => toolReply(`msg_out_${index}`, 1))
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), messages })
+  await fixture.host.session("ses_worker", { messages: true })
+  const turnPages = fixture.messageListCalls.filter((call) => call.cursor || call.order === "desc")
+  expect(turnPages.length).toBeGreaterThanOrEqual(3)
+  expect(turnPages.filter((call) => call.cursor && call.order)).toEqual([])
+})
 
 test("a native input that lands between the bracketing reads is unstable, not paired with the old outcome", async () => {
   const messages: unknown[] = [

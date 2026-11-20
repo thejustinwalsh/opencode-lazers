@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { Session } from "@opencode/schema/session"
-import { DateTime } from "effect"
-import { createRadarSessionHost } from "../../src/observability/native.ts"
+import { DateTime, Effect } from "effect"
+import { assertHostListQuery } from "../host-list-fake.ts"
+import { createRadarSessionHost, nativeRadarSessionHost } from "../../src/observability/native.ts"
 
 function sessionInfo(
   id: string,
@@ -123,4 +124,27 @@ test("native direct reads convert not-found to absence and preserve other failur
   expect(await host.get("missing", signal)).toBeNull()
   expect(await host.get("available", signal)).toMatchObject({ id: "available", busy: true })
   await expect(host.get("broken", signal)).rejects.toThrow("native read failed")
+})
+
+test("native radar session listing sends the order on the first page and only the cursor after it", async () => {
+  const queries: Array<Record<string, unknown>> = []
+  const ctx = {
+    session: {
+      list: (query: { cursor?: string; order?: string }) => {
+        assertHostListQuery(query)
+        queries.push(query)
+        return Effect.succeed({
+          data: [],
+          cursor: query.cursor ? {} : { next: "cursor:1" as Session.ListCursor },
+        })
+      },
+      get: () => Effect.die("unused"),
+    },
+  } as unknown as Parameters<typeof nativeRadarSessionHost>[0]
+  const host = nativeRadarSessionHost(ctx)
+  await host.project("project", false, 5, new AbortController().signal)
+  expect(queries.map((query) => [query.order, query.cursor])).toEqual([
+    ["desc", undefined],
+    [undefined, "cursor:1"],
+  ])
 })

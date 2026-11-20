@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { assertHostListQuery } from "../../test/host-list-fake.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, DateTime } from "effect"
 import { nativeTrajectoryHost } from "./native.ts"
@@ -11,7 +12,13 @@ function messageClient(
 ) {
   return {
     message: {
-      list: async (input: { sessionID: string; limit?: number; cursor?: string }) => {
+      list: async (input: {
+        sessionID: string
+        limit?: number
+        cursor?: string
+        order?: string
+      }) => {
+        assertHostListQuery(input)
         reads.push(`${options.label ?? "messages"}:${input.sessionID}`)
         if (options.fail) throw options.fail
         const all = options.history ?? []

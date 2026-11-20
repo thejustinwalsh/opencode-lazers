@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { assertHostListQuery } from "../../test/host-list-fake.ts"
 import type { OpenCode } from "@opencode/client"
 import { resolveNativeInputID, retainedNativeInputID } from "./native-input.ts"
 
@@ -98,6 +99,7 @@ function clientFor(pages: Record<string, Page>) {
     message: {
       list: async (query: Query) => {
         queries.push(query)
+        assertHostListQuery(query)
         expect(query.sessionID).toBe("ses_worker")
         expect(query.limit).toBe(1)
         const page = pages[query.cursor ?? query.type ?? ""]

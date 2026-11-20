@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Project } from "@opencode/schema/project"
 import { Session } from "@opencode/schema/session"
 import { DateTime, Effect } from "effect"
+import { hostPage } from "../core/host-page.ts"
 
 export type RadarNativeSession = {
   id: string
@@ -218,9 +219,8 @@ export function nativeRadarSessionHost(ctx: Pick<Plugin.Context, "session">): Ra
           project: Project.ID.make(request.projectID),
           ...(request.parentID ? { parentID: Session.ID.make(request.parentID) } : {}),
           archived: request.archived,
-          order: "desc",
           limit: request.limit,
-          ...(request.cursor ? { cursor: request.cursor } : {}),
+          ...hostPage("desc", request.cursor),
         }),
         { signal },
       )
