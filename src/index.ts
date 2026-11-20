@@ -55,7 +55,8 @@ import { registerToolResults } from "./tool-results.ts"
 import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
-import { registerModelsServer } from "./models/server.ts"
+import { createModelsManagedUsagePriceProvider, registerModelsServer } from "./models/server.ts"
+import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { acquireLazersCore } from "./core/core.ts"
 import { coreSnapshot, loadedProjectDirectories } from "./core/registry.ts"
@@ -127,6 +128,16 @@ export default Plugin.define({
         registerModelsServer(ctx, repository, undefined, undefined, { prewarmDecision: true }).pipe(
           Effect.orDie,
         ),
+      )
+      const managedUsagePriceProvider = createModelsManagedUsagePriceProvider(ctx, repository)
+      yield* sectionEffect("setup:ManagedUsageTools", () =>
+        registerManagedUsageTools({
+          ctx,
+          store: core.managedUsageStore,
+          projectID,
+          projectDirectory: repository.projectDirectory,
+          priceProvider: managedUsagePriceProvider,
+        }),
       )
       const agentRoutes = agentRouteReader(repository)
       yield* sectionEffect("setup:Architect", () => registerArchitect(ctx, agentRoutes))

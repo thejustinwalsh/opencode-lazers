@@ -17,7 +17,10 @@ import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
 import { registerModelsServer } from "./server.ts"
-import { createModelsTaskValuationProvider } from "./server.ts"
+import {
+  createModelsManagedUsagePriceProvider,
+  createModelsTaskValuationProvider,
+} from "./server.ts"
 import type { ProjectTaskValuationRequest } from "./valuation.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
@@ -1139,6 +1142,54 @@ test("Models task valuation uses the configured cached market index, not worker 
     expect(changedSubscription.valueUSD).toBe(valuation.valueUSD)
     expect(changedSubscription.currentIndex?.indexID).toBe(valuation.currentIndex?.indexID)
     expect(changedSubscription.currentIndex?.sources).toEqual(valuation.currentIndex?.sources)
+
+    const managedProvider = createModelsManagedUsagePriceProvider(
+      harness.context as never,
+      repository,
+    )
+    const managed = await managedProvider(
+      [
+        {
+          sessionID: "ses-managed",
+          assistantMessageID: "msg-managed",
+          startSequence: 5,
+          terminalSequence: 6,
+          startEventIDs: ["managed-start"],
+          terminalEventIDs: ["managed-end"],
+          eventFactCount: 2,
+          provenanceTruncated: false,
+          route,
+          routeStatus: "observed",
+          categories: {
+            uncachedInput: { tokens: 10, status: "observed" },
+            output: { tokens: 3, status: "observed" },
+            reasoning: { tokens: 2, status: "observed" },
+            cacheRead: { tokens: 5, status: "observed" },
+            cacheWrite: { tokens: 0, status: "observed" },
+          },
+          outcome: "succeeded",
+          status: "observed",
+          association: { kind: "unallocated" },
+          associationRevision: null,
+          associationBoundarySequence: null,
+          associationReason: "test usage is intentionally unallocated",
+        },
+      ],
+      new AbortController().signal,
+    )
+    expect(managed.calls[0]?.quote).toMatchObject({
+      status: "observed",
+      pinStatus: "resolved",
+    })
+    expect(managed.currentPrice).toMatchObject({
+      freshness: "current",
+      policy: {
+        sources: ["openrouter", "opencode", "models-dev"],
+      },
+      access: { "models-dev": "configured" },
+      pins: [{ provenance: { source: "native-catalog", generation: 5 } }],
+    })
+    expect(harness.sourceAccessIDs).toEqual(["openrouter", "openrouter", "openrouter"])
 
     const failedSourceProvider = createModelsTaskValuationProvider(
       harness.context as never,

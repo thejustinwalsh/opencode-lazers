@@ -385,7 +385,7 @@ function pinMatches(
   )
 }
 
-function pinBlockers(pin: CurrentPricePin): string[] {
+export function currentPricePinBlockers(pin: CurrentPricePin): string[] {
   const blockers: string[] = []
   if (pin.resolution.route !== "resolved" || !pin.route) blockers.push("route")
   if (pin.resolution.sku !== "resolved" || !pin.productID) blockers.push("sku")
@@ -906,7 +906,7 @@ function sessionMarketValue(input: {
         ? ("missing" as const)
         : null
   const pin = input.candidates.length === 1 ? input.candidates[0]! : null
-  const blockers = pin ? pinBlockers(pin) : []
+  const blockers = pin ? currentPricePinBlockers(pin) : []
   const categories = Object.fromEntries(
     USAGE_CATEGORIES.map((category) => [
       category,

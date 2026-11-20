@@ -28,6 +28,7 @@ import { RunnerStore } from "../runner/store.ts"
 import { RetentionService } from "../retention/service.ts"
 import { verificationTimeoutDefaults } from "../runner/verification-timeout.ts"
 import { TaskRepository, taskDatabasePath } from "../storage.ts"
+import { ManagedUsageStore } from "../managed-usage/store.ts"
 import { nativeTrajectoryHost } from "../trajectory/native.ts"
 import { ownsRecordedWorkspace } from "../runner/workspace-location.ts"
 import { InferenceBroker } from "../webgpu/broker.ts"
@@ -56,6 +57,7 @@ export type LazersCore = {
   readonly taskReads: AssociationTaskReads
   readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
   readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
+  readonly managedUsageStore: ManagedUsageStore
   readonly usageCache: UsageCache
   readonly retention: RetentionService
   readonly inferenceBroker: InferenceBroker
@@ -152,6 +154,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   }
   const runnerStore = new RunnerStore(repository)
   built("runnerStore")
+  const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
     registerProject(repository, {
@@ -255,6 +258,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     taskReads,
     trajectoryHost,
     taskValuationProvider,
+    managedUsageStore,
     usageCache,
     retention,
     inferenceBroker,

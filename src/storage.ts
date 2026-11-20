@@ -4,6 +4,7 @@ import { Database, SQLiteError } from "bun:sqlite"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
 import { installObservedRevisionsSchema } from "./tasks/observed-revisions.ts"
+import { managedUsageSchemaModule } from "./managed-usage/schema.ts"
 import { installRepoMapSchema } from "./context/repo-map-store.ts"
 import { installPlanningSchema } from "./planning/store.ts"
 import { mkdirSync, realpathSync, statSync } from "node:fs"
@@ -559,7 +560,10 @@ export class TaskRepository {
         .all()
         .map((row) => [row.module, row.generation]),
     )
-    const declarations = Object.entries(schemaModules)
+    const declarations = Object.entries({
+      ...schemaModules,
+      "managed-usage": managedUsageSchemaModule,
+    })
     const declared = new Set<string>(declarations.flatMap(([, entry]) => [...entry.tables]))
     return {
       undeclaredTables: [...actual].filter((table) => !declared.has(table)),
