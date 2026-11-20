@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "scripts/build-website-demo.ts"
       - "package.json"
       - ".github/workflows/website.yml"
   workflow_dispatch:
@@ -28,6 +29,9 @@ jobs:
           bun_version="$(node -p 'require("./package.json").packageManager.replace(/^bun@/, "")')"
           npm install --prefix "$RUNNER_TEMP/lazers-bun" --no-audit --no-fund "bun@$bun_version"
           echo "$RUNNER_TEMP/lazers-bun/node_modules/.bin" >> "$GITHUB_PATH"
+      # The panel demos are built from the plugin's own source, so its dependencies are needed too.
+      - name: Install the plugin's dependencies
+        run: bun install --frozen-lockfile
       - name: Build the website
         working-directory: website
         run: |
