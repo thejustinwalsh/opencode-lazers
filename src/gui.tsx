@@ -33,7 +33,13 @@ import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
 import { setupRadarPanel, radarStores } from "./radar/panel.tsx"
 import { GENERATION_RESULT_CONTRACT_REVISION, LocalInference } from "./webgpu/rpc.ts"
-import { defaultFeatures, featureEnabled, usesGPU } from "./webgpu/features.ts"
+import {
+  NEVER_UNLOAD_MS,
+  RUNTIME_SETTINGS_INITIAL,
+  defaultFeatures,
+  featureEnabled,
+  usesGPU,
+} from "./webgpu/features.ts"
 import type { Features, LocalFeature } from "./webgpu/features.ts"
 import { setupRadarLayoutMain } from "./radar/layout-main.ts"
 
@@ -44,7 +50,6 @@ import { setupNotice } from "./projects/setup-notice.tsx"
 import { setupProjects } from "./projects/gui.tsx"
 import { setupRetention } from "./retention/gui.tsx"
 
-const NEVER_UNLOAD_MS = -1
 /** "Never" only for -1; any other persisted value is shown exactly. */
 const keepAliveLabel = (ms: number | undefined) => {
   if (ms === undefined || ms === NEVER_UNLOAD_MS) return "Never"
@@ -68,7 +73,7 @@ export default Plugin.define({
           Schema.isBetween({ minimum: -1, maximum: 86_400_000 }),
         ),
       }),
-      { keepAliveMs: NEVER_UNLOAD_MS },
+      RUNTIME_SETTINGS_INITIAL,
     ),
     voice: Store.global(Schema.Struct({ selected: Schema.Literals(voiceKeys) }), {
       selected: DEFAULT_VOICE,

@@ -2,6 +2,8 @@ import { expect, test } from "bun:test"
 import {
   DEFAULT_MODEL_KEEP_ALIVE_MS,
   FeaturePolicy,
+  NEVER_UNLOAD_MS,
+  RUNTIME_SETTINGS_INITIAL,
   defaultFeatures,
   featureEnabled,
   needsChat,
@@ -67,4 +69,14 @@ test("resident weights have a finite default idle timeout inside the settings ra
   // Chat plus decision weights are about 2.2 GB; "never unload" must be a choice, not the default.
   expect(DEFAULT_MODEL_KEEP_ALIVE_MS).toBeGreaterThan(0)
   expect(DEFAULT_MODEL_KEEP_ALIVE_MS).toBeLessThanOrEqual(86_400_000)
+})
+
+test("a user who never chose gets the 15 minute idle unload; an explicit Always stays available", async () => {
+  expect(RUNTIME_SETTINGS_INITIAL.keepAliveMs).toBe(15 * 60_000)
+  // Always is the one negative value, and the settings list still offers it.
+  expect(NEVER_UNLOAD_MS).toBe(-1)
+  const source = await Bun.file(new URL("../gui.tsx", import.meta.url)).text()
+  expect(source).toContain("RUNTIME_SETTINGS_INITIAL,")
+  expect(source).not.toContain("{ keepAliveMs: NEVER_UNLOAD_MS }")
+  expect(source).toContain('{ value: String(NEVER_UNLOAD_MS), label: "Always" }')
 })
