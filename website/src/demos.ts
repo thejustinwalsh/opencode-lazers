@@ -121,7 +121,7 @@ export const DEMOS = {
   local: {
     story: "local",
     panel: "local",
-    size: { width: 560, height: 150 },
+    size: { width: 560, height: 176 },
     summary:
       "The local inference indicator in the session header: hidden while off, then downloading, available, and working while a local decision runs.",
     steps: [
