@@ -79,7 +79,12 @@ async function load() {
     const tokenizer = await tokenizerURL(signal)
     signal.throwIfAborted()
     post({ t: "loading", fromCache: cached })
-    const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"] } })
+    // Without this the device gets WebGPU's default 128 MiB binding limit, whatever the GPU has.
+    const requiredLimits = {
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      maxBufferSize: adapter.limits.maxBufferSize,
+    }
+    const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"], requiredLimits } })
     try {
       initRunntime(root)
       const engine = await createLfm3Omni(

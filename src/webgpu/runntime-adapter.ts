@@ -1,4 +1,5 @@
 import tgpu, { type TgpuRoot } from "typegpu"
+import { adapterBufferLimits } from "./device-limits"
 import { createD1Decider, createLfm3Omni, initRunntime, models } from "runntime/zoo"
 import type { Lfm3Omni, RangeSource, WeightCache } from "runntime/zoo"
 import { cachedRange } from "./files-fetch.ts"
@@ -128,7 +129,9 @@ function destroyAfterFailedLoad(root: TgpuRoot, cause: unknown): never {
 
 async function initializeRoot(signal: AbortSignal): Promise<TgpuRoot> {
   signal.throwIfAborted()
-  const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"] } })
+  const requiredLimits = await adapterBufferLimits()
+  signal.throwIfAborted()
+  const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"], requiredLimits } })
   try {
     signal.throwIfAborted()
     initRunntime(root)
