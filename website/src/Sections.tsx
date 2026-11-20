@@ -7,6 +7,7 @@ import sparkle from "./assets/mark-sparkle.png"
 import stripesMark from "./assets/mark-stripes.png"
 import { Demo } from "./Demo"
 import { DEMOS } from "./demos"
+import { LiveChat } from "./live/Chat"
 import { bp, color, type } from "./tokens.stylex"
 import { BeamCanvas, Cat, Field, Stripes, links, srOnly, t, useBeamKit } from "./ui"
 
@@ -929,12 +930,14 @@ export function Local() {
                 sessions on the models you route in Models.
               </p>
               <p {...stylex.props(s.body)}>
-                The session header carries the real status icon. It is hidden while local features
-                are off, and shows Loading, Available, Working or Error while they are on.
+                The chat beside this text runs the same Omni model in your browser, on request: type
+                a message or use the microphone, and it answers aloud. Nothing downloads until you
+                do. In the app, the session header carries a status icon that shows Loading,
+                Available, Working or Error while local features are on.
               </p>
             </div>
           </div>
-          <Demo def={DEMOS.local} label="Live demo of the local inference indicator" />
+          <LiveChat />
         </div>
         <dl aria-label="What local inference does" {...stylex.props(lc.facts)}>
           <div {...stylex.props(lc.fact)}>
