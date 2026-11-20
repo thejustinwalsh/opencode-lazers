@@ -12,11 +12,20 @@ import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerPlanningAgents } from "./planning/register.ts"
 import {
   createPlanningDecisions,
+  createPlanningReviews,
+  registerPlanningReviewTicks,
   registerPlanningDecisionHooks,
   registerPlanningRpc,
 } from "./planning/server.ts"
 import { startDecision } from "./planning/decision/step.ts"
-import { PlanDrafts, registerPlanningTools } from "./planning/tools.ts"
+import {
+  PlanDrafts,
+  PlanReviewer,
+  registerPlanReviewTool,
+  registerPlanningTools,
+} from "./planning/tools.ts"
+import { PlanningStore } from "./planning/store.ts"
+import { projectKeyOfDirectory, projectSettings } from "./projects/settings.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import {
   architectContextStubsMode,
@@ -180,8 +189,34 @@ export default Plugin.define({
       yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
       yield* registerPlanningDecisionHooks(ctx, planningDecisions)
       yield* registerPlanningRpc(ctx, repository, projectID).pipe(Effect.orDie)
+      const planningReviews = createPlanningReviews(ctx, repository, agentRoutes)
+      yield* registerPlanningReviewTicks(planningReviews, repository.projectDirectory)
       yield* sectionEffect("setup:PlanningTools", () =>
-        registerPlanningTools(ctx, new PlanDrafts(repository, projectID)),
+        Effect.gen(function* () {
+          const store = new PlanningStore(repository)
+          yield* registerPlanningTools(
+            ctx,
+            new PlanDrafts(
+              repository,
+              projectID,
+              Date.now,
+              (planningID, reason) => void planningReviews.cancelForPlanning(planningID, reason),
+            ),
+          )
+          yield* registerPlanReviewTool(
+            ctx,
+            new PlanReviewer(
+              store,
+              planningReviews,
+              projectID,
+              () => {
+                const key = projectKeyOfDirectory(repository, repository.projectDirectory)
+                return key ? projectSettings(repository, key).planningAutoDispatch : true
+              },
+              ctx.location.directory,
+            ),
+          )
+        }),
       )
       const stubsMode = architectContextStubsMode(ctx.options.architectContextStubs)
       if (stubsMode !== "off")

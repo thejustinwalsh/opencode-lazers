@@ -1,5 +1,6 @@
 import fallowConfig from "./fallow-config.md" with { type: "text" }
 import fallowSuppressions from "./fallow-suppressions.md" with { type: "text" }
+import planningResolve from "./planning-resolve.md" with { type: "text" }
 import planningShow from "./planning-show.md" with { type: "text" }
 import projectSetup from "./project-setup.md" with { type: "text" }
 import recoveryBundle from "./recovery-bundle.md" with { type: "text" }
@@ -17,6 +18,7 @@ import workerTakeoverNotice from "./worker-takeover-notice.md" with { type: "tex
 export const runbooks = {
   "fallow-config": fallowConfig,
   "fallow-suppressions": fallowSuppressions,
+  "planning-resolve": planningResolve,
   "planning-show": planningShow,
   "project-setup": projectSetup,
   "recovery-bundle": recoveryBundle,
@@ -38,6 +40,7 @@ export function runbook(topic: RunbookTopic): string {
 const retrieval = {
   "fallow-config": '`lz-fallow-config` with `mode: "guide"`',
   "fallow-suppressions": '`lz-fallow-config` with `mode: "guide", topic: "suppressions"`',
+  "planning-resolve": '`lz-plan-draft` with `action: "guide", topic: "resolve"`',
   "planning-show": '`lz-plan-draft` with `action: "guide", topic: "show"`',
   "project-setup": '`lz-project-profile` with `mode: "guide"`',
 } as const satisfies Partial<Record<RunbookTopic, string>>

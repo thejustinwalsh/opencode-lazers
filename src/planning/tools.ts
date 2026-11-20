@@ -6,7 +6,10 @@ import { z } from "zod"
 import { Delivery, runbook } from "../guidance/index.ts"
 import type { PlanningState } from "../runner/lifecycle-machines.ts"
 import type { TaskRepository } from "../storage.ts"
-import { PlanningAgentId } from "./contract.ts"
+import { PlanningAgentId, type PlanningAgentId as AgentID } from "./contract.ts"
+import { AGENT_ORDER } from "./decision/tree.ts"
+import { rulesAdd } from "./checks.ts"
+import type { AgentSelection, PlanningReviews, ReviewResult } from "./reviews.ts"
 import {
   DEFERRED_TO_TASKING,
   DraftID,
@@ -107,6 +110,8 @@ export class PlanDrafts {
     repository: Pick<TaskRepository, "read" | "atomic" | "projectDirectory">,
     private readonly projectID: string,
     private readonly now: () => number = Date.now,
+    /** Called when a plan is abandoned, so its running review runs are cancelled. */
+    private readonly cancelReviews?: (planningID: string, reason: string) => void,
   ) {
     this.store = new PlanningStore(repository)
     this.directory = repository.projectDirectory
@@ -158,12 +163,16 @@ export class PlanDrafts {
       case "abandon":
         return this.abandon(input.planningID)
       case "guide":
-        return input.topic === "show"
-          ? { status: "guide", topic: "show", guidance: runbook("planning-show") }
+        return input.topic === "show" || input.topic === "resolve"
+          ? {
+              status: "guide",
+              topic: input.topic,
+              guidance: runbook(input.topic === "show" ? "planning-show" : "planning-resolve"),
+            }
           : {
               status: "guide",
               topic: input.topic,
-              guidance: `The ${input.topic} runbook is not written yet; topic "show" is available.`,
+              guidance: `The ${input.topic} runbook is not written yet; topics "show" and "resolve" are available.`,
             }
       case "evidence":
         return this.evidence(input.planningID, input.draftID)
@@ -255,6 +264,7 @@ export class PlanDrafts {
     if (row.state === "tasked" || row.state === "abandoned")
       return invalid("planningID", `plan is already ${row.state}`)
     this.store.move(planningID, "abandoned", this.now())
+    this.cancelReviews?.(planningID, "plan abandoned")
     return { status: "abandoned", planningID }
   }
 
@@ -309,6 +319,151 @@ export function registerPlanningTools(
                 try: () => {
                   const delivery = new Delivery(call.sessionID)
                   const output = drafts.call(input, { sessionID: call.sessionID }, delivery)
+                  delivery.commit()
+                  return { content: JSON.stringify(output), output: output as never }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              }),
+            ),
+          ),
+    })
+  })
+}
+
+export const PlanReviewInput = z.strictObject({
+  planningID: z.uuid(),
+  stage: z.enum(["review", "final"]).default("review"),
+  agents: z
+    .array(PlanningAgentId)
+    .optional()
+    .describe(
+      "Agents to run in addition to the default; the only agents when automatic dispatch is off.",
+    ),
+})
+export type PlanReviewInput = z.infer<typeof PlanReviewInput>
+
+export type PlanReviewResult =
+  | ReviewResult
+  | { status: "needs-agents"; scores?: Record<string, number>; reason: string }
+  | { status: "invalid"; errors: { path: string; message: string }[] }
+
+/**
+ * `lz-plan-review`: runs the planning agents on the stored plan in fresh context and returns
+ * when every one has an outcome. All five run by default (the owner's decision); the per-project
+ * switch turns the default off, and then the Architect names the agents.
+ */
+export class PlanReviewer {
+  constructor(
+    private readonly store: PlanningStore,
+    private readonly reviews: PlanningReviews,
+    private readonly projectID: string,
+    private readonly autoDispatch: () => boolean,
+    private readonly directory: string,
+  ) {}
+
+  /** Who runs, and why each runs. */
+  selection(planningID: string, requested: readonly AgentID[] = []): AgentSelection[] | string {
+    const planning = this.store.planning(planningID)!
+    if (!this.autoDispatch())
+      return requested.length
+        ? AGENT_ORDER.filter((agent) => requested.includes(agent)).map((agent) => ({
+            agent,
+            source: "architect" as const,
+          }))
+        : "automatic planning agents are off for this project"
+    const decision = planning.decisionId ? this.store.decisionByID(planning.decisionId) : undefined
+    const chosen: AgentID[] =
+      decision?.status === "decided" && decision.selectedJson
+        ? (JSON.parse(decision.selectedJson) as AgentID[])
+        : [...AGENT_ORDER]
+    const body = PlanningBody.parse(
+      JSON.parse(this.store.revision(planningID, planning.revision)!.body),
+    )
+    const rules = rulesAdd(body)
+    return AGENT_ORDER.flatMap((agent): AgentSelection[] => {
+      if (chosen.includes(agent))
+        return [{ agent, source: decision?.status === "decided" ? "decision" : "all" }]
+      const rule = rules.find((entry) => entry.agent === agent)
+      if (rule) return [{ agent, source: `rule:${rule.ruleID}` as AgentSelection["source"] }]
+      return requested.includes(agent) ? [{ agent, source: "architect" }] : []
+    })
+  }
+
+  async call(
+    input: PlanReviewInput,
+    caller: { sessionID: string },
+    signal?: AbortSignal,
+    delivery = new Delivery(caller.sessionID),
+  ): Promise<PlanReviewResult> {
+    const planning = this.store.planning(input.planningID)
+    if (!planning || planning.projectKey !== this.projectID)
+      return invalid("planningID", "no such plan in this project") as PlanReviewResult
+    if (input.stage === "final")
+      return invalid("stage", "the final pass is not available yet") as PlanReviewResult
+    if (!["drafted", "questions-open", "in-review"].includes(planning.state))
+      return invalid(
+        "planningID",
+        `plan is ${planning.state}; it cannot be reviewed`,
+      ) as PlanReviewResult
+    const selected = this.selection(planning.id, input.agents)
+    if (typeof selected === "string") {
+      const decision = planning.decisionId
+        ? this.store.decisionByID(planning.decisionId)
+        : undefined
+      const scores = decision?.scoresJson
+        ? Object.fromEntries(
+            Object.entries(
+              JSON.parse(decision.scoresJson) as Record<string, { score: number }>,
+            ).map(([agent, value]) => [agent, value.score]),
+          )
+        : undefined
+      return { status: "needs-agents", ...(scores ? { scores } : {}), reason: selected }
+    }
+    const review = await this.reviews.start({
+      planningID: planning.id,
+      stage: "review",
+      agents: selected,
+      parentSessionID: caller.sessionID,
+      directory: this.directory,
+    })
+    const result = await this.reviews.run(review.id, signal)
+    const runbookText = delivery.once("planning-resolve")
+    return { ...result, runbook: runbookText }
+  }
+}
+
+/** Registers `lz-plan-review`; its permission is the Architect's alone. */
+export function registerPlanReviewTool(
+  ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
+  reviewer: PlanReviewer,
+) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: "lz-plan-review",
+      description:
+        "Run the planning agents on a stored plan, each in a fresh context, and return when every one has finished. All five run by default; if automatic planning agents are off for the project, name them in agents. The result lists each agent's status (a failed agent is retried once, then shown as not run), the findings and questions with the revision they reviewed, and the breakdown to show the owner. Then resolve them with lz-plan-resolve.",
+      input: PlanReviewInput,
+      output: z.record(z.string(), z.unknown()),
+      options: { codemode: true, permission: "lz-plan-review" },
+      execute: (input, call) =>
+        ctx.permission
+          .assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: "lz-plan-review",
+            resources: [ctx.location.directory],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async (signal) => {
+                  const delivery = new Delivery(call.sessionID)
+                  const output = await reviewer.call(
+                    input,
+                    { sessionID: call.sessionID },
+                    signal,
+                    delivery,
+                  )
                   delivery.commit()
                   return { content: JSON.stringify(output), output: output as never }
                 },
