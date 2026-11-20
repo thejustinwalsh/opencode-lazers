@@ -37,7 +37,7 @@ import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
-import type { TaskValuationProvider } from "./task-valuation.ts"
+import type { TaskValuationIndexReader, TaskValuationProvider } from "./task-valuation.ts"
 import { createThreadedDecisionReader } from "./decision-worker-client.ts"
 import {
   MODELS_DECISION_CONTRACT_VERSION,
@@ -68,6 +68,8 @@ import {
   ModelPriceSourceSettingsStore,
   ModelPriceSourceWriteOutputSchema,
 } from "./price-source-settings.ts"
+import { createManagedUsagePriceProvider } from "./managed-usage-valuation.ts"
+import type { ManagedUsageIndexReader } from "./managed-usage-valuation.ts"
 import type {
   ModelPriceSource,
   ModelPriceSourcePolicy,
@@ -226,6 +228,37 @@ function priceIndexFromSources(input: {
   return { settings, opencode, index }
 }
 
+function createModelsPriceIndexReader(
+  ctx: ModelsContext,
+  repository: TaskRepository,
+  evidenceReadStoreFactory: EvidenceReadStoreFactory,
+): TaskValuationIndexReader {
+  const priceSourceSettings = createPriceSourceSettingsStore(ctx, repository.projectDirectory)
+  return async (routes, signal) => {
+    signal.throwIfAborted()
+    const [policy, openrouter] = await Promise.all([
+      priceSourceSettings.read(signal),
+      configuredAccess(ctx, "openrouter", signal),
+    ])
+    signal.throwIfAborted()
+    const store = evidenceReadStoreFactory(repository.path, repository.projectDirectory)
+    try {
+      signal.throwIfAborted()
+      const sources = store.readComparisonSources()
+      signal.throwIfAborted()
+      const { index, settings } = priceIndexFromSources({ sources, policy, openrouter, routes })
+      return {
+        index,
+        freshness: currentPriceIndexFreshness(index, sources),
+        settings,
+        sources,
+      }
+    } finally {
+      store.close()
+    }
+  }
+}
+
 async function authorizeDecisionRead(
   ctx: ModelsContext,
   request: { scope: { projectDirectory: string }; sessionID: string },
@@ -253,32 +286,24 @@ export function createModelsTaskValuationProvider(
   evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
     new ModelEvidenceReadStore(databasePath, directory),
 ): TaskValuationProvider {
-  const projectDirectory = repository.projectDirectory
-  const priceSourceSettings = createPriceSourceSettingsStore(ctx, projectDirectory)
-  const readPriceIndex = createTaskValuationReader(async (routes, signal) => {
-    signal.throwIfAborted()
-    const [policy, openrouter] = await Promise.all([
-      priceSourceSettings.read(signal),
-      configuredAccess(ctx, "openrouter", signal),
-    ])
-    signal.throwIfAborted()
-    const store = evidenceReadStoreFactory(repository.path, projectDirectory)
-    try {
-      signal.throwIfAborted()
-      const sources = store.readComparisonSources()
-      signal.throwIfAborted()
-      const { index, settings } = priceIndexFromSources({ sources, policy, openrouter, routes })
-      return {
-        index,
-        freshness: currentPriceIndexFreshness(index, sources),
-        settings,
-        sources,
-      }
-    } finally {
-      store.close()
-    }
-  })
-  return readPriceIndex
+  return createTaskValuationReader(
+    createModelsPriceIndexReader(ctx, repository, evidenceReadStoreFactory),
+  )
+}
+
+/** Managed generations use the same configured, cached source path as Models without refreshing it. */
+export function createModelsManagedUsagePriceProvider(
+  ctx: ModelsContext,
+  repository: TaskRepository,
+  evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
+    new ModelEvidenceReadStore(databasePath, directory),
+) {
+  const readIndex = createModelsPriceIndexReader(ctx, repository, evidenceReadStoreFactory)
+  const managedReadIndex: ManagedUsageIndexReader = async (routes, signal) => {
+    const { index, freshness, settings } = await readIndex(routes, signal)
+    return { index, freshness, settings }
+  }
+  return createManagedUsagePriceProvider(managedReadIndex)
 }
 
 /** How long after registration the default decision snapshot is built in the background. */

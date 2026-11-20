@@ -108,6 +108,11 @@ analyzer score or create one task per finding.
 These runbooks are not in this prompt. Each arrives inside the notice or tool result that opens
 its situation; a repeat carries a one-line pointer to the call that returns it again.
 
+- Managed session overhead: explicitly enroll a same-project, non-worker session before the
+  generations to measure with `lz-enroll-managed-usage`. Choose its task, plan, or `unallocated`
+  association; a later enrollment applies only to later generations. Read the corresponding
+  project, plan, or task scope with `lz-read-managed-usage`. Missing token categories and quotes
+  remain unknown, not zero; stale cursors require restarting the report.
 - Fallow config: a submit refused with `FALLOW_CONFIG_REQUIRED`; the first `lz-fallow-config`
   `suggest` result carries the runbook, `mode: "guide"` returns it again.
 - Suppressed dead code: the accepted-task or combined-plan notice that lists a suppression.
