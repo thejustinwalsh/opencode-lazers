@@ -14,6 +14,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { backfillPage, BACKFILL_TABLES } from "../src/runner/identity-backfill.ts"
+import { createKeyIndexes } from "../src/runner/transition-indexes.ts"
 import { TaskRepository } from "../src/storage.ts"
 import { RunnerStore } from "../src/runner/store.ts"
 
@@ -56,8 +57,8 @@ const events = ids(
 )
 const pad = (target: number) => JSON.stringify({ note: hex(Math.max(0, target - 12)) })
 
-function bytes() {
-  const db = new Database(path, { readonly: true })
+function bytes(file = path) {
+  const db = new Database(file, { readonly: true })
   try {
     const page = db.query<{ page_size: number }, []>("PRAGMA page_size").get()!.page_size
     const count = db.query<{ page_count: number }, []>("PRAGMA page_count").get()!.page_count
@@ -206,8 +207,61 @@ for (const table of BACKFILL_TABLES) {
   )
 }
 report("backfilled")
+
+// Step 3: the integer indexes beside the text ones, built once per table after its backfill.
+for (const table of BACKFILL_TABLES) {
+  const started = performance.now()
+  repository.atomic((db) => createKeyIndexes(db, table))
+  console.log(
+    JSON.stringify({ phase: "key-indexes", table, ms: Math.round(performance.now() - started) }),
+  )
+}
+report("indexed")
 repository.close()
 
+// Step 4 on a copy: what the offline compaction window would return. DROP COLUMN fails on a
+// column with a foreign key; the error is reported and that table is rebuilt instead.
+const projectedPath = join(directory, "projected.sqlite")
+copyFileSync(path, projectedPath)
+const projected = new Database(projectedPath)
+const started4 = performance.now()
+const steps: Record<string, string> = {}
+for (const { name } of projected
+  .query<{ name: string }, []>(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('runner_transitions','runner_progress')",
+  )
+  .all())
+  projected.exec(`DROP TRIGGER ${name}`)
+for (const index of [
+  "runner_transitions_lookup",
+  "runner_transitions_plan_id",
+  "runner_transitions_plan_event",
+  "runner_transitions_task_latest",
+  "runner_progress_attempt_seq",
+  "runner_progress_plan_recency",
+])
+  projected.exec(`DROP INDEX IF EXISTS ${index}`)
+for (const [table, column] of [
+  ["runner_transitions", "plan_id"],
+  ["runner_progress", "plan_id"],
+  ["runner_progress", "attempt_id"],
+] as const)
+  try {
+    projected.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+    steps[`${table}.${column}`] = "dropped"
+  } catch (error) {
+    steps[`${table}.${column}`] = String(error).slice(0, 120)
+  }
+projected.exec("VACUUM")
+projected.close()
+console.log(
+  JSON.stringify({
+    phase: "projected",
+    ...bytes(projectedPath),
+    steps,
+    ms: Math.round(performance.now() - started4),
+  }),
+)
 void copyFileSync
 void statSync
 console.error(`fixture: ${path}`)
