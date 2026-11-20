@@ -1,22 +1,13 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { ProjectRef } from "./scope.ts"
+import { GlobalSettingsView, ProjectSettingsView } from "./setting-schemas.ts"
 
 const Scope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("global") }),
   z.strictObject({ kind: z.literal("project"), key: z.string().min(1) }),
 ])
 const Pause = z.strictObject({ reason: z.string(), by: z.string(), at: z.number() })
-const ProjectSettingsView = z.strictObject({
-  limit: z.number().nullable(),
-  weight: z.number(),
-  spendCeilingTokens: z.number().nullable(),
-})
-const GlobalSettingsView = z.strictObject({
-  globalSlots: z.number().nullable(),
-  agingMs: z.number(),
-  historyCacheMB: z.number(),
-})
 const Project = z.strictObject({
   key: z.string(),
   code: z.string(),
@@ -109,7 +100,7 @@ export const Projects = Rpc.define({
       input: z.strictObject({
         scope: Scope,
         name: z.string().min(1),
-        value: z.number().nullable(),
+        value: z.json(),
       }),
       output: Outcome,
     },

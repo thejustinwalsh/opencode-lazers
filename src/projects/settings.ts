@@ -2,39 +2,34 @@ import type { Database } from "bun:sqlite"
 import { z } from "zod"
 import { schemaModules } from "../database-schema.ts"
 import type { TaskRepository } from "../storage.ts"
+import {
+  globalSettingDefs,
+  projectSettingDefs,
+  type GlobalSettings,
+  type ProjectSettings,
+  type SettingDef,
+} from "./setting-schemas.ts"
 
 /**
  * Two-level settings: every setting has exactly one level. A value stored here (set in
  * Settings) wins; a plugin option is only the default for a value never set; built-in defaults
  * come last. Storing `undefined` clears the value. Tables live in the `project-controls` module.
  */
-export type GlobalSettings = {
-  globalSlots: number | null
-  agingMs: number
-  historyCacheMB: number
-}
-export type ProjectSettings = {
-  limit: number | null
-  weight: number
-  spendCeilingTokens: number | null
-}
+export type { GlobalSettings, ProjectSettings }
 
-const count = z.int().min(1)
-const amount = z.number().finite().positive()
-const globalSchema = {
-  globalSlots: count.nullable(),
-  agingMs: amount,
-  historyCacheMB: amount,
-} as const satisfies Record<keyof GlobalSettings, z.ZodType>
-const projectSchema = {
-  limit: count.nullable(),
-  weight: amount,
-  spendCeilingTokens: count.nullable(),
-} as const satisfies Record<keyof ProjectSettings, z.ZodType>
+const schemasOf = (defs: Record<string, SettingDef>) =>
+  Object.fromEntries(Object.entries(defs).map(([name, def]) => [name, def.schema])) as Record<
+    string,
+    z.ZodType
+  >
+const builtInsOf = <T>(defs: Record<string, SettingDef>) =>
+  Object.fromEntries(Object.entries(defs).map(([name, def]) => [name, def.builtIn])) as T
+const globalSchema = schemasOf(globalSettingDefs)
+const projectSchema = schemasOf(projectSettingDefs)
 
 export const GLOBAL_SCOPE = "global"
-const builtInGlobal: GlobalSettings = { globalSlots: null, agingMs: 600_000, historyCacheMB: 128 }
-const builtInProject: ProjectSettings = { limit: null, weight: 1, spendCeilingTokens: null }
+const builtInGlobal = builtInsOf<GlobalSettings>(globalSettingDefs)
+const builtInProject = builtInsOf<ProjectSettings>(projectSettingDefs)
 
 type Controls = Pick<TaskRepository, "read" | "atomic" | "changed">
 
@@ -68,7 +63,7 @@ export function projectKeyOfDirectory(
 }
 
 function resolve<T extends Record<string, unknown>>(
-  schema: Record<keyof T, z.ZodType>,
+  schema: Record<string, z.ZodType>,
   builtIn: T,
   defaults: Partial<T>,
   stored: Map<string, string>,
