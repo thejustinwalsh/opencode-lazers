@@ -2677,6 +2677,9 @@ test.each([false, true])(
   },
 )
 
+// No per-test timeout literal: this runs `bun fmt --check` repeatedly and takes about 10 s alone
+// (9.5-10.7 s over three runs, 11.6 s with three other test files running). A 15 s literal timed
+// out under gate load, and the still-running body then hit the torn-down fixture database.
 test("a committed shared-checkout correction gets fresh mechanical preparation", async () => {
   const f = fixture({
     shared: true,
@@ -2721,7 +2724,7 @@ test("a committed shared-checkout correction gets fresh mechanical preparation",
   const effects = f.store.effects(planID).filter((effect) => effect.kind === "mechanical-fix")
   expect(effects.map((effect) => effect.state)).toEqual(["completed", "completed"])
   expect(new Set(effects.map((effect) => JSON.parse(effect.payload).receiptPath)).size).toBe(2)
-}, 15_000)
+})
 
 test("protected candidate changes are not mechanically modified", async () => {
   const f = fixture({
