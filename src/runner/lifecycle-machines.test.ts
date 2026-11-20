@@ -56,6 +56,8 @@ test("runner lifecycle graphs have no accidental sink states", () => {
       cleanup: ["complete"],
       workspace: ["removed"],
       takeover: ["taken-over", "cancelled"],
+      planning: ["tasked", "abandoned"],
+      planningRun: ["reviewed", "failed", "stuck", "cancelled"],
     }
     for (const start of Object.keys(machine.config.states ?? {})) {
       const seen = new Set<string>()
@@ -90,4 +92,22 @@ test("lifecycle transitions reject illegal shortcuts rather than fabricating com
   expect(lifecycleTransition("retained", "task-checks", "accepted")).toBe("accepted")
   expect(lifecycleTransition("plan", "cleanup-blocked", "integrated")).toBe("integrated")
   expect(lifecycleTransition("attempt", "cancelled", "preparing")).toBe("preparing")
+})
+
+test("a planning state exits to tasked and abandoned, and an edit in ready returns to drafted", () => {
+  for (const state of ["drafted", "in-review", "questions-open", "final-review", "ready"]) {
+    expect(lifecycleTransition("planning", state, "tasked")).toBe("tasked")
+    expect(lifecycleTransition("planning", state, "abandoned")).toBe("abandoned")
+  }
+  expect(lifecycleTransition("planning", "ready", "drafted")).toBe("drafted")
+  expect(lifecycleTransition("planning", "in-review", "in-review")).toBe("in-review")
+  expect(() => lifecycleTransition("planning", "drafted", "final-review")).toThrow(
+    "Invalid planning transition drafted → final-review",
+  )
+  expect(() => lifecycleTransition("planning", "tasked", "drafted")).toThrow()
+})
+
+test("a planning run that is stuck stays stuck: a retry is a new run row", () => {
+  expect(lifecycleTransition("planningRun", "running", "stuck")).toBe("stuck")
+  expect(() => lifecycleTransition("planningRun", "stuck", "running")).toThrow()
 })

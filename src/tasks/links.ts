@@ -11,7 +11,7 @@ const projectIDIsValid = (projectID: string) =>
   // oxlint-disable-next-line no-control-regex -- Reject controls in encoded project identities.
   !/[\u0000-\u001f\u007f-\u009f]/u.test(projectID)
 
-function encodeProjectID(projectID: string): string {
+export function encodeProjectID(projectID: string): string {
   return Array.from(new TextEncoder().encode(projectID), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("")
