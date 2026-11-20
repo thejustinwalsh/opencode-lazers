@@ -80,7 +80,7 @@ function profileState(repository: Controls, key: string) {
   }
 }
 
-const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
+export const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
   revision: row.revision,
   state: row.state,
   profile: row.profile,
@@ -143,6 +143,32 @@ function guarded(repository: Controls, scope: ProjectScope, act: () => void): Pr
   }
 }
 
+/** The stored revisions of a project as the owner sees them; shared with the Architect's tool. */
+export function profileViewOf(repository: Controls, key: string): ProfileView {
+  const revisions = profileRevisions(repository, key)
+  const active = activeProfileForKey(repository, key)
+  const activeRow = active ? revisions.find((row) => row.id === active.revisionID) : undefined
+  const pendingRow = pendingRevision(repository, key)
+  const legacy = projects(repository)
+    .find((project) => project.key === key)
+    ?.paths.map((path) => repoMapSource(repository, path))
+    .find(Boolean)
+  return {
+    key,
+    ...(activeRow ? { active: revisionView(activeRow) } : {}),
+    ...(pendingRow
+      ? {
+          pending: {
+            ...revisionView(pendingRow),
+            changes: profileDiff(activeRow?.profile, pendingRow.profile),
+          },
+        }
+      : {}),
+    ...(legacy ? { legacySource: { include: legacy.include, exclude: legacy.exclude } } : {}),
+    setupDismissedAt: projectSettings(repository, key).setupDismissedAt,
+  }
+}
+
 /** The operations behind `lz.projects`; separate from registration so tests call them directly. */
 export function projectsOperations(
   repository: Controls,
@@ -182,30 +208,7 @@ export function projectsOperations(
     }
   }
   return {
-    profile(key: string): ProfileView {
-      const revisions = profileRevisions(repository, key)
-      const active = activeProfileForKey(repository, key)
-      const activeRow = active ? revisions.find((row) => row.id === active.revisionID) : undefined
-      const pendingRow = pendingRevision(repository, key)
-      const legacy = projects(repository)
-        .find((project) => project.key === key)
-        ?.paths.map((path) => repoMapSource(repository, path))
-        .find(Boolean)
-      return {
-        key,
-        ...(activeRow ? { active: revisionView(activeRow) } : {}),
-        ...(pendingRow
-          ? {
-              pending: {
-                ...revisionView(pendingRow),
-                changes: profileDiff(activeRow?.profile, pendingRow.profile),
-              },
-            }
-          : {}),
-        ...(legacy ? { legacySource: { include: legacy.include, exclude: legacy.exclude } } : {}),
-        setupDismissedAt: projectSettings(repository, key).setupDismissedAt,
-      }
-    },
+    profile: (key: string) => profileViewOf(repository, key),
     async proposeProfile(input: {
       key: string
       profile: unknown

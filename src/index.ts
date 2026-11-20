@@ -21,6 +21,7 @@ import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { ensureArchitectMap } from "./context/architect-map.ts"
+import { registerProfileTools } from "./projects/profile-tools.ts"
 import { ensureArchitectProfileGuidance } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
@@ -111,6 +112,19 @@ export default Plugin.define({
         registerAuditTools(ctx, repository, (sessionID) =>
           core.runtime.attemptBaseForSession(sessionID),
         ),
+      )
+      yield* sectionEffect("setup:ProfileTools", () =>
+        registerProfileTools(ctx, repository, {
+          dataDirectory: dirname(taskDatabasePath(dataDirectory)),
+          workspace: {
+            create: ({ base, name }) =>
+              runtime.host.worktree({
+                base,
+                directory: join(`${repository.projectDirectory}.worktrees`, name),
+              }),
+            remove: (directory) => runtime.host.removeWorktree(directory),
+          },
+        }),
       )
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
         Effect.promise(async () => {
