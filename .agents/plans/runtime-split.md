@@ -533,3 +533,11 @@ bun scripts/runtime-split-fallow.ts src/runner/runtime.ts src/runner/<module>.ts
 | all files         | 14,597 | 230      | 63.5        | 10,033 (68.7%)         | 4,980 of 9,809 ranged (50.8%) | 33,057,450          |
 
 The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) is higher than the 35% in `rediscovery-measurements.md`; I count a read as overlapping when its range touches any earlier range of the same file, the older figure may use a stricter intersection. Compare future runs with this definition (the appendix queries and derivation rules, with that overlap test), not with the older number.
+
+## 9. Corrections found while doing S2 and S4 to S6
+
+- Test count is 415 cases, not 332 (see section 8).
+- `runtime-helpers.ts` also receives `isRerunnableEffect`, `sessionID` (a local `const` used by `ensureArchitectOwner` and the worktree code), and the `StartupRecoveryAuthorization` and `WorkerObservationFence` types. A moved member cannot import any of them from `runtime.ts`.
+- S5 does not need `renewalLocks`; S6 does not need `architectRouting` (only `architectPromptHook`). `ArchitectRenewal` takes lazy callbacks into `ArchitectOwnership` and `ArchitectSources`, and `ArchitectSources` takes `renewalEvent` lazily from `ArchitectRenewal`, so the two modules never need each other at construction time. `ArchitectSources` stays last in the constructor and seeds `sourceEpochs` itself.
+- After S6 the coordinator keeps forwarders only for members its remaining code calls: `validArchitect`, `ensureArchitectOwner`, `sessionTitle`, `architectRoute`, `recordArchitectRoute`, `assertSchedulerActive`, `reconcileArchitectSources`, `considerArchitectRenewal`, `continueArchitectRenewal`, the five public source methods, and the `sourceResyncPending` getter.
+- Moved-member check: removing `private` can let a wrapped signature fit on one line, so the check joins the header before comparing. Class members are cut with `>` also counted as a closer (multi-line `Map<...>()` fields).
