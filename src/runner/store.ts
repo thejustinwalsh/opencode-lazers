@@ -462,6 +462,30 @@ function architectSourceJournalExists(db: Database, sessionID: string) {
 const PROGRESS_COLUMNS =
   "seq,project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload"
 
+/**
+ * The progress columns a report reads: everything but `project_directory` (the filter) and
+ * `dedupe_key` (a write-side key). `payload` is read whole; the projection parses it.
+ */
+const PROGRESS_REPORT_COLUMNS =
+  "seq,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,payload"
+const legacyProgress = new WeakMap<Database, boolean>()
+/**
+ * The column list, with `recorded_at` read as NULL on a database that predates it (a read-only
+ * connection never migrates). Checked once per connection.
+ */
+function progressColumns(db: Database, columns: string) {
+  let legacy = legacyProgress.get(db)
+  if (legacy === undefined) {
+    legacy = !db
+      .query<{ name: string }, []>("PRAGMA table_info(runner_progress)")
+      .all()
+      .some((column) => column.name === "recorded_at")
+    legacyProgress.set(db, legacy)
+  }
+  return legacy ? columns.replace("recorded_at", "NULL AS recorded_at") : columns
+}
+export type ProgressReportRow = Omit<ProgressRow, "project_directory" | "dedupe_key">
+
 export type ProgressRow = {
   seq: number
   project_directory: string
@@ -4753,13 +4777,58 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<ProgressRow, [string, ...string[], number]>(
-          `SELECT ${PROGRESS_COLUMNS} FROM (
-             SELECT ${PROGRESS_COLUMNS} FROM runner_progress WHERE project_directory=?
+          `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM (
+             SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress WHERE project_directory=?
                AND attempt_id IN (${placeholders}) ORDER BY seq DESC LIMIT ?
            ) ORDER BY seq`,
         )
         .all(this.repository.projectDirectory, ...attemptIDs, bounded),
     )
+  }
+  /**
+   * The newest `visible` progress rows of the attempts, oldest first, as pages of `pageSize`.
+   * `truncated` says older rows exist beyond the window. A page is one keyset read on `seq`, so a
+   * caller that folds each page never holds the window's payloads together. Same rows, same order
+   * as the newest `visible` of `progressFacts`.
+   */
+  progressReportWindow(
+    attemptIDs: readonly string[],
+    visible = 10_000,
+    pageSize = 500,
+  ): { truncated: boolean; pages: Generator<ProgressReportRow[]> } {
+    if (!attemptIDs.length) return { truncated: false, pages: (function* () {})() }
+    const placeholders = attemptIDs.map(() => "?").join(",")
+    const directory = this.repository.projectDirectory
+    // The newest row outside the window, if any: the window starts after its seq.
+    const outside = this.read(
+      (db) =>
+        db
+          .query<{ seq: number }, (string | number)[]>(
+            `SELECT seq FROM runner_progress WHERE project_directory=? AND attempt_id IN (${placeholders})
+             ORDER BY seq DESC LIMIT 1 OFFSET ${Math.trunc(visible)}`,
+          )
+          .get(directory, ...attemptIDs)?.seq,
+    )
+    const read = (after: number) =>
+      this.read((db) =>
+        db
+          .query<ProgressReportRow, (string | number)[]>(
+            `SELECT ${progressColumns(db, PROGRESS_REPORT_COLUMNS)} FROM runner_progress
+             WHERE project_directory=? AND attempt_id IN (${placeholders}) AND seq>?
+             ORDER BY seq LIMIT ${Math.trunc(pageSize)}`,
+          )
+          .all(directory, ...attemptIDs, after),
+      )
+    const pages = (function* () {
+      let after = outside ?? 0
+      for (;;) {
+        const rows = read(after)
+        if (rows.length) yield rows
+        if (rows.length < pageSize) return
+        after = rows[rows.length - 1]!.seq
+      }
+    })()
+    return { truncated: outside !== undefined, pages }
   }
   /**
    * Whether an attempt has progress other than recovery gaps the caller ignores. A row that is not
@@ -4785,7 +4854,7 @@ export class RunnerStore {
       for (;;) {
         const rows = db
           .query<ProgressRow, [string, string, number, number]>(
-            `SELECT ${PROGRESS_COLUMNS} FROM runner_progress
+            `SELECT ${progressColumns(db, PROGRESS_COLUMNS)} FROM runner_progress
               WHERE project_directory=? AND attempt_id=? AND seq>? AND ${gapShape}
               ORDER BY seq LIMIT ?`,
           )
