@@ -197,8 +197,8 @@ export default defineStory<RadarData>({
       data: set(4, {
         workers: [w202([...w202tests, tests(2_500)], 12), w203("running", calls203a)],
       }),
-      actions: [{ do: "hover", sel: '[data-session-id="ses-worker-202"]' }],
     },
+    { at: 8_000, actions: [{ do: "hover", sel: '[data-session-id="ses-worker-202"]' }] },
     {
       at: 9_000,
       chapter: "inspect",
@@ -209,13 +209,13 @@ export default defineStory<RadarData>({
       data: set(5, {
         workers: [w202(w202failed, 14), w203("running", calls203b.slice(0, 2))],
       }),
-      actions: [{ do: "click", sel: '.lazers-radar-row-target[data-failed="true"]' }],
     },
     {
-      at: 14_000,
-      data: set(6, { workers: [w202(w202failed, 14), w203("running", calls203b)] }),
-      actions: [row(203)],
+      at: 12_000,
+      actions: [{ do: "click", sel: '.lazers-radar-row-target[data-failed="true"]' }],
     },
+    { at: 14_000, data: set(6, { workers: [w202(w202failed, 14), w203("running", calls203b)] }) },
+    { at: 14_700, actions: [row(203)] },
     {
       at: 18_000,
       chapter: "attention",

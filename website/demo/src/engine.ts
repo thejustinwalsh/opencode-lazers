@@ -248,9 +248,24 @@ export class Engine<D> {
         target.dispatchEvent(new KeyboardEvent(type, { key: action.key, bubbles: true }))
       return this.pause_(160, instant)
     }
-    const el = await this.find(action.sel, action.do === "click" ? (action.nth ?? 0) : 0)
+    const nth = action.do === "click" ? (action.nth ?? 0) : 0
+    let el = await this.find(action.sel, nth)
     if (!el) return
     await this.moveTo(el, instant)
+    // Resolve the target again at click time: the panel may have re-rendered or re-laid-out
+    // during the travel. Re-aim at the element's current position before pressing.
+    for (let aim = 0; aim < 3 && !instant && !this.opts.reduced; aim++) {
+      const now = this.opts.root.querySelectorAll<HTMLElement>(action.sel)[nth]
+      if (!now) break
+      const rect = now.getBoundingClientRect()
+      const moved = Math.hypot(
+        rect.left + Math.min(rect.width / 2, 80) - this.pointer.x,
+        rect.top + rect.height / 2 - this.pointer.y,
+      )
+      if (now === el && moved <= 3) break
+      el = now
+      await this.moveTo(el, false)
+    }
     const { x, y } = this.pointer
     const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }
     switch (action.do) {
