@@ -2056,42 +2056,6 @@ export class TaskRuntime {
     return seed
   }
 
-  private sourceWorkerWait(
-    attempt: Pick<
-      AttemptRow,
-      "id" | "task_id" | "policy" | "session_id" | "workspace" | "state" | "message_id"
-    >,
-    session: HostSession | null | undefined,
-    requireCompletedForeground = true,
-  ) {
-    if (
-      !session ||
-      session.id !== attempt.session_id ||
-      session.projectID !== this.projectID ||
-      session.directory !== attempt.workspace ||
-      !isWorkerAgent(session.agent) ||
-      session.metadata?.lazersAttemptID !== attempt.id
-    )
-      return "Retained worker ownership or location is unavailable"
-    if (
-      session.busy ||
-      session.pendingInput !== false ||
-      session.observationUnstable ||
-      session.pendingPermissions !== 0 ||
-      session.pendingForms !== 0
-    )
-      return "Retained worker has active or unresolved foreground/input/approval work"
-    if (
-      attempt.state === "running" &&
-      requireCompletedForeground &&
-      (session.outcome !== "succeeded" ||
-        session.turn?.state !== "completed" ||
-        session.turn.inputID !== attempt.message_id)
-    )
-      return "Retained running attempt requires its current input's completed foreground execution"
-    return undefined
-  }
-
   private sameModel(left: ModelPolicy | undefined, right: ModelPolicy | undefined) {
     return sameNativeModel(left, right)
   }
@@ -7026,21 +6990,6 @@ export class TaskRuntime {
       { renewalID: renewal.id, reason: RENEWAL_SUCCESSOR_FOREIGN },
       fence,
     )
-  }
-
-  private async rollbackArchitectRenewal(
-    renewal: ArchitectRenewalRow,
-    state: "deferred" | "archive-failed",
-    error: string | null,
-    fence: number,
-  ) {
-    if (!this.host.updateSession)
-      throw new Error("Cannot recover Architect renewal without native session update")
-    await this.host.updateSession({ sessionID: renewal.previous_session_id, archived: false })
-    const restored = await this.host.session(renewal.previous_session_id)
-    if (!restored || restored.archived)
-      throw new Error("Architect renewal rollback did not restore the predecessor")
-    this.store.rollbackArchitectRenewal(this.owner, fence, renewal.id, state, error)
   }
 
   private hold(
