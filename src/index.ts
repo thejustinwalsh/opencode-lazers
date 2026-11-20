@@ -10,6 +10,8 @@ import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerPlanningAgents } from "./planning/register.ts"
+import { createPlanningDecisions, registerPlanningDecisionHooks } from "./planning/server.ts"
+import { startDecision } from "./planning/decision/step.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import {
   architectContextStubsMode,
@@ -126,8 +128,32 @@ export default Plugin.define({
           },
         }),
       )
+      const planningDecisions = createPlanningDecisions(
+        ctx,
+        repository,
+        core.inferenceBroker,
+        projectID,
+      )
+      const sessionAgents = new Map<string, string>()
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
         Effect.promise(async () => {
+          // Recorded and delivered without ever delaying the prompt; a failure here is invisible.
+          void (async () => {
+            const id = String(prompt.sessionID)
+            let agent = sessionAgents.get(id)
+            if (agent === undefined) {
+              agent = String(
+                (await Effect.runPromise(ctx.session.get({ sessionID: prompt.sessionID }))).agent,
+              )
+              sessionAgents.set(id, agent)
+            }
+            startDecision(planningDecisions, {
+              sessionID: id,
+              messageID: String(prompt.messageID),
+              text: prompt.prompt.text,
+              agent,
+            })
+          })().catch(() => undefined)
           await runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)
           // The map joins the Architect's cached prefix at its first prompt; orientation must
           // never block the prompt, so a failure leaves the session without it.
@@ -147,6 +173,7 @@ export default Plugin.define({
         ),
       )
       yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
+      yield* registerPlanningDecisionHooks(ctx, planningDecisions)
       const stubsMode = architectContextStubsMode(ctx.options.architectContextStubs)
       if (stubsMode !== "off")
         yield* sectionEffect("setup:ContextStubs", () =>

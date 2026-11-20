@@ -21,7 +21,7 @@ export function installPlanningSchema(repository: TaskRepository): void {
         status TEXT NOT NULL CHECK(status IN ('decided','none','unavailable')),
         reason TEXT, size TEXT, scores_json TEXT, selected_json TEXT, threshold REAL,
         constants_json TEXT, model_ms INTEGER, elapsed_ms INTEGER, calls INTEGER,
-        open_planning_ids_json TEXT, delivered_text TEXT, late_json TEXT,
+        open_planning_ids_json TEXT, delivered_text TEXT, late_json TEXT, architect_json TEXT,
         UNIQUE(session_id, message_id)
       );
       CREATE TABLE IF NOT EXISTS planning_decision_nodes (
@@ -79,6 +79,13 @@ export function installPlanningSchema(repository: TaskRepository): void {
         PRIMARY KEY(planning_id, draft_id)
       );
     `)
+    // Generation 1 had no `architect_json`; the Architect's own classification is recorded beside D1's.
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(planning_decisions)")
+      .all()
+      .map((column) => column.name)
+    if (!columns.includes("architect_json"))
+      db.exec("ALTER TABLE planning_decisions ADD COLUMN architect_json TEXT")
   })
 }
 
@@ -150,6 +157,8 @@ export interface DecisionRow {
   openPlanningIdsJson?: string | null
   deliveredText?: string | null
   lateJson?: string | null
+  /** The Architect's own pick, `{source:"architect", size, agents}`, for comparison with D1 on the same ask. */
+  architectJson?: string | null
 }
 export interface DecisionNodeRow {
   decisionId: string
@@ -297,6 +306,37 @@ export class PlanningStore {
             "SELECT * FROM planning_decisions WHERE session_id=? AND message_id=?",
           )
           .get(sessionID, messageID),
+      ),
+    )
+  }
+
+  /** The Architect's own classification of the ask, recorded beside the decision model's. */
+  setArchitectPick(decisionID: string, pick: { size?: string; agents?: readonly string[] }): void {
+    this.repository.atomic((db) =>
+      update(
+        db,
+        "planning_decisions",
+        { architectJson: JSON.stringify({ source: "architect", ...pick }) },
+        "id=?",
+        [decisionID],
+      ),
+    )
+  }
+
+  /** Pieces of a decision recorded after its row (a late result). */
+  addDecisionNodes(nodes: readonly DecisionNodeRow[]): void {
+    this.repository.atomic((db) => {
+      for (const node of nodes) insert(db, "planning_decision_nodes", node, "OR IGNORE")
+    })
+  }
+
+  /** The session's decisions, oldest first. */
+  sessionDecisions(sessionID: string): DecisionRow[] {
+    return this.repository.read((db) =>
+      select<DecisionRow>(
+        db,
+        "SELECT * FROM planning_decisions WHERE session_id=? ORDER BY created_at, id",
+        [sessionID],
       ),
     )
   }

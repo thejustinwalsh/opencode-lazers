@@ -114,6 +114,12 @@ export class InferenceBroker {
     this.cancelled = null
   }
 
+  /** A Desktop renderer is attached and its heartbeat is current; a request would be served. */
+  attached(): boolean {
+    this.expire()
+    return this.owner !== undefined
+  }
+
   demand() {
     return { requested: Boolean(this.pending || this.queue.length) }
   }

@@ -783,6 +783,13 @@ export const PlanDraftInput = z.discriminatedUnion("action", [
     planningID: z.uuid().optional(),
     expectedRevision: z.int().positive().optional(),
     decisionMessageID: z.string().optional(),
+    /** The Architect's own classification of the ask (owner correction, 2026-11-20). Written with `PlanningStore.setArchitectPick(decisionID, pick)` to the decision row's `architect_json`, source `architect`, so it is compared with D1 on the same ask. */
+    architectPick: z
+      .strictObject({
+        size: z.enum(["one task", "a few tasks", "a large effort"]).optional(),
+        agents: z.array(PlanningAgentId).optional(),
+      })
+      .optional(),
     body: PlanningBody,
   }),
   z.strictObject({
@@ -1602,3 +1609,20 @@ Differences found while implementing Tasks 1, 2, 10 and 11 against the code on `
 - **Task 10: `fieldHashes`** keys per draft: each proposal key, `dependsOn` (sorted), `persona`, and `*`. `@plan` holds `title`, `ask`, `assumptions`, `openDecisions`, each plan-level field, and `*` over the whole body with tasks sorted by `draftID`. `changedFields` also reports `@plan` when a plan-level key changed. A finding with `draftID: null` reads `@plan`.
 - **Task 11: blank lines.** The breakdown is blocks joined by one blank line (tasks, open decisions, link block). With no open decisions the section and its separator go, so one blank line remains between the tasks and the link. The review line is the first line of the link block. Answered decisions are not listed as open. The findings parenthesis lists only blockers and majors, as in the plan's example; singular nouns are used for a count of 1.
 - **Task 11: `encodeProjectID`** in `src/tasks/links.ts` is now exported (no other change there).
+
+## Corrections (decision)
+
+Differences found while implementing Tasks 5 to 8 against the code on `main` and the owner decision of 2026-11-20 (all five agents run, scores recorded, nothing selected).
+
+- **Decision output is context, not routing.** `DecisionOutcome` has no `none` status. A cost bound (budget, depth) ends the search with `stopped` set on a `decided` outcome; nothing refuses. `selected` is every agent whose combined score is at or above `agentThreshold`, and the default `0` cuts none. `unavailable` reasons: `no-window`, `feature-off`, `no-model`, `error`, `over-limit`, `budget`, and `timeout` (set by the delivery step).
+- **Questions.** The default per agent per piece is one yes/no question (`noul`), with its one-line "use when" as the criteria; the 5-way `choice` is behind `agentForm: "choice"` for the replay script. One question per request (`batch: false`); `batch: true` sends a piece's questions together. Question text lives in `src/planning/decision/tree.ts` and is the single definition the decider and the note both use.
+- **Input bound.** No request carries more than `maxInputTokens` 400: state is limited to `(400 - 100 reserved for the question) x 3` chars (`stateLimit`), `charsPerToken` 3 being below the measured prose figure and labelled unmeasured. Measurement M1 (Task 3) was not part of this batch.
+- **Slicers.** A fourth strategy `windows` is the default: `sentenceWindows` makes windows of 4 sentences (a heading, list item or fenced block counts as one unit) with a one-sentence overlap, each packed to the limit by necessity. `whole`, `pre-slice` (`fixedSlices`) and `uncertainty` (beam, children, follow-ups) are the other three behind `decide`. The plan's fixture block is 28 characters, so the oversize test uses a 25-character limit instead of 40.
+- **Agent order.** `AGENT_ORDER` (run order: comprehension, grounding, readiness, critic, zoom-out, from `planningAgents`) is used for scores and notes; `PLANNING_AGENT_IDS` in `contract.ts` has a different order and is not used for that.
+- **Follow-ups** run only at depth-0 nodes of `whole` and `uncertainty`; "floor" raises the agent's score to `followUpFloor` (0.22).
+- **Wiring.** `PlanningDecisions` (`src/planning/decision/step.ts`) is built by `createPlanningDecisions` in `src/planning/server.ts` and held in `src/index.ts`, not `src/core/core.ts`, so `core.ts` is unchanged (it already exposes `inferenceBroker`). The agent of a session is read with `ctx.session.get` and cached in `index.ts`. The local "decisions" feature being off is not checked up front (the feature state lives inside the webgpu server): `systemOne` answers with an error, which the step records as `error`.
+- **Context hook** matches by message id; a message without an id matches the recorded ask text. The host fact (does the `context` hook's message carry the prompt's `messageID`) is still to confirm in the Task 25 walkthrough.
+- **Runbooks.** `planning-draft` and `planning-brainstorm` are written by Task 21. The note takes an optional runbook text (full first, pointer afterwards, from the store) through `PlanningServiceDeps.runbook`; none is passed yet.
+- **Table.** `planning_decisions` gained `architect_json` (schema module `planning` generation 2; an `ALTER TABLE` adds it to a database installed at generation 1). `PlanningStore` gained `setArchitectPick`, `addDecisionNodes`, `sessionDecisions`. Task 12's `lz-plan-draft` store input gets the optional `architectPick` field (written into its section above); the tool is not built here.
+- **Late results.** A decision that finishes after the delivery wait leaves its row `unavailable`/`timeout`, writes `late_json` (status, size, scores) and adds its nodes; `delivered_text` never changes.
+- **No `Decider.selected`/settings wiring.** `decisionModel`, `decisionSlicer` settings from Task 4 are not read yet: the local decider and the default strategy are used. `deciderFor(setting, parts)` takes the setting value so the wiring is one line when the settings reach this code.
