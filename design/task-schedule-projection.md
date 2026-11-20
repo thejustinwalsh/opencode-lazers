@@ -67,20 +67,20 @@ only; plans supply priority and nesting), and a tree row would duplicate a DAG p
                              ├───────────────────►│ task_schedule_blockers  │ reservation blockers
                              ├───────────────────►│ task_schedule_waits     │ prerequisite plans
                              ├───────────────────►│ task_schedule_sessions  │ session association
-                             └───────────────────►│ task_schedule_search    │ FTS5 (trigram)
+                             └───────────────────►│ task_schedule_scopes    │ write-scope paths
  runner_plans ───────────────►│ task_schedule_plans │ one row per plan (detail, scheduling plans)
 ```
 
 ### `task_schedule` (the list row)
 
 `seq INTEGER PRIMARY KEY` is `tasks.created_version`: unique across projects, immutable, and
-the FTS rowid. It replaces `tasks.rowid`, which a full `VACUUM` (`src/retention/vacuum.ts`)
+the key every child table joins on. It replaces `tasks.rowid`, which a full `VACUUM` (`src/retention/vacuum.ts`)
 may renumber; the old order tie-break (`-task_rowid`) silently depends on rowid stability,
 this one does not.
 
 | Group       | Columns                                                                                                                                                                                        | Source of truth                                              |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Identity    | `seq`, `task_id` UNIQUE, `project_directory`, `reference`, `revision`, `created_at`, `creator_session_id`                                                                                      | `tasks`, `task_references`                                   |
+| Identity    | `seq`, `task_id` UNIQUE, `project_directory`, `reference`, `revision`, `created_at`, `session_id`                                                                                              | `tasks`, `task_references`                                   |
 | Task text   | `title` (`taskTitle`, `presentation.ts:2`), `objective` (first 400 chars), `classification` (current), `source_plan` (json)                                                                    | task body, `task_classifications`                            |
 | Disposition | `retired` (bool), `disposition` (json: disposition and reason)                                                                                                                                 | `task_dispositions`                                          |
 | Schedule    | `plan_id`, `plan_seq`, `ordinal`, `node_state`, `plan_state`, `rank`, `bucket`, `priority_key`, `finished_at`, `finished_basis`, `transition_mark`, `sort_key`                                 | `runner_nodes`, `runner_plans`, `runner_transitions`         |
@@ -88,20 +88,20 @@ this one does not.
 
 Indexes (every one leads with `project_directory`; each serves one source order and filter):
 
-| Index                                                        | Serves                                |
-| ------------------------------------------------------------ | ------------------------------------- |
-| `(project_directory, retired, sort_key)`                     | default list, schedule order          |
-| `(project_directory, retired, bucket, sort_key)`             | state chips (Running, Queued, ...)    |
-| `(project_directory, creator_session_id, retired, sort_key)` | creator-session scope                 |
-| `(project_directory, retired, seq)`                          | `recent` order (the old default sort) |
-| `(plan_id)`                                                  | plan-scoped refresh and plan detail   |
+| Index                                                | Serves                                |
+| ---------------------------------------------------- | ------------------------------------- |
+| `(project_directory, retired, sort_key)`             | default list, schedule order          |
+| `(project_directory, retired, bucket, sort_key)`     | state chips (Running, Queued, ...)    |
+| `(project_directory, session_id, retired, sort_key)` | creator-session scope                 |
+| `(project_directory, retired, seq)`                  | `recent` order (the old default sort) |
+| `(plan_id)`                                          | plan-scoped refresh and plan detail   |
 
 ### `task_schedule_plans` (plans)
 
 `plan_id` PK; `project_directory`, `seq` (the plan's rowid at first sight, immutable),
 `title`, `state`, `reason`, `priority` (0 is none), `priority_key`, `owner_session_id`,
 `workspace_mode`, `after_plans` (json), `after_plans_count`, `pause` (json),
-`last_transition_at`, `plan_version`, `plan_revision`, `node_count`, `open_count`.
+`plan_version`, `plan_revision`, `node_count`, `open_count`.
 Index `(project_directory, priority_key, seq)`: the scheduler's plan order, which replaces
 `planOrder` and the 1,000-plan page chain of `transport.scheduling`.
 
@@ -117,10 +117,16 @@ Index `(project_directory, priority_key, seq)`: the scheduler's plan order, whic
 Edge indexes: `(child_task_id)`, `(child_plan_id)` for fan-out updates. Blockers: `(blocker_task_id)`.
 Sessions: `(task_id)`.
 
-`task_schedule_search` is `fts5(text, scope, tokenize='trigram')` with `rowid = seq`. FTS5 with
-the trigram tokenizer is available in `bun:sqlite` on this machine (SQLite 3.54.0), verified in a
-scratch database: a quoted `MATCH` finds substrings case-insensitively. 50,000 rows measured: 2 ms
-for a 9-character query, 1 ms on the `scope` column, 12 ms for the below-3-character fallback.
+Search has no index. `task_schedule.search_text` holds the lower-cased six fields
+`summarize` matches (id, reference, objective, write scope, acceptance assertions, context
+references); the reader worker filters with `instr(search_text, ?)`. `task_schedule_scopes
+(task_id, path)` (indexed by `path`) holds the write-scope paths for `scopePath`. At 260 live
+tasks a scan of one narrow column is cheap, and no shadow tables or schema drift follow. **When
+to replace it with FTS5:** when a project passes about 50,000 tasks, or when a search query
+exceeds 10 ms on a window read. FTS5 with the trigram tokenizer works in this `bun:sqlite`
+(SQLite 3.54.0); the data point is 12 ms for a below-3-character scan and 2 ms for a trigram
+`MATCH` over 50,000 rows. Rerun that scratch measurement against `search_text` at the real row
+count before switching.
 
 ### Sorting without renumbering: the schedule key
 
@@ -252,13 +258,13 @@ Cycles are cut on the client by the ancestor path, as `flattenExecutionList` doe
 state and `waiting`, so the `referenceRow` fallback for unknown tasks disappears. At most one
 child stream exists per expanded row; closing the row closes the stream.
 
-Counts. `tasks.schedule` uses `count: { exact: "scan" }`, an index range count in one seek
-(`source.ts:SourceCount`). The author's assertion: a project's tasks are human-scale (260 live);
-the scan is linear in rows beyond the window and measured at about 10 ms per 500,000 index
-entries in `data-streams.md`. If a project ever reaches hundreds of thousands of tasks, switch
-to `exact: { before, after }` over stored counters; the source shape does not change.
-`tasks.bucketCounts` reads two views, project-scoped and session-scoped, both index-only
-aggregates over `(project_directory, retired, bucket)` and `task_schedule_sessions`.
+Counts. `tasks.schedule` uses the default probe count (`count: "more"`): one existence probe per
+side, no scan of a table that grows with tasks. A view that needs a position (the chips) reads
+`task_schedule_counts (project_directory, bucket, n)`, stored per-bucket counters kept by the
+refresh: a row write adjusts the old and new bucket in the same transaction. `tasks.bucketCounts`
+reads that table; the session-scoped chip counts read `task_schedule_session_bucket_counts`, a
+view over `task_schedule_sessions` and the row's bucket (cost proportional to the session's
+tasks).
 
 Detail. `tasks.schedule` opened with `window: 1` adds the cold columns (`wait` text, the
 concern totals, `plan_title`). Plan, blockers and waits are the sources above, anchored at one
@@ -403,26 +409,22 @@ a visible change, listed under the owner questions.
 
 ### Filters
 
-| Filter today                                             | Becomes                                                                                                                     | Maintained by                                         |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `state` (`state-filter.ts`)                              | `bucket` column and index                                                                                                   | `task`, `plan`, `pause` refresh                       |
-| `includeRetired` (`storage.ts:948`)                      | `retired` column, in every index                                                                                            | disposition insert                                    |
-| `sessionID`, creator (`storage.ts:950`, `json_extract`)  | `creator_session_id` column and index                                                                                       | task insert                                           |
-| `sessionID`, association (`task-reads.ts:120`)           | `EXISTS` on `task_schedule_sessions (session_id, task_id, role)`                                                            | task insert; plan owner change; attempt insert        |
-| `search` (`storage.ts:956`, `instr` over the whole body) | `task_schedule_search` `MATCH` on a quoted phrase; strings under 3 characters use `instr(lower(text), ?)` on the same table | `task` refresh at task insert (the body is immutable) |
-| `scopePath` (`storage.ts:967`, `json_each`)              | `MATCH` on the `scope` column; the same under-3 fallback                                                                    | task insert                                           |
-| `created_version <= snapshot` (`storage.ts:939`)         | deleted: the stream anchors on keys and a revision                                                                          | none                                                  |
+| Filter today                                             | Becomes                                                                        | Maintained by                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `state` (`state-filter.ts`)                              | `bucket` column and index                                                      | `task`, `plan`, `pause` refresh                |
+| `includeRetired` (`storage.ts:948`)                      | `retired` column, in every index                                               | disposition insert                             |
+| `sessionID`, creator (`storage.ts:950`, `json_extract`)  | `session_id` column and index                                                  | task insert                                    |
+| `sessionID`, association (`task-reads.ts:120`)           | `EXISTS` on `task_schedule_sessions (session_id, task_id, role)`               | task insert; plan owner change; attempt insert |
+| `search` (`storage.ts:956`, `instr` over the whole body) | `instr(search_text, ?)` on the stored lower-cased column, in the reader worker | `task` refresh (reference renames rewrite it)  |
+| `scopePath` (`storage.ts:967`, `json_each`)              | `EXISTS` on `task_schedule_scopes` with `instr(lower(path), ?)`                | `task` refresh                                 |
+| `created_version <= snapshot` (`storage.ts:939`)         | deleted: the stream anchors on keys and a revision                             | none                                           |
 
 The search text is the six fields `summarize` already matches (`read.ts:60-67`): id, reference,
 objective, scope, acceptance assertions, context references. Today `search` runs over the
 whole JSON body, so it matches key names such as `proposal`. Narrowing it is an engineering
-call with a visible effect, listed below. A reference rename also rewrites the FTS row.
+call with a visible effect, listed below. A reference rename rewrites `search_text`.
 
-The FTS5 virtual table creates shadow tables (`task_schedule_search_data`, `_idx`,
-`_content`, `_docsize`, `_config`); they must be declared in `schemaModules` or
-`schemaDrift()` (`storage.ts:628`) reports them as undeclared.
-
-### The scheduling decision, and the one fact the writer cannot know
+### The scheduling decision### The scheduling decision, and the one fact the writer cannot know
 
 `TaskSchedulingRead` computes `decision` (`eligible`, `waiting`, `unknown`) by walking plans
 in priority order with git ancestry proofs (`scheduling-read.ts:228,1043`), delegated-agent
@@ -454,8 +456,7 @@ A new module in `src/database-schema.ts`:
 ```ts
 "task-schedule": { generation: 1, source: "src/tasks/schedule/schema.ts",
   tables: ["task_schedule", "task_schedule_plans", "task_schedule_edges", "task_schedule_blockers",
-           "task_schedule_waits", "task_schedule_sessions", "task_schedule_search",
-           "task_schedule_search_data", "task_schedule_search_idx", "task_schedule_search_content",
+           "task_schedule_waits", "task_schedule_sessions",           "task_schedule_search_data", "task_schedule_search_idx", "task_schedule_search_content",
            "task_schedule_search_docsize", "task_schedule_search_config",
            "task_schedule_dirty", "task_schedule_state"] }
 ```
@@ -555,10 +556,9 @@ Live database, read-only (`tasks.sqlite`, 2026-11-20):
 
 Expected size: a list row is about 0.7 KB (title at most 72 characters, objective 400,
 reason 400, json fields), so `task_schedule` is about 0.2 MB plus four indexes of about 0.1 MB
-each, and the FTS table about 1.5 MB (trigram index of about 2 KB of text per task). At 100,000
-tasks: about 70 MB of rows and indexes and about 600 MB of FTS. The FTS table is the large
-one; if it matters, search text is the knob (scope and objective only, or a stored count
-bound by the retention pass).
+each, and `search_text` about 2 KB per task (0.5 MB). At 100,000 tasks: about 70 MB of rows and
+indexes and about 200 MB of search text. Search text is the knob if it matters (see the FTS
+threshold above).
 
 Cost to read: the first page is a single index range seek of 30 to 100 rows instead of 50 ms of
 window functions. Cost to write: a plan-scoped refresh is about 10 indexed point reads and
@@ -602,39 +602,56 @@ Every caller that must move first:
 Not moved by this lane: `Tasks.get` (point read by id), `currentActivity` (host reads),
 `start`, and `Tasks.changes`.
 
-## Calls made here, and questions for the owner
+## Review amendments, calls and lead decisions
+
+Amendments from the lead's review (2026-11-20), implemented as written above:
+
+- **Search** is a stored `search_text` and a `task_schedule_scopes` child table; no FTS5.
+- **Counts.** `tasks.schedule` uses probe counts; chip counts are stored per-bucket counters.
+- **The drain costs one statement when nothing is queued.** `drainScheduleHook` runs
+  `SELECT 1 FROM task_schedule_dirty LIMIT 1` through a prepared statement; the measurement is in
+  the plan report. A test asserts a transaction touching no schedule table runs no other
+  statement.
+- **Several plans for one task.** `UNIQUE(task_id, spec_revision)` and the writer's constant
+  `spec_revision = 1` (`store.ts:4000`) make a second plan for a task impossible through the
+  writers. If one exists (legacy rows, a test), the projection and `tasks.schedule` show the
+  newest plan by rowid, as `currentActivityTargets` (`read.ts`, `ORDER BY p.rowid DESC`) and the
+  old `tasks.list` do; a re-planned task's current plan is its newest one. The old
+  `runner.execution` took whichever row SQLite returned first, which is the oldest.
+- **`session_id` and `revision` are columns** of `task_schedule`, so no source reads
+  `json_extract` of a task body. `tasks.list` is deleted once `tasks.schedule` serves its `recent`
+  order.
+
+Lead decisions the owner can reverse:
+
+1. No count badge while a search is active.
+2. Search covers the six fields only.
+3. Concern totals are frozen at the latest concern version (read once when the version moves,
+   kept until it changes again).
+4. The chip follows the displayed status: a task held by a reservation, a prerequisite plan or an
+   adoption counts under Blocked, not Queued. The parity suite states this in one place,
+   `INTENTIONAL_DIFFERENCES` in `src/tasks/schedule/parity.ts`.
+
+Implementation notes that differ from the sections above:
+
+- The plan header stores the plan's own pause only; a project or global pause shows on each
+  queued row. `last_transition_at` is not stored: the finish-time fallback reads the plan's
+  newest transition directly, and a trigger re-queues the plan on a transition only when a row
+  of that plan took that fallback (`finished_basis = 'plan'`, partial index).
+- `runner_nodes` triggers queue the plan, not the node: a plan has 1.14 nodes on average and one
+  refresh rewrites only the rows that changed.
+- Blockers are listed in reservation priority order (plan priority, plan rowid, start time), so a
+  priority change queues `reservations`.
+- A missing observation is shown as waiting with an explicit reason, never as unknown.
 
 Engineering calls (mine; reverse them cheaply if you disagree):
 
-1. **Composite `sort_key`, not renumbering or fractional ranks.** The order terms are
-   functions of the row's own node and plan, so a changed row re-keys itself and nothing else.
-2. **Triggers queue dirty entries and a drain runs in the writer's transaction**, instead of
-   instrumenting 117 statements. Every table above gets triggers; the drain is hooked at
-   `atomic` and `atomicAsync`.
-3. **Plan-scoped refresh** is the unit. A plan has 1.14 nodes on average; it removes a class of
-   skew bugs that a per-node fold has.
-4. **No tree rows.** Dependencies are a child table and each expanded row owns a child stream.
-5. **`unknown` leaves the scheduling vocabulary.** The panel never rendered it
-   (`row-presentation.ts` handles only `waiting`).
-6. **Prerequisite proof recorded by the dispatcher** as `PREREQUISITE_OBSERVED`, because the
-   decision tick already computes it.
-7. **Stable immutable `seq` and `plan_seq`** instead of `rowid`, so `VACUUM` cannot reorder.
-8. **Counts by scan** for `tasks.schedule`, index views for bucket chips.
-9. **Dropped coverage fields.** `waitingOnPlansComplete`, `reservationTaskIDsComplete`,
-   `reservationTaskIDsScopeLimited` and the "partial coverage" text disappear because stored
-   child tables are complete; the 100-item caps go with them.
-
-Open questions that only the owner can answer:
-
-1. **Chip counts while searching.** Today the counts reflect the search and scope path. Stored
-   views give counts for scope (project or session) only. With a search active I propose the
-   chips show no count (the panel already omits a badge for an undefined count). Alternative:
-   one window-1 probe stream per chip.
-2. **Search scope.** Search over the whole JSON body (matches key names and provenance) versus
-   the six fields the result snippets already use. I propose the six fields. A wider text
-   multiplies the FTS table.
-3. **Concern totals.** Live totals in the inspector (rewrite on every progress event) versus
-   totals as of the latest concern version. I propose the latter.
-4. **Reservation-blocked tasks and the Queued chip.** Today such a task shows `blocked` but is
-   counted under `queued`. I propose to unify: the chip follows the displayed status. Parity
-   keeps today's behaviour in the first cut unless you decide now.
+1. Composite `sort_key`, not renumbering or fractional ranks.
+2. Triggers queue dirty entries and a drain runs in the writer's transaction.
+3. Plan-scoped refresh as the unit.
+4. No tree rows: a child table and one child stream per expanded row.
+5. `unknown` leaves the scheduling vocabulary; the panel never rendered it.
+6. Prerequisite proofs recorded by the dispatcher as `PREREQUISITE_OBSERVED`.
+7. Immutable `seq` and `plan_seq` instead of `rowid`, so `VACUUM` cannot reorder.
+8. Dropped coverage fields: `waitingOnPlansComplete`, `reservationTaskIDsComplete`,
+   `reservationTaskIDsScopeLimited` and the 100-item caps, because child tables are complete.

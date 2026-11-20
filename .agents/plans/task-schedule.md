@@ -8,11 +8,11 @@ chains, `taskViewCache`, `scheduledTaskPageSQL` and the merged tree are deleted.
 
 **Architecture:** One `task_schedule` row per task with a composite `sort_key`, a `bucket`
 for the state chips and the display fields; `task_schedule_plans` per plan; child tables for
-dependencies, reservation blockers, prerequisite plans and sessions; FTS5 for search. Triggers
+dependencies, reservation blockers, prerequisite plans and sessions and scope paths; a stored `search_text` for search. Triggers
 on the source tables queue dirty entries; `drainTaskSchedule` runs inside `atomic` and
 `atomicAsync` and recomputes only the affected plan or task. Backfill is paged and resumable.
 
-**Tech Stack:** TypeScript (strict), Bun 1.4.4, `bun:sqlite` (SQLite 3.54, FTS5 trigram),
+**Tech Stack:** TypeScript (strict), Bun 1.4.4, `bun:sqlite` (SQLite 3.54),
 XState (`lifecycleMachines`, unchanged), the streams API in `src/streams/`, SolidJS.
 
 **Spec:** [design/task-schedule-projection.md](../../design/task-schedule-projection.md) (read it first), with
@@ -26,7 +26,7 @@ XState (`lifecycleMachines`, unchanged), the streams API in `src/streams/`, Soli
 - A decide read never reads the projection. Show reads use the streams only.
 - No cap refuses or truncates a read; a batch size is a unit of work with its measurement
   beside it. "Unknown" is never a default in the UI or the vocabulary.
-- No native binaries or addons. FTS5 is part of `bun:sqlite`.
+- No native binaries or addons. No FTS5 in this lane (see the design).
 - Every write that can change a stored row is covered by a trigger and a test that fails when
   one is missing (Task 5).
 - A schema generation bump needs a full service restart; say so in the commit that bumps it.
@@ -65,7 +65,7 @@ XState (`lifecycleMachines`, unchanged), the streams API in `src/streams/`, Soli
 | `src/tasks/schedule/blockers.ts`          | Reservation set fingerprint and blocker recompute                                                      |
 | `src/tasks/schedule/refresh.ts`           | `refreshTask`, `refreshPlan`, `refreshReservations`, `refreshPause`                                    |
 | `src/tasks/schedule/drain.ts`             | `drainTaskSchedule`, dirty queue, work budget                                                          |
-| `src/tasks/schedule/search.ts`            | FTS row writes and the filter fragments for search and `scopePath`                                     |
+| `src/tasks/schedule/search.ts`            | The filter fragments for search and `scopePath`                                                        |
 | `src/tasks/schedule/backfill.ts`          | Paged, resumable backfill and readiness                                                                |
 | `src/tasks/schedule/owner.ts`             | Project-core owner: backfill loop, table-change drain, idle when clean                                 |
 | `src/streams/sources/tasks.ts`            | `defineSource` for `tasks.schedule`, `.dependencies`, `.plans`, `.blockers`, `.waits`, `.bucketCounts` |
@@ -91,14 +91,12 @@ export type Bucket = (typeof BUCKETS)[number]
 ```
 
 - Columns, keys and indexes exactly as in the design (`task_schedule` with `seq` PK,
-  `task_schedule_plans`, `_edges`, `_blockers`, `_waits`, `_sessions`, `_search` FTS5 trigram
-  with `text` and `scope`, `_dirty`, `_state`, views `task_schedule_bucket_counts` and
-  `task_schedule_session_bucket_counts`).
+  `task_schedule_plans`, `_edges`, `_blockers`, `_waits`, `_sessions`, `_scopes`, `_counts`, `_dirty`, `_state`, view `task_schedule_session_bucket_counts`).
 - Install creates all tables and indexes, drops and recreates triggers (Task 2 supplies the
   trigger SQL), inserts a `task_schedule_state` row per known project with `ready = 0`.
 
 - [ ] Test: install twice leaves one copy of each object; `schemaDrift()` reports no undeclared
-      and no missing table (FTS5 shadow tables included).
+      and no missing table .
 - [ ] Test: installing at a lower stored generation upgrades; a higher stored generation throws
       `Unsupported LAZERS schema module`.
 - [ ] Test: `EXPLAIN QUERY PLAN` for the three list reads (default, bucket filter, creator
@@ -362,8 +360,7 @@ export const taskBlockersSource, taskWaitsSource, taskBucketCountsSource
 
 - `tasks.schedule`: orders `schedule` (`sort_key`, `task_id`) and `recent` (`seq` desc,
   `task_id`); `count: { exact: "scan" }`; `detail` columns for `window: 1`.
-- Search and `scopePath` filter fragments from `search.ts` (quoted `MATCH`, the under-3
-  fallback, quoting of `"`); `tables` names every table read so table-level refresh works.
+- Search and `scopePath` filter fragments from `search.ts` (`instr` on `search_text` and `task_schedule_scopes`); `tables` names every table read so table-level refresh works.
 - `tasks.dependencies` order is `ord`; `tasks.plans` order is `(priority_key, seq)`.
 
 - [ ] Test (stream harness, seeded projection): head window, slide, `seek(key)` equal the old
