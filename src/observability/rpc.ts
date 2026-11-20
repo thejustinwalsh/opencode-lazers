@@ -65,7 +65,7 @@ function schedulerTotals(agent: string) {
     : { status: "unavailable" as const, reason: "architect-only" as const }
 }
 
-async function authorize(
+export async function authorize(
   ctx: ObservationContext,
   scope: { sessionID: string },
   projectID: string,

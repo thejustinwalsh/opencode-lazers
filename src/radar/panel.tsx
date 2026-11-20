@@ -946,6 +946,7 @@ function RadarLiveMonitorPanel(
           },
         ),
         projectDirectory: value.directory,
+        scope: observationScope,
       })
       onCleanup(() => {
         streams.abort()

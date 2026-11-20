@@ -32,7 +32,7 @@ export function installProgressDisplayBackfill(db: Database) {
 }
 
 const COLUMNS =
-  "seq,project_directory,attempt_id,session_id,at,recorded_at,source,kind,event_ids_json,call_id,message_id,payload"
+  "seq,project_directory,project_id,attempt_id,session_id,at,recorded_at,source,kind,event_ids_json,call_id,message_id,payload"
 
 /**
  * One page, inside the caller's transaction: the next rows below the watermark that have no

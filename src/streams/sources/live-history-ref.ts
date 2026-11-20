@@ -33,6 +33,10 @@ export type LiveHistoryFilter = {
   projectDirectory: string
   attemptID: string
   sessionID: string
+  /** The view the caller reads from; a session view reads only its own session. */
+  scope: { kind: "session" | "project" | "all"; sessionID: string }
+  /** Set by the service from the project's known ids; whatever the caller sends is replaced. */
+  projectIDs?: string[]
   /** Only rows that carry a tool: the calls. */
   toolsOnly?: boolean
   /** Only rows observed before this time (epoch ms). */

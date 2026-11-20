@@ -48,7 +48,8 @@ import { registerProfileTools } from "./projects/profile-tools.ts"
 import { ensureArchitectProfileGuidance, ensureSetupPointer } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
-import { registerObservability } from "./observability/rpc.ts"
+import { authorize as authorizeRead, registerObservability } from "./observability/rpc.ts"
+import { projectIdsFor } from "./project-key.ts"
 import { registerProgress } from "./progress/native.ts"
 import { registerRecoveryTools } from "./recovery/tools.ts"
 import { registerToolCallWrappers } from "./progress/tool-observation.ts"
@@ -214,7 +215,23 @@ export default Plugin.define({
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Streams", () =>
-        registerStreams(ctx, { databasePath: core.taskReads.repository.path }).pipe(Effect.orDie),
+        registerStreams(ctx, {
+          databasePath: core.taskReads.repository.path,
+          context: {
+            projectID,
+            projectDirectory: repository.projectDirectory,
+            projectIds: projectIdsFor,
+            assertRead: async (sessionID) => {
+              await authorizeRead(
+                ctx,
+                { sessionID },
+                projectID,
+                repository.projectDirectory,
+                "read",
+              )
+            },
+          },
+        }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Worker", () =>
         registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>

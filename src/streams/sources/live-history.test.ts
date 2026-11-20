@@ -10,7 +10,11 @@ import { meterRepository } from "../../runner/read-meter.fixture.ts"
 import { openStream } from "../client.ts"
 import { readerPool, type ReaderPool } from "../pool.ts"
 import { liveHistorySource } from "./live-history.ts"
-import { liveHistoryItem, type LiveHistoryFilter } from "./live-history-ref.ts"
+import { liveHistoryColumns, liveHistoryItem, type LiveHistoryFilter } from "./live-history-ref.ts"
+import { readFrame } from "../frame.ts"
+import { base64ToBytes } from "../gui.ts"
+import { createStreamsService } from "../rpc.ts"
+import { refreshProgressDisplay } from "../../progress/display-store.ts"
 
 let fixture: ReturnType<typeof makeFixture>
 let pool: ReaderPool
@@ -23,6 +27,8 @@ beforeAll(() => {
     projectDirectory: fixture.store.repository.projectDirectory,
     attemptID: firstAttemptID,
     sessionID: "ses-failed",
+    scope: { kind: "project", sessionID: "ses-owner" },
+    projectIDs: ["project"],
   }
   pool = readerPool(fixture.store.repository.path, { workers: 1 })
 })
@@ -37,7 +43,7 @@ function expectedItems() {
     .read((db) =>
       db
         .query<StoredDisplay, [string]>(
-          "SELECT * FROM runner_progress_display WHERE attempt_id=? AND session_id='ses-failed' ORDER BY seq DESC",
+          "SELECT * FROM runner_progress_display WHERE attempt_id=? AND session_id='ses-failed' AND project_id='project' ORDER BY seq DESC",
         )
         .all(firstAttemptID),
     )
@@ -150,4 +156,90 @@ test("the reads are range seeks on the attempt's index, never a scan of the tabl
     expect(detail).not.toMatch(/^SCAN/)
     expect(detail).not.toContain("TEMP B-TREE")
   }
+})
+
+test("opening through the service keeps what the replaced read checked: aliases, directory and session scope", async () => {
+  // The same project under a second OpenCode project id, and a row of an unrelated project.
+  fixture.store.atomic((db) => {
+    for (const [index, projectID] of ["alias-b", "stranger"].entries()) {
+      const plan = db
+        .query<{ plan_id: string; task_id: string }, [string]>(
+          "SELECT plan_id,task_id FROM runner_attempts WHERE id=?",
+        )
+        .get(firstAttemptID)!
+      const result = db
+        .query(
+          `INSERT INTO runner_progress(project_directory,project_id,plan_id,task_id,attempt_id,session_id,
+            at,recorded_at,source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+           VALUES(?,?,?,?,?,?,?,?,?,'[]','tool','[]',?,?,?,?)`,
+        )
+        .run(
+          fixture.store.repository.projectDirectory,
+          projectID,
+          plan.plan_id,
+          plan.task_id,
+          firstAttemptID,
+          "ses-failed",
+          9_000 + index,
+          9_000 + index,
+          "runtime",
+          `call-${projectID}`,
+          `msg-${projectID}`,
+          `dedupe-${projectID}`,
+          JSON.stringify({ tool: "read", status: "succeeded" }),
+        )
+      refreshProgressDisplay(db, Number(result.lastInsertRowid))
+    }
+  })
+  const asked: string[] = []
+  const service = createStreamsService({
+    pool,
+    changed: () => {},
+    context: {
+      projectID: "project",
+      projectDirectory: fixture.store.repository.projectDirectory,
+      projectIds: (id) => (id === "project" ? ["project", "alias-b"] : [id]),
+      assertRead: async (sessionID) => {
+        asked.push(sessionID)
+        if (sessionID === "ses-denied") throw new Error("Not permitted")
+      },
+    },
+  })
+  const calls = async (
+    input: Partial<LiveHistoryFilter> & { scope?: LiveHistoryFilter["scope"] },
+  ) => {
+    const frame = await service.open({
+      stream: crypto.randomUUID(),
+      source: "observability.liveHistory",
+      filter: {
+        projectDirectory: "/elsewhere",
+        attemptID: firstAttemptID,
+        sessionID: "ses-failed",
+        scope: { kind: "project", sessionID: "ses-owner" },
+        projectIDs: ["stranger"],
+        ...input,
+      },
+      order: "recent",
+      window: 200,
+    })
+    const bytes = base64ToBytes(frame.data)
+    const read = readFrame(bytes.buffer, bytes.byteOffset, liveHistoryColumns)
+    return Array.from({ length: read.header.count }, (_, i) => read.row(i).call_id)
+  }
+  const ids = await calls({})
+  // The alias's row is the project's; the stranger's is not; the caller's directory and ids were replaced.
+  expect(ids).toContain("call-alias-b")
+  expect(ids).not.toContain("call-stranger")
+  expect(ids.length).toBe(expectedItems().length + 1)
+  await expect(calls({ scope: { kind: "session", sessionID: "ses-other" } })).rejects.toThrow(
+    "unavailable in this project scope",
+  )
+  expect((await calls({ scope: { kind: "session", sessionID: "ses-failed" } })).length).toBe(
+    ids.length,
+  )
+  await expect(calls({ scope: { kind: "project", sessionID: "ses-denied" } })).rejects.toThrow(
+    "Not permitted",
+  )
+  expect(asked).toEqual(["ses-owner", "ses-failed", "ses-denied"])
+  service.dispose()
 })

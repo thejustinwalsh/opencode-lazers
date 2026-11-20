@@ -323,6 +323,12 @@ test("registered /lz-radar renders live session activity, concurrent calls and s
     streamsService = createStreamsService({
       pool,
       changed: (stream, seq) => streamBus.publish({ stream, seq }),
+      context: {
+        projectID: projectID,
+        projectDirectory: fixture.directory,
+        projectIds: (id) => [id],
+        assertRead: async () => {},
+      },
     })
     const streamsRpc = {
       open: (input: { source: string; filter: Record<string, unknown>; window: number }) => {

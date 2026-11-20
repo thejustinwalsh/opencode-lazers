@@ -35,7 +35,11 @@ export const HISTORY_WINDOW = FIT_ROWS + 2 * SLOP_ROWS
 const COLUMNS = "64px minmax(0, 1fr) 64px"
 
 export type HistoryTarget = { attemptID: string; sessionID: string; beforeAt?: number }
-export type HistorySource = { transport: StreamsTransport; projectDirectory: string }
+export type HistorySource = {
+  transport: StreamsTransport
+  projectDirectory: string
+  scope: { kind: "session" | "project" | "all"; sessionID: string }
+}
 
 /** The older calls of one attempt as a stream. Call inside the owner that should close it. */
 export function createOlderCalls(source: HistorySource, target: Accessor<HistoryTarget>) {
@@ -46,6 +50,7 @@ export function createOlderCalls(source: HistorySource, target: Accessor<History
         projectDirectory: source.projectDirectory,
         attemptID: now.attemptID,
         sessionID: now.sessionID,
+        scope: source.scope,
         toolsOnly: true,
         ...(now.beforeAt !== undefined && Number.isFinite(now.beforeAt)
           ? { beforeAt: now.beforeAt }
