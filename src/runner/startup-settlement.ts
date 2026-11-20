@@ -233,29 +233,24 @@ export class StartupSettlement {
     if (
       !sourceSettlement ||
       sourceSettlement.requestID !== operation.settlementRequestID ||
-      !this.store.activity(planID, attempt.task_id).some((entry) => {
-        if (entry.event !== "STARTUP_RECOVERY_AUTHORIZED") return false
-        try {
-          const authorization = JSON.parse(entry.payload) as Record<string, unknown>
-          return (
-            authorization.schema === "lazers-worktree-startup-authorization/v1" &&
-            authorization.recoveryID === operation.recoveryID &&
-            authorization.sourceEffectID === source.id &&
-            authorization.settlementRequestID === sourceSettlement.requestID &&
-            authorization.requestID === operation.authorizationRequestID &&
-            authorization.owner === operation.authorizedOwner &&
-            authorization.planVersion === operation.authorizedVersion &&
-            authorization.taskID === attempt.task_id &&
-            authorization.attemptID === attempt.id &&
-            authorization.sessionID === attempt.session_id &&
-            authorization.messageID === attempt.message_id &&
-            authorization.workspace === attempt.workspace &&
-            authorization.base === attempt.base_commit &&
-            authorization.policy === attempt.policy
-          )
-        } catch {
-          return false
-        }
+      !this.store.hasActivity(planID, attempt.task_id, {
+        events: ["STARTUP_RECOVERY_AUTHORIZED"],
+        payload: {
+          schema: "lazers-worktree-startup-authorization/v1",
+          recoveryID: operation.recoveryID,
+          sourceEffectID: source.id,
+          settlementRequestID: sourceSettlement.requestID,
+          requestID: operation.authorizationRequestID,
+          owner: operation.authorizedOwner,
+          planVersion: operation.authorizedVersion,
+          taskID: attempt.task_id,
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          messageID: attempt.message_id,
+          workspace: attempt.workspace,
+          base: attempt.base_commit,
+          policy: attempt.policy,
+        },
       })
     )
       return undefined

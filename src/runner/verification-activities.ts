@@ -10,9 +10,14 @@ export type VerificationActivity<T = unknown> = {
   metadata: Record<string, unknown>
   controller: AbortController
   state: VerificationActivityState
-  result?: T
+  /**
+   * What the activity keeps of its result once it completes: the small fact later ticks need, never
+   * the result itself. The full result is written to the journal by `run`.
+   */
+  summary?: unknown
   error?: unknown
-  promise: Promise<T>
+  /** Settles when the run does; carries no result, so a finished activity pins none. */
+  promise: Promise<void>
   settled: Promise<void>
 }
 
@@ -55,6 +60,8 @@ export function startVerificationActivity<T>(input: {
   metadata: Record<string, unknown>
   signal?: AbortSignal
   run(signal: AbortSignal): Promise<T>
+  /** Reduce a completed result to the pointer the activity keeps. */
+  summarize?(result: T): unknown
   onSettled?(): void | Promise<void>
 }): { activity: VerificationActivity<T>; created: boolean } {
   const existing = activities.get(input.key)
@@ -79,7 +86,7 @@ export function startVerificationActivity<T>(input: {
     },
     controller,
     state: "running" as const,
-    promise: Promise.resolve(undefined as T),
+    promise: Promise.resolve(),
     settled: Promise.resolve(),
   }
   activities.set(input.key, activity)
@@ -90,9 +97,8 @@ export function startVerificationActivity<T>(input: {
     .then(() => input.run(controller.signal))
     .then(
       (result) => {
-        activity.result = result
+        activity.summary = input.summarize?.(result)
         activity.state = "completed"
-        return result
       },
       (error: unknown) => {
         activity.error = error

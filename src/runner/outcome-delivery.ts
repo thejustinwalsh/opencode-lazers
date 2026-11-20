@@ -1,7 +1,7 @@
 import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { HostSession } from "./host.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
-import { appendOutboxReceipt } from "./store.ts"
+import { addOutboxReceipt } from "./store.ts"
 import { coalescedOutcomeText } from "./outcome.ts"
 import { Delivery } from "../guidance/index.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
@@ -89,18 +89,13 @@ export class OutcomeDelivery {
     fence: number,
   ) {
     return this.runtime.store.fenced(this.runtime.owner, fence, (db) => {
-      const current = db
-        .query<{ state: string; receipt: string | null }, [string]>(
-          "SELECT state,receipt FROM runner_outbox WHERE id=?",
-        )
-        .get(message.id)
-      if (current?.state !== "pending") return false
       const changed = db
         .query(
-          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?),receipt=? WHERE id=? AND state='pending'",
+          "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,?) WHERE id=? AND state='pending'",
         )
-        .run(state, appendOutboxReceipt(current.receipt, receipt), message.id).changes
+        .run(state, message.id).changes
       if (changed) {
+        addOutboxReceipt(db, message.id, receipt)
         this.runtime.store.record(message.plan_id, null, event, {
           outboxID: message.id,
           messageID: message.message_id,
@@ -248,17 +243,7 @@ export class OutcomeDelivery {
 
   /** Rows a queued native notice already summarizes, itself included. */
   private summarized(row: OutboxRow) {
-    const ids = new Set([row.id])
-    try {
-      const history = (
-        JSON.parse(row.receipt ?? "{}") as { history?: Array<Record<string, unknown>> }
-      ).history
-      for (const entry of history ?? [])
-        if (Array.isArray(entry.coalescedOutboxIDs))
-          for (const id of entry.coalescedOutboxIDs) if (typeof id === "string") ids.add(id)
-    } catch {
-      // A receipt that cannot be read summarizes only its own row.
-    }
+    const ids = new Set([row.id, ...this.runtime.store.coalescedOutboxIDs(row.id)])
     return [...ids].flatMap((id) => this.runtime.store.outboxRowByID(id) ?? [])
   }
 
@@ -499,7 +484,7 @@ export class OutcomeDelivery {
     if (this.runtime.store.architectContactPaused()) return false
     let retry = false
     const groups = new Map<string, OutboxRow[]>()
-    for (const message of this.runtime.store.outboxForDelivery(this.runtime.directory)) {
+    for (const message of this.runtime.store.pendingOutbox(this.runtime.directory)) {
       const group = groups.get(message.plan_id) ?? []
       group.push(message)
       groups.set(message.plan_id, group)

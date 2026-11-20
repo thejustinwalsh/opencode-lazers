@@ -1205,7 +1205,9 @@ export class TaskRuntime {
           closeoutDelivered = true
         }
         await this.reconcilePlan(candidate.id, fence, "step", async () => {
-          let plan: PlanRow = candidate
+          // The body is read only for the plan being stepped, never for the whole candidate list.
+          let plan = this.store.plan(candidate.id)
+          if (!plan) return
           if (plan.state === "draft") {
             // Only an explicit draft waits. Every other draft is admitted: the request is the authorization.
             if (explicitDraft(plan)) return
@@ -1257,10 +1259,10 @@ export class TaskRuntime {
           await this.recoveryBundles.reconcile(fence)
         } catch (error) {
           if (errorText(error).includes("Stale scheduler fence")) throw error
-          const anchor = this.store.plans()[0]
-          if (anchor)
+          const anchorID = this.store.anchorPlanID()
+          if (anchorID)
             this.store.fenced(this.owner, fence, () =>
-              this.store.recordOnce(anchor.id, null, "RECOVERY_BUNDLE_FAILED", {
+              this.store.recordOnce(anchorID, null, "RECOVERY_BUNDLE_FAILED", {
                 error: errorText(error).slice(0, 300),
               }),
             )

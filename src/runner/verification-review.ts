@@ -273,8 +273,7 @@ export class VerificationReview {
       classified: classifyChanges(changes, model),
       owners: this.scopeOwners(plan, attempt.task_id),
       amendmentReasons: this.store
-        .activity(plan.id, attempt.task_id)
-        .filter((event) => event.event === "SCOPE_AMENDED")
+        .activityEvents(plan.id, attempt.task_id, { events: ["SCOPE_AMENDED"] })
         .map((event) => String(JSON.parse(event.payload).reason ?? "")),
       warnings: await sizeWarnings(attempt.workspace, base, artifact.commit, changes),
     })

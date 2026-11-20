@@ -491,5 +491,5 @@ test("the runner schema generation runs the retained retirement when an old data
         )
         .get(),
     ),
-  ).toEqual({ generation: 13 })
+  ).toEqual({ generation: 14 })
 })

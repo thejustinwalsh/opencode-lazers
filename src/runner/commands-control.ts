@@ -139,13 +139,10 @@ export class CommandsControl {
       )
     if (reopenAccepted) this.assertTakeoverReopenable(plan, attempt, ctx.obs)
     const submission =
-      this.store
-        .activity(plan.id, attempt.task_id)
-        .filter(
-          (event) =>
-            event.event === "TAKEOVER_SUBMITTED" &&
-            this.parseTransitionPayload<{ attemptID?: unknown }>(event)?.attemptID === attempt.id,
-        ).length + 1
+      this.store.activityCount(plan.id, attempt.task_id, {
+        events: ["TAKEOVER_SUBMITTED"],
+        payload: { attemptID: attempt.id },
+      }) + 1
     const takeoverID = (JSON.parse(attempt.policy) as { takeover: { takeoverID: string } }).takeover
       .takeoverID
     if (reopenAccepted) {

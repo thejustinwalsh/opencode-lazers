@@ -11,6 +11,7 @@ import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import { runbook } from "../guidance/index.ts"
 import { noticeMarker } from "./notice-marker.ts"
+import { addOutboxReceipt } from "./store.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -281,6 +282,13 @@ const PLAN_STATE_WORD: Readonly<Record<string, string>> = {
 }
 
 /** Plan states whose tasks can still be recovered. Cancelled and integrated work is excluded. */
+const STUCK_PLAN_STATES = [
+  "blocked",
+  "failed",
+  "accepted",
+  "cleanup-blocked",
+  "cancelling",
+] as const
 const OPEN_PLAN_STATES = new Set([
   "draft",
   "running",
@@ -365,27 +373,29 @@ export class RecoveryBundles {
     }
   }
 
+  /**
+   * Whether every verification recorded for this artifact passed, null when none was recorded.
+   * Folded in SQL so no evidence body reaches JavaScript.
+   */
   private checksPassed(planID: string, taskID: string, artifact: string): boolean | null {
-    const rows = this.deps.store.read((db) =>
+    const row = this.deps.store.read((db) =>
       db
-        .query<{ body: string }, [string, string]>(
-          "SELECT body FROM runner_evidence WHERE plan_id=? AND task_id=? AND kind='verification'",
+        .query<{ total: number; passed: number }, [string, string, string]>(
+          `WITH v AS (
+             SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.artifact') END AS artifact,
+                    CASE WHEN json_valid(body) AND json_type(body,'$.artifact')='text' THEN
+                      json_type(body,'$.exitCode')||':'||json_extract(body,'$.exitCode') END AS exit_code,
+                    CASE WHEN json_valid(body) THEN json_type(body,'$.timedOut') END AS timed_out
+             FROM runner_evidence WHERE plan_id=? AND task_id=? AND kind='verification'
+           )
+           SELECT count(*) AS total,
+                  coalesce(sum(CASE WHEN exit_code IN ('integer:0','real:0.0')
+                    AND coalesce(timed_out,'')<>'true' THEN 1 ELSE 0 END),0) AS passed
+           FROM v WHERE artifact=?`,
         )
-        .all(planID, taskID),
+        .get(planID, taskID, artifact),
     )
-    const results = rows.flatMap((row) => {
-      try {
-        const body = JSON.parse(row.body) as {
-          artifact?: unknown
-          exitCode?: unknown
-          timedOut?: unknown
-        }
-        return body.artifact === artifact ? [body.exitCode === 0 && body.timedOut !== true] : []
-      } catch {
-        return []
-      }
-    })
-    return results.length ? results.every(Boolean) : null
+    return row && row.total ? row.total === row.passed : null
   }
 
   private async worktree(attempt: AttemptRow | undefined, landing: () => Promise<string | null>) {
@@ -506,13 +516,13 @@ export class RecoveryBundles {
     let landing: Promise<string | null> | undefined
     const head = () => (landing ??= this.git(directory, ["rev-parse", "HEAD"]).catch(() => null))
     const items: RecoveryItem[] = [...(await this.concernItems(head))]
-    for (const plan of store.plans()) {
-      const stuck = ["blocked", "failed", "accepted", "cleanup-blocked", "cancelling"].includes(
-        plan.state,
-      )
-      if (!stuck && !OPEN_PLAN_STATES.has(plan.state)) continue
-      const idle = this.idleSince(plan.id)
+    const heads = store.planHeads([...new Set([...STUCK_PLAN_STATES, ...OPEN_PLAN_STATES])])
+    for (const entry of heads) {
+      const idle = this.idleSince(entry.id)
       if (idle < RECOVERY_STALE_MS) continue
+      // The body is loaded only for a plan that is stale enough to be an item.
+      const plan = store.plan(entry.id)
+      if (!plan) continue
       const nodes = store.nodes(plan.id)
       const attempts = store.attempts(plan.id)
       const latest = (taskID: string) => attempts.filter((a) => a.task_id === taskID).at(-1)
@@ -803,15 +813,18 @@ export class RecoveryBundles {
         if ((taken?.generation ?? 0) >= generation) return undefined
         if (replaces) {
           const current = store.outboxRowByID(replaces)
-          if (current?.state === "pending")
-            db.query(
-              "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),receipt=? WHERE id=? AND state='pending'",
-            ).run(
-              JSON.stringify({
-                history: [{ kind: "superseded-by-recovery-bundle", byOutboxID: id }],
-              }),
-              replaces,
-            )
+          if (
+            current?.state === "pending" &&
+            db
+              .query(
+                "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded') WHERE id=? AND state='pending'",
+              )
+              .run(replaces).changes
+          )
+            addOutboxReceipt(db, replaces, {
+              kind: "superseded-by-recovery-bundle",
+              byOutboxID: id,
+            })
         }
         const inserted = db
           .query(

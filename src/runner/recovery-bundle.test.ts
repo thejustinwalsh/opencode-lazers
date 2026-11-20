@@ -19,6 +19,7 @@ import {
   type RecoveryFacts,
   type RecoveryReuse,
 } from "./recovery-bundle.ts"
+import { meterReads } from "./read-meter.fixture.ts"
 import { RunnerStore } from "./store.ts"
 import { RecoveryDetector } from "../recovery/detector.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
@@ -864,4 +865,96 @@ test("93bb4046-1: every item of a long backlog is identified in the notice", () 
     }),
   )
   for (const entry of items) expect(text).toContain(entry.planID)
+})
+
+function seedVerification(
+  f: ReturnType<typeof fixture>,
+  planID: string,
+  taskID: string,
+  body: string,
+) {
+  f.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,NULL,NULL,'verification',?,?,?)",
+      )
+      .run(crypto.randomUUID(), planID, taskID, f.base, body, Date.now()),
+  )
+}
+
+test("checks passed is folded from the recorded verifications of the artifact", async () => {
+  const f = fixture()
+  const failedNode = { state: "running", node: "failed", nodeReason: "Task exited 1" }
+  const passing = f.plan(failedNode)
+  const failing = f.plan(failedNode)
+  const timedOut = f.plan(failedNode)
+  const unrelated = f.plan(failedNode)
+  const none = f.plan(failedNode)
+  const garbage = f.plan(failedNode)
+  for (const { planID } of [passing, failing, timedOut, unrelated, none, garbage])
+    f.store.atomic((db) =>
+      db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=?").run(f.base, planID),
+    )
+  const ok = JSON.stringify({ artifact: f.base, exitCode: 0, timedOut: false })
+  seedVerification(f, passing.planID, passing.taskID, ok)
+  seedVerification(f, passing.planID, passing.taskID, ok)
+  seedVerification(f, failing.planID, failing.taskID, ok)
+  seedVerification(
+    f,
+    failing.planID,
+    failing.taskID,
+    JSON.stringify({ artifact: f.base, exitCode: 1 }),
+  )
+  seedVerification(
+    f,
+    timedOut.planID,
+    timedOut.taskID,
+    JSON.stringify({ artifact: f.base, exitCode: 0, timedOut: true }),
+  )
+  seedVerification(
+    f,
+    unrelated.planID,
+    unrelated.taskID,
+    JSON.stringify({ artifact: "other", exitCode: 1 }),
+  )
+  seedVerification(f, garbage.planID, garbage.taskID, "not json")
+  const items = await collect(f)
+  const checks = (planID: string) =>
+    items.find((item) => item.planID === planID && item.taskID)?.reuse.checksPassed
+  expect(checks(passing.planID)).toBe(true)
+  expect(checks(failing.planID)).toBe(false)
+  expect(checks(timedOut.planID)).toBe(false)
+  expect(checks(unrelated.planID)).toBeNull()
+  expect(checks(none.planID)).toBeNull()
+  expect(checks(garbage.planID)).toBeNull()
+})
+
+test("a collect tick reads no plan body for fresh plans and no evidence body at all", async () => {
+  const f = fixture()
+  const stale = f.plan({ state: "running", node: "failed", nodeReason: "Task exited 1" })
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=?").run(f.base, stale.planID)
+  })
+  seedVerification(
+    f,
+    stale.planID,
+    stale.taskID,
+    JSON.stringify({ artifact: f.base, exitCode: 0, log: "x".repeat(200_000) }),
+  )
+  for (let index = 0; index < 20; index++) {
+    const fresh = f.plan({ state: "blocked", reason: "Dispatch failed" })
+    f.touch(fresh.planID)
+    f.store.atomic((db) =>
+      db
+        .query("UPDATE runner_plans SET body=json_set(body,'$.padding',?) WHERE id=?")
+        .run("p".repeat(50_000), fresh.planID),
+    )
+  }
+  const meter = meterReads(f.store)
+  const items = await collect(f)
+  meter.stop()
+  expect(items.some((item) => item.planID === stale.planID)).toBe(true)
+  // Stale plans load their own bodies; the twenty fresh padded bodies (1 MB) are never selected.
+  expect(meter.of(/runner_plans/).bytes).toBeLessThan(60_000)
+  expect(meter.of(/runner_evidence/).bytes).toBeLessThan(200)
 })

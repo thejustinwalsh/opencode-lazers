@@ -687,10 +687,11 @@ test("whole-plan cancellation interrupts busy siblings while retaining uncertain
       (entry) => entry.metadata.attemptID === checked!.id,
     )!
     await activity.settled
-    expect(activity.result).toMatchObject({
-      exitCode: 0,
-      timedOut: false,
-      processCleanup: { state: "uncertain" },
+    // The activity keeps the settlement fact, not the receipt.
+    expect(activity.summary).toEqual({
+      settlementProblem: expect.stringContaining(
+        "Command exited 0 with timedOut=false; subprocess cleanup remains uncertain",
+      ),
     })
     const interrupted: string[] = []
     const interrupt = f.host.interrupt
