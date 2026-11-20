@@ -299,7 +299,7 @@ export type ProfileChange = {
 const fixText = (entry: ProjectProfile["fix"][number]) => entry.command
 const fixFiles = (entry: ProjectProfile["fix"][number]) => (entry.files ?? []).join(",")
 
-/** What confirming `proposed` would change against the running profile (none: all added). */
+/** What a new profile changes against the active one (none: everything is added). */
 export function profileDiff(
   active: ProjectProfile | undefined,
   proposed: ProjectProfile,

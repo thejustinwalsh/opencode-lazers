@@ -49,7 +49,7 @@ const ProfileChangeView = z.strictObject({
 /** `profile` is the stored profile JSON, the one document `ProjectProfileSchema` validates. */
 const RevisionView = z.strictObject({
   revision: z.int(),
-  state: z.enum(["proposed", "confirmed", "discarded"]),
+  state: z.enum(["active", "superseded"]),
   profile: z.unknown(),
   author: z.strictObject({
     kind: z.enum(["architect", "owner"]),
@@ -57,7 +57,8 @@ const RevisionView = z.strictObject({
   }),
   reason: z.string(),
   createdAt: z.number(),
-  decidedAt: z.number().optional(),
+  /** When a later revision superseded this one. */
+  supersededAt: z.number().optional(),
   proofs: z.array(ProofView),
   mapPreview: MapPreviewView.optional(),
   /** Names in `profile.env` that look like credentials. */
@@ -66,8 +67,9 @@ const RevisionView = z.strictObject({
 const ProfileView = z.strictObject({
   key: z.string(),
   active: RevisionView.optional(),
-  pending: RevisionView.extend({ changes: z.array(ProfileChangeView) }).optional(),
-  /** A stored repository-map source filter of one of its checkouts, kept until a profile is confirmed. */
+  /** Earlier revisions, newest first, so a change can be seen and set again. */
+  history: z.array(RevisionView),
+  /** A stored repository-map source filter of one of its checkouts, kept until a profile is active. */
   legacySource: z
     .strictObject({ include: z.array(z.string()), exclude: z.array(z.string()) })
     .optional(),
@@ -85,11 +87,10 @@ const Project = z.strictObject({
   /** Present only while Architect contact is paused for the project (read-only here). */
   architectContact: z.strictObject({ reason: z.string() }).nullable(),
   settings: ProjectSettingsView,
-  /** `pending` while a proposal waits for the owner; `revision` is the active one, if any. */
+  /** `revision` is the active profile revision, if any. */
   profile: z.strictObject({
-    state: z.enum(["none", "pending", "active"]),
+    state: z.enum(["none", "active"]),
     revision: z.int().optional(),
-    pendingRevision: z.int().optional(),
   }),
 })
 const Listing = z.strictObject({
@@ -104,7 +105,6 @@ const Refusal = z.enum([
   "PROJECT_MISSING",
   "SETTING_INVALID",
   "PROFILE_INVALID",
-  "PROFILE_REVISION_NOT_PENDING",
   "PROJECT_NOT_LOADED",
 ])
 const Outcome = z.discriminatedUnion("ok", [
@@ -114,13 +114,7 @@ const Outcome = z.discriminatedUnion("ok", [
 
 const NeedsYouItem = z.strictObject({
   project: ProjectRef,
-  kind: z.enum([
-    "owner-hold",
-    "recovery-bundle",
-    "architect-question",
-    "project-setup",
-    "profile-confirmation",
-  ]),
+  kind: z.enum(["owner-hold", "recovery-bundle", "architect-question", "project-setup"]),
   id: z.string().min(1),
   title: z.string(),
   reference: z.string().optional(),
@@ -137,7 +131,7 @@ const NeedsYouPage = z.strictObject({
   nextCursor: z.string().nullable(),
 })
 
-/** A proposal that was proved and stored, or a refusal. */
+/** A profile that was proved and made active, or a refusal. */
 const ProfileOutcome = z.union([
   z.strictObject({
     ok: z.literal(true),
@@ -155,9 +149,8 @@ const SetupStatus = z.union([
     ok: z.literal(true),
     key: z.string(),
     code: z.string(),
-    state: z.enum(["none", "pending", "active"]),
+    state: z.enum(["none", "active"]),
     dismissed: z.boolean(),
-    pendingRevision: z.int().optional(),
   }),
   z.strictObject({ ok: z.literal(false), refusal: Refusal, message: z.string() }),
 ])
@@ -211,9 +204,9 @@ export const Projects = Rpc.define({
     profile: { input: z.strictObject({ key: z.string().min(1) }), output: ProfileView },
     /**
      * The owner's edit: validates the profile JSON, proves each command once in a native worktree
-     * (this can take minutes) and stores the result as a pending revision. Confirm it to use it.
+     * (this can take minutes) and saves the result as the new active revision at once.
      */
-    proposeProfile: {
+    saveProfile: {
       input: z.strictObject({
         key: z.string().min(1),
         profile: z.unknown(),
@@ -221,14 +214,6 @@ export const Projects = Rpc.define({
         proofTargets: z.record(z.string(), z.array(z.string())).optional(),
       }),
       output: ProfileOutcome,
-    },
-    confirmProfile: {
-      input: z.strictObject({ key: z.string().min(1), revision: z.int().min(1) }),
-      output: Outcome,
-    },
-    discardProfile: {
-      input: z.strictObject({ key: z.string().min(1), revision: z.int().min(1) }),
-      output: Outcome,
     },
     /** The profile state of the calling session's own project, for the setup notice. */
     setupStatus: {

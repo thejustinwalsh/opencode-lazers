@@ -69,7 +69,7 @@ async function confirmed(root: string, profile: ProjectProfile): Promise<ActiveP
     revision: 1,
     projectKey: "k",
     profile,
-    confirmedAt: 1,
+    activatedAt: 1,
     proofs: new Map(proof.proofs.map((entry) => [entry.key, entry])),
   }
 }
@@ -267,7 +267,7 @@ test("Bun: the hardened install argv is today's and the profile's format check p
     revision: 1,
     projectKey: "k",
     profile,
-    confirmedAt: 1,
+    activatedAt: 1,
     proofs: new Map(),
   }
   // The recorded argv is the proof of today's install; running it needs a real lockfile.

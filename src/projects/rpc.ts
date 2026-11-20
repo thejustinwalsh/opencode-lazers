@@ -30,18 +30,15 @@ import {
   setGlobalSetting,
   setProjectSetting,
 } from "./settings.ts"
-import { dropLegacySources, repoMapSource } from "../context/repo-map-store.ts"
+import { repoMapSource } from "../context/repo-map-store.ts"
 import { credentialLikeEnv, parseProfile, profileDiff } from "./profile.ts"
 import { proveProfile } from "./profile-proof.ts"
 import type { ProofWorkspace } from "./profile-proof.ts"
 import {
   activeProfileForKey,
-  confirmRevision,
-  discardRevision,
-  pendingRevision,
+  activateRevision,
   ProfileStoreError,
   profileRevisions,
-  proposeRevision,
 } from "./profile-store.ts"
 import type { ProfileRevisionRow } from "./profile-store.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
@@ -77,11 +74,9 @@ function architectContactReason(repository: Pick<TaskRepository, "read">, paths:
 
 function profileState(repository: Controls, key: string) {
   const active = activeProfileForKey(repository, key)
-  const pending = pendingRevision(repository, key)
   return {
-    state: pending ? ("pending" as const) : active ? ("active" as const) : ("none" as const),
+    state: active ? ("active" as const) : ("none" as const),
     ...(active ? { revision: active.revision } : {}),
-    ...(pending ? { pendingRevision: pending.revision } : {}),
   }
 }
 
@@ -95,7 +90,9 @@ export const revisionView = (row: ProfileRevisionRow): ProfileRevisionView => ({
       : { kind: "owner" },
   reason: row.reason,
   createdAt: row.createdAt,
-  ...(row.decidedAt === undefined ? {} : { decidedAt: row.decidedAt }),
+  ...(row.state === "superseded" && row.decidedAt !== undefined
+    ? { supersededAt: row.decidedAt }
+    : {}),
   proofs: row.proofs,
   ...(row.mapPreview ? { mapPreview: row.mapPreview } : {}),
   credentialLikeEnv: row.profile.env.filter(credentialLikeEnv),
@@ -153,7 +150,6 @@ export function profileViewOf(repository: Controls, key: string): ProfileView {
   const revisions = profileRevisions(repository, key)
   const active = activeProfileForKey(repository, key)
   const activeRow = active ? revisions.find((row) => row.id === active.revisionID) : undefined
-  const pendingRow = pendingRevision(repository, key)
   const legacy = projects(repository)
     .find((project) => project.key === key)
     ?.paths.map((path) => repoMapSource(repository, path))
@@ -161,14 +157,7 @@ export function profileViewOf(repository: Controls, key: string): ProfileView {
   return {
     key,
     ...(activeRow ? { active: revisionView(activeRow) } : {}),
-    ...(pendingRow
-      ? {
-          pending: {
-            ...revisionView(pendingRow),
-            changes: profileDiff(activeRow?.profile, pendingRow.profile),
-          },
-        }
-      : {}),
+    history: revisions.filter((row) => row.state === "superseded").map(revisionView),
     ...(legacy ? { legacySource: { include: legacy.include, exclude: legacy.exclude } } : {}),
     setupDismissedAt: projectSettings(repository, key).setupDismissedAt,
   }
@@ -206,36 +195,14 @@ export function projectsOperations(
       }
     return { key, code: projectForDirectory(repository, repository.projectDirectory)?.code ?? "" }
   }
-  const proposalRefusal = (message: string): ProfileOutcomeView => ({
+  const saveRefusal = (message: string): ProfileOutcomeView => ({
     ok: false,
     refusal: "PROJECT_NOT_LOADED",
     message,
   })
-  const decide = (
-    key: string,
-    revision: number,
-    act: (
-      repo: TaskRepository,
-      input: { projectKey: string; revision: number; by: string },
-    ) => ProfileRevisionRow,
-  ): ProjectsOutcome => {
-    if (!projectExists(repository, key))
-      return refuse("PROJECT_MISSING", "That project is not registered.")
-    try {
-      act(repository, { projectKey: key, revision, by: "owner" })
-      return OK
-    } catch (error) {
-      if (error instanceof ProfileStoreError)
-        return refuse(
-          error.code === "PROFILE_INVALID" ? "PROFILE_INVALID" : "PROFILE_REVISION_NOT_PENDING",
-          error.message,
-        )
-      throw error
-    }
-  }
   return {
     profile: (key: string) => profileViewOf(repository, key),
-    async proposeProfile(input: {
+    async saveProfile(input: {
       key: string
       profile: unknown
       reason: string
@@ -244,11 +211,11 @@ export function projectsOperations(
       if (!projectExists(repository, input.key))
         return { ok: false, refusal: "PROJECT_MISSING", message: "That project is not registered." }
       if (projectKeyOfDirectory(repository, repository.projectDirectory) !== input.key)
-        return proposalRefusal(
+        return saveRefusal(
           "Proving a profile needs this project's own checkout; open the project to set it up.",
         )
       if (!options.proofWorkspace || !options.dataDirectory)
-        return proposalRefusal("This location cannot create a proof worktree.")
+        return saveRefusal("This location cannot create a proof worktree.")
       const parsed = parseProfile(input.profile)
       if (!parsed.ok) {
         const [first] = parsed.issues
@@ -266,7 +233,8 @@ export function projectsOperations(
         workspace: options.proofWorkspace,
         repository,
       })
-      const row = proposeRevision(repository, {
+      const before = activeProfileForKey(repository, input.key)?.profile
+      const row = activateRevision(repository, {
         projectKey: input.key,
         profile: parsed.profile,
         author: { kind: "owner" },
@@ -279,7 +247,7 @@ export function projectsOperations(
         revision: row.revision,
         proofs: row.proofs,
         mapPreview: proof.mapPreview,
-        changes: profileDiff(activeProfileForKey(repository, input.key)?.profile, parsed.profile),
+        changes: profileDiff(before, parsed.profile),
       }
     },
     async setupStatus(sessionID: string): Promise<SetupStatusView> {
@@ -292,7 +260,6 @@ export function projectsOperations(
         code: project.code,
         state: state.state,
         dismissed: projectSettings(repository, project.key).setupDismissedAt !== null,
-        ...(state.pendingRevision === undefined ? {} : { pendingRevision: state.pendingRevision }),
       }
     },
     async startSetup(sessionID: string): Promise<SetupStartedView> {
@@ -333,19 +300,6 @@ export function projectsOperations(
       setProjectSetting(repository, key, "setupDismissedAt", undefined)
       return OK
     },
-    // Confirming also drops the project's legacy source filters, in the same transaction.
-    confirmProfile: (key: string, revision: number) =>
-      decide(key, revision, (repo, input) =>
-        confirmRevision(repo, {
-          ...input,
-          onConfirmed: (db) =>
-            dropLegacySources(
-              db,
-              projects(repo).find((project) => project.key === key)?.paths ?? [],
-            ),
-        }),
-      ),
-    discardProfile: (key: string, revision: number) => decide(key, revision, discardRevision),
     list: () => listProjects(repository, options.loaded, options.defaults),
     setCode(key: string, code: string): ProjectsOutcome {
       if (!projectExists(repository, key))
@@ -429,15 +383,11 @@ export function registerProjects(
     startSetup: (input) => Effect.promise(() => operations.startSetup(input.sessionID)),
     dismissSetup: (input) => Effect.sync(() => operations.dismissSetup(input.key)),
     resumeSetupNotice: (input) => Effect.sync(() => operations.resumeSetupNotice(input.key)),
-    proposeProfile: (input) =>
+    saveProfile: (input) =>
       Effect.tryPromise({
-        try: () => operations.proposeProfile(input),
+        try: () => operations.saveProfile(input),
         catch: (error) => (error instanceof Error ? error : new Error(String(error))),
       }).pipe(Effect.orDie),
-    confirmProfile: (input) =>
-      Effect.sync(() => operations.confirmProfile(input.key, input.revision)),
-    discardProfile: (input) =>
-      Effect.sync(() => operations.discardProfile(input.key, input.revision)),
     setCode: (input) => Effect.sync(() => operations.setCode(input.key, input.code)),
     setPause: (input) =>
       Effect.sync(() => operations.setPause(input.scope, input.paused, input.reason ?? "")),

@@ -106,11 +106,11 @@ const pointerInFlight = new Map<string, Promise<boolean>>()
 const pointerInstalled = new Set<string>()
 
 const SETUP_POINTER =
-  "This project has no LAZERS profile, so the runtime uses the commands you write in tasks.\n`lz-project-profile` (mode `guide`) explains how to propose one."
+  "This project has no LAZERS profile, so the runtime uses the commands you write in tasks.\n`lz-project-profile` (mode `guide`) explains how to set one up."
 
 /**
  * Installs a two-line pointer to project setup on an Architect session of a project with no
- * confirmed profile, whose owner has not dismissed the notice. Setup sessions already carry the
+ * active profile, whose owner has not dismissed the notice. Setup sessions already carry the
  * runbook and get nothing. The pointer is not the runbook: a long-lived project would otherwise
  * pay for it in every session.
  */

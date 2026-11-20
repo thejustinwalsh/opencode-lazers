@@ -6,14 +6,11 @@ import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { TaskRepository } from "../storage.ts"
 import { parseProfile, type ProjectProfile } from "./profile.ts"
 import {
+  activateRevision,
   activeProfile,
   activeProfileForKey,
-  confirmRevision,
-  discardRevision,
-  pendingRevision,
   profileRevisionByID,
   profileRevisions,
-  proposeRevision,
   ProfileStoreError,
   type ProofRecord,
 } from "./profile-store.ts"
@@ -65,8 +62,8 @@ const proof = (key: string, outcome: ProofRecord["outcome"] = "proven"): ProofRe
   ranAt: 1,
 })
 const author = { kind: "architect", sessionID: "s1", agent: "architect" } as const
-const propose = (repository: TaskRepository, key: string, command: string) =>
-  proposeRevision(repository, {
+const activate = (repository: TaskRepository, key: string, command: string) =>
+  activateRevision(repository, {
     projectKey: key,
     profile: make(command),
     author,
@@ -74,95 +71,48 @@ const propose = (repository: TaskRepository, key: string, command: string) =>
     proofs: [proof("verify:tests")],
   })
 
-test("a proposal is stored with its proofs and is never active", async () => {
+test("a revision is active and readable the moment it is written, with its proofs", async () => {
   const { repository, directory, key } = await setup()
-  const row = propose(repository, key, "cargo test")
-  expect(row).toMatchObject({ revision: 1, state: "proposed", projectKey: key })
-  expect(row.proofs.map((p) => p.key)).toEqual(["verify:tests"])
   expect(activeProfile(repository, directory)).toBeUndefined()
-  expect(activeProfileForKey(repository, key)).toBeUndefined()
-  expect(pendingRevision(repository, key)?.revision).toBe(1)
-})
-
-test("confirming makes the revision active, with its proofs", async () => {
-  const { repository, directory, key } = await setup()
-  propose(repository, key, "cargo test")
-  const confirmed = confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
-  expect(confirmed).toMatchObject({ state: "confirmed", decidedBy: "owner" })
+  const row = activate(repository, key, "cargo test")
+  expect(row).toMatchObject({ revision: 1, state: "active", projectKey: key })
   const active = activeProfile(repository, directory)
-  expect(active).toMatchObject({ revision: 1, projectKey: key })
+  expect(active).toMatchObject({ revision: 1, projectKey: key, revisionID: row.id })
   expect(active?.profile.verify[0]?.command).toBe("cargo test")
   expect(active?.proofs.get("verify:tests")?.outcome).toBe("proven")
-  expect(active?.confirmedAt).toBe(confirmed.decidedAt!)
+  expect(activeProfileForKey(repository, key)?.revision).toBe(1)
 })
 
-test("a pending edit never replaces the running revision; a new proposal replaces the pending one", async () => {
+test("a new revision supersedes the active one; the earlier one stays readable by id", async () => {
   const { repository, directory, key } = await setup()
-  propose(repository, key, "cargo test")
-  confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
-  const second = propose(repository, key, "cargo test --locked")
+  const first = activate(repository, key, "cargo test")
+  const second = activate(repository, key, "cargo test --locked")
   expect(second.revision).toBe(2)
-  expect(activeProfile(repository, directory)?.revision).toBe(1)
-  const third = propose(repository, key, "cargo test --all")
-  expect(third.revision).toBe(3)
   const states = Object.fromEntries(
     profileRevisions(repository, key).map((r) => [r.revision, r.state]),
   )
-  expect(states).toEqual({ 1: "confirmed", 2: "discarded", 3: "proposed" })
-  expect(profileRevisions(repository, key).map((r) => r.revision)).toEqual([3, 2, 1])
-  expect(activeProfile(repository, directory)?.revision).toBe(1)
-})
-
-test("a later confirmation supersedes, and a pinned revision stays readable", async () => {
-  const { repository, directory, key } = await setup()
-  const first = propose(repository, key, "cargo test")
-  confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
-  propose(repository, key, "cargo test --locked")
-  const third = propose(repository, key, "cargo test --all")
-  confirmRevision(repository, { projectKey: key, revision: 3, by: "owner" })
-  expect(activeProfile(repository, directory)?.revision).toBe(3)
+  expect(states).toEqual({ 1: "superseded", 2: "active" })
+  expect(profileRevisions(repository, key).map((r) => r.revision)).toEqual([2, 1])
+  expect(activeProfile(repository, directory)?.revision).toBe(2)
+  // A run pinned to the first revision still reads it.
   expect(profileRevisionByID(repository, first.id)?.profile.verify[0]?.command).toBe("cargo test")
-  expect(profileRevisionByID(repository, third.id)?.revision).toBe(3)
-  expect(() => confirmRevision(repository, { projectKey: key, revision: 2, by: "owner" })).toThrow(
-    ProfileStoreError,
-  )
-  try {
-    confirmRevision(repository, { projectKey: key, revision: 2, by: "owner" })
-  } catch (error) {
-    expect((error as ProfileStoreError).code).toBe("PROFILE_REVISION_NOT_PENDING")
-  }
+  expect(profileRevisionByID(repository, second.id)?.revision).toBe(2)
+  expect(profileRevisionByID(repository, 9999)).toBeUndefined()
 })
 
-test("a discarded or proposed revision cannot be pinned; a missing one is reported", async () => {
+test("superseding changes only the state and decision columns", async () => {
   const { repository, key } = await setup()
-  const row = propose(repository, key, "cargo test")
-  expect(profileRevisionByID(repository, row.id)).toBeUndefined()
-  discardRevision(repository, { projectKey: key, revision: 1, by: "owner" })
-  expect(profileRevisionByID(repository, row.id)).toBeUndefined()
-  expect(() => confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })).toThrow(
-    /PROFILE_REVISION_NOT_PENDING|not pending/,
-  )
-  try {
-    confirmRevision(repository, { projectKey: key, revision: 9, by: "owner" })
-  } catch (error) {
-    expect((error as ProfileStoreError).code).toBe("PROFILE_REVISION_MISSING")
-  }
-  expect(pendingRevision(repository, key)).toBeUndefined()
-})
-
-test("confirming changes only state and decision columns", async () => {
-  const { repository, key } = await setup()
-  propose(repository, key, "cargo test")
+  activate(repository, key, "cargo test")
   const read = () =>
     repository.read((db) =>
       db
         .query<Record<string, unknown>, []>(
-          "SELECT payload,sha256,reason,created_at,author_kind,session_id,agent FROM lazers_profile_revisions",
+          "SELECT payload,sha256,reason,created_at,author_kind,session_id,agent FROM lazers_profile_revisions WHERE revision=1",
         )
         .get(),
     )
   const before = read()
-  confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
+  activate(repository, key, "cargo test --locked")
   expect(read()).toEqual(before)
   expect(before?.sha256).toMatch(/^[0-9a-f]{64}$/)
 })
@@ -170,7 +120,7 @@ test("confirming changes only state and decision columns", async () => {
 test("an invalid profile is refused on write; a corrupted stored payload reads as no profile", async () => {
   const { repository, directory, key } = await setup()
   expect(() =>
-    proposeRevision(repository, {
+    activateRevision(repository, {
       projectKey: key,
       profile: { verify: [] } as unknown as ProjectProfile,
       author,
@@ -178,8 +128,8 @@ test("an invalid profile is refused on write; a corrupted stored payload reads a
       proofs: [],
     }),
   ).toThrow(ProfileStoreError)
-  propose(repository, key, "cargo test")
-  confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
+  expect(profileRevisions(repository, key)).toEqual([])
+  activate(repository, key, "cargo test")
   expect(activeProfile(repository, directory)).toBeDefined()
   repository.atomic((db) => db.exec("UPDATE lazers_profile_revisions SET payload='{'"))
   expect(activeProfile(repository, directory)).toBeUndefined()
@@ -191,32 +141,79 @@ test("an unregistered directory has no profile", async () => {
   expect(activeProfile(repository, "/nowhere")).toBeUndefined()
 })
 
-test("a confirmation hook runs inside the confirming transaction", async () => {
-  const { repository, key } = await setup()
-  propose(repository, key, "cargo test")
-  let seen = ""
-  expect(() =>
-    confirmRevision(repository, {
-      projectKey: key,
-      revision: 1,
-      by: "owner",
-      onConfirmed: (_db, row) => {
-        seen = row.state
-        throw new Error("hook failed")
-      },
-    }),
-  ).toThrow("hook failed")
-  expect(seen).toBe("confirmed")
-  expect(activeProfileForKey(repository, key)).toBeUndefined()
-  expect(pendingRevision(repository, key)?.revision).toBe(1)
+test("activating drops the project's stored source filters in the same transaction", async () => {
+  const { repository, directory, key } = await setup()
+  repository.atomic((db) =>
+    db.query("INSERT INTO repo_map_sources VALUES(?,?,?,?)").run(directory, '["src/**"]', "[]", 1),
+  )
+  const rows = () =>
+    repository.read(
+      (db) => db.query("SELECT COUNT(*) AS n FROM repo_map_sources").get() as { n: number },
+    ).n
+  expect(rows()).toBe(1)
+  activate(repository, key, "cargo test")
+  expect(rows()).toBe(0)
 })
 
-test("the revision machine: only proposed has exits, and SQL transitions use it", () => {
-  expect(lifecycleTransition("profile", "proposed", "OWNER_CONFIRMED")).toBe("confirmed")
-  expect(lifecycleTransition("profile", "proposed", "OWNER_DISCARDED")).toBe("discarded")
-  expect(lifecycleTransition("profile", "proposed", "REPLACED")).toBe("discarded")
-  expect(() => lifecycleTransition("profile", "confirmed", "OWNER_DISCARDED")).toThrow()
-  expect(profileRevisionMachine.config.initial).toBe("proposed")
+test("the revision machine: active has an exit, superseded none, and SQL transitions use it", () => {
+  expect(lifecycleTransition("profile", "active", "SUPERSEDED")).toBe("superseded")
+  expect(() => lifecycleTransition("profile", "superseded", "SUPERSEDED")).toThrow()
+  expect(profileRevisionMachine.config.initial).toBe("active")
+})
+
+test("a database written before the confirmation step was removed is migrated: the newest proposal wins", async () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "lazers-profile-migrate-")))
+  cleanups.push(() => rmSync(parent, { recursive: true, force: true }))
+  const path = join(parent, "db.sqlite")
+  const directory = join(parent, "project")
+  mkdirSync(directory)
+  for (const args of [
+    ["init", "-q", "-b", "main"],
+    ["remote", "add", "origin", "git@h.com:a/m.git"],
+  ])
+    Bun.spawnSync(["git", "-C", directory, ...args])
+  let repository = new TaskRepository(path, directory)
+  const { key } = await registerProject(repository, { directory, opencodeProjectID: "p1" })
+  const payload = JSON.stringify(make("cargo test"))
+  // Put the profile tables back as the previous generation left them.
+  repository.atomic((db) => {
+    db.exec(`
+      DROP TABLE lazers_profile_revisions;
+      CREATE TABLE lazers_profile_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, project_key TEXT NOT NULL, revision INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('proposed','confirmed','discarded')),
+        payload TEXT NOT NULL, sha256 TEXT NOT NULL,
+        author_kind TEXT NOT NULL CHECK(author_kind IN ('architect','owner')),
+        session_id TEXT, agent TEXT, reason TEXT NOT NULL, map_preview TEXT,
+        created_at INTEGER NOT NULL, decided_at INTEGER, decided_by TEXT,
+        UNIQUE(project_key, revision));
+      UPDATE schema_modules SET generation=2 WHERE module='project-profile';
+    `)
+    const insert = db.query(
+      `INSERT INTO lazers_profile_revisions(project_key,revision,state,payload,sha256,author_kind,reason,created_at)
+       VALUES(?,?,?,?,?,'architect','old',?)`,
+    )
+    insert.run(key, 1, "confirmed", payload, "a", 1)
+    insert.run(key, 2, "discarded", payload, "b", 2)
+    insert.run(key, 3, "proposed", payload, "c", 3)
+    db.query("INSERT INTO repo_map_sources VALUES(?,?,?,?)").run(directory, '["src/**"]', "[]", 1)
+  })
+  repository.close()
+  resetProjectAliasCache()
+  repository = new TaskRepository(path, directory)
+  cleanups.push(() => repository.close())
+  const states = Object.fromEntries(
+    profileRevisions(repository, key).map((r) => [r.revision, r.state]),
+  )
+  expect(states).toEqual({ 1: "superseded", 2: "superseded", 3: "active" })
+  expect(activeProfile(repository, directory)?.revision).toBe(3)
+  expect(
+    repository.read(
+      (db) => db.query("SELECT COUNT(*) AS n FROM repo_map_sources").get() as { n: number },
+    ).n,
+  ).toBe(0)
+  // New revisions continue the numbering, and the migrated table accepts them.
+  expect(activate(repository, key, "cargo test --locked").revision).toBe(4)
 })
 
 test("the setup dismissal setting defaults to null and round-trips an epoch value", async () => {

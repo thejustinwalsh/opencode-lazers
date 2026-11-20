@@ -21,7 +21,7 @@ import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { fakeTools } from "../../test/fixtures/profile/toolchain.ts"
 import { registerProfileTools } from "./profile-tools.ts"
-import { profileRevisions } from "./profile-store.ts"
+import { activeProfile, profileRevisions } from "./profile-store.ts"
 
 type Registered = Parameters<ToolEditor["add"]>[0]
 const cleanups: (() => void)[] = []
@@ -125,16 +125,16 @@ test("an unregistered project is refused", async () => {
   expect(await f.invoke({})).toEqual({ refused: "PROJECT_NOT_REGISTERED" })
 })
 
-test("propose with an invalid profile is refused with its issues and stores nothing", async () => {
+test("set with an invalid profile is refused with its issues and stores nothing", async () => {
   const f = await setup()
-  const out = await f.invoke({ mode: "propose", profile: { ...good, verify: [] }, reason: "x" })
+  const out = await f.invoke({ mode: "set", profile: { ...good, verify: [] }, reason: "x" })
   expect(out.refused).toBe("PROFILE_INVALID")
   expect(out.issues[0].code).toBe("VERIFY_EMPTY")
   const key = (await f.invoke({})).projectKey
   expect(profileRevisions(f.repository, key)).toEqual([])
 })
 
-test("propose runs the commands, stores a failing one as unproven, and replaces the earlier proposal", async () => {
+test("a tool call makes the profile active and readable at once, and a failing command is recorded as failing", async () => {
   const f = await setup()
   const marker = join(f.parent, "marker")
   const tools = fakeTools({
@@ -144,27 +144,38 @@ test("propose runs the commands, stores a failing one as unproven, and replaces 
   cleanups.push(tools.cleanup)
   process.env.MARKER = marker
   process.env.PATH = `${tools.bin}:${process.env.PATH}`
-  const first = await f.invoke({ mode: "propose", profile: good, reason: "first" })
-  expect(first).toMatchObject({ revision: 1, state: "proposed" })
+  expect(activeProfile(f.repository, f.root)).toBeUndefined()
+  const first = await f.invoke({ mode: "set", profile: good, reason: "first" })
+  expect(first).toMatchObject({ revision: 1, state: "active" })
+  // Read straight away, with no step in between.
+  expect(activeProfile(f.repository, f.root)).toMatchObject({ revision: 1 })
   const proof = first.proofs.find((p: { key: string }) => p.key === "verify:tests")
   expect(proof).toMatchObject({ outcome: "failed", exitCode: 3, command: "cargo test" })
   expect(existsSync(marker)).toBe(true)
   expect(readFileSync(marker, "utf8").trim()).toBe("ran")
-  expect(first.next).toContain("Settings")
+  expect(first.next).toContain("active now")
+  expect(JSON.stringify(first)).not.toMatch(/propos|pending|not active|confirm/i)
   expect(first.guidance).toBe(runbook("project-setup"))
+  // The old mode name still works, and the next revision supersedes this one.
   const second = await f.invoke({ mode: "propose", profile: good, reason: "again" })
   expect(second.revision).toBe(2)
   expect(second.guidance).toContain("guidance was delivered earlier")
   const key = (await f.invoke({})).projectKey
   expect(
     Object.fromEntries(profileRevisions(f.repository, key).map((r) => [r.revision, r.state])),
-  ).toEqual({
-    1: "discarded",
-    2: "proposed",
-  })
+  ).toEqual({ 1: "superseded", 2: "active" })
+  expect(activeProfile(f.repository, f.root)?.revision).toBe(2)
 })
 
-test("no mode confirms a profile", async () => {
+test("show returns the active profile", async () => {
+  const f = await setup()
+  await f.invoke({ mode: "set", profile: { ...good, toolchains: [] }, reason: "x" })
+  const shown = await f.invoke({})
+  expect(shown.active).toMatchObject({ revision: 1, state: "active" })
+  expect(shown).not.toHaveProperty("pending")
+})
+
+test("no mode confirms a profile; there is nothing to confirm", async () => {
   const f = await setup()
   expect(() => (f.tool.input as z.ZodType).parse({ mode: "confirm" })).toThrow()
 })
