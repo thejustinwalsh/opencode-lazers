@@ -187,3 +187,96 @@ export async function latestMessages(
   })
   return [...page.data].reverse()
 }
+
+/**
+ * The assistant messages at the end of a session, oldest first: the steps of the last
+ * execution. Read newest page first and stop at the first message that is not an assistant's,
+ * so a reply costs its own pages, never the conversation.
+ */
+export async function trailingAssistants(
+  client: HostMessageClient,
+  sessionID: string,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<readonly Extract<HostMessage, { type: "assistant" }>[]> {
+  const newestFirst: Extract<HostMessage, { type: "assistant" }>[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  for (;;) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      order: "desc",
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const message of page.data) {
+      if (message.type !== "assistant") return newestFirst.reverse()
+      newestFirst.push(message)
+    }
+    const next = page.cursor.next
+    if (!next || seen.has(next)) return newestFirst.reverse()
+    seen.add(next)
+    cursor = next
+  }
+}
+
+/**
+ * Whether message `earlierID` (accepted by `isEarlier`) comes before message `laterID` in the
+ * session's order. Reads newest page first: the later message is normally at the tail, so the
+ * check costs the pages between the two, never the conversation. False when either is missing.
+ */
+export async function precedesInSession(
+  client: HostMessageClient,
+  sessionID: string,
+  earlier: (message: HostMessage) => boolean,
+  laterID: string,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<boolean> {
+  let seenLater = false
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  for (;;) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      order: "desc",
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const message of page.data) {
+      if (message.id === laterID) seenLater = true
+      else if (earlier(message)) return seenLater
+    }
+    const next = page.cursor.next
+    if (!next || seen.has(next)) return false
+    seen.add(next)
+    cursor = next
+  }
+}
+
+/**
+ * The first `limit` messages of a session, oldest first, read a page at a time. For a report
+ * that needs the transcript itself: the host serves each page on request, and no more than
+ * `limit` messages are ever held.
+ */
+export async function pagedMessages(
+  client: HostMessageClient,
+  sessionID: string,
+  limit: number,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<HostMessage[]> {
+  const messages: HostMessage[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  while (messages.length < limit) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      limit: Math.min(pageSize, limit - messages.length),
+      ...(cursor ? { cursor } : { order: "asc" as const }),
+    })
+    messages.push(...page.data)
+    const next = page.cursor.next
+    if (!next || seen.has(next)) break
+    seen.add(next)
+    cursor = next
+  }
+  return messages
+}

@@ -1,3 +1,4 @@
+import { trailingAssistants, type HostMessageClient } from "../core/host-messages.ts"
 import { Agent } from "@opencode/schema/agent"
 import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
@@ -78,7 +79,10 @@ export function planningModel(routes?: AgentRouteReader): ModelRef | undefined {
   return (routes?.(PLANNING_ROUTE_ID) ?? routes?.("lazers-implementor"))?.route
 }
 
-export function planningHost(ctx: Pick<Plugin.Context, "session">): PlanningHost {
+export function planningHost(
+  ctx: Pick<Plugin.Context, "session">,
+  messages: HostMessageClient,
+): PlanningHost {
   const session = ctx.session
   const read = (sessionID: string) =>
     Effect.runPromise(
@@ -140,15 +144,9 @@ export function planningHost(ctx: Pick<Plugin.Context, "session">): PlanningHost
       }
     },
     async reply(sessionID) {
-      const messages = await Effect.runPromise(
-        session.context({ sessionID: Session.ID.make(sessionID) }),
-      )
-      // The last execution's steps: every assistant message after the last user message.
-      let from = messages.length
-      while (from > 0 && messages[from - 1]!.type === "assistant") from--
-      const steps = messages
-        .slice(from)
-        .flatMap((message) => (message.type === "assistant" ? [message] : []))
+      // The last execution's steps: every assistant message after the last user message,
+      // read from the end of the conversation by page.
+      const steps = await trailingAssistants(messages, sessionID)
       const last = [...steps].reverse().find((message) => message.content?.some(isText))
       if (!last) return undefined
       return {

@@ -2,6 +2,27 @@ import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, DateTime } from "effect"
 import { nativeTrajectoryHost } from "./native.ts"
+import type { HostMessageClient } from "../core/host-messages.ts"
+
+/** The host's message list: pages of `pageSize` over `history`, every read pushed to `reads`. */
+function messageClient(
+  reads: string[],
+  options: { history?: unknown[]; fail?: Error; label?: string } = {},
+) {
+  return {
+    message: {
+      list: async (input: { sessionID: string; limit?: number; cursor?: string }) => {
+        reads.push(`${options.label ?? "messages"}:${input.sessionID}`)
+        if (options.fail) throw options.fail
+        const all = options.history ?? []
+        const limit = input.limit ?? 50
+        const start = input.cursor ? Number(input.cursor) : 0
+        const next = start + limit < all.length ? String(start + limit) : undefined
+        return { data: all.slice(start, start + limit), cursor: { ...(next ? { next } : {}) } }
+      },
+    },
+  } as unknown as HostMessageClient
+}
 
 const sessionRecord = (projectID = "project") => ({
   id: "ses-owned",
@@ -28,17 +49,14 @@ test("native adapter reads only the owned session context and projects public ti
             calls.push(`get:${input.sessionID}`)
             return sessionRecord()
           }),
-        context: (input: { sessionID: string }) =>
-          Effect.sync(() => {
-            calls.push(`context:${input.sessionID}`)
-            return []
-          }),
       },
     } as unknown as Plugin.Context,
     "project",
+    undefined,
+    messageClient(calls),
   )
   const result = await host.session("ses-owned")
-  expect(calls).toEqual(["get:ses-owned", "context:ses-owned"])
+  expect(calls).toEqual(["get:ses-owned", "messages:ses-owned"])
   expect(result?.projectID).toBe("project")
   expect(result?.model).toEqual({ providerID: "openai", id: "gpt-6-luna", variant: "max" })
   expect(result?.tokens).toEqual({
@@ -61,14 +79,11 @@ test("native adapter refuses a foreign project before reading its transcript", a
             calls.push("get")
             return sessionRecord("foreign-project")
           }),
-        context: () =>
-          Effect.sync(() => {
-            calls.push("context")
-            return []
-          }),
       },
     } as unknown as Plugin.Context,
     "project",
+    undefined,
+    messageClient(calls),
   )
   await expect(host.session("ses-owned")).rejects.toThrow("outside this project")
   expect(calls).toEqual(["get"])
@@ -83,17 +98,12 @@ test("a retained worker can be inspected after its recorded workspace changes pr
     metadata: { lazersAttemptID: attempt.id },
   }
   let currentWorkspace = true
-  let contextReads = 0
+  const reads: string[] = []
   let locationReads = 0
   const host = nativeTrajectoryHost(
     {
       session: {
         get: () => Effect.succeed(session),
-        context: () =>
-          Effect.sync(() => {
-            contextReads++
-            return []
-          }),
       },
     } as unknown as Plugin.Context,
     "project",
@@ -101,6 +111,7 @@ test("a retained worker can be inspected after its recorded workspace changes pr
       locationReads++
       return currentWorkspace && directory === attempt.workspace
     },
+    messageClient(reads),
   )
 
   await expect(host.session("ses-owned", { ...attempt, id: "different-attempt" })).rejects.toThrow(
@@ -112,19 +123,19 @@ test("a retained worker can be inspected after its recorded workspace changes pr
   expect(locationReads).toBe(0)
   currentWorkspace = false
   await expect(host.session("ses-owned", attempt)).rejects.toThrow("outside this project")
-  expect(contextReads).toBe(0)
+  expect(reads).toHaveLength(0)
 
   currentWorkspace = true
   expect(await host.status!("ses-owned", attempt)).toMatchObject({
     projectID: "project",
     messageStatus: "not-read",
   })
-  expect(contextReads).toBe(0)
+  expect(reads).toHaveLength(0)
   expect(await host.session("ses-owned", attempt)).toMatchObject({
     projectID: "project",
     messages: [],
   })
-  expect(contextReads).toBe(1)
+  expect(reads).toHaveLength(1)
 })
 
 test("lightweight native status reads current session facts without loading context", async () => {
@@ -137,14 +148,11 @@ test("lightweight native status reads current session facts without loading cont
             calls.push(`get:${sessionID}`)
             return sessionRecord()
           }),
-        context: ({ sessionID }: { sessionID: string }) =>
-          Effect.sync(() => {
-            calls.push(`context:${sessionID}`)
-            return []
-          }),
       },
     } as unknown as Plugin.Context,
     "project",
+    undefined,
+    messageClient(calls),
   )
   const status = await host.status!("ses-owned")
   expect(calls).toEqual(["get:ses-owned"])
@@ -164,13 +172,11 @@ test("lightweight status rejects a foreign session before returning live metadat
             calls.push("get")
             return sessionRecord("foreign-project")
           }),
-        context: () => {
-          calls.push("context")
-          return Effect.succeed([])
-        },
       },
     } as unknown as Plugin.Context,
     "project",
+    undefined,
+    messageClient(calls),
   )
   await expect(host.status!("ses-owned")).rejects.toThrow("outside this project")
   expect(calls).toEqual(["get"])
@@ -181,13 +187,29 @@ test("native context access failures remain explicit and redact credentials", as
     {
       session: {
         get: () => Effect.succeed(sessionRecord()),
-        context: () => Effect.fail(new Error("Authorization: Bearer native-secret-value")),
       },
     } as unknown as Plugin.Context,
     "project",
+    undefined,
+    messageClient([], { fail: new Error("Authorization: Bearer native-secret-value") }),
   )
   const result = await host.session("ses-owned")
   expect(result?.messageStatus).toBe("unavailable")
   expect(result?.messageError).toContain("[REDACTED]")
   expect(result?.messageError).not.toContain("native-secret-value")
+})
+
+test("a long transcript is paged in, bounded, and flagged one past the bound", async () => {
+  const reads: string[] = []
+  const history = Array.from({ length: 10_050 }, (_, index) => ({ id: `m${index}`, type: "user" }))
+  const host = nativeTrajectoryHost(
+    { session: { get: () => Effect.succeed(sessionRecord()) } } as unknown as Plugin.Context,
+    "project",
+    undefined,
+    messageClient(reads, { history }),
+  )
+  const result = await host.session("ses-owned")
+  // One past the 10,000 bound, so the report can say it is truncated; 50 per page.
+  expect(result?.messages).toHaveLength(10_001)
+  expect(reads).toHaveLength(Math.ceil(10_001 / 50))
 })

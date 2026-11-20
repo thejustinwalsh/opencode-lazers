@@ -15,7 +15,7 @@ import { PlanInput } from "../runner/schema.ts"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { InspectTrajectoryInput } from "./schema.ts"
 import { TrajectoryIdentityError } from "./native.ts"
-import type { TrajectoryHost, TrajectorySession } from "./native.ts"
+import { MAX_CONTEXT_MESSAGES, type TrajectoryHost, type TrajectorySession } from "./native.ts"
 import { privateTagOmission, privacyStats, safeError, safeText, safeValue } from "./privacy.ts"
 import type { PrivacyStats } from "./privacy.ts"
 import { projectProgressFact } from "../progress/projection.ts"
@@ -64,7 +64,6 @@ type PlanSnapshot = {
 }
 
 const ACTIVE_ATTEMPTS = new Set(["preparing", "running", "verifying"])
-const MAX_CONTEXT_MESSAGES = 10_000
 const modelIdentities = new WeakMap<
   object,
   {
@@ -1401,10 +1400,9 @@ function coverageView(
   return {
     sessionRead:
       options.includeMessages === false
-        ? "OpenCode session.get only; native session.context was not read"
-        : "OpenCode session.get followed by session.context",
-    transcript:
-      "Only messages returned by session.context; plugin context does not expose client.message.list",
+        ? "OpenCode session.get only; the native message list was not read"
+        : "OpenCode session.get followed by a paged message.list read",
+    transcript: "Only messages returned by the paged host message list, up to the transcript bound",
     availableSessionContexts: messageSessions,
     unavailableSessionContexts: messagesUnavailable,
     fullSessionHistory: "not guaranteed; use explicit warnings and do not infer omitted history",
@@ -1436,7 +1434,7 @@ function privacyView(stats: PrivacyStats) {
     warnings: [
       "Credential detection covers common formats and sensitive key names; arbitrary prose secrets may evade pattern detection.",
       "System instructions, reasoning, metadata, provider-native/replay data, attachment/file bodies, and raw response bodies are not exported.",
-      "Compaction summaries are omitted; the returned session.context may not contain the full history.",
+      "Compaction summaries are omitted; the paged transcript may not contain the full history.",
     ],
   }
 }
@@ -1665,7 +1663,7 @@ export function captureTrajectoryHistory(
   })
 }
 
-/** Reads current runner/session facts without invoking native session.context. */
+/** Reads current runner/session facts without reading the native message list. */
 export function inspectTrajectoryStatus(
   store: RunnerStore,
   host: TrajectoryHost,

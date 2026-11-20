@@ -1,9 +1,13 @@
+import { pagedMessages, type HostMessageClient } from "../core/host-messages.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { DateTime, Effect } from "effect"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { privacyStats, safeError } from "./privacy.ts"
+
+/** The transcript bound of one report; a longer history is read to one past it so it can be flagged. */
+export const MAX_CONTEXT_MESSAGES = 10_000
 
 export type UsageSnapshot = {
   input: number
@@ -51,7 +55,8 @@ export function nativeTrajectoryHost(
   ctx: Pick<Plugin.Context, "session">,
   projectID: string,
   /** Recorded attempt workspace belongs to this project; never boots the worktree's location. */
-  ownsRecordedWorkspace?: (directory: string) => boolean,
+  ownsRecordedWorkspace: ((directory: string) => boolean) | undefined,
+  hostMessages: HostMessageClient,
 ): TrajectoryHost {
   async function loadSession(id: string, includeContext: boolean, attempt?: OwnedAttempt) {
     const session = await Effect.runPromise(
@@ -80,7 +85,12 @@ export function nativeTrajectoryHost(
     let messageError: string | null = null
     if (includeContext) {
       try {
-        messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+        // A report, not a model prompt: the transcript is paged in, never read whole.
+        messages = (await pagedMessages(
+          hostMessages,
+          session.id,
+          MAX_CONTEXT_MESSAGES + 1,
+        )) as unknown as ReadonlyArray<SessionMessage.Info>
       } catch (error) {
         messageStatus = "unavailable"
         messageError = safeError(error, privacyStats())

@@ -23,10 +23,27 @@ function stub(overrides: Record<string, (input: never) => unknown> = {}) {
     create: wrap("create", overrides.create ?? (() => undefined)),
     get: wrap("get", overrides.get ?? (() => ({ time: { updated: DateTime.makeUnsafe(5) } }))),
     prompt: wrap("prompt", overrides.prompt ?? (() => undefined)),
-    context: wrap("context", overrides.context ?? (() => [])),
     interrupt: wrap("interrupt", overrides.interrupt ?? (() => undefined)),
   }
-  return { calls, host: planningHost({ session } as never) }
+  // The host's message list over the same array `context` serves, newest page first on request.
+  const listCalls: Array<{ order?: string; limit?: number; cursor?: string }> = []
+  const messages = {
+    message: {
+      list: async (input: { order?: string; limit?: number; cursor?: string }) => {
+        listCalls.push({ order: input.order, limit: input.limit, cursor: input.cursor })
+        const all = (overrides.context ?? (() => []))(input as never) as unknown[]
+        const limit = input.limit ?? 50
+        const ordered = input.order === "desc" ? [...all].reverse() : all
+        const start = input.cursor ? Number(input.cursor) : 0
+        const next = start + limit < ordered.length ? String(start + limit) : undefined
+        return {
+          data: ordered.slice(start, start + limit),
+          cursor: { ...(next ? { next } : {}) },
+        }
+      },
+    },
+  }
+  return { calls, listCalls, host: planningHost({ session } as never, messages as never) }
 }
 
 const SID = Session.ID.create()
@@ -147,6 +164,19 @@ test("reply returns the last assistant text, length finish and summed tokens", a
     cacheReadTokens: 14,
     model: { providerID: "p", id: "m" },
   })
+})
+
+test("reply reads the end of a long conversation by page, never the conversation", async () => {
+  const history = Array.from({ length: 300 }, (_, index) =>
+    index % 2 === 0 ? { type: "user" } : assistant(`old ${index}`, "stop", 1, 1),
+  )
+  const { host, listCalls } = stub({
+    context: () => [...history, { type: "user" }, assistant("final", "stop", 5, 6)],
+  })
+  const reply = await host.reply(SID)
+  expect(reply).toMatchObject({ text: "final", inputTokens: 5, outputTokens: 6 })
+  // Before: one session.context of 302 messages. Now: one descending page that ends at the user.
+  expect(listCalls).toEqual([{ order: "desc", limit: 50, cursor: undefined }])
 })
 
 test("reply is undefined while no assistant text exists", async () => {

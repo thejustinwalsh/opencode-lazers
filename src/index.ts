@@ -212,7 +212,12 @@ export default Plugin.define({
       yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
       yield* registerPlanningDecisionHooks(ctx, planningDecisions)
       yield* registerPlanningRpc(ctx, repository, projectID).pipe(Effect.orDie)
-      const planningReviews = createPlanningReviews(ctx, repository, agentRoutes)
+      const planningReviews = createPlanningReviews(
+        ctx,
+        repository,
+        agentRoutes,
+        core.host.messages,
+      )
       yield* registerPlanningReviewTicks(planningReviews, repository.projectDirectory)
       yield* sectionEffect("setup:PlanningTools", () =>
         Effect.gen(function* () {
@@ -228,7 +233,11 @@ export default Plugin.define({
           )
           yield* registerPlanResolveTool(
             ctx,
-            new PlanResolver(store, projectID, sessionMessageText(ctx)),
+            new PlanResolver(
+              store,
+              projectID,
+              sessionMessageText((sessionID, messageID) => core.host.message(sessionID, messageID)),
+            ),
           )
           yield* registerPlanTaskTool(
             ctx,
@@ -360,7 +369,9 @@ export default Plugin.define({
       yield* sectionEffect("setup:LocalInference", () =>
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:RecoveryTools", () => registerRecoveryTools(ctx, repository))
+      yield* sectionEffect("setup:RecoveryTools", () =>
+        registerRecoveryTools(ctx, repository, core.host.messages),
+      )
       yield* sectionEffect("setup:ToolSignatures", () => registerToolSignatures(ctx))
       yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx, projectID))
       yield* sectionEffect("setup:ToolCallWrappers", () =>
