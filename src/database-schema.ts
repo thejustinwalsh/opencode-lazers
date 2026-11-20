@@ -50,7 +50,7 @@ export const schemaModules = {
     tables: ["lazers_profile_revisions", "lazers_profile_proofs", "lazers_profile_pins"],
   },
   runner: {
-    generation: 13,
+    generation: 14,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",
@@ -72,6 +72,7 @@ export const schemaModules = {
       "runner_adoption_evidence",
       "runner_evidence",
       "runner_outbox",
+      "runner_outbox_receipts",
       "runner_continuations",
       "runner_architect_renewals",
       "runner_architect_renewal_plans",

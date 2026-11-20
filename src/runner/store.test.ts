@@ -8,6 +8,7 @@ import { validProposal } from "../../test/proposal.ts"
 import { fingerprint } from "../identity.ts"
 import { TaskRepository } from "../storage.ts"
 import { scopePatternsConflict } from "./artifacts.ts"
+import { meterReads } from "./read-meter.fixture.ts"
 import { PlanInput } from "./schema.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 
@@ -1447,3 +1448,133 @@ function seedSourceJournal(
   })
   return { renewalID, mappedPlanID, sourceSessionID, successorSessionID }
 }
+
+function seedOutbox(f: ReturnType<typeof fixture>, planID: string, id: string, state = "pending") {
+  f.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume) VALUES(?,?,?,?,?,?,1)",
+      )
+      .run(id, planID, "owner", `msg_${id}`, JSON.stringify({ planID, version: 1 }), state),
+  )
+}
+
+test("outbox receipts append as child rows and never grow the parent", () => {
+  const f = fixture("outbox-receipt-append")
+  const plan = f.store.submit(f.input, "owner")
+  seedOutbox(f, plan.planID, "notice")
+  const parentBytes = () =>
+    f.store.read(
+      (db) =>
+        db
+          .query<{ n: number }, []>(
+            `SELECT length(id)+length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,'')) AS n
+             FROM runner_outbox WHERE id='notice'`,
+          )
+          .get()!.n,
+    )
+  const before = parentBytes()
+  for (let index = 0; index < 500; index++)
+    f.store.noteOutboxReceipt("notice", { kind: index === 499 ? "last" : "held", index })
+  const row = f.store.read((db) =>
+    db
+      .query<{ receipt: string | null; receipt_count: number; receipt_last_kind: string }, []>(
+        "SELECT receipt,receipt_count,receipt_last_kind FROM runner_outbox WHERE id='notice'",
+      )
+      .get(),
+  )!
+  expect(row).toEqual({ receipt: null, receipt_count: 500, receipt_last_kind: "last" })
+  expect(parentBytes()).toBe(before)
+  const entries = f.store.outboxReceipts("notice") as { index: number }[]
+  expect(entries.map((entry) => entry.index)).toEqual([...Array(500).keys()])
+  // The pending page carries no receipt entries.
+  const pending = f.store.outboxForDelivery()
+  expect(pending.map((pendingRow) => pendingRow.receipt)).toEqual([null])
+  expect(pending[0]!.receipt_count).toBe(500)
+  // Detail still shows the history as one document.
+  const shown = f.store.detail(plan.planID).delivery as { receipt: string }[]
+  expect(JSON.parse(shown[0]!.receipt).history).toHaveLength(500)
+})
+
+test("coalesced ids and the retired-session marker are read from receipt rows", () => {
+  const f = fixture("outbox-receipt-queries")
+  const plan = f.store.submit(f.input, "owner")
+  seedOutbox(f, plan.planID, "merged")
+  seedOutbox(f, plan.planID, "cleaned", "delivered")
+  seedOutbox(f, plan.planID, "uncleaned", "delivered")
+  f.store.noteOutboxReceipt("merged", { kind: "coalesced", coalescedOutboxIDs: ["a", "b"] })
+  f.store.noteOutboxReceipt("merged", { kind: "coalesced", coalescedOutboxIDs: ["b", "c"] })
+  expect(f.store.coalescedOutboxIDs("merged").toSorted()).toEqual(["a", "b", "c"])
+  f.store.noteOutboxReceipt("cleaned", { kind: "retired-session-cleaned", sessionID: "owner" })
+  const outside = f.store
+    .deliveredOutsideSession([plan.planID], "other")
+    .map((outboxRow) => outboxRow.id)
+  expect(outside).toEqual(["uncleaned"])
+})
+
+test("legacy receipt documents migrate to child rows with the same entries in order", () => {
+  const f = fixture("outbox-receipt-migration")
+  const plan = f.store.submit(f.input, "owner")
+  seedOutbox(f, plan.planID, "history")
+  seedOutbox(f, plan.planID, "single")
+  seedOutbox(f, plan.planID, "opaque")
+  seedOutbox(f, plan.planID, "none")
+  f.store.atomic((db) => {
+    const set = db.query("UPDATE runner_outbox SET receipt=? WHERE id=?")
+    set.run(
+      JSON.stringify({
+        history: [
+          { kind: "x", n: 1 },
+          { kind: "y", n: 2 },
+        ],
+      }),
+      "history",
+    )
+    set.run(JSON.stringify({ kind: "solo" }), "single")
+    set.run("not json", "opaque")
+    db.query("DELETE FROM schema_modules WHERE module='runner'").run()
+  })
+  f.repository.close()
+  const repository = new TaskRepository(f.databasePath, f.projectDirectory)
+  repositories.push(repository)
+  const reopened = new RunnerStore(repository)
+  expect(reopened.outboxReceipts("history")).toEqual([
+    { kind: "x", n: 1 },
+    { kind: "y", n: 2 },
+  ])
+  expect(reopened.outboxReceipts("single")).toEqual([{ kind: "solo" }])
+  expect(reopened.outboxReceipts("opaque")).toEqual([{ legacyReceipt: "not json" }])
+  expect(reopened.outboxReceipts("none")).toEqual([])
+  const parent = reopened.read((db) =>
+    db
+      .query<
+        {
+          id: string
+          receipt: string | null
+          receipt_count: number
+          receipt_last_kind: string | null
+        },
+        []
+      >("SELECT id,receipt,receipt_count,receipt_last_kind FROM runner_outbox ORDER BY id")
+      .all(),
+  )
+  expect(parent).toEqual([
+    { id: "history", receipt: null, receipt_count: 2, receipt_last_kind: "y" },
+    { id: "none", receipt: null, receipt_count: 0, receipt_last_kind: null },
+    { id: "opaque", receipt: null, receipt_count: 1, receipt_last_kind: null },
+    { id: "single", receipt: null, receipt_count: 1, receipt_last_kind: "solo" },
+  ])
+})
+
+test("pending notices are read in pages without receipt history", () => {
+  const f = fixture("outbox-pages")
+  const plan = f.store.submit(f.input, "owner")
+  for (let index = 0; index < 7; index++) seedOutbox(f, plan.planID, `n${index}`)
+  f.store.noteOutboxReceipt("n3", { kind: "held", text: "x".repeat(10_000) })
+  const meter = meterReads(f.store)
+  const ids = [...f.store.pendingOutbox(f.projectDirectory, 3)].map((row) => row.id)
+  meter.stop()
+  expect(ids).toEqual(["n0", "n1", "n2", "n3", "n4", "n5", "n6"])
+  expect(meter.of(/runner_outbox/).rows).toBe(7)
+  expect(meter.of(/runner_outbox/).bytes).toBeLessThan(5_000)
+})

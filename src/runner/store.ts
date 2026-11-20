@@ -236,6 +236,8 @@ export type OutboxRow = {
   resume: number
   metadata: string | null
   receipt: string | null
+  receipt_count: number
+  receipt_last_kind: string | null
   version: number
   sequence: number
 }
@@ -420,20 +422,64 @@ function schedulingSessionAssociations(
   }
 }
 
-export function appendOutboxReceipt(previous: string | null, next: unknown) {
-  let history: unknown[] = []
-  if (previous) {
-    const parsed: unknown = JSON.parse(previous)
-    history =
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "history" in parsed &&
-      Array.isArray(parsed.history)
-        ? parsed.history
-        : [parsed]
+/** The kind tag of a receipt entry, kept beside the body so SQL can filter on it. */
+function receiptKind(entry: unknown): string | null {
+  return typeof entry === "object" &&
+    entry !== null &&
+    "kind" in entry &&
+    typeof entry.kind === "string"
+    ? entry.kind
+    : null
+}
+
+/**
+ * Append one receipt entry to an outbox row: one child row plus the parent's count and last kind.
+ * Never reads or rewrites earlier entries, so cost does not grow with history.
+ */
+export function addOutboxReceipt(db: Database, outboxID: string, entry: unknown) {
+  const kind = receiptKind(entry)
+  db.query(
+    `INSERT INTO runner_outbox_receipts(outbox_id,seq,kind,body)
+     SELECT id,receipt_count,?,? FROM runner_outbox WHERE id=?`,
+  ).run(kind, JSON.stringify(entry), outboxID)
+  db.query(
+    "UPDATE runner_outbox SET receipt_count=receipt_count+1,receipt_last_kind=? WHERE id=?",
+  ).run(kind, outboxID)
+}
+
+/**
+ * Receipts used to be one growing `{history:[...]}` document on the row. Move each entry to a child
+ * row, keeping its meaning (order, content, a non-history document as the single first entry).
+ */
+function migrateOutboxReceipts(db: Database) {
+  const legacy = db
+    .query<{ id: string; receipt: string }, []>(
+      "SELECT id,receipt FROM runner_outbox WHERE receipt IS NOT NULL AND receipt_count=0",
+    )
+    .all()
+  for (const row of legacy) {
+    let entries: unknown[]
+    try {
+      const parsed: unknown = JSON.parse(row.receipt)
+      entries =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "history" in parsed &&
+        Array.isArray(parsed.history)
+          ? parsed.history
+          : [parsed]
+    } catch {
+      entries = [{ legacyReceipt: row.receipt }]
+    }
+    entries.forEach((entry, seq) =>
+      db
+        .query("INSERT INTO runner_outbox_receipts(outbox_id,seq,kind,body) VALUES(?,?,?,?)")
+        .run(row.id, seq, receiptKind(entry), JSON.stringify(entry)),
+    )
+    db.query(
+      "UPDATE runner_outbox SET receipt=NULL,receipt_count=?,receipt_last_kind=? WHERE id=?",
+    ).run(entries.length, receiptKind(entries.at(-1)), row.id)
   }
-  history.push(next)
-  return JSON.stringify({ history })
 }
 
 /** Preserve the first effect receipt while adding durable, append-only recovery evidence. */
@@ -767,8 +813,15 @@ export class RunnerStore {
       CREATE TABLE IF NOT EXISTS runner_outbox (
         id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES runner_plans(id), session_id TEXT NOT NULL,
         message_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, state TEXT NOT NULL, resume INTEGER NOT NULL,
-        metadata TEXT, receipt TEXT
+        metadata TEXT, receipt TEXT,
+        receipt_count INTEGER NOT NULL DEFAULT 0, receipt_last_kind TEXT
       );
+      CREATE TABLE IF NOT EXISTS runner_outbox_receipts (
+        outbox_id TEXT NOT NULL REFERENCES runner_outbox(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL, kind TEXT, body TEXT NOT NULL,
+        PRIMARY KEY(outbox_id,seq)
+      ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS runner_outbox_receipts_kind ON runner_outbox_receipts(kind,outbox_id);
       CREATE TABLE IF NOT EXISTS runner_continuations (
         plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL,
         parent_id TEXT, directory TEXT NOT NULL, model TEXT, generation INTEGER NOT NULL
@@ -1044,6 +1097,11 @@ export class RunnerStore {
         )
         if (!columns.has("metadata")) db.exec("ALTER TABLE runner_outbox ADD COLUMN metadata TEXT")
         if (!columns.has("receipt")) db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt TEXT")
+        if (!columns.has("receipt_count"))
+          db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt_count INTEGER NOT NULL DEFAULT 0")
+        if (!columns.has("receipt_last_kind"))
+          db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt_last_kind TEXT")
+        migrateOutboxReceipts(db)
         const renewalColumns = db
           .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
           .all()
@@ -2717,22 +2775,17 @@ export class RunnerStore {
         })
       }
       if (renewal.handoff_outbox_id) {
-        const outbox = db
-          .query<{ state: string; receipt: string | null }, [string]>(
-            "SELECT state,receipt FROM runner_outbox WHERE id=?",
+        const changedOutbox = db
+          .query(
+            "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded') WHERE id=? AND state='pending'",
           )
-          .get(renewal.handoff_outbox_id)
-        if (outbox?.state === "pending")
-          db.query(
-            "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),receipt=? WHERE id=? AND state='pending'",
-          ).run(
-            appendOutboxReceipt(outbox.receipt, {
-              kind: "architect-renewal-rolled-back",
-              renewalID: renewal.id,
-              reason: state,
-            }),
-            renewal.handoff_outbox_id,
-          )
+          .run(renewal.handoff_outbox_id).changes
+        if (changedOutbox)
+          addOutboxReceipt(db, renewal.handoff_outbox_id, {
+            kind: "architect-renewal-rolled-back",
+            renewalID: renewal.id,
+            reason: state,
+          })
       }
       const changed = db
         .query(
@@ -2832,41 +2885,52 @@ export class RunnerStore {
   }) {
     return this.atomic((db) => {
       const current = db
-        .query<{ state: string; receipt: string | null }, [string]>(
-          "SELECT state,receipt FROM runner_outbox WHERE id=?",
-        )
+        .query<{ state: string }, [string]>("SELECT state FROM runner_outbox WHERE id=?")
         .get(input.id)
       if (current?.state !== input.expectedState) return false
-      const receipt = appendOutboxReceipt(current.receipt, input.receipt)
       const changed =
         db
           .query(
-            "UPDATE runner_outbox SET session_id=?,message_id=?,metadata=?,state=lz_runner_transition('outbox',state,'pending'),receipt=? WHERE id=? AND state=?",
+            "UPDATE runner_outbox SET session_id=?,message_id=?,metadata=?,state=lz_runner_transition('outbox',state,'pending') WHERE id=? AND state=?",
           )
-          .run(
-            input.sessionID,
-            input.messageID,
-            input.metadata,
-            receipt,
-            input.id,
-            input.expectedState,
-          ).changes === 1
-      if (changed) this.repository.changed()
+          .run(input.sessionID, input.messageID, input.metadata, input.id, input.expectedState)
+          .changes === 1
+      if (changed) {
+        addOutboxReceipt(db, input.id, input.receipt)
+        this.repository.changed()
+      }
       return changed
     })
   }
-  /** Notices not yet in an Architect inbox; delivered and superseded rows are history. */
+  /**
+   * Notices not yet in an Architect inbox, a page at a time in arrival order; delivered and
+   * superseded rows are history. Rows carry no receipt entries: those are child rows read by id.
+   */
+  *pendingOutbox(
+    projectDirectory = this.repository.projectDirectory,
+    pageSize = 200,
+  ): Generator<OutboxRow> {
+    let after = 0
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<OutboxRow, [string, number, number]>(
+            `SELECT o.id,o.plan_id,o.session_id,o.message_id,o.payload,o.state,o.resume,o.metadata,
+                    NULL AS receipt,o.receipt_count,o.receipt_last_kind,
+                    CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence
+             FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
+             WHERE p.project_directory=? AND o.state='pending' AND o.rowid>?
+             ORDER BY o.rowid LIMIT ?`,
+          )
+          .all(projectDirectory, after, pageSize),
+      )
+      yield* page
+      if (page.length < pageSize) return
+      after = page.at(-1)!.sequence
+    }
+  }
   outboxForDelivery(projectDirectory = this.repository.projectDirectory): OutboxRow[] {
-    return this.read((db) =>
-      db
-        .query<OutboxRow, [string]>(
-          `SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequence
-           FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
-           WHERE p.project_directory=? AND o.state='pending'
-           ORDER BY o.rowid`,
-        )
-        .all(projectDirectory),
-    )
+    return [...this.pendingOutbox(projectDirectory)]
   }
   outboxRowByMessage(sessionID: string, messageID: string): OutboxRow | undefined {
     return this.read(
@@ -2890,7 +2954,10 @@ export class RunnerStore {
            FROM runner_outbox o JOIN runner_plans p ON p.id=o.plan_id
            WHERE p.project_directory=? AND o.state='delivered' AND o.session_id<>?
              AND o.plan_id IN (${planIDs.map(() => "?").join(",")})
-             AND (o.receipt IS NULL OR o.receipt NOT LIKE '%"retired-session-cleaned"%')
+             AND NOT EXISTS (
+               SELECT 1 FROM runner_outbox_receipts r
+               WHERE r.outbox_id=o.id AND r.kind='retired-session-cleaned'
+             )
            ORDER BY o.rowid`,
         )
         .all(this.repository.projectDirectory, sessionID, ...planIDs),
@@ -2899,16 +2966,33 @@ export class RunnerStore {
   /** Append a receipt entry without changing the row's state. */
   noteOutboxReceipt(id: string, receipt: unknown) {
     this.atomic((db) => {
-      const current = db
-        .query<{ receipt: string | null }, [string]>("SELECT receipt FROM runner_outbox WHERE id=?")
-        .get(id)
-      if (!current) return
-      db.query("UPDATE runner_outbox SET receipt=? WHERE id=?").run(
-        appendOutboxReceipt(current.receipt, receipt),
-        id,
-      )
+      if (!db.query("SELECT 1 FROM runner_outbox WHERE id=?").get(id)) return
+      addOutboxReceipt(db, id, receipt)
       this.repository.changed()
     })
+  }
+  /** Every receipt entry of one outbox row, oldest first. */
+  outboxReceipts(id: string): unknown[] {
+    return this.read((db) =>
+      db
+        .query<{ body: string }, [string]>(
+          "SELECT body FROM runner_outbox_receipts WHERE outbox_id=? ORDER BY seq",
+        )
+        .all(id)
+        .map((row) => JSON.parse(row.body) as unknown),
+    )
+  }
+  /** Outbox ids a row's receipts record as coalesced into it. */
+  coalescedOutboxIDs(id: string): string[] {
+    return this.read((db) =>
+      db
+        .query<{ value: string }, [string]>(
+          `SELECT DISTINCT je.value AS value FROM runner_outbox_receipts r, json_each(r.body,'$.coalescedOutboxIDs') je
+           WHERE r.outbox_id=? AND json_valid(r.body) AND je.type='text'`,
+        )
+        .all(id)
+        .map((row) => row.value),
+    )
   }
   outboxRowByID(id: string): OutboxRow | undefined {
     return this.read(
@@ -4345,7 +4429,13 @@ export class RunnerStore {
         evidence: evidence.rows,
         activity: activity.rows,
         verificationTimeoutAmendments: this.verificationTimeoutAmendments(planID),
-        delivery: delivery.rows,
+        delivery: delivery.rows.map((row: OutboxRow) => ({
+          ...row,
+          // One explicit read of the entries for display, shaped as the old history document.
+          receipt: row.receipt_count
+            ? JSON.stringify({ history: this.outboxReceipts(row.id) })
+            : null,
+        })),
         paging: {
           limit,
           activity: activity.paging,

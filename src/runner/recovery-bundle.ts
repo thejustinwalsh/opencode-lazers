@@ -11,6 +11,7 @@ import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import { runbook } from "../guidance/index.ts"
 import { noticeMarker } from "./notice-marker.ts"
+import { addOutboxReceipt } from "./store.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -812,15 +813,18 @@ export class RecoveryBundles {
         if ((taken?.generation ?? 0) >= generation) return undefined
         if (replaces) {
           const current = store.outboxRowByID(replaces)
-          if (current?.state === "pending")
-            db.query(
-              "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded'),receipt=? WHERE id=? AND state='pending'",
-            ).run(
-              JSON.stringify({
-                history: [{ kind: "superseded-by-recovery-bundle", byOutboxID: id }],
-              }),
-              replaces,
-            )
+          if (
+            current?.state === "pending" &&
+            db
+              .query(
+                "UPDATE runner_outbox SET state=lz_runner_transition('outbox',state,'superseded') WHERE id=? AND state='pending'",
+              )
+              .run(replaces).changes
+          )
+            addOutboxReceipt(db, replaces, {
+              kind: "superseded-by-recovery-bundle",
+              byOutboxID: id,
+            })
         }
         const inserted = db
           .query(
