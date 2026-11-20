@@ -67,7 +67,13 @@ const s = stylex.create({
     transform: "rotate(-2deg)",
     transformOrigin: "left bottom",
   },
-  h2Wrap: { display: "flex", alignItems: "flex-end", gap: "clamp(12px, 1.6vw, 24px)" },
+  h2Wrap: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "flex-end",
+    columnGap: "clamp(12px, 1.6vw, 24px)",
+    rowGap: 8,
+  },
   h2Stripes: { fontSize: "clamp(9px, 1vw, 14px)", marginBlockEnd: "0.8em", flex: "none" },
   lead: {
     fontSize: "clamp(18px, 1.45vw, 22px)",
@@ -602,7 +608,7 @@ export function Parts() {
               <li {...stylex.props(pt.state, pt.stateBad)}>Failed</li>
               <li {...stylex.props(pt.state)}>Cancelled</li>
             </ul>
-            <Demo def={DEMOS.tasks} label="Live demo of the Tasks panel" maxWidth={440} />
+            <Demo def={DEMOS.tasks} label="Live demo of the Tasks panel" />
           </article>
 
           <article
@@ -639,7 +645,7 @@ export function Parts() {
                 Live XState lifecycle view showing where every runner sits and what it is waiting on
               </dd>
             </dl>
-            <Demo def={DEMOS.radar} label="Live demo of the Radar panel" maxWidth={440} />
+            <Demo def={DEMOS.radar} label="Live demo of the Radar panel" />
           </article>
 
           <article
@@ -683,7 +689,7 @@ export function Parts() {
                 </span>
               </li>
             </ul>
-            <Demo def={DEMOS.trajectory} label="Live demo of the Trajectory panel" maxWidth={460} />
+            <Demo def={DEMOS.trajectory} label="Live demo of the Trajectory panel" />
           </article>
         </div>
       </div>
@@ -818,12 +824,7 @@ export function Checked() {
                 <span>fast, focused code edits</span>
               </li>
             </ul>
-            <Demo
-              def={DEMOS.models}
-              label="Live demo of the Models panel"
-              tone="ink"
-              maxWidth={460}
-            />
+            <Demo def={DEMOS.models} label="Live demo of the Models panel" tone="ink" />
             <p {...stylex.props(s.body, ck.sideBody)}>
               The Compare view benchmarks your actual task histories, retry counts, measured token
               usage, and market-price cost estimates so you can tune your model stack with real
@@ -1061,6 +1062,10 @@ const in_ = stylex.create({
   pre: {
     margin: 0,
     overflowX: "auto",
+    /* Narrow: wrap long lines instead of hiding them behind a scroll; copy still gives the
+       original text. From 640px the block scrolls sideways instead. */
+    whiteSpace: { default: "pre-wrap", [bp.mid]: "pre" },
+    overflowWrap: { default: "anywhere", [bp.mid]: "normal" },
     backgroundColor: color.ink,
     color: color.paper,
     fontFamily: type.mono,
@@ -1078,7 +1083,7 @@ const in_ = stylex.create({
     top: 10,
     right: 10,
     zIndex: 1,
-    minHeight: 34,
+    minHeight: 44,
     minWidth: 92,
     paddingInline: 14,
     borderWidth: 0,
