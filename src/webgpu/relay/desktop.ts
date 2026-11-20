@@ -445,14 +445,7 @@ export class DesktopInferenceRelay {
       return
     }
     entry.client = client
-    const request = await boundedRpc(
-      client
-        .rpc(InferenceRelay)
-        .claim(
-          { requestID: entry.requestID, claimToken: entry.claimToken },
-          { location: { directory: entry.directory }, signal: this.requestSignal(entry) },
-        ),
-    )
+    const request = await boundedRpc(this.requestRpc(client, entry, "claim"))
     if (entry.settled || this.closed) return
     if (!request) {
       entry.settled = true
@@ -469,14 +462,7 @@ export class DesktopInferenceRelay {
       await this.recover(entry)
       return
     }
-    const request = await boundedRpc(
-      client
-        .rpc(InferenceRelay)
-        .begin(
-          { requestID: entry.requestID, claimToken: entry.claimToken },
-          { location: { directory: entry.directory }, signal: this.requestSignal(entry) },
-        ),
-    )
+    const request = await boundedRpc(this.requestRpc(client, entry, "begin"))
     if (entry.settled || this.closed) return
     if (!request) {
       entry.settled = true
@@ -488,6 +474,16 @@ export class DesktopInferenceRelay {
       return
     }
     return request
+  }
+
+  private requestRpc(client: OpenCodeClient, entry: ActiveRequest, method: "claim" | "begin") {
+    const relay = client.rpc(InferenceRelay)
+    const input = { requestID: entry.requestID, claimToken: entry.claimToken }
+    const options = {
+      location: { directory: entry.directory },
+      signal: this.requestSignal(entry),
+    }
+    return method === "claim" ? relay.claim(input, options) : relay.begin(input, options)
   }
 
   private async deliver(
@@ -607,34 +603,33 @@ export class DesktopInferenceRelay {
     }
   }
 
-  private async settle(entry: ActiveRequest, completion: RelayCompletion) {
-    if (entry.settled) return
-    entry.settled = true
-    entry.controller.abort()
-    this.releaseLocal(entry)
-    try {
-      await this.sourceRpc(entry.directory, (client, options) =>
-        client
-          .rpc(InferenceRelay)
-          .complete(
-            { requestID: entry.requestID, claimToken: entry.claimToken, completion },
-            options,
-          ),
-      )
-    } finally {
-      this.forget(entry)
-    }
+  private settle(entry: ActiveRequest, completion: RelayCompletion) {
+    return this.finish(entry, (client, options) =>
+      client
+        .rpc(InferenceRelay)
+        .complete(
+          { requestID: entry.requestID, claimToken: entry.claimToken, completion },
+          options,
+        ),
+    )
   }
 
-  private async recover(entry: ActiveRequest) {
+  private recover(entry: ActiveRequest) {
+    return this.finish(entry, (client, options) =>
+      client.rpc(InferenceRelay).recover({ requestID: entry.requestID }, options),
+    )
+  }
+
+  private async finish(
+    entry: ActiveRequest,
+    invoke: (client: OpenCodeClient, options: RelayRpcOptions) => Promise<unknown>,
+  ) {
     if (entry.settled) return
     entry.settled = true
     entry.controller.abort()
     this.releaseLocal(entry)
     try {
-      await this.sourceRpc(entry.directory, (client, options) =>
-        client.rpc(InferenceRelay).recover({ requestID: entry.requestID }, options),
-      )
+      await this.sourceRpc(entry.directory, invoke)
     } finally {
       this.forget(entry)
     }
