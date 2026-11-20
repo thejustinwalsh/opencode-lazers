@@ -168,17 +168,11 @@ export class PlanDrafts {
       case "abandon":
         return this.abandon(input.planningID)
       case "guide":
-        return input.topic === "show" || input.topic === "resolve"
-          ? {
-              status: "guide",
-              topic: input.topic,
-              guidance: runbook(input.topic === "show" ? "planning-show" : "planning-resolve"),
-            }
-          : {
-              status: "guide",
-              topic: input.topic,
-              guidance: `The ${input.topic} runbook is not written yet; topics "show" and "resolve" are available.`,
-            }
+        return {
+          status: "guide",
+          topic: input.topic,
+          guidance: runbook(`planning-${input.topic}`),
+        }
       case "evidence":
         return this.evidence(input.planningID, input.draftID)
     }

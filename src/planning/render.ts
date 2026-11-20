@@ -138,7 +138,7 @@ export function decisionNote(
   if (row.status === "unavailable") {
     return [
       `${header} decision model not run (${row.reason ?? "unavailable"})${open}`,
-      'Before planning, answer these yourself and state your picks in one line ("size: <choice> · agents: <ids>"). All five agents run on a stored plan; your picks are recorded as context.',
+      'Before planning, answer these yourself and state your picks in one line ("size: <choice> · agents: <ids>"), and pass them as `architectPick` when you store the plan with `lz-plan-draft`. All five agents run on a stored plan; your picks are recorded as context.',
       `size, one of: ${SIZE_CHOICES.map((choice) => `${choice} (${SIZE_CRITERIA[choice]})`).join("; ")}`,
       "agents, use when:",
       ...AGENT_ORDER.map((id) => `- ${id}: ${useWhen(id)}`),

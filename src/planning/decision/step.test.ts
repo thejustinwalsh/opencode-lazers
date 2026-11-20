@@ -180,3 +180,12 @@ test("with no decision model the note still delivers, and the Architect's own pi
     agents: ["grounding"],
   })
 })
+
+test("a runbook is offered for a plan-sized ask and never for a simple one", async () => {
+  const f = fixture({ runbook: true })
+  start(f, "m1")
+  const out = (await f.send([ask("m1", "Add a plan view with a few tasks.")])) as ReturnType<
+    typeof ask
+  >[]
+  expect(out[0]!.content[1]!.text).toContain("RUNBOOK TEXT")
+})
