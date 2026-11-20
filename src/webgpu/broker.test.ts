@@ -551,3 +551,13 @@ test("public chat and audio RPC settle measured and unknown-usage results throug
     ),
   )
 })
+
+test("attached reports a live renderer and drops it when the heartbeat expires", () => {
+  let now = 0
+  const broker = new InferenceBroker(() => now, 15_000)
+  expect(broker.attached()).toBe(false)
+  broker.attach("window")
+  expect(broker.attached()).toBe(true)
+  now = 15_001
+  expect(broker.attached()).toBe(false)
+})
