@@ -1,5 +1,6 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite"
 import { RECOVERY_FACT_WINDOW } from "../recovery/journal.ts"
+import { AUDIT_RUNS_KIND, measureAuditRuns, retireAuditRunBatch } from "./audit-runs.ts"
 
 /**
  * Retention: retire recorded detail of finished work. A purge is one bounded command, not a
@@ -72,6 +73,7 @@ export type RetentionKindID =
   | "change-log"
   | "model-snapshots"
   | "planning-detail"
+  | "audit-runs"
 
 type Spec = {
   table: string
@@ -582,7 +584,14 @@ export async function measure(db: Database, spec: Spec) {
  */
 export async function previewRetention(
   db: Database,
-  input: { now: number; days: number; ageIndependent?: boolean; ageDependent?: boolean },
+  input: {
+    now: number
+    days: number
+    ageIndependent?: boolean
+    ageDependent?: boolean
+    /** The plugin data folder; with it the audit runs of retired plans (and their files) count. */
+    dataDirectory?: string
+  },
 ): Promise<RetentionPreview> {
   const { retired, kept } = classifyPlans(db, input.now, input.days)
   const ctx = retentionContext(
@@ -602,6 +611,10 @@ export async function previewRetention(
       bytes += total.bytes
     }
     kinds.push({ id: kind.id, label: kind.label, detail: kind.detail, rows, bytes })
+  }
+  if (input.dataDirectory !== undefined && input.ageDependent !== false) {
+    const total = measureAuditRuns(db, { retired: ctx.retired, dataDirectory: input.dataDirectory })
+    kinds.push({ ...AUDIT_RUNS_KIND, ...total })
   }
   const taskCount = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM tasks").get()!.n
   const protectedRows: Protected[] = [
@@ -663,7 +676,14 @@ export type SliceResult = {
 export async function retireSlice(
   atomic: <T>(run: (db: Database) => T) => T,
   read: <T>(run: (db: Database) => T) => T,
-  input: { now: number; days: number; budgetMs: number; batch: number },
+  input: {
+    now: number
+    days: number
+    budgetMs: number
+    batch: number
+    /** The plugin data folder; with it the audit runs of retired plans go with their files. */
+    dataDirectory?: string
+  },
 ): Promise<SliceResult> {
   const started = Date.now()
   const removed: SliceResult["removed"] = {}
@@ -704,6 +724,26 @@ export async function retireSlice(
       })
       if (!result.rows) break
       const entry = (removed[kind.id] ??= { rows: 0, bytes: 0 })
+      entry.rows += result.rows
+      entry.bytes += result.bytes
+      rows += result.rows
+      await turn()
+    }
+  }
+  if (input.dataDirectory !== undefined) {
+    const dataDirectory = input.dataDirectory
+    for (;;) {
+      if (Date.now() - started >= input.budgetMs) return { removed, rows, done: false }
+      const retired = read((db) => classifyPlans(db, input.now, input.days).retired).map(
+        (plan) => plan.id,
+      )
+      const result = retireAuditRunBatch(atomic, read, {
+        retired,
+        dataDirectory,
+        batch: Math.min(input.batch, 50),
+      })
+      if (!result.rows) break
+      const entry = (removed[AUDIT_RUNS_KIND.id] ??= { rows: 0, bytes: 0 })
       entry.rows += result.rows
       entry.bytes += result.bytes
       rows += result.rows
