@@ -1,3 +1,4 @@
+import { installScheduleTriggers } from "../tasks/schedule/schema.ts"
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
 import { schemaModules } from "../database-schema.ts"
@@ -35,8 +36,17 @@ type Controls = Pick<TaskRepository, "read" | "atomic" | "changed">
 
 export function installProjectControlsSchema(repository: TaskRepository): void {
   const module = schemaModules["project-controls"]
-  repository.installSchema("project-controls", module.generation, module.tables, (db) => {
-    db.exec(`
+  repository.installSchema(
+    "project-controls",
+    module.generation,
+    module.tables,
+    createControlTables,
+  )
+}
+
+/** The control tables, then the schedule projection's triggers on them (a no-op until it installs). */
+export function createControlTables(db: Database): void {
+  db.exec(`
       CREATE TABLE IF NOT EXISTS lazers_settings (
         scope TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL,
         PRIMARY KEY(scope, name)
@@ -46,7 +56,7 @@ export function installProjectControlsSchema(repository: TaskRepository): void {
         reason TEXT NOT NULL, by TEXT NOT NULL, updated_at INTEGER NOT NULL
       );
     `)
-  })
+  installScheduleTriggers(db)
 }
 
 /** The project a checkout directory belongs to; undefined until the project is registered. */

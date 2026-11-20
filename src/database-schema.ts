@@ -217,6 +217,23 @@ export const schemaModules = {
     source: "src/audit/history.ts",
     tables: ["audit_runs", "audit_sections", "audit_decisions", "audit_findings"],
   },
+  "task-schedule": {
+    generation: 1,
+    source: "src/tasks/schedule/schema.ts",
+    tables: [
+      "task_schedule",
+      "task_schedule_plans",
+      "task_schedule_edges",
+      "task_schedule_blockers",
+      "task_schedule_waits",
+      "task_schedule_sessions",
+      "task_schedule_scopes",
+      "task_schedule_counts",
+      "task_schedule_dirty",
+      "task_schedule_failed",
+      "task_schedule_state",
+    ],
+  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",

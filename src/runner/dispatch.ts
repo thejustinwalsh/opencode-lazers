@@ -155,7 +155,7 @@ export class Dispatch {
     const rows = capturedRows
       ? capturedRows.filter((row) => row.plan_id === plan.id && prerequisites.includes(row.task_id))
       : this.store.taskPrerequisiteIntegrationRows(plan.id, prerequisites)
-    return evaluateTaskPrerequisiteIntegration(
+    const decision = await evaluateTaskPrerequisiteIntegration(
       this.directory,
       branch,
       prerequisites,
@@ -164,6 +164,21 @@ export class Dispatch {
       candidateBaseline,
       this.artifactEvidence,
     )
+    this.observePrerequisites(plan.id, node.task_id, decision)
+    return decision
+  }
+
+  /** Keep the newest proof where the Tasks list can show it; an unknown proof is not a decision. */
+  private observePrerequisites(planID: string, taskID: string, decision: IntegrationDecision) {
+    if (decision.status === "unknown") return
+    try {
+      this.store.recordPrerequisiteObservation(planID, taskID, {
+        decision: decision.status,
+        reason: decision.status === "waiting" ? decision.reason : null,
+      })
+    } catch {
+      // The proof drives dispatch; the list reads what was recorded and the next tick records again.
+    }
   }
 
   async integratedPrerequisiteBaseline(
