@@ -24,6 +24,7 @@
 
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: clamp(480px, 74svh, 660px);
   width: 100%;
@@ -304,6 +305,7 @@
 /* composer */
 .lc-foot {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 6px 12px 12px;
 }
@@ -525,6 +527,7 @@
   }
   .lc-input {
     font-size: 16px;
+    min-height: 44px;
   }
   .lc-pills {
     min-height: 44px;
