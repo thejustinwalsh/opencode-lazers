@@ -137,3 +137,24 @@ test("changing the options reopens the stream and closes the old one; cleanup cl
   await tick()
   expect(service.size).toBe(0)
 })
+
+test("readWindow reads one window and closes its stream", async () => {
+  const service = createStreamsService({ pool, changed: () => {} })
+  const { transport, calls } = wire(service)
+  const { readWindow } = await import("../../src/streams/gui.ts")
+  const { sourceRef } = await import("../../src/streams/source.ts")
+  const { itemColumns } = await import("../../src/streams/test-source.ts")
+  const rows = await readWindow(
+    transport,
+    sourceRef({ name: "test.items", columns: itemColumns }),
+    {
+      filter: {},
+      order: "id",
+      window: 7,
+    },
+  )
+  expect(rows).toHaveLength(7)
+  expect(rows[0]!.title).toBe("item 1 é")
+  expect(calls).toEqual(["open", "close"])
+  expect(service.size).toBe(0)
+})

@@ -53,7 +53,7 @@ export type ModelComparisonTransport = {
   settings(taskID: string | undefined, signal: AbortSignal): Promise<ModelSettingsOutput>
   catalog(signal: AbortSignal): Promise<ModelCatalogOutput>
   configure(update: ModelMappingUpdate, signal: AbortSignal): Promise<ModelMappingWriteOutput>
-  queryTasks(signal: AbortSignal): Promise<TaskPage>
+  queryTasks(signal: AbortSignal): Promise<Pick<TaskPage, "projectDirectory" | "tasks">>
   getTask(taskID: string, signal: AbortSignal): Promise<TaskDetail>
   trajectoryStatus(taskID: string, signal: AbortSignal): Promise<TrajectoryResponse>
   decisionOverview?(

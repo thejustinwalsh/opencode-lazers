@@ -6,7 +6,7 @@ import { acquireReaderPool } from "../streams/pool.ts"
 import "../streams/sources/index.ts"
 import { taskScheduleSource } from "../streams/sources/tasks.ts"
 import { AgentQueryInput, type TaskSummary } from "./contract.ts"
-import { taskTitle } from "./presentation.ts"
+import { summaryOf } from "./summary-row.ts"
 
 /**
  * One window of the stored task list for an agent tool: a stream opened on the project's reader
@@ -56,9 +56,6 @@ export function matchesOf(
   return matches
 }
 
-const optional = <T>(value: unknown): T | undefined =>
-  value === null || value === undefined ? undefined : (value as T)
-
 export async function queryTaskPage(
   repository: Pick<TaskRepository, "path" | "projectDirectory" | "get" | "read">,
   input: unknown,
@@ -106,39 +103,13 @@ export async function queryTaskPage(
       }
       const page = rows.slice(0, query.limit)
       const more = rows.length > query.limit
-      const tasks = page.map((row): TaskSummary => {
-        const taskID = String(row.task_id)
-        const reference = String(row.reference)
-        const spec = query.search || query.scopePath ? repository.get(taskID) : undefined
-        const status = String(row.status)
-        const nodeState = optional<string>(row.node_state)
-        const running = ["running", "verifying"].includes(String(nodeState))
-        return {
-          taskID,
-          reference,
-          ...(optional(row.source_plan) ? { sourcePlan: row.source_plan as never } : {}),
-          ...(optional(row.dispatch_pause)
-            ? {
-                dispatchPause: row.dispatch_pause as never,
-                ...(row.dispatch_pause_plan_id
-                  ? { dispatchPausePlanID: String(row.dispatch_pause_plan_id) }
-                  : {}),
-              }
-            : {}),
-          revision: 1,
-          status: status as TaskSummary["status"],
-          ...(nodeState ? { recordedState: nodeState as never } : {}),
-          ...(running && row.started_at != null ? { startedAt: Number(row.started_at) } : {}),
-          ...(row.takeover ? { takeover: true as const } : {}),
-          reason: optional<string>(row.reason) ?? null,
-          ...(optional(row.disposition) ? { disposition: row.disposition as never } : {}),
-          classification: row.classification as never,
-          title: String(row.title ?? taskTitle(String(row.objective ?? ""))).slice(0, 120),
-          objective: String(row.objective ?? "").slice(0, 400),
-          createdAt: String(row.created_at),
-          sessionID: String(row.session_id),
-          matches: spec ? matchesOf(spec, reference, query.search, query.scopePath) : [],
-        }
+      const tasks = page.map((row) => {
+        const spec =
+          query.search || query.scopePath ? repository.get(String(row.task_id)) : undefined
+        return summaryOf(
+          row,
+          spec ? matchesOf(spec, String(row.reference), query.search, query.scopePath) : [],
+        )
       })
       return {
         projectDirectory: repository.projectDirectory,

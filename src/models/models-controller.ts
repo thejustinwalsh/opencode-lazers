@@ -1,3 +1,7 @@
+import { Streams } from "../streams/contract.ts"
+import { readWindow, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import { summaryOf } from "../tasks/summary-row.ts"
 import { createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import { createPanelStatus } from "../panel-status.tsx"
 import type { PanelProps } from "@opencode/plugin/gui"
@@ -334,12 +338,28 @@ export function createModelsController(props: ModelsProps) {
         configure: (update, signal) =>
           models.configure({ sessionID: value.session, ...update }, { ...location, signal }),
         queryTasks: (parent) =>
-          withReadDeadline(parent, (signal) =>
-            tasks.query(
-              { state: "all", includeCompleted: true, includeRetired: true, limit: 100 },
-              { ...location, signal },
-            ),
-          ),
+          withReadDeadline(parent, async (signal) => {
+            // The newest tasks of the project, read as one stream window.
+            const rows = await readWindow(
+              rpcStreamsTransport(
+                () => value.client.rpc(Streams) as unknown as StreamsRpc,
+                signal,
+                { location: { directory: value.directory } },
+              ),
+              taskScheduleRef,
+              {
+                filter: {
+                  project: value.project,
+                  scope: { kind: "project", sessionID: value.session },
+                  state: "all",
+                  includeRetired: true,
+                },
+                order: "recent",
+                window: 100,
+              },
+            )
+            return { projectDirectory: value.project, tasks: rows.map((row) => summaryOf(row)) }
+          }),
         getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal }),
         trajectoryStatus: (taskID, signal) =>
           observations.trajectoryStatus(
