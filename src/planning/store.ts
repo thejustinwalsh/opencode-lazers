@@ -463,6 +463,12 @@ export class PlanningStore {
     })
   }
 
+  setTitle(planningID: string, title: string): void {
+    this.repository.atomic((db) =>
+      update(db, "planning_plannings", { title }, "id=?", [planningID]),
+    )
+  }
+
   setTaskedPlan(planningID: string, planID: string): void {
     this.repository.atomic((db) =>
       update(db, "planning_plannings", { taskedPlanId: planID }, "id=?", [planningID]),

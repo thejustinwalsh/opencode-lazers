@@ -12,6 +12,7 @@ import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerPlanningAgents } from "./planning/register.ts"
 import { createPlanningDecisions, registerPlanningDecisionHooks } from "./planning/server.ts"
 import { startDecision } from "./planning/decision/step.ts"
+import { PlanDrafts, registerPlanningTools } from "./planning/tools.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
 import {
   architectContextStubsMode,
@@ -174,6 +175,9 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
       yield* registerPlanningDecisionHooks(ctx, planningDecisions)
+      yield* sectionEffect("setup:PlanningTools", () =>
+        registerPlanningTools(ctx, new PlanDrafts(repository, projectID)),
+      )
       const stubsMode = architectContextStubsMode(ctx.options.architectContextStubs)
       if (stubsMode !== "off")
         yield* sectionEffect("setup:ContextStubs", () =>

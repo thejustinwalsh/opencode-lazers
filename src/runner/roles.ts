@@ -167,6 +167,8 @@ export function registerWorker(
             { action: "lz-fallow-config-set", resource: "*", effect: "deny" },
             // The profile is proposed by the Architect and confirmed by the owner, never by a worker.
             { action: "lz-project-profile", resource: "*", effect: "deny" },
+            // A plan is stored and revised by the Architect alone.
+            { action: "lz-plan-draft", resource: "*", effect: "deny" },
           ]
           agent.permissions = permissions.filter(
             (rule, index) =>
