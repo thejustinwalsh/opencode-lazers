@@ -1,3 +1,4 @@
+import type { HostMessageClient } from "../core/host-messages.ts"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect } from "effect"
@@ -158,11 +159,12 @@ export function registerPlanningRpc(
 export function createPlanningReviews(
   ctx: Pick<Plugin.Context, "session">,
   repository: TaskRepository,
-  routes?: AgentRouteReader,
+  routes: AgentRouteReader | undefined,
+  messages: HostMessageClient,
 ): PlanningReviews {
   return new PlanningReviews({
     store: new PlanningStore(repository),
-    host: planningHost(ctx),
+    host: planningHost(ctx, messages),
     now: Date.now,
     mapFor: async (directory) => {
       const map = await currentRepoMap(repository, directory, repository.projectDirectory)

@@ -212,7 +212,12 @@ export default Plugin.define({
       yield* sectionEffect("setup:PlanningAgents", () => registerPlanningAgents(ctx, agentRoutes))
       yield* registerPlanningDecisionHooks(ctx, planningDecisions)
       yield* registerPlanningRpc(ctx, repository, projectID).pipe(Effect.orDie)
-      const planningReviews = createPlanningReviews(ctx, repository, agentRoutes)
+      const planningReviews = createPlanningReviews(
+        ctx,
+        repository,
+        agentRoutes,
+        core.host.messages,
+      )
       yield* registerPlanningReviewTicks(planningReviews, repository.projectDirectory)
       yield* sectionEffect("setup:PlanningTools", () =>
         Effect.gen(function* () {

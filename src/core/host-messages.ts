@@ -187,3 +187,34 @@ export async function latestMessages(
   })
   return [...page.data].reverse()
 }
+
+/**
+ * The assistant messages at the end of a session, oldest first: the steps of the last
+ * execution. Read newest page first and stop at the first message that is not an assistant's,
+ * so a reply costs its own pages, never the conversation.
+ */
+export async function trailingAssistants(
+  client: HostMessageClient,
+  sessionID: string,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<readonly Extract<HostMessage, { type: "assistant" }>[]> {
+  const newestFirst: Extract<HostMessage, { type: "assistant" }>[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  for (;;) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      order: "desc",
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const message of page.data) {
+      if (message.type !== "assistant") return newestFirst.reverse()
+      newestFirst.push(message)
+    }
+    const next = page.cursor.next
+    if (!next || seen.has(next)) return newestFirst.reverse()
+    seen.add(next)
+    cursor = next
+  }
+}
