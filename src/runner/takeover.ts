@@ -112,7 +112,6 @@ const HANDOFF_FIELDS = [
   "tried",
   "notes",
 ] as const
-const FIELD_LIMIT = 8_000
 
 /** The slim worker handoff as advertised; `recordWorkerHandoff` accepts anything. */
 export const WorkerHandoffInput = z.looseObject({
@@ -127,12 +126,11 @@ export const WorkerHandoffInput = z.looseObject({
 /** Never rejects: known fields become text, anything else is kept verbatim as `raw`. */
 export function normalizeWorkerHandoff(input: unknown): WorkerHandoff {
   const text = (value: unknown) =>
-    (typeof value === "string"
+    typeof value === "string"
       ? value
       : Array.isArray(value)
         ? value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join("\n")
         : JSON.stringify(value)
-    ).slice(0, FIELD_LIMIT)
   const handoff: WorkerHandoff = { author: "worker" }
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     if (input !== undefined) handoff.raw = text(input)
