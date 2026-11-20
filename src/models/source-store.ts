@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { acquireSharedConnection } from "../storage.ts"
+import { budgetFromEnv, sharedByteLru } from "./byte-lru.ts"
 import type { SharedConnection } from "../storage.ts"
 import {
   ENDPOINT_PRICING_PRODUCTS,
@@ -53,6 +54,30 @@ type SnapshotRow = {
   record_count: number
   body: string
 }
+
+type SnapshotMetaRow = Omit<SnapshotRow, "body"> & { body_bytes: number }
+
+/**
+ * Parsed evidence snapshots by project and immutable snapshot id, shared by every plugin copy.
+ * Budget counts stored JSON bytes. Measured 2026-11-20: JSON.parse of a 22 MB native-shaped
+ * catalog (60 000 records) adds 32 MB of heap, 1.5 bytes per text byte; the schema parse keeps
+ * one copy of that, so 48 MiB of text bounds the cache near 72-150 MB. models.dev (about 24 MB)
+ * fits alone; the two priced sources fit together.
+ * Tune with LAZERS_SNAPSHOT_CACHE_MIB.
+ */
+const parsedSnapshots = sharedByteLru<ModelEvidenceSnapshot>(
+  "model-evidence-snapshots",
+  budgetFromEnv("LAZERS_SNAPSHOT_CACHE_MIB", 48),
+)
+
+/** Cache counters for diagnostics and tests. */
+export const parsedSnapshotCacheStats = () => ({
+  hits: parsedSnapshots.stats.hits,
+  misses: parsedSnapshots.stats.misses,
+  size: parsedSnapshots.size,
+  bytes: parsedSnapshots.bytes,
+})
+export const clearParsedSnapshotCache = () => parsedSnapshots.clear()
 
 type EndpointPricingGeneration = Record<EndpointPricingProductID, number>
 
@@ -411,6 +436,29 @@ export class ModelEvidenceStore {
             )
             .run(now, this.projectDirectory, snapshot.source, snapshot.generation)
         }
+        // Superseded snapshots have no reader: keep the newest two generations per source
+        // (plus whatever the refresh row points at) and drop the rest in the same transaction.
+        const pruned = this.db
+          .query<{ snapshot_id: string }, [string, string, string, string, string]>(
+            `DELETE FROM model_evidence_snapshots
+             WHERE project_directory=? AND source=?
+               AND snapshot_id NOT IN (
+                 SELECT snapshot_id FROM model_evidence_snapshots
+                 WHERE project_directory=? AND source=? ORDER BY generation DESC LIMIT 2)
+               AND snapshot_id NOT IN (
+                 SELECT latest_snapshot_id FROM model_evidence_refreshes
+                 WHERE project_directory=? AND latest_snapshot_id IS NOT NULL)
+             RETURNING snapshot_id`,
+          )
+          .all(
+            this.projectDirectory,
+            snapshot.source,
+            this.projectDirectory,
+            snapshot.source,
+            this.projectDirectory,
+          )
+        for (const { snapshot_id } of pruned)
+          parsedSnapshots.delete(`${this.projectDirectory}\u0000${snapshot_id}`)
       })
       .immediate()
   }
@@ -773,14 +821,14 @@ export class ModelEvidenceReadStore {
             snapshot: null,
           }
 
-        const row = this.db
-          .query<SnapshotRow, [string, string]>(
+        const meta = this.db
+          .query<SnapshotMetaRow, [string, string]>(
             `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
-                    record_count, body FROM model_evidence_snapshots
+                    record_count, length(body) AS body_bytes FROM model_evidence_snapshots
              WHERE project_directory=? AND snapshot_id=?`,
           )
           .get(this.projectDirectory, snapshotID)
-        if (!row)
+        if (!meta)
           return {
             source,
             storage,
@@ -790,19 +838,33 @@ export class ModelEvidenceReadStore {
             snapshot: null,
           }
 
-        if (row.source !== source)
+        if (meta.source !== source)
           throw new Error("Model evidence snapshot source does not match its selection")
 
-        const snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
+        // Snapshots are immutable by id, so a parsed one is reused; only metadata is read per call.
+        const cacheKey = `${this.projectDirectory}\u0000${snapshotID}`
+        let snapshot = parsedSnapshots.get(cacheKey)
+        if (!snapshot) {
+          const row = this.db
+            .query<{ body: string }, [string, string]>(
+              `SELECT body FROM model_evidence_snapshots WHERE project_directory=? AND snapshot_id=?`,
+            )
+            .get(this.projectDirectory, snapshotID)
+          if (!row) throw new Error("Model evidence snapshot is inconsistent")
+          snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
+          parsedSnapshots.set(cacheKey, snapshot, meta.body_bytes)
+        }
         if (
-          snapshot.snapshotID !== row.snapshot_id ||
-          snapshot.projectDirectory !== row.project_directory ||
-          snapshot.source !== row.source ||
-          snapshot.generation !== row.generation ||
-          snapshot.retrievedAt !== row.retrieved_at ||
-          snapshot.records.length !== row.record_count
-        )
+          snapshot.snapshotID !== meta.snapshot_id ||
+          snapshot.projectDirectory !== meta.project_directory ||
+          snapshot.source !== meta.source ||
+          snapshot.generation !== meta.generation ||
+          snapshot.retrievedAt !== meta.retrieved_at ||
+          snapshot.records.length !== meta.record_count
+        ) {
+          parsedSnapshots.delete(cacheKey)
           throw new Error("Model evidence snapshot is inconsistent")
+        }
         return {
           source,
           storage,

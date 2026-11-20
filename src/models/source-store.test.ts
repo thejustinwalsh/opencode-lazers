@@ -15,7 +15,11 @@ import {
   ModelEvidenceSnapshotSchema,
 } from "./source-schema.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
-import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
+import {
+  ModelEvidenceReadStore,
+  ModelEvidenceStore,
+  clearParsedSnapshotCache,
+} from "./source-store.ts"
 
 const projectDirectory = "/source-store-project"
 
@@ -502,6 +506,79 @@ test("comparison reader pins snapshots and scopes selected IDs to the project", 
     reader.close()
     foreign.close()
     owner.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("saving a snapshot keeps the newest two generations per source and drops the rest", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const store = new ModelEvidenceStore(path, projectDirectory)
+  const db = new Database(path, { readonly: true })
+  try {
+    const ids: string[] = []
+    for (let round = 0; round < 4; round++) {
+      const generations = store.beginRefresh(["native-catalog"])
+      const saved = snapshot("native-catalog", projectDirectory, generations["native-catalog"], [
+        nativeRecord(`m${round}`),
+      ])
+      ids.push(saved.snapshotID)
+      store.saveSnapshot(saved)
+    }
+    const kept = db
+      .query<{ snapshot_id: string }, []>(
+        "SELECT snapshot_id FROM model_evidence_snapshots ORDER BY generation",
+      )
+      .all()
+      .map((row) => row.snapshot_id)
+    expect(kept).toEqual(ids.slice(2))
+    expect(store.read().sources[0]!.latestSnapshotID).toBe(ids[3]!)
+  } finally {
+    db.close()
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("comparison reads parse a snapshot once per immutable id and read only its metadata after", () => {
+  clearParsedSnapshotCache()
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  try {
+    const generations = writer.beginRefresh(["native-catalog"])
+    writer.saveSnapshot(
+      snapshot(
+        "native-catalog",
+        projectDirectory,
+        generations["native-catalog"],
+        Array.from({ length: 200 }, (_, index) => nativeRecord(`model-${index}`)),
+      ),
+    )
+    const parse = JSON.parse
+    let parsedBytes = 0
+    let parses = 0
+    JSON.parse = ((text: string, reviver?: never) => {
+      parses++
+      parsedBytes += text.length
+      return parse(text, reviver)
+    }) as typeof JSON.parse
+    try {
+      const first = reader.readComparisonSources().find((s) => s.source === "native-catalog")!
+      const afterFirst = { parses, parsedBytes }
+      for (let read = 0; read < 25; read++) reader.readComparisonSources()
+      const again = reader.readComparisonSources().find((s) => s.source === "native-catalog")!
+      expect(afterFirst.parsedBytes).toBeGreaterThan(50_000)
+      expect(parsedBytes).toBe(afterFirst.parsedBytes)
+      expect(parses).toBe(afterFirst.parses)
+      expect(again.snapshot).toBe(first.snapshot)
+    } finally {
+      JSON.parse = parse
+    }
+  } finally {
+    reader.close()
+    writer.close()
     rmSync(root, { recursive: true, force: true })
   }
 })
