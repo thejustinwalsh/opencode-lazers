@@ -15,6 +15,12 @@ import type { PathScope } from "./tool-detail.ts"
 import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
+import {
+  installSessionStampSchema,
+  readSessionStamp,
+  writeSessionStamp,
+  type SessionStamp,
+} from "./session-stamps.ts"
 
 type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -156,7 +162,40 @@ type JsonObject = Record<string, unknown>
 
 type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
 
+/**
+ * Warm per-session reconcile bookkeeping: a fingerprint, a cursor and two flags, about 150
+ * bytes each, so 256 sessions stay under 40 KB. Eviction is free: the state reloads as defaults.
+ * Per-message stamps are not held here; they live in runner_progress_reconciled and each run
+ * reads only the rows for the messages it was given.
+ */
 const MAX_RECONCILE_STATES = 256
+/** Message ids bound per stamp query; SQLite's host-parameter limit is far above this. */
+const STAMP_QUERY_IDS = 500
+
+type AssignmentRow = {
+  plan_id: string
+  task_id: string
+  attempt_id: string
+  attempt_state: string
+  session_id: string
+  message_id: string
+  workspace: string
+  project_directory: string
+}
+
+/**
+ * Per-task project verdicts, shared by every recorder copy in the process. An entry is the
+ * task key (about 90 characters) plus a project id string, measured near 200 bytes in the
+ * heap; 50_000 entries is therefore about 10 MB. Eviction only costs one body parse.
+ */
+const TASK_VERDICT_ENTRIES = 50_000
+const verdictsKey = Symbol.for("opencode-lazers.progress-task-verdicts.v1")
+const verdictHost = globalThis as typeof globalThis & {
+  [verdictsKey]?: Map<string, string | false>
+}
+const taskVerdicts: Map<string, string | false> = (verdictHost[verdictsKey] ??= new Map())
+/** Task bodies parsed by assignment reads; tests and diagnostics only. */
+export const verdictStats = { parses: 0 }
 /** One synchronous slice of reconcile work stays near this long before yielding. */
 const RECONCILE_SLICE_MS = 20
 const RECONCILE_CHUNK_MESSAGES = 25
@@ -168,8 +207,6 @@ type ReconciledStamp = { light: string; full?: string }
 
 type SessionReconcileState = {
   assignmentFingerprint: string
-  /** Durable per-message stamps (mirrors runner_progress_reconciled for this attempt). */
-  stamps: Map<string, ReconciledStamp>
   verifyCursor: number
   gapsRecorded: boolean
   boundRecorded: boolean
@@ -216,7 +253,7 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 const number = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined
 
-function dateMillis(value: unknown): number | undefined {
+export function dateMillis(value: unknown): number | undefined {
   let millis: number
   if (typeof value === "number" && Number.isFinite(value)) millis = value
   else {
@@ -301,6 +338,34 @@ function parseIDs(textValue: string): string[] {
   } catch {
     return []
   }
+}
+
+/**
+ * Event ids kept per row: the first id plus the most recent ones. A row such as a cumulative
+ * usage snapshot sees one event per update for the life of its session, so the list would
+ * otherwise grow and be re-read and rewritten on every hit. 32 ids of about 40 bytes each keep
+ * the column near 1.3 KB; readers see the same JSON array of strings, just windowed.
+ */
+export const EVENT_ID_WINDOW = 32
+
+function includesString(arrayText: string, value: string): boolean {
+  return arrayText.includes(JSON.stringify(value))
+}
+
+/** Add one event id without parsing when it is already listed (the common dedupe hit). */
+export function mergeEventIDsText(existing: string, eventID: string | undefined): string {
+  if (!eventID || includesString(existing, eventID)) return existing
+  const ids = parseIDs(existing)
+  ids.push(eventID)
+  const windowed =
+    ids.length > EVENT_ID_WINDOW ? [ids[0]!, ...ids.slice(-(EVENT_ID_WINDOW - 1))] : ids
+  return JSON.stringify(windowed)
+}
+
+/** Union of sources, sorted; unchanged text is returned without parsing when nothing is new. */
+export function mergeSourcesText(existing: string, incoming: readonly string[]): string {
+  if (incoming.every((source) => includesString(existing, source))) return existing
+  return JSON.stringify([...new Set([...parseSources(existing), ...incoming])].toSorted())
 }
 
 function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
@@ -1388,11 +1453,23 @@ export class ProgressRecorder {
   /** Work counters for tests and diagnostics; never persisted. */
   readonly reconcileStats = { stamped: 0, messages: 0, parts: 0 }
   private owners: SessionOwners | undefined
+  private assignmentScan: { revision: number; assignments: ProgressAssignment[] } | undefined
 
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
-  ) {}
+  ) {
+    installSessionStampSchema(store.repository)
+  }
+
+  /** Native `time.updated` (and derived handoff) at this attempt's last complete reconstruction. */
+  sessionStamp(attemptID: string): SessionStamp | undefined {
+    return readSessionStamp(this.store.repository, attemptID)
+  }
+
+  recordSessionStamp(assignment: ProgressAssignment, stamp: SessionStamp): void {
+    writeSessionStamp(this.store.repository, assignment.attemptID, assignment.sessionID, stamp)
+  }
 
   /**
    * O(1) prefilter: false means no runner attempt owns this session, so assignment-only
@@ -1403,28 +1480,48 @@ export class ProgressRecorder {
     return this.owners.has(sessionID)
   }
 
-  private assignmentFromRow(row: {
-    plan_id: string
-    task_id: string
-    attempt_id: string
-    attempt_state: string
-    session_id: string
-    message_id: string
-    workspace: string
-    project_directory: string
-    task_body: string
-  }): ProgressAssignment | undefined {
+  /**
+   * Task bodies are insert-only, so whether a task belongs to this project is decided once per
+   * task and cached; no scan or lookup re-parses a body it has already judged.
+   */
+  private taskProject(db: Database, row: AssignmentRow): string | false {
+    const key = `${this.store.repository.path}\0${this.projectID}\0${row.task_id}`
+    const cached = taskVerdicts.get(key)
+    if (cached !== undefined) {
+      taskVerdicts.delete(key)
+      taskVerdicts.set(key, cached)
+      return cached
+    }
+    verdictStats.parses++
+    const body = db
+      .query<{ body: string }, [string, string]>(
+        "SELECT body FROM tasks WHERE id=? AND project_directory=?",
+      )
+      .get(row.task_id, row.project_directory)?.body
+    if (body === undefined) return false
+    const task = TaskSpecSchema.parse(JSON.parse(body))
+    const belongs =
+      task.id === row.task_id &&
+      sameProject(task.provenance.projectID, this.projectID) &&
+      task.provenance.projectDirectory === row.project_directory
+        ? task.provenance.projectID
+        : (false as const)
+    taskVerdicts.set(key, belongs)
+    while (taskVerdicts.size > TASK_VERDICT_ENTRIES) {
+      const oldest = taskVerdicts.keys().next().value
+      if (oldest === undefined) break
+      taskVerdicts.delete(oldest)
+    }
+    return belongs
+  }
+
+  private assignmentFromRow(db: Database, row: AssignmentRow): ProgressAssignment | undefined {
     if (row.project_directory !== this.store.repository.projectDirectory) return undefined
-    const task = TaskSpecSchema.parse(JSON.parse(row.task_body))
-    if (
-      task.id !== row.task_id ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== row.project_directory
-    )
-      return undefined
+    const projectID = this.taskProject(db, row)
+    if (projectID === false) return undefined
     return {
-      projectID: task.provenance.projectID,
-      taskID: task.id,
+      projectID,
+      taskID: row.task_id,
       planID: row.plan_id,
       attemptID: row.attempt_id,
       attemptState: row.attempt_state,
@@ -1447,19 +1544,18 @@ export class ProgressRecorder {
           message_id: string
           workspace: string
           project_directory: string
-          task_body: string
         },
         [string, string, string]
       >(
         `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
-                a.session_id,a.message_id,a.workspace,p.project_directory,t.body AS task_body
+                a.session_id,a.message_id,a.workspace,p.project_directory
          FROM runner_attempts a
          JOIN runner_plans p ON p.id=a.plan_id
          JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
          WHERE p.project_directory=? AND t.project_directory=? AND ${condition}`,
       )
       .get(this.store.repository.projectDirectory, this.store.repository.projectDirectory, value)
-    const assignment = row ? this.assignmentFromRow(row) : undefined
+    const assignment = row ? this.assignmentFromRow(db, row) : undefined
     if (assignment && where === "session")
       (this.owners ??= sessionOwners(this.store.repository)).markOwned(assignment.sessionID)
     return assignment
@@ -1522,35 +1618,49 @@ export class ProgressRecorder {
     })
   }
 
+  /** Revision of the project's observation stamp, or undefined when it cannot be read. */
+  private observationRevision(db: Database): number | undefined {
+    try {
+      return (
+        db
+          .query<{ revision: number }, [string]>(
+            "SELECT revision FROM observation_revisions WHERE project_directory=?",
+          )
+          .get(this.store.repository.projectDirectory)?.revision ?? 0
+      )
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Every attempt's assignment. Rows carry no task body: project membership comes from the
+   * per-task verdict cache, so a scan parses only tasks it has never seen. When the project's
+   * observation revision has not moved since the previous scan, the previous result is returned
+   * without a query.
+   */
   assignments(): ProgressAssignment[] {
+    // TODO: replace this local gate with src/core/stamp-gate.ts when it lands.
     return this.store.atomic((db) => {
+      const revision = this.observationRevision(db)
+      const last = this.assignmentScan
+      if (revision !== undefined && last?.revision === revision) return [...last.assignments]
       const rows = db
-        .query<
-          {
-            plan_id: string
-            task_id: string
-            attempt_id: string
-            attempt_state: string
-            session_id: string
-            message_id: string
-            workspace: string
-            project_directory: string
-            task_body: string
-          },
-          [string, string]
-        >(
+        .query<AssignmentRow, [string, string]>(
           `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
-                  a.session_id,a.message_id,a.workspace,p.project_directory,t.body AS task_body
+                  a.session_id,a.message_id,a.workspace,p.project_directory
            FROM runner_attempts a
            JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
            WHERE p.project_directory=? AND t.project_directory=? ORDER BY a.started_at,a.number`,
         )
         .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
-      return rows.flatMap((row) => {
-        const assignment = this.assignmentFromRow(row)
+      const assignments = rows.flatMap((row) => {
+        const assignment = this.assignmentFromRow(db, row)
         return assignment ? [assignment] : []
       })
+      this.assignmentScan = revision === undefined ? undefined : { revision, assignments }
+      return [...assignments]
     })
   }
 
@@ -1665,15 +1775,9 @@ export class ProgressRecorder {
         ? factPayload
         : priorPayload
       : mergeFactPayload(nextKind as ProgressKind, priorPayload, factPayload)
-    const sources = [
-      ...new Set([...parseSources(existing.sources_json), existing.source, fact.source]),
-    ].toSorted()
-    const eventIDs = [
-      ...new Set([...parseIDs(existing.event_ids_json), ...(fact.eventID ? [fact.eventID] : [])]),
-    ]
     const nextPayloadText = JSON.stringify(nextPayload)
-    const nextSourcesText = JSON.stringify(sources)
-    const nextEventIDsText = JSON.stringify(eventIDs)
+    const nextSourcesText = mergeSourcesText(existing.sources_json, [existing.source, fact.source])
+    const nextEventIDsText = mergeEventIDsText(existing.event_ids_json, fact.eventID)
     const nextCallID = existing.call_id ?? fact.callID ?? null
     const nextMessageID = existing.message_id ?? fact.messageID ?? null
     const nextAt = replaceCumulative ? factAt : existing.at
@@ -1808,18 +1912,9 @@ export class ProgressRecorder {
     if (targetOnlyTool(previous?.tool ?? incomingTool)) delete incoming.content
     const payload = mergeFactPayload("tool", prior, incoming)
     const agent = text(payload.agent) ?? previous?.agent ?? null
-    const sources = [
-      ...new Set([...(previous ? parseIDs(previous.sources_json) : []), fact.source]),
-    ].toSorted()
-    const eventIDs = [
-      ...new Set([
-        ...(previous ? parseIDs(previous.event_ids_json) : []),
-        ...(fact.eventID ? [fact.eventID] : []),
-      ]),
-    ]
     const payloadText = JSON.stringify(payload)
-    const sourcesText = JSON.stringify(sources)
-    const eventIDsText = JSON.stringify(eventIDs)
+    const sourcesText = mergeSourcesText(previous?.sources_json ?? "[]", [fact.source])
+    const eventIDsText = mergeEventIDsText(previous?.event_ids_json ?? "[]", fact.eventID)
     if (!previous) {
       db.query(
         `INSERT INTO native_tool_calls
@@ -2283,28 +2378,34 @@ export class ProgressRecorder {
     return tracked
   }
 
-  private loadReconcileState(
+  private loadReconcileState(assignmentFingerprint: string): SessionReconcileState {
+    return { assignmentFingerprint, verifyCursor: 0, gapsRecorded: false, boundRecorded: false }
+  }
+
+  /** Stored stamps for exactly the given messages; transient, never retained across runs. */
+  private loadStamps(
     assignment: ProgressAssignment,
-    assignmentFingerprint: string,
-  ): SessionReconcileState {
-    const rows = this.store.repository.read((db) =>
-      db
-        .query<{ message_id: string; light: string; full: string | null }, [string, string]>(
-          `SELECT message_id,light,full FROM runner_progress_reconciled
-           WHERE project_directory=? AND attempt_id=?`,
-        )
-        .all(this.store.repository.projectDirectory, assignment.attemptID),
-    )
+    ids: readonly string[],
+  ): Map<string, ReconciledStamp> {
     const stamps = new Map<string, ReconciledStamp>()
-    for (const row of rows)
-      stamps.set(row.message_id, { light: row.light, ...(row.full ? { full: row.full } : {}) })
-    return {
-      assignmentFingerprint,
-      stamps,
-      verifyCursor: 0,
-      gapsRecorded: false,
-      boundRecorded: false,
+    for (let start = 0; start < ids.length; start += STAMP_QUERY_IDS) {
+      const batch = JSON.stringify(ids.slice(start, start + STAMP_QUERY_IDS))
+      const rows = this.store.repository.read((db) =>
+        db
+          .query<
+            { message_id: string; light: string; full: string | null },
+            [string, string, string]
+          >(
+            `SELECT message_id,light,full FROM runner_progress_reconciled
+             WHERE project_directory=? AND attempt_id=?
+             AND message_id IN (SELECT value FROM json_each(?))`,
+          )
+          .all(this.store.repository.projectDirectory, assignment.attemptID, batch),
+      )
+      for (const row of rows)
+        stamps.set(row.message_id, { light: row.light, ...(row.full ? { full: row.full } : {}) })
     }
+    return stamps
   }
 
   private *reconcileSteps(
@@ -2322,7 +2423,7 @@ export class ProgressRecorder {
     const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
     let state = this.reconcileStates.get(sessionID)
     if (!state || state.assignmentFingerprint !== assignmentFingerprint)
-      state = this.loadReconcileState(assignment, assignmentFingerprint)
+      state = this.loadReconcileState(assignmentFingerprint)
     // Bounded per-recorder LRU of warm sessions; evicted sessions reload from SQLite.
     this.reconcileStates.delete(sessionID)
     this.reconcileStates.set(sessionID, state)
@@ -2332,6 +2433,13 @@ export class ProgressRecorder {
       this.reconcileStates.delete(oldest)
     }
 
+    const stamps = this.loadStamps(
+      assignment,
+      messages.flatMap((raw) => {
+        const id = text(object(raw)?.id)
+        return id ? [id] : []
+      }),
+    )
     // 1. Cheap per-message change stamps decide what is new or changed.
     const dirty: DirtyMessage[] = []
     const dirtyIDs = new Set<string>()
@@ -2341,7 +2449,7 @@ export class ProgressRecorder {
       if (!id) continue
       this.reconcileStats.stamped++
       const light = messageLightSignature(raw)
-      const stamp = state.stamps.get(id)
+      const stamp = stamps.get(id)
       if (light === undefined || stamp?.light !== light) {
         dirty.push({ raw, id, light })
         dirtyIDs.add(id)
@@ -2359,7 +2467,7 @@ export class ProgressRecorder {
       const raw = messages[state.verifyCursor++ % messages.length]
       const id = text(object(raw)?.id)
       if (!id || dirtyIDs.has(id)) continue
-      const stamp = state.stamps.get(id)
+      const stamp = stamps.get(id)
       if (!stamp?.full) continue
       const full = messageFullFingerprint(raw)
       if (full !== undefined && full !== stamp.full) {
@@ -2411,7 +2519,7 @@ export class ProgressRecorder {
       }
       for (const item of done)
         if (item.light !== undefined && item.full !== undefined)
-          state.stamps.set(item.id, { light: item.light, full: item.full })
+          stamps.set(item.id, { light: item.light, full: item.full })
       if (index < dirty.length) yield
     }
 

@@ -90,6 +90,16 @@ export const schemaModules = {
       "runner_progress_reconciled",
     ],
   },
+  "host-messages": {
+    generation: 1,
+    source: "src/core/host-messages.ts",
+    tables: ["host_message_cursors"],
+  },
+  "progress-reconcile": {
+    generation: 1,
+    source: "src/progress/session-stamps.ts",
+    tables: ["runner_progress_session_stamps"],
+  },
   priority: {
     generation: 1,
     source: "src/runner/priority.ts",

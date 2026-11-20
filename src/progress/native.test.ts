@@ -5,7 +5,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { DateTime, Effect, Fiber, Queue, Stream } from "effect"
+import { DateTime, Effect, Exit, Fiber, Queue, Scope, Stream } from "effect"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
@@ -1714,3 +1714,100 @@ test.each(["get", "context"] as const)(
     }
   },
 )
+
+test("finished sessions with an unchanged native stamp are neither re-read nor re-reconciled", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const updated = new Map([
+      ["ses-failed", 100],
+      ["ses-accepted", 100],
+    ])
+    const gets: string[] = []
+    const contexts: string[] = []
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      readSession: (sessionID) => {
+        gets.push(sessionID)
+        return Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "lazers-implementor",
+          location: { directory: fixture.directory },
+          time: { updated: updated.get(sessionID) },
+        })
+      },
+      readContext: (sessionID) => {
+        contexts.push(sessionID)
+        return Effect.succeed([])
+      },
+    })
+    const idle = (sessionID: string) => ctx.emitEvent(executionEvent("session.idle", sessionID, 1))
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          // Boot baseline: no stamp exists yet, so each finished session is read once.
+          yield* Effect.promise(() => waitForNativeState(async () => contexts.length === 2))
+          expect(gets.length).toBe(2)
+
+          // Events for unchanged sessions cost one cheap session.get and no context read.
+          yield* Effect.promise(async () => {
+            await idle("ses-failed")
+            await idle("ses-accepted")
+            await waitForNativeState(async () => gets.length === 4, 6_000)
+          })
+          expect(contexts.length).toBe(2)
+
+          // A newer native stamp reads that session's context again.
+          updated.set("ses-accepted", 200)
+          yield* Effect.promise(async () => {
+            await idle("ses-accepted")
+            await waitForNativeState(async () => contexts.length === 3, 6_000)
+          })
+          expect(contexts.filter((id) => id === "ses-accepted").length).toBe(2)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("plugin copies of one project share one native event subscription and promote on leave", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const copies = [0, 1, 2].map(() => makeContext(fixture, { holdEvents: true }))
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const scopes = yield* Effect.all(copies.map(() => Scope.make()))
+        for (const [index, copy] of copies.entries())
+          yield* registerProgress(copy.context, recorder, "project").pipe(
+            Scope.provide(scopes[index]!),
+          )
+        yield* Effect.promise(() =>
+          waitForNativeState(
+            async () => copies.reduce((sum, c) => sum + c.subscriptions(), 0) >= 1,
+          ),
+        )
+        yield* Effect.sleep(50)
+        // Three copies, one subscriber: the first to join leads.
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 0, 0])
+
+        // The leader leaves: exactly one other copy takes the subscription over.
+        yield* Scope.close(scopes[0]!, Exit.void)
+        yield* Effect.promise(() =>
+          waitForNativeState(
+            async () => copies[1]!.subscriptions() + copies[2]!.subscriptions() === 1,
+          ),
+        )
+        yield* Scope.close(scopes[1]!, Exit.void)
+        yield* Scope.close(scopes[2]!, Exit.void)
+      }),
+    )
+  } finally {
+    fixture.close()
+  }
+})

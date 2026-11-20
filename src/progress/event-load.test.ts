@@ -88,7 +88,6 @@ test("a burst of native nudges coalesces into at most one reconstruction per ses
     projectDirectory: fixture.directory,
     projectID: "project-burst",
     pollIntervalMs: 60_000,
-    terminalRefreshMs: 60_000,
     changedDebounceMs: 100,
     participant: {
       assignments: () => [assignment],

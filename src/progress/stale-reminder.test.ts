@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { Tool } from "@opencode/schema/tool"
 import { Effect } from "effect"
 import { registerToolResults } from "../tool-results.ts"
-import { ProgressStaleness, STALE_PROGRESS_CALLS } from "./stale-reminder.ts"
+import { endStalenessSession, ProgressStaleness, STALE_PROGRESS_CALLS } from "./stale-reminder.ts"
 
 test("the reminder is due once per stale stretch and again only after a report goes stale", () => {
   const staleness = new ProgressStaleness(3)
@@ -118,4 +118,15 @@ test("the Code Mode wrapper, other agents and sessions of another project are no
   const elsewhere = harness(false)
   for (let index = 0; index < 5; index++) await elsewhere.call("shell")
   expect(text((await elsewhere.call("lz-get-task")).result.content)).toBe("answer")
+})
+
+test("a session end drops its staleness entry in every live counter", () => {
+  const first = new ProgressStaleness(2)
+  const second = new ProgressStaleness(2)
+  for (const staleness of [first, second]) staleness.record("ended", "shell", true)
+  endStalenessSession("ended")
+  for (const staleness of [first, second]) staleness.record("ended", "shell", true)
+  // Each counter restarted at one call, below the threshold of two.
+  expect(first.due("ended")).toBeUndefined()
+  expect(second.due("ended")).toBeUndefined()
 })
