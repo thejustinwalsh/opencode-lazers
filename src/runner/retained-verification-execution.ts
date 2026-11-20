@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite"
 import type { RetainedVerificationPreparation } from "./retained-verification-preparation.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
 import type { CheckActivities } from "./check-activities.ts"
@@ -24,6 +25,7 @@ import {
   activateRetainedVerificationResources,
   beginRetainedVerificationCheck,
   completeRetainedVerificationCheck,
+  hasUnremovedResource,
   markRetainedVerificationCheckUncertain,
   registerRetainedVerificationResources,
   retainedVerification,
@@ -108,6 +110,52 @@ type WorktreeInventory = { native: string[]; gitWorktrees: string[] }
 
 function isTerminalRetainedState(state: string) {
   return ["accepted", "failed", "cancelled"].includes(state)
+}
+
+/**
+ * The filesystem paths that resources of other runs still hold, `null` for one that cannot be
+ * judged (a payload that does not parse, or a key that is not an absolute filesystem path). Only
+ * the rows that matter are selected: another run's resource that is not removed, and any row whose
+ * payload does not parse, never the project's whole resource history.
+ */
+export function priorOwnedFilesystemPaths(
+  db: Database,
+  projectDirectory: string,
+  currentRunID: string,
+): (string | null)[] {
+  const table = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='owned_resources'",
+    )
+    .get()
+  if (!table) return []
+  return db
+    .query<{ payload: string }, [string, string]>(
+      `SELECT payload FROM owned_resources WHERE project_directory=?
+         AND (NOT json_valid(payload)
+           OR (json_extract(payload,'$.runID') IS NOT ?
+               AND json_extract(payload,'$.state') IS NOT 'removed'))`,
+    )
+    .all(projectDirectory, currentRunID)
+    .flatMap(({ payload }) => {
+      try {
+        const resource = JSON.parse(payload) as {
+          runID?: unknown
+          resourceKey?: unknown
+          state?: unknown
+        }
+        if (resource.runID === currentRunID || resource.state === "removed") return []
+        if (
+          typeof resource.resourceKey !== "string" ||
+          !resource.resourceKey.startsWith("filesystem:")
+        )
+          return [null]
+        const path = resource.resourceKey.slice("filesystem:".length)
+        return path.startsWith("/") ? [path] : [null]
+      } catch {
+        return [null]
+      }
+    })
 }
 
 export class RetainedVerificationExecution {
@@ -244,38 +292,9 @@ export class RetainedVerificationExecution {
     }
     const currentRunID = resources[0]!.runID
     if (resources.some((resource) => resource.runID !== currentRunID)) return false
-    const priorOwnedResources = this.runtime.store.atomic((db) => {
-      const table = db
-        .query<{ name: string }, []>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='owned_resources'",
-        )
-        .get()
-      if (!table) return []
-      return db
-        .query<{ payload: string }, [string]>(
-          "SELECT payload FROM owned_resources WHERE project_directory=?",
-        )
-        .all(operation.projectDirectory)
-        .flatMap(({ payload }) => {
-          try {
-            const resource = JSON.parse(payload) as {
-              runID?: unknown
-              resourceKey?: unknown
-              state?: unknown
-            }
-            if (resource.runID === currentRunID || resource.state === "removed") return []
-            if (
-              typeof resource.resourceKey !== "string" ||
-              !resource.resourceKey.startsWith("filesystem:")
-            )
-              return [null]
-            const path = resource.resourceKey.slice("filesystem:".length)
-            return path.startsWith("/") ? [path] : [null]
-          } catch {
-            return [null]
-          }
-        })
-    })
+    const priorOwnedResources = this.runtime.store.atomic((db) =>
+      priorOwnedFilesystemPaths(db, operation.projectDirectory, currentRunID),
+    )
     if (priorOwnedResources.some((path) => path === null)) return false
     const retainedCheckPaths = this.runtime.store.atomic((db) =>
       db
@@ -1684,12 +1703,7 @@ export class RetainedVerificationExecution {
         }
       }
       const remainingResources = this.runtime.store.atomic((db) =>
-        db
-          .query<{ state: string }, [string, string]>(
-            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
-          )
-          .all(operation.id, phase)
-          .some((resource) => resource.state !== "removed"),
+        hasUnremovedResource(db, operation.id, phase),
       )
       const checkCleanupPending = this.runtime.store.atomic((db) =>
         retainedVerificationChecks(db, operation.id, phase).some(
@@ -2053,12 +2067,7 @@ export class RetainedVerificationExecution {
         break
       }
       const resourcePending = this.runtime.store.atomic((db) =>
-        db
-          .query<{ state: string }, [string, string, string]>(
-            "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=? AND check_id=?",
-          )
-          .all(operation.id, phase, check.checkID)
-          .some((resource) => resource.state !== "removed"),
+        hasUnremovedResource(db, operation.id, phase, check.checkID),
       )
       if (check.cleanupState === "complete" && !resourcePending) continue
       const setupClean = await this.cleanupRetainedCheckSetup(
@@ -2085,12 +2094,7 @@ export class RetainedVerificationExecution {
       retainedVerificationChecks(db, operation.id, phase),
     )
     const remainingResources = this.runtime.store.atomic((db) =>
-      db
-        .query<{ state: string }, [string, string]>(
-          "SELECT state FROM runner_retained_verification_resources WHERE operation_id=? AND phase=?",
-        )
-        .all(operation.id, phase)
-        .some((resource) => resource.state !== "removed"),
+      hasUnremovedResource(db, operation.id, phase),
     )
     checksSettled &&= refreshedChecks.every(
       (check) =>

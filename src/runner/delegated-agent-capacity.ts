@@ -978,7 +978,7 @@ export class DelegatedAgentCapacity {
       ])
       const attempts = db
         .query<{ project_directory: string }, [string, ...string[]]>(
-          `SELECT COALESCE(a.project_directory,p.project_directory) AS project_directory
+          `SELECT DISTINCT COALESCE(a.project_directory,p.project_directory) AS project_directory
            FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
            WHERE a.session_id=? AND a.state IN (${ACTIVE_ATTEMPT_STATES.map(() => "?").join(",")})`,
         )
@@ -987,7 +987,7 @@ export class DelegatedAgentCapacity {
         return true
       const plans = db
         .query<{ project_directory: string }, [string]>(
-          `SELECT project_directory FROM runner_plans
+          `SELECT DISTINCT project_directory FROM runner_plans
            WHERE owner=? AND state NOT IN ('integrated','cancelled','failed')`,
         )
         .all(sessionID)
