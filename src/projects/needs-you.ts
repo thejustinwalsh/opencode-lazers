@@ -9,12 +9,7 @@ import type { ProjectRef, ProjectUnit } from "./scope.ts"
 
 /** One thing that waits on the owner, without its project (the page names that). */
 export type NeedsYouEntry = {
-  kind:
-    | "owner-hold"
-    | "recovery-bundle"
-    | "architect-question"
-    | "project-setup"
-    | "profile-confirmation"
+  kind: "owner-hold" | "recovery-bundle" | "architect-question" | "project-setup"
   /** Task id, outbox id or session id. */
   id: string
   title: string
@@ -104,27 +99,16 @@ export function openRecoveryBundle(db: Database, directory: string): NeedsYouEnt
 }
 
 /**
- * What the project's profile asks of the owner: set one up (none stored, none proposed, notice
- * not dismissed) or confirm the proposed one. Read from recorded rows only.
+ * What the project's profile asks of the owner: set one up, while none is active and the notice
+ * is not dismissed. Read from recorded rows only.
  */
 export function profileEntries(db: Database, projectKey: string): NeedsYouEntry[] {
-  const rows = db
-    .query<{ revision: number; state: string; created_at: number }, [string]>(
-      `SELECT revision,state,created_at FROM lazers_profile_revisions
-        WHERE project_key=? AND state IN ('proposed','confirmed') ORDER BY revision DESC`,
+  const active = db
+    .query<{ n: number }, [string]>(
+      "SELECT COUNT(*) AS n FROM lazers_profile_revisions WHERE project_key=? AND state='active'",
     )
-    .all(projectKey)
-  const proposed = rows.find((row) => row.state === "proposed")
-  if (proposed)
-    return [
-      {
-        kind: "profile-confirmation",
-        id: `${projectKey}:r${proposed.revision}`,
-        title: "Confirm the profile",
-        since: proposed.created_at,
-      },
-    ]
-  if (rows.some((row) => row.state === "confirmed")) return []
+    .get(projectKey)
+  if ((active?.n ?? 0) > 0) return []
   if (projectSettingsIn(db, projectKey).setupDismissedAt !== null) return []
   return [{ kind: "project-setup", id: projectKey, title: "Set up LAZERS" }]
 }

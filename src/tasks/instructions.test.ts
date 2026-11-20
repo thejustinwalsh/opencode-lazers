@@ -336,7 +336,7 @@ function activeCargoProfile(unprovenFix = false): ActiveProfile {
     revision: 1,
     projectKey: "k",
     profile: parsed.profile,
-    confirmedAt: 1,
+    activatedAt: 1,
     proofs: new Map([
       proof("verify:fmt", "proven", 0),
       proof("verify:tests", unprovenFix ? "failed" : "proven", unprovenFix ? 101 : 0),

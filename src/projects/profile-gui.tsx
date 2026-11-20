@@ -9,7 +9,6 @@ import { startSetupInSession } from "./setup-notice.tsx"
 
 type Ctx = Parameters<Plugin.Setup>[0]
 type Proof = ProfileRevisionView["proofs"][number]
-type Change = NonNullable<ProfileView["pending"]>["changes"][number]
 
 /** What the editor opens with when a project has no profile: a shape to fill in, not a default. */
 const TEMPLATE = {
@@ -22,7 +21,6 @@ const TEMPLATE = {
 }
 
 const asProfile = (value: unknown) => value as ProjectProfile
-const kindLabel = { added: "Added", removed: "Removed", changed: "Changed" } as const
 const lastLine = (text: string) =>
   text
     .split("\n")
@@ -50,29 +48,10 @@ function failureNote(proof: Proof | undefined): string | undefined {
     .join(": ")
 }
 
-/** The commands the runtime would run unattended, and those it will not because they are unproven. */
-function unattended(revision: ProfileRevisionView) {
-  const profile = asProfile(revision.profile)
-  const proofOf = (key: string) => revision.proofs.find((proof) => proof.key === key)
-  const entries = [
-    ...(profile.install === undefined
-      ? []
-      : [{ text: `install: ${profile.install}`, proof: proofOf("install:0") }]),
-    ...profile.fix.map((entry, index) => ({
-      text: `fix: ${entry.command}`,
-      proof: proofOf(`fix:${index}`),
-    })),
-  ]
-  return {
-    runs: entries.filter((entry) => entry.proof?.outcome === "proven").map((entry) => entry.text),
-    held: entries.filter((entry) => entry.proof?.outcome !== "proven").map((entry) => entry.text),
-  }
-}
-
 /**
  * The Verification group of one project in Settings: the active profile with each command's
- * proof, a pending revision with what changed, and an editor for the same JSON the Architect
- * proposes and the store keeps (one document, one schema). Confirmation is the owner's alone.
+ * proof, its earlier revisions, and an editor for the same JSON the Architect sets and the store
+ * keeps (one document, one schema). A save is active at once.
  */
 export function VerificationGroup(props: {
   ctx: Ctx
@@ -109,7 +88,7 @@ export function VerificationGroup(props: {
 
   const seed = () => {
     const current = view()
-    const source = current?.pending?.profile ?? current?.active?.profile ?? TEMPLATE
+    const source = current?.active?.profile ?? TEMPLATE
     return JSON.stringify(source, null, 2)
   }
   /** Starts setup through a session of one of the project's checkouts, which the server can answer for. */
@@ -162,7 +141,7 @@ export function VerificationGroup(props: {
       persistent: true,
     })
     try {
-      const outcome = await rpc().proposeProfile(
+      const outcome = await rpc().saveProfile(
         { key: props.project.key, profile, reason: why },
         { signal: ctx.signal },
       )
@@ -177,36 +156,7 @@ export function VerificationGroup(props: {
       props.refresh()
     }
   }
-  const decide = async (method: "confirmProfile" | "discardProfile", revision: number) => {
-    try {
-      const outcome = await rpc()[method](
-        { key: props.project.key, revision },
-        { signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)]) },
-      )
-      setProblem(outcome.ok ? undefined : outcome.message)
-    } catch {
-      setProblem("Could not save. Try again.")
-    }
-    await load()
-    props.refresh()
-  }
-  const confirm = async (revision: ProfileRevisionView) => {
-    const { runs, held } = unattended(revision)
-    const description = [
-      runs.length ? `Runs unattended:\n${runs.join("\n")}` : "Nothing runs unattended.",
-      held.length ? `Will not run unattended (unproven):\n${held.join("\n")}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-    const ok = await ctx.dialogs.confirm({
-      title: `Confirm profile revision ${revision.revision}?`,
-      description,
-      confirm: "Confirm",
-    })
-    if (ok) await decide("confirmProfile", revision.revision)
-  }
-
-  const Cmd = (cmd: { command: string; proof?: Proof | undefined }) => {
+  const Cmd = (cmd: { command: string; proof?: Proof | undefined; fixOrInstall?: boolean }) => {
     const label = proofLabel(cmd.proof)
     return (
       <div class="lazers-verification-command">
@@ -214,6 +164,9 @@ export function VerificationGroup(props: {
         <Label tone={label.tone}>{label.text}</Label>
         <Show when={failureNote(cmd.proof)}>
           {(note) => <span class="lazers-projects-refusal">{note()}</span>}
+        </Show>
+        <Show when={cmd.fixOrInstall && cmd.proof?.outcome !== "proven"}>
+          <span class="lazers-projects-note">Not run unattended</span>
         </Show>
       </div>
     )
@@ -236,7 +189,7 @@ export function VerificationGroup(props: {
           {(install) => (
             <div>
               <span class="lazers-projects-note">install</span>
-              <Cmd command={install()} proof={proofOf("install:0")} />
+              <Cmd command={install()} proof={proofOf("install:0")} fixOrInstall />
             </div>
           )}
         </Show>
@@ -244,7 +197,7 @@ export function VerificationGroup(props: {
           {(entry, index) => (
             <div>
               <span class="lazers-projects-note">fix {entry.files?.join(", ")}</span>
-              <Cmd command={entry.command} proof={proofOf(`fix:${index()}`)} />
+              <Cmd command={entry.command} proof={proofOf(`fix:${index()}`)} fixOrInstall />
             </div>
           )}
         </For>
@@ -271,16 +224,23 @@ export function VerificationGroup(props: {
         title={<span class="lazers-projects-name">Verification</span>}
         description={
           <span class="lazers-projects-detail">
-            <Show when={!view()?.active && !view()?.pending}>
+            <Show when={!view()?.active}>
               <span class="lazers-projects-note">No profile</span>
             </Show>
             <Show when={view()?.active}>
               {(active) => (
                 <>
                   <span class="lazers-projects-note">
-                    Revision {active().revision}, confirmed{" "}
-                    {active().decidedAt ? new Date(active().decidedAt!).toLocaleDateString() : ""}
+                    Revision {active().revision}, set by {active().author.kind}{" "}
+                    {new Date(active().createdAt).toLocaleDateString()}: {active().reason}
                   </span>
+                  <Show when={active().mapPreview}>
+                    {(map) => (
+                      <span class="lazers-projects-note">
+                        Map: {map().files} files, {map().names} names, {map().tokens} tokens
+                      </span>
+                    )}
+                  </Show>
                   <Revision revision={active()} />
                 </>
               )}
@@ -306,57 +266,22 @@ export function VerificationGroup(props: {
           </Show>
         </div>
       </Ui.SettingsRow>
-      <Show when={view()?.pending}>
-        {(pending) => (
-          <Ui.SettingsRow
-            title={<span class="lazers-projects-name">Pending revision {pending().revision}</span>}
-            description={
-              <span class="lazers-projects-detail">
-                <For each={pending().changes}>
-                  {(change: Change) => (
-                    <span class="lazers-verification-change">
-                      <Label tone="interactive">{kindLabel[change.kind]}</Label> {change.field}{" "}
-                      {change.key}
-                      <Show when={change.before !== undefined}>
-                        {" "}
-                        <code>{change.before}</code>
-                      </Show>
-                      <Show when={change.before !== undefined && change.after !== undefined}>
-                        {" → "}
-                      </Show>
-                      <Show when={change.after !== undefined}>
-                        {" "}
-                        <code>{change.after}</code>
-                      </Show>
-                    </span>
-                  )}
-                </For>
-                <Show when={pending().mapPreview}>
-                  {(map) => (
-                    <span class="lazers-projects-note">
-                      Map: {map().files} files, {map().names} names, {map().tokens} tokens (now{" "}
-                      {map().currentFiles} files, {map().currentTokens} tokens)
-                    </span>
-                  )}
-                </Show>
-                <Revision revision={pending()} />
-              </span>
-            }
-          >
-            <div class="lazers-projects-controls">
-              <Ui.Button size="small" onClick={() => void confirm(pending())}>
-                Confirm
-              </Ui.Button>
-              <Ui.Button
-                size="small"
-                variant="ghost"
-                onClick={() => void decide("discardProfile", pending().revision)}
-              >
-                Discard
-              </Ui.Button>
-            </div>
-          </Ui.SettingsRow>
-        )}
+      <Show when={(view()?.history.length ?? 0) > 0}>
+        <Ui.SettingsRow
+          title={<span class="lazers-projects-name">Earlier revisions</span>}
+          description={
+            <span class="lazers-projects-detail">
+              <For each={view()?.history ?? []}>
+                {(revision) => (
+                  <span class="lazers-projects-note">
+                    Revision {revision.revision}, set by {revision.author.kind}{" "}
+                    {new Date(revision.createdAt).toLocaleDateString()}: {revision.reason}
+                  </span>
+                )}
+              </For>
+            </span>
+          }
+        />
       </Show>
       <Show when={editing()}>
         <Ui.SettingsRow

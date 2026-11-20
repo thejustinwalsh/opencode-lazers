@@ -34,7 +34,7 @@ function active(proofs: (readonly [string, ProofRecord])[], extra: object = {}):
     revision: 3,
     projectKey: "k",
     profile: parsed.profile,
-    confirmedAt: 1,
+    activatedAt: 1,
     proofs: new Map(proofs),
   }
 }
@@ -80,13 +80,13 @@ test("the check run profile carries commands, the revision and tool versions, ne
   })
 })
 
-test("the audit is off only when a confirmed profile says so", async () => {
+test("the audit is off only when the active profile says so", async () => {
   const { mkdtempSync, realpathSync, rmSync } = await import("node:fs")
   const { tmpdir } = await import("node:os")
   const { join } = await import("node:path")
   const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
   const { TaskRepository } = await import("../storage.ts")
-  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
+  const { activateRevision } = await import("./profile-store.ts")
   const { auditIsOff } = await import("./profile-runtime.ts")
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-audit-off-")))
   Bun.spawnSync(["git", "-C", root, "init", "-q", "-b", "main"])
@@ -101,15 +101,13 @@ test("the audit is off only when a confirmed profile says so", async () => {
       source: { include: ["src/**"] },
     })
     if (!parsed.ok) throw new Error("bad fixture")
-    proposeRevision(repository, {
+    activateRevision(repository, {
       projectKey: key,
       profile: parsed.profile,
       author: { kind: "owner" },
       reason: "t",
       proofs: [],
     })
-    expect(auditIsOff(repository, root)).toBe(false)
-    confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
     expect(auditIsOff(repository, root)).toBe(true)
   } finally {
     resetProjectAliasCache()
@@ -118,13 +116,13 @@ test("the audit is off only when a confirmed profile says so", async () => {
   }
 })
 
-test("a recheck keeps the revision it started with, across a newer confirmation", async () => {
+test("a recheck keeps the revision it started with, across a newer revision", async () => {
   const { mkdtempSync, realpathSync, rmSync } = await import("node:fs")
   const { tmpdir } = await import("node:os")
   const { join } = await import("node:path")
   const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
   const { TaskRepository } = await import("../storage.ts")
-  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
+  const { activateRevision } = await import("./profile-store.ts")
   const { retainedProfileInput } = await import("./profile-runtime.ts")
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-pin-")))
   Bun.spawnSync(["git", "-C", root, "init", "-q", "-b", "main"])
@@ -137,23 +135,22 @@ test("a recheck keeps the revision it started with, across a newer confirmation"
       source: { include: ["src/**"] },
     })
     if (!parsed.ok) throw new Error("bad fixture")
-    const confirm = (revision: number) => {
-      proposeRevision(repository, {
+    const activate = () => {
+      activateRevision(repository, {
         projectKey: key,
         profile: parsed.profile,
         author: { kind: "owner" },
         reason: "t",
         proofs: [],
       })
-      confirmRevision(repository, { projectKey: key, revision, by: "owner" })
     }
     const revisionOf = (operation: string) =>
       retainedProfileInput(repository, root, root, operation).profile?.revision
     // A run that started with no profile stays without one.
     expect(revisionOf("before")).toBeUndefined()
-    confirm(1)
+    activate()
     expect(revisionOf("first")).toBe(1)
-    confirm(2)
+    activate()
     expect(revisionOf("first")).toBe(1)
     expect(revisionOf("second")).toBe(2)
     expect(revisionOf("before")).toBeUndefined()

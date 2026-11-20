@@ -283,7 +283,7 @@ test("a stored per-project source definition replaces the derived default", asyn
   expect((await currentRepoMap(repository, root)).hash).toBe(derived.hash)
 })
 
-// --- a confirmed profile's source ---
+// --- an active profile's source ---
 
 async function profiled(
   files: Record<string, string>,
@@ -291,7 +291,7 @@ async function profiled(
 ) {
   const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
   const { parseProfile } = await import("../projects/profile.ts")
-  const { proposeRevision, confirmRevision } = await import("../projects/profile-store.ts")
+  const { activateRevision } = await import("../projects/profile-store.ts")
   const root = realpathSync(tree(files))
   Bun.spawnSync(["git", "-C", root, "remote", "add", "origin", "git@h.com:a/map.git"])
   const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
@@ -306,15 +306,15 @@ async function profiled(
     source: { exclude: [], ...source },
   })
   if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
-  proposeRevision(repository, {
-    projectKey: key,
-    profile: parsed.profile,
-    author: { kind: "owner" },
-    reason: "t",
-    proofs: [],
-  })
-  const confirm = () => confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
-  return { root, repository, confirm }
+  const activate = () =>
+    activateRevision(repository, {
+      projectKey: key,
+      profile: parsed.profile,
+      author: { kind: "owner" },
+      reason: "t",
+      proofs: [],
+    })
+  return { root, repository, activate }
 }
 
 test("a profile's source selects files of any language; exports are read for TypeScript only", async () => {
@@ -326,7 +326,7 @@ test("a profile's source selects files of any language; exports are read for Typ
     },
     { include: ["src/**/*.rs", "src/**/*.ts"] },
   )
-  f.confirm()
+  f.activate()
   const map = await currentRepoMap(f.repository, f.root)
   expect(map.files).toBe(2)
   expect(map.text).toContain("src/index.ts: const a")
@@ -342,17 +342,17 @@ test("a profile source equal to the derived default builds the identical map", a
   }
   const f = await profiled(files, { include: ["src/**/*.ts", "src/**/*.tsx"] })
   const derived = await currentRepoMap(f.repository, f.root)
-  f.confirm()
+  f.activate()
   expect((await currentRepoMap(f.repository, f.root)).hash).toBe(derived.hash)
 })
 
-test("a proposal is not read: the stored filter or the derived default keeps applying", async () => {
+test("before a profile is active the derived default applies; the map follows the profile once it is", async () => {
   const f = await profiled(fixture, {
     include: ["src/ui/**/*.tsx"],
     exclude: ["**/*.test.tsx"],
   })
   const before = await currentRepoMap(f.repository, f.root)
   expect(before.files).toBeGreaterThan(1)
-  f.confirm()
+  f.activate()
   expect((await currentRepoMap(f.repository, f.root)).files).toBe(1)
 })

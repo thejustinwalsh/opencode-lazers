@@ -27,7 +27,7 @@ const profile = (() => {
     revision: 1,
     projectKey: "k",
     profile: parsed.profile,
-    confirmedAt: 1,
+    activatedAt: 1,
     proofs: new Map(),
   })
 })()

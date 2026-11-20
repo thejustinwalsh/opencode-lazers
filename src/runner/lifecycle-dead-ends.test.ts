@@ -58,11 +58,11 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     ],
     terminal: [],
   },
-  // The owner confirms or discards a proposed profile; a newer proposal replaces a pending one.
+  // A profile revision is active until the project's next revision supersedes it.
   profile: {
-    observable: ["REPLACED"],
-    architect: ["OWNER_CONFIRMED", "OWNER_DISCARDED"],
-    terminal: ["confirmed", "discarded"],
+    observable: ["SUPERSEDED"],
+    architect: [],
+    terminal: ["superseded"],
   },
   plan: {
     observable: ["blocked", "accepted", "cancelled", "cleanup-blocked", "integrated"],

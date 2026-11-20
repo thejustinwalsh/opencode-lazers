@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { TaskRepository } from "../storage.ts"
 import { parseProfile } from "./profile.ts"
-import { confirmRevision, proposeRevision } from "./profile-store.ts"
+import { activateRevision } from "./profile-store.ts"
 import {
   architectProfileKey,
   ensureArchitectProfileGuidance,
@@ -61,21 +61,20 @@ async function fixture() {
       },
     },
   }
-  const confirm = () => {
+  const activate = () => {
     const parsed = parseProfile({
       toolchains: ["cargo"],
       verify: [{ id: "tests", command: "cargo test --locked" }],
       source: { include: ["src/**/*.rs"] },
     })
     if (!parsed.ok) throw new Error("bad fixture")
-    proposeRevision(repository, {
+    activateRevision(repository, {
       projectKey: key,
       profile: parsed.profile,
       author: { kind: "owner" },
       reason: "t",
       proofs: [],
     })
-    confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
   }
   return {
     repository,
@@ -84,14 +83,14 @@ async function fixture() {
     key,
     entries,
     puts,
-    confirm,
+    activate,
     session: session as unknown as Plugin.Context["session"],
   }
 }
 
 test("an Architect session of a profiled project gets the guidance once", async () => {
   const f = await fixture()
-  f.confirm()
+  f.activate()
   f.agents.set("ses_a1", "architect")
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_a1")).toBe(true)
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_a1")).toBe(false)
@@ -107,13 +106,13 @@ test("with no profile nothing is installed, and a later profile still installs",
   f.agents.set("ses_a2", "architect")
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_a2")).toBe(false)
   expect(f.puts).toEqual([])
-  f.confirm()
+  f.activate()
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_a2")).toBe(true)
 })
 
 test("workers are skipped, and an existing entry is left alone", async () => {
   const f = await fixture()
-  f.confirm()
+  f.activate()
   f.agents.set("ses_w", "lazers-implementor")
   expect(await ensureArchitectProfileGuidance(f.session, f.repository, "ses_w")).toBe(false)
   f.agents.set("ses_a3", "architect")
@@ -133,7 +132,7 @@ test("a hand-started Architect session in a project without a profile gets the p
   expect(text).toContain("lz-project-profile")
 })
 
-test("no pointer after dismissal, after confirmation, in a setup session, or for a worker", async () => {
+test("no pointer after dismissal, once a profile is active, in a setup session, or for a worker", async () => {
   const f = await fixture()
   f.agents.set("ses_d", "architect")
   setProjectSetting(f.repository, f.key, "setupDismissedAt", 1)
@@ -144,7 +143,7 @@ test("no pointer after dismissal, after confirmation, in a setup session, or for
   expect(await ensureSetupPointer(f.session, f.repository, "ses_setup")).toBe(false)
   f.agents.set("ses_w2", "lazers-implementor")
   expect(await ensureSetupPointer(f.session, f.repository, "ses_w2")).toBe(false)
-  f.confirm()
+  f.activate()
   f.agents.set("ses_c", "architect")
   expect(await ensureSetupPointer(f.session, f.repository, "ses_c")).toBe(false)
   expect(f.puts).toEqual([])
