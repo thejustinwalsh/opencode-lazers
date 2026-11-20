@@ -1,5 +1,6 @@
 import { Plugin, Style, bindPlugin } from "@opencode/plugin/gui"
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { createStore, reconcile } from "solid-js/store"
 import type { JSX } from "solid-js"
 import { Label } from "../details/components.tsx"
 import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
@@ -31,7 +32,7 @@ export function setupProjects(ctx: Ctx) {
   ctx.add(Style, `${settingLabelStyles}\n${projectsStyles}`)
 
   const Section = bindPlugin(() => {
-    const [listing, setListing] = createSignal<ProjectsListing>()
+    const [listing, setListing] = createStore<{ value?: ProjectsListing }>({})
     const [unreachable, setUnreachable] = createSignal(false)
     /** A refused write by row key (`global` for the header), shown beside the control. */
     const [refusals, setRefusals] = createSignal<Record<string, string>>({})
@@ -40,7 +41,9 @@ export function setupProjects(ctx: Ctx) {
     const signal = () => AbortSignal.any([ctx.signal, AbortSignal.timeout(5_000)])
     const refresh = async () => {
       try {
-        setListing(await ctx.client.rpc(Projects).list({}, { signal: signal() }))
+        // Reconciled by key: a project's row keeps its identity, focus and unsent drafts.
+        const next = await ctx.client.rpc(Projects).list({}, { signal: signal() })
+        setListing("value", reconcile(next, { key: "key", merge: true }))
         setUnreachable(false)
       } catch {
         if (!ctx.signal.aborted) setUnreachable(true)
@@ -273,8 +276,8 @@ export function setupProjects(ctx: Ctx) {
             <SettingLabel
               name="Pause all"
               hint={
-                listing()?.globalPause
-                  ? [listing()!.globalPause!.by, listing()!.globalPause!.reason]
+                listing.value?.globalPause
+                  ? [listing.value!.globalPause!.by, listing.value!.globalPause!.reason]
                       .filter(Boolean)
                       .join(" · ")
                   : "no new dispatch in any project; running work finishes"
@@ -293,12 +296,12 @@ export function setupProjects(ctx: Ctx) {
         >
           <PauseSwitch
             label="Pause all"
-            paused={listing()?.globalPause != null}
+            paused={listing.value?.globalPause != null}
             onPause={(reason) => void setPause({ kind: "global" }, true, reason)}
             onResume={() => void setPause({ kind: "global" }, false)}
           />
         </Ui.SettingsRow>
-        <For each={listing()?.projects ?? []}>{(project) => <Row project={project} />}</For>
+        <For each={listing.value?.projects ?? []}>{(project) => <Row project={project} />}</For>
       </Ui.SettingsSection>
     )
   })
