@@ -19,6 +19,8 @@ import { architectCacheWindowMs } from "./runner/architect-routing.ts"
 import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
+import { ensureArchitectMap } from "./context/architect-map.ts"
+import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { registerObservability } from "./observability/rpc.ts"
 import { registerProgress } from "./progress/native.ts"
@@ -109,7 +111,12 @@ export default Plugin.define({
         ),
       )
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
-        Effect.promise(() => runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)),
+        Effect.promise(async () => {
+          await runtime.observeArchitectPrompt(prompt.sessionID, prompt.messageID)
+          // The map joins the Architect's cached prefix at its first prompt; orientation must
+          // never block the prompt, so a failure leaves the session without it.
+          await ensureArchitectMap(ctx.session, repository, prompt.sessionID).catch(() => false)
+        }),
       )
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
@@ -163,7 +170,11 @@ export default Plugin.define({
           },
         }).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:RunnerTools", () => registerRunnerTools(ctx, runtime))
+      yield* sectionEffect("setup:RunnerTools", () =>
+        registerRunnerTools(ctx, runtime, (planID) =>
+          freezePlanMap(repository, planID, ctx.location.directory),
+        ),
+      )
       yield* sectionEffect("setup:Progress", () =>
         registerProgress(
           ctx,
