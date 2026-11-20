@@ -11,6 +11,9 @@ import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
 import { applyAgentRoute } from "../models/agent-route-apply.ts"
 import type { AgentRouteReader } from "../models/agent-route-apply.ts"
+import { stubSuperseded } from "./context-stubs.ts"
+import type { ContextMessage } from "./context-stubs.ts"
+import { StubHorizons } from "./context-horizon.ts"
 
 /** The Auditor's model when native OpenCode configuration pins none. */
 export const AUDITOR_DEFAULT_MODEL = {
@@ -135,4 +138,47 @@ export function registerWorker(ctx: Plugin.Context, store: RunnerStore, routes?:
       }),
     )
   })
+}
+
+/**
+ * The Architect's requests carry superseded notices and obsolete reads as one-line stubs, in the
+ * request only: storage and the transcript are untouched. See `context-stubs.ts` for the rules and
+ * `context-horizon.ts` for when they may change. Never throws: a failure leaves the messages as
+ * they were and is logged once, because a throw here would fail the Architect's step and the
+ * `context` hooks of other plugins.
+ */
+export function registerArchitectContextStubs(
+  ctx: Pick<Plugin.Context, "session">,
+  options: {
+    cacheWindowMs?: number
+    horizons?: StubHorizons
+    log?: (message: string, fields: Record<string, unknown>) => void
+  } = {},
+) {
+  const horizons = options.horizons ?? new StubHorizons(options.cacheWindowMs)
+  const log =
+    options.log ??
+    ((message: string, fields: Record<string, unknown>) =>
+      void Effect.runFork(Effect.logWarning(message, fields)))
+  let logged = false
+  return timedHooks(ctx.session, "session").hook("context", (context) =>
+    Effect.sync(() => {
+      if (String(context.agent) !== "architect") return
+      try {
+        const { horizon } = horizons.horizonFor(
+          context.sessionID,
+          context.messages as readonly ContextMessage[],
+        )
+        const stubbed = stubSuperseded(context.messages as readonly ContextMessage[], { horizon })
+        if (stubbed.stubbed > 0)
+          context.messages.splice(0, context.messages.length, ...(stubbed.messages as never[]))
+      } catch (error) {
+        if (logged) return
+        logged = true
+        log("LAZERS context stubs failed; the request is sent unchanged", {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }),
+  )
 }

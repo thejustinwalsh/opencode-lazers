@@ -10,7 +10,8 @@ import { registerTaskTools } from "./tools.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
 import { registerRunnerTools } from "./runner/tools.ts"
-import { registerWorker } from "./runner/roles.ts"
+import { registerArchitectContextStubs, registerWorker } from "./runner/roles.ts"
+import { architectCacheWindowMs } from "./runner/architect-routing.ts"
 import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
@@ -110,6 +111,13 @@ export default Plugin.define({
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, agentRoutes))
+      yield* sectionEffect("setup:ContextStubs", () =>
+        registerArchitectContextStubs(ctx, {
+          cacheWindowMs: architectCacheWindowMs(
+            ctx.options.architectCacheWindowMs ?? ctx.options.architectIdleWindowMs,
+          ),
+        }),
+      )
       yield* sectionEffect("setup:ArchitectContact", () =>
         registerArchitectContact(ctx, runtime.store, () => core.wake()).pipe(Effect.orDie),
       )
