@@ -1,4 +1,4 @@
-import type { Bucket } from "./schema.ts"
+import type { Bucket } from "./buckets.ts"
 
 /**
  * State rank of a task for the list: the `STATE_RANK_SQL` of the old schedule query

@@ -41,6 +41,11 @@ export class TaskScheduleOwner {
             const page = await this.repository.retryBusy(() =>
               this.repository.atomic((db) => backfillPage(db, this.repository.projectDirectory)),
             )
+            // The state and the counters are WITHOUT ROWID tables: the update hook never names them.
+            databaseChanges.touch(this.repository.path, [
+              "task_schedule_state",
+              "task_schedule_counts",
+            ])
             if (page.done || this.closed) break
             await Bun.sleep(0)
           }

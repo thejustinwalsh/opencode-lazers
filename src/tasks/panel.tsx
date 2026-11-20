@@ -964,6 +964,14 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
+            <Show when={taskRow().stale}>
+              <span
+                class="lazers-tasks-row-stale"
+                title="This row could not be refreshed; it shows its last values."
+              >
+                Stale
+              </span>
+            </Show>
             <Show when={taskRow().concern}>
               {(concern) => (
                 <Label tone="warning" title={`Concern: ${concern().line}`}>

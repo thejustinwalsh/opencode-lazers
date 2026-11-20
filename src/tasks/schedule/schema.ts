@@ -4,19 +4,9 @@ import type { TaskRepository } from "../../storage.ts"
 import { drainTaskSchedule } from "./drain.ts"
 import { enrollScheduleConnection, registerScheduleDrain } from "./hook.ts"
 
-/** Chips of the Tasks panel. One value per row; `open`, `completed` and `all` are unions. */
-export const BUCKETS = [
-  "running",
-  "queued",
-  "paused",
-  "blocked",
-  "open",
-  "accepted",
-  "integrated",
-  "failed",
-  "cancelled",
-] as const
-export type Bucket = (typeof BUCKETS)[number]
+import { BUCKETS, type Bucket } from "./buckets.ts"
+
+export { BUCKETS, type Bucket }
 
 export type DirtyKind = "task" | "plan" | "reservations" | "pause"
 

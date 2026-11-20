@@ -25,7 +25,7 @@ import {
   type TaskStateFilter,
 } from "../streams/sources/tasks-ref.ts"
 import { bucketsFor } from "./schedule/key.ts"
-import { BUCKETS } from "./schedule/schema.ts"
+import { BUCKETS } from "./schedule/buckets.ts"
 import { childRowOf, listRowOf, priorityOfRow, type ExecutionListRow } from "./task-row.ts"
 import { spliceItems, type VirtualItem } from "./virtual-rows.ts"
 
@@ -84,6 +84,10 @@ export type TaskListInput = {
 /** Call inside the owner that should close the streams. */
 export function createTaskList(input: TaskListInput) {
   const filterBase = { project: input.project, scope: input.scope }
+  // Memoized so a write that leaves them unchanged (the stored view saves the selection) does not
+  // reopen the stream.
+  const search = createMemo(input.search)
+  const state = createMemo(input.state)
   const windowSize = createMemo<number>((previous) =>
     Math.max(previous ?? 0, windowFor(input.fit())),
   )
@@ -94,8 +98,8 @@ export function createTaskList(input: TaskListInput) {
   const schedule = createStream(input.transport, taskScheduleRef, () => {
     const filter = {
       ...filterBase,
-      state: input.state(),
-      ...(input.search() ? { search: input.search() } : {}),
+      state: state(),
+      ...(search() ? { search: search() } : {}),
     }
     const now = JSON.stringify(filter)
     const keep = now === shape ? firstKey : undefined
@@ -187,7 +191,7 @@ export function createTaskList(input: TaskListInput) {
   )
   /** Tasks per chip from the stored counters; undefined while a search narrows the list. */
   const chipCount = (chip: TaskStateFilter): number | undefined => {
-    if (input.search() || !counts.loaded()) return undefined
+    if (search() || !counts.loaded()) return undefined
     const byBucket = new Map(
       counts.items().map((raw) => [String(readerOf(raw)("bucket")), Number(readerOf(raw)("n"))]),
     )
@@ -200,10 +204,12 @@ export function createTaskList(input: TaskListInput) {
     order: "project",
     window: 1,
   }))
-  /** False while the project is being indexed; undefined before the first answer. */
+  /** False until the project is indexed; undefined before the first answer. */
   const indexed = createMemo(() => {
+    if (!index.loaded()) return undefined
     const [first] = index.items()
-    return first ? Boolean(readerOf(first)("ready")) : undefined
+    // No state row: the project's indexing has not started.
+    return first ? Boolean(readerOf(first)("ready")) : false
   })
 
   // One move at a time, each answered by a frame.
@@ -245,8 +251,8 @@ export function createTaskList(input: TaskListInput) {
      */
     reveal: (taskID: string, bucket: string) => {
       if (rows().some(({ row }) => row.taskID === taskID)) return
-      if (input.search()) return
-      const buckets = bucketsFor(input.state())
+      if (search()) return
+      const buckets = bucketsFor(state())
       if (buckets && !(buckets as readonly string[]).includes(bucket)) return
       schedule.seek({ key: [taskID], place: "center" })
     },
@@ -293,10 +299,11 @@ type Facts = {
  */
 export function createSelectedFacts(input: SelectedFactsInput) {
   const owner = getOwner()
+  const selected = createMemo(input.taskID)
   const [facts, setFacts] = createSignal<Facts>()
   let release: (() => void) | undefined
   createEffect(
-    on(input.taskID, (taskID) => {
+    on(selected, (taskID) => {
       release?.()
       release = undefined
       setFacts(undefined)
