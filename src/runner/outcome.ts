@@ -4,6 +4,7 @@ import { ScopeReport, scopeNotice } from "./scope.ts"
 import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
 import { runbook, type Delivery } from "../guidance/index.ts"
 import { DIVERGENCE_REASON_PREFIX } from "./scope.ts"
+import { noticeMarker } from "./notice-marker.ts"
 
 /**
  * Where the situational runbooks of a notice come from: `delivery` tracks what the receiving
@@ -129,7 +130,18 @@ export function outcomeText(serialized: string, project?: string, guidance?: Not
         typeof check === "object" && check !== null && "id" in check ? check.id : check,
       )
     : payload.evidence
-  return `LAZERS outcome${project ? ` · ${project}` : ""}\n${action}\n${JSON.stringify({ ...payload, ...(evidence ? { evidence } : {}) })}`
+  const planID = typeof payload.planID === "string" ? payload.planID : guidance?.planID
+  const marker = planID
+    ? noticeMarker({
+        kind: String(payload.status ?? "update"),
+        plan: planID,
+        ...(typeof payload.version === "number" ? { v: payload.version } : {}),
+        ...(payload.status === "task-accepted" && typeof payload.taskID === "string"
+          ? { task: payload.taskID }
+          : {}),
+      })
+    : undefined
+  return `LAZERS outcome${project ? ` · ${project}` : ""}\n${marker ? `${marker}\n` : ""}${action}\n${JSON.stringify({ ...payload, ...(evidence ? { evidence } : {}) })}`
 }
 
 /**
