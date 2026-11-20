@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 const root = fileURLToPath(new URL("..", import.meta.url))
 
 /**
- * Bundles LAZERS' own source into dist/server.js (the package's server entry) plus the two
+ * Bundles LAZERS' own source into dist/server.js (the package's server entry) plus the
  * worker scripts it spawns beside it. Dependencies stay external so the host and Node
  * resolution keep one shared copy and native assets keep working. OpenCode then watches a
  * single file, and source edits do not reload live plugins until this build runs.
@@ -17,6 +17,7 @@ const entries = [
   ["src/runner/transition-indexes-worker.ts", "transition-indexes-worker.js"],
   ["src/audit/fallow-worker.ts", "fallow-worker.js"],
   ["src/audit/fallow-thread.ts", "fallow-thread.js"],
+  ["src/streams/reader-worker.ts", "reader-worker.js"],
 ] as const
 
 export async function buildServer() {
