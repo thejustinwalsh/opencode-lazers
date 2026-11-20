@@ -5,14 +5,14 @@ import { Model } from "@opencode/schema/model"
 import { Schema } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
-import { Session } from "@opencode/schema/session"
 import { Tool } from "@opencode/schema/tool"
-import { Effect, Predicate, Stream } from "effect"
+import { Effect, Predicate } from "effect"
 import source from "../implementor.md" with { type: "text" }
 import type { RunnerStore } from "./store.ts"
 import { applyAgentRoute } from "../models/agent-route-apply.ts"
 import type { AgentRouteReader } from "../models/agent-route-apply.ts"
 import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
+import { nativeChildLifecycle } from "./delegated-native-lifecycle.ts"
 
 /** The Auditor's model when native OpenCode configuration pins none. */
 export const AUDITOR_DEFAULT_MODEL = {
@@ -23,20 +23,6 @@ export const AUDITOR_DEFAULT_MODEL = {
 export const delegationTool = (tool: string) =>
   /(?:^|[._/])subagent(?:$|[._/])/.test(tool) ||
   ["lz-research", "lz-submit-plan", "lz-plan-command", "lz-submit-task"].includes(tool)
-
-const NATIVE_CHILD_EVENT_TYPES = [
-  "session.created",
-  "session.deleted",
-  "session.execution.succeeded",
-  "session.execution.failed",
-  "session.execution.interrupted",
-  "session.idle",
-  "session.status",
-] as const
-
-function sessionNotFound(error: unknown) {
-  return Predicate.isObject(error) && error._tag === "SessionNotFoundError"
-}
 
 function knownPreChildFailure(message: string) {
   return (
@@ -50,83 +36,6 @@ function knownPreChildFailure(message: string) {
     message.startsWith("Parent session not found:") ||
     message.startsWith("Subagent session not found:")
   )
-}
-
-function nativeChildLifecycle(
-  ctx: Plugin.Context,
-  capacity: DelegatedAgentCapacity,
-  wakeScheduler?: () => void,
-) {
-  const watchedChildren = new Set<string>()
-  const watchNativeChild = (sessionID: string) => {
-    if (watchedChildren.has(sessionID)) return Effect.void
-    watchedChildren.add(sessionID)
-    const monitor = Effect.promise(async () => {
-      try {
-        await Effect.runPromise(ctx.session.wait({ sessionID: Session.ID.make(sessionID) }))
-      } catch (error) {
-        if (!sessionNotFound(error)) return
-      }
-      if (await capacity.releaseNativeChild(sessionID)) wakeScheduler?.()
-    }).pipe(Effect.ensuring(Effect.sync(() => watchedChildren.delete(sessionID))))
-    return Effect.map(Effect.forkDetach(monitor), () => undefined)
-  }
-  const observeNativeEvent = (event: unknown) =>
-    Effect.gen(function* () {
-      const payload = Predicate.isObject(event) ? event : undefined
-      const data = payload && Predicate.isObject(payload.data) ? payload.data : undefined
-      if (!payload || !data) return
-      if (
-        payload.type === "session.created" &&
-        typeof data.sessionID === "string" &&
-        typeof data.parentID === "string" &&
-        typeof data.agent === "string" &&
-        typeof data.title === "string"
-      ) {
-        const requestID = yield* Effect.promise(() =>
-          capacity.bindNativeChildFromCreatedSession({
-            sessionID: data.sessionID as string,
-            parentSessionID: data.parentID as string,
-            agent: data.agent as string,
-            description: data.title as string,
-          }),
-        )
-        if (requestID) yield* watchNativeChild(data.sessionID)
-        return
-      }
-      const completion =
-        payload.type === "session.deleted" ||
-        payload.type === "session.execution.succeeded" ||
-        payload.type === "session.execution.failed" ||
-        payload.type === "session.execution.interrupted" ||
-        payload.type === "session.idle" ||
-        (payload.type === "session.status" &&
-          Predicate.isObject(data.status) &&
-          data.status.type === "idle")
-      if (!completion || typeof data.sessionID !== "string") return
-      const observedAt = typeof payload.created === "number" ? payload.created : undefined
-      const released = yield* Effect.promise(() =>
-        capacity.releaseNativeChild(data.sessionID as string, observedAt),
-      )
-      if (released) wakeScheduler?.()
-    })
-  const listenForNativeChildren = Effect.forever(
-    Effect.suspend(() =>
-      Stream.runForEach(
-        ctx.event.subscribe({ types: NATIVE_CHILD_EVENT_TYPES }),
-        observeNativeEvent,
-      ).pipe(
-        Effect.catch(() => Effect.void),
-        Effect.andThen(Effect.sleep(1_000)),
-      ),
-    ),
-  )
-  const start = Effect.gen(function* () {
-    for (const sessionID of yield* Effect.promise(() => capacity.admittedNativeChildren()))
-      yield* watchNativeChild(sessionID)
-    yield* Effect.forkDetach(listenForNativeChildren)
-  })
-  return { start, watch: watchNativeChild }
 }
 
 function nativeChildIDFromError(message: string) {
@@ -221,8 +130,9 @@ export function registerWorker(
           )
           .get(sessionID),
       )
-    const nativeChildren = capacity ? nativeChildLifecycle(ctx, capacity, wakeScheduler) : undefined
-    if (nativeChildren) yield* nativeChildren.start
+    const nativeChildren = capacity
+      ? yield* nativeChildLifecycle(ctx, capacity, wakeScheduler)
+      : undefined
     yield* timedHooks(ctx.session, "session").hook("context", (context) =>
       Effect.sync(() => {
         if (!attempt(context.sessionID)) return
@@ -251,7 +161,11 @@ export function registerWorker(
           )
             return Effect.tryPromise({
               try: async (signal) => {
-                if (!(await capacity.isLazersNativeParent(call.sessionID))) return
+                if (
+                  String(call.agent).toLowerCase() !== "architect" &&
+                  !(await capacity.isLazersNativeParent(call.sessionID))
+                )
+                  return
                 const input = call.input as {
                   agent: string
                   description: string
@@ -312,7 +226,7 @@ export function registerWorker(
               yield* Effect.promise(() => capacity.bindNativeChild(request.id, childID))
               if (call.status === "completed" && metadata?.status === "completed") {
                 const released = yield* Effect.promise(() =>
-                  capacity.releaseNativeRequest(request.id),
+                  capacity.releaseNativeRequest(request.id, request.request_key),
                 )
                 if (released) wakeScheduler?.()
               } else {
@@ -325,7 +239,7 @@ export function registerWorker(
               (call.status === "error" && knownPreChildFailure(message))
             ) {
               const released = yield* Effect.promise(() =>
-                capacity.releaseNativeRequest(request.id),
+                capacity.releaseNativeRequest(request.id, request.request_key),
               )
               if (released) wakeScheduler?.()
             }
@@ -348,20 +262,7 @@ export function registerWorker(
               if (!request) continue
               await capacity.bindNativeChild(request.id, background.childSessionID)
             }
-            await capacity.releaseNativeChild(idle.sessionID)
-            wakeScheduler?.()
-            const session = await Effect.runPromise(
-              ctx.session.get({ sessionID: Session.ID.make(idle.sessionID) }),
-            ).catch(() => null)
-            if (session?.parentID && session.agent && session.title) {
-              await capacity.observeNativeIdle({
-                sessionID: idle.sessionID,
-                parentSessionID: session.parentID,
-                agent: session.agent,
-                description: session.title,
-              })
-              wakeScheduler?.()
-            }
+            if (nativeChildren) await Effect.runPromise(nativeChildren.watch(idle.sessionID))
           } catch {
             // An idle notification may outlive a removed native helper session.
           }

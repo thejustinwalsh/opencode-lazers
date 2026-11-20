@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import { Effect, Queue, Stream } from "effect"
+import { DateTime, Effect, Queue, Stream } from "effect"
 import workerInstructions from "../implementor.md" with { type: "text" }
 import { delegationTool, registerWorker } from "./roles.ts"
 import type { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
@@ -185,7 +185,12 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
   let beforeHook: ((call: never) => Effect.Effect<void>) | undefined
   let afterHook: ((call: never) => Effect.Effect<void>) | undefined
   const capacity = {
-    admittedNativeChildren: async () => [],
+    admittedNativeExecutions: async () => [],
+    nativeExecution: async (sessionID: string) => ({
+      id: "native-admission",
+      sessionID,
+      createdAt: 0,
+    }),
     isLazersNativeParent: async (sessionID: string) => sessionID === "lazers-parent",
     ensureNativeQueued: async (input: unknown) => {
       admitted.push(input)
@@ -202,13 +207,12 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
       childBindings.push({ requestID, sessionID })
       return true
     },
-    releaseNativeChild: async (sessionID: string) => {
-      if (releasedChildren.includes(sessionID)) return false
-      releasedChildren.push(sessionID)
+    releaseNativeRequest: async () => {
+      if (releasedChildren.length) return false
+      releasedChildren.push("ses_child-helper")
       resolveChildRelease()
       return true
     },
-    releaseNativeRequest: async () => false,
   } as unknown as DelegatedAgentCapacity
   const store = {
     repository: { path: "/synthetic/roles-capacity.sqlite", projectDirectory: "/work" },
@@ -231,6 +235,7 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
     },
     session: {
       hook: () => Effect.void,
+      get: () => Effect.succeed({ time: { busy: DateTime.makeUnsafe(1000) } }),
       wait: () => Effect.promise(() => childWait),
     },
     tool: {
@@ -277,7 +282,7 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
         yield* Queue.offer(eventQueue, {
           type: "session.created",
           data: {
-            sessionID: "child-helper",
+            sessionID: "ses_child-helper",
             parentID: "lazers-parent",
             agent: "research",
             title: "background helper",
@@ -286,7 +291,7 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
         yield* Effect.promise(() => createdBinding)
         expect(createdBindings).toEqual([
           {
-            sessionID: "child-helper",
+            sessionID: "ses_child-helper",
             parentSessionID: "lazers-parent",
             agent: "research",
             description: "background helper",
@@ -300,20 +305,28 @@ test("registered native helper hooks admit only LAZERS parents and bind failed c
           id: "native-call",
           input: { agent: "research", description: "background helper", background: true },
           status: "error",
-          error: { message: "Subagent failed (sessionID: child-helper): helper failed" },
+          error: { message: "Subagent failed (sessionID: ses_child-helper): helper failed" },
         } as never)
         expect(childBindings).toEqual([
-          { requestID: "native-admission", sessionID: "child-helper" },
+          { requestID: "native-admission", sessionID: "ses_child-helper" },
         ])
         yield* Queue.offer(eventQueue, {
           type: "session.execution.interrupted",
-          data: { sessionID: "child-helper" },
+          data: { sessionID: "ses_child-helper" },
         })
+        resolveChildWait()
         yield* Effect.promise(() => childRelease)
         yield* Effect.promise(() => schedulerWake)
-        expect(releasedChildren).toEqual(["child-helper"])
+        expect(releasedChildren).toEqual(["ses_child-helper"])
         expect(schedulerWakes).toBe(1)
-        resolveChildWait()
+        yield* beforeHook!({
+          sessionID: "fresh-architect-with-no-plan",
+          agent: Agent.ID.make("architect"),
+          tool: "subagent",
+          id: "fresh-call",
+          input: { agent: "research", description: "pre-plan research" },
+        } as never)
+        expect(admitted).toHaveLength(2)
       }),
     ),
   )

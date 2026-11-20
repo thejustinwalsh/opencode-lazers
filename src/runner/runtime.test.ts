@@ -4468,9 +4468,9 @@ test("a retry that asks for an isolated workspace leaves the shared checkout", a
   expect(attempts[1]!.workspace).toContain(".worktrees")
 })
 
-test("shared resume waits for another plan's worker and cancellation retains final usage", async () => {
+test.each([1, 3])("shared resume waits for scope, not spare capacity (limit %i)", async (limit) => {
   const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
-  await f.runtime.delegatedAgentCapacity.configure({ expectedRevision: 0, limit: 1 })
+  await f.runtime.delegatedAgentCapacity.configure({ expectedRevision: 0, limit })
   await runPlan(f)
   await f.runtime.tick()
   const a = f.store.attempts(f.receipt.planID)[0]!
@@ -4511,12 +4511,27 @@ test("shared resume waits for another plan's worker and cancellation retains fin
   expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
     active: 1,
     queued: 1,
-    limit: 1,
+    limit,
   })
   const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
   await f.runtime.tick()
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("preparing")
+  if (limit === 3) {
+    const helper = await f.runtime.delegatedAgentCapacity.ensureNativeQueued({
+      parentSessionID: "scope-independent-helper",
+      toolCallID: "spare-slot",
+      agent: "research",
+      description: "Eligible work must pass a scope-blocked resumed request",
+    })
+    await f.runtime.delegatedAgentCapacity.waitForNative(helper, AbortSignal.timeout(1000))
+    expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+      active: 2,
+      queued: 0,
+      limit: 3,
+    })
+    await f.runtime.delegatedAgentCapacity.releaseNativeRequest(helper)
+  }
   f.completeWorker(other.session_id)
   await settleVerification(f.runtime)
   await f.runtime.tick()

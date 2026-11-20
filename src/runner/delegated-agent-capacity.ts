@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite"
 import { realpathSync } from "node:fs"
 import { z } from "zod"
 import type { TaskRepository } from "../storage.ts"
+import { registerLifecycleTransitions } from "./lifecycle-machines.ts"
 
 export const DEFAULT_DELEGATED_AGENT_LIMIT = 3
 const ACTIVE_ATTEMPT_STATES = ["preparing", "running"] as const
@@ -53,6 +54,8 @@ type NativeRequest = {
   description: string
   existingSessionID?: string
 }
+
+export type NativeExecution = { id: string; key: string; sessionID: string; createdAt: number }
 
 type AdmissionRow = {
   id: string
@@ -159,7 +162,7 @@ function activeCount(db: Database, projectKey: string) {
 function reconcileRunnerAdmissions(db: Database, projectKey: string, now: number) {
   db.query(
     `UPDATE delegated_agent_admissions
-     SET state='released',updated_at=?
+     SET state=lz_runner_transition('capacity',state,'released'),updated_at=?
      WHERE project_key=? AND kind='runner' AND state='admitted'
        AND NOT EXISTS (
          SELECT 1 FROM runner_attempts r
@@ -178,13 +181,13 @@ function releaseDeadNativeOwners(
   const rows = db
     .query<{ id: string; state: AdmissionState; process_id: number | null }, [string]>(
       `SELECT id,state,process_id FROM delegated_agent_admissions
-       WHERE project_key=? AND kind='native' AND state IN ('queued','admitted')`,
+       WHERE project_key=? AND kind='native' AND state='queued'`,
     )
     .all(projectKey)
   for (const row of rows) {
     if (!row.process_id) {
       db.query(
-        `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+        `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,?),updated_at=?
          WHERE id=? AND state=? AND process_id IS NULL`,
       ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
       continue
@@ -196,7 +199,7 @@ function releaseDeadNativeOwners(
       if (typeof error === "object" && error !== null && "code" in error && error.code === "EPERM")
         continue
       db.query(
-        `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+        `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,?),updated_at=?
          WHERE id=? AND state=?`,
       ).run(row.state === "queued" ? "cancelled" : "released", now, row.id, row.state)
     }
@@ -257,7 +260,7 @@ function tryAdmitQueued(
   const changed = db
     .query(
       `UPDATE delegated_agent_admissions
-       SET state='admitted',${setAttempt}process_id=?,updated_at=?
+       SET state=lz_runner_transition('capacity',state,'admitted'),${setAttempt}process_id=?,updated_at=?
        WHERE id=? AND project_key=? AND kind=? AND state='queued'`,
     )
     .run(...values).changes
@@ -275,7 +278,7 @@ function transitionAdmission(
   },
 ) {
   db.query(
-    `UPDATE delegated_agent_admissions SET state=?,updated_at=?
+    `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,?),updated_at=?
      WHERE id=? AND kind=? AND state IN (${input.from.map(() => "?").join(",")})`,
   ).run(input.to, input.now, input.id, input.kind, ...input.from)
 }
@@ -357,6 +360,7 @@ export class DelegatedAgentCapacity {
     const projectDirectory = canonicalDirectory(this.repository.projectDirectory)
     const now = this.clock.now()
     this.repository.atomic((db) => {
+      registerLifecycleTransitions(db)
       db.query(
         `INSERT OR IGNORE INTO delegated_agent_settings
          (project_key,revision,agent_limit,updated_at) VALUES(?,0,?,?)`,
@@ -467,7 +471,7 @@ export class DelegatedAgentCapacity {
       )
       if (legacy && legacy.id !== canonical.id)
         db.query(
-          `UPDATE delegated_agent_admissions SET state='released',updated_at=?
+          `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'released'),updated_at=?
            WHERE id=? AND state='admitted'`,
         ).run(now, legacy.id)
       return
@@ -475,7 +479,7 @@ export class DelegatedAgentCapacity {
     if (legacy) {
       db.query(
         `UPDATE delegated_agent_admissions
-         SET request_key=?,project_key=?,project_directory=?,state='admitted',
+         SET request_key=?,project_key=?,project_directory=?,state=lz_runner_transition('capacity',state,'admitted'),
              agent='lazers-implementor',priority=?,plan_order=?,task_order=?,plan_id=?,task_id=?,
              attempt_number=?,attempt_id=?,updated_at=?
          WHERE id=?`,
@@ -663,7 +667,7 @@ export class DelegatedAgentCapacity {
     if (existing) {
       db.query(
         `UPDATE delegated_agent_admissions
-         SET project_key=?,project_directory=?,state='queued',priority=?,plan_order=?,task_order=?,
+         SET project_key=?,project_directory=?,state=lz_runner_transition('capacity',state,'queued'),priority=?,plan_order=?,task_order=?,
              queue_order=?,plan_id=?,task_id=?,attempt_number=?,attempt_id=?,process_id=NULL,
              created_at=?,updated_at=?
          WHERE id=?`,
@@ -760,7 +764,7 @@ export class DelegatedAgentCapacity {
       for (const candidate of candidates)
         if (!keep.has(candidate.task_id))
           db.query(
-            `UPDATE delegated_agent_admissions SET state='cancelled',updated_at=?
+            `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'cancelled'),updated_at=?
              WHERE id=? AND state='queued'`,
           ).run(this.clock.now(), candidate.id)
     })
@@ -777,6 +781,19 @@ export class DelegatedAgentCapacity {
         now: this.clock.now(),
       })
     })
+  }
+
+  /** A scope/prerequisite-blocked continuation must not head the capacity queue. */
+  async cancelRunnerAttemptQueue(attemptID: string) {
+    const projectKey = await this.projectKey()
+    this.repository.atomic((db) =>
+      db
+        .query(
+          `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'cancelled'),updated_at=?
+         WHERE project_key=? AND kind='runner' AND attempt_id=? AND state='queued'`,
+        )
+        .run(this.clock.now(), projectKey, attemptID),
+    )
   }
 
   /** Called inside the same fenced write transaction that inserts the attempt row. */
@@ -806,7 +823,8 @@ export class DelegatedAgentCapacity {
         existing = db
           .query<{ id: string; state: AdmissionRow["state"] }, [string, string, string]>(
             `SELECT id,state FROM delegated_agent_admissions
-             WHERE project_key=? AND kind='native' AND session_id=? AND parent_session_id=?`,
+              WHERE project_key=? AND kind='native' AND session_id=? AND parent_session_id=?
+                AND state='admitted'`,
           )
           .get(projectKey, input.existingSessionID, input.parentSessionID)
       existing ??= db
@@ -817,9 +835,11 @@ export class DelegatedAgentCapacity {
       const id = existing?.id ?? crypto.randomUUID()
       const requestKey = `native:${input.parentSessionID}:${input.toolCallID}`
       if (existing?.state === "admitted") {
+        // Renew callback ownership, not the execution's start boundary. A
+        // followup can join the very first loop, with no prior native idle time.
         db.query(
           `UPDATE delegated_agent_admissions
-           SET request_key=?,parent_session_id=?,tool_call_id=?,agent=?,description=?,process_id=?,updated_at=?
+            SET request_key=?,parent_session_id=?,tool_call_id=?,agent=?,description=?,process_id=?,updated_at=?
            WHERE id=?`,
         ).run(
           requestKey,
@@ -836,7 +856,7 @@ export class DelegatedAgentCapacity {
       if (existing) {
         db.query(
           `UPDATE delegated_agent_admissions
-            SET request_key=?,project_key=?,project_directory=?,state='queued',agent=?,description=?,
+            SET request_key=?,project_key=?,project_directory=?,state=lz_runner_transition('capacity',state,'queued'),agent=?,description=?,
                 priority=0,plan_order=?,task_order=?,queue_order=?,parent_session_id=?,tool_call_id=?,
                 session_id=?,process_id=?,created_at=?,updated_at=?
            WHERE id=?`,
@@ -920,7 +940,7 @@ export class DelegatedAgentCapacity {
       this.repository.atomic((db) =>
         db
           .query(
-            `UPDATE delegated_agent_admissions SET state='cancelled',updated_at=?
+            `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'cancelled'),updated_at=?
              WHERE id=? AND kind='native' AND state='queued'`,
           )
           .run(this.clock.now(), requestID),
@@ -994,17 +1014,44 @@ export class DelegatedAgentCapacity {
     })
   }
 
-  async admittedNativeChildren() {
+  async admittedNativeExecutions(): Promise<NativeExecution[]> {
     const projectKey = await this.projectKey()
     return this.repository.read((db) =>
       db
-        .query<{ session_id: string }, [string]>(
-          `SELECT DISTINCT session_id FROM delegated_agent_admissions
+        .query<
+          { id: string; request_key: string; session_id: string; created_at: number },
+          [string]
+        >(
+          `SELECT id,request_key,session_id,created_at FROM delegated_agent_admissions
            WHERE project_key=? AND kind='native' AND state='admitted' AND session_id IS NOT NULL`,
         )
         .all(projectKey)
-        .map((row) => row.session_id),
+        .map((row) => ({
+          id: row.id,
+          key: row.request_key,
+          sessionID: row.session_id,
+          createdAt: row.created_at,
+        })),
     )
+  }
+
+  async nativeExecution(sessionID: string) {
+    const projectKey = await this.projectKey()
+    return this.repository.read((db) => {
+      const row = db
+        .query<
+          { id: string; request_key: string; session_id: string; created_at: number },
+          [string, string]
+        >(
+          `SELECT id,request_key,session_id,created_at FROM delegated_agent_admissions
+         WHERE project_key=? AND kind='native' AND session_id=? AND state='admitted'
+         ORDER BY queue_order DESC LIMIT 1`,
+        )
+        .get(projectKey, sessionID)
+      return row
+        ? { id: row.id, key: row.request_key, sessionID: row.session_id, createdAt: row.created_at }
+        : undefined
+    })
   }
 
   async bindNativeChild(requestID: string, sessionID: string) {
@@ -1034,73 +1081,31 @@ export class DelegatedAgentCapacity {
           `SELECT id FROM delegated_agent_admissions
            WHERE project_key=? AND kind='native' AND state='admitted'
              AND parent_session_id=? AND agent=? AND description=? AND session_id IS NULL
-           ORDER BY queue_order LIMIT 1`,
+            ORDER BY queue_order LIMIT 2`,
         )
-        .get(projectKey, input.parentSessionID, input.agent, input.description)
-      if (!request) return undefined
+        .all(projectKey, input.parentSessionID, input.agent, input.description)
+      if (request.length !== 1) return undefined
       const changed = db
         .query(
           `UPDATE delegated_agent_admissions SET session_id=?,updated_at=?
            WHERE id=? AND state='admitted' AND session_id IS NULL`,
         )
-        .run(input.sessionID, this.clock.now(), request.id).changes
-      return changed === 1 ? request.id : undefined
+        .run(input.sessionID, this.clock.now(), request[0]!.id).changes
+      return changed === 1 ? request[0]!.id : undefined
     })
   }
 
-  async observeNativeIdle(input: {
-    sessionID: string
-    parentSessionID: string
-    agent: string
-    description: string
-  }) {
-    const projectKey = await this.projectKey()
-    return this.repository.atomic((db) => {
-      const row = db
-        .query<{ id: string }, [string, string, string, string, string]>(
-          `SELECT id FROM delegated_agent_admissions
-           WHERE project_key=? AND kind='native' AND state='admitted'
-             AND parent_session_id=? AND agent=? AND description=?
-             AND (session_id IS NULL OR session_id=?) ORDER BY queue_order LIMIT 1`,
-        )
-        .get(projectKey, input.parentSessionID, input.agent, input.description, input.sessionID)
-      if (!row) return false
-      return (
-        db
-          .query(
-            `UPDATE delegated_agent_admissions SET session_id=?,state='released',updated_at=?
-         WHERE id=? AND state='admitted'`,
-          )
-          .run(input.sessionID, this.clock.now(), row.id).changes === 1
-      )
-    })
-  }
-
-  async releaseNativeRequest(requestID: string) {
+  async releaseNativeRequest(requestID: string, requestKey?: string) {
     await this.projectKey()
     return this.repository.atomic(
       (db) =>
         db
           .query(
-            `UPDATE delegated_agent_admissions SET state='released',updated_at=?
-           WHERE id=? AND kind='native' AND state IN ('queued','admitted')`,
+            `UPDATE delegated_agent_admissions SET state=lz_runner_transition('capacity',state,'released'),updated_at=?
+            WHERE id=? AND kind='native' AND state IN ('queued','admitted')
+              AND (? IS NULL OR request_key=?)`,
           )
-          .run(this.clock.now(), requestID).changes === 1,
-    )
-  }
-
-  async releaseNativeChild(sessionID: string, observedAt?: number) {
-    const projectKey = await this.projectKey()
-    return this.repository.atomic(
-      (db) =>
-        db
-          .query(
-            `UPDATE delegated_agent_admissions SET state='released',updated_at=?
-           WHERE project_key=? AND kind='native' AND session_id=? AND state='admitted'
-             AND (? IS NULL OR updated_at<=?)`,
-          )
-          .run(this.clock.now(), projectKey, sessionID, observedAt ?? null, observedAt ?? null)
-          .changes === 1,
+          .run(this.clock.now(), requestID, requestKey ?? null, requestKey ?? null).changes === 1,
     )
   }
 }

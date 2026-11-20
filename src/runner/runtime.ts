@@ -7669,7 +7669,11 @@ export class TaskRuntime {
       }
       const activeTaskIDs = this.store
         .attempts(plan.id)
-        .filter((attempt) => ["preparing", "running"].includes(attempt.state))
+        .filter(
+          (attempt) =>
+            attempt.state === "running" ||
+            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
+        )
         .map((attempt) => attempt.task_id)
       await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id, [
         ...new Set([...selected.map((node) => node.task_id), ...activeTaskIDs]),
@@ -7695,7 +7699,11 @@ export class TaskRuntime {
     await this.delegatedAgentCapacity.cancelRunnerQueue(
       plan.id,
       outstanding
-        .filter((attempt) => ["preparing", "running"].includes(attempt.state))
+        .filter(
+          (attempt) =>
+            attempt.state === "running" ||
+            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
+        )
         .map((attempt) => attempt.task_id),
     )
     if (outstanding.length) {
@@ -8972,8 +8980,11 @@ export class TaskRuntime {
       plan?.state !== "running" ||
       currentAttempt?.state !== "preparing" ||
       !this.preparationAllowed(currentAttempt)
-    )
+    ) {
+      if (currentAttempt)
+        await this.delegatedAgentCapacity.cancelRunnerAttemptQueue(currentAttempt.id)
       return false
+    }
     const recovery = this.startupRecoveryAuthorization(plan, currentAttempt)
     if (recovery && !this.startupRecoveryAuthorityCurrent(plan, currentAttempt, recovery))
       return false

@@ -2,7 +2,7 @@
 
 Date: 2026-11-19
 
-## Automated evidence
+## Earlier implementation evidence
 
 - `bun run verify` passed after the capacity settings UI and authorization changes.
   Oxlint reported existing warnings outside the new settings component; typecheck
@@ -21,6 +21,21 @@ session scope after permission authorization. The settings component test uses
 deliberate fake session/client identities to exercise canonical-project display,
 stale project and connection reads, invalid input, and stale write responses.
 These are fixture observations, not live native host identities.
+
+## Takeover correction evidence
+
+The current takeover correction passed `bun run verify`, both GUI and server
+builds, and `git diff --check`. Focused capacity, registered native-hook and
+lifecycle suites passed 22 tests; public shared-resume checks passed at limits
+1 and 3 (2 tests). These checks cover creation before execution, stale waiter
+fencing across follow-ups, first-loop follow-ups preserving their start boundary,
+plugin disposal, fresh Architect admission, scope-blocked refill, admitted work
+surviving process loss, and ambiguous child-creation metadata.
+
+Independent read-only re-review confirmed the first-loop follow-up regression.
+The full declared behavior suite must still pass for the committed takeover
+candidate through runtime verification; the earlier 969-test result above is
+not current-candidate evidence.
 
 ## Live rollout probe
 

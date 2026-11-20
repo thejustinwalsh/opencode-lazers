@@ -40,6 +40,7 @@ test("runner lifecycle graphs have no accidental sink states", () => {
     const goals: Record<string, string[]> = {
       task: ["accepted", "incorporated"],
       dispatch: ["enabled"],
+      capacity: ["released", "cancelled"],
       source: ["active", "retired"],
       contact: ["enabled"],
       plan: ["integrated", "cancelled"],

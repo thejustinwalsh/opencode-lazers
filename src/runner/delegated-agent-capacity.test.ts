@@ -338,7 +338,7 @@ test("native helper waiters share the same three slots and release on observed c
   expect(await f.capacity.settings()).toMatchObject({ active: 3, queued: 2, limit: 3 })
 
   await f.capacity.bindNativeChild(requests[0]!, "child-0")
-  await f.capacity.releaseNativeChild("child-0")
+  await f.capacity.releaseNativeRequest(requests[0]!)
   await waits[3]
   expect(await f.capacity.settings()).toMatchObject({ active: 3, queued: 1, limit: 3 })
 
@@ -346,4 +346,42 @@ test("native helper waiters share the same three slots and release on observed c
   await expect(waits[4]).rejects.toThrow("parent tool was cancelled")
   for (const request of requests) await f.capacity.releaseNativeRequest(request)
   expect(await f.capacity.settings()).toMatchObject({ active: 0, queued: 0 })
+})
+
+test("process loss alone does not release a native admission that may have executed", async () => {
+  const f = fixture()
+  const prior = new DelegatedAgentCapacity(
+    f.repository,
+    "github.com/example/project",
+    undefined,
+    () => 2_147_483_647,
+  )
+  await prior.ready()
+  const request = await prior.ensureNativeQueued({
+    parentSessionID: "prior-parent",
+    toolCallID: "prior-call",
+    agent: "research",
+    description: "Native execution still needs fresh observation",
+  })
+  await prior.waitForNative(request, new AbortController().signal)
+  const reopened = new DelegatedAgentCapacity(f.repository, "github.com/example/project")
+  await reopened.ready()
+  expect(await reopened.settings()).toMatchObject({ active: 1 })
+})
+
+test("ambiguous creation metadata cannot bind the wrong admitted helper", async () => {
+  const f = fixture()
+  await f.capacity.ready()
+  const input = { parentSessionID: "parent", agent: "research", description: "same description" }
+  for (const toolCallID of ["first", "second"]) {
+    const request = await f.capacity.ensureNativeQueued({ ...input, toolCallID })
+    await f.capacity.waitForNative(request, new AbortController().signal)
+  }
+  expect(
+    await f.capacity.bindNativeChildFromCreatedSession({
+      sessionID: "ses_unknown-child",
+      ...input,
+    }),
+  ).toBeUndefined()
+  expect(await f.capacity.settings()).toMatchObject({ active: 2 })
 })
