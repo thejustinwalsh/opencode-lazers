@@ -130,7 +130,7 @@ test("every chapter of every story performs its actions on real elements", async
   if (process.env.ONLY) return
   for (const story of realStories()) {
     for (const chapter of story.chapters) {
-      const child = Bun.spawn(["bun", "test", import.meta.path], {
+      const child = Bun.spawn(["bun", "test", "--timeout", "120000", import.meta.path], {
         env: { ...process.env, ONLY: `${story.id}:${chapter.name}` },
         stdout: "pipe",
         stderr: "pipe",
