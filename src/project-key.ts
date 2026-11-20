@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { realpathSync } from "node:fs"
 import { schemaModules } from "./database-schema.ts"
-import { assignProjectCode, projectNameFor } from "./projects/registry.ts"
+import { assignProjectCode, projectNameFor, recodeReferences } from "./projects/registry.ts"
 import type { TaskRepository } from "./storage.ts"
 
 /** Stable LAZERS project identity: survives OpenCode project-id and history changes. */
@@ -115,7 +115,15 @@ export function installProjectSchema(repository: TaskRepository): void {
     )
     if (!columns.has("code")) db.exec("ALTER TABLE lazers_projects ADD COLUMN code TEXT")
     if (!columns.has("name")) db.exec("ALTER TABLE lazers_projects ADD COLUMN name TEXT")
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS lazers_projects_code ON lazers_projects(code)")
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS lazers_projects_code ON lazers_projects(code);
+      CREATE TABLE IF NOT EXISTS task_reference_aliases (
+        project_key TEXT NOT NULL REFERENCES lazers_projects(key),
+        alias TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        PRIMARY KEY(project_key, alias)
+      );
+    `)
     backfillProjectCodes(db)
   })
 }
@@ -153,6 +161,8 @@ function backfillProjectCodes(db: Database): void {
       project.name ?? projectNameFor(project.path ?? "", project.key),
       project === heaviest ? "LZ" : undefined,
     )
+  if (tableExists(db, "task_references"))
+    for (const project of ordered) recodeReferences(db, project.key)
 }
 
 // In-process alias groups, filled from lazers_project_aliases. Sync lookups keep
@@ -358,6 +368,8 @@ export async function registerProject(
         .get(id)
       if (owner) remember(id, owner.key)
     }
+    // Checkouts first seen before this project had a code may still hold references under another.
+    recodeReferences(db, resolved.key)
     return { key: resolved.key, aliased: [...aliased] }
   })
 }

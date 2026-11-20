@@ -95,6 +95,7 @@ import { PROGRESS_STEPS, taskProgress } from "./task-progress.ts"
 import { attemptLane, taskStats } from "./stats.ts"
 import { criterionLine } from "./criterion.ts"
 import { eventLabel } from "./history.ts"
+import { REFERENCE_EXACT } from "../projects/code.ts"
 import css from "./panel.css?inline"
 
 const View = Schema.Struct({
@@ -737,7 +738,7 @@ function TaskPanel(
     const reference = createMemo(() => relationLabel(taskID))
     return (
       <Show
-        when={reference().startsWith("LZ-") && selectedTask()}
+        when={REFERENCE_EXACT.test(reference()) && selectedTask()}
         fallback={
           <button
             type="button"

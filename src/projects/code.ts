@@ -3,6 +3,9 @@
 /** A task reference such as `LZ-137` or `APP2-5`; every reader of references uses this one pattern. */
 export const REFERENCE_PATTERN = /\b[A-Z]{2,4}\d*-\d+\b/
 
+/** The whole of a string is one reference; the schema and every exact check share it. */
+export const REFERENCE_EXACT = /^[A-Z]{2,4}\d*-[1-9]\d{0,15}$/
+
 const FALLBACK = "PX"
 
 /**
