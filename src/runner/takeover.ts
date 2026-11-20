@@ -403,16 +403,27 @@ export class TakeoverExecution {
     return JSON.parse(row.payload) as Payload
   }
 
+  /**
+   * State change that merges `patch` into the payload as it is now, inside the transaction: the
+   * worker's handoff can be saved while the caller awaited the host, and a stale copy must not
+   * overwrite it.
+   */
   private move(row: TakeoverRow, to: TakeoverState, patch: Partial<Payload>, event?: string) {
     const { store } = this.deps
     return store.atomic((db) => {
+      const current = db
+        .query<{ payload: string }, [string, string]>(
+          "SELECT payload FROM runner_takeovers WHERE id=? AND state=?",
+        )
+        .get(row.id, row.state)
+      if (!current) return false
       const changed = db
         .query(
           "UPDATE runner_takeovers SET state=lz_runner_transition('takeover',state,?),payload=?,updated_at=? WHERE id=? AND state=?",
         )
         .run(
           to,
-          JSON.stringify({ ...this.payload(row), ...patch }),
+          JSON.stringify({ ...(JSON.parse(current.payload) as Payload), ...patch }),
           this.deps.now(),
           row.id,
           row.state,
@@ -445,10 +456,9 @@ export class TakeoverExecution {
       (db) =>
         db
           .query(
-            "UPDATE runner_takeovers SET payload=?,updated_at=? WHERE id=? AND state='notifying' AND json_extract(payload,'$.noticeSent') IS NULL",
+            "UPDATE runner_takeovers SET payload=json_set(payload,'$.noticeSent',json('true')),updated_at=? WHERE id=? AND state='notifying' AND json_extract(payload,'$.noticeSent') IS NULL",
           )
-          .run(JSON.stringify({ ...payload, noticeSent: true }), this.deps.now(), row.id)
-          .changes === 1,
+          .run(this.deps.now(), row.id).changes === 1,
     )
     if (!claimed) {
       // Claimed by a call that did not finish (a reload between the claim and the move): whether
@@ -535,8 +545,10 @@ export class TakeoverExecution {
         payload = { ...payload, stopDeadline: now() + this.stopWaitMs }
         store.atomic((db) =>
           db
-            .query("UPDATE runner_takeovers SET payload=? WHERE id=? AND state='stopping'")
-            .run(JSON.stringify(payload), row.id),
+            .query(
+              "UPDATE runner_takeovers SET payload=json_set(payload,'$.stopDeadline',?) WHERE id=? AND state='stopping'",
+            )
+            .run(payload.stopDeadline!, row.id),
         )
         store.record(row.plan_id, row.task_id, "TAKEOVER_WORKER_INTERRUPTED", {
           takeoverID: row.id,

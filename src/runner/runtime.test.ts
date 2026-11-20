@@ -16323,3 +16323,39 @@ test("84e85b0f-2: a finished takeover does not keep its plan out of retention", 
   expect([...kept.keys()].join("\n")).not.toContain("handoff is open")
   expect(retired.map((plan) => plan.id)).toContain(planID)
 })
+
+test("7abe4acd-2: a handoff saved while a host read is in flight survives the transition", async () => {
+  const { f, worker } = await takeoverFixture({
+    takeover: { handoffWindowMs: 60_000, stopWaitMs: 50, pollMs: 5 },
+  })
+  f.host.steerWorker = async () => {}
+  const takeovers = (f.runtime as any).takeovers
+  const row = await takeovers.start(
+    { attemptID: worker.id, reason: "Not converging", requestID: "take-race" },
+    "owner",
+  )
+  await takeovers.advance(row) // notifying -> awaiting-handoff
+  const read = f.host.session.bind(f.host)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => (release = resolve))
+  f.host.session = async (id: string, options?: never) => {
+    const session = await read(id, options)
+    await gate
+    // By the time the read returns, the worker's turn has ended.
+    return session && id === worker.session_id ? { ...session, busy: false } : session
+  }
+  const advancing = takeovers.advance(takeovers.open(f.receipt.planID)[0])
+  await Bun.sleep(20)
+  f.runtime.takeoverHandoff({ done: "half", remaining: "the final warning" }, worker.session_id)
+  release()
+  await advancing
+  const saved = f.store.read(
+    (db) =>
+      JSON.parse(
+        db
+          .query<{ payload: string }, [string]>("SELECT payload FROM runner_takeovers WHERE id=?")
+          .get(row.id)!.payload,
+      ) as { workerHandoff?: { remaining?: string } },
+  )
+  expect(saved.workerHandoff?.remaining).toBe("the final warning")
+}, 10_000)

@@ -9,5 +9,7 @@ test("7abe4acd-1: a long handoff field and a long raw payload keep their final t
   })
   expect(handoff.remaining?.endsWith(warning)).toBe(true)
   expect(handoff.raw?.includes(warning)).toBe(true)
-  expect(normalizeWorkerHandoff(`${"z".repeat(9_000)} ${warning}`).raw?.endsWith(warning)).toBe(true)
+  expect(normalizeWorkerHandoff(`${"z".repeat(9_000)} ${warning}`).raw?.endsWith(warning)).toBe(
+    true,
+  )
 })
