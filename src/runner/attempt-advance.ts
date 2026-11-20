@@ -128,27 +128,20 @@ export class AttemptAdvance {
   private static readonly staleAttemptWindowMs = 60_000
   private readonly staleAttemptProbes = new Map<string, { since: number; probed: number }>()
   async settleStaleAttempts(fence: number) {
-    for (const attempt of this.store.activeProjectAttempts()) {
-      const plan = this.store.plan(attempt.plan_id)
+    const active = this.store.activeProjectAttempts()
+    // A probe entry lives while its attempt is active; a settled attempt frees it.
+    const liveIDs = new Set(active.map((attempt) => attempt.id))
+    for (const id of this.staleAttemptProbes.keys())
+      if (!liveIDs.has(id)) this.staleAttemptProbes.delete(id)
+    for (const attempt of active) {
+      const plan = this.store.planStatus(attempt.plan_id)
       if (!plan) continue
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((item) => item.task_id === attempt.task_id)
-        .at(-1)
-      if (latest?.id !== attempt.id) continue
+      if (this.store.latestAttemptID(plan.id, attempt.task_id) !== attempt.id) continue
       // The Architect is finishing this task itself. Its attempt has no native session, so absence
       // says nothing about it: only accept, a plan cancellation, or the abandonment hold ends it.
       if (isTakeoverAttempt(attempt.policy)) continue
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        continue
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
+      if (this.store.hasOpenEffect(plan.id, attempt.id)) continue
+      const node = this.store.node(plan.id, attempt.task_id)
       let target: "accepted" | "failed" | "cancelled" | undefined
       let cause: string
       if (node && ["accepted", "incorporated"].includes(node.state)) {
@@ -183,7 +176,7 @@ export class AttemptAdvance {
         cause = session ? "session-archived-and-quiet" : "session-absent"
       } else continue
       this.store.fenced(this.owner, fence, (db) => {
-        if (this.store.plan(plan.id)?.version !== plan.version) return
+        if (this.store.planStatus(plan.id)?.version !== plan.version) return
         const changed = db
           .query(
             `UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,?),artifact=COALESCE(artifact,?)
@@ -191,6 +184,7 @@ export class AttemptAdvance {
           )
           .run(target!, node?.artifact ?? null, attempt.id, attempt.state).changes
         if (changed !== 1) return
+        this.staleAttemptProbes.delete(attempt.id)
         this.store.record(plan.id, attempt.task_id, "ATTEMPT_STALE_SETTLED", {
           attemptID: attempt.id,
           sessionID: attempt.session_id,
@@ -600,17 +594,10 @@ export class AttemptAdvance {
     const plan = this.store.plan(planID)
     const attempt = this.store.attempts(planID).find((candidate) => candidate.id === attemptID)
     if (!plan || plan.state !== "blocked" || !attempt) return
-    const prior = this.store.activity(planID, attempt.task_id).filter(
-      (event) =>
-        event.event === "WORKER_AUTO_RESUMED" &&
-        (() => {
-          try {
-            return (JSON.parse(event.payload) as { attemptID?: unknown }).attemptID === attempt.id
-          } catch {
-            return false
-          }
-        })(),
-    ).length
+    const prior = this.store.activityCount(planID, attempt.task_id, {
+      events: ["WORKER_AUTO_RESUMED"],
+      payload: { attemptID: attempt.id },
+    })
     if (prior >= 3 || !this.validArchitect(await this.host.session(plan.owner))) return
     this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
       attemptID: attempt.id,

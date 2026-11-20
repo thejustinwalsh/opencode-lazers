@@ -109,62 +109,52 @@ export class WorkerObservation {
     )
       return false
 
-    const aliases = this.store.atomic((db) =>
-      db
+    // Newest alias first, one row at a time: the walk stops at the first match.
+    return this.store.atomic((db) => {
+      const aliases = db
         .query<{ id: number; payload: string }, [string, string]>(
           `SELECT id,payload FROM runner_transitions
            WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
            ORDER BY id DESC`,
         )
-        .all(attempt.plan_id, attempt.task_id),
-    )
-    for (const row of aliases) {
-      let alias: ReturnType<typeof parseReviewInputAlias>
-      try {
-        alias = parseReviewInputAlias(JSON.parse(row.payload))
-      } catch {
-        alias = undefined
+        .iterate(attempt.plan_id, attempt.task_id)
+      for (const row of aliases) {
+        let alias: ReturnType<typeof parseReviewInputAlias>
+        try {
+          alias = parseReviewInputAlias(JSON.parse(row.payload))
+        } catch {
+          alias = undefined
+        }
+        if (
+          alias &&
+          matchesReviewInputAlias(alias, {
+            projectDirectory: this.directory,
+            projectID: this.projectID,
+            planID: attempt.plan_id,
+            taskID: attempt.task_id,
+            attemptID: attempt.id,
+            sessionID: attempt.session_id,
+            workspace: attempt.workspace,
+            assignedMessageID: attempt.message_id,
+            reviewInputID: inputID,
+          })
+        )
+          return true
       }
-      if (
-        !alias ||
-        !matchesReviewInputAlias(alias, {
-          projectDirectory: this.directory,
-          projectID: this.projectID,
-          planID: attempt.plan_id,
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          assignedMessageID: attempt.message_id,
-          reviewInputID: inputID,
-        })
-      )
-        continue
-      return true
-    }
-    return false
+      return false
+    })
   }
 
   isPriorContinuationInput(attempt: AttemptRow, inputID: string | null | undefined) {
     if (!inputID) return false
-    return this.store.activity(attempt.plan_id, attempt.task_id).some((entry) => {
-      if (entry.event !== "ATTEMPT_RESUMED") return false
-      try {
-        const resumed = JSON.parse(entry.payload) as {
-          attemptID?: unknown
-          previousMessageID?: unknown
-          interruptedInputID?: unknown
-          terminalInputID?: unknown
-        }
-        return (
-          resumed.attemptID === attempt.id &&
-          (resumed.previousMessageID === inputID ||
-            resumed.interruptedInputID === inputID ||
-            resumed.terminalInputID === inputID)
-        )
-      } catch {
-        return false
-      }
+    return this.store.hasActivity(attempt.plan_id, attempt.task_id, {
+      events: ["ATTEMPT_RESUMED"],
+      payload: { attemptID: attempt.id },
+      payloadAny: {
+        previousMessageID: inputID,
+        interruptedInputID: inputID,
+        terminalInputID: inputID,
+      },
     })
   }
 

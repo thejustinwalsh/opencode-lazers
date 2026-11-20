@@ -67,6 +67,45 @@ export type PlanRow = {
   reason: string | null
   artifact: string | null
 }
+type ActivityRow = {
+  id: number
+  task_id: string | null
+  event: string
+  payload: string
+  created_at: number
+}
+type PayloadScalar = string | number
+export type ActivityFilter = {
+  events?: readonly string[]
+  payload?: Record<string, PayloadScalar>
+  payloadAny?: Record<string, PayloadScalar>
+  newest?: boolean
+  limit?: number
+}
+/** A payload field read; malformed JSON reads as NULL and never matches. */
+function payloadField(key: string) {
+  if (!/^[A-Za-z0-9_]+$/.test(key)) throw new Error(`Invalid payload key ${key}`)
+  return `json_extract(CASE WHEN json_valid(payload) THEN payload END,'$.${key}')`
+}
+function activityWhere(filter: ActivityFilter) {
+  const clauses: string[] = []
+  const binds: (string | number)[] = []
+  if (filter.events?.length) {
+    clauses.push(`event IN (${filter.events.map(() => "?").join(",")})`)
+    binds.push(...filter.events)
+  }
+  for (const [key, value] of Object.entries(filter.payload ?? {})) {
+    clauses.push(`${payloadField(key)}=?`)
+    binds.push(value)
+  }
+  const any = Object.entries(filter.payloadAny ?? {})
+  if (any.length) {
+    clauses.push(`(${any.map(([key]) => `${payloadField(key)}=?`).join(" OR ")})`)
+    binds.push(...any.map(([, value]) => value))
+  }
+  return { where: clauses.map((clause) => `AND ${clause}`).join(" "), binds }
+}
+
 /** What the scheduler needs to order and pick a plan; the body is loaded on demand. */
 export type RunnablePlan = { id: string; state: PlanLifecycleState; queue_rank: number }
 export type NodeRow = {
@@ -3011,6 +3050,48 @@ export class RunnerStore {
           .get(this.repository.projectDirectory, id) ?? undefined,
     )
   }
+  /**
+   * One task's recorded events, filtered in SQL. `events` limits the event names; `payload` entries
+   * must all equal the payload field; `payloadAny` needs at least one entry to equal. Rows come
+   * oldest first, or newest first with `newest`. Callers that need a count, an existence check or
+   * the latest row pass `limit` or use activityCount / hasActivity instead of loading history.
+   */
+  activityEvents(planID: string, taskID: string, filter: ActivityFilter = {}) {
+    const { where, binds } = activityWhere(filter)
+    return this.read((db) =>
+      db
+        .query<ActivityRow, (string | number)[]>(
+          `SELECT id,task_id,event,payload,created_at FROM runner_transitions
+           WHERE plan_id=? AND task_id=? ${where}
+           ORDER BY id ${filter.newest ? "DESC" : ""} ${filter.limit ? "LIMIT ?" : ""}`,
+        )
+        .all(planID, taskID, ...binds, ...(filter.limit ? [filter.limit] : [])),
+    )
+  }
+  activityCount(planID: string, taskID: string, filter: ActivityFilter = {}): number {
+    const { where, binds } = activityWhere(filter)
+    return this.read(
+      (db) =>
+        db
+          .query<{ n: number }, (string | number)[]>(
+            `SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND task_id=? ${where}`,
+          )
+          .get(planID, taskID, ...binds)!.n,
+    )
+  }
+  hasActivity(planID: string, taskID: string, filter: ActivityFilter = {}): boolean {
+    const { where, binds } = activityWhere(filter)
+    return (
+      this.read((db) =>
+        db
+          .query<{ one: number }, (string | number)[]>(
+            `SELECT 1 AS one FROM runner_transitions WHERE plan_id=? AND task_id=? ${where} LIMIT 1`,
+          )
+          .get(planID, taskID, ...binds),
+      ) !== null
+    )
+  }
+  /** Whole-task history; prefer activityEvents / activityCount / hasActivity. */
   activity(planID: string, taskID: string) {
     if (!this.plan(planID)) throw new Error("Plan not found")
     return this.read((db) =>
@@ -3726,6 +3807,53 @@ export class RunnerStore {
           "SELECT * FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
         )
         .all(planID),
+    )
+  }
+  /** The newest attempt id of one task, ordered as attempts() is; one row, no history. */
+  latestAttemptID(planID: string, taskID: string): string | null {
+    return (
+      this.read((db) =>
+        db
+          .query<{ id: string }, [string, string]>(
+            "SELECT id FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY started_at DESC,number DESC LIMIT 1",
+          )
+          .get(planID, taskID),
+      )?.id ?? null
+    )
+  }
+  /** Whether an attempt has an effect still waiting on a result (intended or uncertain). */
+  hasOpenEffect(planID: string, attemptID: string): boolean {
+    return (
+      this.read((db) =>
+        db
+          .query<{ one: number }, [string, string]>(
+            "SELECT 1 AS one FROM runner_effects WHERE plan_id=? AND attempt_id=? AND state IN ('intended','uncertain') LIMIT 1",
+          )
+          .get(planID, attemptID),
+      ) !== null
+    )
+  }
+  node(planID: string, taskID: string): NodeRow | undefined {
+    return (
+      this.read((db) =>
+        db
+          .query<NodeRow, [string, string]>(
+            "SELECT * FROM runner_nodes WHERE plan_id=? AND task_id=?",
+          )
+          .get(planID, taskID),
+      ) ?? undefined
+    )
+  }
+  /** A plan's state and version without its body. */
+  planStatus(id: string): { id: string; state: PlanLifecycleState; version: number } | undefined {
+    return (
+      this.read((db) =>
+        db
+          .query<{ id: string; state: PlanLifecycleState; version: number }, [string, string]>(
+            "SELECT id,state,version FROM runner_plans WHERE id=? AND project_directory=?",
+          )
+          .get(id, this.repository.projectDirectory),
+      ) ?? undefined
     )
   }
   /** Every live project reservation, independent of retained plan history or plan state. */

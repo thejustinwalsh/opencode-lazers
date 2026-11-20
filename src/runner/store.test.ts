@@ -1597,3 +1597,110 @@ test("runnable plan paging returns scheduling columns, not plan bodies", () => {
   // 30 padded bodies are 1.2 MB; the page is the ids, states and ranks.
   expect(meter.bytes).toBeLessThan(10_000)
 })
+
+test("the latest attempt, open effect and node are single-row reads however long the history", () => {
+  const f = fixture("latest-attempt-sql")
+  const receipt = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  f.store.atomic((db) => {
+    const insert = db.query(
+      `INSERT INTO runner_attempts(
+        id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,'failed',?)`,
+    )
+    for (let index = 0; index < 300; index++)
+      insert.run(
+        `attempt-${index}`,
+        receipt.planID,
+        taskID,
+        index + 1,
+        `session-${index}`,
+        `message-${index}`,
+        f.projectDirectory,
+        "base",
+        JSON.stringify({ padding: "p".repeat(2_000) }),
+        index,
+      )
+  })
+  const meter = meterReads(f.store)
+  expect(f.store.latestAttemptID(receipt.planID, taskID)).toBe("attempt-299")
+  expect(f.store.hasOpenEffect(receipt.planID, "attempt-299")).toBe(false)
+  expect(f.store.node(receipt.planID, taskID)?.task_id).toBe(taskID)
+  expect(f.store.planStatus(receipt.planID)?.id).toBe(receipt.planID)
+  meter.stop()
+  // 300 attempts hold 600 KB of policy; the four reads return a handful of small rows.
+  expect(meter.rows).toBeLessThanOrEqual(3)
+  expect(meter.bytes).toBeLessThan(5_000)
+})
+
+test("task activity is filtered in SQL: counts, existence and the latest row read no history", () => {
+  const f = fixture("activity-sql")
+  const receipt = f.store.submit(f.input, "owner")
+  const taskID = f.input.nodes[0]!.taskID
+  f.store.atomic((db) => {
+    const insert = db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,?,?,?)",
+    )
+    for (let index = 0; index < 400; index++)
+      insert.run(
+        receipt.planID,
+        taskID,
+        "TOOL_NOISE",
+        JSON.stringify({ attemptID: "a1", padding: "p".repeat(2_000) }),
+        index,
+      )
+    insert.run(
+      receipt.planID,
+      taskID,
+      "ATTEMPT_RESUMED",
+      JSON.stringify({ attemptID: "a1", n: 1 }),
+      500,
+    )
+    insert.run(
+      receipt.planID,
+      taskID,
+      "ATTEMPT_RESUMED",
+      JSON.stringify({ attemptID: "a2", n: 2 }),
+      501,
+    )
+    insert.run(
+      receipt.planID,
+      taskID,
+      "ATTEMPT_RESUMED",
+      JSON.stringify({ attemptID: "a1", n: 3 }),
+      502,
+    )
+    insert.run(receipt.planID, taskID, "ATTEMPT_RESUMED", "not json", 503)
+  })
+  const meter = meterReads(f.store)
+  expect(f.store.activityCount(receipt.planID, taskID, { events: ["ATTEMPT_RESUMED"] })).toBe(4)
+  expect(
+    f.store.activityCount(receipt.planID, taskID, {
+      events: ["ATTEMPT_RESUMED"],
+      payload: { attemptID: "a1" },
+    }),
+  ).toBe(2)
+  expect(
+    f.store.hasActivity(receipt.planID, taskID, {
+      events: ["ATTEMPT_RESUMED"],
+      payload: { attemptID: "a2" },
+      payloadAny: { n: 9, previousMessageID: "x" },
+    }),
+  ).toBe(false)
+  expect(
+    f.store.hasActivity(receipt.planID, taskID, {
+      events: ["ATTEMPT_RESUMED"],
+      payloadAny: { n: 2, previousMessageID: "x" },
+    }),
+  ).toBe(true)
+  const latest = f.store.activityEvents(receipt.planID, taskID, {
+    events: ["ATTEMPT_RESUMED"],
+    payload: { attemptID: "a1" },
+    newest: true,
+    limit: 1,
+  })
+  expect(JSON.parse(latest[0]!.payload).n).toBe(3)
+  meter.stop()
+  // The 400 padded noise rows (800 KB) are never returned.
+  expect(meter.bytes).toBeLessThan(2_000)
+})

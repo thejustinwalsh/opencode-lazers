@@ -87,18 +87,19 @@ export class WorkerPreparation {
    * the input the attempt had before the resume, the attempt takes that input back and runs.
    */
   async adoptRunningWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    const resumed = this.store
-      .activity(plan.id, attempt.task_id)
-      .filter((event) => event.event === "ATTEMPT_RESUMED")
-      .map((event) =>
-        this.parseTransitionPayload<{
+    const latest = this.store.activityEvents(plan.id, attempt.task_id, {
+      events: ["ATTEMPT_RESUMED"],
+      payload: { attemptID: attempt.id },
+      newest: true,
+      limit: 1,
+    })[0]
+    const resumed = latest
+      ? this.parseTransitionPayload<{
           attemptID?: unknown
           messageID?: unknown
           previousMessageID?: unknown
-        }>(event),
-      )
-      .filter((payload) => payload?.attemptID === attempt.id)
-      .at(-1)
+        }>(latest)
+      : undefined
     const previousMessageID = resumed?.previousMessageID
     if (resumed?.messageID !== attempt.message_id || typeof previousMessageID !== "string")
       return false
