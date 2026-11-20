@@ -101,3 +101,13 @@ for further splits; the order above keeps each one independently testable.
 
 Sources: `git` and `gh` read-only queries against both repositories on 2026-11-19; the commit-by-commit
 table and the upstream rules are in the survey notes this file was written from.
+
+## Owner decisions, 2026-11-20
+
+- **Prep starts now on the fork:** run the full check set on `a3718c8`, then merge `upstream/main` into a new
+  integration branch on the fork. Nothing is opened or said upstream.
+- **D1 is in the series.** The maintainer told the owner to add contributed work to the zoo. Blocker 2 changes:
+  the open point is no longer whether D1 goes up, but how the collaborator's three commits are credited
+  (keep their authorship on those commits) and whether the series builds on upstream's `@chmjkb/d1-omni`
+  branch or carries it. Row 8 of the series moves from "depends on upstream's own D1 branch" to a normal
+  member of the series.
