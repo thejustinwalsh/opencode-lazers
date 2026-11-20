@@ -1233,6 +1233,33 @@ export class RunnerStore {
         .all(this.repository.projectDirectory),
     )
   }
+  /**
+   * Ids and states of the project's plans in the given states, in display order. A tick that only
+   * filters by state reads this instead of materializing every plan body; load one body with plan().
+   */
+  planHeads(states: readonly string[]): { id: string; state: PlanLifecycleState }[] {
+    if (!states.length) return []
+    return this.read((db) =>
+      db
+        .query<{ id: string; state: PlanLifecycleState }, string[]>(
+          `SELECT id,state FROM runner_plans WHERE project_directory=? AND state IN (${states.map(() => "?").join(",")})
+           ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
+        )
+        .all(this.repository.projectDirectory, ...states),
+    )
+  }
+  /** The first plan id in display order, without its body. */
+  anchorPlanID(): string | null {
+    return (
+      this.read((db) =>
+        db
+          .query<{ id: string }, [string]>(
+            `SELECT id FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1`,
+          )
+          .get(this.repository.projectDirectory),
+      )?.id ?? null
+    )
+  }
   /** Page execution candidates after filtering history; never use the display window for scheduling. */
   *runnablePlans(terminalStates: ReadonlySet<string>): Generator<PlanRow & { queue_rank: number }> {
     type Candidate = PlanRow & { queue_rank: number; priority: number; sequence: number }
