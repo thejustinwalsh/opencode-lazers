@@ -4,6 +4,7 @@ import {
   installOwnerKeys,
   planKey,
 } from "./identity-keys.ts"
+import { planIs } from "./identity-read.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
@@ -3591,7 +3592,7 @@ export class RunnerStore {
       db
         .query<ActivityRow, (string | number)[]>(
           `SELECT id,task_id,event,payload,created_at FROM runner_transitions
-           WHERE plan_id=? AND task_id=? ${where}
+           WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where}
            ORDER BY id ${filter.newest ? "desc" : ""} ${filter.limit ? "LIMIT ?" : ""}`,
         )
         .all(planID, taskID, ...binds, ...(filter.limit ? [filter.limit] : [])),
@@ -3603,7 +3604,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ n: number }, (string | number)[]>(
-            `SELECT count(*) AS n FROM runner_transitions WHERE plan_id=? AND task_id=? ${where}`,
+            `SELECT count(*) AS n FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where}`,
           )
           .get(planID, taskID, ...binds)!.n,
     )
@@ -3614,7 +3615,7 @@ export class RunnerStore {
       this.read((db) =>
         db
           .query<{ one: number }, (string | number)[]>(
-            `SELECT 1 AS one FROM runner_transitions WHERE plan_id=? AND task_id=? ${where} LIMIT 1`,
+            `SELECT 1 AS one FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ${where} LIMIT 1`,
           )
           .get(planID, taskID, ...binds),
       ) !== null
@@ -3635,7 +3636,7 @@ export class RunnerStore {
           },
           [string, string]
         >(
-          "SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND task_id=? ORDER BY id",
+          `SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? ORDER BY id`,
         )
         .all(planID, taskID),
     )
@@ -4083,7 +4084,7 @@ export class RunnerStore {
         db
           .query<{ payload: string }, [string, string]>(
             `SELECT payload FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
+             WHERE ${planIs(db, "runner_transitions")} AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
                AND json_extract(payload,'$.sourceSessionID')=? ORDER BY id DESC LIMIT 1`,
           )
           .get(planID, payload.sourceSessionID),
@@ -4098,7 +4099,7 @@ export class RunnerStore {
     const row = this.read((db) =>
       db
         .query<{ payload: string }, [string, string | null, string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1`,
         )
         .get(planID, taskID, event),
     )
@@ -4114,7 +4115,7 @@ export class RunnerStore {
       (db) =>
         db
           .query<{ version: number }, [string, string | null, string]>(
-            "SELECT version FROM runner_transitions WHERE plan_id=? AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1",
+            `SELECT version FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id IS ? AND event=? ORDER BY id DESC LIMIT 1`,
           )
           .get(planID, taskID, event)?.version,
     )
@@ -4124,7 +4125,7 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id",
+          `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND event='VERIFICATION_DEADLINE_EXTENDED' ORDER BY id`,
         )
         .all(planID)
         .map((row) => VerificationTimeoutAmendmentSchema.parse(JSON.parse(row.payload))),
@@ -4136,12 +4137,12 @@ export class RunnerStore {
       taskID === undefined
         ? db
             .query<{ payload: string }, [string]>(
-              "SELECT payload FROM runner_transitions WHERE plan_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+              `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1`,
             )
             .get(planID)
         : db
             .query<{ payload: string }, [string, string]>(
-              "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1",
+              `SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND task_id=? AND event='RETAINED_REPAIR_REQUESTED' ORDER BY id DESC LIMIT 1`,
             )
             .get(planID, taskID),
     )

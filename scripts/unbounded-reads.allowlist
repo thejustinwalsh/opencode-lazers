@@ -172,10 +172,10 @@ src/runner/store.ts:3361 | star | runner_continuations | one row: plan_id is the
 src/runner/store.ts:3479 | all | runner_outbox | receipt entries of one outbox row (child rows, append-only) | SELECT o.*,CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,o.rowid AS sequ
 src/runner/store.ts:3497 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT body FROM runner_outbox_receipts WHERE outbox_id=? ORDER BY seq
 src/runner/store.ts:3509 | all | runner_outbox_receipts | receipt entries of one outbox row (child rows, append-only) | SELECT DISTINCT je.value AS value FROM runner_outbox_receipts r, json_each(r.body,'$.coale
-src/runner/store.ts:3583 | all | runner_transitions | one plan or task's transitions of one event | SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE plan_id=? AND tas
+src/runner/store.ts:3583 | all | runner_transitions | one plan or task's transitions of one event | SELECT id,task_id,event,payload,created_at FROM runner_transitions WHERE ${planIs(db, "run
 src/runner/store.ts:3782 | all | runner_dependencies | one plan or task's transitions of one event | SELECT d.prerequisite FROM runner_dependencies d JOIN runner_nodes n ON n.plan_id=d.plan_i
 src/runner/store.ts:3824 | star | runner_commands | one row by request or review key | SELECT * FROM runner_commands WHERE project_directory=? AND request_id=?
-src/runner/store.ts:4064 | all | runner_transitions | one plan or task's transitions of one event | SELECT payload FROM runner_transitions WHERE plan_id=? AND event='VERIFICATION_DEADLINE_EX
+src/runner/store.ts:4064 | all | runner_transitions | one plan or task's transitions of one event | SELECT payload FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} AND event
 src/runner/store.ts:4124 | star | runner_leases | one lease row per project | SELECT * FROM runner_leases WHERE project_directory=?
 src/runner/store.ts:4221 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?
 src/runner/store.ts:4338 | all | runner_relations | project audit: relations of the project, ids only | SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?

@@ -7,6 +7,8 @@ import {
   backfillPage,
   backfillState,
 } from "../runner/identity-backfill.ts"
+import { completeKeys } from "../runner/identity-read.ts"
+import { ensureKeyIndexes } from "../runner/transition-indexes.ts"
 import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
 import {
   classifyPlans,
@@ -91,8 +93,8 @@ const AS_OF_WINDOW_MS = 24 * 3_600_000
 
 export class RetentionService {
   private running: Promise<RetentionSlice> | undefined
-  /** Set once every history table is keyed: an idle tick then reads nothing for it. */
-  private keysBackfilled = false
+  /** Set once every history table is keyed and indexed: an idle tick then reads nothing for it. */
+  private keysComplete = false
 
   constructor(private readonly deps: Dependencies) {
     installRetentionSchema(deps.repository)
@@ -279,14 +281,17 @@ export class RetentionService {
   /**
    * Idle step: key the rows of the two history tables written before the integer key columns
    * existed, one page per transaction with a turn of the event loop between, until the time is
-   * used. Returns the rows keyed. Cheap when finished (one read per table per tick).
+   * used; then build the table's integer indexes (a worker for a large table) and mark its keys
+   * complete, which is what lets readers use them. Returns the rows keyed. A finished upgrade
+   * costs nothing: the instance remembers it.
    */
   async backfillKeys(budgetMs: number): Promise<number> {
-    if (this.keysBackfilled) return 0
+    if (this.keysComplete) return 0
     const { repository } = this.deps
     const started = Date.now()
     let rows = 0
     for (const table of BACKFILL_TABLES) {
+      if (repository.read((db) => backfillState(db, table).complete)) continue
       while (Date.now() - started < budgetMs) {
         if (repository.read((db) => backfillState(db, table).backfilled)) break
         const page = repository.atomic((db) => backfillPage(db, table, BACKFILL_PAGE_ROWS))
@@ -294,9 +299,12 @@ export class RetentionService {
         if (page.done) break
         await new Promise<void>((resolve) => setImmediate(resolve))
       }
+      if (!repository.read((db) => backfillState(db, table).backfilled)) continue
+      await repository.read((db) => ensureKeyIndexes(db, repository.path, table))
+      repository.atomic((db) => completeKeys(db, table))
     }
-    this.keysBackfilled = repository.read((db) =>
-      BACKFILL_TABLES.every((table) => backfillState(db, table).backfilled),
+    this.keysComplete = repository.read((db) =>
+      BACKFILL_TABLES.every((table) => backfillState(db, table).complete),
     )
     return rows
   }

@@ -6,6 +6,8 @@ import { TaskRepository } from "../storage.ts"
 import { RetentionService } from "../retention/service.ts"
 import { BACKFILL_TABLES, backfillPage, backfillState } from "./identity-backfill.ts"
 import { planKey } from "./identity-keys.ts"
+import { planIs } from "./identity-read.ts"
+import { missingKeyIndexes } from "./transition-indexes.ts"
 import { RunnerStore } from "./store.ts"
 
 const directories: string[] = []
@@ -145,6 +147,36 @@ test("the retention idle step backfills within its budget and resumes", async ()
   for (const table of BACKFILL_TABLES)
     expect(repository.read((db) => backfillState(db, table).backfilled)).toBe(true)
   expect(await service.backfillKeys(10_000)).toBe(0)
+  // Complete means keyed and indexed: readers may now take the integer predicate.
+  repository.read((db) => {
+    for (const table of BACKFILL_TABLES) expect(backfillState(db, table).complete).toBe(true)
+    expect(missingKeyIndexes(db)).toEqual([])
+  })
+})
+
+test("a reader takes the text predicate until a table is complete, then the integer one, same rows", async () => {
+  const { repository } = open()
+  seedLegacy(repository, 3, 20)
+  const sql = (db: import("bun:sqlite").Database, tail: string) =>
+    `SELECT id FROM runner_transitions WHERE ${planIs(db, "runner_transitions")} ${tail}`
+  const rows = (db: import("bun:sqlite").Database) =>
+    db
+      .query<{ id: number }, [string]>(sql(db, "ORDER BY id"))
+      .all("plan-1")
+      .map((row) => row.id)
+  const before = repository.read((db) => {
+    expect(planIs(db, "runner_transitions")).toBe("plan_id=?")
+    return rows(db)
+  })
+  expect(before.length).toBe(20)
+  const service = new RetentionService({ repository, host: {} as never })
+  await service.backfillKeys(10_000)
+  repository.read((db) => {
+    expect(planIs(db, "runner_transitions")).toContain("plan_n=(SELECT n FROM lazers_plan_keys")
+    expect(rows(db)).toEqual(before)
+    // An unknown plan has no key and no rows, as with the text column.
+    expect(db.query(sql(db, "")).all("nope")).toEqual([])
+  })
 })
 
 test("an upgrade from a database without the columns adds them and leaves rows readable", () => {
