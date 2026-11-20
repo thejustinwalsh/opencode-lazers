@@ -1,4 +1,5 @@
 import { installHostMessageSchema } from "../core/host-messages.ts"
+import { observationRevisionStamp, StampGate } from "../core/stamp-gate.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { isNativeInput } from "../runner/native-input.ts"
 import { DateTime } from "effect"
@@ -1454,7 +1455,15 @@ export class ProgressRecorder {
   /** Work counters for tests and diagnostics; never persisted. */
   readonly reconcileStats = { stamped: 0, messages: 0, parts: 0 }
   private owners: SessionOwners | undefined
-  private assignmentScan: { revision: number; assignments: ProgressAssignment[] } | undefined
+  /**
+   * The last assignment scan, kept while the project's observation revision stands still.
+   * Budget: an assignment is about 0.4 KB of JSON (ids, state, paths), so 4 MiB holds roughly
+   * 10,000 attempts; past that the oldest scan is dropped and the next call rescans, it never
+   * refuses work.
+   */
+  private readonly assignmentGate = new StampGate<ProgressAssignment[]>({
+    maxBytes: 4 * 1024 * 1024,
+  })
 
   constructor(
     readonly store: RunnerStore,
@@ -1620,49 +1629,38 @@ export class ProgressRecorder {
     })
   }
 
-  /** Revision of the project's observation stamp, or undefined when it cannot be read. */
-  private observationRevision(db: Database): number | undefined {
-    try {
-      return (
-        db
-          .query<{ revision: number }, [string]>(
-            "SELECT revision FROM observation_revisions WHERE project_directory=?",
-          )
-          .get(this.store.repository.projectDirectory)?.revision ?? 0
-      )
-    } catch {
-      return undefined
-    }
-  }
-
   /**
    * Every attempt's assignment. Rows carry no task body: project membership comes from the
    * per-task verdict cache, so a scan parses only tasks it has never seen. When the project's
    * observation revision has not moved since the previous scan, the previous result is returned
-   * without a query.
+   * without a query (`StampGate`).
    */
   assignments(): ProgressAssignment[] {
-    // TODO: replace this local gate with src/core/stamp-gate.ts when it lands.
+    const directory = this.store.repository.projectDirectory
     return this.store.atomic((db) => {
-      const revision = this.observationRevision(db)
-      const last = this.assignmentScan
-      if (revision !== undefined && last?.revision === revision) return [...last.assignments]
-      const rows = db
-        .query<AssignmentRow, [string, string]>(
-          `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
+      const stamp = observationRevisionStamp(db, directory)
+      return [
+        ...this.assignmentGate.runSync(`assignments:${directory}`, stamp, () =>
+          this.scanAssignments(db),
+        ),
+      ]
+    })
+  }
+
+  private scanAssignments(db: Database): ProgressAssignment[] {
+    const rows = db
+      .query<AssignmentRow, [string, string]>(
+        `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
                   a.session_id,a.message_id,a.workspace,p.project_directory
            FROM runner_attempts a
            JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
            WHERE p.project_directory=? AND t.project_directory=? ORDER BY a.started_at,a.number`,
-        )
-        .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
-      const assignments = rows.flatMap((row) => {
-        const assignment = this.assignmentFromRow(db, row)
-        return assignment ? [assignment] : []
-      })
-      this.assignmentScan = revision === undefined ? undefined : { revision, assignments }
-      return [...assignments]
+      )
+      .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
+    return rows.flatMap((row) => {
+      const assignment = this.assignmentFromRow(db, row)
+      return assignment ? [assignment] : []
     })
   }
 
