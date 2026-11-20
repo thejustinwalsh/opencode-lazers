@@ -68,7 +68,6 @@ export type RetentionKindID =
   | "tool-calls"
   | "transitions"
   | "notices"
-  | "scan-history"
   | "audit-receipts"
   | "change-log"
   | "model-snapshots"
@@ -281,21 +280,6 @@ export const KINDS: Kind[] = [
         bind: [ctx.retiredJSON],
         bytes:
           "length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,''))+length(session_id)+length(message_id)+length(id)+96",
-      },
-    ],
-  },
-  {
-    id: "scan-history",
-    label: "Conflict scan history",
-    detail: "recorded scans older than the age; nothing reads them",
-    ageIndependent: false,
-    specs: (ctx) => [
-      {
-        table: "runner_conflict_scans",
-        where: "created_at < ?",
-        bind: [ctx.cutoff],
-        bytes: "length(body)+length(id)+length(project_directory)+64",
-        optional: true,
       },
     ],
   },

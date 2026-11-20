@@ -148,12 +148,6 @@ function setup() {
     )
     outbox.run("o1", receipt.planID, "ses-owner", "m1", "{}", "delivered")
     outbox.run("o2", receipt.planID, "ses-owner", "m2", "{}", "superseded")
-    db.query(
-      "INSERT INTO runner_conflict_scans(id,project_directory,watermark,body,created_at) VALUES(?,?,?,?,?)",
-    ).run("old", directory, 1, "{}", 1000)
-    db.query(
-      "INSERT INTO runner_conflict_scans(id,project_directory,watermark,body,created_at) VALUES(?,?,?,?,?)",
-    ).run("new", directory, 2, "{}", NOW)
   })
   return fixture
 }
@@ -259,7 +253,6 @@ test("the dry run equals the real run; the plan's proofs, latest transition and 
   expect(rows["tool-calls"]?.rows).toBe(5)
   expect(rows.transitions?.rows).toBe(6) // the six old noise events; the newest event stays
   expect(rows.notices?.rows).toBe(2)
-  expect(rows["scan-history"]?.rows).toBe(1)
   expect(rows["recovery-facts"]?.rows).toBeGreaterThan(0)
   expect(preview.plans.retired).toBe(1)
 

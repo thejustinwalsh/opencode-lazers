@@ -705,18 +705,13 @@ function ensureArchitectSourceJournalRevisions(db: Database) {
   // Journal cursors now observe only the selected plan's retained-source mappings.
 }
 
-function migrateConflictScanHistory(db: Database) {
-  // F-S4-1: preserve historical conflict scans under their actual domain name.
-  if (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get()) {
-    if (
-      db
-        .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_conflict_scans'")
-        .get()
-    )
-      db.exec(`INSERT OR IGNORE INTO runner_conflict_scans SELECT * FROM runner_audits;
-                   DROP TABLE runner_audits`)
-    else db.exec("ALTER TABLE runner_audits RENAME TO runner_conflict_scans")
-  }
+/**
+ * Generation 15: conflict scans were never written after commit 77df0c3c and nothing reads them
+ * (`runner_audits` is the same table under its pre-rename name). One DROP TABLE returns the pages
+ * to the free list without touching a row: 91 ms for 695 rows of 0.5 MB on a fixture.
+ */
+function retireConflictScans(db: Database) {
+  db.exec("DROP TABLE IF EXISTS runner_conflict_scans; DROP TABLE IF EXISTS runner_audits")
 }
 
 const DETAIL_PAGE_LIMIT = 200
@@ -753,7 +748,7 @@ export class RunnerStore {
       schemaModules.runner.generation,
       schemaModules.runner.tables,
       (db) => {
-        migrateConflictScanHistory(db)
+        retireConflictScans(db)
         db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -932,9 +927,6 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_architect_source_results_pending
         ON runner_architect_source_results(session_id,referenced_revision,updated_at);
-      CREATE TABLE IF NOT EXISTS runner_conflict_scans (
-        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS runner_progress (
         seq INTEGER PRIMARY KEY AUTOINCREMENT,
         project_directory TEXT NOT NULL, project_id TEXT NOT NULL,
@@ -1210,10 +1202,14 @@ export class RunnerStore {
     // An older still-loaded plugin can recreate its table after the generation was installed.
     if (
       repository.read((db) =>
-        db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_audits'").get(),
+        db
+          .query(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('runner_audits','runner_conflict_scans')",
+          )
+          .get(),
       )
     )
-      repository.atomic(migrateConflictScanHistory)
+      repository.atomic(retireConflictScans)
     new RecoveryJournal(repository)
   }
   atomic<T>(run: (db: Database) => T): T {

@@ -146,7 +146,7 @@ test("S2-4 startup inventory reports three drift classes without mutating tables
   const drift = repository.schemaDrift()
   expect(drift.undeclaredTables).toContain("legacy_orphan")
   expect(drift.missingTables).toContain("runner_plans")
-  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 14 })
+  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 15 })
   expect(repository.read((db) => db.query("SELECT * FROM legacy_orphan").all())).toEqual([
     { value: "keep" },
   ])

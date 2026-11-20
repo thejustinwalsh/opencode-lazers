@@ -397,46 +397,35 @@ test("S2-4 runner module upgrade installs the shared lookup indexes and skips cu
   expect(stored.installed_at).toBeGreaterThan(0)
 })
 
-test("F-S4-1 conflict scan migration preserves history without restarting persistence", () => {
+test("conflict scans are retired: the upgrade drops the table and a hot path never recreates it", () => {
   const f = fixture()
+  const tables = () =>
+    f.store.atomic((db) =>
+      db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE name IN ('runner_conflict_scans','runner_audits')",
+        )
+        .all(),
+    )
+  expect(tables()).toEqual([])
+  // A database from before the retirement: populated table, runner generation 14.
   f.store.atomic((db) => {
-    db.exec("ALTER TABLE runner_conflict_scans RENAME TO runner_audits")
-    db.query("INSERT INTO runner_audits VALUES(?,?,?,?,?)").run(
-      "old-scan",
-      f.projectDirectory,
-      1,
-      "[]",
-      100,
+    db.exec(
+      "CREATE TABLE runner_conflict_scans (id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, watermark INTEGER NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL)",
     )
+    db.query("INSERT INTO runner_conflict_scans VALUES(?,?,?,?,?)").run("old", "/p", 1, "[]", 1)
+    db.exec("UPDATE schema_modules SET generation=14 WHERE module='runner'")
   })
-  const store = new RunnerStore(f.repository)
-  store.audit()
-  store.audit()
-  expect(store.atomic((db) => db.query("SELECT id,body FROM runner_conflict_scans").all())).toEqual(
-    [{ id: "old-scan", body: "[]" }],
-  )
-  expect(
-    store.atomic((db) => db.query("SELECT 1 FROM sqlite_master WHERE name='runner_audits'").get()),
-  ).toBeNull()
+  const before = f.store.atomic((db) => db.query("SELECT * FROM runner_plans").all())
   new RunnerStore(f.repository)
-  expect(
-    store.atomic((db) => db.query("SELECT COUNT(*) AS n FROM runner_conflict_scans").get()),
-  ).toEqual({ n: 1 })
+  expect(tables()).toEqual([])
+  expect(f.store.atomic((db) => db.query("SELECT * FROM runner_plans").all())).toEqual(before)
   // A still-loaded older plugin can recreate its table during an upgrade overlap.
-  store.atomic((db) => {
-    db.exec("CREATE TABLE runner_audits AS SELECT * FROM runner_conflict_scans WHERE 0")
-    db.query("INSERT INTO runner_audits VALUES(?,?,?,?,?)").run(
-      "overlap-scan",
-      f.projectDirectory,
-      2,
-      "[]",
-      200,
-    )
-  })
+  f.store.atomic((db) => db.exec("CREATE TABLE runner_audits (id TEXT)"))
   new RunnerStore(f.repository)
-  expect(
-    store.atomic((db) => db.query("SELECT id FROM runner_conflict_scans ORDER BY id").all()),
-  ).toEqual([{ id: "old-scan" }, { id: "overlap-scan" }])
+  expect(tables()).toEqual([])
+  f.store.audit()
+  expect(tables()).toEqual([])
 })
 
 test("F-S4-1 selected duplicate checks match the audit without execution/scope scans or writes", () => {
@@ -507,9 +496,6 @@ test("F-S4-1 selected duplicate checks match the audit without execution/scope s
   ).toHaveLength(2)
   expect(f.store.exactContentConflicts([crypto.randomUUID()]).findings).toEqual([])
   expect(f.repository.version()).toBe(version)
-  expect(
-    f.store.atomic((db) => db.query("SELECT COUNT(*) AS n FROM runner_conflict_scans").get()),
-  ).toEqual({ n: 0 })
 })
 
 function seedAuditTasks(f: ReturnType<typeof fixture>, count: number) {
