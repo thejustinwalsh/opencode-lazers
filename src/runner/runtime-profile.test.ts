@@ -290,9 +290,6 @@ test("a fix that changes a file it was not given holds the plan", async () => {
   ])
   await runPlan(f)
   await drive(f.runtime, 14)
-  console.log(
-    preparation(f).map((e) => [e.state, e.payload.slice(0, 400), (e.receipt ?? "").slice(0, 600)]),
-  )
   expect(f.store.plan(f.receipt.planID)?.reason).toContain(
     "Mechanical candidate preparation changed files it was not given: other.rs",
   )

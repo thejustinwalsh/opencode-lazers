@@ -14122,7 +14122,9 @@ test("a write-scope overlap during mechanical preparation is a warning and never
   })
   // Another active attempt reserves an overlapping scope.
   ;(
-    f.runtime as unknown as { preparationAllowed: (attempt: { state: string }) => boolean }
+    Reflect.get(f.runtime, "dispatchModule") as {
+      preparationAllowed: (attempt: { state: string }) => boolean
+    }
   ).preparationAllowed = (attempt) => attempt.state !== "verifying"
   await runPlan(f)
   await drive(f.runtime, 18)
