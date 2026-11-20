@@ -516,7 +516,7 @@ test("installing the schema again keeps the stored rows and re-creates the trigg
         "SELECT generation FROM schema_modules WHERE module='model-decision-projection'",
       )
       .get(),
-  ).toEqual({ generation: 2 })
+  ).toEqual({ generation: 3 })
 })
 
 test("a folded decision read parses fewer bytes than the full read", async () => {
