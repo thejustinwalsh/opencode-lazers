@@ -1,22 +1,8 @@
 import { workerURL } from "../worker-url.ts"
-import { isWorkerAgent } from "../runner/worker-agent.ts"
-import {
-  constants,
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  opendirSync,
-  realpathSync,
-  readdirSync,
-  statSync,
-  unlinkSync,
-} from "node:fs"
-import { lstat, open, realpath, rename, stat as fsStat, writeFile } from "node:fs/promises"
+import { constants, existsSync, realpathSync } from "node:fs"
+import { lstat, open, realpath } from "node:fs/promises"
 import { isAbsolute, join, relative } from "node:path"
 import { Worker } from "node:worker_threads"
-import ignore from "ignore"
-import type { Ignore } from "ignore"
 import type { TaskRepository } from "../storage.ts"
 import type { TaskProposal } from "../task.ts"
 import {
@@ -24,53 +10,22 @@ import {
   type RepositorySnapshotWorker,
   type RepositorySnapshotRequest,
 } from "./repository-snapshots.ts"
-import { projectIdsJSON, sameProject } from "../project-key.ts"
+import { trackedFiles } from "./repo-map.ts"
 
-type FileRecord = { path: string; stamp: string; content: string; outline: string; bytes: number }
-type Snapshot = {
-  version: 2
-  id: string
-  workspace: string
-  createdAt: number
-  repomix: "1.18.1"
-  encoding: "o200k_base"
-  tokens: number
-  files: FileRecord[]
-}
 type Principal = { sessionID: string; agent: string; signal?: AbortSignal }
 type Permission = (path: string, principal: Principal, workspace: string) => Promise<boolean>
-export type ContextSession = {
-  id: string
-  parentID?: string
-  projectID: string
-  directory: string
-  agent?: string
-}
-export type ContextHost = {
-  projectID: string
-  session: (id: string) => Promise<ContextSession | null>
-}
-type Packed = { files: { path: string; content: string }[]; denied: string[]; tokens: number }
-export type Focus = {
-  paths?: string[]
-  search?: string
-  level?: "full" | "outline" | "structure"
-  startLine?: number
-  endLine?: number
-}
+type Compressed = { files: { path: string; content: string }[]; denied: string[] }
+
 const maxFile = 512 * 1024
-const maxCache = 256 * 1024 * 1024
-const orphanGraceMs = 60_000
-const workspaceSelection = "$workspace"
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const snapshotFilename =
-  /^[a-f0-9]{32}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/
+/** Prompt budget for the named files' source context; paths past it are listed, not dropped. */
+const sourceContextTokens = 24_000
 const matchesPath = (pattern: string, path: string) =>
   new Bun.Glob(pattern).match(path) || path.startsWith(`${pattern.replace(/\/$/, "")}/`)
 const secret = (path: string) =>
   /(^|\/)(?:\.env(?:\..*)?|[^/]*\.(?:pem|key|p12|pfx)|id_(?:rsa|ed25519)|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$/i.test(
     path,
   ) && !/(?:^|\/)\.env\.example$/.test(path)
+const compressible = /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/
 
 function validSourcePath(path: string) {
   return (
@@ -79,12 +34,6 @@ function validSourcePath(path: string) {
     !path.split("/").some((part) => part === ".." || part === ".") &&
     !secret(path)
   )
-}
-
-export class WorkspaceIndexUnavailable extends Error {
-  constructor() {
-    super("Workspace index is unavailable; Architect must refresh it before it can be read")
-  }
 }
 
 /** Reads at most maxFile+1 bytes. Rejects symlinks and changed inode/metadata. */
@@ -131,61 +80,54 @@ async function readSource(root: string, path: string): Promise<string> {
   }
 }
 
-/** JSON.stringify of a snapshot that yields between file records (up to 64 MiB). */
-async function stringifySnapshot(snapshot: Snapshot): Promise<string> {
-  const { files, ...header } = snapshot
-  const head = JSON.stringify(header)
-  const parts: string[] = []
-  let size = 0
-  for (const [index, file] of files.entries()) {
-    const text = JSON.stringify(file)
-    parts.push(text)
-    size += text.length
-    if (index % 64 === 63 || size > 1024 * 1024) {
-      size = 0
-      await new Promise<void>((resolve) => setImmediate(resolve))
-    }
+/** Tree-sitter outlines of a few named files, computed in a worker thread. */
+async function compress(
+  root: string,
+  files: { path: string; content: string }[],
+  signal?: AbortSignal,
+): Promise<Compressed> {
+  const worker = new Worker(workerURL("./processor", import.meta.url))
+  try {
+    return await new Promise<Compressed>((resolve, reject) => {
+      const abort = () => reject(signal?.reason ?? new Error("Aborted"))
+      signal?.addEventListener("abort", abort, { once: true })
+      worker.once("error", reject)
+      worker.once("message", (data: { ok: boolean; error?: string } & Compressed) =>
+        data.ok ? resolve(data) : reject(new Error(data.error)),
+      )
+      worker.postMessage({
+        root,
+        files: files.map((file) => ({
+          ...file,
+          level: compressible.test(file.path) ? ("compress" as const) : ("directory-only" as const),
+        })),
+      })
+    })
+  } finally {
+    void worker.terminate()
   }
-  return `${head.slice(0, -1)},"files":[${parts.join(",")}]}`
 }
 
+/**
+ * Source context for a task, and remote repository snapshots. Local orientation is the
+ * repository map; this class only reads the files a task names.
+ */
 export class ProjectIndex {
-  private readonly cacheID: string
-  private readonly projectID: string
-  private readonly projectDirectory: string
   private readonly repositorySnapshots: RepositorySnapshotStore
   private counter?: import("repomix").TokenCounter
   constructor(
     readonly root: string,
     readonly cacheDirectory: string,
-    readonly repository: TaskRepository,
+    repository: TaskRepository,
     readonly allow: Permission,
-    private readonly host?: ContextHost,
     repositoryWorker?: RepositorySnapshotWorker,
   ) {
     this.root = realpathSync(root)
-    this.projectID = host?.projectID ?? repository.projectDirectory
-    this.projectDirectory = repository.projectDirectory
-    mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
     this.repositorySnapshots = new RepositorySnapshotStore(
       join(cacheDirectory, "repositories"),
       repository,
       repositoryWorker,
     )
-    repository.atomic((db) =>
-      db.exec(
-        `CREATE TABLE IF NOT EXISTS context_workspaces(workspace TEXT PRIMARY KEY,id TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_cache(workspace TEXT NOT NULL,selection TEXT NOT NULL,stamp TEXT NOT NULL,file TEXT NOT NULL,PRIMARY KEY(workspace,selection)); CREATE TABLE IF NOT EXISTS context_publications(project_id TEXT NOT NULL,project_directory TEXT NOT NULL,owner_session TEXT NOT NULL,workspace TEXT NOT NULL,snapshot_id TEXT NOT NULL,PRIMARY KEY(project_id,project_directory,owner_session));`,
-      ),
-    )
-    this.cacheID = repository.atomic((db) => {
-      db.query("INSERT OR IGNORE INTO context_workspaces VALUES(?,?)").run(
-        this.root,
-        crypto.randomUUID().replaceAll("-", ""),
-      )
-      return db
-        .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
-        .get(this.root)!.id
-    })
   }
   private async tokenizer() {
     if (!this.counter) {
@@ -195,562 +137,13 @@ export class ProjectIndex {
     }
     return this.counter
   }
-  private evict() {
-    // Coordinate with readers across processes. Age alone cannot prove that a
-    // superseded immutable file is no longer selected by a reader.
-    this.repository.atomic((db) => {
-      const active = new Set([
-        ...db
-          .query<{ file: string }, [string]>("SELECT file FROM context_cache WHERE selection=?")
-          .all(workspaceSelection)
-          .map(({ file }) => file),
-        ...db
-          .query<{ file: string }, []>(
-            `SELECT w.id || '-' || p.snapshot_id || '.json' AS file
-               FROM context_publications p JOIN context_workspaces w ON w.workspace=p.workspace`,
-          )
-          .all()
-          .map(({ file }) => file),
-      ])
-      const now = Date.now()
-      const orphans = readdirSync(this.cacheDirectory).filter((name) => {
-        if (!name.endsWith(".json") || active.has(name)) return false
-        return now - statSync(join(this.cacheDirectory, name)).mtimeMs > orphanGraceMs
-      })
-      for (const name of orphans) unlinkSync(join(this.cacheDirectory, name))
-    })
-  }
 
-  private assertCacheCapacity(size: number, filename: string) {
-    let bytes = size
-    for (const name of readdirSync(this.cacheDirectory))
-      if (name.endsWith(".json") && name !== filename)
-        bytes += statSync(join(this.cacheDirectory, name)).size
-    if (bytes > maxCache) throw new Error("Workspace snapshot cache exceeds 256 MiB")
-  }
-  private activeRefresh?: Promise<Snapshot>
-
-  async refresh(principal: Principal): Promise<Snapshot> {
-    principal.signal?.throwIfAborted()
-    if (principal.agent !== "architect")
-      throw new Error("Only Architect may refresh the workspace index")
-    if (this.host) {
-      const publisher = await this.host.session(principal.sessionID)
-      if (!this.sameSession(publisher, principal.sessionID, "architect", this.root))
-        throw new Error("Only the Architect session for this workspace may refresh the index")
-    }
-    const previous = this.activeRefresh
-    const promise = (async () => {
-      if (previous) await previous.catch(() => {})
-      return await this.publish(principal)
-    })()
-    this.activeRefresh = promise
-    try {
-      return await promise
-    } finally {
-      if (this.activeRefresh === promise) this.activeRefresh = undefined
-    }
-  }
-
-  private async publish(principal: Principal): Promise<Snapshot> {
-    const snapshot = await this.collectWorkspace(principal)
-    principal.signal?.throwIfAborted()
-    const filename = `${this.cacheID}-${snapshot.id}.json`
-    const cache = join(this.cacheDirectory, filename)
-    const temporary = `${cache}.${crypto.randomUUID()}.tmp`
-    try {
-      const text = await stringifySnapshot(snapshot)
-      const size = Buffer.byteLength(text)
-      if (size > 64 * 1024 * 1024) throw new Error("Snapshot exceeds 64 MiB")
-      await writeFile(temporary, text, { flag: "wx", mode: 0o600 })
-      await rename(temporary, cache)
-      this.evict()
-      this.assertCacheCapacity(size, filename)
-      this.repository.atomic((db) => {
-        db.query("DELETE FROM context_cache WHERE workspace=? AND selection<>?").run(
-          this.root,
-          workspaceSelection,
-        )
-        db.query(
-          "INSERT INTO context_cache VALUES(?,?,?,?) ON CONFLICT(workspace,selection) DO UPDATE SET stamp=excluded.stamp,file=excluded.file",
-        ).run(
-          this.root,
-          workspaceSelection,
-          JSON.stringify(snapshot.files.map(({ path, stamp }) => [path, stamp])),
-          filename,
-        )
-        if (this.host)
-          db.query(
-            `INSERT INTO context_publications(project_id,project_directory,owner_session,workspace,snapshot_id)
-             VALUES(?,?,?,?,?)
-             ON CONFLICT(project_id,project_directory,owner_session) DO UPDATE SET
-             workspace=excluded.workspace,snapshot_id=excluded.snapshot_id`,
-          ).run(
-            this.projectID,
-            this.projectDirectory,
-            principal.sessionID,
-            snapshot.workspace,
-            snapshot.id,
-          )
-      })
-    } catch (error) {
-      try {
-        unlinkSync(temporary)
-      } catch {
-        // A failed refresh must not hide the original publish error.
-      }
-      try {
-        unlinkSync(cache)
-      } catch {
-        // The new snapshot may not have been written to disk.
-      }
-      throw error
-    }
-    try {
-      this.evict()
-    } catch {
-      // Eviction is best-effort and must not turn a successfully published snapshot into a failure.
-    }
-    return snapshot
-  }
-
-  private async collectWorkspace(principal: Principal): Promise<Snapshot> {
-    const started = Date.now()
-    const worker = new Worker(workerURL("./processor", import.meta.url))
-    let processorFailure: Error | undefined
-    worker.on("error", (error: Error) => {
-      processorFailure = error
-    })
-    try {
-      const defaultIgnoreList = await new Promise<string[]>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error("Repomix indexing exceeded 30 seconds")),
-          Math.max(1, 30000 - (Date.now() - started)),
-        )
-        const onError = (error: Error) => {
-          clearTimeout(timer)
-          reject(error)
-        }
-        worker.once("error", onError)
-        worker.once("message", (message: { patterns?: unknown }) => {
-          clearTimeout(timer)
-          worker.off("error", onError)
-          if (
-            !Array.isArray(message.patterns) ||
-            !message.patterns.every((pattern): pattern is string => typeof pattern === "string")
-          )
-            reject(new Error("Cannot establish Repomix ignore policy"))
-          else resolve(message.patterns)
-        })
-      })
-      const ignores = defaultIgnoreList.map((pattern) => new Bun.Glob(pattern))
-      const selected: { path: string; content: string; stamp: string; bytes: number }[] = []
-      let visited = 0,
-        total = 0
-      const walk = async (path: string, inherited: { base: string; rules: Ignore }[] = []) => {
-        principal.signal?.throwIfAborted()
-        const rules = [...inherited]
-        for (const control of [".ignore", ".repomixignore"]) {
-          const name = path ? `${path}/${control}` : control
-          if (existsSync(join(this.root, name))) {
-            if (!(await this.allow(name, principal, this.root)))
-              throw new Error("Cannot establish permitted project ignore policy")
-            rules.push({
-              base: path ? `${path}/` : "",
-              rules: ignore().add(await readSource(this.root, name)),
-            })
-          }
-        }
-        const directory = opendirSync(join(this.root, path))
-        const entries: {
-          entry: NonNullable<ReturnType<typeof directory.readSync>>
-          name: string
-        }[] = []
-        try {
-          while (true) {
-            principal.signal?.throwIfAborted()
-            const entry = directory.readSync()
-            if (!entry) break
-            if (++visited > 20000 || Date.now() - started > 30000)
-              throw new Error("Project enumeration exceeded 20,000 entries/30 seconds")
-            const name = path ? `${path}/${entry.name}` : entry.name
-            if (
-              name.length > 1024 ||
-              secret(name) ||
-              entry.isSymbolicLink() ||
-              ignores.some(
-                (p) => p.match(name) || (entry.isDirectory() && p.match(`${name}/__entry__`)),
-              )
-            )
-              continue
-            if (
-              rules.some((rule) =>
-                rule.rules.ignores(name.slice(rule.base.length) + (entry.isDirectory() ? "/" : "")),
-              )
-            )
-              continue
-            entries.push({ entry, name })
-          }
-          if (!entries.length) return
-          principal.signal?.throwIfAborted()
-          const ignored = Bun.spawn(["git", "check-ignore", "--no-index", "-z", "--stdin", "--"], {
-            cwd: this.root,
-            stdin: Buffer.from(entries.map(({ name }) => name).join("\0") + "\0"),
-            stdout: "pipe",
-            stderr: "ignore",
-            timeout: 1000,
-            killSignal: "SIGKILL",
-            signal: principal.signal,
-          })
-          const [status, output] = await Promise.all([
-            ignored.exited,
-            new Response(ignored.stdout).text(),
-          ])
-          principal.signal?.throwIfAborted()
-          if (status !== 0 && status !== 1)
-            throw new Error("Cannot establish repository ignore policy")
-          const ignoredPaths = new Set(output.split("\0").filter(Boolean))
-          let sinceYield = 0
-          for (const { entry, name } of entries) {
-            if (++sinceYield === 32) {
-              await new Promise<void>((resolve) => setImmediate(resolve))
-              sinceYield = 0
-            }
-            principal.signal?.throwIfAborted()
-            if (ignoredPaths.has(name)) continue
-            if (Date.now() - started > 30000)
-              throw new Error("Project enumeration exceeded 20,000 entries/30 seconds")
-            if (entry.isDirectory()) {
-              await walk(name, rules)
-              continue
-            }
-            if (!entry.isFile() || !(await this.allow(name, principal, this.root))) continue
-            let content: string
-            try {
-              content = await readSource(this.root, name)
-            } catch {
-              continue
-            }
-            const bytes = Buffer.byteLength(content)
-            total += bytes
-            if (selected.length >= 5000 || total > 32 * 1024 * 1024)
-              throw new Error("Project source exceeds 5,000 files/32 MiB; narrow indexing policy")
-            const stat = await fsStat(join(this.root, name))
-            selected.push({
-              path: name,
-              content,
-              stamp: JSON.stringify([stat.size, stat.mtimeMs, stat.ctimeMs]),
-              bytes,
-            })
-          }
-        } finally {
-          directory.closeSync()
-        }
-      }
-      await walk("")
-      if (processorFailure) throw processorFailure
-      selected.sort((a, b) => a.path.localeCompare(b.path))
-      const packed = await this.processWorkspace(
-        selected.map(({ path, content }) => ({
-          path,
-          content,
-          level: /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb|c|cpp|h|cs|swift|kt)$/.test(path)
-            ? ("compress" as const)
-            : ("directory-only" as const),
-        })),
-        started,
-        worker,
-      )
-      const denied = new Set(packed.denied)
-      const outline = new Map(packed.files.map((f) => [f.path, f.content]))
-      const snapshot: Snapshot = {
-        version: 2,
-        id: crypto.randomUUID(),
-        workspace: this.root,
-        createdAt: Date.now(),
-        repomix: "1.18.1",
-        encoding: "o200k_base",
-        tokens: packed.tokens,
-        files: selected
-          .filter((f) => !denied.has(f.path))
-          .map((f) => ({ ...f, outline: outline.get(f.path) ?? "" })),
-      }
-      return snapshot
-    } finally {
-      worker.terminate()
-    }
-  }
-
-  private async processWorkspace(
-    files: { path: string; content: string; level: "compress" | "directory-only" }[],
-    started: number,
-    worker: Worker,
-  ): Promise<Packed> {
-    return await new Promise<Packed>((resolve, reject) => {
-      const timer = setTimeout(
-        () => {
-          worker.terminate()
-          reject(new Error("Repomix indexing exceeded 30 seconds"))
-        },
-        Math.max(1, 30000 - (Date.now() - started)),
-      )
-      worker.on(
-        "message",
-        (data: {
-          ok: boolean
-          error?: string
-          files: { path: string; content: string }[]
-          denied: string[]
-          tokens: number
-        }) => {
-          clearTimeout(timer)
-          worker.terminate()
-          data.ok ? resolve(data) : reject(new Error(data.error))
-        },
-      )
-      worker.on("error", (error) => {
-        clearTimeout(timer)
-        worker.terminate()
-        reject(error instanceof Error ? error : new Error(String(error)))
-      })
-      worker.postMessage({ root: this.root, files })
-    })
-  }
-
-  private async loadSnapshot(publication?: {
-    ownerSessionID: string
-    workspace: string
-  }): Promise<Snapshot> {
-    // The immediate transaction is a lock, not a snapshot write. Hold it until
-    // the immutable bytes are read so another process cannot evict that file.
-    // The descriptor opened inside the lock pins the immutable bytes even if
-    // another process evicts the file; they are read after the lock is released.
-    const { file, workspace, cacheID, expectedSnapshotID, descriptor } = this.repository.atomic(
-      (db) => {
-        let file: string,
-          workspace = this.root,
-          cacheID = this.cacheID,
-          expectedSnapshotID: string | undefined
-        if (publication) {
-          const row = db
-            .query<{ workspace: string; snapshot_id: string }, [string, string, string]>(
-              "SELECT workspace,snapshot_id FROM context_publications WHERE project_id IN (SELECT value FROM json_each(?)) AND project_directory=? AND owner_session=?",
-            )
-            .get(projectIdsJSON(this.projectID), this.projectDirectory, publication.ownerSessionID)
-          if (!row || row.workspace !== publication.workspace) throw new WorkspaceIndexUnavailable()
-          workspace = row.workspace
-          expectedSnapshotID = row.snapshot_id
-          const identity = db
-            .query<{ id: string }, [string]>("SELECT id FROM context_workspaces WHERE workspace=?")
-            .get(workspace)
-          if (!identity) throw new WorkspaceIndexUnavailable()
-          cacheID = identity.id
-          file = `${identity.id}-${expectedSnapshotID}.json`
-        } else {
-          const row = db
-            .query<{ file: string }, [string, string]>(
-              "SELECT file FROM context_cache WHERE workspace=? AND selection=?",
-            )
-            .get(this.root, workspaceSelection)
-          if (!row) throw new WorkspaceIndexUnavailable()
-          file = row.file
-        }
-        if (!snapshotFilename.test(file)) throw new Error("Invalid cached snapshot path")
-        const cache = join(this.cacheDirectory, file)
-        if (!existsSync(cache)) throw new WorkspaceIndexUnavailable()
-        if (statSync(cache).size > 64 * 1024 * 1024) throw new Error("Invalid cached snapshot size")
-        return {
-          file,
-          workspace,
-          cacheID,
-          expectedSnapshotID,
-          descriptor: openSync(cache, constants.O_RDONLY),
-        }
-      },
-    )
-    let text: string
-    try {
-      text = await Bun.file(descriptor).text()
-    } finally {
-      closeSync(descriptor)
-    }
-    const stored = JSON.parse(text) as Snapshot
-    if (
-      stored.version !== 2 ||
-      !uuidPattern.test(stored.id) ||
-      file !== `${cacheID}-${stored.id}.json` ||
-      (expectedSnapshotID !== undefined && stored.id !== expectedSnapshotID) ||
-      stored.workspace !== workspace ||
-      !Number.isInteger(stored.createdAt) ||
-      stored.repomix !== "1.18.1" ||
-      stored.encoding !== "o200k_base" ||
-      !Number.isInteger(stored.tokens) ||
-      stored.tokens < 0 ||
-      !Array.isArray(stored.files) ||
-      stored.files.some(
-        (file) =>
-          !file ||
-          !validSourcePath(file.path) ||
-          typeof file.content !== "string" ||
-          typeof file.outline !== "string" ||
-          !Number.isInteger(file.bytes) ||
-          file.bytes !== Buffer.byteLength(file.content),
-      )
-    )
-      throw new Error("Invalid cached snapshot identity")
-    return stored
-  }
-
-  private sameSession(
-    session: ContextSession | null,
-    id: string,
-    agent: string,
-    directory?: string,
-  ) {
-    // Session.Info.agent is optional; the authenticated tool principal supplies
-    // the effective agent, while a conflicting persisted role is rejected.
-    if (
-      !session ||
-      session.id !== id ||
-      !sameProject(session.projectID, this.projectID) ||
-      (session.agent !== undefined && session.agent !== agent)
-    )
-      return false
-    try {
-      const actual = realpathSync(session.directory)
-      return directory === undefined || actual === directory
-    } catch {
-      return false
-    }
-  }
-
-  private async publicationFor(principal: Principal) {
-    if (!this.host || !isWorkerAgent(principal.agent)) return undefined
-    try {
-      const worker = await this.host.session(principal.sessionID)
-      if (
-        !worker ||
-        !this.sameSession(worker, principal.sessionID, principal.agent, this.root) ||
-        !worker.parentID
-      )
-        return undefined
-      const architect = await this.host.session(worker.parentID)
-      if (!architect || !this.sameSession(architect, worker.parentID, "architect")) return undefined
-      const workspace = realpathSync(architect.directory)
-      return { ownerSessionID: architect.id, workspace }
-    } catch {
-      // Published context is optional; native session lookup failures must not
-      // prevent ordinary workspace reads or cause an implicit refresh.
-      return undefined
-    }
-  }
-
-  private async snapshotFor(principal: Principal) {
-    const publication = await this.publicationFor(principal)
-    if (publication) {
-      try {
-        return await this.loadSnapshot(publication)
-      } catch (error) {
-        if (!(error instanceof WorkspaceIndexUnavailable)) throw error
-      }
-    }
-    return await this.loadSnapshot()
-  }
-
-  private selectedFiles(snapshot: Snapshot, paths: string[]) {
-    return snapshot.files.filter(
-      (file) =>
-        validSourcePath(file.path) &&
-        (!paths.length || paths.some((path) => matchesPath(path, file.path))),
-    )
-  }
-
-  private async permittedFiles(
-    snapshot: Snapshot,
-    principal: Principal,
-    candidates: FileRecord[] = snapshot.files,
-  ) {
-    const files: FileRecord[] = []
-    for (const file of candidates) {
-      principal.signal?.throwIfAborted()
-      if (
-        validSourcePath(file.path) &&
-        (await this.allow(file.path, principal, snapshot.workspace))
-      )
-        files.push(file)
-      principal.signal?.throwIfAborted()
-    }
-    return files
-  }
-
-  private async selectPermitted(principal: Principal, paths: string[], search?: string) {
-    principal.signal?.throwIfAborted()
-    const snapshot = await this.snapshotFor(principal)
-    const selected = this.selectedFiles(snapshot, paths)
-    const permitted = await this.permittedFiles(snapshot, principal, selected)
-    const query = search
-      ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu")
-      : undefined
-    const matches = query ? permitted.filter((file) => query.test(file.content)) : permitted
-    return { snapshot, matches }
-  }
-
-  async manifest(principal: Principal, paths: string[] = []) {
-    const { snapshot, matches } = await this.selectPermitted(principal, paths)
-    const limited = matches.slice(0, 100)
-    return {
-      snapshotID: snapshot.id,
-      freshness: "as-of-refresh" as const,
-      refreshedAt: snapshot.createdAt,
-      workspace: snapshot.workspace,
-      repomix: snapshot.repomix,
-      encoding: snapshot.encoding,
-      totalFiles: matches.length,
-      packedTokens: snapshot.tokens,
-      files: limited.map(({ path, bytes }) => ({ path, bytes })),
-      truncated: matches.length > limited.length,
-    }
-  }
-  async evidence(principal: Principal, focus: Focus) {
-    const { snapshot, matches } = await this.selectPermitted(
-      principal,
-      focus.paths ?? [],
-      focus.search,
-    )
-    const limited = matches.slice(0, 50)
-    const sources = limited.map((f) => {
-      const lines = f.content.split("\n"),
-        start = focus.startLine ?? 1,
-        end = Math.min(focus.endLine ?? lines.length, lines.length)
-      return {
-        path: f.path,
-        revision: null,
-        startLine: start,
-        endLine: end,
-        level: focus.level ?? "full",
-        text:
-          focus.level === "structure"
-            ? ""
-            : focus.level === "outline"
-              ? f.outline
-              : lines.slice(start - 1, end).join("\n"),
-      }
-    })
-    return {
-      snapshotID: snapshot.id,
-      freshness: "as-of-refresh" as const,
-      refreshedAt: snapshot.createdAt,
-      workspace: snapshot.workspace,
-      encoding: snapshot.encoding,
-      sources,
-      truncated: matches.length > limited.length,
-    }
-  }
-
+  /**
+   * The source the task names (referenced paths and line ranges, else its write scope), read from
+   * the checkout now: compressed outlines for code, full text otherwise or with line ranges.
+   */
   async taskContext(principal: Principal, proposal: TaskProposal, findings: string[] = []) {
-    const snapshot = await this.snapshotFor(principal)
     const references = new Map<string, { start: number; end: number }[]>()
-    const paths = new Set(snapshot.files.map((file) => file.path))
     for (const text of [
       ...proposal.context.map((ref) => ref.reference),
       proposal.guidance ?? "",
@@ -760,7 +153,7 @@ export class ProjectIndex {
         /((?:[a-zA-Z0-9_.@-]+\/)*[a-zA-Z0-9_.@-]+\.[a-zA-Z][a-zA-Z0-9]*)(?::(\d+)(?:-(\d+))?)?/g,
       )) {
         const path = match[1]!
-        if (!paths.has(path)) continue
+        if (!validSourcePath(path) || !existsSync(join(this.root, path))) continue
         const ranges = references.get(path) ?? []
         if (match[2]) {
           const start = Number(match[2]),
@@ -770,21 +163,35 @@ export class ProjectIndex {
         references.set(path, ranges)
       }
     }
-    const scoped = snapshot.files.filter((file) =>
-      proposal.writeScope.some((scope) => matchesPath(scope, file.path)),
-    )
     const candidates = references.size
-      ? snapshot.files.filter((file) => references.has(file.path))
-      : scoped
-    const visible = await this.permittedFiles(snapshot, principal, candidates)
+      ? [...references.keys()].sort()
+      : (await trackedFiles(this.root)).filter(
+          (path) =>
+            validSourcePath(path) && proposal.writeScope.some((scope) => matchesPath(scope, path)),
+        )
+    const sources: { path: string; content: string }[] = []
+    for (const path of candidates) {
+      principal.signal?.throwIfAborted()
+      if (!(await this.allow(path, principal, this.root))) continue
+      try {
+        sources.push({ path, content: await readSource(this.root, path) })
+      } catch {
+        // Unreadable, binary, oversized or changing files are not named as context.
+      }
+    }
+    const outlines = new Map<string, string>()
+    if (sources.length) {
+      const packed = await compress(this.root, sources, principal.signal)
+      for (const file of packed.files) outlines.set(file.path, file.content)
+    }
     const counter = await this.tokenizer()
     const deferred: string[] = []
     const entries: { path: string; level: "full" | "outline"; text: string }[] = []
     let tokens = 0
-    for (const file of visible) {
+    for (const file of sources) {
       const ranges = references.get(file.path) ?? []
       const lines = file.content.split("\n")
-      const outline = ranges.length === 0 && Boolean(file.outline)
+      const outline = ranges.length === 0 && Boolean(outlines.get(file.path))
       const text = ranges.length
         ? ranges
             .map(
@@ -793,25 +200,17 @@ export class ProjectIndex {
             )
             .join("\n")
         : outline
-          ? file.outline
+          ? outlines.get(file.path)!
           : file.content
       const cost = counter.countTokens(file.path + text)
-      if (tokens + cost > 24_000) {
+      if (tokens + cost > sourceContextTokens) {
         deferred.push(file.path)
         continue
       }
       tokens += cost
       entries.push({ path: file.path, level: outline ? "outline" : "full", text })
     }
-    return {
-      workspace: snapshot.workspace,
-      snapshotID: snapshot.id,
-      refreshedAt: snapshot.createdAt,
-      freshness: "as-of-refresh" as const,
-      tokens,
-      entries,
-      deferred,
-    }
+    return { workspace: this.root, tokens, entries, deferred }
   }
   async repositorySnapshot(principal: Principal, input: RepositorySnapshotRequest) {
     principal.signal?.throwIfAborted()

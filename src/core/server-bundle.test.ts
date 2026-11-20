@@ -60,12 +60,25 @@ test("generation of a bundle follows its contents, not its mtime or path", () =>
 
 test("bundled workers start from the built output", async () => {
   const processor = new Worker(pathToFileURL(`${dist}processor.js`))
-  const first = await new Promise<{ patterns: unknown[] }>((resolve, reject) => {
-    processor.once("message", resolve)
-    processor.once("error", reject)
-  })
+  const outline = await new Promise<{ ok: boolean; files: { path: string; content: string }[] }>(
+    (resolve, reject) => {
+      processor.once("message", resolve)
+      processor.once("error", reject)
+      processor.postMessage({
+        root: process.cwd(),
+        files: [
+          {
+            path: "a.ts",
+            content: "export function a(x: number) {\n  return x + 1\n}\n",
+            level: "compress",
+          },
+        ],
+      })
+    },
+  )
   await processor.terminate()
-  expect(first.patterns.length).toBeGreaterThan(0)
+  expect(outline.ok).toBe(true)
+  expect(outline.files[0]?.content).toContain("export function a")
 
   const fixture = makeLedgerFixture()
   const settings = ModelPriceSourceSettingsSchema.parse({
