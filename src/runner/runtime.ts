@@ -16,7 +16,7 @@ import {
   isRerunnableEffect,
 } from "./runtime-helpers.ts"
 import type {
-  AdoptionSeed,
+  CommandContext,
   RetainedRepairRecoverySeed,
   RetainedRepairSeed,
   RetainedVerificationSeed,
@@ -30,7 +30,7 @@ import { ArchitectSources } from "./architect-sources.ts"
 import { ArchitectRenewal } from "./architect-renewal.ts"
 import { Dispatch } from "./dispatch.ts"
 import { WorkerObservation } from "./worker-observation.ts"
-import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { CleanupAudit } from "./cleanup-audit.ts"
 import { AttemptAdvance } from "./attempt-advance.ts"
 import { Cancellation } from "./cancellation.ts"
 import { activeProfile, profileRevisionByID } from "../projects/profile-store.ts"
@@ -40,6 +40,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { ContinuationPreparation } from "./continuation-preparation.ts"
 import { StartupSettlement } from "./startup-settlement.ts"
 import { AdoptionPreparation } from "./adoption-preparation.ts"
 import { RetainedRepairPreparation } from "./retained-repair-preparation.ts"
@@ -101,16 +102,13 @@ import {
 import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 
-import {
-  RETAINED_REPAIR_FENCE_FAILURE_REASON,
-  terminalWorkerContinuationProblem as checkTerminalWorkerContinuation,
-} from "./interrupted-continuation.ts"
-import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
+import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation.ts"
+
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
 import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
-import { DispatchRouteDecisionSchema } from "../models/dispatch-resolution.ts"
+
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -121,9 +119,9 @@ import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
 import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
-import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
+
 import { startupFailureSettlementFromReceipt } from "./startup-recovery.ts"
-import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
+
 import {
   activeRetainedVerifications,
   createRetainedVerification,
@@ -208,34 +206,6 @@ export function architectIdleWindowMs(value: unknown): number {
   return architectCacheWindowMs(value)
 }
 
-type CommandContext = {
-  command: PlanCommand
-  caller: string
-  baseVersion: number
-  continuedOwner: string | undefined
-  configuredWorker: ModelPolicy | undefined
-  ownerSession: HostSession | null | undefined
-  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
-  terminalContinuation:
-    { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
-  terminalRepairContinuation: { operationID: string; owner: string } | undefined
-  retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
-  adoptionSeed: AdoptionSeed | undefined
-  retainedVerificationSeed: RetainedVerificationSeed | undefined
-  retainedRepair: RetainedRepairSeed | undefined
-  reviewInput: { binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined
-  startupSettlement:
-    | {
-        attempt: AttemptRow
-        effect: EffectRow
-        failure: StartupWorktreeFailureEvidence
-        evidence: StartupAbsenceEvidence
-      }
-    | undefined
-  cleanupDiagnostics: CleanupAuditDiagnostics | undefined
-  obs: GitObservations
-}
-
 /** Whether a command's outcome leaves work the scheduler should pick up now. */
 function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
   const outcome = result as { status?: unknown; instructionUpdates?: unknown } | null | undefined
@@ -295,6 +265,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly continuationPreparation: ContinuationPreparation
   private readonly startupSettlement: StartupSettlement
   private readonly adoptionPreparation: AdoptionPreparation
   private readonly retainedRepairPreparation: RetainedRepairPreparation
@@ -503,6 +474,14 @@ export class TaskRuntime {
       preparationAllowed: (...args) => this.preparationAllowed(...args),
       effect: (...args) => this.effect(...args),
       uncertain: (...args) => this.uncertain(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.continuationPreparation = new ContinuationPreparation(this.core, {
+      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
+      interruptedChecksFor: (...args) => this.interruptedChecksFor(...args),
+      prepareRetainedRepairRecovery: (...args) => this.prepareRetainedRepairRecovery(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.outcomeDelivery = new OutcomeDelivery({
@@ -961,136 +940,6 @@ export class TaskRuntime {
     return this.retainedRepairPreparation.prepareReviewInputReconciliation(...args)
   }
 
-  private terminalWorkerContinuationProblem(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    owner: HostSession | null | undefined,
-    worker: HostSession | null | undefined,
-  ) {
-    const taskID = command.taskID
-    const attempt = taskID
-      ? this.store
-          .attempts(plan.id)
-          .filter((candidate) => candidate.task_id === taskID)
-          .at(-1)
-      : undefined
-    const node = taskID
-      ? this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
-      : undefined
-    const stopObservation = taskID
-      ? this.store.latestTransition<Record<string, unknown>>(plan.id, taskID, "WORKER_STOPPED")
-      : undefined
-    const blockedObservation = this.store.latestTransition<{ workerObservation?: unknown }>(
-      plan.id,
-      null,
-      "BLOCKED",
-    )?.workerObservation
-    let continuationPlan = plan
-    if (attempt) {
-      try {
-        const attemptPolicy = JSON.parse(attempt.policy) as {
-          model?: unknown
-          routeDecision?: unknown
-        }
-        const decision = DispatchRouteDecisionSchema.safeParse(attemptPolicy.routeDecision)
-        const route = ModelPolicy.safeParse(attemptPolicy.model)
-        if (
-          decision.success &&
-          decision.data.status === "resolved" &&
-          route.success &&
-          sameModelSnapshot(decision.data.route, route.data)
-        )
-          continuationPlan = { ...plan, model: JSON.stringify(route.data) }
-      } catch {
-        // The retained attempt remains fail-closed if its route snapshot is malformed.
-      }
-    }
-    const planHoldObservation =
-      typeof blockedObservation === "object" && blockedObservation !== null
-        ? (blockedObservation as TerminalWorkerHold)
-        : undefined
-    const effects = this.store.effects(plan.id)
-    let taskCurrent = false
-    if (attempt) {
-      try {
-        const admitted = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-          (candidate) => candidate.taskID === attempt.task_id,
-        )
-        const task = this.store.repository.get(attempt.task_id)
-        taskCurrent = Boolean(
-          admitted &&
-          task &&
-          task.revision === admitted.revision &&
-          task.provenance.projectID === this.projectID &&
-          task.provenance.projectDirectory === this.directory &&
-          !this.store.repository.taskDisposition(task.id),
-        )
-      } catch {
-        taskCurrent = false
-      }
-    }
-    return checkTerminalWorkerContinuation({
-      plan: continuationPlan,
-      node,
-      attempt,
-      latestAttemptID: attempt?.id,
-      commandTaskID: command.taskID,
-      commandAttemptID: command.attemptID,
-      caller,
-      owner,
-      worker,
-      projectID: this.projectID,
-      taskCurrent,
-      assignedInputMatches: Boolean(
-        attempt && worker?.turn && this.matchesWorkerInput(attempt, worker.turn.inputID),
-      ),
-      stopObservation,
-      planHoldObservation,
-      retainedSession: Boolean(
-        attempt &&
-        effects.some((effect) => {
-          if (
-            effect.attempt_id !== attempt.id ||
-            effect.kind !== "session" ||
-            effect.state !== "completed"
-          )
-            return false
-          try {
-            return JSON.parse(effect.payload).sessionID === attempt.session_id
-          } catch {
-            return false
-          }
-        }),
-      ),
-      retainedPrompt: Boolean(
-        attempt &&
-        effects.some((effect) => {
-          if (
-            effect.attempt_id !== attempt.id ||
-            effect.kind !== "prompt" ||
-            effect.state !== "completed"
-          )
-            return false
-          try {
-            const payload = JSON.parse(effect.payload)
-            return (
-              payload.sessionID === attempt.session_id &&
-              payload.messageID === attempt.message_id &&
-              payload.workspace === attempt.workspace
-            )
-          } catch {
-            return false
-          }
-        }),
-      ),
-      hasUnresolvedEffects: effects.some((effect) =>
-        ["intended", "uncertain"].includes(effect.state),
-      ),
-      reservationAvailable: attempt ? this.preparationAllowed(attempt) : false,
-    })
-  }
-
   private hasMeaningfulWorkerProgress(
     ...args: Parameters<StartupSettlement["hasMeaningfulWorkerProgress"]>
   ) {
@@ -1123,27 +972,10 @@ export class TaskRuntime {
     return this.startupSettlement.startupWorkspaceReady(...args)
   }
 
-  /**
-   * `resume` without a task re-runs the combined check on the current
-   * candidate. It needs a live Architect and a blocked, unaccepted plan; no
-   * earlier receipt, fingerprint or deadline has to match.
-   */
   private assertCombinedVerificationResume(
-    plan: PlanRow,
-    command: PlanCommand,
-    ownerSession: HostSession | null | undefined,
+    ...args: Parameters<ContinuationPreparation["assertCombinedVerificationResume"]>
   ) {
-    if (
-      !command.reason?.trim() ||
-      command.attemptID !== undefined ||
-      command.workspaceMode !== undefined ||
-      command.baseCommit !== undefined
-    )
-      throw new Error("Plan-level verification resume requires only a reason, not task controls")
-    if (!this.validArchitect(ownerSession))
-      throw new Error("Combined verification resume requires the current same-project Architect")
-    if (plan.state !== "blocked" || plan.artifact !== null)
-      throw new Error("Combined verification resume requires a blocked, unaccepted plan")
+    return this.continuationPreparation.assertCombinedVerificationResume(...args)
   }
 
   async command(input: unknown, caller: string): Promise<unknown> {
@@ -1329,110 +1161,10 @@ export class TaskRuntime {
     return this.host.session(target)
   }
 
-  /** Resume of a task: the worker continuation or retained-repair recovery its latest attempt allows. */
-  private async prepareResumeContinuation(
-    old: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-    taskID: string,
-  ): Promise<
-    Pick<
-      CommandContext,
-      "terminalContinuation" | "terminalRepairContinuation" | "retainedRepairRecovery"
-    >
-  > {
-    const attempt = this.store
-      .attempts(old.id)
-      .filter((candidate) => candidate.task_id === taskID)
-      .at(-1)
-    const latestStop = attempt
-      ? this.store.latestTransition<Record<string, unknown>>(
-          old.id,
-          attempt.task_id,
-          "WORKER_STOPPED",
-        )
-      : undefined
-    const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-    const interruptedVerification = Boolean(
-      attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0,
-    )
-    let continuation: Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation"> =
-      {
-        terminalContinuation: undefined,
-        terminalRepairContinuation: undefined,
-      }
-    if (
-      attempt &&
-      !interruptedVerification &&
-      (attempt.state === "running" || attempt.state === "verifying" || terminalNativeFailure)
-    )
-      continuation = await this.prepareTerminalContinuation(
-        old,
-        command,
-        caller,
-        ownerSession,
-        attempt,
-      )
-    let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
-    if (
-      !continuation.terminalContinuation &&
-      attempt?.state === "cancelled" &&
-      this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)?.state ===
-        "cancelled" &&
-      old.state === "blocked" &&
-      old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
-      this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
-        ?.attemptID === attempt.id
-    )
-      retainedRepairRecovery = await this.prepareRetainedRepairRecovery(
-        old,
-        command,
-        caller,
-        ownerSession,
-        attempt,
-      )
-    return { ...continuation, retainedRepairRecovery }
-  }
-
-  private async prepareTerminalContinuation(
-    old: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-    attempt: AttemptRow,
-  ): Promise<Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation">> {
-    if (!command.attemptID || command.attemptID !== attempt.id)
-      throw new Error("Terminal worker continuation requires the exact latest attemptID")
-    const worker = await this.host.session(attempt.session_id, { messages: true })
-    const problem = this.terminalWorkerContinuationProblem(
-      old,
-      command,
-      caller,
-      ownerSession,
-      worker,
-    )
-    if (problem) throw new Error(problem)
-    const terminalContinuation = {
-      attemptID: attempt.id,
-      messageID: attempt.message_id,
-      inputID: worker!.turn!.inputID!,
-      worker: worker!,
-    }
-    let terminalRepairContinuation: { operationID: string; owner: string } | undefined
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      old.id,
-      attempt.task_id,
-    )
-    if (latestRepair?.attemptID === attempt.id) {
-      const repair = this.retainedRepairForAttempt(attempt)
-      if (!repair || repair.messageID !== attempt.message_id)
-        throw new Error(
-          "Retained repair continuation is missing its current owner/control authorization",
-        )
-      terminalRepairContinuation = { operationID: repair.operationID, owner: repair.owner }
-    }
-    return { terminalContinuation, terminalRepairContinuation }
+  private prepareResumeContinuation(
+    ...args: Parameters<ContinuationPreparation["prepareResumeContinuation"]>
+  ) {
+    return this.continuationPreparation.prepareResumeContinuation(...args)
   }
 
   private prepareStartupSettlement(
@@ -2708,40 +2440,9 @@ export class TaskRuntime {
   }
 
   private assertTerminalContinuation(
-    ctx: CommandContext,
-    plan: PlanRow,
-    attempt: AttemptRow | undefined,
+    ...args: Parameters<ContinuationPreparation["assertTerminalContinuation"]>
   ) {
-    const { command, caller, ownerSession, terminalContinuation, terminalRepairContinuation } = ctx
-    const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
-    if (
-      (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
-      (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
-    )
-      throw new Error("Terminal continuation preserves its workspace and baseline")
-    const problem = this.terminalWorkerContinuationProblem(
-      plan,
-      command,
-      caller,
-      ownerSession,
-      terminalContinuation!.worker,
-    )
-    if (problem) throw new Error(problem)
-    if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
-      throw new Error("Native terminal observation changed before continuation admission")
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      plan.id,
-      attempt!.task_id,
-    )
-    const currentRepair = this.retainedRepairForAttempt(attempt!)
-    if (
-      (latestRepair?.attemptID === attempt!.id &&
-        (!terminalRepairContinuation ||
-          !currentRepair ||
-          currentRepair.operationID !== terminalRepairContinuation.operationID)) ||
-      (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
-    )
-      throw new Error("Retained repair continuation authority changed before reservation")
+    return this.continuationPreparation.assertTerminalContinuation(...args)
   }
 
   private commandRequeueUnstartedTask(

@@ -1,3 +1,10 @@
+import { GitObservations } from "./git-observations.ts"
+import { type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { type BaseReach, type IntegrationProof } from "./integration-proof.ts"
+import type { CommandInput as PlanCommand } from "./schema.ts"
+import type { AttemptRow } from "./store.ts"
+import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
+import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
 import type { HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
@@ -216,4 +223,32 @@ export type AdoptionSeed = {
   inputFingerprint: string
   reason: string
   combinedArtifact: string
+}
+
+export type CommandContext = {
+  command: PlanCommand
+  caller: string
+  baseVersion: number
+  continuedOwner: string | undefined
+  configuredWorker: ModelPolicy | undefined
+  ownerSession: HostSession | null | undefined
+  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
+  terminalContinuation:
+    { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
+  terminalRepairContinuation: { operationID: string; owner: string } | undefined
+  retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+  adoptionSeed: AdoptionSeed | undefined
+  retainedVerificationSeed: RetainedVerificationSeed | undefined
+  retainedRepair: RetainedRepairSeed | undefined
+  reviewInput: { binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined
+  startupSettlement:
+    | {
+        attempt: AttemptRow
+        effect: EffectRow
+        failure: StartupWorktreeFailureEvidence
+        evidence: StartupAbsenceEvidence
+      }
+    | undefined
+  cleanupDiagnostics: CleanupAuditDiagnostics | undefined
+  obs: GitObservations
 }
