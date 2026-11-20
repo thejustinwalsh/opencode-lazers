@@ -549,7 +549,7 @@ test("task reports include unsuccessful and accepted attempts, usage categories,
       { id: "msg-old-tool:tool:call-failed", status: "error", completedAt: 1040 },
       { id: "msg-new-tool:tool:call-success", status: "completed", completedAt: 2030 },
     ])
-    expect(report.coverage.transcript).toContain("session.context")
+    expect(report.coverage.transcript).toContain("paged host message list")
     expect(report.coverage.compacted).toBe(true)
   } finally {
     fixture.close()
@@ -1388,7 +1388,7 @@ test("native tool arguments, JSON results and errors omit nested private state",
     expect(toolEvent.error).toMatchObject({ type: "ToolError" })
     expect((toolEvent.error as { message?: string }).message).toContain("safe JSON error retained")
     expect(report.plans[0]?.checks.map((check) => check.result)).toContain("passed")
-    expect(report.coverage.transcript).toContain("session.context")
+    expect(report.coverage.transcript).toContain("paged host message list")
     expect(report.privacy.warnings.join(" ")).toContain("System instructions")
     expect(report.privacy.truncatedValues).toBeGreaterThan(0)
     expect(report.privacy.omittedUnknownParts).toBeGreaterThan(0)

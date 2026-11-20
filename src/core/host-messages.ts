@@ -251,3 +251,32 @@ export async function precedesInSession(
     cursor = next
   }
 }
+
+/**
+ * The first `limit` messages of a session, oldest first, read a page at a time. For a report
+ * that needs the transcript itself: the host serves each page on request, and no more than
+ * `limit` messages are ever held.
+ */
+export async function pagedMessages(
+  client: HostMessageClient,
+  sessionID: string,
+  limit: number,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<HostMessage[]> {
+  const messages: HostMessage[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  while (messages.length < limit) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      limit: Math.min(pageSize, limit - messages.length),
+      ...(cursor ? { cursor } : { order: "asc" as const }),
+    })
+    messages.push(...page.data)
+    const next = page.cursor.next
+    if (!next || seen.has(next)) break
+    seen.add(next)
+    cursor = next
+  }
+  return messages
+}

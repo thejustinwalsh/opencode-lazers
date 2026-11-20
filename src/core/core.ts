@@ -195,8 +195,11 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   built("runtime")
   // Lazy, offline-safe backfill of stable change identity; never blocks startup.
   void runtime.stampIdentity(true)
-  const trajectoryHost = nativeTrajectoryHost(host, projectID, (directory) =>
-    ownsRecordedWorkspace(directory, repository.projectDirectory),
+  const trajectoryHost = nativeTrajectoryHost(
+    host,
+    projectID,
+    (directory) => ownsRecordedWorkspace(directory, repository.projectDirectory),
+    nativeRunnerHost.messages,
   )
   const radarSessionHost = nativeRadarSessionHost(host)
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
