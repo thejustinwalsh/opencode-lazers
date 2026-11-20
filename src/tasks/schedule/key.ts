@@ -101,3 +101,23 @@ export function decodeSortKey(key: string) {
     priorityKey: Number(key.slice(15, 25)),
   }
 }
+
+/**
+ * The buckets a panel state filter selects; `undefined` selects every bucket. `legacy` is the
+ * default filter of `Tasks.query` (everything not accepted, integrated or cancelled).
+ */
+export function bucketsFor(state: string | undefined): readonly Bucket[] | undefined {
+  switch (state) {
+    case undefined:
+    case "all":
+      return undefined
+    case "open":
+      return ["running", "queued", "paused", "blocked", "open"]
+    case "completed":
+      return ["accepted", "integrated"]
+    case "legacy":
+      return ["running", "queued", "paused", "blocked", "open", "failed"]
+    default:
+      return [state as Bucket]
+  }
+}

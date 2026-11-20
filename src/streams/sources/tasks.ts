@@ -1,101 +1,275 @@
-import {
-  effectiveTaskStateFilter,
-  taskStatePredicate,
-  type TaskQueryState,
-} from "../../tasks/state-filter.ts"
+import { bucketsFor } from "../../tasks/schedule/key.ts"
+import type { Bucket } from "../../tasks/schedule/schema.ts"
 import { defineSource } from "../source.ts"
 
 /**
- * `tasks.list`: one project's tasks, newest first, with the facts SQL can derive from the task
- * tables and the runner's persisted node, plan and attempt rows. It carries no field that needs
- * main-thread memory or TypeScript derivation (effective status with reservation blockers,
- * concerns, takeover, classification, search matches): those wait for a stored projection.
- *
- * Filters are the index-backed ones only: project (required), task id, the state predicates over
- * `runner_nodes` and `runner_plans`, and retirement. Search text, write-scope path and session id
- * have no index or stored column and are not offered.
+ * The Tasks panel's sources, over the stored projection (`design/task-schedule-projection.md`).
+ * Every column a source reads is a column of a projection table, kept current in the writing
+ * transaction; nothing here derives a field, reads a task body or needs main-thread memory.
  */
-export type TasksListFilter = {
-  projectDirectory: string
+
+/** A state chip, or a union of chips; `legacy` is `Tasks.query`'s default. Omitted is every task. */
+export type TaskStateFilter =
+  | "open"
+  | "queued"
+  | "running"
+  | "blocked"
+  | "paused"
+  | "completed"
+  | "accepted"
+  | "integrated"
+  | "failed"
+  | "cancelled"
+  | "all"
+  | "legacy"
+
+export type TaskScheduleFilter = {
+  project: string
+  state?: TaskStateFilter
   /** One task by id. */
   taskID?: string
-  /** The panel's state filter; omitted reads as the legacy filter, like `Tasks.query`. */
-  state?: TaskQueryState
   includeRetired?: boolean
+  /** Tasks the session created, owns a plan of, or ran an attempt of. */
+  session?: string
+  /** Tasks the session created. */
+  creator?: string
+  /** Case-insensitive substring of the id, reference, objective, scope, acceptance or context. */
+  search?: string
+  /** Case-insensitive substring of a write-scope path. */
+  scopePath?: string
 }
 
-const latestNode = (field: string) =>
-  `(SELECT ${field} FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
-     WHERE n.task_id=t.id AND p.project_directory=t.project_directory ORDER BY p.rowid DESC LIMIT 1)`
+const placeholders = (values: readonly unknown[]) => values.map(() => "?").join(",")
 
-export const tasksListSource = defineSource({
-  name: "tasks.list",
-  // An aliased subquery named `tasks`, so the state predicates (written for `tasks.id`) apply.
-  table: `(SELECT t.project_directory AS project_directory, t.id AS id, t.rowid AS position,
-      r.reference AS reference,
-      json_extract(t.body,'$.proposal.objective') AS objective,
-      t.created_at AS createdAt,
-      json_extract(t.body,'$.provenance.sessionID') AS sessionID,
-      json_extract(t.body,'$.revision') AS revision,
-      ${latestNode("n.state")} AS nodeState,
-      ${latestNode("n.reason")} AS nodeReason,
-      ${latestNode("p.id")} AS planID,
-      ${latestNode("p.state")} AS planState,
-      (SELECT a.started_at FROM runner_attempts a
-        WHERE a.plan_id=${latestNode("p.id")} AND a.task_id=t.id
-        ORDER BY a.number DESC, a.started_at DESC LIMIT 1) AS attemptStartedAt,
-      (SELECT d.reason FROM task_dispositions d
-        WHERE d.project_directory=t.project_directory AND d.task_id=t.id
-        ORDER BY d.id DESC LIMIT 1) AS dispositionReason
-    FROM tasks t JOIN task_references r
-      ON r.project_directory=t.project_directory AND r.task_id=t.id) AS tasks`,
-  tables: [
-    "tasks",
-    "task_references",
-    "task_dispositions",
-    "runner_nodes",
-    "runner_plans",
-    "runner_attempts",
-    "runner_dispatch_controls",
-    "lazers_dispatch_pause",
-    "lazers_project_paths",
-  ],
-  key: ["id"],
+export const taskScheduleColumns = {
+  task_id: "text",
+  seq: "int",
+  sort_key: "text",
+  reference: "text",
+  title: "text",
+  objective: "text",
+  status: "text",
+  reason: "text",
+  node_state: "text",
+  plan_state: "text",
+  bucket: "text",
+  plan_id: "text",
+  ordinal: "int",
+  priority_key: "int",
+  started_at: "int",
+  takeover: "bool",
+  classification: "json",
+  concern: "json",
+  dispatch_pause: "json",
+  dispatch_pause_plan_id: "text",
+  dependency_count: "int",
+  blocker_count: "int",
+  wait_plans_count: "int",
+  decision: "text",
+  decision_reason: "text",
+  disposition: "json",
+  retired: "bool",
+  source_plan: "json",
+  revision: "int",
+  session_id: "text",
+  created_at: "text",
+} as const
+
+export const taskScheduleSource = defineSource({
+  name: "tasks.schedule",
+  table: "task_schedule",
+  tables: ["task_schedule", "task_schedule_sessions", "task_schedule_scopes"],
+  key: ["task_id"],
   orders: {
+    // The old `sort: "schedule"`: one stored key holds all seven terms.
+    schedule: [
+      { column: "sort_key", direction: "asc" },
+      { column: "task_id", direction: "asc" },
+    ],
+    // The old `sort: "recent"`: newest first.
     recent: [
-      { column: "position", direction: "desc" },
-      { column: "id", direction: "asc" },
+      { column: "seq", direction: "desc" },
+      { column: "task_id", direction: "asc" },
     ],
   },
-  filter(input: TasksListFilter) {
-    const clauses = ["tasks.project_directory = ?"]
-    const params: (string | number | null)[] = [input.projectDirectory]
+  filter(input: TaskScheduleFilter) {
+    const clauses = ["task_schedule.project_directory = ?"]
+    const params: (string | number | null)[] = [input.project]
     if (input.taskID !== undefined) {
-      clauses.push("tasks.id = ?")
+      clauses.push("task_schedule.task_id = ?")
       params.push(input.taskID)
     }
-    const state = taskStatePredicate(effectiveTaskStateFilter(input.state, undefined), "tasks")
-    if (state) clauses.push(state)
-    if (input.includeRetired !== true)
+    if (input.includeRetired !== true) clauses.push("task_schedule.retired = 0")
+    const buckets: readonly Bucket[] | undefined = bucketsFor(input.state)
+    if (buckets) {
+      clauses.push(`task_schedule.bucket IN (${placeholders(buckets)})`)
+      params.push(...buckets)
+    }
+    if (input.creator !== undefined) {
+      clauses.push("task_schedule.session_id = ?")
+      params.push(input.creator)
+    }
+    if (input.session !== undefined) {
       clauses.push(
-        "NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)",
+        "EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_schedule.task_id AND s.session_id=?)",
       )
+      params.push(input.session)
+    }
+    if (input.search) {
+      clauses.push("instr(task_schedule.search_text, ?) > 0")
+      params.push(input.search.toLowerCase())
+    }
+    if (input.scopePath) {
+      clauses.push(
+        "EXISTS (SELECT 1 FROM task_schedule_scopes c WHERE c.task_id=task_schedule.task_id AND instr(lower(c.path), ?) > 0)",
+      )
+      params.push(input.scopePath.toLowerCase())
+    }
     return { where: clauses.join(" AND "), params }
   },
-  columns: {
-    id: "text",
-    position: "int",
-    reference: "text",
-    objective: "text",
-    createdAt: "text",
-    sessionID: "text",
-    revision: "int",
-    nodeState: "text",
-    nodeReason: "text",
-    planID: "text",
-    planState: "text",
-    attemptStartedAt: "int",
-    dispositionReason: "text",
+  columns: taskScheduleColumns,
+  detail: { concern_totals: "json" },
+})
+
+/** The dependency children of one task, in the order the list shows them. */
+export const taskDependenciesSource = defineSource({
+  name: "tasks.dependencies",
+  table: "task_schedule_edges",
+  key: ["parent_task_id", "ord"],
+  orders: {
+    ord: [
+      { column: "parent_task_id", direction: "asc" },
+      { column: "ord", direction: "asc" },
+    ],
   },
-  count: "more",
+  filter: (input: { parent: string }) => ({ where: "parent_task_id = ?", params: [input.parent] }),
+  columns: {
+    parent_task_id: "text",
+    ord: "int",
+    child_task_id: "text",
+    kind: "text",
+    child_reference: "text",
+    child_title: "text",
+    child_state: "text",
+    waiting: "bool",
+    child_plan_id: "text",
+  },
+})
+
+/** Plans in scheduler order: priority (1 first, none last), then plan creation order. */
+export const taskPlansSource = defineSource({
+  name: "tasks.plans",
+  table: "task_schedule_plans",
+  key: ["plan_id"],
+  orders: {
+    schedule: [
+      { column: "priority_key", direction: "asc" },
+      { column: "seq", direction: "asc" },
+      { column: "plan_id", direction: "asc" },
+    ],
+  },
+  filter(input: { project: string; state?: string }) {
+    return input.state === undefined
+      ? { where: "project_directory = ?", params: [input.project] }
+      : { where: "project_directory = ? AND state = ?", params: [input.project, input.state] }
+  },
+  columns: {
+    plan_id: "text",
+    seq: "int",
+    title: "text",
+    state: "text",
+    reason: "text",
+    priority: "int",
+    priority_key: "int",
+    owner_session_id: "text",
+    workspace_mode: "text",
+    after_plans: "json",
+    after_plans_count: "int",
+    pause: "json",
+    plan_version: "int",
+    plan_revision: "int",
+    node_count: "int",
+    open_count: "int",
+  },
+})
+
+/** The reservations holding one queued task back, with the blocker's reference. */
+export const taskBlockersSource = defineSource({
+  name: "tasks.blockers",
+  table: `(SELECT b.task_id AS task_id, b.blocker_task_id AS blocker_task_id,
+      t.reference AS reference, t.title AS title
+    FROM task_schedule_blockers b LEFT JOIN task_schedule t ON t.task_id=b.blocker_task_id) AS task_schedule_blockers`,
+  tables: ["task_schedule_blockers", "task_schedule"],
+  key: ["task_id", "blocker_task_id"],
+  orders: {
+    blocker: [
+      { column: "task_id", direction: "asc" },
+      { column: "blocker_task_id", direction: "asc" },
+    ],
+  },
+  filter: (input: { task: string }) => ({
+    where: "task_schedule_blockers.task_id = ?",
+    params: [input.task],
+  }),
+  columns: { task_id: "text", blocker_task_id: "text", reference: "text", title: "text" },
+})
+
+/** The prerequisite plans one task still waits on. */
+export const taskWaitsSource = defineSource({
+  name: "tasks.waits",
+  table: "task_schedule_waits",
+  key: ["task_id", "ord"],
+  orders: {
+    ord: [
+      { column: "task_id", direction: "asc" },
+      { column: "ord", direction: "asc" },
+    ],
+  },
+  filter: (input: { task: string }) => ({ where: "task_id = ?", params: [input.task] }),
+  columns: {
+    task_id: "text",
+    ord: "int",
+    plan_id: "text",
+    title: "text",
+    state: "text",
+    reason: "text",
+  },
+})
+
+/** Chip counts: one stored counter per bucket of a project (retired tasks excluded). */
+export const taskBucketCountsSource = defineSource({
+  name: "tasks.bucketCounts",
+  table: "task_schedule_counts",
+  key: ["project_directory", "bucket"],
+  orders: {
+    bucket: [
+      { column: "project_directory", direction: "asc" },
+      { column: "bucket", direction: "asc" },
+    ],
+  },
+  filter: (input: { project: string }) => ({
+    where: "project_directory = ?",
+    params: [input.project],
+  }),
+  columns: { project_directory: "text", bucket: "text", n: "int" },
+})
+
+/** Chip counts for the tasks one session created, owns a plan of, or ran an attempt of. */
+export const taskSessionBucketCountsSource = defineSource({
+  name: "tasks.sessionBucketCounts",
+  table: "task_schedule_session_bucket_counts",
+  tables: ["task_schedule_sessions", "task_schedule"],
+  key: ["session_id", "project_directory", "bucket"],
+  orders: {
+    bucket: [
+      { column: "session_id", direction: "asc" },
+      { column: "project_directory", direction: "asc" },
+      { column: "bucket", direction: "asc" },
+    ],
+  },
+  filter: (input: { project: string; session: string }) => ({
+    where: "project_directory = ? AND session_id = ?",
+    params: [input.project, input.session],
+  }),
+  columns: { session_id: "text", project_directory: "text", bucket: "text", n: "int" },
 })

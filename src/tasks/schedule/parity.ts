@@ -1,7 +1,8 @@
 import type { TaskReads } from "../read.ts"
 import { TaskStateFilter } from "../state-filter.ts"
 import type { TaskRepository } from "../../storage.ts"
-import type { Bucket } from "./schema.ts"
+import { bucketsFor } from "./key.ts"
+import { BUCKETS } from "./schema.ts"
 
 /**
  * Old read versus projection. `compareReads` pages the old `Tasks.query` and reads the stored
@@ -49,31 +50,6 @@ export const INTENTIONAL_DIFFERENCES = {
   },
 }
 
-const BUCKET_FILTERS: Record<string, readonly Bucket[] | "legacy"> = {
-  open: ["running", "queued", "paused", "blocked", "open"],
-  queued: ["queued"],
-  running: ["running"],
-  blocked: ["blocked"],
-  paused: ["paused"],
-  completed: ["accepted", "integrated"],
-  accepted: ["accepted"],
-  integrated: ["integrated"],
-  failed: ["failed"],
-  cancelled: ["cancelled"],
-  all: [
-    "running",
-    "queued",
-    "paused",
-    "blocked",
-    "open",
-    "accepted",
-    "integrated",
-    "failed",
-    "cancelled",
-  ],
-  legacy: ["running", "queued", "paused", "blocked", "open", "failed"],
-}
-
 /** The stored rows of a chip in schedule order, optionally for one creating session. */
 export function projectedIDs(
   repository: TaskRepository,
@@ -81,7 +57,7 @@ export function projectedIDs(
   sort: "schedule" | "recent",
   creator?: string,
 ): string[] {
-  const buckets = BUCKET_FILTERS[chip]!
+  const buckets = bucketsFor(chip) ?? BUCKETS
   return repository.read((db) =>
     db
       .query<{ task_id: string }, (string | number)[]>(
