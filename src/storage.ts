@@ -548,11 +548,34 @@ export class TaskRepository {
   submitOnce(key: string, proposal: unknown, create: () => unknown) {
     IdempotencyKeySchema.parse(key)
     const validated = TaskProposalSchema.parse(proposal)
+    const outcome = this.atomic((db) => this.submitWithin(db, key, validated, create))
+    if (outcome.inserted) this.notify()
+    return outcome.receipt
+  }
+
+  /**
+   * `submitOnce` for async callers: waits out another process's write lock by yielding the event
+   * loop (see `atomicAsync`) instead of failing after the synchronous busy budget. `create` may run
+   * once per attempt, so it must stay side-effect free.
+   */
+  async submitOnceAsync(key: string, proposal: unknown, create: () => unknown) {
+    IdempotencyKeySchema.parse(key)
+    const validated = TaskProposalSchema.parse(proposal)
+    const outcome = await this.atomicAsync((db) => this.submitWithin(db, key, validated, create))
+    if (outcome.inserted) this.notify()
+    return outcome.receipt
+  }
+
+  /** The write lock covers lookup, lazy provenance collection, and both inserts. */
+  private submitWithin(
+    db: Database,
+    key: string,
+    validated: ReturnType<typeof TaskProposalSchema.parse>,
+    create: () => unknown,
+  ) {
     const content = canonical(validated)
     let inserted = false
-    // The write lock covers lookup, lazy provenance collection, and both inserts.
-    // No competing caller can collect provenance or reserve this key in between.
-    const receipt = this.atomic((db) => {
+    const receipt = (() => {
       const existing = db
         .query<{ body: string }, [string, string]>(
           `SELECT t.body FROM submission_requests r JOIN tasks t ON t.id = r.task_id
@@ -598,9 +621,8 @@ export class TaskRepository {
       ).run(this.projectDirectory, key, fingerprint(validated), task.id)
       inserted = true
       return { status: "submitted" as const, taskID: task.id, reference, revision: task.revision }
-    })
-    if (inserted) this.notify()
-    return receipt
+    })()
+    return { receipt, inserted }
   }
 
   insert(input: unknown): TaskSpec {

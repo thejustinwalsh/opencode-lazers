@@ -5,7 +5,7 @@ import { Tool } from "@opencode/schema/tool"
 import { TaskRepository } from "./storage.ts"
 import {
   startingRevision as observeStartingRevision,
-  submitTask,
+  submitTaskAsync,
   taskSubmissionSummary,
 } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
@@ -82,6 +82,15 @@ export function registerTaskTools(
       connection.close()
     }
   }
+  /** Async variant: a write that must wait out another process's lock cannot block the event loop. */
+  async function withRepositoryAsync<T>(run: (connection: TaskRepository) => Promise<T>) {
+    const connection = new TaskRepository(path, projectDirectory)
+    try {
+      return await run(connection)
+    } finally {
+      connection.close()
+    }
+  }
   return ctx.tool.transform((editor) => {
     editor.add({
       name: "lz-submit-task",
@@ -122,8 +131,8 @@ export function registerTaskTools(
                     (revision) => ({ revision }),
                     (error: unknown) => ({ error }),
                   )
-                  const receipt = withRepository((connection) => {
-                    const submitted = submitTask(
+                  const receipt = await withRepositoryAsync(async (connection) => {
+                    const submitted = await submitTaskAsync(
                       connection,
                       parsed.data,
                       () => ({
