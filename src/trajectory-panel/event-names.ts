@@ -170,6 +170,7 @@ export const runnerTransitions: Record<string, string> = {
   RETRY_REQUESTED: "Retry requested",
   SCHEDULE_UPDATED: "Schedule updated",
   SCOPE_AMENDED: "Scope amended",
+  PREREQUISITE_OBSERVED: "Prerequisite observed",
   SCOPE_DECISION_REQUIRED: "Scope decision needed",
   SCOPE_OVERLAP_WARNING: "Scope overlap warning",
   STARTUP_RECOVERY_AUTHORIZED: "Startup recovery authorized",
