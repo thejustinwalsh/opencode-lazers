@@ -416,7 +416,17 @@ export function classifyPlans(db: Database, now: number, days: number) {
       ids(
         `SELECT DISTINCT r.plan_id FROM recovery_handoff_requests r
           WHERE NOT EXISTS (SELECT 1 FROM recovery_handoff_dispositions d
-                             WHERE d.project_directory=r.project_directory AND d.request_id=r.request_id)`,
+                             WHERE d.project_directory=r.project_directory AND d.request_id=r.request_id)
+            ${
+              // A takeover's request never gets a report, so never a disposition; it closes with
+              // its takeover.
+              tableExists(db, "runner_takeovers")
+                ? `AND NOT EXISTS (SELECT 1 FROM runner_takeovers t
+                                    WHERE t.project_directory=r.project_directory
+                                      AND 'takeover:'||t.id=r.request_id
+                                      AND t.state IN ('taken-over','cancelled'))`
+                : ""
+            }`,
         "recovery_handoff_requests",
       ),
     ],
