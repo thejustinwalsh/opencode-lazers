@@ -75,7 +75,7 @@ export async function collectTools(
       registerAuditTools(ctx, repository),
       registerRunnerTools(ctx, inert()),
       registerTrajectoryTools(ctx as never, inert(), inert(), "inventory"),
-      registerRecoveryTools(ctx as never, repository),
+      registerRecoveryTools(ctx as never, repository, {} as never),
       registerInferenceTools(ctx as never),
       registerTaskReviewTool(ctx as never, inert()),
     ]

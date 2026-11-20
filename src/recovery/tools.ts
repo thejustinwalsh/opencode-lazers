@@ -1,3 +1,4 @@
+import { precedesInSession, type HostMessageClient } from "../core/host-messages.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Tool } from "@opencode/schema/tool"
@@ -57,7 +58,11 @@ function safeMessage(error: unknown): string {
   return String(error).slice(0, 500)
 }
 
-export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepository) {
+export function registerRecoveryTools(
+  ctx: RecoveryContext,
+  repository: TaskRepository,
+  messages: HostMessageClient,
+) {
   const store = new HandoffStore(repository)
   /**
    * Request-keyed or read-only store work, retried while another process holds the write lock
@@ -300,17 +305,16 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
                   const caller = actor(call)
                   const checkpoint = store.checkpointForWorker(input.requestID, caller)
                   if (!checkpoint) throw new Error("Checkpoint request was not found")
-                  const messages = await Effect.runPromise(
-                    ctx.session.context({ sessionID: Session.ID.make(call.sessionID) }),
-                  )
-                  const requestIndex = messages.findIndex(
+                  // The ordering check needs only that the exact synthetic request precedes
+                  // this response message: read back from the tail until the request is found.
+                  const ordered = await precedesInSession(
+                    messages,
+                    call.sessionID,
                     (message) =>
                       message.type === "synthetic" && message.id === checkpoint.command.messageID,
+                    call.messageID,
                   )
-                  const responseIndex = messages.findIndex(
-                    (message) => message.id === call.messageID,
-                  )
-                  if (requestIndex < 0 || responseIndex <= requestIndex)
+                  if (!ordered)
                     throw new Error(
                       "The exact checkpoint request is not observed before this response",
                     )

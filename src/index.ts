@@ -369,7 +369,9 @@ export default Plugin.define({
       yield* sectionEffect("setup:LocalInference", () =>
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:RecoveryTools", () => registerRecoveryTools(ctx, repository))
+      yield* sectionEffect("setup:RecoveryTools", () =>
+        registerRecoveryTools(ctx, repository, core.host.messages),
+      )
       yield* sectionEffect("setup:ToolSignatures", () => registerToolSignatures(ctx))
       yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx, projectID))
       yield* sectionEffect("setup:ToolCallWrappers", () =>

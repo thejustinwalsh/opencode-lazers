@@ -201,8 +201,6 @@ async function setup(
         ])
         return Effect.succeed({ id: input.id })
       },
-      context: ({ sessionID }: { sessionID: string }) =>
-        Effect.succeed(messages.get(String(sessionID)) ?? []),
     },
     rpc: () => ({
       review: (input: unknown) => {
@@ -227,8 +225,30 @@ async function setup(
       },
     }),
   } as unknown as Pick<Plugin.Context, "tool" | "permission" | "location" | "session" | "rpc">
+  // The host's message list over the same map: newest page first on request, every call counted.
+  const listCalls: Array<{ order?: string; limit?: number; cursor?: string }> = []
+  const hostMessages = {
+    message: {
+      list: async (input: {
+        sessionID: string
+        order?: string
+        limit?: number
+        cursor?: string
+      }) => {
+        listCalls.push({ order: input.order, limit: input.limit, cursor: input.cursor })
+        const all = messages.get(String(input.sessionID)) ?? []
+        const limit = input.limit ?? 50
+        const ordered = input.order === "desc" ? [...all].reverse() : all
+        const start = input.cursor ? Number(input.cursor) : 0
+        const next = start + limit < ordered.length ? String(start + limit) : undefined
+        return { data: ordered.slice(start, start + limit), cursor: { ...(next ? { next } : {}) } }
+      },
+    },
+  }
   const register = (repository: TaskRepository = fixture.repository) =>
-    Effect.runPromise(Effect.scoped(registerRecoveryTools(fakeContext, repository)))
+    Effect.runPromise(
+      Effect.scoped(registerRecoveryTools(fakeContext, repository, hostMessages as never)),
+    )
   await register()
   cleanup.push(() => fixture.close())
   return {
@@ -238,6 +258,7 @@ async function setup(
     syntheticCalls,
     reviewInputs,
     messages,
+    listCalls,
     register,
     invoke: async <T = unknown>(
       name: string,
@@ -425,6 +446,10 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     responseInput,
     responseCall,
   )
+  // Before: one whole session.context. Now: the response is at the tail and the request one
+  // message earlier, so the last check read one descending page of 50 and no more.
+  expect(f.listCalls.at(-1)).toEqual({ order: "desc", limit: 50, cursor: undefined })
+  expect(f.listCalls).toHaveLength(2)
   expect(response.record.observedCallID).toBe(String(responseCall.id))
   expect(response.record.reportedBy.sessionID).toBe("ses-accepted")
   const completedCheckpoint = await f.invoke<CheckpointState>(

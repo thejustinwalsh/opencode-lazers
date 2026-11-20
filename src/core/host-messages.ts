@@ -218,3 +218,36 @@ export async function trailingAssistants(
     cursor = next
   }
 }
+
+/**
+ * Whether message `earlierID` (accepted by `isEarlier`) comes before message `laterID` in the
+ * session's order. Reads newest page first: the later message is normally at the tail, so the
+ * check costs the pages between the two, never the conversation. False when either is missing.
+ */
+export async function precedesInSession(
+  client: HostMessageClient,
+  sessionID: string,
+  earlier: (message: HostMessage) => boolean,
+  laterID: string,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<boolean> {
+  let seenLater = false
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  for (;;) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      order: "desc",
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const message of page.data) {
+      if (message.id === laterID) seenLater = true
+      else if (earlier(message)) return seenLater
+    }
+    const next = page.cursor.next
+    if (!next || seen.has(next)) return false
+    seen.add(next)
+    cursor = next
+  }
+}
