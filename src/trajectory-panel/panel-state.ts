@@ -139,6 +139,8 @@ export class TrajectoryViewCache {
     ])
   }
 
+  /** Kept with the views so a re-mounted panel does not repeat a failure the previous mount saw. */
+  readonly captureFailures = new Map<string, CaptureFailure>()
   private readonly lastTasks = new Map<string, string>()
   private static viewKey(projectID: string, scope: ObservationScope) {
     return JSON.stringify([projectID, scope.kind, scope.kind === "session" ? scope.sessionID : ""])
@@ -170,11 +172,23 @@ export class TrajectoryViewCache {
   clear() {
     this.entries.clear()
     this.lastTasks.clear()
+    this.captureFailures.clear()
   }
 }
 
 /** Shared by every Trajectory panel in the process. */
 export const trajectoryViewCache = new TrajectoryViewCache()
+
+/**
+ * Pacing, not a limit: after a capture fails, the same task is not requested again on its own
+ * until this long has passed (doubling per consecutive failure up to the ceiling). A person's
+ * Retry or Recapture always asks at once. Chosen by hand, not measured; it only stops a
+ * re-mounting or event-driven panel from repeating an identical failing request every second.
+ */
+const CAPTURE_RETRY_FIRST_MS = 5_000
+const CAPTURE_RETRY_LAST_MS = 60_000
+
+type CaptureFailure = { message: string; at: number; delayMs: number }
 
 /** A first read that has not answered by now becomes a failure with Retry, not a spinner. */
 const FIRST_READ_TIMEOUT_MS = 30_000
@@ -756,6 +770,19 @@ export class TrajectoryPanelState {
     if (!transport || !scope || signal.aborted) return
     const generation = this.generation
     const taskRequest = this.taskRequest
+    const failureKey = JSON.stringify([this.projectID, scope, taskID])
+    const failures = this.options.cache?.captureFailures
+    const failure = failures?.get(failureKey)
+    if (!explicitRecapture && failure && Date.now() - failure.at < failure.delayMs) {
+      // The identical request just failed; wait for Retry or for the pacing window to pass.
+      this.update({
+        loading: false,
+        loadingActivity: false,
+        stale: true,
+        historyError: failure.message,
+      })
+      return
+    }
     const request = ++this.historyRequest
     this.activityRequest++
     this.update({
@@ -896,6 +923,7 @@ export class TrajectoryPanelState {
         stale: Boolean(this.data.error),
         asOf: Date.now(),
       })
+      failures?.delete(failureKey)
       this.selected({ taskID, selection })
       void this.drainActivity()
     } catch (error) {
@@ -904,17 +932,27 @@ export class TrajectoryPanelState {
         taskRequest === this.taskRequest &&
         request === this.historyRequest &&
         !signal.aborted
-      )
+      ) {
+        const message =
+          this.target?.taskID === taskID
+            ? `Trajectory for ${this.target.reference} is unavailable: ${historyFailureMessage(error)}`
+            : historyFailureMessage(error)
+        failures?.set(failureKey, {
+          message,
+          at: Date.now(),
+          delayMs: Math.min(
+            CAPTURE_RETRY_LAST_MS,
+            failure ? failure.delayMs * 2 : CAPTURE_RETRY_FIRST_MS,
+          ),
+        })
         this.update({
           loading: false,
           loadingActivity: false,
           recapturingHistory: false,
           stale: true,
-          historyError:
-            this.target?.taskID === taskID
-              ? `Trajectory for ${this.target.reference} is unavailable: ${historyFailureMessage(error)}`
-              : historyFailureMessage(error),
+          historyError: message,
         })
+      }
     }
   }
 
