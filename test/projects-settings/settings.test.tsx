@@ -299,3 +299,18 @@ test("an unreachable service shows a notice, not stale or empty rows", async () 
   expect(ui.root.querySelector("[aria-label='Code of alpha']")).toBeNull()
   ui.close()
 })
+
+test("49f6a84a-1: a poll with equal data keeps the row, its focus and an unsent reason", async () => {
+  const ui = await open()
+  await ui.flip("Pause alpha", true)
+  await ui.type("Reason to pause alpha", "Rebuild in prog")
+  const before = ui.q("Reason to pause alpha")
+  const rowBefore = ui.row("alpha")
+  const listsBefore = ui.api.calls.filter((c) => c.method === "list").length
+  await Bun.sleep(3_300) // one refresh interval
+  expect(ui.api.calls.filter((c) => c.method === "list").length).toBeGreaterThan(listsBefore)
+  expect(ui.row("alpha")).toBe(rowBefore)
+  expect(ui.q("Reason to pause alpha")).toBe(before)
+  expect(ui.q("Reason to pause alpha").value).toBe("Rebuild in prog")
+  ui.close()
+}, 15_000)

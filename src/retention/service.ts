@@ -24,8 +24,10 @@ import {
 } from "./store.ts"
 import {
   inspectWorktrees,
+  removalBlocker,
   removeWorktree,
   type WorktreeFinding,
+  type WorktreeSkip,
   type WorktreeHost,
   type WorktreeProbe,
 } from "./worktrees.ts"
@@ -59,6 +61,8 @@ export type RetentionSlice = {
   rows: number
   bytes: number
   worktrees: WorktreeRemoval[]
+  /** Removable worktrees left in place at removal time, each with why; the next purge retries. */
+  skipped: WorktreeSkip[]
   fileBytes: number
   freeBytes: number
 }
@@ -194,10 +198,13 @@ export class RetentionService {
       { now: asOf, days: input.days, budgetMs: SLICE_MS, batch: BATCH_ROWS },
     )
     const worktrees: WorktreeRemoval[] = []
+    const skipped: WorktreeSkip[] = []
     let done = slice.done
-    if (slice.done) done = await this.removeWorktrees(asOf, input.days, started, worktrees)
+    if (slice.done) done = await this.removeWorktrees(asOf, input.days, started, worktrees, skipped)
     const removed = slice.removed
-    repository.atomic((db) => addToRun(db, runID, { kinds: removed, worktrees }, done, this.now()))
+    repository.atomic((db) =>
+      addToRun(db, runID, { kinds: removed, worktrees, skipped }, done, this.now()),
+    )
     return {
       runID,
       asOf,
@@ -206,20 +213,26 @@ export class RetentionService {
       rows: slice.rows,
       bytes: Object.values(removed).reduce((sum, kind) => sum + kind.bytes, 0),
       worktrees,
+      skipped,
       ...this.sizes(),
     }
   }
 
-  /** Returns true when no removable worktree remains. One native removal per slice at most. */
+  /**
+   * Returns true when no removable worktree remains to try. One native removal at a time, each
+   * after a fresh look at what still owns the tree; anything left in place is reported with its
+   * reason, and the next purge (manual, or automatic at its interval) looks again.
+   */
   private async removeWorktrees(
     asOf: number,
     days: number,
     started: number,
     removed: WorktreeRemoval[],
+    skipped: WorktreeSkip[],
   ) {
-    const { host, probe } = this.deps
+    const { host, probe, repository } = this.deps
     const { retired } = classifyPlans(
-      this.deps.repository.read((db) => db),
+      repository.read((db) => db),
       asOf,
       days,
     )
@@ -227,10 +240,24 @@ export class RetentionService {
     for (const finding of findings) {
       if (Date.now() - started >= SLICE_MS * 4) return false
       try {
+        const current = repository.read((db) => classifyPlans(db, asOf, days).retired)
+        const blocker = await removalBlocker(
+          repository.read((db) => db),
+          finding,
+          { retired: new Set(current.map((plan) => plan.id)), host, ...(probe ? { probe } : {}) },
+        )
+        if (blocker) {
+          skipped.push({ path: finding.path, reason: blocker })
+          continue
+        }
         if (await removeWorktree(finding, host, probe))
           removed.push({ path: finding.path, bytes: finding.bytes })
-      } catch {
-        // OpenCode refused (not forced): the next inspection lists it again with its reason.
+        else skipped.push({ path: finding.path, reason: "still present after native removal" })
+      } catch (error) {
+        skipped.push({
+          path: finding.path,
+          reason: `OpenCode refused: ${String(error).slice(0, 160)}`,
+        })
       }
     }
     return true

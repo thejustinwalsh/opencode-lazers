@@ -14,7 +14,8 @@ export class ProjectCodeError extends Error {
   }
 }
 
-const CODE_PATTERN = /^[A-Z]{2,4}\d*$/
+/** 2-4 letters and up to 12 digits: the longest a task reference (40 characters) can carry. */
+const CODE_PATTERN = /^[A-Z]{2,4}\d{0,12}$/
 
 /** The folder name the owner sees for a checkout; the tail of a key when the path is empty. */
 export function projectNameFor(path: string, key: string): string {

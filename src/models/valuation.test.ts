@@ -893,7 +893,7 @@ test("recovered message.model is call-local and current route B conflicts remain
   }
 })
 
-test("same-call route conflicts stay durable through observation eviction, recovery replay, and reopen", () => {
+test("same-call route conflicts preserve every observation through recovery replay and reopen", () => {
   const messageID = "msg-durable-route-conflict"
   const recoveryMessage = {
     id: messageID,
@@ -946,7 +946,27 @@ test("same-call route conflicts stay durable through observation eviction, recov
       const row = fixture.store.progressFacts([firstAttemptID])[0]!
       const payload = JSON.parse(row.payload) as Record<string, unknown>
       expect(payload.routeEvidence).toEqual({ status: "identity-unavailable" })
-      expect(payload.observations).toHaveLength(25)
+      const observations = payload.observations as Array<{
+        eventID?: string
+        source?: string
+        eventType?: string
+        messageID?: string
+      }>
+      expect(observations).toHaveLength(events.length + 1)
+      expect(
+        new Set(
+          observations.flatMap((observation) =>
+            typeof observation.eventID === "string" ? [observation.eventID] : [],
+          ),
+        ),
+      ).toEqual(new Set(events.map((event) => event.id)))
+      expect(observations).toContainEqual(
+        expect.objectContaining({
+          source: "recovery",
+          eventType: "retained-assistant-message",
+          messageID,
+        }),
+      )
 
       const beforeReopen = fixture.store
         .progressFacts([firstAttemptID])

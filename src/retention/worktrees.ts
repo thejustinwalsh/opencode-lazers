@@ -2,11 +2,14 @@ import type { Database } from "bun:sqlite"
 import { existsSync, realpathSync } from "node:fs"
 import { join, resolve, sep } from "node:path"
 import { gitAsync } from "../runner/artifacts.ts"
+import type { HostSession } from "../runner/host.ts"
 import { headContained } from "../runner/integration-proof.ts"
 import type { RetentionPlan } from "./retention.ts"
 
 /** What retention needs from the host: the native inventory and non-forced native removal. */
 export type WorktreeHost = {
+  /** Live worker observation, read immediately before a removal. */
+  session(id: string): Promise<HostSession | null>
   worktrees(): Promise<string[]>
   removeWorktree(directory: string): Promise<void>
 }
@@ -147,6 +150,60 @@ export async function inspectWorktrees(
     })
   }
   return findings
+}
+
+/** A worktree retention left in place at removal time, and why; the next purge looks again. */
+export type WorktreeSkip = { path: string; reason: string }
+
+/**
+ * The last look before native removal, taken after every slow probe: the workspace must still
+ * belong only to finished plans with no attempt in flight, its worker sessions must be idle (no
+ * work, pending input, shell or child session, as ordinary workspace cleanup requires), and the
+ * tree must still be clean. Returns why it must stay, or null when removal may proceed.
+ */
+export async function removalBlocker(
+  db: Database,
+  finding: WorktreeFinding,
+  input: { retired: ReadonlySet<string>; host: WorktreeHost; probe?: WorktreeProbe },
+): Promise<string | null> {
+  const probe = input.probe ?? defaultProbe
+  const path = real(finding.path)
+  const attempts = db
+    .query<{ plan_id: string; session_id: string; state: string; workspace: string }, []>(
+      "SELECT plan_id, session_id, state, workspace FROM runner_attempts",
+    )
+    .all()
+    .filter((attempt) => real(attempt.workspace) === path)
+  for (const attempt of attempts) {
+    if (!input.retired.has(attempt.plan_id)) return "also recorded by work that is not finished"
+    if (["preparing", "running", "verifying"].includes(attempt.state))
+      return "an attempt is still in flight there"
+  }
+  for (const attempt of attempts) {
+    let session: HostSession | null
+    try {
+      session = await input.host.session(attempt.session_id)
+    } catch (error) {
+      return `could not observe its worker: ${String(error).slice(0, 120)}`
+    }
+    if (!session) continue
+    const busy = [
+      session.busy !== false && "worker session is busy",
+      session.pendingInput === true && "worker has pending input",
+      session.observationUnstable && "worker observation is unstable",
+      (session.pendingPermissions ?? 0) !== 0 && "worker has pending permission requests",
+      (session.pendingForms ?? 0) !== 0 && "worker has pending forms",
+      ((session.runningShells ?? 0) !== 0 || (session.activeChildren ?? 0) !== 0) &&
+        `worker has ${session.runningShells ?? 0} running shell(s) and ${session.activeChildren ?? 0} active child session(s)`,
+    ].find(Boolean)
+    if (busy) return String(busy)
+  }
+  try {
+    if ((await probe.status(finding.path)).trim()) return "uncommitted changes"
+  } catch (error) {
+    return `could not inspect it: ${String(error).slice(0, 120)}`
+  }
+  return null
 }
 
 /** Remove one finding through the native API, never forced; the directory must be gone after. */

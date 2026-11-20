@@ -15,7 +15,7 @@ import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
 import { historyCacheBytes } from "../trajectory/history.ts"
 import { ObservationReads } from "../observability/read.ts"
-import { registerProject } from "../project-key.ts"
+import { projectKeyFor, registerProject } from "../project-key.ts"
 import { globalSettings, spendCeilingFor } from "../projects/settings.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { nativeHost } from "../runner/native.ts"
@@ -119,6 +119,9 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     hardTimeoutMs: info.options.verificationHardTimeoutMs,
   })
   const repository = new TaskRepository(taskDatabasePath(dataDirectory), info.projectDirectory)
+  const delegatedAgentProjectKey = projectKeyFor(info.projectDirectory).then(
+    (identity) => identity.key,
+  )
   built("repository")
   const indexes = new Map<string, ProjectIndex>()
   const contextHost: ContextHost = {
@@ -194,6 +197,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   let scheduler: ReturnType<typeof sharedScheduler.register> | undefined
   setFallowThreads(parseFallowThreads(info.options.fallowThreads))
   const runtime: TaskRuntime = new TaskRuntime(runnerStore, nativeRunnerHost, projectID, progress, {
+    delegatedAgentProjectKey,
     architectCacheWindowMs: info.options.architectCacheWindowMs as number | undefined,
     architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as
       number | undefined,

@@ -153,3 +153,18 @@ test("setProjectCode validates and refuses a code another project holds", async 
   setProjectCode(repository, key, "ALP")
   expect(projects(repository)[0]!.code).toBe("ALP")
 })
+
+test("1add0595-1: every code the setter accepts passes the project and task reference schemas", async () => {
+  const { ProjectRef } = await import("./scope.ts")
+  const { TaskReferenceSchema } = await import("../task.ts")
+  const parent = root()
+  const a = await checkout(join(parent, "a"), "alpha-app", "git@h.com:o/a.git")
+  const repository = open(join(parent, "db.sqlite"), a)
+  const { key } = await registerProject(repository, { directory: a, opencodeProjectID: "p1" })
+  const code = "ABCD123456789012" // the longest the grammar allows
+  setProjectCode(repository, key, code)
+  const saved = projects(repository)[0]!
+  expect(() => ProjectRef.parse({ key, code: saved.code, name: "x", loaded: true })).not.toThrow()
+  expect(() => TaskReferenceSchema.parse(`${saved.code}-${"9".repeat(15)}`)).not.toThrow()
+  expect(() => setProjectCode(repository, key, `${code}3`)).toThrow("PROJECT_CODE_INVALID")
+})

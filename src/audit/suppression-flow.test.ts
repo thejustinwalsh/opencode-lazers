@@ -1,4 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
+import { FallowPackage } from "./contract.ts"
+import { dispositionsAfterRepair } from "./fallow-dispositions.ts"
+import { staleFinding, withExtraFindings } from "./suppression-flow.ts"
 import { renderNotice, renderRepair } from "./fallow-render.ts"
 import { fallowPlanReview } from "./review-plan.ts"
 import { commitAll, fixture, write, type Fixture } from "./review-fixtures.ts"
@@ -152,3 +155,29 @@ test("the flow gives the same package with threads on and off", async () => {
   const strip = (r: typeof on) => ({ ...r.package!, timings: undefined })
   expect(strip(off)).toEqual(strip(on))
 }, 180_000)
+
+test("581cf7e8-1: repeated suppressions of one kind and reason keep distinct ids; removing one fixes exactly one", () => {
+  const base = FallowPackage.parse({
+    verdict: "pass",
+    base: "base",
+    config: { source: "repo", classesNotChecked: [] },
+    thresholds: { cyclomatic: 20, cognitive: 15 },
+    findings: [],
+    summary: { errors: 0, warnings: 0, inherited: 0 },
+    timings: { elapsedMs: 0 },
+  })
+  const comment = (line: number) =>
+    staleFinding({
+      path: "a.ts",
+      line,
+      origin: { issue_kind: "unused-export", reason: "consumed by AB-1" },
+    })
+  const first = withExtraFindings(base, [comment(10), comment(20)])
+  expect(new Set(first.findings.map((f) => f.id)).size).toBe(2)
+  const after = withExtraFindings(base, [comment(20)])
+  expect(
+    dispositionsAfterRepair(first, after)
+      .map((d) => d.disposition)
+      .toSorted(),
+  ).toEqual(["fixed", "remaining"])
+})

@@ -75,12 +75,14 @@ export function RadarFlowCanvas(props: {
     const set = related()
     return set !== undefined && !set.edgeKeys.has(key)
   }
-  const still = reducedMotion()
+  const [still, setStill] = createSignal(reducedMotion())
   let pulseLayer: HTMLDivElement | undefined
   let visibleOnScreen = true
   onMount(() => {
-    if (!pulseLayer || still) return
+    if (!pulseLayer) return
     const environment = browserHost()
+    // The preference can change while the view is open: static dots follow it too.
+    onCleanup(environment.onReducedMotionChange?.(() => setStill(reducedMotion())) ?? (() => {}))
     const loop = createPulseLoop(pulseLayer, {
       ...environment,
       visible: () => environment.visible() && visibleOnScreen,
@@ -212,7 +214,7 @@ export function RadarFlowCanvas(props: {
                   stroke-opacity={edge().opacity.toFixed(2)}
                 />
                 {/* Reduced motion keeps still dots; moving pulses are drawn by the pulse loop. */}
-                <Show when={still && edge().running}>
+                <Show when={still() && edge().running}>
                   <Index each={edge().dots}>
                     {(dot) => (
                       <circle class="lazers-radar-flow-dot" cx={dot().x} cy={dot().y} r={1.8} />

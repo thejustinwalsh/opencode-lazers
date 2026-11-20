@@ -7,6 +7,7 @@ import sparkle from "./assets/mark-sparkle.png"
 import stripesMark from "./assets/mark-stripes.png"
 import { Demo } from "./Demo"
 import { DEMOS } from "./demos"
+import { LiveChat } from "./live/Loader"
 import { bp, color, type } from "./tokens.stylex"
 import { BeamCanvas, Cat, Field, Stripes, links, srOnly, t, useBeamKit } from "./ui"
 
@@ -67,7 +68,13 @@ const s = stylex.create({
     transform: "rotate(-2deg)",
     transformOrigin: "left bottom",
   },
-  h2Wrap: { display: "flex", alignItems: "flex-end", gap: "clamp(12px, 1.6vw, 24px)" },
+  h2Wrap: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "flex-end",
+    columnGap: "clamp(12px, 1.6vw, 24px)",
+    rowGap: 8,
+  },
   h2Stripes: { fontSize: "clamp(9px, 1vw, 14px)", marginBlockEnd: "0.8em", flex: "none" },
   lead: {
     fontSize: "clamp(18px, 1.45vw, 22px)",
@@ -602,7 +609,7 @@ export function Parts() {
               <li {...stylex.props(pt.state, pt.stateBad)}>Failed</li>
               <li {...stylex.props(pt.state)}>Cancelled</li>
             </ul>
-            <Demo def={DEMOS.tasks} label="Live demo of the Tasks panel" maxWidth={440} />
+            <Demo def={DEMOS.tasks} label="Live demo of the Tasks panel" />
           </article>
 
           <article
@@ -639,7 +646,7 @@ export function Parts() {
                 Live XState lifecycle view showing where every runner sits and what it is waiting on
               </dd>
             </dl>
-            <Demo def={DEMOS.radar} label="Live demo of the Radar panel" maxWidth={440} />
+            <Demo def={DEMOS.radar} label="Live demo of the Radar panel" />
           </article>
 
           <article
@@ -683,7 +690,7 @@ export function Parts() {
                 </span>
               </li>
             </ul>
-            <Demo def={DEMOS.trajectory} label="Live demo of the Trajectory panel" maxWidth={460} />
+            <Demo def={DEMOS.trajectory} label="Live demo of the Trajectory panel" />
           </article>
         </div>
       </div>
@@ -787,10 +794,11 @@ export function Checked() {
                 the suite and captures the receipt.
               </p>
               <p {...stylex.props(s.body)}>
-                LAZERS gates every task on executable verification commands and Fallow static
-                analysis for dead code, duplication, and complexity. Only after mechanical checks
-                pass does Architect review the diff and integrate it into your branch&mdash;under
-                your normal OpenCode permissions.
+                LAZERS runs your executable verification commands and a Fallow static-analysis audit
+                (dead code, duplication, complexity) on every task. A failing command stops the task
+                before review. Fallow findings go back to the worker once for a repair, and what
+                remains is reported to the Architect, who reviews the diff and integrates it into
+                your branch&mdash;under your normal OpenCode permissions.
               </p>
             </div>
           </div>
@@ -818,12 +826,7 @@ export function Checked() {
                 <span>fast, focused code edits</span>
               </li>
             </ul>
-            <Demo
-              def={DEMOS.models}
-              label="Live demo of the Models panel"
-              tone="ink"
-              maxWidth={460}
-            />
+            <Demo def={DEMOS.models} label="Live demo of the Models panel" tone="ink" />
             <p {...stylex.props(s.body, ck.sideBody)}>
               The Compare view benchmarks your actual task histories, retry counts, measured token
               usage, and market-price cost estimates so you can tune your model stack with real
@@ -911,8 +914,15 @@ export function Local() {
             <p {...stylex.props(lc.statement)}>Optional. Off until you turn it on.</p>
             <div {...stylex.props(lc.copy)}>
               <p {...stylex.props(s.lead)}>
-                LAZERS can run a small model locally in OpenCode Desktop, on WebGPU through
-                ruNNtime. Architect, tasks and the panels work without it.
+                LAZERS can run a small model on your own GPU. It runs inside the OpenCode Desktop
+                window, on WebGPU through ruNNtime. Architect, tasks and the panels work without it.
+              </p>
+              <p {...stylex.props(s.body)}>
+                Nothing is installed or launched beside it: no separate process, no local server or
+                port, no native binary, no Python or llama runtime, no account or API key. The
+                weights download once into the plugin&rsquo;s cache and can be removed. It starts
+                and stops with the app, uses the GPU the machine already has, and turns off with one
+                switch.
               </p>
               <p {...stylex.props(s.body)}>
                 Local models take the small jobs: answering a question, making a typed decision,
@@ -920,14 +930,24 @@ export function Local() {
                 sessions on the models you route in Models.
               </p>
               <p {...stylex.props(s.body)}>
-                The session header carries the real status icon. It is hidden while local features
-                are off, and shows Loading, Available, Working or Error while they are on.
+                The chat beside this text runs the same Omni model in your browser, on request: type
+                a message or use the microphone, and it answers aloud. Nothing downloads until you
+                do. In the app, the session header carries a status icon that shows Loading,
+                Available, Working or Error while local features are on.
               </p>
             </div>
           </div>
-          <Demo def={DEMOS.local} label="Live demo of the local inference indicator" />
+          <LiveChat />
         </div>
         <dl aria-label="What local inference does" {...stylex.props(lc.facts)}>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>How it runs</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              OpenCode Desktop window &rarr; WebGPU (ruNNtime) &rarr; your GPU. No server, no extra
+              process. Inference runs on the device; only the one-time weight download uses the
+              network.
+            </dd>
+          </div>
           <div {...stylex.props(lc.fact)}>
             <dt {...stylex.props(lc.factKey)}>Switch</dt>
             <dd {...stylex.props(lc.factDef)}>
@@ -1061,6 +1081,10 @@ const in_ = stylex.create({
   pre: {
     margin: 0,
     overflowX: "auto",
+    /* Narrow: wrap long lines instead of hiding them behind a scroll; copy still gives the
+       original text. From 640px the block scrolls sideways instead. */
+    whiteSpace: { default: "pre-wrap", [bp.mid]: "pre" },
+    overflowWrap: { default: "anywhere", [bp.mid]: "normal" },
     backgroundColor: color.ink,
     color: color.paper,
     fontFamily: type.mono,
@@ -1078,7 +1102,7 @@ const in_ = stylex.create({
     top: 10,
     right: 10,
     zIndex: 1,
-    minHeight: 34,
+    minHeight: 44,
     minWidth: 92,
     paddingInline: 14,
     borderWidth: 0,

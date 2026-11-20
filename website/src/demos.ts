@@ -6,7 +6,7 @@
  */
 export interface DemoDef {
   story: string
-  panel: "tasks" | "radar" | "trajectory" | "models" | "local"
+  panel: "tasks" | "radar" | "trajectory" | "models"
   size: { width: number; height: number }
   /** What the panel is, in a sentence, for the figure's text alternative. */
   summary: string
@@ -17,7 +17,7 @@ export const DEMOS = {
   tasks: {
     story: "hero",
     panel: "tasks",
-    size: { width: 420, height: 560 },
+    size: { width: 420, height: 600 },
     summary:
       "The Tasks panel: four tasks in scheduled order. One runs, then is verified and accepted, and the task waiting on it starts.",
     steps: [
@@ -42,7 +42,7 @@ export const DEMOS = {
   radar: {
     story: "radar",
     panel: "radar",
-    size: { width: 420, height: 560 },
+    size: { width: 420, height: 580 },
     summary:
       "The Radar panel: an Architect and two workers with their models and current calls, a held worker, then the Map view.",
     steps: [
@@ -71,7 +71,7 @@ export const DEMOS = {
   trajectory: {
     story: "trajectory",
     panel: "trajectory",
-    size: { width: 420, height: 560 },
+    size: { width: 440, height: 700 },
     summary:
       "The Trajectory panel: one task's recorded attempts on a timeline. The first attempt fails its tests, the second fills in and is accepted.",
     steps: [
@@ -79,68 +79,46 @@ export const DEMOS = {
         name: "pick",
         caption: "Trajectory opens on a task: the picker follows the session or the whole project.",
       },
-      { name: "live", caption: "A retry attempt fills in as the worker's calls are recorded." },
+      {
+        name: "live",
+        caption:
+          "A retry attempt fills in as the worker's calls are recorded; both checks pass and it is accepted.",
+      },
       {
         name: "inspect",
         caption: "Every mark opens its recorded detail; zoom separates calls seconds apart.",
       },
       {
         name: "settle",
-        caption: "Both checks pass and the attempt is accepted; its events stay filterable.",
+        caption: "Select the accepted attempt to read its summary; its events stay filterable.",
       },
     ],
   },
   models: {
     story: "models",
     panel: "models",
-    size: { width: 420, height: 560 },
+    size: { width: 440, height: 740 },
     summary:
-      "The Models panel: a comparison of models by measured cost per accepted task, then the Assignments view where an agent is given a different model.",
+      "The Models panel: five real models plotted by cost per accepted task at OpenRouter's published prices as of 2026-11-19, a price refresh that re-prices the same usage, then the Assignments view where Implementor is given a different model.",
     steps: [
       {
         name: "compare",
         caption:
-          "Compare plots each model by what its accepted tasks cost, measured from your own runs.",
+          "Compare plots each model by what its accepted tasks cost at the price source's rates, measured from your own runs.",
       },
       {
         name: "inspect",
-        caption:
-          "Selecting a model opens its measured cost, accepted share and the runs behind it.",
+        caption: "Selecting a model opens its cost per accepted task and the runs behind it.",
       },
       {
         name: "refresh",
-        caption: "A newly accepted task changes a model's cost; Refresh re-reads and re-plots it.",
+        caption:
+          "A fresh price snapshot re-prices the same recorded usage: DeepSeek V4 Pro's tokens stay and its cost changes.",
       },
       {
         name: "assign",
-        caption: "Assignments sets which model each agent and persona runs on, saved per project.",
-      },
-    ],
-  },
-  local: {
-    story: "local",
-    panel: "local",
-    size: { width: 560, height: 120 },
-    summary:
-      "The local inference indicator in the session header: hidden while off, then downloading, available, and working while a local decision runs.",
-    steps: [
-      {
-        name: "off",
-        caption: "Local inference starts off. Nothing loads and the header shows no icon.",
-      },
-      {
-        name: "download",
         caption:
-          "Turn it on in Settings, LAZERS. The first request downloads the model; D1 is about 625 MB.",
-      },
-      {
-        name: "ready",
-        caption: "The model is resident on the GPU through WebGPU, and the icon reads Available.",
-      },
-      {
-        name: "decide",
-        caption:
-          "A typed decision runs on the device, and the icon reads Working. Task review uses these decisions.",
+          "Assignments routes each agent to a model. Moving Implementor off Claude Opus 5.5 changes what its accepted tasks cost.",
       },
     ],
   },

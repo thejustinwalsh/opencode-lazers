@@ -8,6 +8,10 @@ import {
 } from "../../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import type { PanelAdapter } from "./adapter.ts"
 import { createUi } from "./ui.tsx"
+import { nativeBusyStyles } from "../../../src/native-busy-styles.ts"
+import { panelStatusStyles } from "../../../src/panel-status.tsx"
+import { detailsPaneStyles } from "../../../src/details-pane.css.ts"
+import { detailsKitStyles } from "../../../src/details/styles.ts"
 
 function store<T>(initial: T) {
   const [read, write] = createSignal(initial, { equals: false })
@@ -221,6 +225,14 @@ export function mountPanel<D>(
     createComponent(PluginContext.Provider, {
       value: ctx as never,
       get children() {
+        // The plugin root registers the shared styles before any panel (src/gui.tsx setup).
+        for (const css of [
+          nativeBusyStyles,
+          panelStatusStyles,
+          detailsPaneStyles,
+          detailsKitStyles,
+        ])
+          ctx.add(Style, css)
         adapter.setup(ctx as never, { openPanel })
         return null
       },

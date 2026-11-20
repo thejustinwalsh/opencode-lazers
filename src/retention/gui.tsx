@@ -76,6 +76,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
         })
         if (!confirmed) return
         let runID: number | undefined
+        let skipped: Array<{ path: string; reason: string }> = []
         const total = { rows: 0, bytes: 0, trees: 0, treeBytes: 0 }
         setProgress({ rows: 0, bytes: 0, trees: 0 })
         for (;;) {
@@ -89,6 +90,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
             { signal: signal() },
           )
           runID = slice.runID
+          skipped = slice.skipped
           total.rows += slice.rows
           total.bytes += slice.bytes
           total.trees += slice.worktrees.length
@@ -100,7 +102,8 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
         setPreview(undefined)
         setResult(
           `Retired ${plural(total.rows, "record")} (${formatBytes(total.bytes)})` +
-            `${total.trees ? ` and ${plural(total.trees, "worktree")} (${formatBytes(total.treeBytes)})` : ""}.`,
+            `${total.trees ? ` and ${plural(total.trees, "worktree")} (${formatBytes(total.treeBytes)})` : ""}.` +
+            skipped.map((entry) => ` Kept ${entry.path}: ${entry.reason}.`).join(""),
         )
         await refresh()
       })

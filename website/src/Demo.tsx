@@ -1,9 +1,10 @@
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { DemoDef } from "./demos"
+import { fitScale, frameStyle } from "./lib/demo-fit"
 import { isDemoMessage } from "./lib/demo-protocol"
-import type { ChapterInfo, DemoCommandBody } from "./lib/demo-protocol"
-import { color, type } from "./tokens.stylex"
+import type { ChapterInfo, DemoCommandBody, PointerKind } from "./lib/demo-protocol"
+import { bp, color, type } from "./tokens.stylex"
 
 /**
  * A live demo: the real LAZERS panel running in an iframe (/demo/) that replays a recorded story.
@@ -15,16 +16,15 @@ import { color, type } from "./tokens.stylex"
 const s = stylex.create({
   figure: { margin: 0, display: "grid", gap: 16, minWidth: 0, justifyItems: "stretch" },
   plate: {
-    position: "relative",
-    overflow: "hidden",
     width: "100%",
     maxWidth: "var(--demo-max, 100%)",
-    marginInline: "auto",
     backgroundColor: "#14131c",
     border: `3px solid ${color.ink}`,
     boxShadow: "8px 10px 0 #A3A5F9",
-    containerType: "inline-size",
   },
+  /* The scaled iframe's box: the aspect ratio lives here, inside the border, so the content
+     box matches the design size exactly. */
+  view: { position: "relative", overflow: "hidden", width: "100%" },
   plateOnInk: { borderColor: color.peri, boxShadow: `8px 10px 0 ${color.magenta}` },
   placeholder: {
     position: "absolute",
@@ -61,30 +61,49 @@ const s = stylex.create({
     zIndex: 2,
     willChange: "transform",
   },
+  /* The pointer's origin is the hotspot: every shape is offset so its tip sits at (0, 0). */
   cursor: {
     position: "absolute",
     top: 0,
     left: 0,
-    width: 22,
-    height: 22,
+    width: 0,
+    height: 0,
+    transformOrigin: "0 0",
+    filter: "drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.4))",
   },
-  ripple: {
-    position: "absolute",
-    top: -14,
-    left: -14,
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    backgroundColor: "rgba(25, 235, 241, 0.55)",
-    opacity: 0,
-    transform: "scale(0.4)",
+  shape: { position: "absolute", overflow: "visible" },
+  /* Narrow: one row of numbered buttons and the active caption above them, so a demo stays
+     shorter than the viewport. From 640px the buttons carry their captions in a column. */
+  steps: {
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    display: "grid",
+    gridTemplateColumns: { default: "repeat(4, minmax(0, 1fr))", [bp.mid]: "minmax(0, 1fr)" },
+    gap: 8,
   },
-  steps: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 },
+  liveCaption: {
+    display: { default: "block", [bp.mid]: "none" },
+    margin: 0,
+    minHeight: "3em",
+    fontSize: 15,
+    lineHeight: 1.45,
+    fontWeight: 600,
+  },
+  stepText: {
+    position: { default: "absolute", [bp.mid]: "static" },
+    width: { default: 1, [bp.mid]: "auto" },
+    height: { default: 1, [bp.mid]: "auto" },
+    overflow: { default: "hidden", [bp.mid]: "visible" },
+    clip: { default: "rect(0 0 0 0)", [bp.mid]: "auto" },
+    whiteSpace: { default: "nowrap", [bp.mid]: "normal" },
+  },
   step: { display: "block" },
   stepButton: {
     appearance: "none",
     display: "grid",
-    gridTemplateColumns: "auto 1fr",
+    gridTemplateColumns: { default: "1fr", [bp.mid]: "auto 1fr" },
+    justifyItems: { default: "center", [bp.mid]: "stretch" },
     columnGap: 12,
     alignItems: "baseline",
     width: "100%",
@@ -137,6 +156,55 @@ const barRun = stylex.create({
   full: { transform: "scaleX(1)" },
 })
 
+/** The cursor shapes, vector and drawn here: black fill, white outline; tip or hotspot at (0, 0). */
+const OUTLINE = {
+  fill: "#fff",
+  stroke: "#fff",
+  "stroke-width": 2.6,
+  "stroke-linejoin": "round",
+} as const
+function PointerShapes() {
+  const arrow = "M0 0 L0 15.6 L3.9 12.2 L6.6 18.4 L9.1 17.3 L6.5 11.2 L11.6 11.2 Z"
+  const hand =
+    "M0 6.2 V-4.2 C0 -5.3 0.8 -6.1 1.8 -6.1 C2.8 -6.1 3.6 -5.3 3.6 -4.2 V0.6 C3.8 0.2 4.3 0 4.8 0 C5.6 0 6.2 0.6 6.2 1.3 C6.5 0.9 6.9 0.7 7.4 0.7 C8.2 0.7 8.8 1.3 8.8 2 C9.1 1.7 9.5 1.6 9.9 1.6 C10.7 1.6 11.3 2.2 11.3 3 V8 C11.3 11 9.5 13 7.5 14.4 H2.7 C1.5 13 0 10 -1.1 8.2 C-1.7 7.3 -2 6.6 -2 6 C-2 5.2 -1.2 4.8 -0.5 5.1 Z"
+  const beam = "M-3 -8 H3 M0 -8 V8 M-3 8 H3"
+  return (
+    <>
+      <svg data-kind="default" width="1" height="1" {...stylex.props(s.shape)}>
+        <path d={arrow} {...OUTLINE} />
+        <path d={arrow} fill="#000" />
+      </svg>
+      <svg
+        data-kind="pointer"
+        width="1"
+        height="1"
+        style={{ display: "none" }}
+        {...stylex.props(s.shape)}
+      >
+        <path d={hand} transform="translate(-1.8 6.1)" {...OUTLINE} />
+        <path
+          d={hand}
+          transform="translate(-1.8 6.1)"
+          fill="#000"
+          stroke="#000"
+          stroke-width="0.6"
+          stroke-linejoin="round"
+        />
+      </svg>
+      <svg
+        data-kind="text"
+        width="1"
+        height="1"
+        style={{ display: "none" }}
+        {...stylex.props(s.shape)}
+      >
+        <path d={beam} fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" />
+        <path d={beam} fill="none" stroke="#000" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </>
+  )
+}
+
 const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)")
 
 function demoURL(def: DemoDef, at?: string) {
@@ -155,12 +223,12 @@ export function Demo({
   /** Names the figure for assistive technology. */
   label: string
   tone?: "paper" | "ink"
-  /** Caps the frame's CSS width; the panel scales down with it. */
+  /** Caps the frame's CSS width (default: the design width, so the panel is never scaled up). */
   maxWidth?: number
 }) {
   const plate = useRef<HTMLDivElement>(null)
   const pointer = useRef<HTMLDivElement>(null)
-  const ripple = useRef<HTMLSpanElement>(null)
+  const cursor = useRef<HTMLDivElement>(null)
   const iframe = useRef<HTMLIFrameElement | null>(null)
   const [mounted, setMounted] = useState(false)
   const [scale, setScale] = useState(0)
@@ -187,7 +255,7 @@ export function Demo({
   useEffect(() => {
     const el = plate.current
     if (!el) return
-    const ro = new ResizeObserver(() => setScale(el.clientWidth / def.size.width))
+    const ro = new ResizeObserver(() => setScale(fitScale(el.clientWidth, def.size)))
     ro.observe(el)
     return () => ro.disconnect()
   }, [def.size.width])
@@ -208,7 +276,7 @@ export function Demo({
     const seen = new IntersectionObserver(
       (entries) => {
         const entry = entries[entries.length - 1]
-        live.current.visible = Boolean(entry?.isIntersecting)
+        live.current.visible = Boolean(entry?.isIntersecting && entry.intersectionRatio >= 0.35)
         sync()
       },
       { threshold: 0.35 },
@@ -242,19 +310,17 @@ export function Demo({
           if (!node) break
           node.style.transform = `translate(${message.x * scale}px, ${message.y * scale}px)`
           node.style.opacity = message.off ? "0" : "1"
-          if (message.down) {
-            ripple.current?.animate(
-              [
-                { opacity: 0.9, transform: "scale(0.4)" },
-                { opacity: 0, transform: "scale(1.6)" },
-              ],
-              { duration: 420, easing: "ease-out" },
+          for (const shape of cursor.current?.children ?? [])
+            (shape as SVGElement).style.display =
+              shape.getAttribute("data-kind") === message.cursor ? "" : "none"
+          // A brief press, like a real cursor: scale from the tip and back.
+          if (message.down)
+            cursor.current?.animate(
+              [{ transform: "scale(1)" }, { transform: "scale(0.92)" }, { transform: "scale(1)" }],
+              { duration: 160, easing: "ease-out" },
             )
-          }
           break
         }
-        case "view":
-          break
         case "end":
           // Replay from the first chapter once the story has finished.
           restart = window.setTimeout(() => {
@@ -287,55 +353,48 @@ export function Demo({
   return (
     <figure role="group" aria-label={label} {...stylex.props(s.figure)}>
       <div
-        ref={plate}
-        style={{ aspectRatio: aspect, "--demo-max": maxWidth ? `${maxWidth}px` : undefined }}
+        style={{ "--demo-max": `${maxWidth ?? def.size.width + 6}px` }}
         {...stylex.props(s.plate, tone === "ink" && s.plateOnInk)}
       >
-        {!mounted || scale === 0 ? (
-          <div aria-hidden="true" {...stylex.props(s.placeholder)}>
-            {def.panel} panel
-          </div>
-        ) : (
-          <>
-            <iframe
-              ref={(node) => {
-                iframe.current = node
-              }}
-              title={`${label}: replay of the real panel`}
-              src={demoURL(def, reduced ? "final" : undefined)}
-              tabIndex={-1}
-              // The panel is a replay, not a control: out of the tab order and the accessibility tree.
-              inert
-              aria-hidden="true"
-              style={{
-                width: def.size.width,
-                height: def.size.height,
-                transform: `scale(${scale})`,
-              }}
-              {...stylex.props(s.frame)}
-            />
-            {!reduced && (
-              <div
-                ref={pointer}
-                style={{ opacity: 0 }}
+        <div ref={plate} style={{ aspectRatio: aspect }} {...stylex.props(s.view)}>
+          {!mounted || scale === 0 ? (
+            <div aria-hidden="true" {...stylex.props(s.placeholder)}>
+              {def.panel} panel
+            </div>
+          ) : (
+            <>
+              <iframe
+                ref={(node) => {
+                  iframe.current = node
+                }}
+                title={`${label}: replay of the real panel`}
+                src={demoURL(def, reduced ? "final" : undefined)}
+                tabIndex={-1}
+                // The panel is a replay, not a control: out of the tab order and the accessibility tree.
+                inert
                 aria-hidden="true"
-                {...stylex.props(s.pointer)}
-              >
-                <span ref={ripple} {...stylex.props(s.ripple)} />
-                <svg viewBox="0 0 22 22" {...stylex.props(s.cursor)}>
-                  <path
-                    d="M2 2 L2 17 L6 13 L9 20 L12 19 L9 12 L15 12 Z"
-                    fill="#fff"
-                    stroke="#13095e"
-                    stroke-width="1.4"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </div>
-            )}
-          </>
-        )}
+                style={frameStyle(def.size, scale)}
+                {...stylex.props(s.frame)}
+              />
+              {!reduced && (
+                <div
+                  ref={pointer}
+                  style={{ opacity: 0 }}
+                  aria-hidden="true"
+                  {...stylex.props(s.pointer)}
+                >
+                  <div ref={cursor} {...stylex.props(s.cursor)}>
+                    <PointerShapes />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
+      <p aria-hidden="true" {...stylex.props(s.liveCaption)}>
+        {steps[Math.max(active, 0)]?.caption}
+      </p>
       <ol aria-label="Steps in this demo" {...stylex.props(s.steps)}>
         {steps.map((step, index) => (
           <li key={step.name} {...stylex.props(s.step)}>
@@ -348,7 +407,7 @@ export function Demo({
               <span aria-hidden="true" {...stylex.props(s.stepNum)}>
                 {index + 1}
               </span>
-              <span>{step.caption}</span>
+              <span {...stylex.props(s.stepText)}>{step.caption}</span>
               {!reduced && (
                 <span
                   key={index === active ? `run-${active}` : `idle-${index}`}

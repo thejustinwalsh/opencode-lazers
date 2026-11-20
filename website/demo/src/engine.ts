@@ -5,18 +5,20 @@ import { dataAt, T0 } from "./story.ts"
 type Post = (message: DemoMessageBody) => void
 
 /** One virtual clock for steps, pointer travel and typing; it advances only while playing. */
-class Clock {
+export class Clock {
   t = 0
   playing = false
   private last = 0
   private raf = 0
   private waiters: { at: number; resolve: () => void }[] = []
+  private parked: (() => void)[] = []
 
   play() {
     if (this.playing) return
     this.playing = true
     this.last = performance.now()
     this.raf = requestAnimationFrame(this.frame)
+    for (const wake of this.parked.splice(0)) requestAnimationFrame(() => wake())
   }
   pause() {
     this.playing = false
@@ -30,6 +32,15 @@ class Clock {
     this.waiters = this.waiters.filter((waiter) => waiter.at > this.t)
     for (const waiter of due) waiter.resolve()
     this.raf = requestAnimationFrame(this.frame)
+  }
+  /**
+   * The next animation frame of a playing clock. While paused nothing is scheduled: the caller
+   * parks until `play`, so an offscreen demo's pointer and scroll loops cost no frames or messages.
+   */
+  nextFrame() {
+    return new Promise<void>((resolve) =>
+      this.playing ? requestAnimationFrame(() => resolve()) : this.parked.push(resolve),
+    )
   }
   until(at: number) {
     return at <= this.t
@@ -67,7 +78,22 @@ export class Engine<D> {
     this.data = opts.story.initial
     // The panel reads "now" from the story, so recorded timestamps stay in the past.
     const clock = this.clock
-    Date.now = () => T0 + clock.t
+    // Whole milliseconds: contracts take integers and the clock advances by fractions.
+    Date.now = () => Math.floor(T0 + clock.t)
+    // The story owns every pointer, wheel, touch and key input: a visitor's own (trusted) events
+    // are dropped before the panel sees them, so they can never move its scroll positions or focus.
+    // The page also sets pointer-events: none on the iframe; this covers standalone use.
+    for (const type of ["wheel", "touchmove", "keydown", "mousedown", "click"])
+      opts.root.ownerDocument.addEventListener(
+        type,
+        (event) => {
+          if (event.isTrusted) {
+            event.stopImmediatePropagation()
+            event.preventDefault()
+          }
+        },
+        { capture: true, passive: false },
+      )
   }
 
   private setData(data: D) {
@@ -152,13 +178,30 @@ export class Engine<D> {
     await new Promise<void>((resolve) => setTimeout(resolve, 250))
   }
 
+  /** What a real cursor would look like here: the computed `cursor`, else by element kind. */
+  private cursorAt(x: number, y: number): "default" | "pointer" | "text" {
+    const el = document.elementFromPoint(x, y)
+    if (!el) return "default"
+    const css = getComputedStyle(el).cursor
+    if (css === "pointer") return "pointer"
+    if (css === "text") return "text"
+    if (css !== "auto") return "default"
+    if (
+      el.closest("input:not([type=checkbox]):not([type=radio]), textarea, [contenteditable=true]")
+    )
+      return "text"
+    if (el.closest("button, a[href], summary, [role=button], [role=option], [role=tab], select"))
+      return "pointer"
+    return "default"
+  }
+
   private emitPointer(down: boolean) {
     const { x, y, off } = this.pointer
-    this.opts.post({ type: "pointer", x, y, down, off })
+    this.opts.post({ type: "pointer", x, y, down, off, cursor: this.cursorAt(x, y) })
   }
 
   private async moveTo(el: HTMLElement, instant: boolean) {
-    el.scrollIntoView({ block: "nearest", inline: "nearest" })
+    revealWithinFrame(el)
     const rect = el.getBoundingClientRect()
     const x = rect.left + Math.min(rect.width / 2, 80)
     const y = rect.top + rect.height / 2
@@ -175,7 +218,7 @@ export class Engine<D> {
       const k = ease(Math.min(1, (this.clock.t - begin) / ms))
       this.pointer = { x: start.x + (x - start.x) * k, y: start.y + (y - start.y) * k, off: false }
       this.emitPointer(false)
-      await frameDelay()
+      await this.clock.nextFrame()
     }
     this.pointer = { x, y, off: false }
     this.emitPointer(false)
@@ -205,9 +248,24 @@ export class Engine<D> {
         target.dispatchEvent(new KeyboardEvent(type, { key: action.key, bubbles: true }))
       return this.pause_(160, instant)
     }
-    const el = await this.find(action.sel, action.do === "click" ? (action.nth ?? 0) : 0)
+    const nth = action.do === "click" ? (action.nth ?? 0) : 0
+    let el = await this.find(action.sel, nth)
     if (!el) return
     await this.moveTo(el, instant)
+    // Resolve the target again at click time: the panel may have re-rendered or re-laid-out
+    // during the travel. Re-aim at the element's current position before pressing.
+    for (let aim = 0; aim < 3 && !instant && !this.opts.reduced; aim++) {
+      const now = this.opts.root.querySelectorAll<HTMLElement>(action.sel)[nth]
+      if (!now) break
+      const rect = now.getBoundingClientRect()
+      const moved = Math.hypot(
+        rect.left + Math.min(rect.width / 2, 80) - this.pointer.x,
+        rect.top + rect.height / 2 - this.pointer.y,
+      )
+      if (now === el && moved <= 3) break
+      el = now
+      await this.moveTo(el, false)
+    }
     const { x, y } = this.pointer
     const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }
     switch (action.do) {
@@ -247,7 +305,7 @@ export class Engine<D> {
         const begin = this.clock.t
         while (ms > 0 && this.clock.t - begin < ms) {
           el.scrollTop = from + (action.to - from) * ease((this.clock.t - begin) / ms)
-          await frameDelay()
+          await this.clock.nextFrame()
         }
         el.scrollTop = action.to
         return this.pause_(160, instant)
@@ -263,5 +321,24 @@ export class Engine<D> {
         return this.pause_(260, instant)
       }
     }
+  }
+}
+
+/**
+ * Scroll `el` into view inside this document only. `Element.scrollIntoView` also scrolls the
+ * embedding page, which made the visitor's own scrolling fight the replay.
+ */
+function revealWithinFrame(el: HTMLElement) {
+  const view = el.ownerDocument.defaultView
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const style = view?.getComputedStyle(node)
+    if (!style || !/(auto|scroll)/.test(style.overflowY + style.overflowX)) continue
+    if (node.scrollHeight <= node.clientHeight && node.scrollWidth <= node.clientWidth) continue
+    const box = node.getBoundingClientRect()
+    const rect = el.getBoundingClientRect()
+    if (rect.top < box.top) node.scrollTop -= box.top - rect.top
+    else if (rect.bottom > box.bottom) node.scrollTop += rect.bottom - box.bottom
+    if (rect.left < box.left) node.scrollLeft -= box.left - rect.left
+    else if (rect.right > box.right) node.scrollLeft += rect.right - box.right
   }
 }

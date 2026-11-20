@@ -33,7 +33,7 @@ import { RecoveryJournal } from "../recovery/journal.ts"
 import { git, scopePatternsConflict } from "./artifacts.ts"
 import { reservationPatterns, type ScopeModel } from "./scope.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
-import { PlanInput, PlanSubmissionInput } from "./schema.ts"
+import { MAX_EXECUTION_PLAN_WAIT_REFERENCES, PlanInput, PlanSubmissionInput } from "./schema.ts"
 import type { DispatchPause, Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
@@ -51,6 +51,10 @@ import type {
   PrerequisiteIntegrationRow,
   TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
+
+/** Why a renewal deferred: a session under its successor ID is not the one it created. */
+export const RENEWAL_SUCCESSOR_FOREIGN =
+  "Native Architect renewal ID belongs to another session or route"
 
 export type PlanRow = {
   id: string
@@ -2093,10 +2097,17 @@ export class RunnerStore {
         return latest
 
       if (latest && ["deferred", "archive-failed"].includes(latest.state)) {
-        if (latest.model !== input.model || latest.directory !== input.directory) {
-          this.record(latest.anchor_plan_id, null, "ARCHITECT_RENEWAL_RETRY_BLOCKED", {
+        const blocked =
+          latest.error === RENEWAL_SUCCESSOR_FOREIGN
+            ? RENEWAL_SUCCESSOR_FOREIGN
+            : latest.model !== input.model || latest.directory !== input.directory
+              ? "Selected route or directory changed after the prior successor was created"
+              : undefined
+        if (blocked) {
+          // Judged on every plan step: an unchanged refusal is one observation, not one per tick.
+          this.recordOnce(latest.anchor_plan_id, null, "ARCHITECT_RENEWAL_RETRY_BLOCKED", {
             renewalID: latest.id,
-            reason: "Selected route or directory changed after the prior successor was created",
+            reason: blocked,
           })
           return null
         }
@@ -2957,11 +2968,78 @@ export class RunnerStore {
     ]
   }
 
+  waitingOnPlanFacts(prerequisiteIDs: readonly string[] | undefined) {
+    if (!prerequisiteIDs) return { plans: [], count: 0, complete: false }
+    const uniquePrerequisites: string[] = []
+    const seen = new Set<string>()
+    let inputComplete = true
+    for (const [index, prerequisiteID] of prerequisiteIDs.entries()) {
+      if (index > MAX_EXECUTION_PLAN_WAIT_REFERENCES) {
+        inputComplete = false
+        break
+      }
+      if (seen.has(prerequisiteID)) continue
+      seen.add(prerequisiteID)
+      uniquePrerequisites.push(prerequisiteID)
+    }
+    if (!uniquePrerequisites.length) return { plans: [], count: 0, complete: true }
+    const rows = this.read((db) =>
+      db
+        .query<
+          {
+            plan_id: string
+            title: string | null
+            state: string | null
+            version: number | null
+            reason: string | null
+            total: number
+          },
+          [string, string, number]
+        >(
+          `WITH prerequisites AS (
+             SELECT CAST(key AS INTEGER) AS ordinal,value AS plan_id FROM json_each(?)
+           )
+           SELECT prerequisites.plan_id,
+                  COALESCE(json_extract(required.body,'$.title'),
+                           json_extract(required.body,'$.objective')) AS title,
+                  required.state,required.version,required.reason,
+                  COUNT(*) OVER() AS total
+           FROM prerequisites
+           LEFT JOIN runner_plans required
+             ON required.project_directory=? AND required.id=prerequisites.plan_id
+           WHERE required.id IS NULL
+              OR required.state NOT IN ('cleaning','cleanup-blocked','integrated')
+           ORDER BY prerequisites.ordinal
+           LIMIT ?`,
+        )
+        .all(
+          JSON.stringify(uniquePrerequisites),
+          this.repository.projectDirectory,
+          MAX_EXECUTION_PLAN_WAIT_REFERENCES + 1,
+        ),
+    )
+    const count = rows[0]?.total ?? 0
+    return {
+      plans: rows.slice(0, MAX_EXECUTION_PLAN_WAIT_REFERENCES).map((row) => ({
+        planID: row.plan_id,
+        title: row.title?.slice(0, 120) ?? null,
+        state: row.state?.slice(0, 80) ?? null,
+        version: row.version,
+        reason: row.reason?.slice(0, 400) ?? null,
+      })),
+      count,
+      complete: inputComplete && count <= MAX_EXECUTION_PLAN_WAIT_REFERENCES,
+    }
+  }
+
   execution(taskID: string): Execution | undefined {
     const node = this.read((db) =>
       db
-        .query<NodeRow & { plan_state: string; plan_reason: string | null }, [string, string]>(
-          "SELECT n.*,p.state AS plan_state,p.reason AS plan_reason FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? AND n.task_id=?",
+        .query<
+          NodeRow & { plan_state: string; plan_reason: string | null; plan_body: string },
+          [string, string]
+        >(
+          "SELECT n.*,p.state AS plan_state,p.reason AS plan_reason,p.body AS plan_body FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id WHERE p.project_directory=? AND n.task_id=?",
         )
         .get(this.repository.projectDirectory, taskID),
     )
@@ -2985,6 +3063,14 @@ export class RunnerStore {
         .all(node.plan_id, taskID)
         .map((r) => r.prerequisite),
     )
+    let prerequisites: string[] | undefined
+    try {
+      const parsed = PlanInput.safeParse(JSON.parse(node.plan_body))
+      if (parsed.success) prerequisites = parsed.data.afterPlans ?? []
+    } catch {
+      prerequisites = undefined
+    }
+    const waitingPlans = this.waitingOnPlanFacts(prerequisites)
     return {
       planID: node.plan_id,
       taskID,
@@ -2999,6 +3085,13 @@ export class RunnerStore {
         node.reason ??
         (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
+      ...(waitingPlans.count || !waitingPlans.complete
+        ? {
+            waitingOnPlans: waitingPlans.plans,
+            waitingOnPlansCount: waitingPlans.count,
+            waitingOnPlansComplete: waitingPlans.complete,
+          }
+        : {}),
       ...(["queued", "ready"].includes(node.state) && this.effectiveDispatchPause(node.plan_id)
         ? { dispatchPause: this.effectiveDispatchPause(node.plan_id) }
         : {}),
@@ -3331,14 +3424,24 @@ export class RunnerStore {
     )
     return Math.min(30_000, Math.max(1_000, (lease?.expires_at ?? now) - now + 250))
   }
+  private assertFence(db: Database, owner: string, fence: number) {
+    const lease = db
+      .query<{ owner: string; fence: number }, [string]>(
+        "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
+      )
+      .get(this.repository.projectDirectory)
+    if (lease?.owner !== owner || lease.fence !== fence) throw new Error("Stale scheduler fence")
+  }
   fenced<T>(owner: string, fence: number, run: (db: Database) => T): T {
     return this.read((db) => {
-      const lease = db
-        .query<{ owner: string; fence: number }, [string]>(
-          "SELECT owner,fence FROM runner_leases WHERE project_directory=?",
-        )
-        .get(this.repository.projectDirectory)
-      if (lease?.owner !== owner || lease.fence !== fence) throw new Error("Stale scheduler fence")
+      this.assertFence(db, owner, fence)
+      return run(db)
+    })
+  }
+  /** A scheduler-fenced write transaction for admissions that must pair with a durable row. */
+  fencedAtomic<T>(owner: string, fence: number, run: (db: Database) => T): T {
+    return this.repository.atomic((db) => {
+      this.assertFence(db, owner, fence)
       return run(db)
     })
   }
@@ -3714,7 +3817,7 @@ export class RunnerStore {
         planIntegrations.push(
           ...db
             .query<PrerequisiteIntegrationRow, [string, ...string[]]>(
-              `SELECT p.id AS plan_id,p.project_directory,p.state,p.artifact,
+              `SELECT p.id AS plan_id,p.project_directory,p.state,p.reason,p.artifact,
                  accepted.id AS accepted_id,accepted.version AS accepted_version,
                  accepted.payload AS accepted_payload,
                  integration.id AS integration_id,integration.version AS integration_version,

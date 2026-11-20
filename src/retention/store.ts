@@ -30,6 +30,7 @@ export function installRetentionSchema(repository: TaskRepository) {
 
 export type RemovedKinds = Record<string, { rows: number; bytes: number }>
 export type WorktreeRemoval = { path: string; bytes: number | null }
+export type WorktreeSkipped = { path: string; reason: string }
 export type RetentionRun = {
   id: number
   at: number
@@ -38,6 +39,7 @@ export type RetentionRun = {
   done: boolean
   removed: RemovedKinds
   worktrees: WorktreeRemoval[]
+  skipped: WorktreeSkipped[]
 }
 
 /** Runs older than the newest few hundred add nothing the totals below do not already say. */
@@ -52,7 +54,7 @@ export function startRun(
     .query<{ id: number }, [number, number, string, string]>(
       "INSERT INTO retention_runs(at,days,trigger,done,removed) VALUES(?,?,?,0,?) RETURNING id",
     )
-    .get(run.at, run.days, run.trigger, JSON.stringify({ kinds: {}, worktrees: [] }))!
+    .get(run.at, run.days, run.trigger, JSON.stringify({ kinds: {}, worktrees: [], skipped: [] }))!
   db.query("DELETE FROM retention_runs WHERE id <= ? - ?").run(id, RUNS_KEPT)
   return id
 }
@@ -60,7 +62,7 @@ export function startRun(
 export function addToRun(
   db: Database,
   id: number,
-  delta: { kinds: RemovedKinds; worktrees: WorktreeRemoval[] },
+  delta: { kinds: RemovedKinds; worktrees: WorktreeRemoval[]; skipped: WorktreeSkipped[] },
   done: boolean,
   at: number,
 ) {
@@ -68,13 +70,19 @@ export function addToRun(
     .query<{ removed: string }, [number]>("SELECT removed FROM retention_runs WHERE id=?")
     .get(id)
   if (!row) return
-  const body = JSON.parse(row.removed) as { kinds: RemovedKinds; worktrees: WorktreeRemoval[] }
+  const body = JSON.parse(row.removed) as {
+    kinds: RemovedKinds
+    worktrees: WorktreeRemoval[]
+    skipped?: WorktreeSkipped[]
+  }
   for (const [kind, total] of Object.entries(delta.kinds)) {
     const entry = (body.kinds[kind] ??= { rows: 0, bytes: 0 })
     entry.rows += total.rows
     entry.bytes += total.bytes
   }
   body.worktrees.push(...delta.worktrees)
+  // Only the latest slice's reasons: they describe what is still in place now.
+  body.skipped = delta.skipped
   db.query("UPDATE retention_runs SET removed=?, done=?, at=? WHERE id=?").run(
     JSON.stringify(body),
     done ? 1 : 0,
@@ -111,6 +119,7 @@ export function lastRuns(db: Database, limit = 5): RetentionRun[] {
       const body = JSON.parse(row.removed) as {
         kinds?: RetentionRun["removed"]
         worktrees?: WorktreeRemoval[]
+        skipped?: WorktreeSkipped[]
       }
       return {
         id: row.id,
@@ -120,6 +129,7 @@ export function lastRuns(db: Database, limit = 5): RetentionRun[] {
         done: row.done === 1,
         removed: body.kinds ?? {},
         worktrees: body.worktrees ?? [],
+        skipped: body.skipped ?? [],
       }
     })
 }

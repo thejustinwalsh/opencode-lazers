@@ -8,6 +8,12 @@ import type {
 } from "./retained-verification/store.ts"
 import type { RunnerStore } from "./store.ts"
 import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
+import type { DelegatedAgentStatus } from "./delegated-agent-capacity.ts"
+import { PlanInput, type ExecutionPlanWait } from "./schema.ts"
+
+type DelegatedAgentInspection = DelegatedAgentStatus & {
+  queuedRunnerTasks: Array<{ planID: string; taskID: string }>
+}
 
 const CompactInspectPlanInput = z.strictObject({
   planID: z.uuid().optional(),
@@ -45,12 +51,7 @@ export const InspectPlanInput = z.union([
 ])
 export type InspectPlanInput = z.infer<typeof InspectPlanInput>
 
-export type CompactWaitingPlan = {
-  planID: string
-  state: string | null
-  version: number | null
-  reason: string | null
-}
+export type CompactWaitingPlan = ExecutionPlanWait
 export type CompactNode = {
   taskID: string
   ordinal: number
@@ -93,6 +94,8 @@ export type CompactPlanDetail = {
     }
   }
   waitingOnPlans: CompactWaitingPlan[]
+  waitingOnPlansCount: number
+  waitingOnPlansComplete: boolean
   counts: Record<string, unknown>
   nodes: CompactNode[]
   latestOutcomes: Record<string, unknown>[]
@@ -120,6 +123,8 @@ export type CompactInspectionSummary = {
       dispatchPause?: { reason: string; untilPlans: string[]; level?: "project" | "global" } | null
     }
     waitingOnPlans: CompactWaitingPlan[]
+    waitingOnPlansCount: number
+    waitingOnPlansComplete: boolean
     counts: { nodes: number; nodesByState: Record<string, number> }
   }>
 }
@@ -133,6 +138,7 @@ type PlanRow = {
   reason: string | null
   model: string | null
   artifact: string | null
+  body: string
   title: string | null
   objective: string
   priority: number | null
@@ -175,8 +181,6 @@ type TransitionRow = {
   payload: string
   created_at: number
 }
-type WaitingPlanRow = { id: string; state: string; version: number; reason: string | null }
-
 const json = (value: string | null): unknown => {
   if (!value) return undefined
   try {
@@ -196,34 +200,22 @@ const model = (value: string | null): unknown => {
   return parsed && typeof parsed === "object" ? parsed : null
 }
 
-function waitingOnPlans(store: RunnerStore, plan: PlanRow): CompactWaitingPlan[] {
-  const prerequisites = arrayJSON<string>(plan.afterPlans, [])
-  if (!prerequisites.length) return []
-  return store.atomic((db) =>
-    prerequisites.flatMap((planID) => {
-      const current = db
-        .query<WaitingPlanRow, [string, string]>(
-          "SELECT id,state,version,reason FROM runner_plans WHERE project_directory=? AND id=?",
-        )
-        .get(store.repository.projectDirectory, planID)
-      if (current?.state === "integrated") return []
-      return [
-        {
-          planID,
-          state: current?.state ?? null,
-          version: current?.version ?? null,
-          reason: current?.reason ?? null,
-        },
-      ]
-    }),
-  )
+function waitingOnPlans(store: RunnerStore, plan: Pick<PlanRow, "body">) {
+  let prerequisites: string[] | undefined
+  try {
+    const parsed = PlanInput.safeParse(JSON.parse(plan.body))
+    if (parsed.success) prerequisites = parsed.data.afterPlans ?? []
+  } catch {
+    prerequisites = undefined
+  }
+  return store.waitingOnPlanFacts(prerequisites)
 }
 
 function planRows(store: RunnerStore, planID?: string): PlanRow[] {
   return store.atomic((db) =>
     db
       .query<PlanRow, (string | null)[]>(
-        `SELECT id,owner,revision,version,state,reason,model,artifact,
+        `SELECT id,owner,revision,version,state,reason,model,artifact,body,
           json_extract(body,'$.title') AS title,
           json_extract(body,'$.objective') AS objective,
           json_extract(body,'$.priority') AS priority,
@@ -252,7 +244,7 @@ function nodeLatestTransitions(db: Database, planID: string) {
   return latest
 }
 
-function compactPlan(store: RunnerStore, plan: PlanRow) {
+function compactPlan(store: RunnerStore, plan: PlanRow, capacity?: DelegatedAgentInspection) {
   const { nodes, dependencies, attempts, effects, transitionCounts, latestByTask } = store.atomic(
     (db) => ({
       nodes: db
@@ -363,12 +355,23 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
       dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
       dependencies,
+      delegatedAgentCapacity: capacity
+        ? {
+            limit: capacity.limit,
+            active: capacity.active,
+            queued: capacity.queued,
+            reason: capacity.reason,
+          }
+        : null,
     },
   }
+  const prerequisiteFacts = waitingOnPlans(store, plan)
   return {
     mode: "compact" as const,
     plan: planDetail,
-    waitingOnPlans: waitingOnPlans(store, plan),
+    waitingOnPlans: prerequisiteFacts.plans,
+    waitingOnPlansCount: prerequisiteFacts.count,
+    waitingOnPlansComplete: prerequisiteFacts.complete,
     counts: {
       nodes: nodes.length,
       attempts: attempts.length,
@@ -394,7 +397,17 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
             ? "blocked"
             : node.state,
         version: node.version,
-        reason: node.reason ?? (plan.state === "blocked" ? plan.reason : null),
+        reason:
+          node.reason ??
+          (capacity?.queuedRunnerTasks.some(
+            (candidate) => candidate.planID === plan.id && candidate.taskID === node.task_id,
+          )
+            ? capacity.limit !== null && capacity.active >= capacity.limit
+              ? `Waiting for delegated-agent capacity (${capacity.active} of ${capacity.limit} slots in use).`
+              : "Waiting for admission behind earlier delegated-agent work."
+            : plan.state === "blocked"
+              ? plan.reason
+              : null),
         waitingOn,
         attempts: taskAttempts.length,
         latestAttempt: latestAttempt
@@ -419,7 +432,11 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
   }
 }
 
-function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
+function compactPlanSummary(
+  store: RunnerStore,
+  plan: PlanRow,
+  capacity?: DelegatedAgentInspection,
+) {
   const states = store.atomic((db) =>
     db
       .query<{ state: string; count: number }, [string]>(
@@ -427,6 +444,7 @@ function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
       )
       .all(plan.id),
   )
+  const prerequisiteFacts = waitingOnPlans(store, plan)
   return {
     id: plan.id,
     owner: plan.owner,
@@ -444,8 +462,18 @@ function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
       afterPlans: arrayJSON<string>(plan.afterPlans, []),
       dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
+      delegatedAgentCapacity: capacity
+        ? {
+            limit: capacity.limit,
+            active: capacity.active,
+            queued: capacity.queued,
+            reason: capacity.reason,
+          }
+        : null,
     },
-    waitingOnPlans: waitingOnPlans(store, plan),
+    waitingOnPlans: prerequisiteFacts.plans,
+    waitingOnPlansCount: prerequisiteFacts.count,
+    waitingOnPlansComplete: prerequisiteFacts.complete,
     counts: {
       nodes: states.reduce((total, entry) => total + entry.count, 0),
       nodesByState: Object.fromEntries(states.map((entry) => [entry.state, entry.count])),
@@ -521,21 +549,43 @@ function retainedInspection(store: RunnerStore, plan: InspectablePlan) {
   )
 }
 
-export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
+export function inspectPlan(
+  store: RunnerStore,
+  input: InspectPlanInput,
+  capacity?: DelegatedAgentInspection,
+) {
   if ("view" in input && input.view === "journal")
     return store.architectSourceJournalPage(input.planID, input.limit, input.cursor)
   if ("view" in input)
     throw new Error("Selected source messages require an authenticated active Architect read")
   if (input.full) {
-    if (!input.planID) return { plans: store.plans(), audit: store.audit() }
+    if (!input.planID)
+      return {
+        plans: store.plans().map((plan) => {
+          const prerequisiteFacts = waitingOnPlans(store, plan)
+          return {
+            ...plan,
+            waitingOnPlans: prerequisiteFacts.plans,
+            waitingOnPlansCount: prerequisiteFacts.count,
+            waitingOnPlansComplete: prerequisiteFacts.complete,
+          }
+        }),
+        audit: store.audit(),
+        delegatedAgentCapacity: capacity ?? null,
+      }
     const detail = store.detail(input.planID, {
       limit: input.limit,
       activityBefore: input.activityBefore,
       evidenceBefore: input.evidenceBefore,
       deliveryBefore: input.deliveryBefore,
     })
+    const prerequisiteFacts = waitingOnPlans(store, detail.plan)
     return {
       ...detail,
+      waitingOnPlans: prerequisiteFacts.plans,
+      waitingOnPlansCount: prerequisiteFacts.count,
+      waitingOnPlansComplete: prerequisiteFacts.complete,
+      delegatedAgentCapacity: capacity ?? null,
       retainedVerifications: decorateRetainedInspection(
         retainedInspection(store, detail.plan),
         detail.plan,
@@ -546,9 +596,10 @@ export function inspectPlan(store: RunnerStore, input: InspectPlanInput) {
   const plans = planRows(store, input.planID)
   if (input.planID && !plans.length) throw new Error("Plan not found")
   return input.planID
-    ? compactPlan(store, plans[0]!)
+    ? compactPlan(store, plans[0]!, capacity)
     : {
         mode: "compact",
-        plans: plans.map((plan) => compactPlanSummary(store, plan)),
+        delegatedAgentCapacity: capacity ?? null,
+        plans: plans.map((plan) => compactPlanSummary(store, plan, capacity)),
       }
 }

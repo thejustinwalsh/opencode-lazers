@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "steps": [
+    { "type": "user", "text": "In one short sentence, what does LAZERS do?" },
+    {
+      "type": "answer",
+      "text": "LAZERS is a plugin for OpenCode Desktop that turns a feature request into tracked work.",
+      "audio": "speech-1",
+      "seconds": 6.72
+    },
+    { "type": "dictate", "text": "How do I install it?", "seconds": 3 },
+    {
+      "type": "answer",
+      "text": "I don't have information about how to install LAZERS, as it's a plugin for OpenCode Desktop and I don't have access to its installation instructions.",
+      "audio": "speech-2",
+      "seconds": 9.2
+    }
+  ],
+  "audio": {
+    "speech-1": { "webm": "live/speech-1.webm", "m4a": "live/speech-1.m4a" },
+    "speech-2": { "webm": "live/speech-2.webm", "m4a": "live/speech-2.m4a" }
+  }
+}

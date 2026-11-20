@@ -45,13 +45,14 @@ const c = stylex.create({
     width: { default: "100%", [bp.wide]: u(40) },
     height: { default: 190, [bp.wide]: u(23) },
   },
-  /* Mobile: behind the cat band under the nav slab, clear of the contents text. */
+  /* Mobile: it fills the cat zone, so the halftone follows the cat wherever the zone sits.
+     (The zone is `display: contents` from the wide breakpoint, so the desktop box is the cover.) */
   fieldCat: {
     left: 0,
-    top: { default: "calc(25vw + 160px)", [bp.wide]: "auto" },
+    top: { default: 0, [bp.wide]: "auto" },
     bottom: { default: "auto", [bp.wide]: 0 },
     width: { default: "90%", [bp.wide]: u(46) },
-    height: { default: "70vw", [bp.wide]: u(40) },
+    height: { default: "100%", [bp.wide]: u(40) },
   },
   /* wordmark: ink outer rule, ivory gap, ink outline, halftone magenta fill */
   wordmark: {
@@ -61,8 +62,9 @@ const c = stylex.create({
     width: "fit-content",
     left: { default: 0, [bp.wide]: u(0.7) },
     top: { default: 0, [bp.wide]: u(3.4) },
-    marginInlineStart: { default: "4.5vw", [bp.wide]: 0 },
+    marginInlineStart: { default: "max(16px, 4.5vw)", [bp.wide]: 0 },
     marginBlockStart: { default: "7vw", [bp.wide]: 0 },
+    order: 0,
     paddingInlineEnd: "0.3em",
     paddingBlockEnd: "0.12em",
     fontFamily: type.face,
@@ -72,7 +74,7 @@ const c = stylex.create({
     textTransform: "uppercase",
     lineHeight: 1,
     letterSpacing: "-0.025em",
-    fontSize: { default: "16.4vw", [bp.wide]: u(11.6) },
+    fontSize: { default: "min(16.4vw, 124px)", [bp.wide]: u(11.6) },
     transform: "rotate(-3.2deg)",
     transformOrigin: "left bottom",
     whiteSpace: "nowrap",
@@ -121,6 +123,7 @@ const c = stylex.create({
     width: { default: "auto", [bp.wide]: u(38.4) },
     height: { default: "auto", [bp.wide]: u(12.8) },
     marginBlockStart: { default: "2vw", [bp.wide]: 0 },
+    order: 1,
     backgroundColor: color.ink,
     color: color.paper,
     clipPath: { default: "none", [bp.wide]: "polygon(4.5% 0, 100% 0, 100% 100%, 0 100%)" },
@@ -142,7 +145,7 @@ const c = stylex.create({
     display: "flex",
     alignItems: "center",
     justifyContent: { default: "center", [bp.wide]: "flex-start" },
-    minHeight: { default: 52, [bp.wide]: u(3.6) },
+    minHeight: { default: 52, [bp.wide]: `max(44px, ${u(3.6)})` },
     fontFamily: type.face,
     fontStretch: "68%",
     fontWeight: 800,
@@ -177,7 +180,11 @@ const c = stylex.create({
     left: { default: 0, [bp.wide]: u(21) },
     top: { default: 0, [bp.wide]: u(15) },
     marginBlockStart: { default: 28, [bp.wide]: 0 },
-    marginInlineStart: { default: 18, [bp.wide]: 0 },
+    /* The tilt about the bottom-left swings the top line left by about a quarter of the type size;
+       add that back so no line starts inside the 16px gutter. */
+    marginInlineStart: { default: "calc(16px + 0.26 * min(15vw, 84px))", [bp.wide]: 0 },
+    marginInlineEnd: { default: 16, [bp.wide]: 0 },
+    order: 2,
     display: "flex",
     alignItems: "flex-end",
     gap: { default: 14, [bp.wide]: u(1.6) },
@@ -192,8 +199,9 @@ const c = stylex.create({
   },
   headLine: { display: "block" },
   headStripes: {
-    fontSize: { default: 12, [bp.wide]: u(1.2) },
+    fontSize: { default: "clamp(7px, 2.4vw, 12px)", [bp.wide]: u(1.2) },
     marginBlockEnd: { default: 8, [bp.wide]: u(0.9) },
+    flex: "none",
   },
   /* lede */
   ledeWrap: {
@@ -202,8 +210,10 @@ const c = stylex.create({
     left: { default: 0, [bp.wide]: u(3.5) },
     top: { default: 0, [bp.wide]: u(33.8) },
     width: { default: "auto", [bp.wide]: u(49.2) },
-    paddingInline: { default: 18, [bp.wide]: 0 },
+    paddingInline: { default: 16, [bp.wide]: 0 },
     marginBlockStart: { default: 18, [bp.wide]: 0 },
+    maxWidth: { default: "68ch", [bp.wide]: "none" },
+    order: 3,
   },
   ledeBox: { position: "relative" },
   lede: {
@@ -225,24 +235,25 @@ const c = stylex.create({
   catZone: {
     display: { default: "block", [bp.wide]: "contents" },
     position: "relative",
-    height: { default: "64vw", [bp.wide]: "auto" },
+    height: { default: "min(64vw, 440px)", [bp.wide]: "auto" },
     marginBlockStart: { default: 4, [bp.wide]: 0 },
+    order: 4,
   },
   cat: {
-    left: { default: "-15vw", [bp.wide]: u(-6.6) },
+    left: { default: "max(-15vw, -64px)", [bp.wide]: u(-6.6) },
     bottom: { default: "-3vw", [bp.wide]: u(-2.6) },
-    height: { default: "56vw", [bp.wide]: u(36) },
-    width: { default: "58vw", [bp.wide]: u(37.4) },
+    height: { default: "min(56vw, 385px)", [bp.wide]: u(36) },
+    width: { default: "min(58vw, 399px)", [bp.wide]: u(37.4) },
   },
   install: {
     position: "absolute",
     zIndex: 3,
     display: "block",
-    right: { default: "9vw", [bp.wide]: "auto" },
-    top: { default: "14vw", [bp.wide]: u(45) },
+    right: { default: "max(16px, 9vw)", [bp.wide]: "auto" },
+    top: { default: "min(14vw, 96px)", [bp.wide]: u(45) },
     left: { default: "auto", [bp.wide]: u(56) },
-    width: { default: "58vw", [bp.wide]: u(30.5) },
-    height: { default: "20vw", [bp.wide]: u(8.8) },
+    width: { default: "min(58vw, 400px)", [bp.wide]: u(30.5) },
+    height: { default: "min(20vw, 138px)", [bp.wide]: u(8.8) },
     color: color.paper,
     textDecoration: "none",
     minHeight: 64,
@@ -305,9 +316,11 @@ const c = stylex.create({
     right: { default: 0, [bp.wide]: u(1.2) },
     top: { default: 0, [bp.wide]: u(14.6) },
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
     marginBlockStart: { default: 14, [bp.wide]: 0 },
-    marginInline: { default: 10, [bp.wide]: 0 },
+    /* Cells carry 12px of padding, so 4px here lands text on the 16px gutter. */
+    marginInline: { default: 4, [bp.wide]: 0 },
+    order: 5,
   },
   cell: {
     display: "flex",
@@ -321,7 +334,13 @@ const c = stylex.create({
     minHeight: { default: 0, [bp.wide]: u(11.9) },
     backgroundColor: { default: "transparent", ":hover": "rgba(163,165,249,0.28)" },
   },
-  cellHead: { display: "flex", alignItems: "flex-end", gap: { default: 8, [bp.wide]: u(0.9) } },
+  cellHead: {
+    display: "flex",
+    flexWrap: { default: "wrap", [bp.wide]: "nowrap" },
+    alignItems: "flex-end",
+    columnGap: { default: 8, [bp.wide]: u(0.9) },
+    rowGap: 4,
+  },
   mark: {
     imageRendering: "pixelated",
     height: { default: 30, [bp.wide]: u(3.9) },
@@ -330,7 +349,8 @@ const c = stylex.create({
     flex: "none",
   },
   cellName: {
-    fontSize: { default: "clamp(26px, 7.4vw, 36px)", [bp.wide]: u(3.15) },
+    fontSize: { default: "clamp(20px, 6.4vw, 36px)", [bp.wide]: u(3.15) },
+    minWidth: 0,
     lineHeight: 0.9,
     fontStretch: "70%",
     textTransform: "none",
@@ -356,6 +376,7 @@ const c = stylex.create({
     bottom: 0,
     height: { default: "auto", [bp.wide]: u(5.9) },
     marginBlockStart: { default: 20, [bp.wide]: 0 },
+    order: 6,
     backgroundColor: color.ink,
     color: color.paper,
     clipPath: { default: "none", [bp.wide]: "polygon(1.4% 0, 100% 0, 100% 100%, 0 100%)" },
@@ -449,9 +470,6 @@ export function Cover() {
       <Field kit={kit} sx={c.fieldTop} amp={8}>
         <div {...stylex.props(c.dots, c.dotsTop)} />
       </Field>
-      <Field kit={kit} sx={c.fieldCat} amp={10}>
-        <div {...stylex.props(c.dots, c.dotsCat)} />
-      </Field>
 
       <h1 tabIndex={-1} {...stylex.props(c.wordmark)}>
         <span aria-hidden="true" {...stylex.props(c.wmLayer, c.wmOuter)}>
@@ -489,6 +507,9 @@ export function Cover() {
       </div>
 
       <div {...stylex.props(c.catZone)}>
+        <Field kit={kit} sx={c.fieldCat} amp={10}>
+          <div {...stylex.props(c.dots, c.dotsCat)} />
+        </Field>
         <Cat kit={kit} sx={c.cat} />
         <a href="#install" {...stylex.props(c.install)}>
           <span aria-hidden="true" {...stylex.props(c.plateShadow)} />

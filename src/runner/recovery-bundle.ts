@@ -10,6 +10,7 @@ import { availablePlanCommands, planCommandProblem } from "./plan-commands.ts"
 import { messageID } from "./runtime-helpers.ts"
 import { openConcerns } from "../recovery/detector.ts"
 import { runbook } from "../guidance/index.ts"
+import { noticeMarker } from "./notice-marker.ts"
 import type { AttemptRow, NodeRow, OutboxRow, PlanRow, RunnerStore } from "./store.ts"
 
 /**
@@ -31,7 +32,7 @@ export const RECOVERY_STALE_MS = 2 * 3_600_000
 export const RECOVERY_REPRAISE_MS = 6 * 3_600_000
 /** A bundle that could not reach an Architect is tried again no sooner than this. */
 export const RECOVERY_RETRY_MS = 5 * 60_000
-/** Items beyond this are counted in the notice text but not listed. The payload keeps all. */
+/** Items beyond this get one identifying line instead of their full detail; none is left out. */
 export const RECOVERY_TEXT_ITEMS = 60
 
 export const RECOVERY_BUNDLE_STATUS = "recovery-bundle"
@@ -887,8 +888,15 @@ export function recoveryBundleText(serialized: string): string {
       `   Actions: ${item.actions.join(", ") || "none"}. Recommended: ${item.recommendation.action ?? "review"} - ${item.recommendation.because}`,
     ]
   })
+  const marker = noticeMarker({
+    kind: RECOVERY_BUNDLE_STATUS,
+    plan: bundle.planID,
+    v: bundle.version,
+    gen: bundle.generation,
+  })
   return [
     `LAZERS recovery bundle: ${bundle.count} item(s) across ${bundle.planIDs.length} plan(s) have waited at least ${ago(bundle.staleAfterMs)} for a decision and nothing live is working on them.`,
+    ...(marker ? [marker] : []),
     runbook("recovery-bundle"),
     ...(bundle.items.some((item) => item.kind === "worker-concern")
       ? [runbook("worker-concerns"), runbook("recovery-controls")]
@@ -898,7 +906,11 @@ export function recoveryBundleText(serialized: string): string {
     ...lines,
     ...(bundle.items.length > listed.length
       ? [
-          `... and ${bundle.items.length - listed.length} more; list the plans with lz-inspect-plan.`,
+          `${bundle.items.length - listed.length} more, identified only; inspect each with lz-inspect-plan before acting:`,
+          ...bundle.items.slice(listed.length).map((item, index) => {
+            const ref = item.reference ?? `plan ${item.planID.slice(0, 8)}`
+            return `${listed.length + index + 1}. ${ref} - ${item.stateLabel} (${item.kind}); plan ${item.planID}${item.taskID ? ` task ${item.taskID}` : ""}; actions: ${item.actions.join(", ") || "none"}`
+          }),
         ]
       : []),
     `bundle ${bundle.generation} raised ${new Date(bundle.raisedAt).toISOString()}`,

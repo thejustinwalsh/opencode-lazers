@@ -58,7 +58,24 @@ The section header shows the model's current state. The Omni download uses about
 
 **Voice** chooses the Read aloud voice. **Preview** speaks one sentence in the selected voice.
 
+### Speaker pill
+
+With **Read aloud** on, one speaker pill sits in the composer lane with the dictation pill. Click it to hear the last completed response, or to stop speech that is playing. Shift-click it, or press `ctrl+shift+alt+s`, to turn automatic read aloud on or off. The pill's accessible name states the current setting.
+
+| State               | Pill                             |
+| ------------------- | -------------------------------- |
+| Idle, automatic off | Speaker                          |
+| Idle, automatic on  | Speaker with green waveform bars |
+| Preparing           | Spinner                          |
+| Speaking            | Stop square                      |
+
+The pill stays visible before the first response so you can turn automatic read aloud on.
+
 **Remove** beside **Downloaded models** clears the local model cache. The next local request downloads the files again.
+
+### Delegated-agent capacity
+
+A project's **Limit** in **Settings → Projects** is the most delegated agents it runs at once, shared by all of its checkouts and worktrees. It counts runtime-dispatched Implementors and Auditors and native OpenCode subagents such as research and review helpers started from LAZERS sessions; an Architect session is not counted, except that an Architect takeover keeps the task's one slot. With no limit set, nothing waits for capacity. Work beyond the limit stays queued and refills by task priority and dependency eligibility. A changed limit applies on the next scheduler pass and never interrupts active work. A paused project starts nothing new, so it takes no slot. Tasks shows capacity waits, and `lz-inspect-plan` includes the current limit, active and waiting counts, and task-specific wait reasons.
 
 ### Provider usage in the session header
 

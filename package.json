@@ -17,6 +17,7 @@
   ],
   "scripts": {
     "package:release": "bun scripts/release-package.ts",
+    "test": "bun test --timeout 120000",
     "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
     "build:gui": "vite build && bun scripts/verify-gui-bundle.ts",
     "build:server": "bun scripts/build-server.ts",

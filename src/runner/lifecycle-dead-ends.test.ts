@@ -40,6 +40,11 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     terminal: ["incorporated"],
   },
   dispatch: { observable: [], architect: ["PAUSE", "UNPAUSE"], terminal: [] },
+  capacity: {
+    observable: ["queued", "admitted", "released", "cancelled"],
+    architect: [],
+    terminal: [],
+  },
   source: { observable: ["PREPARE", "ACTIVATE", "RETIRE"], architect: [], terminal: [] },
   contact: { observable: [], architect: ["PAUSE", "UNPAUSE"], terminal: [] },
   // Owner controls: a project or global pause is lifted by hand.

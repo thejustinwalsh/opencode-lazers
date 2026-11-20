@@ -2,7 +2,7 @@
 
 Read [README.md](README.md) for the product overview. Read [the contributor contracts](docs/reference/contributor-contracts.md) for product contracts and task acceptance boundaries. Read .agents/docs/opencode-api.md before changing OpenCode integration. Use the pinned V2 API and keep host adapters small.
 
-Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Use `bun test` when behavior tests are introduced. LAZERS is one reusable plugin package.
+Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Run tests with `bun test --timeout 120000 <files>` or `bun run test <files>`, never bare `bun test`: Bun's 5 s per-test default fails correct work on a loaded machine, and on this Bun only the command-line flag applies to every test file (preloads, `bunfig.toml` and environment variables do not). The runtime adds the flag to `bun test` checks that lack one (`src/runner/test-hang-guard.ts`). LAZERS is one reusable plugin package.
 
 Define workflow states and transitions in XState. Reuse `lifecycleMachines` for
 runner lifecycles; do not introduce SQL-only transitions or implicit workflow

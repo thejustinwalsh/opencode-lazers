@@ -1,5 +1,6 @@
 import "./theme.css"
 import type { DemoCommand, DemoMessageBody } from "../../src/lib/demo-protocol.ts"
+import { handleCommand } from "./commands.ts"
 import { Engine } from "./engine.ts"
 import type { MountedHost } from "./host.tsx"
 import type { PanelID, Story } from "./story.ts"
@@ -13,7 +14,6 @@ const modules: Record<PanelID, () => Promise<PanelModule>> = {
   radar: () => import("./panels/radar.ts") as never,
   trajectory: () => import("./panels/trajectory.ts") as never,
   models: () => import("./panels/models.ts") as never,
-  local: () => import("./panels/local.tsx") as never,
 }
 
 async function boot() {
@@ -61,6 +61,25 @@ async function boot() {
     width: story.size.width,
     height: story.size.height,
   })
+  let playing: Promise<void> | undefined
+  const start = () => {
+    if (!playing) playing = engine.play(entered.from)
+    else engine.resume()
+  }
+  // Installed for settled frames too: the chapter buttons seek whatever the motion setting.
+  addEventListener("message", (event: MessageEvent) => {
+    if (event.origin !== location.origin || event.source !== parent) return
+    handleCommand(event.data as DemoCommand, {
+      ...(settled ? {} : { play: start, pause: () => engine.pause() }),
+      seek(chapter) {
+        params.set("at", chapter)
+        params.delete("settled")
+        if (reduced) params.set("settled", "1")
+        location.hash = params.toString()
+        location.reload()
+      },
+    })
+  })
   if (settled) {
     post({
       type: "chapter",
@@ -70,25 +89,6 @@ async function boot() {
     })
     return
   }
-  let playing: Promise<void> | undefined
-  const start = () => {
-    if (!playing) playing = engine.play(entered.from)
-    else engine.resume()
-  }
-  addEventListener("message", (event: MessageEvent) => {
-    if (event.origin !== location.origin || event.source !== parent) return
-    const command = event.data as DemoCommand
-    if (!command?.demo) return
-    if (command.type === "play") start()
-    else if (command.type === "pause") engine.pause()
-    else if (command.type === "seek") {
-      params.set("at", command.chapter)
-      params.delete("settled")
-      if (reduced) params.set("settled", "1")
-      location.hash = params.toString()
-      location.reload()
-    }
-  })
   if (parent === window) start()
 }
 
