@@ -161,3 +161,19 @@ the same JSON, validated by the same schema, for now: no separate form model and
 The tool's input, the stored revision and the Settings view are the same document. Plan tasks 1.6,
 1.7 and 3.2 follow this: the Settings view renders and edits that JSON and the owner confirms it
 there.
+
+## Owner decision, 2026-11-20: no confirmation step
+
+The owner ran setup and was told "Profile proposed, not active" and to confirm it in Settings.
+That is wrong. The Architect sets the profile and it is live at once; Settings is where the owner
+edits it afterwards. This replaces the earlier lead's default that profile commands are
+owner-confirmed, and the "pending revision" wording in the final pass outcomes.
+
+- The Architect's tool call stores the profile as the active revision. There is no proposed or
+  pending state for the owner to act on, no confirmation dialog, and no "confirm" item in "Needs
+  you".
+- An edit in Settings saves as the new active revision at once.
+- Revisions stay append-only, with author and proof, so a change can be seen and reverted.
+- Proof stays: each command is run once and its result recorded. A command that failed its proof
+  is shown as failing; the runtime does not run a failing fix or install unattended, because it
+  would fail again. That is a recorded fact about the command, not an approval step.
