@@ -233,7 +233,11 @@ export default Plugin.define({
           )
           yield* registerPlanResolveTool(
             ctx,
-            new PlanResolver(store, projectID, sessionMessageText(ctx)),
+            new PlanResolver(
+              store,
+              projectID,
+              sessionMessageText((sessionID, messageID) => core.host.message(sessionID, messageID)),
+            ),
           )
           yield* registerPlanTaskTool(
             ctx,

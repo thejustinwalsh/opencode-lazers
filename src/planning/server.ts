@@ -204,21 +204,13 @@ export function registerPlanningReviewTicks(reviews: PlanningReviews, projectDir
   )
 }
 
-/** The text of one message of a session, for checking an Architect's quote of the conversation. */
-export function sessionMessageText(ctx: Pick<Plugin.Context, "session">) {
-  return async (sessionID: string, messageID: string): Promise<string | undefined> => {
-    const messages = await Effect.runPromise(
-      ctx.session.context({ sessionID: Session.ID.make(sessionID) }),
-    )
-    const message = messages.find((entry) => entry.id === messageID)
-    if (!message) return undefined
-    return message.type === "user" || message.type === "synthetic"
-      ? message.text
-      : message.type === "assistant"
-        ? message.content
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n")
-        : undefined
-  }
+/**
+ * The text of one message of a session, for checking an Architect's quote of the conversation.
+ * One point read by message ID; the conversation is never read.
+ */
+export function sessionMessageText(
+  readMessage: (sessionID: string, messageID: string) => Promise<{ text: string } | undefined>,
+) {
+  return async (sessionID: string, messageID: string): Promise<string | undefined> =>
+    (await readMessage(sessionID, messageID))?.text
 }

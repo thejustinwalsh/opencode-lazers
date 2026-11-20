@@ -626,6 +626,7 @@ export function nativeHost(
   retainedInputID(sessionID: string): Promise<string | undefined>
   nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
   messages: HostMessageClient
+  message(sessionID: string, messageID: string): Promise<HostMessage | undefined>
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -687,6 +688,7 @@ export function nativeHost(
     retainedInputID(sessionID: string): Promise<string | undefined>
     nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
     messages: HostMessageClient
+    message(sessionID: string, messageID: string): Promise<HostMessage | undefined>
   } = {
     messages,
     retainedInputID,
