@@ -1,11 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads"
+import "./sources/index.ts"
 import { acquireSharedConnection } from "../storage.ts"
 import { encodeRow, frameSize, readRow, writeFrame, type Columns } from "./frame.ts"
 import {
-  SHARED_ACTIVE,
-  SHARED_CONTROL_BYTES,
-  SHARED_FRAME_BYTES,
-  SHARED_SEQUENCE,
   SHARED_STOP,
   type Anchor,
   type FromReader,
@@ -13,6 +10,7 @@ import {
   type Tier,
   type ToReader,
 } from "./protocol.ts"
+import { allocateSharedFrames, SharedFrameWriter } from "./shared-frames.ts"
 import {
   anchorQuery,
   edgeColumns,
@@ -57,7 +55,7 @@ const run = (query: SQL): unknown[][] => {
 }
 
 type Count = number | "more"
-type Shared = { buffer: SharedArrayBuffer; control: Int32Array; frameBytes: number }
+type Shared = { buffer: SharedArrayBuffer; control: Int32Array; writer: SharedFrameWriter }
 type Stream = {
   id: number
   source: Source<never, Columns>
@@ -101,7 +99,7 @@ const countBeyond = (stream: Stream, side: "before" | "after", edge: readonly un
   })
   const [row] = run(side === "before" ? query.before(edge) : query.after(edge))
   const value = Number(row?.[0] ?? 0)
-  return stream.source.count === "exact" ? value : value > 0 ? "more" : 0
+  return stream.source.countMode === "more" ? (value > 0 ? "more" : 0) : value
 }
 
 type Loaded = { rows: Uint8Array[]; before: Count; after: Count }
@@ -182,7 +180,7 @@ const slide = (stream: Stream, delta: number) => {
   const size = Math.abs(delta)
   const limit = Math.min(size, stream.window)
   const offset = Math.max(0, size - stream.window)
-  const probe = stream.source.count === "more" ? 1 : 0
+  const probe = stream.source.countMode === "more" ? 1 : 0
   const edge = edgeOf(stream, stream.rows[forward ? stream.rows.length - 1 : 0]!)
   const { query, reversed } = slideQuery(stream.source, {
     filter: stream.filter,
@@ -211,7 +209,7 @@ const slide = (stream: Stream, delta: number) => {
   const passed = offset + leaving
   const trailing = forward ? stream.before : stream.after
   const leadingNow = (value: Count): Count =>
-    stream.source.count === "exact"
+    stream.source.countMode !== "more"
       ? (typeof value === "number" ? value : 0) + passed
       : value === "more" || passed > 0
         ? "more"
@@ -219,7 +217,7 @@ const slide = (stream: Stream, delta: number) => {
   const ahead = (value: Count): Count =>
     exhausted
       ? 0
-      : stream.source.count === "exact"
+      : stream.source.countMode !== "more"
         ? Math.max(0, (typeof value === "number" ? value : 0) - entering.length - offset)
         : more
           ? "more"
@@ -261,10 +259,8 @@ const trimPool = () => {
 }
 
 const newShared = (frameBytes: number): Shared => {
-  const buffer = new SharedArrayBuffer(SHARED_CONTROL_BYTES + 2 * frameBytes)
-  const view = new Int32Array(buffer, 0, 4)
-  view[SHARED_FRAME_BYTES] = frameBytes
-  return { buffer, control: view, frameBytes }
+  const buffer = allocateSharedFrames(frameBytes)
+  return { buffer, control: new Int32Array(buffer, 0, 16), writer: new SharedFrameWriter(buffer) }
 }
 const frameBytesFor = (size: number) => Math.max(4096, (Math.ceil(size * 1.5) + 7) & ~7)
 
@@ -285,21 +281,12 @@ const emit = (stream: Stream) => {
   }
   if (stream.tier === "shared") {
     let shared = stream.shared!
-    if (size > shared.frameBytes) {
+    if (size > shared.writer.frameBytes) {
       shared = stream.shared = newShared(frameBytesFor(size))
       send({ type: "regrow", stream: stream.id, shared: shared.buffer })
     }
-    const next = 1 - Atomics.load(shared.control, SHARED_ACTIVE)
-    writeFrame(
-      shared.buffer,
-      SHARED_CONTROL_BYTES + next * shared.frameBytes,
-      stream.columns,
-      header,
-      stream.rows,
-    )
-    Atomics.store(shared.control, SHARED_ACTIVE, next)
-    Atomics.store(shared.control, SHARED_SEQUENCE, sequence)
-    Atomics.notify(shared.control, SHARED_SEQUENCE)
+    writeFrame(shared.buffer, shared.writer.offset, stream.columns, header, stream.rows)
+    shared.writer.publish(sequence)
     send({ type: "frame", ...base })
   } else if (stream.tier === "transfer") {
     const buffer = takeBuffer(size)

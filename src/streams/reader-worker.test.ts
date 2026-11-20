@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { readerPool, type ReaderPool } from "./pool.ts"
 import type { Tier } from "./protocol.ts"
-import { itemSource, itemsMoreSource } from "./test-source.ts"
+import {
+  itemSource,
+  itemsDefaultCountSource,
+  itemsMoreSource,
+  itemsStoredCountSource,
+} from "./test-source.ts"
 import { openHarness, seedItems, testPool, type SeededDatabase } from "./test-harness.ts"
 
 let seeded: SeededDatabase
@@ -172,6 +177,38 @@ test("a source that counts as `more` reports 0 or more", async () => {
   expect(end.header.after).toBe(0)
   expect(end.header.before).toBe("more")
   h.stream.close()
+})
+
+test("a source that names no count probes, and one with a stored counter uses its builders", async () => {
+  const probe = openHarness(pool, itemsDefaultCountSource, {
+    filter: {},
+    order: "id",
+    anchor: { key: [500] },
+    window: 10,
+  })
+  const first = await probe.next()
+  expect(first.header.before).toBe("more")
+  expect(first.header.after).toBe("more")
+  const before = await totals()
+  await probe.slide(3)
+  expect((await totals()).statements - before.statements).toBe(1)
+  probe.stream.close()
+  const stored = openHarness(pool, itemsStoredCountSource, {
+    filter: {},
+    order: "id",
+    anchor: { key: [500] },
+    window: 10,
+  })
+  const frame = await stored.next()
+  // The builders see the window's edge ids: first 495, last 504.
+  expect(frame.header.before).toBe(1_495)
+  expect(frame.header.after).toBe(1_496)
+  const before2 = await totals()
+  const slid = await stored.slide(5)
+  expect((await totals()).statements - before2.statements).toBe(1)
+  expect(slid.header.before).toBe(1_500)
+  expect(slid.header.after).toBe(1_491)
+  stored.stream.close()
 })
 
 test("all three tiers produce byte-identical frames", async () => {

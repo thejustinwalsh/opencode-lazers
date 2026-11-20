@@ -66,14 +66,21 @@ export type FromReader =
   | { type: "closed" }
 
 /**
- * The shared tier's buffer: `[ control | frame 0 | frame 1 ]`. `control` is `Int32Array`
- * `[active, sequence, stop, frameBytes]`; frame `n` starts at `SHARED_CONTROL_BYTES + n * frameBytes`.
- * The reader writes the inactive frame, stores `active`, stores `sequence`, notifies on it. A
- * consumer reads `sequence`, the active frame, then `sequence` again and retries on a change.
- * The consumer stores 1 to `stop` to close the stream.
+ * The shared tier's buffer: `[ control | frame 0 | frame 1 | frame 2 ]`, three frames handed off
+ * without a copy. `control` is an `Int32Array`:
+ * `[latest, sequence, stop, frameBytes, frameSequence0..2]`, and frame `n` starts at
+ * `SHARED_CONTROL_BYTES + n * frameBytes`. Each frame is in exactly one hand: the reader's (being
+ * written), the consumer's (held and read in place) or the `latest` word's (published). `latest`
+ * is `frameIndex | FRESH` where FRESH means "published since the consumer last took". The reader
+ * publishes with one `Atomics.exchange(latest, written | FRESH)` and writes next into the frame
+ * that comes back; the consumer takes with one `Atomics.exchange(latest, held)` and holds what
+ * comes back until it takes again. See `shared-frames.ts`. The consumer stores 1 to `stop` to
+ * close the stream; `sequence` is the word consumers wait on.
  */
 export const SHARED_CONTROL_BYTES = 64
-export const SHARED_ACTIVE = 0
+export const SHARED_LATEST = 0
 export const SHARED_SEQUENCE = 1
 export const SHARED_STOP = 2
 export const SHARED_FRAME_BYTES = 3
+export const SHARED_FRAME_SEQUENCE = 4
+export const SHARED_FRAMES = 3

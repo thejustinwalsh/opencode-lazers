@@ -59,6 +59,9 @@ main thread (one writer)                       read workers (read-only connectio
 - Read workers open read-only connections. In WAL mode a read that starts after a
   commit sees that commit, so a stream is at most one message behind the writer. There
   are no torn reads.
+- Table-level refresh (a stream refreshes only when a table its source reads is written)
+  needs connections opened by the new code, so it takes effect at a service restart;
+  connections opened earlier feed the coarse revision, which refreshes every open stream.
 - A timing probe on `read` and `atomic` in `src/storage.ts` records synchronous time
   per call site. If write time shows up as stalls, heavy writers (retention, backfills,
   folds) are the first candidates for a writer worker. That is a later decision made
@@ -101,8 +104,10 @@ Rules:
 4. **Sources.** A source is a named query registered once: key, order, filterable
    columns, the columns a list row carries, and the cold fields a detail row adds.
    List rows carry only what a list shows.
-5. **Counts.** `before` and `after` come from an indexed count or a stored counter.
-   A source that cannot count cheaply reports "more" instead of a number.
+5. **Counts.** A source reports "more" by default: one existence probe per side. It
+   reports numbers only when it names a cheap count: `exact: "scan"` (a small table, the
+   author asserts it) or `exact: { before, after }` reading a stored counter. Measured:
+   a scan count at 1,000,000 rows is about 10 ms per side.
 
 ## The window is the cache
 
@@ -117,7 +122,7 @@ there. `slide` and `seek` ask the reader to bring the buffer to the new position
            │  slop 25  │           view 50           │  slop 25      │
 ```
 
-- Bound per stream: one window (two frames of it in shared memory, see below). Bound
+- Bound per stream: one window (three frames of it in shared memory, see below). Bound
   per process: the sum over open streams. A closed stream holds nothing.
 - Rows are read from the frame by field, on access. Nothing is decoded into objects
   until a consumer reads it, and text is decoded only for the fields shown.
@@ -137,15 +142,18 @@ contract on all three.
 Tier 1, shared memory:
 
 ```
-  shared buffer:  [ header | frame A | frame B ]
-  header: active frame index, revision, item count, sequence   (Int32, Atomics)
+  shared buffer:  [ header | frame 0 | frame 1 | frame 2 ]
+  header: latest (frame index + "fresh" bit), sequence, stop, frame size   (Int32, Atomics)
 
-  reader worker:  write the inactive frame ─► Atomics.store(active) ─► Atomics.notify
-  consumer:       Atomics.waitAsync(sequence) ─► read the active frame
+  reader worker:  write its own frame ─► Atomics.exchange(latest, own | fresh) ─► notify
+                  the frame that comes back is its next write target
+  consumer:       Atomics.waitAsync(sequence) ─► Atomics.exchange(latest, held)
+                  and read the frame that comes back, in place
 ```
 
-- Two frames, so the consumer always reads a complete window while the reader writes
-  the next one. The reader flips the active index in one atomic store.
+- Three frames: one being written, one published, one held by the consumer. The reader
+  never writes a frame the consumer holds, so rows read from a frame stay intact until
+  the consumer takes the next one, and nothing is copied.
 - The consumer never blocks: it waits with `Atomics.waitAsync` (as
   `src/audit/fallow-wasi.ts` does today). `Atomics.wait` is never called on the main
   thread.

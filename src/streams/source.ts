@@ -23,13 +23,35 @@ export type SourceDefinition<F, C extends Columns> = {
   filter(input: F): { where: string; params: readonly (string | number | null)[] } // indexed columns only
   columns: C // list row
   detail?: Columns // cold fields added when window === 1
-  count: "exact" | "more" // "exact" requires an indexed count
+  /**
+   * How `before` and `after` are known. Default `"more"`: one existence probe per side (an index
+   * seek, cost independent of table size), reported as 0 or `"more"`. An exact count must be
+   * cheap, so the source names how:
+   * - `{ exact: "scan" }` (alias `"exact"`): `COUNT(*)` over the keyset range. The author asserts
+   *   the table is small; the cost is linear in the rows beyond the window (about 10 ms per
+   *   500,000 index entries) and is paid on open, seek and every refresh of a stream that reads it.
+   * - `{ exact: { before, after } }`: SQL that reads a stored counter and returns one number for
+   *   the rows strictly before or after `edge` (the order-column values of the window's edge row).
+   * A slide never counts: it adjusts exact counts by the rows that moved, or probes by reading
+   * one extra row. A refresh recounts scan sources (a write to the table can have changed them)
+   * and re-probes `"more"` sources.
+   */
+  count?: SourceCount<F>
 }
+
+export type CountBuilder<F> = (input: { filter: F; edge: readonly unknown[] }) => SQL
+export type SourceCount<F> =
+  | "more"
+  | "exact"
+  | { exact: "scan" }
+  | { exact: { before: CountBuilder<F>; after: CountBuilder<F> } }
 
 export type Source<F, C extends Columns> = SourceDefinition<F, C> & {
   readonly keyColumns: readonly string[]
   /** The tables whose writes can change this source's rows. */
   readonly readsTables: readonly string[]
+  /** `more`: probes; `scan`/`stored`: exact numbers. */
+  readonly countMode: "more" | "scan" | "stored"
 }
 
 /**
@@ -76,7 +98,19 @@ export function defineSource<F, C extends Columns>(
       fail(
         `table ${table} is not a plain identifier; name the tables the FROM clause reads in \`tables\``,
       )
-  const source: Source<F, C> = { ...definition, keyColumns: key, readsTables: tables }
+  const count = definition.count ?? "more"
+  const countMode =
+    count === "more"
+      ? "more"
+      : count === "exact" || (typeof count === "object" && count.exact === "scan")
+        ? "scan"
+        : "stored"
+  const source: Source<F, C> = {
+    ...definition,
+    keyColumns: key,
+    readsTables: tables,
+    countMode,
+  }
   registry.set(name, source as unknown as Source<never, Columns>)
   return source
 }
@@ -87,7 +121,22 @@ export function findSource(name: string): Source<never, Columns> | undefined {
 }
 
 /** The columns a frame of this window carries: list columns, plus detail columns for one item. */
-export function streamColumns(source: Source<never, Columns>, window: number): Columns {
+export type SourceRef<F, C extends Columns> = Pick<
+  SourceDefinition<F, C>,
+  "name" | "columns" | "detail"
+>
+
+/** What a consumer without a database (the GUI) needs to read a source's frames. */
+export const sourceRef = <F, C extends Columns>(source: SourceRef<F, C>): SourceRef<F, C> => ({
+  name: source.name,
+  columns: source.columns,
+  ...(source.detail ? { detail: source.detail } : {}),
+})
+
+export function streamColumns(
+  source: Pick<SourceDefinition<never, Columns>, "columns" | "detail">,
+  window: number,
+): Columns {
   return window === 1 && source.detail ? { ...source.columns, ...source.detail } : source.columns
 }
 
@@ -281,11 +330,18 @@ export function windowQuery(
   const filter = source.filter(input.filter as never)
   const where = `(${filter.where.trim() || "1"})`
   const count = (side: "after" | "before", edge: readonly unknown[]): SQL => {
+    const stored =
+      typeof source.count === "object" && typeof source.count.exact === "object"
+        ? source.count.exact
+        : undefined
+    if (stored) return stored[side]({ filter: input.filter as never, edge })
     const keyset = beyond(terms, edge, side, false)
     const inner = `FROM ${source.table} WHERE ${where} AND ${keyset.sql}`
     return {
       sql:
-        source.count === "exact" ? `SELECT COUNT(*) ${inner}` : `SELECT EXISTS(SELECT 1 ${inner})`,
+        source.countMode === "scan"
+          ? `SELECT COUNT(*) ${inner}`
+          : `SELECT EXISTS(SELECT 1 ${inner})`,
       params: [...filter.params, ...keyset.params],
     }
   }
