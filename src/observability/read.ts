@@ -25,7 +25,9 @@ import { LiveRadarReader } from "./live-read.ts"
 import type {
   LiveAttemptRequestInput,
   LiveGroupRequestInput,
+  LiveAttemptResponse,
   LiveGroupResponse,
+  LiveHistoryResponse,
   LiveHistoryRequestInput,
   LiveRadarRequestInput,
   LiveRadarResponse,
@@ -43,6 +45,8 @@ import type {
   TrajectoryStatusRequest,
 } from "./contract.ts"
 import { singleScope } from "./contract.ts"
+import { findOwner } from "../projects/resolve.ts"
+import type { OwnerQuery } from "../projects/resolve.ts"
 import { allowAll, canonicalPath, pickUnit } from "../projects/scope.ts"
 import type { CanRead, ProjectRef, ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
@@ -2228,6 +2232,28 @@ export class ObservationReads {
     return this.projectID
   }
 
+  /** One read at one checkout with that checkout's project-scope reads, marked with its project. */
+  async atUnit<T extends object>(
+    unit: ProjectUnit,
+    sessionID: string,
+    ownTracker: ObservationChangeTracker,
+    read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
+  ): Promise<Omit<T, "scope"> & { project: ProjectRef }> {
+    const reads = this.forUnit(unit, ownTracker)
+    try {
+      const page = await read(reads, { kind: "project", sessionID })
+      const { scope: _scope, ...rest } = page as T & { scope?: unknown }
+      return {
+        ...rest,
+        // Outputs that name their scope say `all`; the others (a group read) have none to rewrite.
+        ...("scope" in page ? { scope: { kind: "all" as const } } : {}),
+        project: unit.project,
+      } as unknown as Omit<T, "scope"> & { project: ProjectRef }
+    } finally {
+      reads.release()
+    }
+  }
+
   async allPage<T extends object>(
     input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
     ownTracker: ObservationChangeTracker,
@@ -2236,20 +2262,119 @@ export class ObservationReads {
   ): Promise<Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }> {
     const picked = await pickUnit(access.units, input.cursor, access.canRead)
     if (!picked) throw new Error("No project is readable in this scope")
-    const unit = this.forUnit(picked.unit, ownTracker)
-    try {
-      const page = await read(unit, { kind: "project", sessionID: input.scope.sessionID })
-      const { scope: _scope, ...rest } = page as T & { scope?: unknown }
-      return {
-        ...rest,
-        // Outputs that name their scope say `all`; the others (a group read) have none to rewrite.
-        ...("scope" in page ? { scope: { kind: "all" as const } } : {}),
-        project: picked.unit.project,
-        nextCursor: picked.nextCursor,
-      } as unknown as Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }
-    } finally {
-      unit.release()
-    }
+    const page = await this.atUnit(picked.unit, input.scope.sessionID, ownTracker, read)
+    return { ...page, nextCursor: picked.nextCursor }
+  }
+
+  /** The unit owning what an all-projects read names, or a refusal that does not say which. */
+  private async ownerOf(
+    query: OwnerQuery,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+    unavailable: string,
+  ) {
+    const owner = await findOwner(
+      this.store.repository,
+      access.units,
+      access.canRead ?? allowAll,
+      query,
+    )
+    if (!owner) throw new Error(unavailable)
+    return owner
+  }
+
+  async trajectoryAll(
+    input: TrajectoryRequest,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal | undefined,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<TrajectoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const query: OwnerQuery = input.reference
+      ? { reference: input.reference }
+      : input.taskID
+        ? { taskID: input.taskID }
+        : { attemptID: input.attemptID! }
+    const owner = await this.ownerOf(query, access, "No observation in this scope")
+    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) => {
+      const taskID = input.reference
+        ? unit.reads.store.repository.resolveTaskID(input.reference)
+        : input.taskID
+      if (input.reference && !taskID) throw new Error("No observation in this scope")
+      const { reference: _reference, ...rest } = input
+      return unit.reads.trajectory(
+        { ...rest, scope, ...(taskID ? { taskID } : {}) },
+        unit.tracker,
+        signal,
+      )
+    }) as Promise<TrajectoryResponse>
+  }
+
+  async trajectoryHistoryAll(
+    input: TrajectoryHistoryRequest,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal | undefined,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<TrajectoryHistoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = await this.ownerOf(
+      { taskID: input.taskID },
+      access,
+      "No observation in this scope",
+    )
+    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.trajectoryHistory({ ...input, scope }, unit.tracker, signal),
+    ) as Promise<TrajectoryHistoryResponse>
+  }
+
+  async trajectoryStatusAll(
+    input: TrajectoryStatusRequest,
+    tracker: ObservationChangeTracker,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<TrajectoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = await this.ownerOf(
+      { taskID: input.taskID },
+      access,
+      "No observation in this scope",
+    )
+    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.trajectoryStatus({ ...input, scope }, unit.tracker),
+    ) as Promise<TrajectoryResponse>
+  }
+
+  /** The attempt of a session of any readable project: the worker pane's counts and lane. */
+  async liveAttemptAll(
+    input: LiveAttemptRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<LiveAttemptResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = await this.ownerOf(
+      { sessionID: input.sessionID },
+      access,
+      "Observation scope is unavailable",
+    )
+    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.liveAttempt({ ...input, scope }, signal),
+    ) as Promise<LiveAttemptResponse>
+  }
+
+  async liveHistoryAll(
+    input: LiveHistoryRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<LiveHistoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = await this.ownerOf(
+      { sessionID: input.sessionID },
+      access,
+      "Observation scope is unavailable",
+    )
+    return this.atUnit(owner, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.liveHistory({ ...input, scope }, signal),
+    ) as Promise<LiveHistoryResponse>
   }
 
   async snapshotAll(

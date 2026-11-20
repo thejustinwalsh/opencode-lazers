@@ -7,7 +7,7 @@ import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
-import { Observability, singleScope, type ObservationChange } from "./contract.ts"
+import { Observability, type ObservationChange } from "./contract.ts"
 import { allProjectsAccess, callerSession } from "../projects/read-access.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
@@ -299,7 +299,8 @@ export function registerObservability(
       liveAttempt: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all")
+              return reads.liveAttemptAll(input, tracker, signal, await accessFor(input.scope))
             await authorize(
               ctx,
               input.scope,
@@ -325,7 +326,8 @@ export function registerObservability(
       liveHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all")
+              return reads.liveHistoryAll(input, tracker, signal, await accessFor(input.scope))
             await authorize(
               ctx,
               input.scope,
@@ -351,7 +353,16 @@ export function registerObservability(
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all") {
+              await authorize(
+                ctx,
+                input.scope,
+                projectID,
+                reads.store.repository.projectDirectory,
+                "lz-inspect-trajectory",
+              )
+              return reads.trajectoryAll(input, tracker, signal, await accessFor(input.scope))
+            }
             await authorize(
               ctx,
               input.scope,
@@ -367,7 +378,21 @@ export function registerObservability(
       trajectoryHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all") {
+              await authorize(
+                ctx,
+                input.scope,
+                projectID,
+                reads.store.repository.projectDirectory,
+                "lz-inspect-trajectory",
+              )
+              return reads.trajectoryHistoryAll(
+                input,
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
+            }
             await authorize(
               ctx,
               input.scope,
@@ -394,7 +419,16 @@ export function registerObservability(
       trajectoryStatus: (input) =>
         Effect.tryPromise({
           try: async () => {
-            singleScope(input.scope)
+            if (input.scope.kind === "all") {
+              await authorize(
+                ctx,
+                input.scope,
+                projectID,
+                reads.store.repository.projectDirectory,
+                "lz-inspect-trajectory",
+              )
+              return reads.trajectoryStatusAll(input, tracker, await accessFor(input.scope))
+            }
             await authorize(
               ctx,
               input.scope,

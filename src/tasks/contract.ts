@@ -36,12 +36,23 @@ export const QueryInput = z
       })
   })
 export type TaskQuery = z.input<typeof QueryInput>
-export const GetInput = z.strictObject({
-  taskID: z.union([z.uuid(), TaskReferenceSchema]),
-  revision: z.int().positive().optional(),
-  classificationRevision: z.int().nonnegative().optional(),
-  sessionID: z.string().min(1).max(200).optional(),
-})
+export const GetInput = z
+  .strictObject({
+    /** A task of any project the caller may read; `sessionID` then names the caller, not a filter. */
+    allProjects: z.literal(true).optional(),
+    taskID: z.union([z.uuid(), TaskReferenceSchema]),
+    revision: z.int().positive().optional(),
+    classificationRevision: z.int().nonnegative().optional(),
+    sessionID: z.string().min(1).max(200).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.allProjects && !input.sessionID)
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionID"],
+        message: "An all-projects read names the calling session",
+      })
+  })
 export const GetInstructionsOutput = z.string()
 /** A task that keeps consuming effort without landing; see `assessConcern`. */
 export const TaskConcern = z.strictObject({
@@ -136,7 +147,7 @@ const TaskAttempt = z.strictObject({
 export const CurrentActivityInput = z
   .strictObject({
     sessionID: z.string().min(1).max(200),
-    scope: z.enum(["session", "project"]),
+    scope: z.enum(["session", "project", "all"]),
     taskIDs: z.array(z.uuid()).min(1).max(40),
   })
   .superRefine((input, context) => {
@@ -144,6 +155,8 @@ export const CurrentActivityInput = z
       context.addIssue({ code: "custom", path: ["taskIDs"], message: "Task IDs must be unique" })
   })
 const CurrentTaskActivity = z.strictObject({
+  /** All-projects scope: the project the task belongs to. */
+  project: ProjectRef.optional(),
   taskID: z.uuid(),
   /** Authorized exact worker association used to scope native activity notifications. */
   workerSessionID: z.string().min(1).optional(),
@@ -169,6 +182,8 @@ export type CurrentTaskActivity = z.infer<typeof CurrentTaskActivity>
 export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
+    /** All-projects read: the project the task belongs to. */
+    project: ProjectRef.optional(),
     task: TaskSpecSchema,
     classification: TaskClassificationRevision,
     classificationHistory: z.array(TaskClassificationRevision),

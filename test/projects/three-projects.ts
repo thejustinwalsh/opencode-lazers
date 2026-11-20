@@ -22,7 +22,12 @@ export type TestProject = {
 }
 
 /** Insert a task into one checkout and return its id. */
-export function addTask(repository: TaskRepository, objective: string, sessionID = "session-a") {
+export function addTask(
+  repository: TaskRepository,
+  objective: string,
+  sessionID = "session-a",
+  projectID = "project",
+) {
   const proposal = validProposal()
   proposal.objective = objective
   return repository.insert({
@@ -32,7 +37,7 @@ export function addTask(repository: TaskRepository, objective: string, sessionID
     status: "submitted",
     createdAt: new Date().toISOString(),
     provenance: {
-      projectID: "project",
+      projectID,
       projectDirectory: repository.projectDirectory,
       workspaceDirectory: "/worktree",
       sessionID,
@@ -60,6 +65,39 @@ export function addPlan(repository: TaskRepository, taskIDs: string[], owner = "
   ).planID
 }
 
+/** Record a running attempt of a planned task, for a worker session `sessionID`. */
+export function addAttempt(
+  repository: TaskRepository,
+  planID: string,
+  taskID: string,
+  sessionID: string,
+) {
+  const id = crypto.randomUUID()
+  repository.atomic((db) => {
+    db.query(
+      "INSERT INTO runner_attempts(id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count,retry_count,cost) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      planID,
+      taskID,
+      1,
+      sessionID,
+      "msg",
+      "/worktree",
+      "a".repeat(40),
+      null,
+      "{}",
+      "running",
+      Date.now(),
+      0,
+      0,
+      0,
+      0,
+    )
+  })
+  return id
+}
+
 /**
  * Three registered projects in one temporary database, each with its own checkout, code
  * (AAA, BBB, CCC), tasks and one plan. Project AAA has two further tasks without a plan.
@@ -83,7 +121,7 @@ export async function threeProjects() {
     })
     const code = ["AAA", "BBB", "CCC"][index]!
     setProjectCode(repository, key, code)
-    const planned = addTask(repository, `${name} planned task`)
+    const planned = addTask(repository, `${name} planned task`, "session-a", `opencode-${name}`)
     const planID = addPlan(repository, [planned])
     const extra =
       index === 0

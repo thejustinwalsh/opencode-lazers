@@ -8,7 +8,8 @@ import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
 import { allowAll, encodeUnitCursor, pickUnit } from "../projects/scope.ts"
-import type { CanRead, ProjectUnit } from "../projects/scope.ts"
+import type { CanRead, ProjectRef, ProjectUnit } from "../projects/scope.ts"
+import { findOwner } from "../projects/resolve.ts"
 import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
@@ -27,6 +28,8 @@ const TERMINAL_NODE_STATES = new Set([
 ])
 
 export type CurrentActivityTarget = {
+  /** All-projects read: the project the task belongs to. */
+  project?: ProjectRef
   taskID: string
   authorized: boolean
   attempt: {
@@ -233,8 +236,57 @@ export class TaskReads {
     })
   }
 
+  /**
+   * A task of any readable project by id or `<CODE>-<n>` reference, read from its own checkout.
+   * A task that does not exist and one the caller may not read both come back `not_found`.
+   */
+  async getAll(input: unknown, access: { units: readonly ProjectUnit[]; canRead?: CanRead }) {
+    const { allProjects, sessionID: _caller, ...rest } = GetInput.parse(input)
+    if (!allProjects) throw new Error("Not an all-projects read")
+    const query = /^[0-9a-f]{8}-/i.test(rest.taskID)
+      ? { taskID: rest.taskID }
+      : { reference: rest.taskID }
+    const owner = await findOwner(this.repository, access.units, access.canRead ?? allowAll, query)
+    if (!owner) return GetOutput.parse({ status: "not_found" })
+    const repository = new TaskRepository(this.repository.path, owner.directory)
+    try {
+      const found = new TaskReads(repository).get(rest)
+      return found.status === "found" ? { ...found, project: owner.project } : found
+    } finally {
+      repository.close()
+    }
+  }
+
+  /** Targets for tasks of any readable project; one that is not readable is unavailable. */
+  async currentActivityTargetsAll(
+    taskIDs: readonly string[],
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<CurrentActivityTarget[]> {
+    if (taskIDs.length > 40 || new Set(taskIDs).size !== taskIDs.length)
+      throw new Error("Current activity task selection is invalid")
+    const targets: CurrentActivityTarget[] = []
+    for (const taskID of taskIDs) {
+      const owner = await findOwner(this.repository, access.units, access.canRead ?? allowAll, {
+        taskID,
+      })
+      if (!owner) {
+        targets.push(unavailableTarget(taskID))
+        continue
+      }
+      const repository = new TaskRepository(this.repository.path, owner.directory)
+      try {
+        const [target] = new TaskReads(repository).currentActivityTargets([taskID])
+        targets.push({ ...target!, project: owner.project })
+      } finally {
+        repository.close()
+      }
+    }
+    return targets
+  }
+
   get(input: unknown) {
     const query = GetInput.parse(input)
+    if (query.allProjects) throw new Error("An all-projects read is read with getAll")
     const task = this.repository.get(query.taskID)
     if (!task || (query.sessionID && task.provenance.sessionID !== query.sessionID)) {
       return GetOutput.parse({ status: "not_found" })

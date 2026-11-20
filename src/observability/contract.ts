@@ -1,5 +1,5 @@
 import { AttemptModel, AttemptSummary } from "../tasks/attempt-summary.ts"
-import { TaskSourcePlanSchema } from "../task.ts"
+import { TaskReferenceSchema, TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState, DispatchPause } from "../runner/schema.ts"
 import { ProjectRef } from "../projects/scope.ts"
@@ -742,6 +742,7 @@ export const LiveHistoryOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1).max(200),
   scope: ObservationScopeView,
+  project: ProjectRef.optional(),
   sessionID: z.string().min(1).max(200),
   attemptID: z.uuid().nullable(),
   source: z.literal("runner-progress"),
@@ -782,6 +783,7 @@ export const LiveAttemptInput = z.strictObject({
 export const LiveAttemptOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1).max(200),
+  project: ProjectRef.optional(),
   sessionID: z.string().min(1).max(200),
   attempt: z
     .strictObject({
@@ -850,11 +852,19 @@ const TrajectoryInput = z
     scope: ObservationScope,
     taskID: z.uuid().optional(),
     attemptID: z.uuid().optional(),
+    /** All-projects scope only: a task of any readable project by its `<CODE>-<n>` reference. */
+    reference: TaskReferenceSchema.optional(),
     limit: z.int().min(1).max(50).default(20),
     cursor: z.string().min(1).max(4096).optional(),
   })
   .superRefine((input, ctx) => {
-    if (Boolean(input.taskID) === Boolean(input.attemptID))
+    if (input.reference && input.scope.kind !== "all")
+      ctx.addIssue({
+        code: "custom",
+        path: ["reference"],
+        message: "A reference applies to the all-projects scope only",
+      })
+    if ([input.taskID, input.attemptID, input.reference].filter(Boolean).length !== 1)
       ctx.addIssue({
         code: "custom",
         path: ["taskID"],
@@ -866,6 +876,8 @@ export const TrajectoryOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
+  /** All-projects scope: the project the task belongs to. */
+  project: ProjectRef.optional(),
   boundary: Boundary,
   report: z.record(z.string(), z.unknown()),
   live: z
@@ -888,6 +900,7 @@ const TrajectoryHistoryOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
+  project: ProjectRef.optional(),
   boundary: Boundary,
   capturedAt: z.number().finite(),
   expiresAt: z.number().finite(),

@@ -63,6 +63,11 @@ function sameWorkerObservation(left: HostSession, right: HostSession): boolean {
   )
 }
 
+function requireSession<T>(session: T | undefined): T {
+  if (!session) throw new Error("Task scope is unavailable")
+  return session
+}
+
 export function registerTaskReads(
   ctx: Pick<Plugin.Context, "rpc" | "permission"> &
     Partial<Pick<Plugin.Context, "tool" | "session">>,
@@ -104,7 +109,26 @@ export function registerTaskReads(
                 }),
               }
             }),
-      get: (input) => Effect.sync(() => reads.get(input)),
+      get: (input) =>
+        input.allProjects
+          ? Effect.tryPromise({
+              try: async () =>
+                reads.getAll(
+                  input,
+                  await allProjectsAccess(
+                    { permission: ctx.permission, session: requireSession(ctx.session) },
+                    {
+                      sessionID: input.sessionID!,
+                      projectID: runtime.projectID,
+                      repository: reads.repository,
+                      loaded,
+                      unavailable: "Task scope is unavailable",
+                    },
+                  ),
+                ),
+              catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+            }).pipe(Effect.orDie)
+          : Effect.sync(() => reads.get(input)),
       currentActivity: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -154,7 +178,24 @@ export function registerTaskReads(
             const initialScope = await readScope(true)
             signal.throwIfAborted()
             const sessionScope = request.scope === "session" ? request.sessionID : undefined
-            const before = reads.currentActivityTargets(request.taskIDs, sessionScope)
+            const everyProject =
+              request.scope === "all"
+                ? await allProjectsAccess(
+                    { permission: ctx.permission, session: sessionService },
+                    {
+                      sessionID: request.sessionID,
+                      projectID: runtime.projectID,
+                      repository: reads.repository,
+                      loaded,
+                      unavailable: "Task activity scope is unavailable",
+                    },
+                  )
+                : undefined
+            const targets = async () =>
+              everyProject
+                ? reads.currentActivityTargetsAll(request.taskIDs, everyProject)
+                : reads.currentActivityTargets(request.taskIDs, sessionScope)
+            const before = await targets()
             const initial = await Promise.all(
               before.map(async (target): Promise<CurrentTaskActivity> => {
                 const unknown = (
@@ -225,7 +266,7 @@ export function registerTaskReads(
               }),
             )
             signal.throwIfAborted()
-            const after = reads.currentActivityTargets(request.taskIDs, sessionScope)
+            const after = await targets()
             const currentScope = await readScope(false)
             signal.throwIfAborted()
             // Native DateTime values are freshly decoded on each read.
@@ -268,7 +309,13 @@ export function registerTaskReads(
               }
               return activity
             })
-            return CurrentActivityOutput.parse({ activities })
+            const projectOf = new Map(before.map((target) => [target.taskID, target.project]))
+            return CurrentActivityOutput.parse({
+              activities: activities.map((activity) => {
+                const project = projectOf.get(activity.taskID)
+                return project ? { ...activity, project } : activity
+              }),
+            })
           },
           catch: () => new Error("Current task activity is unavailable"),
         }).pipe(Effect.orDie),

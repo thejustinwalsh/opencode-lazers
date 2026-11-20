@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
-import { addPlan, addTask, threeProjects } from "../../test/projects/three-projects.ts"
+import { addAttempt, addPlan, addTask, threeProjects } from "../../test/projects/three-projects.ts"
 import { encodeUnitCursor, projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
@@ -215,15 +215,97 @@ test("snapshot, radar, live radar and live groups page by project with the same 
   expect(groups.every((page) => LiveGroupOutput.safeParse(page).success)).toBe(true)
 })
 
-test("reads that are single-attempt or single-task refuse all until they resolve their own project", async () => {
-  const { reads, tracker } = await fixture(() => [])
+test("a task, an attempt and a worker session of another project resolve under all", async () => {
+  const { three, reads, tracker, units } = await fixture(() => [])
   const signal = new AbortController().signal
-  const refusal = "All-projects scope is not available for this read"
-  expect(() => reads.liveAttempt({ scope: all, sessionID: "s" }, signal)).toThrow(refusal)
-  expect(() => reads.liveHistory({ scope: all, sessionID: "s", limit: 5 }, signal)).toThrow(refusal)
+  const [, b] = three.projects
+  const taskID = b!.taskIDs[0]!
+  const reference = b!.repository.referenceFor(taskID)!
+  expect(reference.startsWith("BBB-")).toBe(true)
+  const attemptID = addAttempt(b!.repository, b!.planIDs[0]!, taskID, "ses-beta-worker")
+  const access = { units: units() }
+
+  for (const request of [{ reference }, { taskID }, { attemptID }]) {
+    const out = await reads.trajectoryAll(
+      { scope: all, limit: 5, ...request },
+      tracker,
+      signal,
+      access,
+    )
+    expect(out.scope).toEqual({ kind: "all" })
+    expect(out.project).toMatchObject({ code: "BBB", loaded: false })
+  }
+  const status = await reads.trajectoryStatusAll({ scope: all, taskID }, tracker, access)
+  expect(status.project?.code).toBe("BBB")
+  const attempt = await reads.liveAttemptAll(
+    { scope: all, sessionID: "ses-beta-worker" },
+    tracker,
+    signal,
+    access,
+  )
+  expect(attempt.project?.code).toBe("BBB")
+  expect(attempt.attempt?.id).toBe(attemptID)
+  const history = await reads.liveHistoryAll(
+    { scope: all, sessionID: "ses-beta-worker", limit: 5 },
+    tracker,
+    signal,
+    access,
+  )
+  expect(history.project?.code).toBe("BBB")
+  expect(history.scope).toEqual({ kind: "all" })
+
+  // Unknown, and a project the caller may not read, are the same refusal.
+  const none = "No observation in this scope"
   await expect(
-    reads.trajectory({ scope: all, taskID: crypto.randomUUID(), limit: 5 }, tracker, signal),
-  ).rejects.toThrow(refusal)
+    reads.trajectoryAll({ scope: all, limit: 5, reference: "BBB-9999" }, tracker, signal, access),
+  ).rejects.toThrow(none)
+  const deny = { units: units(), canRead: async (unit: ProjectUnit) => unit.project.code !== "BBB" }
+  await expect(
+    reads.trajectoryAll({ scope: all, limit: 5, reference }, tracker, signal, deny),
+  ).rejects.toThrow(none)
+  await expect(
+    reads.liveAttemptAll({ scope: all, sessionID: "ses-beta-worker" }, tracker, signal, deny),
+  ).rejects.toThrow("Observation scope is unavailable")
+})
+
+test("a reference resolves in its own project, and an old code resolves only where it was", async () => {
+  const { three, units } = await fixture(() => [])
+  const [a, b] = three.projects
+  const { setProjectCode } = await import("../projects/registry.ts")
+  const old = b!.repository.referenceFor(b!.taskIDs[0]!)!
+  setProjectCode(b!.repository, b!.key, "BBX")
+  const { findOwner } = await import("../projects/resolve.ts")
+  const owner = (reference: string) =>
+    findOwner(a!.repository, units(), async () => true, { reference })
+  expect((await owner("BBX-1"))?.project.key).toBe(b!.key)
+  expect((await owner(old))?.project.key).toBe(b!.key)
+  expect(await owner("QQQ-1")).toBeUndefined()
+})
+
+test("Tasks get and current activity for another project's task", async () => {
+  const { three, units } = await fixture(() => [])
+  const [a, b] = three.projects
+  const reads = new AssociationTaskReads(a!.repository)
+  const taskID = b!.taskIDs[0]!
+  const reference = b!.repository.referenceFor(taskID)!
+  for (const id of [taskID, reference]) {
+    const found = await reads.getAll(
+      { allProjects: true, sessionID: "ses-caller", taskID: id },
+      { units: units() },
+    )
+    expect(found.status === "found" && found.project?.code).toBe("BBB")
+  }
+  const denied = await reads.getAll(
+    { allProjects: true, sessionID: "ses-caller", taskID: reference },
+    { units: units(), canRead: async () => false },
+  )
+  expect(denied.status).toBe("not_found")
+  const targets = await reads.currentActivityTargetsAll([taskID, crypto.randomUUID()], {
+    units: units(),
+  })
+  expect(targets[0]).toMatchObject({ authorized: true, project: { code: "BBB" } })
+  expect(targets[1]?.authorized).toBe(false)
+  expect(() => reads.get({ allProjects: true, sessionID: "s", taskID })).toThrow()
 })
 
 test("a cursor for another unit's directory is refused once that unit is not allowed", async () => {
