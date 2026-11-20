@@ -30,7 +30,7 @@ import {
   setGlobalSetting,
   setProjectSetting,
 } from "./settings.ts"
-import { repoMapSource } from "../context/repo-map-store.ts"
+import { dropLegacySources, repoMapSource } from "../context/repo-map-store.ts"
 import { credentialLikeEnv, parseProfile, profileDiff } from "./profile.ts"
 import { proveProfile } from "./profile-proof.ts"
 import type { ProofWorkspace } from "./profile-proof.ts"
@@ -214,7 +214,10 @@ export function projectsOperations(
   const decide = (
     key: string,
     revision: number,
-    act: typeof confirmRevision | typeof discardRevision,
+    act: (
+      repo: TaskRepository,
+      input: { projectKey: string; revision: number; by: string },
+    ) => ProfileRevisionRow,
   ): ProjectsOutcome => {
     if (!projectExists(repository, key))
       return refuse("PROJECT_MISSING", "That project is not registered.")
@@ -330,7 +333,18 @@ export function projectsOperations(
       setProjectSetting(repository, key, "setupDismissedAt", undefined)
       return OK
     },
-    confirmProfile: (key: string, revision: number) => decide(key, revision, confirmRevision),
+    // Confirming also drops the project's legacy source filters, in the same transaction.
+    confirmProfile: (key: string, revision: number) =>
+      decide(key, revision, (repo, input) =>
+        confirmRevision(repo, {
+          ...input,
+          onConfirmed: (db) =>
+            dropLegacySources(
+              db,
+              projects(repo).find((project) => project.key === key)?.paths ?? [],
+            ),
+        }),
+      ),
     discardProfile: (key: string, revision: number) => decide(key, revision, discardRevision),
     list: () => listProjects(repository, options.loaded, options.defaults),
     setCode(key: string, code: string): ProjectsOutcome {

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { git } from "../runner/artifacts.ts"
@@ -11,7 +11,7 @@ import {
   scanExports,
   sourceFiles,
 } from "./repo-map.ts"
-import { currentRepoMap, setRepoMapSource } from "./repo-map-store.ts"
+import { currentRepoMap } from "./repo-map-store.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -250,17 +250,109 @@ test("without a top-level src the nested src folders, else the non-tooling folde
   expect((await deriveSourceDefinition(flat)).include).toEqual(["lib/**/*.ts", "lib/**/*.tsx"])
 })
 
+/** The stored source filter is written by SQL here: nothing in production writes it any more. */
+function seedSource(
+  repository: TaskRepository,
+  directory: string,
+  definition: { include: string[]; exclude: string[] } | undefined,
+) {
+  repository.atomic((db) => {
+    db.query("DELETE FROM repo_map_sources WHERE project_directory=?").run(directory)
+    if (definition)
+      db.query("INSERT INTO repo_map_sources VALUES(?,?,?,?)").run(
+        directory,
+        JSON.stringify(definition.include),
+        JSON.stringify(definition.exclude),
+        1,
+      )
+  })
+}
+
 test("a stored per-project source definition replaces the derived default", async () => {
   const root = tree(fixture)
   const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
   cleanup.push(() => repository.close())
   const derived = await currentRepoMap(repository, root)
   expect(derived.text).toContain("src/index.ts")
-  setRepoMapSource(repository, root, { include: ["src/ui/**/*.tsx"], exclude: ["**/*.test.tsx"] })
+  seedSource(repository, root, { include: ["src/ui/**/*.tsx"], exclude: ["**/*.test.tsx"] })
   const stored = await currentRepoMap(repository, root)
   expect(stored.files).toBe(1)
   expect(stored.text).toContain("src/ui/panel.tsx: fn Panel")
   expect(stored.text).not.toContain("src/index.ts")
-  setRepoMapSource(repository, root, undefined)
+  seedSource(repository, root, undefined)
   expect((await currentRepoMap(repository, root)).hash).toBe(derived.hash)
+})
+
+// --- a confirmed profile's source ---
+
+async function profiled(
+  files: Record<string, string>,
+  source: { include: string[]; exclude?: string[] },
+) {
+  const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
+  const { parseProfile } = await import("../projects/profile.ts")
+  const { proposeRevision, confirmRevision } = await import("../projects/profile-store.ts")
+  const root = realpathSync(tree(files))
+  Bun.spawnSync(["git", "-C", root, "remote", "add", "origin", "git@h.com:a/map.git"])
+  const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
+  cleanup.push(() => {
+    resetProjectAliasCache()
+    repository.close()
+  })
+  const { key } = await registerProject(repository, { directory: root, opencodeProjectID: "p" })
+  const parsed = parseProfile({
+    verify: [{ id: "t", command: "true" }],
+    audit: "off",
+    source: { exclude: [], ...source },
+  })
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues))
+  proposeRevision(repository, {
+    projectKey: key,
+    profile: parsed.profile,
+    author: { kind: "owner" },
+    reason: "t",
+    proofs: [],
+  })
+  const confirm = () => confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
+  return { root, repository, confirm }
+}
+
+test("a profile's source selects files of any language; exports are read for TypeScript only", async () => {
+  const f = await profiled(
+    {
+      "src/lib.rs": "pub fn add() {}\n",
+      "src/index.ts": "export const a = 1\n",
+      "README.md": "# hi\n",
+    },
+    { include: ["src/**/*.rs", "src/**/*.ts"] },
+  )
+  f.confirm()
+  const map = await currentRepoMap(f.repository, f.root)
+  expect(map.files).toBe(2)
+  expect(map.text).toContain("src/index.ts: const a")
+  const rustLine = map.text.split("\n").find((l) => l.startsWith("src/lib.rs"))
+  expect(rustLine).toBe("src/lib.rs")
+  expect(map.text).not.toContain("README.md:")
+})
+
+test("a profile source equal to the derived default builds the identical map", async () => {
+  const files = {
+    "src/index.ts": "export const a = 1\n",
+    "src/ui/panel.tsx": "export function P() {}\n",
+  }
+  const f = await profiled(files, { include: ["src/**/*.ts", "src/**/*.tsx"] })
+  const derived = await currentRepoMap(f.repository, f.root)
+  f.confirm()
+  expect((await currentRepoMap(f.repository, f.root)).hash).toBe(derived.hash)
+})
+
+test("a proposal is not read: the stored filter or the derived default keeps applying", async () => {
+  const f = await profiled(fixture, {
+    include: ["src/ui/**/*.tsx"],
+    exclude: ["**/*.test.tsx"],
+  })
+  const before = await currentRepoMap(f.repository, f.root)
+  expect(before.files).toBeGreaterThan(1)
+  f.confirm()
+  expect((await currentRepoMap(f.repository, f.root)).files).toBe(1)
 })

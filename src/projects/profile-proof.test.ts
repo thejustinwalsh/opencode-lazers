@@ -262,7 +262,25 @@ test("proof targets are appended to a verify command for its proof only", async 
   })
 })
 
-test.todo("map preview counts source files in any language once Task 5.1 has landed")
+test("the map preview counts source files of any language, with no export names for them", async () => {
+  const root = repo({ "src/lib.rs": "pub fn a() {}\n", "src/b.ts": "export const b = 1\n" })
+  const result = await proveProfile({
+    projectDirectory: root,
+    dataDirectory: temp("lazers-proof-data-"),
+    profile: profileOf({
+      verify: [{ id: "ok", command: "true" }],
+      source: { include: ["src/**/*.rs"] },
+    }),
+    workspace: workspace(root),
+    environment: { PATH: "/usr/bin:/bin" },
+  })
+  expect(result.mapPreview).toMatchObject({
+    files: 1,
+    names: 0,
+    largestFolders: [{ folder: "src", files: 1 }],
+    currentFiles: 1,
+  })
+})
 
 const cargoAvailable = requireToolchain("cargo", "proves the cargo-min fixture with real cargo")
 test.skipIf(!cargoAvailable)("real cargo: the cargo-min profile proves every command", async () => {

@@ -277,8 +277,8 @@ export async function proveProfile(input: {
     }
 
     // map preview: the profile's source in the worktree against what the map is today
-    const selected = await sourceFiles(worktree, profile.source)
-    const map = await buildRepoMap(worktree, profile.source)
+    const selected = await sourceFiles(worktree, profile.source, { anyExtension: true })
+    const map = await buildRepoMap(worktree, profile.source, { anyExtension: true })
     const current = input.repository
       ? await currentRepoMap(input.repository, input.projectDirectory)
       : await buildRepoMap(

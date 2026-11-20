@@ -573,7 +573,9 @@ const globMatches = (patterns: string[], path: string) =>
 /**
  * The default source definition for a checkout: the folders holding the project's own TypeScript,
  * minus tests, fixtures, declaration files, vendored or generated folders and the paths the
- * project's Fallow configuration ignores. The per-project profile replaces this function.
+ * project's Fallow configuration ignores. It is the default while no profile is confirmed (a
+ * stored source filter, until a profile replaces it, takes precedence); a confirmed profile's
+ * `source` replaces both.
  *
  * Source roots, in order of preference: a top-level `src`; else every nested `src` folder
  * (a monorepo's packages); else each top-level folder that is not tooling or documentation.
@@ -603,11 +605,18 @@ export async function deriveSourceDefinition(root: string): Promise<SourceDefini
   return { include, exclude }
 }
 
-/** The source files a definition selects, in plain path order. */
-export async function sourceFiles(root: string, definition: SourceDefinition): Promise<string[]> {
+/**
+ * The source files a definition selects, in plain path order. `anyExtension` (a profile's source)
+ * selects files of any language; without it only TypeScript files qualify, as before.
+ */
+export async function sourceFiles(
+  root: string,
+  definition: SourceDefinition,
+  options: { anyExtension?: boolean } = {},
+): Promise<string[]> {
   const files = (await checkoutFiles(root)).filter(
     (path) =>
-      sourceExtension.test(path) &&
+      (options.anyExtension || sourceExtension.test(path)) &&
       globMatches(definition.include, path) &&
       !globMatches(definition.exclude, path),
   )
@@ -663,9 +672,11 @@ async function countTokens(text: string): Promise<number> {
 export async function buildRepoMap(
   root: string,
   definition: SourceDefinition,
-  options: { topLevel?: string[] } = {},
+  options: { topLevel?: string[]; anyExtension?: boolean } = {},
 ): Promise<RepoMap> {
-  const files = await sourceFiles(root, definition)
+  const files = await sourceFiles(root, definition, {
+    ...(options.anyExtension ? { anyExtension: true } : {}),
+  })
   const all = options.topLevel ? [] : await checkoutFiles(root)
   const topLevel =
     options.topLevel ??
@@ -676,6 +687,8 @@ export async function buildRepoMap(
     const batch = files.slice(at, at + 64)
     const scanned = await Promise.all(
       batch.map(async (path) => {
+        // Exported names are read for TypeScript only; other files are listed by path.
+        if (!sourceExtension.test(path)) return []
         try {
           return scanExports(await Bun.file(join(root, path)).text())
         } catch {

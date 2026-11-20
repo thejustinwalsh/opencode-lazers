@@ -417,7 +417,12 @@ export function registerTaskTools(
                     let map: RepoMap | undefined
                     if (planID) {
                       try {
-                        map = await freezePlanMap(repository, planID, ctx.location.directory)
+                        map = await freezePlanMap(
+                          repository,
+                          planID,
+                          ctx.location.directory,
+                          repository.projectDirectory,
+                        )
                         instructions += `\n\n${repoMapBlock(map, "plan start")}`
                       } catch {
                         signal.throwIfAborted()

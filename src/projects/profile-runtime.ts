@@ -85,3 +85,11 @@ export function retainedProfileInput(
     },
   }
 }
+
+/** Whether the project's confirmed profile turns the Fallow audit off (no profile: it does not). */
+export function auditIsOff(
+  repository: Pick<TaskRepository, "read">,
+  projectDirectory: string,
+): boolean {
+  return activeProfile(repository, projectDirectory)?.profile.audit === "off"
+}
