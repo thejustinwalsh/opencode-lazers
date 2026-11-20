@@ -244,4 +244,4 @@ test("retire needs a preview of the chosen age, then a confirmation, then report
     }
     await dom.happyDOM.close()
   }
-}, 60_000)
+})

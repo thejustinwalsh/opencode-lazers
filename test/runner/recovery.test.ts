@@ -182,7 +182,7 @@ test("fresh processes recover accepted session/prompt effects without replay", a
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
     expect(f.store.attempts(f.plan.planID)).toHaveLength(1)
   }
-}, 20000)
+})
 
 test("scope instruction intent survives process death before and after native keyed delivery", async () => {
   for (const fault of ["before-instruction", "after-instruction"]) {
@@ -214,7 +214,7 @@ test("scope instruction intent survives process death before and after native ke
     expect(f.repository.get(f.task.id)!.proposal.writeScope).toEqual(["result.txt"])
     expect(f.store.attempts(f.plan.planID)).toHaveLength(1)
   }
-}, 20000)
+})
 
 test("uncertain dispatch stays blocked and a crashed verifier is superseded without repeating its effect", async () => {
   for (const fault of ["before-session", "before-prompt", "verifier"]) {
@@ -252,7 +252,7 @@ test("uncertain dispatch stays blocked and a crashed verifier is superseded with
     expect((await run(f.root, "none")).code).toBe(0)
     expect(f.store.effects(f.plan.planID).map((effect) => effect.id)).toEqual(before)
   }
-}, 20000)
+})
 
 test("durable outbox survives process death before/after host delivery without duplicate notices", async () => {
   for (const fault of ["before-notify", "after-notify"]) {
@@ -282,7 +282,7 @@ test("durable outbox survives process death before/after host delivery without d
     expect(JSON.parse(latest!.receipt!)).toMatchObject({ kind: "host-admitted" })
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
-}, 20000)
+})
 
 test("a crash after native admission neither repeats the notice nor loses its delivery", async () => {
   const f = fixture()
@@ -325,4 +325,4 @@ test("a crash after native admission neither repeats the notice nor loses its de
   )
   expect(interruptedDelivery?.state).toBeDefined()
   expect(interruptedDelivery?.state).not.toBe("consumed")
-}, 20000)
+})

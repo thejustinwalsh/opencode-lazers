@@ -3559,4 +3559,4 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       else Reflect.deleteProperty(globalThis, name)
     }
   }
-}, 15_000)
+})
