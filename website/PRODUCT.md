@@ -30,6 +30,7 @@ Judgment and task state are separate. Architect makes decisions that need contex
 - Panels: Tasks (`/lz-tasks`), Radar (`/lz-radar`), Trajectory (`/lz-trajectory`), Models (`/lz-models`).
 - Independent tasks can use OpenCode-managed worktrees; conflicting write scopes serialize.
 - Local WebGPU inference is optional and off by default.
+- Local inference (`../docs/reference/user-controls.md`, `../src/webgpu/`): one switch, "Run local models on this device", in Settings, LAZERS. Five features, each its own switch: local questions, System One decisions, task review (advisory, needs decisions), dictation, read aloud. Two models, each downloaded on first use into its own cache: D1 (about 625 MB) for decisions, Omni (about 1.6 GB) for questions, dictation and read aloud. Decisions are typed: yes or no, a choice from a list, or a score in a range (`../src/webgpu/decisions.ts`). "Keep model loaded" sets how long an idle model stays in GPU memory. Turning it off releases GPU memory; downloaded models stay on disk until removed. The session-header icon (`../src/webgpu/indicator.tsx`) reads Loading, Available, Working or Error while on. Workers do not run on the local model: they are native OpenCode sessions on routed models.
 
 ## Capabilities and Constraints
 
@@ -59,3 +60,15 @@ README, install guide, workflow explanation, first-task tutorial and user-contro
 ## Accessibility & Inclusion
 
 **Assumption:** WCAG 2.2 AA. Brief requires reduced-motion parity, keyboard navigation, real HTML text, and original text available to assistive technology when enhanced layout runs.
+
+## Live panel demos
+
+The page shows the real panels, not mock-ups. `Demo` (`src/Demo.tsx`) lazily creates an iframe of `/demo/`, which mounts one real SolidJS panel from `../src/` (Tasks, Radar, Trajectory, Models, and the local-inference indicator) inside a stand-in OpenCode host, answering the panel's reads from a recorded story and performing simulated user actions as real DOM events.
+
+- Source: `demo/` (entry `demo/src/main.tsx`, stand-in host `demo/src/host.tsx` and `ui.tsx`, replay engine `demo/src/engine.ts`, per-panel answers `demo/src/panels/*-answers.ts`, stories `demo/stories/*.ts`).
+- Build: `bun scripts/build-website-demo.ts` from the repo root (`bun run demo` in `website/`; `bun run build` runs it first). It uses the repo's `solid-js` and the real panels, validates every story state's reads against the panels' contract schemas (a contract change a story no longer satisfies fails the build), builds with a relative base into `public/demo/` (git-ignored) and writes the compiled stories as JSON beside it. The homepage has no new runtime dependency.
+- Stories are TypeScript (`defineStory`): timed steps with a data patch and user actions (`hover`, `click`, `type`, `key`, `scroll`, `wheel`, `wait`) on CSS selectors of the real panel DOM, plus chapters with captions. Chapters declare `setup` actions so seeking to a chapter reproduces the same UI state. Data is invented: project code LZ, references LZ-2xx, fictional models and prices; nothing comes from a real machine or database.
+- Page copy that must show without the iframe (step captions, size) lives in `src/demos.ts`; the demo build fails if it differs from the stories.
+- Protocol (`src/lib/demo-protocol.ts`): the iframe posts `ready`, `chapter`, `pointer`, `view`, `end`; the page sends `play`, `pause`, `seek`. Both sides check origin, source and a `demo` tag.
+- Motion: the iframe is created one viewport early and plays only while a third of it is visible. With reduced motion it shows the final state of the last step, does not autoplay, and a step button jumps to that step's result. The iframe is `inert` and `aria-hidden`; a text summary and the step list sit beside it.
+- Smoke test: `bun test website/demo/test/stories.test.ts` mounts every chapter of every story in a DOM and fails if an action's selector matches nothing.
