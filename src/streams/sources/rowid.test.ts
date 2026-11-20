@@ -86,15 +86,18 @@ test("the owner wakes on a dirty row another connection queued", async () => {
   try {
     owner.start()
     await owner.settle()
-    let settled = 0
-    const settle = owner.settle.bind(owner)
-    owner.settle = () => (settled++, settle())
     other.atomic((db) =>
       db.query("INSERT INTO task_schedule_dirty(kind,ref) VALUES('task','x')").run(),
     )
     await Bun.sleep(100)
     expect(heard.flat()).toContain("task_schedule_dirty")
-    expect(settled).toBeGreaterThan(0)
+    // The owner drained the row the other connection queued.
+    expect(
+      first.read(
+        (db) =>
+          db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_schedule_dirty").get()!.n,
+      ),
+    ).toBe(0)
   } finally {
     off()
     owner.close()

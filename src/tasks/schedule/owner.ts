@@ -10,7 +10,14 @@ import { drainTaskSchedule, hasScheduleWork, nextRetryAt, retryParked } from "./
  * Idle, it holds a table-change subscription and no timer.
  */
 /** A project with tasks whose list is not indexed yet. */
-function nextUnindexed(db: Database): string | undefined {
+function nextUnindexed(db: Database, own: string): string | undefined {
+  // This repository's own project is indexed even while it has no task yet.
+  const ownReady = db
+    .query<{ ready: number }, [string]>(
+      "SELECT ready FROM task_schedule_state WHERE project_directory=?",
+    )
+    .get(own)?.ready
+  if (ownReady !== 1) return own
   return db
     .query<{ project_directory: string }, []>(
       `SELECT t.project_directory FROM tasks t WHERE NOT EXISTS (
@@ -40,14 +47,24 @@ export class TaskScheduleOwner {
   start(): void {
     this.unsubscribe = databaseChanges.subscribeTables(this.repository.path, (tables) => {
       if (tables.has("tasks")) this.discover = true
-      if (tables.has("task_schedule_dirty") || tables.has("tasks")) this.settle()
+      if (tables.has("task_schedule_dirty") || tables.has("tasks")) this.run()
     })
     this.settle()
   }
 
+  /** Settle without looking for new projects, unless a task was added. */
+  private run(): Promise<void> {
+    this.again = true
+    return this.loop()
+  }
+
   /** Run until the backfill is complete and the queue is empty; coalesces concurrent calls. */
   settle(): Promise<void> {
-    this.again = true
+    this.discover = true
+    return this.run()
+  }
+
+  private loop(): Promise<void> {
     this.running ??= (async () => {
       while (this.again && !this.closed) {
         this.again = false
@@ -55,7 +72,9 @@ export class TaskScheduleOwner {
           // Every project in the database, not only this repository's: the triggers are
           // database-wide, so the backfill is too. Each project has its own `ready`.
           while (this.discover && !this.closed) {
-            const project = this.repository.read((db) => nextUnindexed(db))
+            const project = this.repository.read((db) =>
+              nextUnindexed(db, this.repository.projectDirectory),
+            )
             if (!project) {
               this.discover = false
               break
