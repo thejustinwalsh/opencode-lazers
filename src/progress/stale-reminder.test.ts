@@ -61,7 +61,7 @@ function harness(owned = true) {
         ...extra,
       }
       await Effect.runPromise(handler!(event as never))
-      return event as {
+      return event as unknown as {
         status: string
         result: { content: unknown; output?: unknown }
         error: Tool.Error
