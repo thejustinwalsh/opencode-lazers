@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { realpathSync } from "node:fs"
 import { schemaModules } from "./database-schema.ts"
+import { assignProjectCode, projectNameFor } from "./projects/registry.ts"
 import type { TaskRepository } from "./storage.ts"
 
 /** Stable LAZERS project identity: survives OpenCode project-id and history changes. */
@@ -105,7 +106,53 @@ export function installProjectSchema(repository: TaskRepository): void {
         last_seen_at TEXT NOT NULL
       );
     `)
+    // Generation 2: a stored code and name per project.
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>("PRAGMA table_info(lazers_projects)")
+        .all()
+        .map((column) => column.name),
+    )
+    if (!columns.has("code")) db.exec("ALTER TABLE lazers_projects ADD COLUMN code TEXT")
+    if (!columns.has("name")) db.exec("ALTER TABLE lazers_projects ADD COLUMN name TEXT")
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS lazers_projects_code ON lazers_projects(code)")
+    backfillProjectCodes(db)
   })
+}
+
+/**
+ * Give every project without a code one. The project that owns the most task references keeps
+ * `LZ` (its references already read `LZ-n`); the rest follow in creation order.
+ */
+function backfillProjectCodes(db: Database): void {
+  const pending = db
+    .query<{ key: string; name: string | null; path: string | null }, []>(
+      `SELECT p.key AS key, p.name AS name,
+              (SELECT path FROM lazers_project_paths WHERE key=p.key ORDER BY rowid LIMIT 1) AS path
+         FROM lazers_projects p WHERE p.code IS NULL ORDER BY p.created_at, p.key`,
+    )
+    .all()
+  if (pending.length === 0) return
+  const owned = new Map<string, number>()
+  if (tableExists(db, "task_references"))
+    for (const row of db
+      .query<{ key: string; n: number }, []>(
+        `SELECT pp.key AS key, COUNT(*) AS n FROM task_references r
+           JOIN lazers_project_paths pp ON pp.path=r.project_directory GROUP BY pp.key`,
+      )
+      .all())
+      owned.set(row.key, row.n)
+  const heaviest = pending
+    .filter((project) => (owned.get(project.key) ?? 0) > 0)
+    .sort((a, b) => owned.get(b.key)! - owned.get(a.key)!)[0]
+  const ordered = heaviest ? [heaviest, ...pending.filter((p) => p !== heaviest)] : pending
+  for (const project of ordered)
+    assignProjectCode(
+      db,
+      project.key,
+      project.name ?? projectNameFor(project.path ?? "", project.key),
+      project === heaviest ? "LZ" : undefined,
+    )
 }
 
 // In-process alias groups, filled from lazers_project_aliases. Sync lookups keep
@@ -283,11 +330,13 @@ export async function registerProject(
       ])
   const at = now().toISOString()
   return repository.atomic((db) => {
+    const name = projectNameFor(input.directory, resolved.key)
     db.query(
-      `INSERT INTO lazers_projects(key,created_at,remote_url,root_commit) VALUES(?,?,?,?)
+      `INSERT INTO lazers_projects(key,created_at,remote_url,root_commit,name) VALUES(?,?,?,?,?)
        ON CONFLICT(key) DO UPDATE SET remote_url=COALESCE(excluded.remote_url,remote_url),
-         root_commit=COALESCE(excluded.root_commit,root_commit)`,
-    ).run(resolved.key, at, resolved.remoteURL ?? null, resolved.rootCommit ?? null)
+         root_commit=COALESCE(excluded.root_commit,root_commit), name=COALESCE(name,excluded.name)`,
+    ).run(resolved.key, at, resolved.remoteURL ?? null, resolved.rootCommit ?? null, name)
+    assignProjectCode(db, resolved.key, name)
     const alias = (value: string, kind: AliasKind) =>
       db
         .query(
