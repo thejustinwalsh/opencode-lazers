@@ -20,6 +20,14 @@ export type ReloadSafety = {
    * Informational: no worker runs there; the Architect's own turn is counted in `architectTurns`.
    */
   architectTakeovers: number
+  /**
+   * Check steps in `uncertain` or `held` (no live process: the effect machine only leaves them on
+   * a decision or a retry), typically a `graph-verify:*` step of a blocked plan. Reported apart
+   * from `verifications` and never makes a reload unsafe.
+   */
+  uncertainSteps: number
+  /** "1 uncertain step on a blocked plan", or undefined when none. */
+  uncertainLine: string | undefined
   /** "2 workers running, 1 verification running, 0 Architect turns in flight, safe to reload: no" */
   line: string
 }
@@ -100,17 +108,21 @@ export function reloadSafety(
       db,
       `SELECT count(*) AS n FROM runner_effects
        WHERE (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%' OR kind='mechanical-fix')
-         AND state IN ('intended','uncertain')`,
+         AND state = 'intended'`,
     ) +
     count(
       db,
       `SELECT count(*) AS n FROM runner_retained_verifications
        WHERE state IN ('pending','task-checks')`,
     ) +
+    count(db, `SELECT count(*) AS n FROM runner_adoption_checks WHERE state = 'intended'`)
+  const uncertainSteps =
     count(
       db,
-      `SELECT count(*) AS n FROM runner_adoption_checks WHERE state IN ('intended','uncertain')`,
-    )
+      `SELECT count(*) AS n FROM runner_effects
+       WHERE (kind LIKE 'verify:%' OR kind LIKE 'graph-verify:%' OR kind='mechanical-fix')
+         AND state IN ('uncertain','held')`,
+    ) + count(db, `SELECT count(*) AS n FROM runner_adoption_checks WHERE state = 'uncertain'`)
   const architectTurns = architectTurnsInFlight(db, opencode, now)
   const takeovers = count(
     db,
@@ -126,6 +138,11 @@ export function reloadSafety(
     safe,
     workers,
     verifications,
+    uncertainSteps,
+    uncertainLine:
+      uncertainSteps > 0
+        ? `${noun(uncertainSteps, "uncertain step")} on a blocked plan`
+        : undefined,
     architectTurns,
     takeovers,
     architectTakeovers,
