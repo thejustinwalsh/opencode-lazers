@@ -30,14 +30,14 @@ export const DecisionModelSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("architect") }),
 ])
-export const DecisionSlicerSchema = z.enum(["whole", "pre-slice", "uncertainty"])
+export const DecisionSlicerSchema = z.enum(["windows", "whole", "pre-slice", "uncertainty"])
 
 export const globalSettingDefs = {
   globalSlots: setting(count.nullable(), null),
   agingMs: setting(amount, 600_000),
   historyCacheMB: setting(amount, 128),
   decisionModel: setting(DecisionModelSchema, { kind: "local" as const }),
-  decisionSlicer: setting(DecisionSlicerSchema, "uncertainty" as const),
+  decisionSlicer: setting(DecisionSlicerSchema, "windows" as const),
 }
 export const projectSettingDefs = {
   limit: setting(count.nullable(), null),

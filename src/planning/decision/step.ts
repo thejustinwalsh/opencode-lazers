@@ -11,9 +11,10 @@ export type PlanningServiceDeps = {
   store: PlanningStore
   projectKey: string
   /** Read at each ask: the local window comes and goes. `undefined` when no decision model is set up. */
-  decider: () => Decider | undefined
+  decider: () => Decider | undefined | Promise<Decider | undefined>
   now?: () => number
-  constants?: Partial<DecisionConstants>
+  /** Read at each ask, so a Settings change applies to the next one. */
+  constants?: Partial<DecisionConstants> | (() => Partial<DecisionConstants>)
   /** The planning runbook for the first decided note of a session; its pointer afterwards. */
   runbook?: (first: boolean) => string | undefined
   wait?: (ms: number) => Promise<void>
@@ -71,7 +72,8 @@ export class PlanningDecisions {
   constructor(private readonly deps: PlanningServiceDeps) {}
 
   private get constants(): DecisionConstants {
-    return { ...DEFAULT_CONSTANTS, ...this.deps.constants }
+    const given = this.deps.constants
+    return { ...DEFAULT_CONSTANTS, ...(typeof given === "function" ? given() : given) }
   }
   private now() {
     return (this.deps.now ?? Date.now)()
@@ -119,12 +121,12 @@ export class PlanningDecisions {
   private async run(sessionID: string, messageID: string, entry: Pending) {
     const { store } = this.deps
     const begin = this.now()
-    const decider = this.deps.decider()
+    const decider = await this.deps.decider()
     const outcome: DecisionOutcome = decider
       ? await decide(entry.text, {
           decider,
           clock: () => this.now(),
-          constants: this.deps.constants,
+          constants: this.constants,
           signal: new AbortController().signal,
         }).catch((error): DecisionOutcome => ({
           status: "unavailable",

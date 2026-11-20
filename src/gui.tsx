@@ -27,6 +27,7 @@ import { audioFilePCM16 } from "./webgpu/audio.ts"
 import { DEFAULT_VOICE, VOICES, voiceKeys } from "./webgpu/speech.ts"
 import { registerReadAloud } from "./webgpu/read-aloud.tsx"
 import { setupTaskPanel, taskStores } from "./tasks/panel.tsx"
+import { setupPlanningPanel } from "./planning/panel.tsx"
 import type { TaskTrajectoryOpener } from "./tasks/panel.tsx"
 import { setupModelsPanel, modelsStores } from "./models/comparison-panel.tsx"
 import { setupTrajectoryPanel, trajectoryStores } from "./trajectory-panel/panel.tsx"
@@ -154,6 +155,7 @@ export default Plugin.define({
       ctx.layout.open(`${ctx.id}:tasks`, session, { tab: "select" })
     }
     setupTaskPanel(ctx, openTaskTrajectory)
+    setupPlanningPanel(ctx)
     setupModelsPanel(ctx, openTaskTrajectory)
     setupTrajectoryPanel(ctx, { openTask })
     setupRadarPanel(ctx, { openTrajectory: openTaskTrajectory, openTask })

@@ -1,34 +1,64 @@
+import { Session } from "@opencode/schema/session"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import { timedHooks } from "../diagnostics/stall-probe.ts"
+import { timedHooks, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { InferenceBroker } from "../webgpu/broker.ts"
+import { defaultFeatures, FeatureSettings, featureEnabled } from "../webgpu/features.ts"
 import { LocalInference } from "../webgpu/rpc.ts"
-import { SystemOneRequest } from "../webgpu/system-one.ts"
+import { globalSettings } from "../projects/settings.ts"
+import { SystemOneRequest, type SystemOneInput } from "../webgpu/system-one.ts"
 import type { TaskRepository } from "../storage.ts"
-import { localDecider } from "./decision/deciders.ts"
+import { deciderFor, localDecider, type ExternalGenerate } from "./decision/deciders.ts"
 import { PlanningDecisions } from "./decision/step.ts"
+import { currentRepoMap } from "../context/repo-map-store.ts"
+import type { AgentRouteReader } from "../models/agent-route-apply.ts"
+import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
+import { mapPathsOf } from "./checks.ts"
+import { planningHost, planningModel } from "./host.ts"
+import { planningView } from "./read.ts"
+import { PlanningReviews } from "./reviews.ts"
+import { PlanningRpc } from "./rpc-contract.ts"
 import { PlanningStore } from "./store.ts"
 
-/** The decision service of one project: the store, and the local decision model behind the broker. */
+/**
+ * The decision service of one project. Settings choose the model (the local D1 behind the
+ * broker, an external catalogue model, or none, so the Architect classifies) and the slicer; both
+ * are read at each ask. The local "decisions" feature is read from storage the way the local
+ * inference server reads it, so a switched-off feature is recorded as `feature-off`.
+ */
 export function createPlanningDecisions(
-  ctx: Pick<Plugin.Context, "rpc">,
+  ctx: Pick<Plugin.Context, "rpc" | "storage" | "options" | "experimental">,
   repository: TaskRepository,
   broker: Pick<InferenceBroker, "attached">,
   projectID: string,
 ): PlanningDecisions {
-  const local = localDecider(
-    broker,
-    // A feature turned off in Settings answers with an error, which the step records.
-    () => true,
-    (input, signal) =>
-      Effect.runPromise(ctx.rpc(LocalInference).systemOne(SystemOneRequest.parse(input)), {
-        signal,
-      }) as never,
-  )
+  const decisionsOn = async () => {
+    const stored = await Effect.runPromise(ctx.storage.get("webgpu.features"))
+    const parsed = FeatureSettings.safeParse(stored)
+    const features = parsed.success
+      ? parsed.data
+      : defaultFeatures(stored === undefined && ctx.options.webgpu === true)
+    return featureEnabled(features, "decisions")
+  }
+  const systemOne = (input: SystemOneInput, signal: AbortSignal) =>
+    Effect.runPromise(ctx.rpc(LocalInference).systemOne(SystemOneRequest.parse(input)), {
+      signal,
+    }) as never
+  const generate: ExternalGenerate = (input, signal) =>
+    Effect.runPromise(ctx.experimental.generate.decisions(input as never), { signal }) as never
   return new PlanningDecisions({
     store: new PlanningStore(repository),
     projectKey: projectID,
-    decider: () => local,
+    constants: () => ({ strategy: globalSettings(repository).decisionSlicer }),
+    decider: async () => {
+      const setting = globalSettings(repository).decisionModel
+      const on = setting.kind === "local" ? await decisionsOn() : true
+      return deciderFor(setting, {
+        local: localDecider(broker, () => on, systemOne),
+        generate,
+      })
+    },
   })
 }
 
@@ -79,4 +109,109 @@ export function registerPlanningDecisionHooks(
       }
     }),
   )
+}
+
+/** `lz.planning`: reads of this project's stored plans, never of another project's. */
+export function registerPlanningRpc(
+  ctx: Pick<Plugin.Context, "rpc">,
+  repository: TaskRepository,
+  projectID: string,
+) {
+  const store = new PlanningStore(repository)
+  return timedRpc(ctx.rpc).register(PlanningRpc, {
+    get: (input) =>
+      Effect.sync(() => planningView(store, projectID, input.planningID, input.revision) ?? null),
+    resolve: (input) =>
+      Effect.sync(() => {
+        const row = store.planning(input.planningID)
+        return row && row.projectKey === projectID
+          ? ({
+              status: "found",
+              planningID: row.id,
+              projectKey: row.projectKey,
+              projectDirectory: row.projectDirectory,
+            } as const)
+          : ({ status: "not_found" } as const)
+      }),
+    list: (input) =>
+      Effect.sync(() =>
+        (input.sessionID
+          ? store.plannings(input.sessionID)
+          : store.projectPlannings(projectID)
+        ).map((row) => ({
+          id: row.id,
+          title: row.title,
+          state: row.state,
+          revision: row.revision,
+          updatedAt: row.updatedAt,
+        })),
+      ),
+  })
+}
+
+/** The review executor of one project, over the native session API and the repository map. */
+export function createPlanningReviews(
+  ctx: Pick<Plugin.Context, "session">,
+  repository: TaskRepository,
+  routes?: AgentRouteReader,
+): PlanningReviews {
+  return new PlanningReviews({
+    store: new PlanningStore(repository),
+    host: planningHost(ctx),
+    now: Date.now,
+    mapFor: async (directory) => {
+      const map = await currentRepoMap(repository, directory, repository.projectDirectory)
+      return { text: map.text, hash: map.hash, tokens: map.tokens, paths: mapPathsOf(map.text) }
+    },
+    notify: async (sessionID, id, text) => {
+      await Effect.runPromise(
+        ctx.session.synthetic({
+          sessionID: Session.ID.make(sessionID),
+          id: SessionMessage.ID.make(id),
+          text,
+          resume: true,
+          delivery: "queue",
+          description: "LAZERS planning review",
+        }),
+      )
+    },
+    title: (agent, revision) => `Planning ${agent} r${revision}`,
+    model: () => planningModel(routes),
+  })
+}
+
+/**
+ * One participant per project that advances open reviews no caller is waiting on, so a review
+ * cut short by a restart settles and is reported without the Architect doing anything.
+ */
+export function registerPlanningReviewTicks(reviews: PlanningReviews, projectDirectory: string) {
+  return Effect.acquireRelease(
+    Effect.sync(() =>
+      sharedScheduler.register(JSON.stringify(["planning", projectDirectory]), {
+        intervalMs: 1_000,
+        run: () => reviews.tick(),
+        onError: () => undefined,
+      }),
+    ),
+    (registration) => Effect.promise(() => registration.dispose()),
+  )
+}
+
+/** The text of one message of a session, for checking an Architect's quote of the conversation. */
+export function sessionMessageText(ctx: Pick<Plugin.Context, "session">) {
+  return async (sessionID: string, messageID: string): Promise<string | undefined> => {
+    const messages = await Effect.runPromise(
+      ctx.session.context({ sessionID: Session.ID.make(sessionID) }),
+    )
+    const message = messages.find((entry) => entry.id === messageID)
+    if (!message) return undefined
+    return message.type === "user" || message.type === "synthetic"
+      ? message.text
+      : message.type === "assistant"
+        ? message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n")
+        : undefined
+  }
 }

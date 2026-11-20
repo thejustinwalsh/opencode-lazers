@@ -17,7 +17,7 @@ export function encodeProjectID(projectID: string): string {
   ).join("")
 }
 
-function decodeProjectID(value: string): string | undefined {
+export function decodeProjectID(value: string): string | undefined {
   if (!/^(?:[0-9a-f]{2})+$/u.test(value)) return undefined
   try {
     const bytes = Uint8Array.from(value.match(/.{2}/gu)!, (byte) => Number.parseInt(byte, 16))
