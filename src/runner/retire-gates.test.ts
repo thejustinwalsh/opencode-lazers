@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
+import { schemaModules } from "../database-schema.ts"
 import { TaskRepository } from "../storage.ts"
 import {
   retireHumanEvidenceGate,
@@ -491,5 +492,5 @@ test("the runner schema generation runs the retained retirement when an old data
         )
         .get(),
     ),
-  ).toEqual({ generation: 14 })
+  ).toEqual({ generation: schemaModules.runner.generation })
 })
