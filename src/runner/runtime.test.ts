@@ -11861,6 +11861,84 @@ test("a cold Architect with a large context is renewed exactly once", async () =
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
 })
 
+// Live LZ-200 (renewal b298778b): the predecessor ran gpt-6.1-sol/high, the shared Architect
+// route was gpt-6.1-sol with no effort. The successor was created on the route, the renewal
+// recorded the predecessor's model, and every tick refused the successor it had created.
+test("a renewal records and creates its successor on the configured Architect route", async () => {
+  const now = 2_000_000_310_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const configured = { providerID: "openai", id: "subscription" }
+  expect(
+    new ModelMappingStore(f.repository).update({
+      target: { scope: "shared" },
+      persona: "architect",
+      expectedRevision: 0,
+      route: configured,
+    }).status,
+  ).toBe("updated")
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  expect(owner.model).toEqual({ ...configured, variant: "high" })
+  owner.contextTokens = 180_000
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(JSON.parse(renewal.model)).toEqual(configured)
+  expect(f.sessions.get(renewal.successor_session_id)?.model).toEqual(configured)
+  expect(renewal.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+})
+
+// The recorded live state: a renewal still `creating` whose successor exists on another route.
+// Its identity cannot change, so the renewal defers once and the plan's own step runs again.
+test("a renewal whose existing successor has another identity defers once instead of retrying every tick", async () => {
+  const now = 2_000_000_320_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 180_000
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await create(input)
+    f.sessions.get(input.id)!.model = { providerID: "openai", id: "subscription" }
+  }
+  const events = (...names: string[]) =>
+    f.store.atomic((db) =>
+      db
+        .query<{ event: string }, [string]>(
+          "SELECT event FROM runner_transitions WHERE plan_id=? ORDER BY id",
+        )
+        .all(f.receipt.planID)
+        .filter((row) => !names.length || names.includes(row.event)),
+    )
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.error).toBe("Native Architect renewal ID belongs to another session or route")
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(events("ARCHITECT_RENEWAL_RECOVERY_FAILED", "PLAN_STEP_FAILED")).toHaveLength(0)
+  expect(events("ARCHITECT_RENEWAL_DEFERRED")).toHaveLength(1)
+  // The predecessor keeps the plan; nothing was archived or transferred.
+  expect(owner.archived).toBe(false)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  // The deferred renewal is not retried onto the foreign successor, and says so once.
+  const after = events().length
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("deferred")
+  expect(events("ARCHITECT_RENEWAL_RETRY_BLOCKED")).toHaveLength(1)
+  expect(events().slice(after)).toEqual([])
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+})
+
 test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
   const now = 2_000_000_100_000
   expect(architectIdleWindowMs(5_000)).toBe(5_000)

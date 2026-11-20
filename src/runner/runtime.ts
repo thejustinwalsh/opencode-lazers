@@ -26,6 +26,7 @@ import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
+import { agentRouteReader, architectSessionModel } from "../models/agent-route-apply.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
@@ -154,7 +155,7 @@ import type {
   ArchitectRenewalRow,
   ProgressRow,
 } from "./store.ts"
-import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
+import { appendRunnerEffectReceipt, RENEWAL_SUCCESSOR_FOREIGN, RunnerStore } from "./store.ts"
 import { outcomeText } from "./outcome.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
 import {
@@ -5897,7 +5898,12 @@ export class TaskRuntime {
           id: continuation.session_id,
           ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
           directory: continuation.directory,
-          ...(continuation.model ? { model: JSON.parse(continuation.model) } : {}),
+          ...(() => {
+            const model = this.architectSessionModel(
+              continuation.model ? JSON.parse(continuation.model) : undefined,
+            )
+            return model ? { model } : {}
+          })(),
           title: this.sessionTitle(`continue ${plan.id.slice(0, 8)}`),
           planID: plan.id,
           sourceSessionID: plan.owner,
@@ -6435,6 +6441,14 @@ export class TaskRuntime {
     })
   }
 
+  /**
+   * The one model decision for an Architect session LAZERS creates. A renewal records it and the
+   * host creates exactly it, so the successor check compares the session with what was asked for.
+   */
+  private architectSessionModel(carried: ModelPolicy | undefined) {
+    return architectSessionModel(agentRouteReader(this.store.repository)("architect"), carried)
+  }
+
   private architectWaitingForHuman(session: HostSession) {
     return (session.pendingForms ?? 0) > 0 || (session.pendingPermissions ?? 0) > 0
   }
@@ -6461,7 +6475,7 @@ export class TaskRuntime {
       anchorPlanID: plan.id,
       previousSessionID: owner.id,
       directory: owner.directory,
-      model: JSON.stringify(owner.model),
+      model: JSON.stringify(this.architectSessionModel(owner.model)),
       idleAt: owner.idleAt,
       now: this.now(),
       handoffMessageID: messageID(),
@@ -6552,7 +6566,7 @@ export class TaskRuntime {
           // history. Re-read after the sweep below; this is not a cached proof.
           const available = await this.host.session(renewal.successor_session_id)
           if (available && !this.renewalSuccessorMatches(available, renewal))
-            throw new Error("Native Architect renewal ID belongs to another session or route")
+            return this.deferForeignSuccessor(renewal, fence)
           // A checkpoint is only safe to transfer after its complete current history
           // sweep has been journaled and checked for uncovered user input.
           await this.inspectArchitectSourceSweep(renewal, fence)
@@ -6560,7 +6574,7 @@ export class TaskRuntime {
           if (renewal.state !== "creating") return
           let successor = await this.host.session(renewal.successor_session_id)
           if (successor && !this.renewalSuccessorMatches(successor, renewal))
-            throw new Error("Native Architect renewal ID belongs to another session or route")
+            return this.deferForeignSuccessor(renewal, fence)
           if (!successor) {
             const predecessor = await this.host.session(renewal.previous_session_id)
             if (predecessor && this.architectWaitingForHuman(predecessor)) {
@@ -6592,6 +6606,8 @@ export class TaskRuntime {
               })
             successor ??= await this.host.session(renewal.successor_session_id)
           }
+          if (successor && !this.renewalSuccessorMatches(successor, renewal))
+            return this.deferForeignSuccessor(renewal, fence)
           if (!this.renewalSuccessorMatches(successor, renewal))
             throw new Error("Native Architect renewal is unavailable or foreign")
           renewal = this.store.architectRenewal(renewal.id)!
@@ -6901,6 +6917,31 @@ export class TaskRuntime {
       }
       throw error
     }
+  }
+
+  /**
+   * A successor that exists under the renewal's ID but is not the session it asked for never
+   * becomes it: its identity does not change between ticks. The renewal defers once, the
+   * predecessor keeps its plans, and the deferred row is not retried onto that session.
+   */
+  private deferForeignSuccessor(renewal: ArchitectRenewalRow, fence: number) {
+    if (
+      !this.store.setArchitectRenewalState(
+        this.owner,
+        fence,
+        renewal.id,
+        ["creating"],
+        "deferred",
+        RENEWAL_SUCCESSOR_FOREIGN,
+      )
+    )
+      return
+    this.renewalEvent(
+      renewal,
+      "ARCHITECT_RENEWAL_DEFERRED",
+      { renewalID: renewal.id, reason: RENEWAL_SUCCESSOR_FOREIGN },
+      fence,
+    )
   }
 
   private async rollbackArchitectRenewal(
