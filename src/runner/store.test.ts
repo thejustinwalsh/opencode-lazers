@@ -1009,7 +1009,7 @@ test("F-S4-2 live reservations and runnable pages survive more than 1000 retaine
   expect(rows[0]!.id).toBe("cancel-first")
   // Priority 1 is the top, then 2; unprioritized (0) plans sort after every prioritized one. The
   // order holds across the 1000-row page boundary.
-  const priorities = rows.slice(1).map((row) => JSON.parse(row.body).priority)
+  const priorities = rows.slice(1).map((row) => JSON.parse(f.store.plan(row.id)!.body).priority)
   expect(priorities.slice(0, 335).every((priority) => priority === 1)).toBe(true)
   expect(priorities.slice(335, 670).every((priority) => priority === 2)).toBe(true)
   expect(priorities.slice(670).every((priority) => priority === 0)).toBe(true)
@@ -1577,4 +1577,23 @@ test("pending notices are read in pages without receipt history", () => {
   expect(ids).toEqual(["n0", "n1", "n2", "n3", "n4", "n5", "n6"])
   expect(meter.of(/runner_outbox/).rows).toBe(7)
   expect(meter.of(/runner_outbox/).bytes).toBeLessThan(5_000)
+})
+
+test("runnable plan paging returns scheduling columns, not plan bodies", () => {
+  const f = fixture("runnable-heads")
+  const receipt = f.store.submit(f.input, "owner")
+  f.store.atomic((db) => {
+    const clone = db.query(`INSERT INTO runner_plans
+      SELECT ?,project_directory,owner,revision,version,'running',json_set(body,'$.padding',?),model,reason,artifact
+      FROM runner_plans WHERE id=?`)
+    for (let index = 0; index < 30; index++)
+      clone.run(`padded-${index}`, "p".repeat(40_000), receipt.planID)
+  })
+  const meter = meterReads(f.store)
+  const rows = [...f.store.runnablePlans(new Set(["integrated"]))]
+  meter.stop()
+  expect(rows).toHaveLength(31)
+  expect(Object.keys(rows[0]!)).not.toContain("body")
+  // 30 padded bodies are 1.2 MB; the page is the ids, states and ranks.
+  expect(meter.bytes).toBeLessThan(10_000)
 })

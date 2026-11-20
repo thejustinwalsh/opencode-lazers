@@ -67,6 +67,8 @@ export type PlanRow = {
   reason: string | null
   artifact: string | null
 }
+/** What the scheduler needs to order and pick a plan; the body is loaded on demand. */
+export type RunnablePlan = { id: string; state: PlanLifecycleState; queue_rank: number }
 export type NodeRow = {
   plan_id: string
   task_id: string
@@ -1318,9 +1320,12 @@ export class RunnerStore {
       )?.id ?? null
     )
   }
-  /** Page execution candidates after filtering history; never use the display window for scheduling. */
-  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<PlanRow & { queue_rank: number }> {
-    type Candidate = PlanRow & { queue_rank: number; priority: number; sequence: number }
+  /**
+   * Page execution candidates after filtering history; never use the display window for scheduling.
+   * Rows carry only what ordering needs; load a body with plan(id) for the one being stepped.
+   */
+  *runnablePlans(terminalStates: ReadonlySet<string>): Generator<RunnablePlan> {
+    type Candidate = RunnablePlan & { priority: number; sequence: number }
     const states = [...terminalStates]
     const queueRank = `CASE
       WHEN state IN ('cancelling','cleaning') THEN 2
@@ -1336,7 +1341,7 @@ export class RunnerStore {
       const page: Candidate[] = this.read((db) =>
         db
           .query<Candidate, (string | number)[]>(
-            `SELECT *,${queueRank} AS queue_rank,
+            `SELECT id,state,${queueRank} AS queue_rank,
            ${planPrioritySortSQL("body")} AS priority,rowid AS sequence
            FROM runner_plans WHERE project_directory=?
            ${states.length ? `AND state NOT IN (${states.map(() => "?").join(",")})` : ""}
