@@ -18,6 +18,8 @@ import {
   errorText,
   isRerunnableEffect,
   sessionID,
+  effectSuperseded,
+  fallowAcceptance,
 } from "./runtime-helpers.ts"
 import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
@@ -25,6 +27,9 @@ import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
 import { ArchitectSources } from "./architect-sources.ts"
 import { ArchitectRenewal } from "./architect-renewal.ts"
+import { CheckActivities } from "./check-activities.ts"
+import { VerificationCandidate } from "./verification-candidate.ts"
+import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -44,41 +49,30 @@ import {
   type PrerequisiteIntegrationRow,
   type TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
-import { dirname, extname, join } from "node:path"
+import { existsSync, lstatSync, realpathSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 
 import {
   effectiveVerificationCheck,
-  verificationDeadline as resolveVerificationDeadline,
-  verificationCheckWithDefaults,
   verificationReceiptDeadline,
   verificationTimeoutDefaults,
 } from "./verification-timeout.ts"
-import type {
-  VerificationDeadline,
-  VerificationTimeoutTarget,
-  VerificationTimeoutDefaults,
-} from "./verification-timeout.ts"
-import { LEGACY_FALLOW_CHECK_ID, type TaskProposal } from "../task.ts"
+import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
+import { type TaskProposal } from "../task.ts"
 import {
   artifactExists,
-  ArtifactScopeViolation,
   artifactUnchanged,
   commitIsAncestor,
   changedPaths,
   checkResourcesSettled,
   canonicalCombinedArtifact,
   combineArtifacts,
-  commitArtifact,
   gitAsync,
   worktreeListPorcelain,
   reviewedScopeBase,
-  runDeclaredCheck,
-  runCheck,
   scopePatternsConflict,
   verificationEnvironmentIdentity,
-  workingTreeIdentity,
   writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
@@ -101,7 +95,6 @@ import {
   defaultFallowPlanReview,
   defaultFallowReview,
   fallowCheckReceipt,
-  fallowOutcome,
   isFallowEffectKind,
   fallowReasonText,
   unavailableFallowResult,
@@ -111,8 +104,7 @@ import type { FallowReviewResult } from "../audit/review.ts"
 import { fallowConfigGate, hasStoredFallowConfig } from "../audit/fallow-gate.ts"
 import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
 import { needsRepair } from "../audit/audit-findings.ts"
-import type { FallowDisposition } from "../audit/contract.ts"
-import { dispositionsAfterRepair } from "../audit/fallow-dispositions.ts"
+
 import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attribution.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
@@ -132,7 +124,7 @@ import {
 import { knownTree } from "./identity-store.ts"
 import type { ArtifactEvidenceLookup } from "./prerequisite-proof.ts"
 import { checkSucceeded, checkFailureReason } from "./checks.ts"
-import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
+
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
 import type { CommandInput as PlanCommand } from "./schema.ts"
@@ -189,7 +181,6 @@ import {
 import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
 import {
   isStartupWorktreeCandidate,
-  nativeWorktreeFailureFromReceipt,
   startupFailureSettlementFromReceipt,
   startupWorktreeFailureEvidence,
   startupWorktreeCandidates,
@@ -198,34 +189,22 @@ import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./s
 import {
   activeRetainedVerifications,
   createRetainedVerification,
-  markRetainedVerificationCheckUncertain,
-  retainedVerification,
-  retainedVerificationChecks,
   retainedVerificationsForPlan,
   saveRetainedVerification,
-  settleRetainedVerificationResources,
 } from "./retained-verification/store.ts"
 import {
   abortVerificationActivities,
-  canonicalVerificationDatabasePath,
   forgetVerificationActivity,
   startVerificationActivity,
-  verificationActivity,
   verificationActivityKey,
   verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
-import {
-  observeRetainedCheckIsolationWitness,
-  retainedVerificationEnvironmentIdentity,
-} from "./retained-verification/isolation.ts"
+import { retainedVerificationEnvironmentIdentity } from "./retained-verification/isolation.ts"
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
-import {
-  retainedProcedurePlan,
-  retainedProjectIdentity,
-} from "./retained-verification/procedure.ts"
+
 import { sameProject } from "../project-key.ts"
 
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
@@ -439,28 +418,6 @@ type PlanFallowContext = {
   verificationEpoch: number
 }
 
-/** The scope review in the `task-accepted` outcome, bounded so a large change stays readable. */
-function boundedScopeReport(report: ScopeReport): ScopeReport {
-  const limit = 30
-  return {
-    ...report,
-    created: report.created.slice(0, limit),
-    missingExpected: report.missingExpected.slice(0, limit),
-    divergences: report.divergences.slice(0, limit),
-    accepted: report.accepted.slice(0, limit),
-    warnings: report.warnings.slice(0, limit),
-  }
-}
-
-/** The `task-accepted` outcome's Fallow field: only when something remains to report. */
-function fallowAcceptance(
-  review: FallowReviewResult | undefined,
-  dispositions?: FallowDisposition[],
-) {
-  const fallow = fallowOutcome(review, dispositions)
-  return fallow ? { fallow } : {}
-}
-
 /** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
 const SLOW_RECONCILE_MS = 30_000
 
@@ -468,16 +425,6 @@ const SLOW_RECONCILE_MS = 30_000
 function explicitDraft(plan: PlanRow): boolean {
   try {
     return (JSON.parse(plan.body) as { draft?: unknown }).draft === true
-  } catch {
-    return false
-  }
-}
-
-/** A re-runnable effect that was replaced for lack of a receipt; it no longer holds anything. */
-function effectSuperseded(effect: EffectRow): boolean {
-  if (effect.state !== "failed" || !effect.receipt) return false
-  try {
-    return (JSON.parse(effect.receipt) as { superseded?: unknown }).superseded === true
   } catch {
     return false
   }
@@ -533,78 +480,6 @@ type CommandContext = {
     | undefined
   cleanupDiagnostics: CleanupAuditDiagnostics | undefined
   obs: GitObservations
-}
-
-const WORKTREE_EFFECT_KINDS = [
-  "worktree",
-  "worktree-recovery",
-  "graph-worktree",
-  "adoption-task-worktree",
-  "adoption-combined-worktree",
-]
-
-/** The blocked-plan reason startup recovery wrote for an uncertain worktree effect, if any. */
-function startupWorktreeRecoveryReason(
-  effect: EffectRow,
-  nativeFailure: ReturnType<typeof nativeWorktreeFailureFromReceipt>,
-): string | undefined {
-  if (
-    !["worktree", "worktree-recovery"].includes(effect.kind) ||
-    effect.state !== "uncertain" ||
-    !effect.receipt ||
-    nativeFailure
-  )
-    return undefined
-  try {
-    const receipt = JSON.parse(effect.receipt) as { error?: unknown }
-    return typeof receipt.error === "string"
-      ? `Recovery uncertain for ${effect.kind} ${effect.id}: ${receipt.error}`
-      : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** Native worktrees at the effect's base commit (clean ones only, for adoption worktrees). */
-async function worktreeReconcileCandidates(
-  effect: EffectRow,
-  payload: { workspace: string; base: string },
-  nativeWorktrees: readonly string[],
-) {
-  const possibleCandidates: string[] = []
-  for (const directory of nativeWorktrees.filter((directory) =>
-    effect.kind === "worktree-recovery"
-      ? directory === payload.workspace
-      : isStartupWorktreeCandidate(payload.workspace, directory),
-  ))
-    if (
-      existsSync(directory) &&
-      (await gitAsync(directory, ["rev-parse", "HEAD"])) === payload.base
-    )
-      possibleCandidates.push(directory)
-  const candidates: string[] = []
-  for (const directory of possibleCandidates) {
-    if (
-      effect.kind.startsWith("adoption-") &&
-      (await gitAsync(directory, ["status", "--porcelain", "--untracked-files=all"]))
-    )
-      continue
-    candidates.push(directory)
-  }
-  return candidates
-}
-
-/** The check receipt a runner subprocess left at the effect's receipt path, when there is one. */
-function readCheckReceipt(payload: { receiptPath: string }): CheckReceipt | undefined {
-  return existsSync(payload.receiptPath)
-    ? (JSON.parse(readFileSync(payload.receiptPath, "utf8")) as CheckReceipt)
-    : undefined
-}
-
-function unsettledCheckError(label: "Mechanical" | "Verification", check: CheckReceipt) {
-  return new Error(
-    `${label} command exited ${check.exitCode ?? "unknown"} with timedOut=${check.timedOut}, but subprocess cleanup is uncertain: ${check.processCleanup?.detail ?? "termination was not confirmed"}`,
-  )
 }
 
 /** Whether a command's outcome leaves work the scheduler should pick up now. */
@@ -665,6 +540,9 @@ export class TaskRuntime {
   private readonly ownership: ArchitectOwnership
   private readonly sources: ArchitectSources
   private readonly renewal: ArchitectRenewal
+  private readonly checkActivities: CheckActivities
+  private readonly verificationCandidate: VerificationCandidate
+  private readonly effectReconciliation: EffectReconciliation
   private running = false
   private stopped = false
   private tickRequested = false
@@ -760,6 +638,41 @@ export class TaskRuntime {
       startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
       startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
       holdAdoption: (...args) => this.adoptionExecution.holdAdoption(...args),
+    })
+    this.checkActivities = new CheckActivities(this.core, {
+      requestTick: () => this.requestTick(),
+      verificationTimeoutDefaults: this.verificationTimeoutDefaults,
+      retainedVerificationAborts: this.retainedVerificationAborts,
+      retainedVerificationExecution: () => this.retainedVerificationExecution,
+      adoptionExecution: () => this.adoptionExecution,
+      reconcileEffect: (...args) => this.reconcileEffect(...args),
+    })
+    this.verificationCandidate = new VerificationCandidate(this.core, {
+      hold: (...args) => this.hold(...args),
+      effect: (...args) => this.effect(...args),
+      outcome: (...args) => this.outcome(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      checkActivity: (...args) => this.checkActivity(...args),
+      startCheckActivity: (...args) => this.startCheckActivity(...args),
+      verificationDeadline: (...args) => this.verificationDeadline(...args),
+      deadlineAwaitingTaskContinuation: (...args) => this.deadlineAwaitingTaskContinuation(...args),
+      verificationTarget: (...args) => this.verificationTarget(...args),
+      runVerificationCheck: (...args) => this.runVerificationCheck(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
+      failAttempt: (...args) => this.failAttempt(...args),
+      startAuditorReport: (...args) => this.startAuditorReport(...args),
+      verificationTimeoutDefaults: this.verificationTimeoutDefaults,
+    })
+    this.effectReconciliation = new EffectReconciliation(this.core, {
+      supersedeEffect: (...args) => this.supersedeEffect(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      receipt: (...args) => this.receipt(...args),
+      checkActivity: (...args) => this.checkActivity(...args),
+      resumeStartupRecovery: (...args) => this.resumeStartupRecovery(...args),
+      requestRetick: () => {
+        this.tickRequested = true
+      },
     })
     this.ownership = new ArchitectOwnership(this.core, {
       architectRouting: this.architectRouting,
@@ -988,397 +901,58 @@ export class TaskRuntime {
     return join(dirname(this.store.repository.path), "runner")
   }
 
-  private startCheckActivity(input: {
-    id: string
-    identity: unknown
-    metadata: Record<string, unknown>
-    signal?: AbortSignal
-    run(signal: AbortSignal): Promise<CheckReceipt>
-  }): { activity: VerificationActivity<CheckReceipt>; created: boolean } {
-    return startVerificationActivity({
-      databasePath: this.store.repository.path,
-      key: verificationActivityKey(this.store.repository.path, input.id),
-      identity: fingerprint(input.identity),
-      owner: this.owner,
-      metadata: input.metadata,
-      ...(input.signal ? { signal: input.signal } : {}),
-      run: input.run,
-      onSettled: () => {
-        void this.requestTick().catch(() => undefined)
-      },
-    })
+  private startCheckActivity(...args: Parameters<CheckActivities["startCheckActivity"]>) {
+    return this.checkActivities.startCheckActivity(...args)
   }
 
-  private checkActivity(
-    id: string,
-    identity: unknown,
-  ): VerificationActivity<CheckReceipt> | undefined {
-    return verificationActivity(
-      verificationActivityKey(this.store.repository.path, id),
-      fingerprint(identity),
-    )
+  private checkActivity(...args: Parameters<CheckActivities["checkActivity"]>) {
+    return this.checkActivities.checkActivity(...args)
   }
 
-  private verificationDeadline(target: VerificationTimeoutTarget): VerificationDeadline {
-    return resolveVerificationDeadline(
-      this.store.verificationTimeoutAmendments(target.planID),
-      target,
-    )
+  private verificationDeadline(...args: Parameters<CheckActivities["verificationDeadline"]>) {
+    return this.checkActivities.verificationDeadline(...args)
   }
 
   private deadlineAwaitingTaskContinuation(
-    plan: PlanRow,
-    target: VerificationTimeoutTarget,
-    deadline: VerificationDeadline,
-  ): boolean {
-    if (!deadline.amendmentID || !target.taskID) return false
-    const amendment = this.store
-      .verificationTimeoutAmendments(plan.id)
-      .find((candidate) => candidate.amendmentID === deadline.amendmentID)
-    if (!amendment) throw new Error("Current verification deadline amendment is missing")
-    const resumedVersion = this.store.latestTransitionVersion(
-      plan.id,
-      target.taskID,
-      "VERIFICATION_RESUMED",
-    )
-    return resumedVersion === undefined || resumedVersion < amendment.planVersion
+    ...args: Parameters<CheckActivities["deadlineAwaitingTaskContinuation"]>
+  ) {
+    return this.checkActivities.deadlineAwaitingTaskContinuation(...args)
   }
 
-  private verificationTarget(
-    plan: PlanRow,
-    phase: "task" | "combined",
-    check: TaskProposal["verification"][number],
-    artifact: string,
-    taskID: string | null,
-    taskRevision: number | null,
-    attemptID: string | null,
-  ): VerificationTimeoutTarget {
-    return {
-      projectID: this.projectID,
-      projectDirectory: this.directory,
-      planID: plan.id,
-      planRevision: plan.revision,
-      phase,
-      taskID,
-      taskRevision,
-      attemptID,
-      artifact,
-      checkID: check.id,
-      command: check.command,
-      authoredTimeoutMs: check.timeoutMs ?? null,
-      authoredInactivityTimeoutMs: check.inactivityTimeoutMs ?? null,
-      authoredHardTimeoutMs: check.hardTimeoutMs ?? null,
-      defaultInactivityTimeoutMs: this.verificationTimeoutDefaults.inactivityTimeoutMs,
-      defaultHardTimeoutMs: this.verificationTimeoutDefaults.hardTimeoutMs,
-    }
+  private verificationTarget(...args: Parameters<CheckActivities["verificationTarget"]>) {
+    return this.checkActivities.verificationTarget(...args)
   }
 
-  private async runVerificationCheck(
-    workspace: string,
-    artifact: string,
-    check: TaskProposal["verification"][number],
-    deadline: VerificationDeadline,
-    receiptPath: string,
-    options?: Parameters<typeof runDeclaredCheck>[4],
-  ): Promise<CheckReceipt> {
-    const receipt = await runDeclaredCheck(
-      workspace,
-      artifact,
-      effectiveVerificationCheck(check, deadline),
-      receiptPath,
-      options,
-    )
-    const annotated = {
-      ...receipt,
-      verificationDeadline: verificationReceiptDeadline(deadline),
-    }
-    await writeCheckReceipt(receiptPath, annotated)
-    return annotated
+  private runVerificationCheck(...args: Parameters<CheckActivities["runVerificationCheck"]>) {
+    return this.checkActivities.runVerificationCheck(...args)
   }
 
-  private async cancelCheckActivities(planID: string): Promise<VerificationActivity[]> {
-    return abortVerificationActivities(
-      (activity) =>
-        activity.metadata.databasePath ===
-          canonicalVerificationDatabasePath(this.store.repository.path) &&
-        activity.metadata.projectDirectory === this.directory &&
-        activity.metadata.planID === planID,
-    )
+  private cancelCheckActivities(...args: Parameters<CheckActivities["cancelCheckActivities"]>) {
+    return this.checkActivities.cancelCheckActivities(...args)
   }
 
-  private retainedCheckSettlementProblem(operationID: string): string | undefined {
-    return this.store.atomic((db) => {
-      for (const check of retainedVerificationChecks(db, operationID)) {
-        if (check.state !== "completed" || !check.receipt)
-          return "Retained check has no conclusive final receipt"
-        try {
-          const receipt = JSON.parse(check.receipt) as CheckReceipt
-          if (!checkResourcesSettled(receipt))
-            return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain`
-        } catch {
-          return "Retained check settlement receipt is unreadable"
-        }
-      }
-      return undefined
-    })
+  private retainedCheckSettlementProblem(
+    ...args: Parameters<CheckActivities["retainedCheckSettlementProblem"]>
+  ) {
+    return this.checkActivities.retainedCheckSettlementProblem(...args)
   }
 
-  private async reconcileCancelledCheckActivities(
-    plan: PlanRow,
-    activities: VerificationActivity[],
-    fence: number,
-  ): Promise<void> {
-    for (const activity of activities) {
-      const metadata = activity.metadata
-      if (metadata.kind === "effect" && typeof metadata.effectID === "string") {
-        const effect = this.store
-          .effects(plan.id)
-          .find((candidate) => candidate.id === metadata.effectID)
-        if (effect) await this.reconcileEffect(effect, fence)
-        continue
-      }
-      if (
-        metadata.kind === "adoption" &&
-        typeof metadata.adoptionID === "string" &&
-        (metadata.phase === "task" || metadata.phase === "combined") &&
-        typeof metadata.checkID === "string"
-      ) {
-        const adoptionID = metadata.adoptionID
-        const phase = metadata.phase
-        const checkID = metadata.checkID
-        const row = this.store
-          .adoptionChecks(adoptionID, phase)
-          .find((candidate) => candidate.check_id === checkID)
-        if (!row) continue
-        let receipt: CheckReceipt | undefined
-        try {
-          if (existsSync(row.receipt_path))
-            receipt = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
-        } catch {
-          receipt = undefined
-        }
-        const check = JSON.parse(row.check_json) as TaskProposal["verification"][number]
-        if (
-          activity.state === "completed" &&
-          receipt &&
-          this.adoptionExecution.adoptionCheckReceiptMatches(receipt, row, check)
-        )
-          this.store.completeAdoptionCheck(adoptionID, phase, checkID, receipt, {
-            owner: this.owner,
-            value: fence,
-          })
-        else
-          this.store.markAdoptionCheckUncertain(
-            adoptionID,
-            phase,
-            checkID,
-            `Cancelled adoption check has no conclusive receipt${activity.error ? `: ${errorText(activity.error)}` : ""}`,
-            { owner: this.owner, value: fence },
-          )
-        const activityID =
-          typeof metadata.activityID === "string"
-            ? metadata.activityID
-            : `adoption:${adoptionID}:${phase}:${checkID}`
-        const activityIdentity = {
-          adoptionID,
-          phase,
-          checkID,
-          inputFingerprint: row.input_fingerprint,
-          workspace: row.workspace,
-          artifact: row.artifact,
-          receiptPath: row.receipt_path,
-        }
-        forgetVerificationActivity(
-          verificationActivityKey(this.store.repository.path, activityID),
-          fingerprint(activityIdentity),
-        )
-        continue
-      }
-      if (metadata.kind === "retained") await this.settleCancelledRetainedActivity(activity)
-    }
+  private reconcileCancelledCheckActivities(
+    ...args: Parameters<CheckActivities["reconcileCancelledCheckActivities"]>
+  ) {
+    return this.checkActivities.reconcileCancelledCheckActivities(...args)
   }
 
-  private async settleCancelledRetainedActivity(activity: VerificationActivity): Promise<void> {
-    await this.settleCancelledRetainedReceipt(activity.metadata, activity)
+  private settleCancelledRetainedActivity(
+    ...args: Parameters<CheckActivities["settleCancelledRetainedActivity"]>
+  ) {
+    return this.checkActivities.settleCancelledRetainedActivity(...args)
   }
 
-  private async recoverCancelledRetainedChecks(operationID: string): Promise<void> {
-    const operation = this.store.atomic((db) => retainedVerification(db, operationID))
-    if (
-      !operation ||
-      operation.state !== "cancelled" ||
-      operation.projectDirectory !== this.directory
-    )
-      return
-    const checks = this.store.atomic((db) => retainedVerificationChecks(db, operationID))
-    for (const check of checks) {
-      if (check.state === "completed") continue
-      // These are durable bindings, not a synthesized successful activity.
-      // The disk receipt and isolation witness must independently validate.
-      await this.settleCancelledRetainedReceipt({
-        operationID,
-        phase: check.phase,
-        checkID: check.checkID,
-        workspace: check.workspace,
-        artifact: check.artifact,
-        contextPath: check.contextPath,
-      })
-    }
-  }
-
-  private async settleCancelledRetainedReceipt(
-    metadata: Record<string, unknown>,
-    activity?: VerificationActivity,
-  ): Promise<void> {
-    if (
-      typeof metadata.operationID !== "string" ||
-      metadata.phase !== "task" ||
-      typeof metadata.checkID !== "string" ||
-      typeof metadata.workspace !== "string" ||
-      typeof metadata.artifact !== "string" ||
-      typeof metadata.contextPath !== "string"
-    )
-      return
-    const operationID = metadata.operationID
-    const phase = metadata.phase
-    const checkID = metadata.checkID
-    const operation = this.store.atomic((db) => retainedVerification(db, operationID))
-    const row = this.store.atomic((db) =>
-      retainedVerificationChecks(db, operationID, phase).find(
-        (candidate) => candidate.checkID === checkID,
-      ),
-    )
-    if (!operation || !row) return
-    const identity = {
-      operationID,
-      phase,
-      checkID,
-      inputFingerprint: row.inputFingerprint,
-      workspace: row.workspace,
-      artifact: row.artifact,
-      contextPath: row.contextPath,
-    }
-    let receipt: CheckReceipt | undefined
-    try {
-      if (existsSync(row.receiptPath))
-        receipt = JSON.parse(readFileSync(row.receiptPath, "utf8")) as CheckReceipt
-    } catch {
-      receipt = undefined
-    }
-    const check = JSON.parse(row.checkJSON) as TaskProposal["verification"][number]
-    const procedure = retainedProcedurePlan(check.command)
-    let valid = false
-    try {
-      if (
-        (!activity || activity.state === "completed") &&
-        receipt &&
-        procedure.status === "supported"
-      )
-        valid = Boolean(
-          row.workspace === metadata.workspace &&
-          row.artifact === metadata.artifact &&
-          row.contextPath === metadata.contextPath &&
-          row.workspace ===
-            this.retainedVerificationExecution.retainedVerificationIsolatedWorkspace(
-              operation,
-              phase,
-            ) &&
-          row.artifact === operation.artifact &&
-          (await observeRetainedCheckIsolationWitness(
-            row.contextPath,
-            activity ? metadata.isolation : receipt.isolation,
-            {
-              operationID,
-              phase,
-              checkID,
-              originalWorkspace: operation.originalWorkspace,
-              candidateWorkspace: row.workspace,
-              taskDatabase: this.store.repository.path,
-              projectDirectory: this.directory,
-              candidateArtifact: row.artifact,
-              projectIdentity: retainedProjectIdentity(this.directory, row.workspace, row.artifact),
-              procedurePlan: procedure.plan,
-            },
-          )) &&
-          this.retainedVerificationExecution.retainedVerificationCheckReceipt(
-            receipt,
-            operation,
-            phase,
-            check,
-            row.workspace,
-            row.artifact,
-            row.environmentIdentity,
-          ) !== undefined,
-        )
-    } catch {
-      valid = false
-    }
-    if (valid && receipt) {
-      this.retainedVerificationExecution.completeRetainedCheck(operation, phase, checkID, receipt)
-      if (checkResourcesSettled(receipt))
-        await this.retainedVerificationExecution.cleanupRetainedCheckResources(
-          operation,
-          phase,
-          checkID,
-          row.contextPath,
-          receipt.isolation,
-          0,
-        )
-      else
-        this.store.atomic((db) =>
-          settleRetainedVerificationResources(
-            db,
-            operationID,
-            phase,
-            checkID,
-            "uncertain",
-            this.now(),
-          ),
-        )
-      if (!checkResourcesSettled(receipt))
-        this.store.record(
-          operation.planID,
-          operation.taskID,
-          "RETAINED_VERIFICATION_CHECK_RESOURCES_UNCERTAIN",
-          {
-            operationID,
-            phase,
-            checkID,
-            receipt,
-            processCleanup: receipt.processCleanup,
-          },
-        )
-      this.retainedVerificationAborts.delete(operationID)
-    } else {
-      this.store.atomic((db) =>
-        markRetainedVerificationCheckUncertain(
-          db,
-          operationID,
-          phase,
-          checkID,
-          activity?.error
-            ? `Verification process termination or receipt is uncertain: ${errorText(activity.error)}`
-            : "Cancelled verification receipt did not match its retained operation binding",
-        ),
-      )
-      this.store.atomic((db) =>
-        settleRetainedVerificationResources(
-          db,
-          operationID,
-          phase,
-          checkID,
-          "uncertain",
-          this.now(),
-        ),
-      )
-    }
-    forgetVerificationActivity(
-      verificationActivityKey(
-        this.store.repository.path,
-        `retained:${operationID}:${phase}:${checkID}`,
-      ),
-      fingerprint(identity),
-    )
+  private recoverCancelledRetainedChecks(
+    ...args: Parameters<CheckActivities["recoverCancelledRetainedChecks"]>
+  ) {
+    return this.checkActivities.recoverCancelledRetainedChecks(...args)
   }
 
   readScheduling(input: SchedulingInput): Promise<SchedulingPage> {
@@ -9431,720 +9005,50 @@ export class TaskRuntime {
     }
   }
 
-  private async prepareVerificationCandidate(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
-    fence: number,
-  ): Promise<"ready" | "prepared" | "pending" | "held"> {
-    if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
-      return "ready"
-    const scope = this.store.effectiveWriteScope(attempt.task_id)
-    const paths = await changedPaths(attempt.workspace, attempt.base_commit)
-    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return "ready"
-    const formatterExtensions = new Set([
-      ".css",
-      ".htm",
-      ".html",
-      ".js",
-      ".jsx",
-      ".json",
-      ".json5",
-      ".jsonc",
-      ".md",
-      ".mdx",
-      ".mjs",
-      ".mts",
-      ".ts",
-      ".tsx",
-      ".yaml",
-      ".yml",
-    ])
-    const lintExtensions = new Set([".cjs", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx", ".cts"])
-    const formatPaths: string[] = []
-    const lintPaths: string[] = []
-    for (const path of paths) {
-      let info: ReturnType<typeof lstatSync>
-      try {
-        info = lstatSync(join(attempt.workspace, path))
-      } catch {
-        continue
-      }
-      if (!info.isFile() || info.isSymbolicLink()) continue
-      const extension = extname(path).toLowerCase()
-      if (formatterExtensions.has(extension)) formatPaths.push(path)
-      if (lintExtensions.has(extension)) lintPaths.push(path)
-    }
-    if (!formatPaths.length && !lintPaths.length) return "ready"
-    // A write-scope overlap is a warning only: parallel work stays allowed.
-    if (!this.preparationAllowed(attempt))
-      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
-        attemptID: attempt.id,
-        phase: "mechanical-preparation",
-      })
-    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
-    const commands = [
-      ...(formatPaths.length ? [`bun fmt ${formatPaths.map(quote).join(" ")}`] : []),
-      ...(lintPaths.length ? [`bun lint --fix ${lintPaths.map(quote).join(" ")}`] : []),
-      ...(formatPaths.length && lintPaths.length
-        ? [`bun fmt ${formatPaths.map(quote).join(" ")}`]
-        : []),
-    ]
-    const command = commands.join(" && ")
-    const check = verificationCheckWithDefaults(
-      { id: "mechanical-preparation", command },
-      this.verificationTimeoutDefaults,
-    )
-    const inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
-    const shared = attempt.workspace === this.directory
-    const sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
-    const environmentIdentity = verificationEnvironmentIdentity()
-    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const payload = {
-      workspace: attempt.workspace,
-      baseCommit: attempt.base_commit,
-      inputFingerprint,
-      scope,
-      paths,
-      formatPaths,
-      lintPaths,
-      command,
-      check,
-      environmentIdentity,
-      messageID: attempt.message_id,
-      ...(repairID ? { repairID } : {}),
-      planVersion: plan.version,
-      receiptPath: join(
-        this.dataDirectory,
-        "receipts",
-        attempt.id,
-        `mechanical-preparation-${inputFingerprint}.json`,
-      ),
-    }
-    const existing = this.store.effects(plan.id).findLast((effect) => {
-      if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
-      if (effectSuperseded(effect)) return false
-      const recorded = JSON.parse(effect.payload)
-      if (
-        recorded.messageID !== attempt.message_id ||
-        (recorded.repairID ?? undefined) !== repairID
-      )
-        return false
-      // A clean shared checkout can contain a newly committed correction.
-      // Preserve old receipts and prepare the new candidate independently.
-      if (shared && !sharedDirty && effect.state === "completed") {
-        const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
-        if (
-          receipt?.preparation &&
-          recorded.inputFingerprint !== inputFingerprint &&
-          receipt.preparation.resultingFingerprint !== inputFingerprint
-        )
-          return false
-      }
-      return true
-    })
-    if (existing) {
-      let recorded: typeof payload
-      try {
-        recorded = JSON.parse(existing.payload) as typeof payload
-      } catch {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation journal is unreadable; no check was replayed",
-        )
-        return "held"
-      }
-      if (
-        recorded.baseCommit !== payload.baseCommit ||
-        recorded.workspace !== payload.workspace ||
-        recorded.command !== payload.command ||
-        JSON.stringify(recorded.scope) !== JSON.stringify(scope) ||
-        recorded.messageID !== attempt.message_id ||
-        recorded.repairID !== payload.repairID
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate preparation inputs changed; the original activity was not replayed",
-        )
-        return "held"
-      }
-      if (existing.state !== "completed") {
-        const activity = this.checkActivity(existing.id, {
-          effectID: existing.id,
-          payload: existing.payload,
-        })
-        if (activity?.state === "running") return "pending"
-        this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
-        return "held"
-      }
-      let receipt: CheckReceipt | undefined
-      try {
-        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: CheckReceipt }).check
-      } catch {
-        receipt = undefined
-      }
-      if (
-        !receipt?.preparation ||
-        receipt.id !== check.id ||
-        receipt.command !== check.command ||
-        receipt.artifact !== attempt.base_commit ||
-        receipt.inputIdentity !== recorded.inputFingerprint ||
-        receipt.environmentIdentity !== recorded.environmentIdentity ||
-        receipt.preparation.inputFingerprint !== recorded.inputFingerprint ||
-        receipt.preparation.resultingFingerprint !==
-          (await workingTreeIdentity(attempt.workspace, attempt.base_commit))
-      ) {
-        this.hold(
-          plan,
-          "Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted",
-        )
-        return "held"
-      }
-      if (!checkSucceeded(receipt)) {
-        this.hold(
-          plan,
-          `Mechanical candidate preparation failed (${receipt.command}, exit ${receipt.exitCode ?? "unknown"}); the original attempt was preserved without a worker repair`,
-          ["reconcile", "resume", "audit", "cancel"],
-        )
-        return "held"
-      }
-      return "prepared"
-    }
-    if (sharedDirty) {
-      this.hold(
-        plan,
-        "Commit task edits before verification; shared checkout has uncommitted changes",
-      )
-      return "held"
-    }
-    const effect = this.effect(
-      plan.id,
-      attempt.task_id,
-      attempt.id,
-      "mechanical-fix",
-      payload,
-      fence,
-    )
-    this.startCheckActivity({
-      id: effect.id,
-      identity: { effectID: effect.id, payload: effect.payload },
-      metadata: {
-        kind: "effect",
-        projectDirectory: this.directory,
-        planID: plan.id,
-        taskID: attempt.task_id,
-        attemptID: attempt.id,
-        effectID: effect.id,
-      },
-      run: async (signal) => {
-        const receipt = await runCheck(
-          attempt.workspace,
-          attempt.base_commit,
-          check,
-          payload.receiptPath,
-          {
-            signal,
-            inputIdentity: inputFingerprint,
-            environmentIdentity,
-          },
-        )
-        const preparation = {
-          inputFingerprint,
-          resultingFingerprint: await workingTreeIdentity(attempt.workspace, attempt.base_commit),
-          paths,
-          scope,
-        }
-        const result = { ...receipt, preparation }
-        await writeCheckReceipt(payload.receiptPath, result)
-        return result
-      },
-    })
-    return "pending"
+  private prepareVerificationCandidate(
+    ...args: Parameters<VerificationCandidate["prepareVerificationCandidate"]>
+  ) {
+    return this.verificationCandidate.prepareVerificationCandidate(...args)
   }
 
-  /** True while the attempt is still the one this verification pass was started for. */
   private verificationCurrentGuard(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    repairID: string | undefined,
+    ...args: Parameters<VerificationCandidate["verificationCurrentGuard"]>
   ) {
-    return () => {
-      const currentPlan = this.store.plan(plan.id)
-      const currentAttempt = this.store
-        .attempts(plan.id)
-        .find((candidate) => candidate.id === attempt.id)
-      const currentNode = this.store
-        .nodes(plan.id)
-        .find((candidate) => candidate.task_id === attempt.task_id)
-      return Boolean(
-        currentPlan &&
-        ["running", "blocked"].includes(currentPlan.state) &&
-        currentAttempt?.state === "verifying" &&
-        currentAttempt.message_id === attempt.message_id &&
-        currentNode?.state === "verifying" &&
-        this.retainedRepairGeneration(plan.id, attempt.task_id) === repairID,
-      )
-    }
+    return this.verificationCandidate.verificationCurrentGuard(...args)
   }
 
-  private taskVerificationTarget(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    check: TaskProposal["verification"][number],
-    artifact: string,
-  ) {
-    return this.verificationTarget(
-      plan,
-      "task",
-      check,
-      artifact,
-      attempt.task_id,
-      this.store.repository.get(attempt.task_id)?.revision ?? null,
-      attempt.id,
-    )
-  }
-
-  /** A blocked plan whose verification deadline waits on the task's continuation does not verify yet. */
   private verificationAwaitsTaskContinuation(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
+    ...args: Parameters<VerificationCandidate["verificationAwaitsTaskContinuation"]>
   ) {
-    const current = this.store.plan(plan.id)
-    return Boolean(
-      current?.state === "blocked" &&
-      attempt.artifact &&
-      proposal.verification.some((check) => {
-        const target = this.taskVerificationTarget(current, attempt, check, attempt.artifact!)
-        return this.deadlineAwaitingTaskContinuation(
-          current,
-          target,
-          this.verificationDeadline(target),
-        )
-      }),
-    )
+    return this.verificationCandidate.verificationAwaitsTaskContinuation(...args)
   }
 
-  /** Whether a verify effect already ran this exact candidate, so a retained fix may be kept. */
-  private candidateAlreadyChecked(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
-    head: string,
-    repairID: string | undefined,
+  private commitVerificationCandidate(
+    ...args: Parameters<VerificationCandidate["commitVerificationCandidate"]>
   ) {
-    return this.store.effects(plan.id).some((effect) => {
-      if (
-        effect.attempt_id !== attempt.id ||
-        effect.state !== "completed" ||
-        !effect.kind.startsWith("verify:")
-      )
-        return false
-      const payload = JSON.parse(effect.payload)
-      const recordedCheck =
-        isRecord(payload) && payload.authoredCheck !== undefined
-          ? payload.authoredCheck
-          : isRecord(payload)
-            ? payload.check
-            : undefined
-      return (
-        payload.artifact === head &&
-        payload.workspace === attempt.workspace &&
-        proposal.verification.some((check) =>
-          sameVerificationCheckIdentity(check, recordedCheck),
-        ) &&
-        (payload.repairID ?? undefined) === repairID
-      )
-    })
+    return this.verificationCandidate.commitVerificationCandidate(...args)
   }
 
-  /** Commits the attempt's workspace as the candidate artifact; undefined when verification must stop. */
-  private async commitVerificationCandidate(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
-    preparation: "ready" | "prepared",
-    repairID: string | undefined,
-    fence: number,
-    verificationCurrent: () => boolean,
-  ): Promise<Awaited<ReturnType<typeof commitArtifact>> | undefined> {
-    try {
-      const head = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-      const checkedCandidate = this.candidateAlreadyChecked(plan, attempt, proposal, head, repairID)
-      const retainFixes =
-        (preparation === "prepared" || checkedCandidate) && this.preparationAllowed(attempt)
-      const artifact = await commitArtifact(
-        attempt.workspace,
-        attempt.base_commit,
-        this.store.effectiveScope(attempt.task_id),
-        attempt.workspace !== this.directory || retainFixes,
-        attempt.workspace !== this.directory
-          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
-          : undefined,
-      )
-      if (!verificationCurrent()) return undefined
-      // Publish the private snapshot before starting checks. Recreating
-      // commit-tree on each tick changes its identity
-      // and can strand an otherwise valid receipt (or supersede worker edits).
-      if ((attempt.workspace !== this.directory || retainFixes) && artifact.commit !== head)
-        await gitAsync(attempt.workspace, ["update-ref", "HEAD", artifact.commit, head])
-      return artifact
-    } catch (error) {
-      if (!verificationCurrent()) return undefined
-      try {
-        this.progress.recordAttemptOutcome(
-          attempt.id,
-          error instanceof ArtifactScopeViolation ? "artifact-scope-violation" : "artifact-error",
-          errorText(error),
-        )
-      } catch {
-        // The task state machine remains authoritative if annotation storage is unavailable.
-      }
-      if (error instanceof ArtifactScopeViolation) {
-        this.store.fenced(this.owner, fence, () => {
-          this.store.record(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
-            attemptID: attempt.id,
-            workspace: attempt.workspace,
-            baseCommit: attempt.base_commit,
-            kind: "protected",
-            paths: error.paths,
-            reason: error.message,
-          })
-          this.hold(plan, error.message, ["amend-scope", "audit", "reconcile", "cancel"])
-        })
-        return undefined
-      }
-      this.failAttempt(plan, attempt, errorText(error))
-      return undefined
-    }
-  }
-
-  /** Records the candidate artifact on the attempt and its task node. */
-  private recordAttemptArtifact(plan: PlanRow, attempt: AttemptRow, commit: string, fence: number) {
-    this.store.fenced(this.owner, fence, (db) => {
-      db.query("UPDATE runner_attempts SET artifact=? WHERE id=?").run(commit, attempt.id)
-      db.query("UPDATE runner_nodes SET artifact=? WHERE plan_id=? AND task_id=?").run(
-        commit,
-        plan.id,
-        attempt.task_id,
-      )
-    })
-  }
-
-  /** The newest non-superseded verify effect that covers this exact candidate and check. */
-  private knownVerifyEffect(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    check: TaskProposal["verification"][number],
-    artifact: { commit: string; identity: string },
-    effectiveCheck: TaskProposal["verification"][number],
-    repairID: string | undefined,
-    verificationEpoch: number,
+  private recordAttemptArtifact(
+    ...args: Parameters<VerificationCandidate["recordAttemptArtifact"]>
   ) {
-    return this.store
-      .effects(plan.id)
-      .toReversed()
-      .find((e) => {
-        if (e.attempt_id !== attempt.id || e.kind !== `verify:${check.id}`) return false
-        if (effectSuperseded(e)) return false
-        const payload = JSON.parse(e.payload) as {
-          artifact?: unknown
-          identity?: unknown
-          workspace?: unknown
-          repairID?: unknown
-          verificationEpoch?: number
-          check?: unknown
-          authoredCheck?: unknown
-        }
-        // A resume replaces interrupted checks. Preserve completed checks
-        // for the same candidate, attempt, command, and repair generation.
-        const passed =
-          e.state === "completed" && e.receipt
-            ? (JSON.parse(e.receipt) as { check?: CheckReceipt }).check
-            : undefined
-        return (
-          payload.artifact === artifact.commit &&
-          payload.identity === artifact.identity &&
-          payload.workspace === attempt.workspace &&
-          (payload.repairID ?? undefined) === repairID &&
-          ((payload.verificationEpoch ?? 0) === verificationEpoch ||
-            (passed && checkSucceeded(passed))) &&
-          sameVerificationCheckIdentity(payload.check, effectiveCheck)
-        )
-      })
+    return this.verificationCandidate.recordAttemptArtifact(...args)
   }
 
-  /** An unfinished earlier effect for the check: wait while it runs, otherwise hold as uncertain. */
-  private holdUncertainVerifyEffect(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    check: TaskProposal["verification"][number],
-    artifact: { commit: string; identity: string },
-    known: EffectRow,
+  private collectCheckReceipts(...args: Parameters<VerificationCandidate["collectCheckReceipts"]>) {
+    return this.verificationCandidate.collectCheckReceipts(...args)
+  }
+
+  private captureAutomaticFixes(
+    ...args: Parameters<VerificationCandidate["captureAutomaticFixes"]>
   ) {
-    const activityIdentity = { effectID: known.id, payload: known.payload }
-    const activity = this.checkActivity(known.id, activityIdentity)
-    if (activity?.state === "running" || activity?.state === "completed") return
-    const actual = actualCheckResultFromEffect(known)
-    const matches = Boolean(
-      actual &&
-      actual.id === check.id &&
-      actual.command === check.command &&
-      actual.cwd === attempt.workspace &&
-      actual.artifact === artifact.commit &&
-      actual.inputIdentity === artifact.identity,
-    )
-    const reason =
-      matches && actual && !checkResourcesSettled(actual)
-        ? `Verification ${check.id} completed with exit ${actual.exitCode ?? "unknown"} and timedOut=${actual.timedOut}; subprocess cleanup remains uncertain: ${actual.processCleanup?.detail ?? "termination was not confirmed"}`
-        : `Verification ${check.id} has an uncertain receipt and was not replayed`
-    this.hold(plan, reason, ["reconcile", "resume", "audit", "cancel"])
-  }
-
-  /** Journals the verify effect and starts its check; the receipt arrives on a later tick. */
-  private startVerifyEffect(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    check: TaskProposal["verification"][number],
-    effectiveCheck: TaskProposal["verification"][number],
-    deadline: VerificationDeadline,
-    artifact: { commit: string; identity: string },
-    known: EffectRow | undefined,
-    repairID: string | undefined,
-    verificationEpoch: number,
-    fence: number,
-  ) {
-    const receiptPath = join(
-      this.dataDirectory,
-      "receipts",
-      attempt.id,
-      `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
-    )
-    const effect = this.effect(
-      plan.id,
-      attempt.task_id,
-      attempt.id,
-      `verify:${check.id}`,
-      {
-        check: effectiveCheck,
-        authoredCheck: check,
-        verificationDeadline: verificationReceiptDeadline(deadline),
-        workspace: attempt.workspace,
-        artifact: artifact.commit,
-        identity: artifact.identity,
-        receiptPath,
-        ...(known ? { previousCheckID: known.id } : {}),
-        ...(verificationEpoch ? { verificationEpoch } : {}),
-        ...(repairID ? { repairID } : {}),
-      },
-      fence,
-    )
-    try {
-      const activityIdentity = { effectID: effect.id, payload: effect.payload }
-      this.startCheckActivity({
-        id: effect.id,
-        identity: activityIdentity,
-        metadata: {
-          kind: "effect",
-          projectDirectory: this.directory,
-          planID: plan.id,
-          effectID: effect.id,
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          receiptPath,
-        },
-        run: (signal) =>
-          this.runVerificationCheck(
-            attempt.workspace,
-            artifact.commit,
-            check,
-            deadline,
-            receiptPath,
-            {
-              signal,
-            },
-          ),
-      })
-    } catch (error) {
-      try {
-        this.progress.recordVerificationError(attempt.id, effect.id, check.id, error)
-      } catch {
-        // The runner effect remains authoritative if annotation storage fails.
-      }
-      this.uncertain(effect, error, fence)
-    }
-  }
-
-  /**
-   * Walks the authored checks in order. Returns every check's receipt once they all completed;
-   * undefined when a check was started, is still running, or the plan was held or stopped.
-   */
-  private async collectCheckReceipts(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
-    artifact: { commit: string; identity: string },
-    repairID: string | undefined,
-    fence: number,
-  ): Promise<CheckReceipt[] | undefined> {
-    const verificationEpoch =
-      this.store.latestTransition<{ verificationEpoch: number }>(
-        plan.id,
-        attempt.task_id,
-        "VERIFICATION_RESUMED",
-      )?.verificationEpoch ?? 0
-    const receipts: CheckReceipt[] = []
-    for (const check of proposal.verification) {
-      if (!["running", "blocked"].includes(this.store.plan(plan.id)!.state)) return undefined
-      const deadline = this.verificationDeadline(
-        this.taskVerificationTarget(plan, attempt, check, artifact.commit),
-      )
-      const effectiveCheck = effectiveVerificationCheck(check, deadline)
-      const known = this.knownVerifyEffect(
-        plan,
-        attempt,
-        check,
-        artifact,
-        effectiveCheck,
-        repairID,
-        verificationEpoch,
-      )
-      if (
-        !known &&
-        this.store.plan(plan.id)?.state === "blocked" &&
-        this.deadlineAwaitingTaskContinuation(
-          plan,
-          this.taskVerificationTarget(plan, attempt, check, artifact.commit),
-          deadline,
-        )
-      )
-        return undefined
-      if (known && known.state !== "completed") {
-        this.holdUncertainVerifyEffect(plan, attempt, check, artifact, known)
-        return undefined
-      }
-      if (known?.state === "completed") {
-        receipts.push(JSON.parse(known.receipt!).check)
-        continue
-      }
-      this.startVerifyEffect(
-        plan,
-        attempt,
-        check,
-        effectiveCheck,
-        deadline,
-        artifact,
-        known,
-        repairID,
-        verificationEpoch,
-        fence,
-      )
-      return undefined
-    }
-    return receipts
-  }
-
-  /**
-   * Folds automatic fixes the checks made into the delivered artifact. Returns the artifact to
-   * accept, or undefined when verification must stop (held, superseded, or re-run on the new commit).
-   */
-  private async captureAutomaticFixes(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    artifact: Awaited<ReturnType<typeof commitArtifact>>,
-    fence: number,
-    verificationCurrent: () => boolean,
-  ): Promise<Awaited<ReturnType<typeof commitArtifact>> | undefined> {
-    try {
-      // Capture automatic fixes in the delivered source; cleanliness is not a pass/fail condition.
-      if (await artifactUnchanged(attempt.workspace, artifact.commit)) return artifact
-      const previousHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-      const updated = await commitArtifact(
-        attempt.workspace,
-        attempt.base_commit,
-        this.store.effectiveScope(attempt.task_id),
-        true,
-        attempt.workspace !== this.directory
-          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
-          : undefined,
-      )
-      if (!verificationCurrent()) return undefined
-      if (updated.commit !== previousHead)
-        await gitAsync(attempt.workspace, ["update-ref", "HEAD", updated.commit, previousHead])
-      this.recordAttemptArtifact(plan, attempt, updated.commit, fence)
-      return updated.commit !== previousHead ? undefined : updated
-    } catch (error) {
-      this.hold(plan, errorText(error))
-      return undefined
-    }
+    return this.verificationCandidate.captureAutomaticFixes(...args)
   }
 
   private acceptVerifiedAttempt(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    artifact: Awaited<ReturnType<typeof commitArtifact>>,
-    receipts: CheckReceipt[],
-    review: FallowReviewResult | undefined,
-    repairID: string | undefined,
-    fence: number,
-    verificationCurrent: () => boolean,
-    scope: ScopeReport,
+    ...args: Parameters<VerificationCandidate["acceptVerifiedAttempt"]>
   ) {
-    this.store.fenced(this.owner, fence, (db) => {
-      if (!verificationCurrent()) return
-      db.query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'accepted') WHERE id=?",
-      ).run(attempt.id)
-      this.store.move(plan.id, attempt.task_id, "ACCEPT")
-      this.store.record(plan.id, attempt.task_id, "ARTIFACT_ACCEPTED", {
-        ...artifact,
-        ...(repairID ? { sourceGeneration: repairID } : {}),
-      })
-      this.outcome(
-        plan.id,
-        {
-          status: "task-accepted",
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          artifact: artifact.commit,
-          evidence: receipts.map((r) => r.id),
-          ...fallowAcceptance(review, this.fallowDispositions(attempt, review)),
-          ...(scopeReportEmpty(scope) ? {} : { scope: boundedScopeReport(scope) }),
-        },
-        true,
-      )
-    })
-    this.startAuditorReport(attempt, "follow-up")
-    try {
-      this.progress.recordAttemptOutcome(attempt.id, "accepted")
-    } catch {
-      // Progress facts never grant or revoke acceptance.
-    }
-  }
-
-  /**
-   * After the one repair: what became of each finding the first audit reported, read from the
-   * audit that just ran. Absent on a first attempt, or when either audit was unavailable.
-   */
-  private fallowDispositions(
-    attempt: AttemptRow,
-    review: FallowReviewResult | undefined,
-  ): FallowDisposition[] | undefined {
-    if (!review?.package || !JSON.parse(attempt.policy).repairAttempt) return undefined
-    const previous = this.store
-      .attempts(attempt.plan_id)
-      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
-      .at(-1)
-    if (!previous) return undefined
-    const first = this.store.read((db) =>
-      db
-        .query<{ body: string }, [string, string, string]>(
-          "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' AND json_extract(body,'$.id') IN (?,?) ORDER BY rowid DESC LIMIT 1",
-        )
-        .get(previous.id, FALLOW_CHECK_ID, LEGACY_FALLOW_CHECK_ID),
-    )
-    const before = first ? (JSON.parse(first.body) as CheckReceipt).fallow?.package : undefined
-    return before ? dispositionsAfterRepair(before, review.package) : undefined
+    return this.verificationCandidate.acceptVerifiedAttempt(...args)
   }
 
   private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
@@ -11030,191 +9934,8 @@ export class TaskRuntime {
       )
     })
   }
-  private async reconcileEffect(effect: EffectRow, fence: number) {
-    const payload = JSON.parse(effect.payload)
-    try {
-      if (await this.reconcileEffectByKind(effect, payload, fence)) return
-      if (isRerunnableEffect(effect.kind)) {
-        this.supersedeEffect(effect, "No receipt was recorded; the check re-runs", fence)
-        this.tickRequested = true
-        return
-      }
-      if (effect.state !== "uncertain")
-        this.uncertain(
-          effect,
-          "No conclusive host/artifact receipt; effect was not repeated",
-          fence,
-        )
-    } catch (error) {
-      if (effect.state !== "uncertain") this.uncertain(effect, error, fence)
-    }
-  }
-
-  /** True when the effect's kind settled it; false leaves the generic no-receipt handling to run. */
-  private async reconcileEffectByKind(
-    effect: EffectRow,
-    payload: any,
-    fence: number,
-  ): Promise<boolean> {
-    if (effect.kind === "scope-instruction")
-      return this.reconcileScopeInstruction(effect, payload as WorkerInstruction, fence)
-    if (effect.kind === "session") return this.reconcileSessionEffect(effect, payload, fence)
-    if (effect.kind === "prompt") return this.reconcilePromptEffect(effect, payload, fence)
-    if (WORKTREE_EFFECT_KINDS.includes(effect.kind))
-      return this.reconcileWorktreeEffect(effect, payload, fence)
-    if (
-      effect.kind === "mechanical-fix" ||
-      effect.kind.startsWith("verify:") ||
-      effect.kind.startsWith("graph-verify:")
-    )
-      return this.reconcileCheckEffect(effect, payload, fence)
-    return false
-  }
-
-  private async reconcileScopeInstruction(
-    effect: EffectRow,
-    update: WorkerInstruction,
-    fence: number,
-  ): Promise<boolean> {
-    const attempt = this.store
-      .attempts(effect.plan_id)
-      .find((item) => item.id === effect.attempt_id)
-    const plan = this.store.plan(effect.plan_id)!
-    if (
-      !attempt ||
-      attempt.task_id !== effect.task_id ||
-      update.attemptID !== attempt.id ||
-      update.sessionID !== attempt.session_id ||
-      update.directory !== attempt.workspace ||
-      update.projectID !== this.projectID
-    )
-      throw new Error("Scope instruction no longer matches its owned attempt")
-    if (
-      plan.state === "cancelling" ||
-      terminal.has(plan.state) ||
-      !["preparing", "running", "verifying"].includes(attempt.state)
-    ) {
-      this.receipt(
-        effect,
-        {
-          skipped: true,
-          reason: "Attempt no longer executing",
-          sessionID: update.sessionID,
-          key: update.key,
-        },
-        fence,
-      )
-      return true
-    }
-    await this.host.updateInstruction(update)
-    this.receipt(
-      effect,
-      {
-        sessionID: update.sessionID,
-        key: update.key,
-        nativeEntryConfirmed: true,
-        modelConsumption: "unknown",
-      },
-      fence,
-    )
-    return true
-  }
-
-  private async reconcileSessionEffect(
-    effect: EffectRow,
-    payload: any,
-    fence: number,
-  ): Promise<boolean> {
-    const session = await this.host.session(payload.sessionID)
-    if (!session) return false
-    this.receipt(effect, { sessionID: session.id, reconciled: true }, fence)
-    return true
-  }
-
-  private async reconcilePromptEffect(
-    effect: EffectRow,
-    payload: any,
-    fence: number,
-  ): Promise<boolean> {
-    const session = await this.host.session(payload.sessionID, { messages: true })
-    if (session?.messages.some((m) => m.id === payload.messageID)) {
-      this.receipt(
-        effect,
-        {
-          messageID: payload.messageID,
-          reconciled: true,
-        },
-        fence,
-      )
-      return true
-    }
-    // These adapter guards throw before ctx.session.prompt. Record the
-    // conclusive non-dispatch so reconciliation can retry the same worker.
-    if (
-      !session?.messages.some((m) => m.id === payload.messageID) &&
-      [
-        "Worker session is not in its assigned worktree",
-        "Worker prompt target is not the exact assigned session and route",
-      ].includes(JSON.parse(effect.receipt ?? "{}").error)
-    ) {
-      this.store.fenced(this.owner, fence, (db) => {
-        db.query(
-          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=?",
-        ).run(
-          JSON.stringify({
-            notSent: true,
-            reason: "Native prompt guard prevented dispatch",
-          }),
-          effect.id,
-        )
-        db.query("UPDATE runner_attempts SET message_id=? WHERE id=?").run(
-          messageID(),
-          effect.attempt_id!,
-        )
-        this.store.record(effect.plan_id, effect.task_id, "PROMPT_NOT_DISPATCHED", {
-          effectID: effect.id,
-          continuation: "new durable message after native prompt guard",
-        })
-      })
-      return true
-    }
-    return false
-  }
-
-  private async reconcileWorktreeEffect(
-    effect: EffectRow,
-    payload: any,
-    fence: number,
-  ): Promise<boolean> {
-    const nativeFailure =
-      effect.kind === "worktree" || effect.kind === "worktree-recovery"
-        ? nativeWorktreeFailureFromReceipt(effect.receipt)
-        : undefined
-    const startupRecoveryReason = startupWorktreeRecoveryReason(effect, nativeFailure)
-    const nativeWorktrees = await this.host.worktrees()
-    // A typed native failure is affirmative terminal evidence, not a lost
-    // success response. It can never be promoted to a ready workspace.
-    if (nativeFailure) return true
-    const candidates = await worktreeReconcileCandidates(effect, payload, nativeWorktrees)
-    if (candidates.length !== 1) return false
-    const workspace = candidates[0]!
-    if (effect.attempt_id)
-      this.store.fenced(this.owner, fence, (db) =>
-        db
-          .query("UPDATE runner_attempts SET workspace=? WHERE id=?")
-          .run(workspace, effect.attempt_id!),
-      )
-    this.receipt(effect, { workspace, base: payload.base, reconciled: true }, fence)
-    if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
-      this.store.setAdoptionWorkspace(
-        payload.adoptionID,
-        effect.kind === "adoption-task-worktree" ? "task" : "combined",
-        workspace,
-        { owner: this.owner, value: fence },
-      )
-    if (startupRecoveryReason && effect.attempt_id)
-      this.resumeStartupRecovery(effect, fence, workspace, startupRecoveryReason)
-    return true
+  private reconcileEffect(...args: Parameters<EffectReconciliation["reconcileEffect"]>) {
+    return this.effectReconciliation.reconcileEffect(...args)
   }
 
   /** Unblocks the plan that startup recovery parked on this worktree effect, once it is ready. */
@@ -11281,127 +10002,5 @@ export class TaskRuntime {
           workspace,
         })
     })
-  }
-
-  /** Drops the in-memory activity record of a check the reconciler has now settled. */
-  private forgetCheckActivity(effect: EffectRow, activityIdentity: unknown) {
-    forgetVerificationActivity(
-      verificationActivityKey(this.store.repository.path, effect.id),
-      fingerprint(activityIdentity),
-    )
-  }
-
-  /** Settles a check effect from its in-memory activity and the receipt the subprocess left. */
-  private async reconcileCheckEffect(
-    effect: EffectRow,
-    payload: any,
-    fence: number,
-  ): Promise<boolean> {
-    const activityIdentity = { effectID: effect.id, payload: effect.payload }
-    const activity = this.checkActivity(effect.id, activityIdentity)
-    if (activity?.state === "running") return true
-    const check = readCheckReceipt(payload)
-    if (check && (await this.checkReceiptMatchesEffect(effect, payload, check)))
-      return this.settleMatchedCheck(effect, check, fence, activityIdentity)
-    return this.settleFailedCheckActivity(effect, activity, fence, activityIdentity)
-  }
-
-  private async checkReceiptMatchesEffect(
-    effect: EffectRow,
-    payload: any,
-    check: CheckReceipt,
-  ): Promise<boolean> {
-    if (effect.kind !== "mechanical-fix")
-      return (
-        check.id === payload.check.id &&
-        check.artifact === payload.artifact &&
-        check.cwd === payload.workspace &&
-        check.command === payload.check.command &&
-        check.inputIdentity === payload.identity
-      )
-    const preparation = check.preparation
-    const scope = this.store.effectiveWriteScope(effect.task_id!)
-    return (
-      check.id === payload.check.id &&
-      check.command === payload.command &&
-      check.cwd === payload.workspace &&
-      check.artifact === payload.baseCommit &&
-      check.inputIdentity === payload.inputFingerprint &&
-      check.environmentIdentity === payload.environmentIdentity &&
-      preparation !== undefined &&
-      preparation.inputFingerprint === payload.inputFingerprint &&
-      JSON.stringify(preparation.paths) === JSON.stringify(payload.paths) &&
-      JSON.stringify(preparation.scope) === JSON.stringify(payload.scope) &&
-      JSON.stringify(scope) === JSON.stringify(payload.scope) &&
-      preparation.resultingFingerprint ===
-        (await workingTreeIdentity(payload.workspace, payload.baseCommit)) &&
-      !protectedPaths(preparation.paths, this.store.effectiveScope(effect.task_id!)).length
-    )
-  }
-
-  private settleMatchedCheck(
-    effect: EffectRow,
-    check: CheckReceipt,
-    fence: number,
-    activityIdentity: unknown,
-  ): boolean {
-    const mechanical = effect.kind === "mechanical-fix"
-    if (check.aborted) {
-      this.uncertain(effect, "Verification was interrupted before completion", fence, { check })
-      this.forgetCheckActivity(effect, activityIdentity)
-      return true
-    }
-    if (effect.kind.startsWith("verify:") && effect.attempt_id && effect.task_id)
-      this.recordVerificationEvidence(effect, check)
-    if (!checkResourcesSettled(check)) {
-      this.uncertain(
-        effect,
-        unsettledCheckError(mechanical ? "Mechanical" : "Verification", check),
-        fence,
-        { check },
-      )
-      if (!mechanical) this.forgetCheckActivity(effect, activityIdentity)
-      return true
-    }
-    this.receipt(effect, { check, reconciled: true }, fence)
-    this.tickRequested = true
-    this.forgetCheckActivity(effect, activityIdentity)
-    return true
-  }
-
-  private recordVerificationEvidence(effect: EffectRow, check: CheckReceipt) {
-    try {
-      this.progress.recordVerification(effect.attempt_id!, effect.id, check)
-    } catch {
-      // The runner receipt remains authoritative if progress annotation fails.
-    }
-    this.store.atomic((db) =>
-      db
-        .query(
-          "INSERT OR IGNORE INTO runner_evidence(id,plan_id,task_id,attempt_id,assertion_id,kind,artifact,body,created_at) VALUES(?,?,?,?,NULL,'verification',?,?,?)",
-        )
-        .run(
-          effect.id,
-          effect.plan_id,
-          effect.task_id,
-          effect.attempt_id,
-          check.artifact,
-          JSON.stringify(check),
-          Date.now(),
-        ),
-    )
-  }
-
-  /** A check whose activity failed without a matching receipt is uncertain; anything else falls through. */
-  private settleFailedCheckActivity(
-    effect: EffectRow,
-    activity: VerificationActivity<CheckReceipt> | undefined,
-    fence: number,
-    activityIdentity: unknown,
-  ): boolean {
-    if (activity?.state !== "failed") return false
-    this.uncertain(effect, activity.error, fence)
-    this.forgetCheckActivity(effect, activityIdentity)
-    return true
   }
 }
