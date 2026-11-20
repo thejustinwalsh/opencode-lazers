@@ -48,6 +48,7 @@ import type { AttemptRow } from "./store.ts"
 import type { FallowReview } from "./fallow-check.ts"
 import type { AuditorReport } from "./auditor-report.ts"
 import type { PlanFallowContext, RetainedRepairRecord } from "./runtime-helpers.ts"
+import { auditIsOff } from "../projects/profile-runtime.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 
 /** What `VerificationReview` reads from the coordinator and its sibling modules; calls are lazy arrows. */
@@ -365,7 +366,11 @@ export class VerificationReview {
     repairID: string | undefined,
     fence: number,
   ): Promise<FallowReviewResult | "pending" | undefined> {
-    if (!this.fallowReviewEnabled) return undefined
+    if (
+      !this.fallowReviewEnabled ||
+      auditIsOff(this.store.repository, this.store.repository.projectDirectory)
+    )
+      return undefined
     const verificationEpoch =
       this.store.latestTransition<{ verificationEpoch: number }>(
         plan.id,
@@ -491,7 +496,11 @@ export class VerificationReview {
     ctx: PlanFallowContext,
     fence: number,
   ): Promise<FallowReviewResult | "pending" | undefined> {
-    if (!this.fallowReviewEnabled) return undefined
+    if (
+      !this.fallowReviewEnabled ||
+      auditIsOff(this.store.repository, this.store.repository.projectDirectory)
+    )
+      return undefined
     const known = this.store
       .effects(plan.id)
       .toReversed()

@@ -91,6 +91,24 @@ const verifyEffects = (f: ReturnType<typeof fixture>) =>
 const checkOf = (effect: { receipt: string | null }) =>
   (JSON.parse(effect.receipt ?? "{}") as { check?: Record<string, any> }).check
 
+test("a project whose profile turns the audit off is accepted with no Fallow review and no hold", async () => {
+  fakeCargoHome()
+  const f = fixture({
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    checkCommand: CARGO_CHECK,
+    fallowConfig: "none",
+  })
+  await confirm(f, { ...cargoProfile, audit: "off" })
+  await runPlan(f)
+  await drive(f.runtime, 14)
+  const planID = f.receipt.planID
+  expect(f.store.plan(planID)?.state).not.toBe("blocked")
+  expect(f.store.effects(planID).some((effect) => effect.kind === "verify:fallow-audit")).toBe(
+    false,
+  )
+  expect(f.store.nodes(planID).every((node) => node.state === "accepted")).toBe(true)
+}, 30_000)
+
 const CARGO_CHECK = "cargo fmt --check && cargo test --locked"
 const cargoProfile = {
   toolchains: ["cargo"],
