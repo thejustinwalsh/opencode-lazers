@@ -33,6 +33,8 @@ export type ReaderPoolOptions = {
   sourceModules?: readonly string[]
 }
 
+export type ReaderPoolCounters = ReaderStats & { workers: number }
+
 export type ReaderPool = {
   readonly databasePath: string
   /** Open a stream. The listener receives every message the reader sends for it. */
@@ -40,6 +42,8 @@ export type ReaderPool = {
   /** The main thread committed `revision` after writing `tables` (all when omitted); each worker refreshes the open streams whose sources read them. */
   revision(revision: number, tables?: readonly string[]): void
   stats(): Promise<ReaderStats[]>
+  /** Counters for diagnostics, without waiting: workers and streams now, worker counters as of the last `stats()` (this call starts the next one). */
+  snapshot(): ReaderPoolCounters
   /** Fault injection for tests: terminate the worker serving `stream` as a crash would. */
   terminateWorkerOf(stream: number): Promise<void>
   /** Closes databases, then terminates the workers. */
@@ -68,6 +72,7 @@ type Tracked = {
 
 const MAX_RESTARTS = 5
 const SHUTDOWN_GRACE_MS = 2_000
+const STATS_TIMEOUT_MS = 500
 const registryKey = Symbol.for("lazers.streams.reader-pools.v2")
 type Entry = { key: string; pool: ReaderPool; refs: number; disconnect(): void }
 const host = globalThis as typeof globalThis & { [registryKey]?: Map<string, Entry> }
@@ -136,7 +141,7 @@ export function acquireReaderPool(
 
 /** Diagnostic: live pools and their holders. */
 export function readerPoolSnapshot() {
-  return [...entries().values()].map(({ key, refs }) => ({ key, refs }))
+  return [...entries().values()].map(({ key, refs, pool }) => ({ key, refs, ...pool.snapshot() }))
 }
 
 function createReaderPool(
@@ -157,6 +162,7 @@ function createReaderPool(
   let nextStream = 0
   let nextSlot = 0
   let nextStat = 0
+  let cachedStats: ReaderStats[] = []
   let latestRevision: number | undefined
   let closed = false
 
@@ -296,18 +302,41 @@ function createReaderPool(
         } satisfies ToReader)
     },
     stats() {
-      return Promise.all(
-        slots
-          .filter((slot) => slot.worker)
-          .map(
-            (slot) =>
-              new Promise<ReaderStats>((resolve) => {
-                const id = ++nextStat
-                statWaiters.set(id, resolve)
-                slot.worker!.postMessage({ type: "stats", id } satisfies ToReader)
-              }),
-          ),
+      const asked = slots
+        .filter((slot) => slot.worker)
+        .map(
+          (slot) =>
+            new Promise<ReaderStats | undefined>((resolve) => {
+              const id = ++nextStat
+              const timer = setTimeout(() => {
+                statWaiters.delete(id)
+                resolve(undefined)
+              }, STATS_TIMEOUT_MS)
+              statWaiters.set(id, (stats) => {
+                clearTimeout(timer)
+                resolve(stats)
+              })
+              slot.worker!.postMessage({ type: "stats", id } satisfies ToReader)
+            }),
+        )
+      return Promise.all(asked).then((all) => {
+        cachedStats = all.filter((stats): stats is ReaderStats => stats !== undefined)
+        return cachedStats
+      })
+    },
+    snapshot() {
+      const workers = slots.filter((slot) => slot.worker).length
+      if (workers > 0 && !closed) void this.stats()
+      const total = cachedStats.reduce(
+        (sum, stats) => ({
+          statements: sum.statements + stats.statements,
+          rowsRead: sum.rowsRead + stats.rowsRead,
+          buffersAllocated: sum.buffersAllocated + stats.buffersAllocated,
+          buffersPooled: sum.buffersPooled + stats.buffersPooled,
+        }),
+        { statements: 0, rowsRead: 0, buffersAllocated: 0, buffersPooled: 0 },
       )
+      return { ...total, streams: tracked.size, workers }
     },
     async terminateWorkerOf(id) {
       await tracked.get(id)?.slot.worker?.terminate()
