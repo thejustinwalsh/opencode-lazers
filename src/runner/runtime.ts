@@ -7930,6 +7930,10 @@ export class TaskRuntime {
         return
       }
       await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
+      // A settled effect unblocks the rest of this plan's step: continue now, not at the next
+      // periodic pass. An effect still unsettled waits for new facts instead of spinning.
+      const settled = this.store.effects(plan.id).find((effect) => effect.id === pending.id)
+      if (settled && !["intended", "uncertain"].includes(settled.state)) this.tickRequested = true
       return
     }
     // A takeover in progress owns its worker attempt: advance it, and leave that worker alone.

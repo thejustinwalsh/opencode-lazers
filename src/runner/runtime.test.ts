@@ -819,6 +819,37 @@ test("active scope amendments durably update the same worker after it fetched ol
   }
 })
 
+// Live LZ-252: a scope instruction journaled after a retained repair was settled by one tick,
+// which then returned; the repair prompt waited 5 minutes for the periodic tick.
+test("a plan step that settles an effect continues the plan in the same scheduler pass", async () => {
+  const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(planID)[0]!
+  await f.runtime.command(
+    {
+      requestID: "allow-test",
+      planID,
+      action: "amend-scope",
+      taskID: attempt.task_id,
+      scopeAdditions: ["escape.txt"],
+      reason: "Keep the reviewed legitimate dependency test.",
+    },
+    "owner",
+  )
+  expect(f.store.effects(planID).find((e) => e.kind === "scope-instruction")?.state).toBe(
+    "intended",
+  )
+  f.completeWorker(attempt.session_id)
+  await f.runtime.tick()
+  expect(f.store.effects(planID).find((e) => e.kind === "scope-instruction")?.state).toBe(
+    "completed",
+  )
+  // The same pass observed the finished worker instead of leaving it for the next one.
+  expect(["verifying", "accepted"]).toContain(f.store.attempts(planID)[0]!.state)
+})
+
 test("failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn", async () => {
   for (const lostResponse of [false, true]) {
     const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
