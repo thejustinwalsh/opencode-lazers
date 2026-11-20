@@ -15,8 +15,10 @@ import {
   GetInstructionsOutput,
   GetOutput,
   AgentQueryInput,
-  QueryOutput,
+  AgentQueryOutput,
 } from "./tasks/contract.ts"
+import { enrollScheduleConnection } from "./tasks/schedule/hook.ts"
+import { queryTaskPage } from "./tasks/stream-query.ts"
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 import type { ProjectIndex } from "./context/index.ts"
@@ -139,6 +141,12 @@ export function repositoryRunner(repository: Pick<TaskRepository, "path" | "proj
   return async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
     const connection = new TaskRepository(path, projectDirectory)
     try {
+      // This connection writes too: its transactions drain the schedule queue like the core's.
+      try {
+        connection.read((db) => enrollScheduleConnection(db))
+      } catch {
+        // The projection schema is not installed in this database yet.
+      }
       return await connection.retryBusy(() => run(connection))
     } finally {
       connection.close()
@@ -540,9 +548,8 @@ export function registerTaskTools(
           .pipe(
             Effect.flatMap(() =>
               result(() =>
-                withRepository((connection) => ({
-                  tasks: new TaskReads(connection).query({ limit: listInput.parse(input).limit })
-                    .tasks,
+                queryTaskPage(repository, { limit: listInput.parse(input).limit }).then((page) => ({
+                  tasks: page.tasks,
                 })),
               ),
             ),
@@ -553,7 +560,7 @@ export function registerTaskTools(
       description:
         "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
       input: AgentQueryInput,
-      output: QueryOutput,
+      output: AgentQueryOutput,
       options: { codemode: true, pinned: true, permission: "lz-query-tasks" },
       execute: (input, context) =>
         ctx.permission
@@ -563,14 +570,7 @@ export function registerTaskTools(
             action: "lz-query-tasks",
             resources: ["*"],
           })
-          .pipe(
-            Effect.flatMap(() =>
-              result(
-                () => withRepository((connection) => new TaskReads(connection).query(input)),
-                true,
-              ),
-            ),
-          ),
+          .pipe(Effect.flatMap(() => result(() => queryTaskPage(repository, input), true))),
     })
   })
 }

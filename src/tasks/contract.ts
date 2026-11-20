@@ -127,6 +127,16 @@ export const QueryOutput = z.strictObject({
   serverTime: z.iso.datetime(),
 })
 export type TaskPage = z.infer<typeof QueryOutput>
+/**
+ * A page an agent tool returns: one window of the stored list. No total is counted; `nextCursor`
+ * is the id of the last task on the page while more follow.
+ */
+export const AgentQueryOutput = QueryOutput.omit({
+  project: true,
+  snapshot: true,
+  count: true,
+  stateCounts: true,
+})
 const Execution = z.strictObject({
   dispatchPause: DispatchPause.optional(),
   planID: z.uuid(),
