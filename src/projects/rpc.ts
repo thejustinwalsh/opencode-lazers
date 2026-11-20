@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs"
-import { resolve } from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { timedRpc } from "../diagnostics/stall-probe.ts"
@@ -9,6 +7,7 @@ import type { ProjectScope, ProjectsListing, ProjectsOutcome } from "./contract.
 import { pauseRecords, setPause } from "./pause.ts"
 import type { PauseScope } from "./pause.ts"
 import { ProjectCodeError, projects, setProjectCode } from "./registry.ts"
+import { isLoaded, liveDirectories } from "./scope.ts"
 import { globalSettings, projectSettings, setGlobalSetting, setProjectSetting } from "./settings.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
 
@@ -19,14 +18,6 @@ export type ProjectsDefaults = {
   project?: Partial<ProjectSettings>
 }
 type Controls = TaskRepository
-
-const canonical = (path: string) => {
-  try {
-    return realpathSync(path)
-  } catch {
-    return resolve(path)
-  }
-}
 
 const refuse = (
   refusal: Extract<ProjectsOutcome, { ok: false }>["refusal"],
@@ -55,7 +46,7 @@ export function listProjects(
   loaded: () => Iterable<string>,
   defaults: ProjectsDefaults = {},
 ): ProjectsListing {
-  const live = new Set([...loaded()].map(canonical))
+  const live = liveDirectories(loaded)
   const pauses = pauseRecords(repository)
   const pauseOf = (scope: PauseScope) => {
     const record = pauses.find((candidate) =>
@@ -71,7 +62,7 @@ export function listProjects(
       code: project.code,
       name: project.name,
       checkouts: project.paths,
-      loaded: project.paths.some((path) => live.has(canonical(path))),
+      loaded: isLoaded(project.paths, live),
       pause: pauseOf({ kind: "project", key: project.key }),
       architectContact: architectContactReason(repository, project.paths),
       settings: projectSettings(repository, project.key, defaults.project),
