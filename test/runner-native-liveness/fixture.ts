@@ -48,6 +48,13 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
   let clients = 0
   let activeReads = 0
   let contextReads = 0
+  /** Pages the host served from its message list: the only way the runner reads a conversation. */
+  const messageListCalls: Array<{
+    type?: string
+    order?: string
+    limit?: number
+    cursor?: string
+  }> = []
   let identityReads = 0
   const locationReads: { kind: "permission" | "form" | "shell"; directory: string }[] = []
   const session = {
@@ -148,7 +155,31 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         update: async () => {},
       },
       message: {
-        list: async (input: { type: string; cursor?: string }) => {
+        list: async (input: { type?: string; cursor?: string; order?: string; limit?: number }) => {
+          if (input.type !== "user" && input.type !== "synthetic") {
+            messageListCalls.push({
+              type: input.type,
+              order: input.order,
+              limit: input.limit,
+              cursor: input.cursor,
+            })
+            // Durable order: history before compaction, then the retained window. Cursors are
+            // offsets into the requested order.
+            const durable = [...(options.history ?? []), ...(options.messages ?? [])] as {
+              type?: string
+            }[]
+            const filtered = input.type
+              ? durable.filter((entry) => entry.type === input.type)
+              : durable
+            const ordered = input.order === "desc" ? [...filtered].reverse() : filtered
+            const limit = input.limit ?? 50
+            const start = input.cursor ? Number(input.cursor) : 0
+            const next = start + limit < ordered.length ? String(start + limit) : undefined
+            return {
+              data: ordered.slice(start, start + limit),
+              cursor: { ...(next ? { next } : {}) },
+            }
+          }
           const history = options.history ?? []
           const boundary = input.cursor
             ? history.findIndex((entry) => entry.id === input.cursor)
@@ -200,6 +231,7 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
     get contextReads() {
       return contextReads
     },
+    messageListCalls,
     get identityReads() {
       return identityReads
     },

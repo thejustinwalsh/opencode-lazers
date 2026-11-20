@@ -94,6 +94,11 @@ export type HostSession = {
   tokens: number | null
   tools: number
   cost: number | null
+  /**
+   * The current turn when requested with `{ messages: true }`: the newest native input and every
+   * message after it, oldest first. Earlier history is not read; use `RunnerHost.message` for
+   * one older message.
+   */
   messages: HostMessage[]
 }
 export type WorkerInstruction = {
@@ -122,6 +127,12 @@ export interface RunnerHost {
    * needed to prove a receipt or count completed tools.
    */
   session(id: string, options?: { messages?: boolean }): Promise<HostSession | null>
+  /**
+   * One message of a session by ID: a point read that does not depend on how much history the
+   * session holds. Absent means the host has no such message. Older injected hosts without it
+   * can still be asked through the current turn that `session(..., { messages: true })` returns.
+   */
+  message?(sessionID: string, messageID: string): Promise<HostMessage | undefined>
   /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
   /** One ordered page of original Architect inputs plus the current native inbox. */

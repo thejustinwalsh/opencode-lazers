@@ -712,10 +712,14 @@ test("authorized interrupted-repair recovery uses the original mapped route and 
     attemptID: attempt.id,
     reason: "Recover only the original interrupted mapped repair.",
   }
+  const recoveryReads = countDetailedReads(f, attempt.session_id)
   expect(await f.runtime.command(recovery, "owner")).toMatchObject({
     status: "retained-repair-recovered",
     attemptID: attempt.id,
   })
+  // Recovery admission and its final revalidation: one detailed worker read each. Both were
+  // observe-then-confirm pairs before (four reads).
+  expect(recoveryReads.detailed).toBe(2)
   expect(f.store.attempts(f.planID)[0]?.policy).toBe(originalPolicy)
   await f.runtime.tick()
 
@@ -1209,4 +1213,69 @@ test("a resumed retained repair whose worker is still running on its prior input
   await settleVerification(f.runtime)
   expect(f.store.attempts(f.planID)[0]?.state).toBe("accepted")
   expect(f.prompts).toHaveLength(2)
+})
+
+/** Counts detailed (`messages: true`) reads of one session on a fake host. */
+function countDetailedReads(f: ReturnType<typeof fixture>, sessionID: string) {
+  const original = f.host.session
+  const counts = { detailed: 0, metadata: 0 }
+  f.host.session = async (id, options) => {
+    if (id === sessionID) counts[options?.messages ? "detailed" : "metadata"]++
+    return original(id, options)
+  }
+  return counts
+}
+
+test("retained repair admission reads the worker conversation once per revalidation, not twice", async () => {
+  const f = fixture()
+  await accept(f)
+  const prior = f.store.attempts(f.planID)[0]!
+  const reads = countDetailedReads(f, prior.session_id)
+  await f.runtime.command(retainedRepairCommand(f), "owner")
+  // Two admission stages (prepare, final revalidation), each one detailed read. Each stage was
+  // an observe-then-confirm pair before, so the same command made four.
+  expect(reads.detailed).toBe(2)
+})
+
+test("observing a retained repair candidate reads the worker conversation once, after the owner", async () => {
+  const f = fixture()
+  await accept(f)
+  await f.runtime.command(retainedRepairCommand(f), "owner")
+  await f.runtime.tick()
+  const attempt = f.store.attempts(f.planID)[0]!
+  const repairs = Reflect.get(f.runtime, "repairRecords") as {
+    retainedRepairForAttempt: (candidate: AttemptRow) => { operationID: string } | undefined
+  }
+  const repair = repairs.retainedRepairForAttempt(attempt)!
+  const worker = f.sessions.get(attempt.session_id)!
+  const order: string[] = []
+  const original = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id && options?.messages) order.push("worker")
+    return original(id, options)
+  }
+  const preparation = Reflect.get(f.runtime, "retainedVerificationPrep") as {
+    observeRetainedRepairCandidate: (
+      plan: unknown,
+      attempt: AttemptRow,
+      binding: unknown,
+      observeOwner: () => Promise<void>,
+    ) => Promise<void>
+  }
+  await preparation
+    .observeRetainedRepairCandidate(
+      f.store.plan(f.planID)!,
+      attempt,
+      { operationID: repair.operationID },
+      async () => {
+        order.push("owner")
+      },
+    )
+    .catch((error: unknown) => {
+      // Only the read count matters here; the candidate itself may still be rejected.
+      order.push(`rejected:${String(error).slice(0, 40)}`)
+    })
+  expect(worker.id).toBe(attempt.session_id)
+  expect(order.filter((step) => step === "worker")).toHaveLength(1)
+  expect(order.indexOf("owner")).toBeLessThan(order.indexOf("worker"))
 })

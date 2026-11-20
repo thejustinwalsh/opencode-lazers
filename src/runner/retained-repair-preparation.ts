@@ -361,7 +361,7 @@ export class RetainedRepairPreparation {
         throw new Error("Retained repair recovery owner changed during native revalidation")
       return current
     }
-    const firstWorker = await this.host.session(attempt.session_id, { messages: true })
+    // Owner first, then one worker read: the freshest observation is the one that is validated.
     const currentOwner = await freshOwner()
     const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
     const route = attemptRoute
@@ -375,10 +375,7 @@ export class RetainedRepairPreparation {
     )
     if (
       problem ||
-      !firstWorker ||
       !confirmedWorker ||
-      this.retainedRepairObservation(firstWorker) !==
-        this.retainedRepairObservation(confirmedWorker) ||
       confirmedWorker.messages.some((message) => message.id === attempt.message_id)
     )
       throw new Error(problem ?? "Retained repair recovery worker changed during revalidation")
@@ -651,6 +648,10 @@ export class RetainedRepairPreparation {
 
     const previousMessageID = attempt.message_id
     await this.host.waitForSession(attempt.session_id)
+    // Owner first, then one worker read: the freshest observation is the one that is validated.
+    const currentOwner = await this.host.session(plan.owner)
+    if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
+      throw new Error("Retained repair owner changed during native observation")
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const nativeInputID = observed?.turn?.inputID ?? undefined
     const backgroundProblem = this.retainedRepairBackgroundProblem(observed, nativeInputID)
@@ -663,32 +664,10 @@ export class RetainedRepairPreparation {
       nativeInputID,
       attemptModel,
     )
-    if (backgroundProblem || problem) throw new Error(backgroundProblem ?? problem)
-    const currentOwner = await this.host.session(plan.owner)
-    if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
-      throw new Error("Retained repair owner changed during native observation")
-    const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedProblem = this.retainedRepairWorkerProblem(
-      plan,
-      attempt,
-      confirmed,
-      nativeInputID,
-      attemptModel,
-    )
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmed,
-      nativeInputID,
-    )
-    if (
-      confirmedProblem ||
-      confirmedBackgroundProblem ||
-      !observed ||
-      !confirmed ||
-      this.retainedRepairObservation(observed) !== this.retainedRepairObservation(confirmed)
-    )
+    if (backgroundProblem || problem || !observed)
       throw new Error(
-        confirmedProblem ??
-          confirmedBackgroundProblem ??
+        backgroundProblem ??
+          problem ??
           "Retained worker input or ownership changed during repair admission",
       )
     if (this.store.plan(plan.id)?.version !== plan.version) throw new PlanMovedDuringCommand()
@@ -704,7 +683,7 @@ export class RetainedRepairPreparation {
       sessionID: attempt.session_id,
       workspace: attempt.workspace,
       model: attemptModel,
-      workerObservation: this.retainedRepairObservation(confirmed),
+      workerObservation: this.retainedRepairObservation(observed),
     }
   }
   async prepareReviewInputReconciliation(
@@ -767,22 +746,14 @@ export class RetainedRepairPreparation {
       expectedPlanVersion: plan.version,
       model,
     }
-    const worker = await this.host.session(latest.session_id, { messages: true })
-    if (!worker) throw new Error("Exact review-input worker session is unavailable")
-    const observedEvidence = observeReviewInput(worker, binding)
-
-    // Recheck owner liveness after the asynchronous worker observation. The
-    // worker is then read again so input/execution changes during that owner
-    // read cannot leave a stale relationship in the journal. The transaction
-    // below separately fences durable reassignment/version/attempt races.
+    // Owner liveness first, then one worker read, so the evidence is the freshest state. The
+    // transaction below separately fences durable reassignment/version/attempt races.
     const currentOwner = await this.host.session(plan.owner)
     if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
       throw new Error("Review input reconciliation owner is no longer current and active")
-    const currentWorker = await this.host.session(latest.session_id, { messages: true })
-    if (!currentWorker) throw new Error("Exact review-input worker session is unavailable")
-    const evidence = observeReviewInput(currentWorker, binding)
-    if (JSON.stringify(evidence) !== JSON.stringify(observedEvidence))
-      throw new Error("Review input native observation changed during owner revalidation")
+    const worker = await this.host.session(latest.session_id, { messages: true })
+    if (!worker) throw new Error("Exact review-input worker session is unavailable")
+    const evidence = observeReviewInput(worker, binding)
     return { binding, evidence }
   }
 }

@@ -1,5 +1,6 @@
 import type { ArchitectOwnership } from "./architect-ownership.ts"
 import type { HostSession } from "./host.ts"
+import { hostMessageByID } from "./host-reads.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
 import { addOutboxReceipt } from "./store.ts"
 import { coalescedOutcomeText } from "./outcome.ts"
@@ -118,8 +119,7 @@ export class OutcomeDelivery {
     // inbox API. They can still prove an exact transcript ID, but cannot prove
     // that an absent message was cancelled or consumed.
     if (!this.runtime.host.outcomeInbox) {
-      const target = await this.runtime.host.session(sessionID, { messages: true })
-      const transcript = target?.messages.find((item) => item.id === message.message_id)
+      const transcript = await hostMessageByID(this.runtime.host, sessionID, message.message_id)
       if (!transcript) return "missing"
       if (ownership) return isOwnedOutcomeTranscript(transcript, ownership) ? "consumed" : "unowned"
       return transcript.type === "synthetic" ? "consumed" : "unowned"
@@ -130,8 +130,7 @@ export class OutcomeDelivery {
       if (ownership && isOwnedQueuedOutcome(entry, ownership)) return "queued"
       return "unowned"
     }
-    const target = await this.runtime.host.session(sessionID, { messages: true })
-    const transcript = target?.messages.find((item) => item.id === message.message_id)
+    const transcript = await hostMessageByID(this.runtime.host, sessionID, message.message_id)
     if (!transcript) return "missing"
     if (ownership) return isOwnedOutcomeTranscript(transcript, ownership) ? "consumed" : "unowned"
     return transcript.type === "synthetic" ? "consumed" : "unowned"

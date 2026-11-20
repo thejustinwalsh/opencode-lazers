@@ -134,17 +134,11 @@ export class RetainedVerificationPreparation {
       const backgroundProblem = worker ? this.backgroundBlockReason(worker) : undefined
       if (backgroundProblem) throw new Error(`Retained repair is not idle: ${backgroundProblem}`)
     }
-    const before = await this.host.session(attempt.session_id, { messages: true })
-    validate(before)
+    // The owner is observed first; the one worker read that follows is the freshest state.
     await observeOwner?.()
-    const after = await this.host.session(attempt.session_id, { messages: true })
-    validate(after)
-    if (
-      !before ||
-      !after ||
-      this.retainedRepairObservation(before) !== this.retainedRepairObservation(after) ||
-      !this.retainedRepairCandidateCurrent(plan, attempt, binding)
-    )
+    const worker = await this.host.session(attempt.session_id, { messages: true })
+    validate(worker)
+    if (!worker || !this.retainedRepairCandidateCurrent(plan, attempt, binding))
       throw new Error("Retained repair changed during candidate observation")
   }
   assertRetainedVerificationScopeAvailable(
