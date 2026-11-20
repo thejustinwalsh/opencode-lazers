@@ -340,6 +340,34 @@ function parseIDs(textValue: string): string[] {
   }
 }
 
+/**
+ * Event ids kept per row: the first id plus the most recent ones. A row such as a cumulative
+ * usage snapshot sees one event per update for the life of its session, so the list would
+ * otherwise grow and be re-read and rewritten on every hit. 32 ids of about 40 bytes each keep
+ * the column near 1.3 KB; readers see the same JSON array of strings, just windowed.
+ */
+export const EVENT_ID_WINDOW = 32
+
+function includesString(arrayText: string, value: string): boolean {
+  return arrayText.includes(JSON.stringify(value))
+}
+
+/** Add one event id without parsing when it is already listed (the common dedupe hit). */
+export function mergeEventIDsText(existing: string, eventID: string | undefined): string {
+  if (!eventID || includesString(existing, eventID)) return existing
+  const ids = parseIDs(existing)
+  ids.push(eventID)
+  const windowed =
+    ids.length > EVENT_ID_WINDOW ? [ids[0]!, ...ids.slice(-(EVENT_ID_WINDOW - 1))] : ids
+  return JSON.stringify(windowed)
+}
+
+/** Union of sources, sorted; unchanged text is returned without parsing when nothing is new. */
+export function mergeSourcesText(existing: string, incoming: readonly string[]): string {
+  if (incoming.every((source) => includesString(existing, source))) return existing
+  return JSON.stringify([...new Set([...parseSources(existing), ...incoming])].toSorted())
+}
+
 function mergeObjects(previous: JsonObject, incoming: JsonObject): JsonObject {
   const merged: JsonObject = { ...previous }
   for (const [key, value] of Object.entries(incoming)) {
@@ -1747,15 +1775,9 @@ export class ProgressRecorder {
         ? factPayload
         : priorPayload
       : mergeFactPayload(nextKind as ProgressKind, priorPayload, factPayload)
-    const sources = [
-      ...new Set([...parseSources(existing.sources_json), existing.source, fact.source]),
-    ].toSorted()
-    const eventIDs = [
-      ...new Set([...parseIDs(existing.event_ids_json), ...(fact.eventID ? [fact.eventID] : [])]),
-    ]
     const nextPayloadText = JSON.stringify(nextPayload)
-    const nextSourcesText = JSON.stringify(sources)
-    const nextEventIDsText = JSON.stringify(eventIDs)
+    const nextSourcesText = mergeSourcesText(existing.sources_json, [existing.source, fact.source])
+    const nextEventIDsText = mergeEventIDsText(existing.event_ids_json, fact.eventID)
     const nextCallID = existing.call_id ?? fact.callID ?? null
     const nextMessageID = existing.message_id ?? fact.messageID ?? null
     const nextAt = replaceCumulative ? factAt : existing.at
@@ -1890,18 +1912,9 @@ export class ProgressRecorder {
     if (targetOnlyTool(previous?.tool ?? incomingTool)) delete incoming.content
     const payload = mergeFactPayload("tool", prior, incoming)
     const agent = text(payload.agent) ?? previous?.agent ?? null
-    const sources = [
-      ...new Set([...(previous ? parseIDs(previous.sources_json) : []), fact.source]),
-    ].toSorted()
-    const eventIDs = [
-      ...new Set([
-        ...(previous ? parseIDs(previous.event_ids_json) : []),
-        ...(fact.eventID ? [fact.eventID] : []),
-      ]),
-    ]
     const payloadText = JSON.stringify(payload)
-    const sourcesText = JSON.stringify(sources)
-    const eventIDsText = JSON.stringify(eventIDs)
+    const sourcesText = mergeSourcesText(previous?.sources_json ?? "[]", [fact.source])
+    const eventIDsText = mergeEventIDsText(previous?.event_ids_json ?? "[]", fact.eventID)
     if (!previous) {
       db.query(
         `INSERT INTO native_tool_calls
