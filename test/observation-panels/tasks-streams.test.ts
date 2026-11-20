@@ -9,7 +9,6 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { Database } from "bun:sqlite"
 import { validProposal } from "../proposal.ts"
 import { meterRepository } from "../../src/runner/read-meter.fixture.ts"
-import { databaseChanges } from "../../src/database-events.ts"
 import { Streams } from "../../src/streams/contract.ts"
 import { readerPool, type ReaderPool } from "../../src/streams/pool.ts"
 import { createStreamsService } from "../../src/streams/rpc.ts"
@@ -726,8 +725,6 @@ test("tasks are being indexed shows while the project is not indexed, and a stal
     repository.atomic((db) =>
       db.query("UPDATE task_schedule_state SET ready=0, backfill_after=0").run(),
     )
-    // The state table is WITHOUT ROWID: its writer announces the write.
-    databaseChanges.touch(repository.path, ["task_schedule_state"])
     await until(() => h.text().includes("Tasks are being indexed."))
     owner = new TaskScheduleOwner(repository)
     owner.start()

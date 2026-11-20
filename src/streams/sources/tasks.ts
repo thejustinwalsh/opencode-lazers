@@ -278,8 +278,6 @@ export const taskBlockersSource = defineSource({
 export const taskWaitsSource = defineSource({
   name: TASK_SOURCES.waits,
   table: "task_schedule_waits",
-  // WITHOUT ROWID tables raise no update hook; the row of the task is written with its waits.
-  tables: ["task_schedule_waits", "task_schedule"],
   key: ["task_id", "ord"],
   orders: {
     ord: [
@@ -302,8 +300,6 @@ export const taskWaitsSource = defineSource({
 export const taskBucketCountsSource = defineSource({
   name: TASK_SOURCES.bucketCounts,
   table: "task_schedule_counts",
-  // WITHOUT ROWID: a counter changes in the transaction that writes the task's own row.
-  tables: ["task_schedule_counts", "task_schedule"],
   key: ["project_directory", "bucket"],
   orders: {
     bucket: [
@@ -352,8 +348,6 @@ export const taskSessionBucketCountsSource = defineSource({
 export const taskIndexSource = defineSource({
   name: TASK_SOURCES.index,
   table: "task_schedule_state",
-  // WITHOUT ROWID: the owner announces its writes (`databaseChanges.touch`); a task write too.
-  tables: ["task_schedule_state", "task_schedule"],
   key: ["project_directory"],
   orders: { project: [{ column: "project_directory", direction: "asc" }] },
   async authorize(input: TaskIndexFilter, context) {

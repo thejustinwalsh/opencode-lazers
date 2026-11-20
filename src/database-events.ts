@@ -42,15 +42,6 @@ export class DatabaseChangeHub {
     db.onDelete = hook
   }
 
-  /**
-   * Announce a write SQLite's update hook cannot see: the hook is not called for a WITHOUT ROWID
-   * table, so a writer of one says so after its transaction.
-   */
-  touch(path: string, tables: readonly string[]) {
-    const feed = this.tableFeeds.get(realpathSync(path))
-    if (feed) for (const table of tables) this.noteTable(feed, table)
-  }
-
   /** Collect the tables written in this event-loop turn; listeners hear them once, after it. */
   private noteTable(feed: TableFeed, table: string) {
     feed.changed.add(table)

@@ -101,14 +101,14 @@ export const TABLES_SQL = `
     waiting INTEGER NOT NULL,
     child_plan_id TEXT,
     PRIMARY KEY(parent_task_id, ord)
-  ) WITHOUT ROWID;
+  );
   CREATE INDEX task_schedule_edges_child ON task_schedule_edges(child_task_id);
   CREATE INDEX task_schedule_edges_plan ON task_schedule_edges(child_plan_id);
   CREATE TABLE task_schedule_blockers (
     task_id TEXT NOT NULL,
     blocker_task_id TEXT NOT NULL,
     PRIMARY KEY(task_id, blocker_task_id)
-  ) WITHOUT ROWID;
+  );
   CREATE INDEX task_schedule_blockers_blocker ON task_schedule_blockers(blocker_task_id);
   CREATE TABLE task_schedule_waits (
     task_id TEXT NOT NULL,
@@ -118,26 +118,26 @@ export const TABLES_SQL = `
     state TEXT,
     reason TEXT,
     PRIMARY KEY(task_id, ord)
-  ) WITHOUT ROWID;
+  );
   CREATE TABLE task_schedule_sessions (
     session_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     role TEXT NOT NULL,
     PRIMARY KEY(session_id, task_id, role)
-  ) WITHOUT ROWID;
+  );
   CREATE INDEX task_schedule_sessions_task ON task_schedule_sessions(task_id);
   CREATE TABLE task_schedule_scopes (
     task_id TEXT NOT NULL,
     path TEXT NOT NULL,
     PRIMARY KEY(task_id, path)
-  ) WITHOUT ROWID;
+  );
   CREATE INDEX task_schedule_scopes_path ON task_schedule_scopes(path);
   CREATE TABLE task_schedule_counts (
     project_directory TEXT NOT NULL,
     bucket TEXT NOT NULL,
     n INTEGER NOT NULL,
     PRIMARY KEY(project_directory, bucket)
-  ) WITHOUT ROWID;
+  );
   CREATE VIEW task_schedule_session_bucket_counts AS
     SELECT s.session_id AS session_id, t.project_directory AS project_directory,
            t.bucket AS bucket, COUNT(*) AS n
@@ -151,7 +151,7 @@ export const SUPPORT_SQL = `
     kind TEXT NOT NULL,
     ref TEXT NOT NULL,
     PRIMARY KEY(kind, ref)
-  ) WITHOUT ROWID;
+  );
   CREATE TABLE IF NOT EXISTS task_schedule_failed (
     kind TEXT NOT NULL,
     ref TEXT NOT NULL,
@@ -161,14 +161,14 @@ export const SUPPORT_SQL = `
     last_at INTEGER NOT NULL,
     next_at INTEGER NOT NULL,
     PRIMARY KEY(kind, ref)
-  ) WITHOUT ROWID;
+  );
   CREATE TABLE IF NOT EXISTS task_schedule_state (
     project_directory TEXT PRIMARY KEY,
     ready INTEGER NOT NULL DEFAULT 0,
     backfill_after INTEGER NOT NULL DEFAULT 0,
     reservations_fp TEXT NOT NULL DEFAULT '',
     last_error TEXT
-  ) WITHOUT ROWID;
+  );
 `
 
 type TriggerSpec = {
