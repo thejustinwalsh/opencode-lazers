@@ -2,6 +2,7 @@ import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
+import { ProjectRef } from "../projects/scope.ts"
 import { ModelPricePinSourceSchema, ModelPriceSourcePolicySchema } from "./price-source-settings.ts"
 import { KnownUsageMarketSchema } from "./market-range.ts"
 import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
@@ -725,6 +726,37 @@ export interface ModelDecisionReader {
   ): Promise<ModelDecisionInspect>
 }
 
+/**
+ * The all-projects read: one page is one checkout of one readable project, in registry order.
+ * `unit` names that checkout (a hash, never a path) so its rows can be read afterwards.
+ */
+export const ModelDecisionOverviewAllRPCInputSchema = z.strictObject({
+  ...RPCScope,
+  schemaVersion: ModelDecisionReadInputSchema.shape.schemaVersion,
+  filters: ModelDecisionReadInputSchema.shape.filters,
+  cursor: z.string().min(1).max(2048).optional(),
+})
+export const ModelDecisionOverviewAllOutputSchema = z.strictObject({
+  project: ProjectRef,
+  unit: z.string().min(1).max(64),
+  nextCursor: z.string().nullable(),
+  overview: ModelDecisionOverviewOutputSchema,
+})
+export const ModelDecisionRowsAllRPCInputSchema = z.strictObject({
+  ...RPCScope,
+  unit: z.string().min(1).max(64),
+  schemaVersion: ModelDecisionRowsInputSchema.shape.schemaVersion,
+  filters: ModelDecisionRowsInputSchema.shape.filters,
+  snapshotID: ModelDecisionRowsInputSchema.shape.snapshotID,
+  cursor: ModelDecisionRowsInputSchema.shape.cursor,
+  limit: ModelDecisionRowsInputSchema.shape.limit,
+})
+export const ModelDecisionRowsAllOutputSchema = z.strictObject({
+  project: ProjectRef,
+  unit: z.string().min(1).max(64),
+  rows: ModelDecisionRowsOutputSchema,
+})
+
 export const ModelsDecision = Rpc.define({
   id: MODELS_DECISION_RPC_ID,
   events: {},
@@ -734,6 +766,14 @@ export const ModelsDecision = Rpc.define({
       output: ModelDecisionOverviewOutputSchema,
     },
     rows: { input: ModelDecisionRowsRPCInputSchema, output: ModelDecisionRowsOutputSchema },
+    overviewAll: {
+      input: ModelDecisionOverviewAllRPCInputSchema,
+      output: ModelDecisionOverviewAllOutputSchema,
+    },
+    rowsAll: {
+      input: ModelDecisionRowsAllRPCInputSchema,
+      output: ModelDecisionRowsAllOutputSchema,
+    },
     configurations: {
       input: ModelDecisionConfigurationsRPCInputSchema,
       output: ModelDecisionConfigurationsOutputSchema,

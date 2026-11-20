@@ -58,13 +58,17 @@ export function lazyGate(
 }
 
 /** `permission.assert` as a yes or no for one session and the `read` action. */
-export function readAssertion(ctx: AccessContext, session: { id: string; agent: string }) {
+export function readAssertion(
+  ctx: Pick<Plugin.Context, "permission">,
+  session: { id: string; agent: string },
+  action = "read",
+) {
   return (resources: string[]) =>
     Effect.runPromise(
       ctx.permission.assert({
         sessionID: Session.ID.make(session.id),
         agent: Agent.ID.make(session.agent),
-        action: "read",
+        action,
         resources,
       }),
     ).then(
