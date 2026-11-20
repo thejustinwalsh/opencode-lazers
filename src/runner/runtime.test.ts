@@ -16459,3 +16459,93 @@ test("8c276019-1: a queued task of another plan is named as a scope owner", () =
   const owners = (f.runtime as any).scopeOwners.call(fake, plans[0], "task-a")
   expect(owners).toEqual([{ taskID: "task-b", patterns: ["src/task-b.ts"] }])
 })
+
+async function capacityLimit(f: ReturnType<typeof fixture>, limit: number | undefined) {
+  setProjectSetting(f.repository, await f.runtime.delegatedAgentCapacity.key(), "limit", limit)
+}
+
+test("capacity: with no limit set two independent tasks dispatch together, as before", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+    limit: null,
+    active: 2,
+    queued: 0,
+    reason: null,
+  })
+})
+
+test("capacity: the Projects limit is honoured and a changed limit applies on the next pass", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  await capacityLimit(f, 1)
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ limit: 1, active: 1 })
+  await capacityLimit(f, 2)
+  await f.runtime.tick()
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+  // Lowering it again stops nothing that runs.
+  await capacityLimit(f, 1)
+  await drive(f.runtime, 2)
+  expect(
+    f.store.attempts(f.receipt.planID).filter((attempt) => attempt.state === "running"),
+  ).toHaveLength(2)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+})
+
+test("capacity: a paused project is granted no slot and its running work is not pre-empted", async () => {
+  const f = fixture({ independent: true, delayed: true })
+  const key = await registeredKey(f)
+  await capacityLimit(f, 1)
+  await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  const [running] = f.store.attempts(f.receipt.planID)
+  expect(running).toBeDefined()
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.sessions.get(running!.session_id)!.busy).toBe(true)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  // The freed slot is not granted while paused, and no admission waits in the queue for it.
+  f.completeWorker(running!.session_id)
+  await drive(f.runtime, 4)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ active: 0, queued: 0 })
+  setPause(f.repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("capacity: a task taken over by the Architect counts once against the limit", async () => {
+  const { f, worker } = await takeoverFixture()
+  await capacityLimit(f, 1)
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ active: 1 })
+  f.completeWorker(worker.session_id, "interrupted")
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Dead worker" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  await drive(f.runtime, 2)
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+    limit: 1,
+    active: 1,
+    queued: 0,
+  })
+  // The slot is the task's: a helper waits behind it rather than starting a second agent.
+  const helper = await f.runtime.delegatedAgentCapacity.ensureNativeQueued({
+    parentSessionID: "owner",
+    toolCallID: "helper-during-takeover",
+    agent: "research",
+    description: "Wait for the task's slot",
+  })
+  await expect(
+    f.runtime.delegatedAgentCapacity.waitForNative(helper, AbortSignal.timeout(300)),
+  ).rejects.toThrow()
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-capacity")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!.state).toBe(
+    "accepted",
+  )
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({ active: 0 })
+})
