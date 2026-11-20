@@ -64,6 +64,104 @@ function result<T>(
   })
 }
 
+/** What `lz-submit-task` and `lz-plan-task` share: the same checks, the same write, the same receipt. */
+export type TaskSubmitDeps = {
+  location: Pick<Plugin.Context["location"], "directory" | "project">
+  withRepository: <T>(run: (connection: TaskRepository) => T) => Promise<T>
+  timeoutDefaults: VerificationTimeoutDefaults
+  /** Refuses submission while the Fallow review is on and the project has no Fallow config. */
+  fallowGate?: () => Promise<unknown>
+}
+
+export async function submitTaskReceipt(
+  deps: TaskSubmitDeps,
+  input: unknown,
+  sessionID: string,
+): Promise<unknown> {
+  const { location, withRepository, timeoutDefaults, fallowGate } = deps
+  const context = { sessionID }
+  const ctx = { location }
+  const parsed = TaskSubmissionSchema.parse(input)
+  const refused = await fallowGate?.()
+  if (refused) return refused
+  // Observed before the transaction: Git must not run inside it.
+  // A failure is deferred to the provenance callback: replayed receipts never need it.
+  const startingRevision = await observeStartingRevision(ctx.location.directory).then(
+    (revision) => ({ revision }),
+    (error: unknown) => ({ error }),
+  )
+  const receipt = await withRepository((connection) => {
+    const submitted = submitTask(
+      connection,
+      parsed,
+      () => ({
+        projectID: ctx.location.project.id,
+        projectDirectory: ctx.location.project.canonical,
+        workspaceDirectory: ctx.location.directory,
+        sessionID: context.sessionID,
+        startingRevision: (() => {
+          if ("error" in startingRevision) throw startingRevision.error
+          return startingRevision.revision
+        })(),
+      }),
+      timeoutDefaults,
+    )
+    if (submitted.status !== "submitted") return submitted
+    const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
+    if (detail.status !== "found") return submitted
+    // The submitting session wrote this task, so it has seen its records.
+    observeRevision(
+      connection,
+      context.sessionID,
+      submitted.taskID,
+      "classification",
+      detail.classification.revision,
+    )
+    return taskSubmissionSummary(
+      submitted,
+      detail.task,
+      detail.execution?.state ?? detail.task.status,
+    )
+  })
+  return receipt
+}
+
+/**
+ * One connection per execution, with the work retried while another process holds the write lock
+ * (`retryBusy`): every handler that uses it is request-keyed or reads/upserts, so repeating it is
+ * safe, and the wait yields the event loop instead of failing after the synchronous budget. The
+ * host may retain an admitted tool callback while a plugin reload closes its setup-scoped
+ * connection, so each execution owns its connection; a write is never retried just because an old
+ * connection was disposed.
+ */
+export function repositoryRunner(repository: Pick<TaskRepository, "path" | "projectDirectory">) {
+  const { path, projectDirectory } = repository
+  return async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
+    const connection = new TaskRepository(path, projectDirectory)
+    try {
+      return await connection.retryBusy(() => run(connection))
+    } finally {
+      connection.close()
+    }
+  }
+}
+
+/** The submit path as one function: used by `lz-submit-task` and by tasking a stored plan. */
+export function taskSubmitter(
+  ctx: Pick<TaskToolContext, "location">,
+  repository: Pick<TaskRepository, "path" | "projectDirectory">,
+  timeoutDefaults: VerificationTimeoutDefaults,
+  fallowGate?: () => Promise<unknown>,
+) {
+  const withRepository = repositoryRunner(repository)
+  return (input: unknown, sessionID: string) =>
+    submitTaskReceipt(
+      { location: ctx.location, withRepository, timeoutDefaults, fallowGate },
+      input,
+      sessionID,
+    )
+}
+
 type TaskToolContext = {
   location: Plugin.Context["location"]
   permission: Pick<Plugin.Context["permission"], "assert">
@@ -78,24 +176,14 @@ export function registerTaskTools(
   /** Refuses submission while the Fallow review is on and the project has no Fallow config. */
   fallowGate?: () => Promise<unknown>,
 ) {
-  // The host may retain an admitted tool callback while a plugin reload closes
-  // its setup-scoped connection. Each execution owns its connection; never
-  // retry a write just because its old connection was disposed.
-  const path = repository.path
-  const projectDirectory = repository.projectDirectory
-  /**
-   * One connection per execution, with the work retried while another process holds the write
-   * lock (`retryBusy`): every handler here is request-keyed or reads/upserts, so repeating it is
-   * safe, and the wait yields the event loop instead of failing after the synchronous budget.
-   */
-  async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
-    const connection = new TaskRepository(path, projectDirectory)
-    try {
-      return await connection.retryBusy(() => run(connection))
-    } finally {
-      connection.close()
-    }
-  }
+  const { path, projectDirectory } = repository
+  const withRepository = repositoryRunner(repository)
+  const submit = (input: unknown, sessionID: string) =>
+    submitTaskReceipt(
+      { location: ctx.location, withRepository, timeoutDefaults, fallowGate },
+      input,
+      sessionID,
+    )
   return ctx.tool.transform((editor) => {
     editor.add({
       name: "lz-submit-task",
@@ -115,50 +203,7 @@ export function registerTaskTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const parsed = TaskSubmissionSchema.parse(input)
-                  const refused = await fallowGate?.()
-                  if (refused) return { content: JSON.stringify(refused) }
-                  // Observed before the transaction: Git must not run inside it.
-                  // A failure is deferred to the provenance callback: replayed receipts never need it.
-                  const startingRevision = await observeStartingRevision(
-                    ctx.location.directory,
-                  ).then(
-                    (revision) => ({ revision }),
-                    (error: unknown) => ({ error }),
-                  )
-                  const receipt = await withRepository((connection) => {
-                    const submitted = submitTask(
-                      connection,
-                      parsed,
-                      () => ({
-                        projectID: ctx.location.project.id,
-                        projectDirectory: ctx.location.project.canonical,
-                        workspaceDirectory: ctx.location.directory,
-                        sessionID: context.sessionID,
-                        startingRevision: (() => {
-                          if ("error" in startingRevision) throw startingRevision.error
-                          return startingRevision.revision
-                        })(),
-                      }),
-                      timeoutDefaults,
-                    )
-                    if (submitted.status !== "submitted") return submitted
-                    const detail = new TaskReads(connection).get({ taskID: submitted.taskID })
-                    if (detail.status !== "found") return submitted
-                    // The submitting session wrote this task, so it has seen its records.
-                    observeRevision(
-                      connection,
-                      context.sessionID,
-                      submitted.taskID,
-                      "classification",
-                      detail.classification.revision,
-                    )
-                    return taskSubmissionSummary(
-                      submitted,
-                      detail.task,
-                      detail.execution?.state ?? detail.task.status,
-                    )
-                  })
+                  const receipt = await submit(input, context.sessionID)
                   return { content: JSON.stringify(receipt) }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),

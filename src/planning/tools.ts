@@ -9,6 +9,7 @@ import type { TaskRepository } from "../storage.ts"
 import { PlanningAgentId, type PlanningAgentId as AgentID } from "./contract.ts"
 import { AGENT_ORDER } from "./decision/tree.ts"
 import { rulesAdd } from "./checks.ts"
+import { PlanTaskInput, type PlanTasker } from "./tasking.ts"
 import type { AgentSelection, PlanningReviews, ReviewResult } from "./reviews.ts"
 import type { TargetField } from "./contract.ts"
 import {
@@ -833,6 +834,42 @@ export function registerPlanResolveTool(
               Effect.tryPromise({
                 try: async () => {
                   const output = await resolver.call(input, { sessionID: call.sessionID })
+                  return { content: JSON.stringify(output), output: output as never }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              }),
+            ),
+          ),
+    })
+  })
+}
+
+/** Registers `lz-plan-task`: "just task it" from any open state, and normal tasking after the final pass. */
+export function registerPlanTaskTool(
+  ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
+  tasker: PlanTasker,
+) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: "lz-plan-task",
+      description:
+        'Task a stored plan exactly as stored: each draft goes through the same path as lz-submit-task, then the plan through lz-submit-plan. It works from every open state, so "just task it" needs no review. Every check runs before anything is written; a failing draft is listed and nothing is saved. Open reviews are cancelled. A repeat call returns the same tasks. The result maps each draft to its task and lists the fields changed after the last review. Run lz-verify-task on each draft first, with evidence from lz-plan-draft action "evidence", and pass the review ids in selfReviews.',
+      input: PlanTaskInput,
+      output: z.record(z.string(), z.unknown()),
+      options: { codemode: true, permission: "lz-plan-task" },
+      execute: (input, call) =>
+        ctx.permission
+          .assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: "lz-plan-task",
+            resources: [ctx.location.directory],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  const output = await tasker.call(input, { sessionID: call.sessionID })
                   return { content: JSON.stringify(output), output: output as never }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),
