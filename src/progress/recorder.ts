@@ -1,3 +1,5 @@
+import { installHostMessageSchema } from "../core/host-messages.ts"
+import { observationRevisionStamp, StampGate } from "../core/stamp-gate.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { isNativeInput } from "../runner/native-input.ts"
 import { DateTime } from "effect"
@@ -1453,13 +1455,22 @@ export class ProgressRecorder {
   /** Work counters for tests and diagnostics; never persisted. */
   readonly reconcileStats = { stamped: 0, messages: 0, parts: 0 }
   private owners: SessionOwners | undefined
-  private assignmentScan: { revision: number; assignments: ProgressAssignment[] } | undefined
+  /**
+   * The last assignment scan, kept while the project's observation revision stands still.
+   * Budget: an assignment is about 0.4 KB of JSON (ids, state, paths), so 4 MiB holds roughly
+   * 10,000 attempts; past that the oldest scan is dropped and the next call rescans, it never
+   * refuses work.
+   */
+  private readonly assignmentGate = new StampGate<ProgressAssignment[]>({
+    maxBytes: 4 * 1024 * 1024,
+  })
 
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
   ) {
     installSessionStampSchema(store.repository)
+    installHostMessageSchema(store.repository)
   }
 
   /** Native `time.updated` (and derived handoff) at this attempt's last complete reconstruction. */
@@ -1618,49 +1629,38 @@ export class ProgressRecorder {
     })
   }
 
-  /** Revision of the project's observation stamp, or undefined when it cannot be read. */
-  private observationRevision(db: Database): number | undefined {
-    try {
-      return (
-        db
-          .query<{ revision: number }, [string]>(
-            "SELECT revision FROM observation_revisions WHERE project_directory=?",
-          )
-          .get(this.store.repository.projectDirectory)?.revision ?? 0
-      )
-    } catch {
-      return undefined
-    }
-  }
-
   /**
    * Every attempt's assignment. Rows carry no task body: project membership comes from the
    * per-task verdict cache, so a scan parses only tasks it has never seen. When the project's
    * observation revision has not moved since the previous scan, the previous result is returned
-   * without a query.
+   * without a query (`StampGate`).
    */
   assignments(): ProgressAssignment[] {
-    // TODO: replace this local gate with src/core/stamp-gate.ts when it lands.
+    const directory = this.store.repository.projectDirectory
     return this.store.atomic((db) => {
-      const revision = this.observationRevision(db)
-      const last = this.assignmentScan
-      if (revision !== undefined && last?.revision === revision) return [...last.assignments]
-      const rows = db
-        .query<AssignmentRow, [string, string]>(
-          `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
+      const stamp = observationRevisionStamp(db, directory)
+      return [
+        ...this.assignmentGate.runSync(`assignments:${directory}`, stamp, () =>
+          this.scanAssignments(db),
+        ),
+      ]
+    })
+  }
+
+  private scanAssignments(db: Database): ProgressAssignment[] {
+    const rows = db
+      .query<AssignmentRow, [string, string]>(
+        `SELECT a.plan_id,a.task_id,a.id AS attempt_id,a.state AS attempt_state,
                   a.session_id,a.message_id,a.workspace,p.project_directory
            FROM runner_attempts a
            JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
            WHERE p.project_directory=? AND t.project_directory=? ORDER BY a.started_at,a.number`,
-        )
-        .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
-      const assignments = rows.flatMap((row) => {
-        const assignment = this.assignmentFromRow(db, row)
-        return assignment ? [assignment] : []
-      })
-      this.assignmentScan = revision === undefined ? undefined : { revision, assignments }
-      return [...assignments]
+      )
+      .all(this.store.repository.projectDirectory, this.store.repository.projectDirectory)
+    return rows.flatMap((row) => {
+      const assignment = this.assignmentFromRow(db, row)
+      return assignment ? [assignment] : []
     })
   }
 
@@ -2363,11 +2363,15 @@ export class ProgressRecorder {
    * Incremental, chunked reconcile: each slice is its own short transaction and the
    * event loop runs between slices. Overlapping runs for a session are serialized.
    */
-  reconcileMessagesAsync(sessionID: string, rawMessages: readonly unknown[]): Promise<void> {
+  reconcileMessagesAsync(
+    sessionID: string,
+    rawMessages: readonly unknown[],
+    options: { final?: boolean } = {},
+  ): Promise<void> {
     const prior = this.reconcileInflight.get(sessionID)
     const run = (async () => {
       if (prior) await prior.catch(() => undefined)
-      const steps = this.reconcileSteps(sessionID, rawMessages)
+      const steps = this.reconcileSteps(sessionID, rawMessages, options.final ?? true)
       while (!steps.next().done) await new Promise<void>((resolve) => setImmediate(resolve))
     })()
     const tracked: Promise<void> = run.finally(() => {
@@ -2408,13 +2412,18 @@ export class ProgressRecorder {
     return stamps
   }
 
+  /**
+   * `final` is false for a page that is not the last of a paged read: a reminder missing from
+   * it may still be on a later page, so only the last page may conclude it was never admitted.
+   */
   private *reconcileSteps(
     sessionID: string,
     rawMessages: readonly unknown[],
+    final = true,
   ): Generator<void, void, void> {
     const messages = rawMessages.slice(0, 10_000)
     const hasMoreThanBound = rawMessages.length > messages.length
-    this.reconcileReminder(sessionID, rawMessages)
+    this.reconcileReminder(sessionID, rawMessages, final)
     const assignment = this.assignmentForSession(sessionID)
     if (!assignment) {
       this.reconcileStates.delete(sessionID)
@@ -3415,7 +3424,7 @@ export class ProgressRecorder {
     )
   }
 
-  reconcileReminder(sessionID: string, messages: readonly unknown[]): void {
+  reconcileReminder(sessionID: string, messages: readonly unknown[], final = true): void {
     this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
       if (!assignment) return
@@ -3464,7 +3473,7 @@ export class ProgressRecorder {
           "admitted",
           Date.now(),
         )
-      } else if (reminder.status === "dispatching") {
+      } else if (final && reminder.status === "dispatching") {
         this.completeReminderIn(
           db,
           assignment.attemptID,

@@ -436,6 +436,9 @@ export class RetainedRepairRecords {
     const model = ModelPolicy.safeParse(repair.route)
     if (!model.success) return false
     await this.host.waitForSession(attempt.session_id)
+    // Owner first, then one worker read: the freshest observation is the one that is validated.
+    const owner = await this.host.session(repair.owner)
+    if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
     const observed = await this.host.session(attempt.session_id, { messages: true })
     const expectedInputID = repair.nativeInputID
     const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
@@ -451,32 +454,10 @@ export class RetainedRepairRecords {
         expectedOutcome,
       ) ||
       observed?.messages.some((message) => message.id === attempt.message_id) ||
+      !observed ||
       !current()
     )
       return false
-    const owner = await this.host.session(repair.owner)
-    if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
-    const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmed,
-      expectedInputID,
-    )
-    return Boolean(
-      !this.retainedRepairWorkerProblem(
-        plan,
-        attempt,
-        confirmed,
-        expectedInputID,
-        model.data,
-        expectedOutcome,
-      ) &&
-      !confirmedBackgroundProblem &&
-      !confirmed?.messages.some((message) => message.id === attempt.message_id) &&
-      observed &&
-      confirmed &&
-      this.retainedRepairObservation(observed) === this.retainedRepairObservation(confirmed) &&
-      current() &&
-      this.preparationAllowed(attempt),
-    )
+    return this.preparationAllowed(attempt)
   }
 }

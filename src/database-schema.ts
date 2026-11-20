@@ -91,7 +91,7 @@ export const schemaModules = {
     ],
   },
   "host-messages": {
-    generation: 1,
+    generation: 2,
     source: "src/core/host-messages.ts",
     tables: ["host_message_cursors"],
   },

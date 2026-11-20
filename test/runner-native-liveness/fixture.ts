@@ -1,6 +1,9 @@
 import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import type { TaskRepository } from "../../src/storage.ts"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { TaskRepository } from "../../src/storage.ts"
 import {
   nativeHost,
   type NativeInboxClient,
@@ -34,6 +37,8 @@ export type NativeLivenessFixtureOptions = {
   /** Other native sessions by ID, e.g. children of the worker. */
   sessions?: Record<string, { parentID?: string; directory: string }>
   messages?: unknown[]
+  /** Runs as the host serves a current-turn page: a change that lands between the bracketing reads. */
+  onTurnRead?: () => void
   history?: Array<{ id: string; type: string }>
   busy?: ReturnType<typeof DateTime.nowUnsafe>
   idle?: ReturnType<typeof DateTime.nowUnsafe>
@@ -48,6 +53,13 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
   let clients = 0
   let activeReads = 0
   let contextReads = 0
+  /** Pages the host served from its message list: the only way the runner reads a conversation. */
+  const messageListCalls: Array<{
+    type?: string
+    order?: string
+    limit?: number
+    cursor?: string
+  }> = []
   let identityReads = 0
   const locationReads: { kind: "permission" | "form" | "shell"; directory: string }[] = []
   const session = {
@@ -148,7 +160,32 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         update: async () => {},
       },
       message: {
-        list: async (input: { type: string; cursor?: string }) => {
+        list: async (input: { type?: string; cursor?: string; order?: string; limit?: number }) => {
+          if (input.type !== "user" && input.type !== "synthetic") {
+            if (input.order === "desc" && !input.type) options.onTurnRead?.()
+            messageListCalls.push({
+              type: input.type,
+              order: input.order,
+              limit: input.limit,
+              cursor: input.cursor,
+            })
+            // Durable order: history before compaction, then the retained window. Cursors are
+            // offsets into the requested order.
+            const durable = [...(options.history ?? []), ...(options.messages ?? [])] as {
+              type?: string
+            }[]
+            const filtered = input.type
+              ? durable.filter((entry) => entry.type === input.type)
+              : durable
+            const ordered = input.order === "desc" ? [...filtered].reverse() : filtered
+            const limit = input.limit ?? 50
+            const start = input.cursor ? Number(input.cursor) : 0
+            const next = start + limit < ordered.length ? String(start + limit) : undefined
+            return {
+              data: ordered.slice(start, start + limit),
+              cursor: { ...(next ? { next } : {}) },
+            }
+          }
           const history = options.history ?? []
           const boundary = input.cursor
             ? history.findIndex((entry) => entry.id === input.cursor)
@@ -176,7 +213,8 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
     app: { version },
     location: { directory: "/project", project: { id: "project" } },
     session: {
-      get: () => Effect.succeed(session),
+      // Each read is a snapshot, as the host returns: a later change cannot rewrite an earlier read.
+      get: () => Effect.succeed({ ...session, time: { ...session.time } }),
       context: () =>
         Effect.sync(() => {
           contextReads++
@@ -184,9 +222,17 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         }),
     },
   } as unknown as Plugin.Context
-  const host = nativeHost(ctx, { projectDirectory: "/project" } as TaskRepository, dependencies)
+  // A real repository: detailed reads keep their tool tally in it. `restart` is a fresh host
+  // (a reloaded plugin) over the same database.
+  const repository = new TaskRepository(
+    join(mkdtempSync(join(tmpdir(), "lazers-liveness-")), "tasks.sqlite"),
+    "/project",
+  )
+  const host = nativeHost(ctx, repository, dependencies)
   return {
     host,
+    repository,
+    restart: () => nativeHost(ctx, repository, dependencies),
     session,
     get discoveries() {
       return discoveries
@@ -200,6 +246,7 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
     get contextReads() {
       return contextReads
     },
+    messageListCalls,
     get identityReads() {
       return identityReads
     },

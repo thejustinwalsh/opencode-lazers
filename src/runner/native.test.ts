@@ -1376,7 +1376,7 @@ test("native Architect history projects mutable assistant/tool status without pr
   expect(JSON.stringify(page)).not.toContain("private-tool-name")
 })
 
-test("native session heartbeat reads metadata without context and opts into messages explicitly", async () => {
+test("a detailed worker read pages the current turn and never reads session.context", async () => {
   const now = DateTime.nowUnsafe()
   const fixture = nativeLivenessFixture({
     busy: now,
@@ -1397,14 +1397,18 @@ test("native session heartbeat reads metadata without context and opts into mess
   })
 
   const heartbeat = await fixture.host.session("ses_worker")
-  expect(fixture.contextReads).toBe(0)
+  expect(fixture.messageListCalls).toHaveLength(0)
   expect(heartbeat?.tokens).toBe(20)
   expect(heartbeat?.tools).toBe(0)
   expect(heartbeat?.messages).toEqual([])
   expect(heartbeat?.busy).toBe(false)
 
   const detailed = await fixture.host.session("ses_worker", { messages: true })
-  expect(fixture.contextReads).toBe(2)
+  // One descending page ends at the turn's input; the whole conversation is never read.
+  expect(turnReads(fixture)).toEqual([
+    { type: undefined, order: "desc", limit: 50, cursor: undefined },
+  ])
+  expect(fixture.contextReads).toBe(0)
   expect(detailed?.tools).toBe(1)
   expect(detailed?.turn).toEqual({ inputID: "msg_user", state: "completed" })
   expect(detailed?.messages).toEqual([
@@ -1493,18 +1497,23 @@ test("compacted worker with no response remains pending and no durable input sta
 
 test("a current failed idle marker completes an input that never received an assistant response", async () => {
   const now = DateTime.nowUnsafe()
-  for (const markerTime of [now, DateTime.makeUnsafe(DateTime.toEpochMillis(now) - 1)]) {
+  // The host's message list carries times as epoch milliseconds.
+  const nowMillis = DateTime.toEpochMillis(now)
+  for (const markerTime of [nowMillis, nowMillis - 1]) {
     const fixture = nativeLivenessFixture({
       idle: now,
       outcome: "failed",
       messages: [
-        { id: "msg_assigned", type: "user", time: { created: now } },
+        { id: "msg_assigned", type: "user", time: { created: nowMillis } },
         { id: "msg_idle", type: "idle", outcome: "failed", time: { created: markerTime } },
       ],
     })
     expect(await fixture.host.session("ses_worker", { messages: true })).toMatchObject({
       outcome: "failed",
-      turn: { inputID: "msg_assigned", state: markerTime === now ? "completed" : "pending" },
+      turn: {
+        inputID: "msg_assigned",
+        state: markerTime === nowMillis ? "completed" : "pending",
+      },
     })
   }
 })
@@ -1885,4 +1894,188 @@ test("an Architect's context size is the newest request's prompt, not its cumula
     42_010,
   )
   expect(latestContextTokens([{ type: "user" } as never])).toBeUndefined()
+})
+
+/** The turn reads: descending, untyped pages. The tool tally pages ascending on its own cursor. */
+function turnReads(fixture: ReturnType<typeof nativeLivenessFixture>) {
+  return fixture.messageListCalls.filter((call) => call.order === "desc" && !call.type)
+}
+
+function assistantMessage(id: string, text: string) {
+  return {
+    id,
+    type: "assistant",
+    time: { completed: 1 },
+    finish: "stop",
+    content: [{ type: "text", text }],
+  }
+}
+
+test("a detailed read of a long conversation costs the current turn's pages, not the conversation", async () => {
+  // 200 earlier messages, then one input and a short reply.
+  const earlier = Array.from({ length: 100 }, (_, index) => [
+    { id: `msg_in_${index}`, type: "user", text: `input ${index}` },
+    assistantMessage(`msg_out_${index}`, `reply ${index}`),
+  ]).flat()
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    messages: [
+      ...earlier,
+      { id: "msg_current", type: "user", text: "latest" },
+      assistantMessage("msg_latest_reply", "done"),
+    ],
+  })
+  const session = await fixture.host.session("ses_worker", { messages: true })
+  // Before: two whole-conversation reads of 202 messages. Now: one turn page.
+  expect(turnReads(fixture)).toHaveLength(1)
+  expect(fixture.contextReads).toBe(0)
+  expect(session?.messages.map((message) => message.id)).toEqual([
+    "msg_current",
+    "msg_latest_reply",
+  ])
+  expect(session?.turn).toEqual({ inputID: "msg_current", state: "completed" })
+})
+
+test("a turn longer than one page reads exactly the pages it spans", async () => {
+  const work = Array.from({ length: 120 }, (_, index) => assistantMessage(`msg_step_${index}`, "x"))
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    messages: [
+      { id: "msg_old", type: "user", text: "old" },
+      { id: "msg_current", type: "user", text: "latest" },
+      ...work,
+    ],
+  })
+  const session = await fixture.host.session("ses_worker", { messages: true })
+  // 120 replies plus the input: three descending pages, then it stops at the input.
+  expect(turnReads(fixture)).toHaveLength(3)
+  expect(session?.messages).toHaveLength(121)
+  expect(session?.turn?.inputID).toBe("msg_current")
+})
+
+test("an Architect heartbeat reads one assistant page for its prompt size, never the conversation", async () => {
+  const fixture = nativeLivenessFixture({
+    messages: [
+      { id: "msg_in", type: "user", text: "hi" },
+      {
+        ...assistantMessage("msg_out", "ok"),
+        tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 40_000, write: 2_000 } },
+      },
+    ],
+  })
+  fixture.session.agent = "architect"
+  const session = await fixture.host.session("ses_worker")
+  expect(session?.contextTokens).toBe(42_010)
+  expect(fixture.messageListCalls).toEqual([
+    { type: "assistant", order: "desc", limit: 8, cursor: undefined },
+  ])
+  expect(fixture.contextReads).toBe(0)
+})
+
+test("a single message is a point read, and an absent one is undefined", async () => {
+  const fixture = nativeLivenessFixture({
+    history: [{ id: "msg_present", type: "synthetic" }],
+  })
+  expect(await fixture.host.message?.("ses_worker", "msg_present")).toMatchObject({
+    id: "msg_present",
+    type: "synthetic",
+  })
+  expect(fixture.messageListCalls).toHaveLength(0)
+})
+
+function toolReply(id: string, tools: number) {
+  return {
+    id,
+    type: "assistant",
+    time: { completed: 1 },
+    finish: "stop",
+    content: [
+      ...Array.from({ length: tools }, () => ({ type: "tool", state: { status: "completed" } })),
+      { type: "text", text: "done" },
+    ],
+  }
+}
+
+test("tools stay cumulative across turns, across reads and across a restart", async () => {
+  const messages: unknown[] = [
+    { id: "msg_in_1", type: "user", text: "one" },
+    toolReply("msg_out_1", 2),
+    { id: "msg_in_2", type: "user", text: "two" },
+    toolReply("msg_out_2", 3),
+    { id: "msg_in_3", type: "user", text: "three" },
+    toolReply("msg_out_3", 1),
+  ]
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), messages })
+  // The current turn holds one tool call; the attempt has made six.
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  // Nothing new: the same total again, from the tail page.
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  // A restarted host resumes from the stored tally and never reports less.
+  const restarted = fixture.restart()
+  expect((await restarted.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  messages.push({ id: "msg_in_4", type: "user", text: "four" }, toolReply("msg_out_4", 4))
+  expect((await restarted.session("ses_worker", { messages: true }))?.tools).toBe(10)
+  // A heartbeat without messages does not read the tally.
+  expect((await restarted.session("ses_worker"))?.tools).toBe(0)
+})
+
+test("the tally pages long histories and counts a tool-heavy turn once per call", async () => {
+  const messages = Array.from({ length: 130 }, (_, index) => toolReply(`msg_out_${index}`, 1))
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), messages })
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(130)
+  const before = fixture.messageListCalls.length
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(130)
+  // Second read: one desc turn read plus one tally page (the tail), not the 3 pages again.
+  expect(fixture.messageListCalls.length - before).toBe(turnReadsPerCall + 1)
+})
+const turnReadsPerCall = 3
+
+test("a native input that lands between the bracketing reads is unstable, not paired with the old outcome", async () => {
+  const messages: unknown[] = [
+    { id: "msg_in_1", type: "user", text: "one" },
+    assistantMessage("msg_out_1", "done"),
+  ]
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    outcome: "succeeded",
+    messages,
+    onTurnRead: () => {
+      // The input arrives while the turn is being read; the session record moves with it.
+      messages.push({ id: "msg_in_2", type: "user", text: "two" })
+      ;(fixture.session.time as { updated?: unknown }).updated = DateTime.makeUnsafe(Date.now() + 1)
+    },
+  })
+  ;(fixture.session.time as { updated?: unknown }).updated = DateTime.makeUnsafe(Date.now())
+  const observed = await fixture.host.session("ses_worker", { messages: true })
+  expect(observed?.observationUnstable).toBe(true)
+  // An unstable observation reports no outcome, so the old success is never paired with msg_in_2.
+  expect(observed?.outcome).toBeUndefined()
+  expect(observed?.turn).toMatchObject({ inputID: "msg_in_2" })
+})
+
+test("the assistant text before the current turn is one assistant-only page that skips the turn's replies", async () => {
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    messages: [
+      { id: "msg_in_1", type: "user", text: "one" },
+      assistantMessage("msg_out_1", "earlier words"),
+      { id: "msg_in_2", type: "user", text: "two" },
+      {
+        id: "msg_out_2",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [{ type: "tool", state: { status: "completed" } }],
+      },
+    ],
+  })
+  const session = await fixture.host.session("ses_worker", { messages: true })
+  expect(session?.turnAssistants).toBe(1)
+  fixture.messageListCalls.length = 0
+  expect(await fixture.host.earlierAssistantText?.("ses_worker", 1)).toBe("earlier words")
+  expect(fixture.messageListCalls).toEqual([
+    { type: "assistant", order: "desc", limit: 2, cursor: undefined },
+  ])
+  // Nothing precedes the first turn.
+  expect(await fixture.host.earlierAssistantText?.("ses_worker", 2)).toBeUndefined()
 })

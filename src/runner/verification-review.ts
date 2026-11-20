@@ -327,11 +327,18 @@ export class VerificationReview {
   async workerFinalMessage(attempt: AttemptRow): Promise<string | undefined> {
     try {
       const worker = await this.host.session(attempt.session_id, { messages: true })
-      const last = worker?.messages.findLast(
+      if (!worker) return undefined
+      // The current turn's replies. Its input is not the worker's own words.
+      const last = worker.messages.findLast(
         (message) =>
-          message.id !== attempt.message_id && message.type !== "synthetic" && message.text.trim(),
+          message.id !== attempt.message_id &&
+          message.id !== worker.turn?.inputID &&
+          message.type !== "synthetic" &&
+          message.text.trim(),
       )
-      return last?.text
+      if (last) return last.text
+      // The turn said nothing in words: one assistant-only page reaches the reply before it.
+      return await this.host.earlierAssistantText?.(attempt.session_id, worker.turnAssistants ?? 0)
     } catch {
       return undefined
     }

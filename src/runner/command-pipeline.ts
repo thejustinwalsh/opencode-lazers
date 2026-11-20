@@ -417,53 +417,33 @@ export class CommandPipeline {
     const observedOwner = await this.host.session(old.owner)
     if (!this.validArchitect(observedOwner) || observedOwner.id !== caller)
       throw new Error("Retained repair owner changed before final admission")
-    const observedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const observedProblem = this.retainedRepairWorkerProblem(
+    // One worker read, compared against the observation the repair was prepared on, then the
+    // owner is read again: a change in either after the worker read still stops admission.
+    const worker = await this.host.session(attempt.session_id, { messages: true })
+    const problem = this.retainedRepairWorkerProblem(
       old,
       attempt,
-      observedWorker,
+      worker,
       retainedRepair.nativeInputID,
       retainedRepair.model,
     )
-    const observedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      observedWorker,
+    const backgroundProblem = this.retainedRepairBackgroundProblem(
+      worker,
       retainedRepair.nativeInputID,
     )
     if (
-      observedProblem ||
-      observedBackgroundProblem ||
-      !observedWorker ||
-      this.retainedRepairObservation(observedWorker) !== retainedRepair.workerObservation
+      problem ||
+      backgroundProblem ||
+      !worker ||
+      this.retainedRepairObservation(worker) !== retainedRepair.workerObservation
     )
-      throw new Error(observedProblem ?? "Retained worker changed before final admission")
+      throw new Error(problem ?? "Retained worker changed before final admission")
     const confirmedOwner = await this.host.session(old.owner)
     if (!this.validArchitect(confirmedOwner) || confirmedOwner.id !== caller)
       throw new Error("Retained repair owner changed during final admission")
-    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedProblem = this.retainedRepairWorkerProblem(
-      old,
-      attempt,
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-      retainedRepair.model,
-    )
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmedWorker,
-      retainedRepair.nativeInputID,
-    )
     if (this.store.plan(old.id)?.version !== baseVersion) throw new PlanMovedDuringCommand()
-    if (
-      confirmedProblem ||
-      confirmedBackgroundProblem ||
-      !confirmedWorker ||
-      this.retainedRepairObservation(confirmedWorker) !== retainedRepair.workerObservation ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error(
-        confirmedProblem ??
-          confirmedBackgroundProblem ??
-          "Retained repair authorization changed during final admission",
-      )
+    if (!this.preparationAllowed(attempt))
+      throw new Error("Retained repair authorization changed during final admission")
   }
   async revalidateRetainedRepairRecovery(
     old: PlanRow,

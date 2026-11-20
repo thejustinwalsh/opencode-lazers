@@ -18,12 +18,19 @@ import type {
   WorktreeLocationRetirement,
 } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
+import {
+  HOST_MESSAGE_PAGE_SIZE,
+  installHostMessageSchema,
+  latestMessages,
+  sessionToolCount,
+  type HostMessageClient,
+} from "../core/host-messages.ts"
 import { ensureArchitectMap } from "../context/architect-map.ts"
 import { ensureArchitectProfileGuidance } from "../projects/profile-guidance.ts"
 import { basename, dirname, resolve } from "node:path"
 import type { OutcomeInboxEntry } from "./inbox.ts"
 import { isOwnedQueuedOutcome } from "./inbox.ts"
-import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
+import { isNativeInput, retainedNativeInputID } from "./native-input.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { sameProject } from "../project-key.ts"
@@ -111,7 +118,7 @@ function isMissingNativeSession(
 }
 
 /** The newest conversational message is an assistant response that finished and has nothing streaming. */
-function completedAssistantTail(messages: readonly SessionMessage.Info[]) {
+function completedAssistantTail(messages: readonly NativeMessage[]) {
   const last = messages.findLast(
     (message) =>
       message.type === "assistant" || message.type === "user" || message.type === "synthetic",
@@ -134,7 +141,7 @@ function completedAssistantTail(messages: readonly SessionMessage.Info[]) {
  * down", finish "error") and OpenCode resumes the session with a new step moments later. For
  * that window the aborted step is the newest message, but the turn did not end.
  */
-function abortedByLocationShutdown(message: Extract<SessionMessage.Info, { type: "assistant" }>) {
+function abortedByLocationShutdown(message: Extract<NativeMessage, { type: "assistant" }>) {
   return message.content.some(
     (part) =>
       part.type === "tool" &&
@@ -354,6 +361,9 @@ function architectSourceResult(
   return result
 }
 
+/** A message as the host's message list returns it: plain JSON, times in epoch milliseconds. */
+type NativeMessage = Awaited<ReturnType<NativeInboxClient["message"]["list"]>>["data"][number]
+
 type NativeSessionInfo = Effect.Success<ReturnType<Plugin.Context["session"]["get"]>>
 
 function sessionIdentity(value: NativeSessionInfo) {
@@ -374,6 +384,10 @@ function sessionExecutionState(value: NativeSessionInfo) {
     idle: value.time.idle ? DateTime.toEpochMillis(value.time.idle) : 0,
     outcome: value.outcome,
     archived: value.time.archived !== undefined,
+    // The session's own change stamp moves when a message lands. The one turn read sits between
+    // the session reads, so an input that arrives during it shows up here and the observation
+    // is unstable, rather than pairing the new input with the previous turn's outcome.
+    updated: value.time.updated ? DateTime.toEpochMillis(value.time.updated) : 0,
   })
 }
 
@@ -381,8 +395,6 @@ function sessionExecutionState(value: NativeSessionInfo) {
 function observationChanged(input: {
   before: NativeWorkerObservation
   after: NativeWorkerObservation
-  inputBefore: string | undefined
-  currentInputID: string | undefined
   session: NativeSessionInfo
   middle: NativeSessionInfo
   latest: NativeSessionInfo
@@ -394,7 +406,6 @@ function observationChanged(input: {
     before.permissionRequests !== after.permissionRequests ||
     before.forms !== after.forms ||
     before.shells !== after.shells ||
-    input.inputBefore !== input.currentInputID ||
     sessionIdentity(session) !== sessionIdentity(middle) ||
     sessionIdentity(middle) !== sessionIdentity(latest) ||
     sessionExecutionState(session) !== sessionExecutionState(middle) ||
@@ -403,9 +414,7 @@ function observationChanged(input: {
 }
 
 /** The assistant reply that followed the current input is still streaming or waiting on tools. */
-function replyUnfinished(
-  response: Extract<SessionMessage.Info, { type: "assistant" }> | undefined,
-) {
+function replyUnfinished(response: Extract<NativeMessage, { type: "assistant" }> | undefined) {
   return (
     response !== undefined &&
     (response.time.completed === undefined ||
@@ -419,10 +428,7 @@ function replyUnfinished(
 }
 
 /** The current input's position in the context, its latest reply, and the turn's idle marker. */
-function turnAfterInput(
-  messages: readonly SessionMessage.Info[],
-  currentInputID: string | undefined,
-) {
+function turnAfterInput(messages: readonly NativeMessage[], currentInputID: string | undefined) {
   const lastInputIndex = messages.reduce(
     (index, message, current) =>
       message.id === currentInputID && (message.type === "user" || message.type === "synthetic")
@@ -434,7 +440,7 @@ function turnAfterInput(
     ? [...messages.slice(lastInputIndex + 1)]
         .reverse()
         .find(
-          (message): message is Extract<SessionMessage.Info, { type: "assistant" }> =>
+          (message): message is Extract<NativeMessage, { type: "assistant" }> =>
             message.type === "assistant",
         )
     : undefined
@@ -459,27 +465,53 @@ function nativeTurnState(input: {
 }
 
 /** The host-shaped message list the runner reads; a compacted window may need the retained input first. */
-function hostMessages(
-  retainedCurrentInput: HostMessage | undefined,
-  messages: readonly SessionMessage.Info[],
-) {
-  return [
-    ...(retainedCurrentInput ? [retainedCurrentInput] : []),
-    ...messages.map((message) => ({
-      id: message.id,
-      ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
-      ...(message.metadata ? { metadata: message.metadata } : {}),
-      text:
-        message.type === "user" || message.type === "synthetic"
-          ? message.text
-          : message.type === "assistant"
-            ? message.content
-                .filter((part) => part.type === "text")
-                .map((part) => part.text)
-                .join("\n")
-            : "",
-    })),
-  ]
+function hostMessage(message: NativeMessage): HostMessage {
+  return {
+    id: message.id,
+    ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
+    ...(message.metadata ? { metadata: message.metadata } : {}),
+    text:
+      message.type === "user" || message.type === "synthetic"
+        ? message.text
+        : message.type === "assistant"
+          ? message.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n")
+          : "",
+  }
+}
+
+function hostMessages(messages: readonly NativeMessage[]) {
+  return messages.map(hostMessage)
+}
+
+/**
+ * The current turn: the newest native input and every message after it, oldest first. Read
+ * newest page first and stop at the input, so a turn costs its own pages, never the
+ * conversation. Message cursors keep the durable order across compaction, so the input is found
+ * even when a compacted context window no longer lists it.
+ */
+async function currentTurn(client: NativeInboxClient, sessionID: string) {
+  const newestFirst: NativeMessage[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  for (;;) {
+    const page = await client.message.list({
+      sessionID,
+      order: "desc",
+      limit: HOST_MESSAGE_PAGE_SIZE,
+      ...(cursor ? { cursor } : {}),
+    })
+    for (const message of page.data) {
+      newestFirst.push(message)
+      if (isNativeInput(message)) return newestFirst.reverse()
+    }
+    const next = page.cursor.next
+    if (!next || seen.has(next)) return newestFirst.reverse()
+    seen.add(next)
+    cursor = next
+  }
 }
 
 function sessionUsage(latest: NativeSessionInfo) {
@@ -505,21 +537,25 @@ function sessionUsage(latest: NativeSessionInfo) {
  * Prompt size of the newest assistant request: what the model was actually sent, not the
  * session's cumulative token spend. Absent when no assistant message reports tokens.
  */
-export function latestContextTokens(messages: readonly SessionMessage.Info[]): number | undefined {
+export function latestContextTokens(messages: readonly NativeMessage[]): number | undefined {
   const last = messages.findLast((message) => message.type === "assistant" && message.tokens)
   if (last?.type !== "assistant" || !last.tokens) return undefined
   return last.tokens.input + last.tokens.cache.read + last.tokens.cache.write
 }
 
-function assistantToolCount(messages: readonly SessionMessage.Info[]) {
-  return messages.reduce(
-    (sum, message) =>
-      sum +
-      (message.type === "assistant"
-        ? message.content.filter((part) => part.type === "tool").length
-        : 0),
-    0,
-  )
+/**
+ * An Architect's prompt size from its newest assistant requests: one descending page of the
+ * assistant-only list, never the conversation. The newest request may not report tokens yet,
+ * so the page holds a few.
+ */
+async function architectContextTokens(client: NativeInboxClient, sessionID: string) {
+  const page = await client.message.list({
+    sessionID,
+    type: "assistant",
+    order: "desc",
+    limit: 8,
+  })
+  return latestContextTokens([...page.data].reverse())
 }
 
 function hostSessionView(input: {
@@ -538,8 +574,10 @@ function hostSessionView(input: {
   idleAt: number
   busyAt: number
   outcome: NativeSessionInfo["outcome"] | "interrupted"
-  messages: readonly SessionMessage.Info[]
-  retainedCurrentInput: HostMessage | undefined
+  messages: readonly NativeMessage[]
+  /** Cumulative tool calls of the whole session, not just the current turn. */
+  tools: number
+  detailed: boolean
   contextTokens: number | undefined
 }) {
   const { latest, active, contradicted, observationUnstable, pendingInput } = input
@@ -568,12 +606,15 @@ function hostSessionView(input: {
     model: latest.model,
     ...sessionUsage(latest),
     ...(input.contextTokens === undefined ? {} : { contextTokens: input.contextTokens }),
-    tools: assistantToolCount(input.messages),
+    tools: input.tools,
     // Subscription billing is not a dated equivalent API estimate.
     cost: null,
     // A compacted window can omit the real input's review binding. Read that
     // exact retained input without replaying history or changing turn evidence.
-    messages: hostMessages(input.retainedCurrentInput, input.messages),
+    messages: hostMessages(input.messages),
+    ...(input.detailed
+      ? { turnAssistants: input.messages.filter((message) => message.type === "assistant").length }
+      : {}),
   }
 }
 
@@ -584,6 +625,7 @@ export function nativeHost(
 ): RunnerHost & {
   retainedInputID(sessionID: string): Promise<string | undefined>
   nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
+  messages: HostMessageClient
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -632,31 +674,21 @@ export function nativeHost(
     await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
     return runNative(client, () => projectCanonicalDirectory(client, projectID))
   }
-  /** The exact retained current input, read when a compacted context window no longer lists it. */
-  const readRetainedCurrentInput = async (
-    client: NativeInboxClient,
-    sessionID: string,
-    currentInputID: string,
-  ): Promise<HostMessage> => {
-    const input = await runNative(client, () =>
-      client.session.message.get({
-        sessionID,
-        messageID: SessionMessage.ID.make(currentInputID),
-      }),
-    )
-    if (input.id !== currentInputID || (input.type !== "user" && input.type !== "synthetic"))
-      throw new Error("Retained current input does not match the native worker input")
-    return {
-      id: input.id,
-      type: input.type,
-      text: input.text ?? "",
-      ...(input.metadata ? { metadata: input.metadata } : {}),
-    }
+  /** The host's message list over the shared native connection, for cursor reads. */
+  const messages: HostMessageClient = {
+    message: {
+      list: async (input) => {
+        const client = await connectedClient()
+        return runNative(client, () => client.message.list(input))
+      },
+    },
   }
   const host: RunnerHost & {
     retainedInputID(sessionID: string): Promise<string | undefined>
     nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
+    messages: HostMessageClient
   } = {
+    messages,
     retainedInputID,
     nativeProjectCanonicalDirectory,
     async workerModel(agentID = "lazers-implementor") {
@@ -772,14 +804,6 @@ export function nativeHost(
       }
 
       const before = await observeWorker(client, id, session.location.directory)
-      const readMessages = () =>
-        runNative(client, () =>
-          Effect.runPromise(ctx.session.context({ sessionID: Session.ID.make(id) })),
-        )
-      const messagesBefore = detailed ? await readMessages() : []
-      const inputBefore = detailed
-        ? await resolveNativeInputID(messagesBefore, () => retainedInputID(id))
-        : undefined
       const middle = detailed ? await readSession() : session
       if (!middle) {
         const after = await observeWorker(client, id, session.location.directory)
@@ -788,17 +812,18 @@ export function nativeHost(
         return null
       }
       const after = detailed ? await observeWorker(client, id, middle.location.directory) : before
-      const messages = detailed ? await readMessages() : []
-      const currentInputID = detailed
-        ? await resolveNativeInputID(messages, () => retainedInputID(id))
-        : undefined
-      const retainedCurrentInput =
-        options?.messages &&
-        isWorkerAgent(session.agent) &&
-        currentInputID &&
-        !messages.some((message) => message.id === currentInputID)
-          ? await readRetainedCurrentInput(client, id, currentInputID)
-          : undefined
+      // One bounded read serves the whole observation: the session reads and the two worker
+      // inventories around it already expose a change of input, execution or ownership.
+      const messages = detailed ? await runNative(client, () => currentTurn(client, id)) : []
+      const currentInputID = messages.find(isNativeInput)?.id
+      // Cumulative across turns: the tool tally keeps its own cursor, so a quiet session costs
+      // its tail page and a restart resumes from the stored count.
+      const tools = detailed
+        ? await runNative(client, async () => {
+            installHostMessageSchema(repository)
+            return sessionToolCount(repository, client, id)
+          })
+        : 0
       const latest = detailed ? await readSession() : session
       if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       if (!latest) {
@@ -812,8 +837,6 @@ export function nativeHost(
         observationChanged({
           before,
           after,
-          inputBefore,
-          currentInputID,
           session,
           middle,
           latest,
@@ -844,7 +867,9 @@ export function nativeHost(
         !observationUnstable &&
         runningShells === 0 &&
         activeChildren === 0
-          ? completedAssistantTail(detailed ? messages : await readMessages())
+          ? completedAssistantTail(
+              detailed ? messages : await runNative(client, () => latestMessages(client, id)),
+            )
           : false
       const active = reportedActive && !contradicted
       const interrupted =
@@ -859,7 +884,7 @@ export function nativeHost(
         latest.outcome === "failed" &&
         terminalMarker?.outcome === "failed" &&
         idleAt > 0 &&
-        DateTime.toEpochMillis(terminalMarker.time.created) === idleAt
+        terminalMarker.time.created === idleAt
       const turn = options?.messages
         ? {
             inputID: currentInputID ?? null,
@@ -881,7 +906,7 @@ export function nativeHost(
       // An Architect's routing needs its prompt size, which the cumulative usage cannot give.
       const contextTokens =
         latest.agent === "architect"
-          ? latestContextTokens(detailed ? messages : await readMessages().catch(() => []))
+          ? await runNative(client, () => architectContextTokens(client, id)).catch(() => undefined)
           : undefined
       return hostSessionView({
         latest,
@@ -899,8 +924,36 @@ export function nativeHost(
         busyAt,
         outcome,
         messages,
-        retainedCurrentInput,
+        tools,
+        detailed,
       })
+    },
+    async earlierAssistantText(sessionID, skip) {
+      const client = await connectedClient()
+      const page = await runNative(client, () =>
+        client.message.list({ sessionID, type: "assistant", order: "desc", limit: skip + 1 }),
+      )
+      const earlier = page.data.length === skip + 1 ? page.data[skip] : undefined
+      return earlier ? hostMessage(earlier).text || undefined : undefined
+    },
+    async message(sessionID, messageID) {
+      const client = await connectedClient()
+      try {
+        const found = await runNative(client, () =>
+          client.session.message.get({ sessionID, messageID: SessionMessage.ID.make(messageID) }),
+        )
+        return found.id === messageID ? hostMessage(found) : undefined
+      } catch (error) {
+        const tag = (error as { _tag?: string } | null)?._tag
+        // An absent message, or an absent session, holds no such message.
+        if (
+          tag === "MessageNotFoundError" ||
+          tag === "SessionNotFoundError" ||
+          tag === "Session.NotFoundError"
+        )
+          return undefined
+        throw error
+      }
     },
     async retireIntegratedWorker(input) {
       if (

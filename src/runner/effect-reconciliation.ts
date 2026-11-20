@@ -8,6 +8,7 @@ import { checkResourcesSettled, workingTreeIdentity } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import { protectedPaths } from "./scope.ts"
 import type { WorkerInstruction } from "./host.ts"
+import { hostMessageByID } from "./host-reads.ts"
 import { nativeWorktreeFailureFromReceipt } from "./startup-recovery.ts"
 import { forgetVerificationActivity, verificationActivityKey } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
@@ -168,8 +169,9 @@ export class EffectReconciliation {
     return true
   }
   async reconcilePromptEffect(effect: EffectRow, payload: any, fence: number): Promise<boolean> {
-    const session = await this.host.session(payload.sessionID, { messages: true })
-    if (session?.messages.some((m) => m.id === payload.messageID)) {
+    // One point read answers both checks below.
+    const delivered = await hostMessageByID(this.host, payload.sessionID, payload.messageID)
+    if (delivered) {
       this.receipt(
         effect,
         {
@@ -183,7 +185,6 @@ export class EffectReconciliation {
     // These adapter guards throw before ctx.session.prompt. Record the
     // conclusive non-dispatch so reconciliation can retry the same worker.
     if (
-      !session?.messages.some((m) => m.id === payload.messageID) &&
       [
         "Worker session is not in its assigned worktree",
         "Worker prompt target is not the exact assigned session and route",

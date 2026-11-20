@@ -27,7 +27,16 @@ test("a verifying attempt reconciles its actual review input and resumes the sam
     )
   })
   const effects = f.store.effects(planID)
+  let detailedReads = 0
+  const readSession = f.host.session
+  f.host.session = async (id, options) => {
+    if (id === attempt.session_id && options?.messages) detailedReads++
+    return readSession(id, options)
+  }
   const reconciled = await f.runtime.command(reviewInputCommand(f, attempt, reviewInputID), "owner")
+  f.host.session = readSession
+  // The worker is read once after the owner check; it used to be read before and after it.
+  expect(detailedReads).toBe(1)
   expect(reconciled).toMatchObject({ relationshipRecorded: true })
   expect(f.store.attempts(planID)[0]!.state).toBe("verifying")
   f.store.atomic((db) =>
