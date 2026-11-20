@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex"
 import { Cover } from "./Cover"
-import { Checked, Footer, Install, Loop, Parts } from "./Sections"
+import { Checked, Footer, Install, Local, Loop, Parts } from "./Sections"
 import { color, type } from "./tokens.stylex"
 
 const s = stylex.create({
@@ -34,6 +34,7 @@ export function App() {
         <Loop />
         <Parts />
         <Checked />
+        <Local />
         <Install />
       </main>
       <Footer />

@@ -314,13 +314,6 @@ export function nearestMark<T extends { left: number; width?: number }>(
   return bestDistance <= tolerance ? best : undefined
 }
 
-export const ZOOM_LEVELS = [1, 2, 4, 8, 16, 32] as const
-export function nextZoom(current: number, direction: 1 | -1) {
-  const index = ZOOM_LEVELS.findIndex((level) => level >= current)
-  const at = index < 0 ? ZOOM_LEVELS.length - 1 : index
-  return ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, at + direction))]!
-}
-
 /** Recorded tool and gap times that the shared axis must cover. */
 export function trackTimes(events: readonly TrajectoryEvent[]) {
   const times: number[] = []

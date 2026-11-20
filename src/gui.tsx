@@ -40,6 +40,7 @@ import { inferenceIndicatorStyles, registerInferenceIndicator } from "./webgpu/i
 import { nativeBusyStyles } from "./native-busy-styles.ts"
 import { budgetStores, setupBudget } from "./budget/gui.tsx"
 import { setupProjects } from "./projects/gui.tsx"
+import { setupRetention } from "./retention/gui.tsx"
 
 const NEVER_UNLOAD_MS = -1
 /** "Never" only for -1; any other persisted value is shown exactly. */
@@ -101,6 +102,7 @@ export default Plugin.define({
     const pageID = "lazers"
     const BudgetSection = setupBudget(ctx, ctx.stores.budget, pageID)
     const ProjectsSection = setupProjects(ctx)
+    const RetentionSection = setupRetention(ctx)
     ctx.add(Style, nativeBusyStyles)
     ctx.add(Style, panelStatusStyles)
     ctx.add(Style, detailsPaneStyles)
@@ -168,6 +170,7 @@ export default Plugin.define({
           >
             <BudgetSection />
             <ProjectsSection />
+            <RetentionSection />
           </Ui.SettingsLayout>
         ),
       })
@@ -599,6 +602,7 @@ export default Plugin.define({
           </Ui.SettingsSection>
           <BudgetSection />
           <ProjectsSection />
+          <RetentionSection />
           <details class="lazers-local lazers-local-diagnostics">
             <summary>
               Advanced diagnostics <span>GPU, model identity, renderer capture</span>

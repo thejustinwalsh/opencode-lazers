@@ -8,6 +8,8 @@ import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability, type ObservationChange } from "./contract.ts"
+import { allProjectsAccess, callerSession } from "../projects/read-access.ts"
+import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationReadChangedError } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -50,11 +52,17 @@ const NATIVE_EVENT_TYPES = [
   "session.status",
 ] as const
 
-const isNotFound = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "_tag" in error &&
-  error._tag === "SessionNotFoundError"
+function schedulerTotals(agent: string) {
+  return agent === "architect"
+    ? {
+        status: "available" as const,
+        scope: "process" as const,
+        audience: "architect-only" as const,
+        source: "sharedScheduler.snapshot" as const,
+        ...sharedScheduler.snapshot(),
+      }
+    : { status: "unavailable" as const, reason: "architect-only" as const }
+}
 
 async function authorize(
   ctx: ObservationContext,
@@ -63,20 +71,8 @@ async function authorize(
   projectDirectory: string,
   action: "read" | "lz-inspect-trajectory",
 ) {
-  const session = await Effect.runPromise(
-    ctx.session
-      .get({ sessionID: Session.ID.make(scope.sessionID) })
-      .pipe(
-        Effect.catch((error) => (isNotFound(error) ? Effect.succeed(null) : Effect.fail(error))),
-      ),
-  )
-  if (
-    !session ||
-    session.id !== scope.sessionID ||
-    session.projectID !== projectID ||
-    !session.agent
-  )
-    throw new Error("Observation scope is unavailable")
+  const session = await callerSession(ctx, scope.sessionID, projectID)
+  if (!session) throw new Error("Observation scope is unavailable")
   await Effect.runPromise(
     ctx.permission.assert({
       sessionID: Session.ID.make(session.id),
@@ -92,13 +88,38 @@ export function registerObservability(
   ctx: ObservationContext,
   reads: ObservationReads,
   projectID: string,
+  options: {
+    /** Project roots with a live location in this server; decides `loaded` on all-projects rows. */
+    loaded?: () => Iterable<string>
+  } = {},
 ) {
+  const loaded = options.loaded ?? loadedProjectDirectories
+  /**
+   * The checkouts an all-projects read covers. A read over this RPC is the owner looking at their
+   * own machine's projects, so no permission is asserted here (nothing can prompt); the session
+   * check only guards against a malformed call. Agent tools never reach these reads.
+   */
+  const accessFor = (scope: { sessionID: string }) =>
+    allProjectsAccess(ctx, {
+      sessionID: scope.sessionID,
+      projectID,
+      repository: reads.store.repository,
+      loaded,
+      unavailable: "Observation scope is unavailable",
+    })
   return Effect.gen(function* () {
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
     const rpc = yield* timedRpc(ctx.rpc).register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all")
+              return reads.snapshotAll(
+                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                tracker,
+                await accessFor(input.scope),
+                signal,
+              )
             await authorize(
               ctx,
               input.scope,
@@ -113,6 +134,12 @@ export function registerObservability(
       topology: (input) =>
         Effect.tryPromise({
           try: async () => {
+            if (input.scope.kind === "all")
+              return reads.topologyAll(
+                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                tracker,
+                await accessFor(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,
@@ -127,6 +154,27 @@ export function registerObservability(
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all") {
+              const access = await accessFor(input.scope)
+              const agent = (await callerSession(ctx, input.scope.sessionID, projectID))!.agent
+              signal.throwIfAborted()
+              return reads
+                .allPage(
+                  { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                  tracker,
+                  access,
+                  (unit) => ({
+                    ...progressReconstructionDiagnostics(
+                      reads.store.repository.path,
+                      unit.reads.store.repository.projectDirectory,
+                      unit.reads.projectIdentity,
+                    ),
+                    scope: { kind: "project" as const },
+                    processSchedulerTotals: schedulerTotals(agent),
+                  }),
+                )
+                .then((page) => ({ ...page, scope: { kind: "all" as const } }))
+            }
             const agent = await authorize(
               ctx,
               input.scope,
@@ -140,16 +188,7 @@ export function registerObservability(
               reads.store.repository.projectDirectory,
               projectID,
             )
-            const processSchedulerTotals =
-              agent === "architect"
-                ? {
-                    status: "available" as const,
-                    scope: "process" as const,
-                    audience: "architect-only" as const,
-                    source: "sharedScheduler.snapshot" as const,
-                    ...sharedScheduler.snapshot(),
-                  }
-                : { status: "unavailable" as const, reason: "architect-only" as const }
+            const processSchedulerTotals = schedulerTotals(agent)
             return {
               ...reconstruction,
               scope: { kind: "project" as const },
@@ -161,6 +200,27 @@ export function registerObservability(
       radar: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all") {
+              const access = await accessFor(input.scope)
+              const scope = input.scope
+              for (let attempt = 1; ; attempt++) {
+                signal.throwIfAborted()
+                try {
+                  return await reads.radarAll(
+                    {
+                      scope,
+                      includeUnmanagedSessions: input.includeUnmanagedSessions,
+                      ...(input.cursor ? { cursor: input.cursor } : {}),
+                    },
+                    tracker,
+                    signal,
+                    access,
+                  )
+                } catch (error) {
+                  if (!(error instanceof ObservationReadChangedError) || attempt === 3) throw error
+                }
+              }
+            }
             await authorize(
               ctx,
               input.scope,
@@ -193,6 +253,17 @@ export function registerObservability(
       liveRadar: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all")
+              return reads.liveRadarAll(
+                {
+                  scope: input.scope,
+                  includeUnmanagedSessions: input.includeUnmanagedSessions,
+                  ...(input.cursor ? { cursor: input.cursor } : {}),
+                },
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,
@@ -207,6 +278,17 @@ export function registerObservability(
       liveGroup: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all")
+              return reads.liveGroupAll(
+                {
+                  scope: input.scope,
+                  group: input.group,
+                  ...(input.cursor ? { cursor: input.cursor } : {}),
+                },
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,
@@ -221,6 +303,8 @@ export function registerObservability(
       liveAttempt: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all")
+              return reads.liveAttemptAll(input, tracker, signal, await accessFor(input.scope))
             await authorize(
               ctx,
               input.scope,
@@ -246,6 +330,8 @@ export function registerObservability(
       liveHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all")
+              return reads.liveHistoryAll(input, tracker, signal, await accessFor(input.scope))
             await authorize(
               ctx,
               input.scope,
@@ -271,6 +357,9 @@ export function registerObservability(
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all") {
+              return reads.trajectoryAll(input, tracker, signal, await accessFor(input.scope))
+            }
             await authorize(
               ctx,
               input.scope,
@@ -286,6 +375,14 @@ export function registerObservability(
       trajectoryHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            if (input.scope.kind === "all") {
+              return reads.trajectoryHistoryAll(
+                input,
+                tracker,
+                signal,
+                await accessFor(input.scope),
+              )
+            }
             await authorize(
               ctx,
               input.scope,
@@ -312,6 +409,9 @@ export function registerObservability(
       trajectoryStatus: (input) =>
         Effect.tryPromise({
           try: async () => {
+            if (input.scope.kind === "all") {
+              return reads.trajectoryStatusAll(input, tracker, await accessFor(input.scope))
+            }
             await authorize(
               ctx,
               input.scope,

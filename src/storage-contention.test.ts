@@ -82,7 +82,7 @@ test("atomicAsync() surfaces StorageBusyError after its deadline", async () => {
   try {
     await expect(
       repository.atomicAsync((db) => db.exec("INSERT INTO probe VALUES (1)"), { deadlineMs: 150 }),
-    ).rejects.toBeInstanceOf(StorageBusyError)
+    ).rejects.toThrow(/Retry this call/)
   } finally {
     clearInterval(timer)
   }

@@ -634,6 +634,22 @@ export type DetailPage = {
 export class RunnerStore {
   /** Settles once the plan-scoped transition indexes exist (or the background build gave up). */
   readonly transitionIndexes: Promise<void>
+
+  /**
+   * A store for reads only. Its constructor would register lifecycle transitions and build indexes
+   * in a write transaction; this skips that, so it needs a repository whose `atomic` is a read
+   * (`ReadOnlyTaskRepository`) and a database another store has already prepared.
+   */
+  static readOnly(repository: TaskRepository): RunnerStore {
+    const store = Object.create(RunnerStore.prototype) as RunnerStore
+    Object.defineProperty(store, "repository", { value: repository, enumerable: true })
+    Object.defineProperty(store, "transitionIndexes", {
+      value: Promise.resolve(),
+      enumerable: true,
+    })
+    return store
+  }
+
   constructor(readonly repository: TaskRepository) {
     repository.atomic(registerLifecycleTransitions)
     repository.installSchema(

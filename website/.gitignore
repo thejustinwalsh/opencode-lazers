@@ -1,3 +1,4 @@
 node_modules
 dist
 .impeccable/hook.cache.json
+public/demo/

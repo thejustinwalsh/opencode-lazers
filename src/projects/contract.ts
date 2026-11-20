@@ -1,5 +1,6 @@
 import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
+import { ProjectRef } from "./scope.ts"
 
 const Scope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("global") }),
@@ -46,6 +47,24 @@ const Outcome = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(false), refusal: Refusal, message: z.string() }),
 ])
 
+const NeedsYouItem = z.strictObject({
+  project: ProjectRef,
+  kind: z.enum(["owner-hold", "recovery-bundle", "architect-question"]),
+  id: z.string().min(1),
+  title: z.string(),
+  reference: z.string().optional(),
+  reason: z.string().optional(),
+  since: z.number().optional(),
+  count: z.number().int().nonnegative().optional(),
+})
+/** One checkout of one readable project per page; `project` is absent when none is readable. */
+const NeedsYouPage = z.strictObject({
+  project: ProjectRef.optional(),
+  items: z.array(NeedsYouItem),
+  nextCursor: z.string().nullable(),
+})
+
+export type NeedsYouPageView = z.infer<typeof NeedsYouPage>
 export type ProjectsListing = z.infer<typeof Listing>
 export type ProjectView = z.infer<typeof Project>
 export type ProjectsOutcome = z.infer<typeof Outcome>
@@ -60,6 +79,17 @@ export const Projects = Rpc.define({
   events: {},
   methods: {
     list: { input: z.strictObject({}), output: Listing },
+    /**
+     * Everything waiting on the owner in the projects the caller may read, a page per checkout.
+     * `sessionID` is the calling session; continue with `nextCursor` until it is null.
+     */
+    needsYou: {
+      input: z.strictObject({
+        sessionID: z.string().min(1).max(200),
+        cursor: z.string().min(1).max(2048).optional(),
+      }),
+      output: NeedsYouPage,
+    },
     setCode: {
       input: z.strictObject({ key: z.string().min(1), code: z.string() }),
       output: Outcome,

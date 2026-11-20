@@ -1,0 +1,65 @@
+/* Native scrolling only. Parallax and section transitions use CSS scroll-driven
+   animations; motion.ts supplies a passive-listener fallback where they are missing. */
+
+/* Anchor navigation: native smooth scroll, off for reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+/* Offset for anchor targets; raise --anchor-offset if a fixed header is ever added. */
+[id] {
+  scroll-margin-top: var(--anchor-offset, 0px);
+}
+
+@keyframes lz-drift {
+  from {
+    transform: translate3d(0, var(--amp, 0px), 0);
+  }
+  to {
+    transform: translate3d(0, calc(var(--amp, 0px) * -1), 0);
+  }
+}
+@keyframes lz-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes lz-clip {
+  from {
+    clip-path: polygon(0 0, 2vw 0, 0 100%, 0 100%);
+  }
+  to {
+    clip-path: polygon(0 0, calc(100% + 2vw) 0, 100% 100%, 0 100%);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    [data-scroll-section] {
+      view-timeline: --lz-section block;
+    }
+    /* Section centre crosses the viewport: +amp as it enters, -amp as it leaves. */
+    [data-parallax] {
+      animation: lz-drift linear both;
+      animation-timeline: --lz-section;
+      animation-range: cover;
+    }
+    /* Print-in: 0 as the section's top meets the viewport bottom, 1 after 70% of a viewport. */
+    [data-reveal] {
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: --lz-section;
+      animation-range: cover 0 cover 70vh;
+    }
+    [data-reveal="grow"] {
+      animation-name: lz-grow;
+    }
+    [data-reveal="clip"] {
+      animation-name: lz-clip;
+    }
+  }
+}

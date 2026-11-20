@@ -8,8 +8,9 @@ import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
 import { TaskStateFilter } from "./state-filter.ts"
 import { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
+import { ProjectRef } from "../projects/scope.ts"
 
-export const QueryInput = z.strictObject({
+const QueryFields = {
   sort: z.enum(["recent", "schedule"]).default("recent"),
   search: z.string().max(200).default(""),
   scopePath: z.string().min(1).max(1_024).optional(),
@@ -19,14 +20,44 @@ export const QueryInput = z.strictObject({
   state: TaskStateFilter.optional(),
   includeCompleted: z.boolean().default(false),
   includeRetired: z.boolean().default(false),
-})
+}
+/** The query an agent tool offers: this project, optionally one session. Never all projects. */
+export const AgentQueryInput = z.strictObject(QueryFields)
+/**
+ * The Tasks RPC query. `allProjects` reads every registered project, a page per checkout, for the
+ * owner's panel; `sessionID` then names the calling session and does not filter, and `cursor` is a
+ * project cursor. Agent tools use `AgentQueryInput`, which has no such field.
+ */
+export const QueryInput = z
+  .strictObject({ allProjects: z.literal(true).optional(), ...QueryFields })
+  .superRefine((input, ctx) => {
+    if (input.allProjects && !input.sessionID)
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionID"],
+        message: "An all-projects query names the calling session",
+      })
+  })
 export type TaskQuery = z.input<typeof QueryInput>
-export const GetInput = z.strictObject({
+const GetFields = {
   taskID: z.union([z.uuid(), TaskReferenceSchema]),
   revision: z.int().positive().optional(),
   classificationRevision: z.int().nonnegative().optional(),
   sessionID: z.string().min(1).max(200).optional(),
-})
+}
+/** The get an agent tool offers: a task of this project. Never another project. */
+export const AgentGetInput = z.strictObject(GetFields)
+/** The Tasks RPC get; `allProjects` reads a task of any registered project for the owner's panel. */
+export const GetInput = z
+  .strictObject({ allProjects: z.literal(true).optional(), ...GetFields })
+  .superRefine((input, ctx) => {
+    if (input.allProjects && !input.sessionID)
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionID"],
+        message: "An all-projects read names the calling session",
+      })
+  })
 export const GetInstructionsOutput = z.string()
 /** A task that keeps consuming effort without landing; see `assessConcern`. */
 export const TaskConcern = z.strictObject({
@@ -46,6 +77,8 @@ export const TaskConcern = z.strictObject({
 export type TaskConcern = z.infer<typeof TaskConcern>
 
 const TaskSummary = z.strictObject({
+  /** Present in an all-projects page only. */
+  project: ProjectRef.optional(),
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
   dispatchPause: DispatchPause.optional(),
@@ -73,6 +106,8 @@ const TaskSummary = z.strictObject({
 })
 export type TaskSummary = z.infer<typeof TaskSummary>
 export const QueryOutput = z.strictObject({
+  /** An all-projects page: the project of every task on it. */
+  project: ProjectRef.optional(),
   projectDirectory: z.string(),
   snapshot: z.int().nonnegative(),
   count: z.int().nonnegative(),
@@ -117,7 +152,7 @@ const TaskAttempt = z.strictObject({
 export const CurrentActivityInput = z
   .strictObject({
     sessionID: z.string().min(1).max(200),
-    scope: z.enum(["session", "project"]),
+    scope: z.enum(["session", "project", "all"]),
     taskIDs: z.array(z.uuid()).min(1).max(40),
   })
   .superRefine((input, context) => {
@@ -125,6 +160,8 @@ export const CurrentActivityInput = z
       context.addIssue({ code: "custom", path: ["taskIDs"], message: "Task IDs must be unique" })
   })
 const CurrentTaskActivity = z.strictObject({
+  /** All-projects scope: the project the task belongs to. */
+  project: ProjectRef.optional(),
   taskID: z.uuid(),
   /** Authorized exact worker association used to scope native activity notifications. */
   workerSessionID: z.string().min(1).optional(),
@@ -150,6 +187,8 @@ export type CurrentTaskActivity = z.infer<typeof CurrentTaskActivity>
 export const GetOutput = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("found"),
+    /** All-projects read: the project the task belongs to. */
+    project: ProjectRef.optional(),
     task: TaskSpecSchema,
     classification: TaskClassificationRevision,
     classificationHistory: z.array(TaskClassificationRevision),

@@ -47,11 +47,18 @@ import {
   ModelDecisionConfigurationsRPCInputSchema,
   ModelDecisionInspectOutputSchema,
   ModelDecisionInspectRPCInputSchema,
+  ModelDecisionOverviewAllOutputSchema,
+  ModelDecisionOverviewAllRPCInputSchema,
   ModelDecisionOverviewOutputSchema,
   ModelDecisionOverviewRPCInputSchema,
+  ModelDecisionRowsAllOutputSchema,
+  ModelDecisionRowsAllRPCInputSchema,
   ModelDecisionRowsOutputSchema,
   ModelDecisionRowsRPCInputSchema,
 } from "./decision-contract.ts"
+import { loadedProjectDirectories } from "../core/registry.ts"
+import { canonicalPath, pickUnit, projectUnits, unitToken } from "../projects/scope.ts"
+import type { ProjectUnit } from "../projects/scope.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
 import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
@@ -86,6 +93,34 @@ function isSessionNotFound(error: unknown): boolean {
   )
 }
 
+/** The caller's session: it exists, is not archived, belongs to this project and has an agent. */
+async function eligibleSession(
+  ctx: ModelsContext,
+  sessionID: string,
+  projectID: string,
+  signal: AbortSignal,
+) {
+  const session = await Effect.runPromise(
+    ctx.session
+      .get({ sessionID: Session.ID.make(sessionID) })
+      .pipe(
+        Effect.catch((error) =>
+          isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
+        ),
+      ),
+    { signal },
+  )
+  if (
+    !session ||
+    String(session.id) !== sessionID ||
+    session.projectID !== projectID ||
+    session.time.archived !== undefined ||
+    !session.agent
+  )
+    throw new Error("Models scope is unavailable")
+  return { session, agent: session.agent }
+}
+
 async function authorize(
   ctx: ModelsContext,
   sessionID: string,
@@ -94,27 +129,7 @@ async function authorize(
   resources: string[],
   signal: AbortSignal,
 ) {
-  const readEligibleSession = async () => {
-    const session = await Effect.runPromise(
-      ctx.session
-        .get({ sessionID: Session.ID.make(sessionID) })
-        .pipe(
-          Effect.catch((error) =>
-            isSessionNotFound(error) ? Effect.succeed(null) : Effect.fail(error),
-          ),
-        ),
-      { signal },
-    )
-    if (
-      !session ||
-      String(session.id) !== sessionID ||
-      session.projectID !== projectID ||
-      session.time.archived !== undefined ||
-      !session.agent
-    )
-      throw new Error("Models scope is unavailable")
-    return { session, agent: session.agent }
-  }
+  const readEligibleSession = () => eligibleSession(ctx, sessionID, projectID, signal)
 
   const eligible = await readEligibleSession()
 
@@ -276,7 +291,7 @@ export function registerModelsServer(
   fetcher?: ModelEvidenceFetcher,
   evidenceReadStoreFactory: EvidenceReadStoreFactory = (databasePath, directory) =>
     new ModelEvidenceReadStore(databasePath, directory),
-  options: { prewarmDecision?: boolean } = {},
+  options: { prewarmDecision?: boolean; loaded?: () => Iterable<string> } = {},
 ) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
@@ -320,49 +335,85 @@ export function registerModelsServer(
   }
   const failure = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
-  return Effect.gen(function* () {
-    const decisionReader = createThreadedDecisionReader({
-      path,
-      projectDirectory,
-      readPriceState: async (routes: readonly CurrentPriceApplicability[], signal) => {
-        signal?.throwIfAborted()
-        const [policy, openrouter] = await Promise.all([
-          priceSourceSettings.read(signal),
-          configuredAccess(ctx, "openrouter", signal ?? new AbortController().signal),
-        ])
-        signal?.throwIfAborted()
-        const state = withEvidenceReadStore((store) => {
-          const sources = store.readComparisonSources()
-          const { settings, opencode, index } = priceIndexFromSources({
-            sources,
-            policy,
-            openrouter,
-            routes,
-          })
-          return {
-            settings,
-            opencode,
-            index,
-            sources,
-            freshness: currentPriceIndexFreshness(index, sources),
-          }
-        })
-        const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
-        signal?.throwIfAborted()
-        return {
-          settings: state.settings,
-          index: state.index,
-          endpointPricing,
-          identityCatalogSource: state.sources.find(
-            (source) => source.source === "openrouter-models",
-          ),
-          identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
-          sources: state.sources,
-          freshness: state.freshness,
-          note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${state.opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
-        }
-      },
+  /** Price sources are global, so every project's decision read prices with this location's. */
+  const readPriceState = async (
+    routes: readonly CurrentPriceApplicability[],
+    signal?: AbortSignal,
+  ) => {
+    signal?.throwIfAborted()
+    const [policy, openrouter] = await Promise.all([
+      priceSourceSettings.read(signal),
+      configuredAccess(ctx, "openrouter", signal ?? new AbortController().signal),
+    ])
+    signal?.throwIfAborted()
+    const state = withEvidenceReadStore((store) => {
+      const sources = store.readComparisonSources()
+      const { settings, opencode, index } = priceIndexFromSources({
+        sources,
+        policy,
+        openrouter,
+        routes,
+      })
+      return {
+        settings,
+        opencode,
+        index,
+        sources,
+        freshness: currentPriceIndexFreshness(index, sources),
+      }
     })
+    const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
+    signal?.throwIfAborted()
+    return {
+      settings: state.settings,
+      index: state.index,
+      endpointPricing,
+      identityCatalogSource: state.sources.find((source) => source.source === "openrouter-models"),
+      identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
+      sources: state.sources,
+      freshness: state.freshness,
+      note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${state.opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
+    }
+  }
+
+  return Effect.gen(function* () {
+    const decisionReader = createThreadedDecisionReader({ path, projectDirectory, readPriceState })
+    // Readers for the other projects' checkouts, started on first use and closed with this scope.
+    const otherReaders = new Map<string, ReturnType<typeof createThreadedDecisionReader>>()
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        for (const reader of otherReaders.values()) reader.close()
+        otherReaders.clear()
+      }),
+    )
+    const readerFor = (unit: ProjectUnit) => {
+      if (canonicalPath(unit.directory) === canonicalPath(projectDirectory))
+        return { reader: decisionReader, directory: projectDirectory }
+      let reader = otherReaders.get(unit.directory)
+      if (!reader)
+        otherReaders.set(
+          unit.directory,
+          (reader = createThreadedDecisionReader({
+            path,
+            projectDirectory: unit.directory,
+            readPriceState,
+          })),
+        )
+      return { reader, directory: unit.directory }
+    }
+    /**
+     * The all-projects Models reads: the caller's session is checked, and no permission is
+     * asserted, so the owner is never prompted for looking at their own projects in a panel.
+     */
+    const decisionAccess = async (sessionID: string, signal: AbortSignal) => {
+      await eligibleSession(ctx, sessionID, projectID, signal)
+      const registry = new TaskRepository(path, projectDirectory)
+      try {
+        return { units: projectUnits(registry, options.loaded ?? loadedProjectDirectories) }
+      } finally {
+        registry.close()
+      }
+    }
     if (options.prewarmDecision) {
       // Build the default snapshot once the service has settled, so the first open after a
       // start or reload reads a cached one. The worker keeps it current from then on.
@@ -699,6 +750,62 @@ export function registerModelsServer(
             )
             signal.throwIfAborted()
             return ModelDecisionRowsOutputSchema.parse(output)
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      overviewAll: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionOverviewAllRPCInputSchema.parse(input)
+            const access = await decisionAccess(request.sessionID, signal)
+            const picked = pickUnit(access.units, request.cursor)
+            if (!picked) throw new Error("No project is readable in this scope")
+            signal.throwIfAborted()
+            const target = readerFor(picked.unit)
+            const overview = await target.reader.overview(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: { projectDirectory: target.directory },
+                filters: request.filters,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionOverviewAllOutputSchema.parse({
+              project: picked.unit.project,
+              unit: unitToken(picked.unit.directory),
+              nextCursor: picked.nextCursor,
+              overview,
+            })
+          },
+          catch: failure,
+        }).pipe(Effect.orDie),
+      rowsAll: (input) =>
+        Effect.tryPromise({
+          try: async (signal) => {
+            const request = ModelDecisionRowsAllRPCInputSchema.parse(input)
+            const access = await decisionAccess(request.sessionID, signal)
+            const unit = access.units.find((item) => unitToken(item.directory) === request.unit)
+            if (!unit) throw new Error("Models scope is unavailable")
+            signal.throwIfAborted()
+            const target = readerFor(unit)
+            const rows = await target.reader.rows(
+              {
+                schemaVersion: request.schemaVersion,
+                scope: { projectDirectory: target.directory },
+                filters: request.filters,
+                snapshotID: request.snapshotID,
+                cursor: request.cursor,
+                limit: request.limit,
+              },
+              { signal },
+            )
+            signal.throwIfAborted()
+            return ModelDecisionRowsAllOutputSchema.parse({
+              project: unit.project,
+              unit: request.unit,
+              rows,
+            })
           },
           catch: failure,
         }).pipe(Effect.orDie),

@@ -696,7 +696,7 @@ function mergeObservations(previous: unknown, incoming: unknown, kind: ProgressK
     const prior = unique.get(identity)
     unique.set(identity, prior ? preferObservation(kind, prior, item) : item)
   }
-  return [...unique.values()].slice(-25)
+  return [...unique.values()]
 }
 
 const toolStatusRank: Record<string, number> = {
@@ -2063,7 +2063,8 @@ export class ProgressRecorder {
       throw new Error("Only an assigned LAZERS implementor may report progress")
     const parsed = ProgressInput.parse({ message: input.message })
     const stats = privacyStats()
-    const safeMessage = safeText(parsed.message, stats, 1200).trim()
+    // Redaction still applies; length does not: the stored note is the whole note.
+    const safeMessage = safeText(parsed.message, stats, Number.POSITIVE_INFINITY).trim()
     if (!safeMessage) throw new Error("Progress message is empty after privacy filtering")
     const result = this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", input.sessionID)

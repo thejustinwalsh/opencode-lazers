@@ -1,0 +1,322 @@
+/* The demo shell: a small stand-in for OpenCode Desktop's side panel and its theme tokens. The
+   LAZERS panels bring their own styles and read only these host tokens (see DESIGN.md). */
+:root {
+  color-scheme: dark;
+  --background-base: #14131c;
+  --surface-base: #1b1a26;
+  --surface-base-hover: #242333;
+  --surface-base-active: #2b2a3d;
+  --surface-raised-base: #1f1e2c;
+  --surface-raised-stronger-non-alpha: #262536;
+  --text-strong: #f2f1fa;
+  --text-base: #cfcde0;
+  --text-weak: #9794b3;
+  --text-weaker: #716e8d;
+  --text-interactive-base: #8f93ff;
+  --text-link-base: #8f93ff;
+  --text-critical-base: #ff7a8a;
+  --text-critical: #ff7a8a;
+  --text-warning-base: #f3b95f;
+  --text-warning: #f3b95f;
+  --border-base: #3a384f;
+  --border-weak-base: #2a2940;
+  --border-selected: #8f93ff;
+  --border-focus: #8f93ff;
+  --icon-base: #9a97b8;
+  --icon-interactive-base: #8f93ff;
+  --icon-success-base: #5fd0a0;
+  --icon-success-active: #5fd0a0;
+  --icon-warning-base: #f3b95f;
+  --icon-warning-active: #f3b95f;
+  --icon-critical-base: #ff7a8a;
+  --font-family-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --text-shimmer-base-color: #4a4866;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background-base: #fbfaf5;
+  --surface-base: #f1f0f9;
+  --surface-base-hover: #e7e6f4;
+  --surface-base-active: #dddcef;
+  --surface-raised-base: #ffffff;
+  --surface-raised-stronger-non-alpha: #ffffff;
+  --text-strong: #13095e;
+  --text-base: #2f2a73;
+  --text-weak: #5f5a98;
+  --text-weaker: #8a86b8;
+  --text-interactive-base: #3b37c9;
+  --text-link-base: #3b37c9;
+  --text-critical-base: #c0123e;
+  --text-critical: #c0123e;
+  --text-warning-base: #94600a;
+  --text-warning: #94600a;
+  --border-base: #c9c7e6;
+  --border-weak-base: #dedcf1;
+  --border-selected: #3b37c9;
+  --border-focus: #3b37c9;
+  --icon-base: #6d68a8;
+  --icon-interactive-base: #3b37c9;
+  --icon-success-base: #14855a;
+  --icon-success-active: #14855a;
+  --icon-warning-base: #94600a;
+  --icon-warning-active: #94600a;
+  --icon-critical-base: #c0123e;
+  --text-shimmer-base-color: #b9b6dc;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--background-base);
+  color: var(--text-base);
+  font:
+    13px/1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  overflow: hidden;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Shell */
+.oc-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: var(--background-base);
+}
+.oc-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-weak-base);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.oc-tabbar .oc-spacer {
+  flex: 1;
+}
+.oc-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.oc-body > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Host components */
+.oc-icon {
+  flex: 0 0 auto;
+  color: var(--icon-base);
+}
+.oc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  background: var(--surface-base);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+.oc-button:hover {
+  background: var(--surface-base-hover);
+}
+.oc-button[data-variant^="ghost"] {
+  border-color: transparent;
+  background: transparent;
+}
+.oc-button[data-variant^="ghost"]:hover {
+  background: var(--surface-base-hover);
+}
+.oc-icon-button {
+  width: 28px;
+  padding: 0;
+}
+.oc-button:focus-visible,
+.oc-input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+.oc-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.oc-input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  background: var(--surface-base);
+  color: var(--text-strong);
+}
+.oc-tooltip {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+.oc-tooltip[data-tooltip]:not([data-tooltip=""]):hover::after,
+.oc-tooltip[data-shown][data-tooltip]:not([data-tooltip=""])::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: calc(100% + 4px);
+  width: max-content;
+  max-width: 260px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  background: var(--surface-raised-stronger-non-alpha);
+  color: var(--text-strong);
+  font-size: 12px;
+  white-space: normal;
+  pointer-events: none;
+}
+.oc-menu {
+  position: relative;
+  display: inline-flex;
+}
+.oc-menu-list {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  background: var(--surface-raised-stronger-non-alpha);
+}
+.oc-menu-list button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.oc-menu-list button:hover {
+  background: var(--surface-base-hover);
+}
+.oc-menu-list hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border-weak-base);
+}
+.oc-loader {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-base);
+  border-top-color: var(--text-interactive-base);
+  border-radius: 50%;
+  animation: oc-spin 0.9s linear infinite;
+}
+@keyframes oc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.oc-code {
+  margin: 0;
+  overflow: auto;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .oc-loader {
+    animation: none;
+  }
+}
+
+.oc-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 56px 16px 16px;
+  background: rgb(0 0 0 / 0.45);
+}
+.oc-dialog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-base);
+  border-radius: 10px;
+  background: var(--surface-raised-stronger-non-alpha);
+  color: var(--text-base);
+}
+.oc-dialog-list strong {
+  padding: 4px 6px 8px;
+  color: var(--text-strong);
+}
+.oc-dialog-list small {
+  padding: 6px 6px 2px;
+  color: var(--text-weaker);
+}
+.oc-dialog-list button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.oc-dialog-list button:hover {
+  background: var(--surface-base-hover);
+}
+
+/* Session header strip for the local-inference demo */
+.oc-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border-weak-base);
+  color: var(--text-strong);
+  font-weight: 500;
+}
+.oc-header .oc-grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oc-header .oc-tooltip::after {
+  left: auto !important;
+  right: 0;
+}

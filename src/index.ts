@@ -1,5 +1,6 @@
 import { registerAuditTools } from "./audit/tools.ts"
 import { registerBudget } from "./budget/server.ts"
+import { registerRetention } from "./retention/rpc.ts"
 import { Plugin } from "@opencode/plugin/effect"
 import { dirname } from "node:path"
 import { Effect } from "effect"
@@ -18,6 +19,8 @@ import { registerObservability } from "./observability/rpc.ts"
 import { registerProgress } from "./progress/native.ts"
 import { registerRecoveryTools } from "./recovery/tools.ts"
 import { registerToolCallWrappers } from "./progress/tool-observation.ts"
+import { registerToolResults } from "./tool-results.ts"
+import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
 import { registerModelsServer } from "./models/server.ts"
@@ -64,6 +67,9 @@ export default Plugin.define({
       const core = handle.core
       const { repository, runtime, progress } = core
       const projectID = ctx.location.project.id
+      yield* sectionEffect("setup:Retention", () =>
+        registerRetention(ctx, core.retention).pipe(Effect.orDie),
+      )
       yield* sectionEffect("setup:Budget", () =>
         registerBudget(ctx, fetch, core.usageCache).pipe(Effect.orDie),
       )
@@ -109,6 +115,20 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:Projects", () =>
         registerProjects(ctx, repository, {
+          projectID: ctx.location.project.id,
+          sessionOf: async (id) => {
+            const session = await runtime.host.session(id, { messages: false })
+            return session && session.projectID === ctx.location.project.id
+              ? {
+                  id: session.id,
+                  archived: session.archived,
+                  ...(session.agent ? { agent: session.agent } : {}),
+                  ...(session.pendingForms !== undefined
+                    ? { pendingForms: session.pendingForms }
+                    : {}),
+                }
+              : null
+          },
           loaded: loadedProjectDirectories,
           wake: () => core.wake(),
           defaults: {
@@ -150,6 +170,8 @@ export default Plugin.define({
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RecoveryTools", () => registerRecoveryTools(ctx, repository))
+      yield* sectionEffect("setup:ToolSignatures", () => registerToolSignatures(ctx))
+      yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx, projectID))
       yield* sectionEffect("setup:ToolCallWrappers", () =>
         registerToolCallWrappers(ctx, progress, projectID),
       )

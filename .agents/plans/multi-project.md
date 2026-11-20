@@ -4,7 +4,7 @@
 
 **Goal:** Projects are told apart by a short code, can be paused and limited individually and globally, can be viewed together in every panel, and share the machine fairly.
 
-**Architecture:** Everything hangs off the existing project key (`src/project-key.ts`, table `lazers_projects`); no table is re-keyed. Stage 1 adds a stored code per project and uses it in references and session titles. Stage 2 adds project and global dispatch pause plus a database-backed settings store with two levels. Stage 3 adds an `all` observation scope to the panels. Stage 4 adds a leased slot allocator with least-served-first scoring. Stages 1 and 2 start now and are independent of each other; stages 3 and 4 are gated on work in flight.
+**Architecture:** Everything hangs off the existing project key (`src/project-key.ts`, table `lazers_projects`); no table is re-keyed. Stage 1 adds a stored code per project and uses it in references and session titles. Stage 2 adds project and global dispatch pause plus a database-backed settings store with two levels. Stage 3 adds an `all` observation scope to the panels. Stage 4 adds a leased slot allocator with least-served-first scoring. Stages 1 to 3 are independent of the panel-streaming work; stage 4 is gated on work in flight.
 
 **Tech Stack:** Strict TypeScript, Bun (`bun:sqlite`, `bun test`), XState `lifecycleMachines`, zod, SolidJS panels, OpenCode plugin API (pinned V2).
 
@@ -240,21 +240,189 @@ test("a clash appends the lowest free number", () => {
 
 ---
 
-## Stage 3: all-projects scope (gated)
+## Stage 3: all-projects scope
 
-Starts after LZ-227 to LZ-230 (panel streaming) are integrated or re-planned, because both rewrite the same read paths. Tasks, to be detailed against the code as it then stands:
+The owner lifted the gate on panel streaming (LZ-227 to LZ-230): stage 3 builds on the current read path and does not wait for or depend on streaming. Pages here are small enough that a streaming transport can carry them later unchanged.
 
 ### Task 8: `all` scope in the observation contract and reads
 
-`src/observability/contract.ts` (`ObservationScope` gains `{ kind: "all", sessionID }`), `src/observability/read.ts`, `src/observability/task-reads.ts`, `src/tasks/read.ts`. Every row carries `project: { key, code, name, loaded: boolean }`. Reads page by project. Tests: three projects in one temporary database; `all` returns rows from each with the right code; a project with no live location is `loaded: false`.
+**Files:**
+
+- Create: `src/projects/scope.ts`, `src/projects/scope.test.ts`, `src/projects/read-access.ts`
+- Modify: `src/observability/contract.ts`, `src/observability/read.ts`, `src/observability/changes.ts` (a boundary that does not observe), `src/observability/rpc.ts`, `src/observability/task-reads.ts`, `src/tasks/read.ts`, `src/tasks/contract.ts`, `src/tasks/rpc.ts`, `src/projects/rpc.ts` (use the shared `loaded` test). `src/index.ts` needs no change: both RPCs default their `loaded` source to `loadedProjectDirectories`.
+- Test: `src/projects/scope.test.ts`, `src/observability/all-projects.test.ts`, `src/observability/task-reads.test.ts` (additions), `src/observability/rpc.test.ts` (additions)
+
+**How the code works today (checked 2026-11-20):**
+
+- Every table is partitioned by `project_directory` (a checkout path). `TaskRepository(path, projectDirectory)` is one checkout's view of the shared database; `ObservationReads` and `TaskReads` are bound to the repository of the location that loaded them. A project (key) owns one or more checkouts in `lazers_project_paths`.
+- Observation RPCs authorise through `authorize()` in `src/observability/rpc.ts`: the session must exist, belong to this process's OpenCode project and have an agent, then `permission.assert({ action: "read", resources: [projectDirectory] })`. `Tasks.query` and `Tasks.get` do no authorisation today; they trust the Desktop caller of this process's own project.
+- Live locations: `loadedProjectDirectories()` in `src/core/registry.ts` lists the project roots with a live core in this process (the registry lives on `globalThis`, so it covers every location the OpenCode server loaded). `listProjects` in `src/projects/rpc.ts` already sets `loaded` as "any checkout path equals a live directory after `realpath`". Task 8 extracts that test and reuses it; it adds no second definition.
+
+**Interfaces:**
+
+- Produces, in `src/projects/scope.ts`:
+
+```ts
+export const ProjectRef = z.strictObject({
+  key: z.string().min(1),
+  code: z.string().min(2).max(6),
+  name: z.string(),
+  loaded: z.boolean(),
+})
+export type ProjectRef = z.infer<typeof ProjectRef>
+/** One checkout of one project: the unit a page reads. */
+export type ProjectUnit = { project: ProjectRef; directory: string }
+export function isLoaded(paths: readonly string[], live: ReadonlySet<string>): boolean
+export function liveDirectories(loaded: () => Iterable<string>): Set<string> // canonical paths
+/** Registry order (created_at, key), then checkout order; a project with no checkout has no unit. */
+export function projectUnits(
+  repository: TaskRepository,
+  loaded: () => Iterable<string>,
+): ProjectUnit[]
+/** Cursor of the NEXT page: the unit to read and, inside it, that read's own cursor. */
+export type UnitCursor = { directory: string; inner?: string }
+export function encodeUnitCursor(cursor: UnitCursor): string // base64url JSON, version-tagged
+export function decodeUnitCursor(value: string): UnitCursor // throws `Invalid project cursor`
+export function unitIndex(units: readonly ProjectUnit[], cursor?: UnitCursor): number
+```
+
+- Produces, in `src/observability/contract.ts`:
+  - `ObservationScope` gains `{ kind: "all"; sessionID }`; `ObservationScopeView` gains `{ kind: "all" }`.
+  - `ObservationPlan` and `UnplannedTask` gain `project: ProjectRef.optional()`; `TopologyOutput` gains `project: ProjectRef.optional()` and `nextCursor: z.string().nullable().optional()`; `TopologyInput` gains `cursor: z.string().min(1).max(2048).optional()`, valid only with `kind: "all"`.
+  - Under `all`, `project` is set on the page, on every plan and on every unplanned task. Under `session` and `project` it is absent, so those outputs are byte-for-byte what they were.
+  - Every other read takes `all` as Task 8b lists; internals that read one project take `SingleScope = Exclude<ObservationScope, { kind: "all" }>` and `singleScope()` refuses `all` for any read that has no all-projects form.
+- Produces, in `src/tasks/contract.ts`: `QueryInput` gains `allProjects: z.literal(true).optional()`; with it `sessionID` names the caller for authorisation and is not a filter, and `cursor` is a `UnitCursor`. `QueryOutput` gains `project: ProjectRef.optional()` (the page's project); `TaskSummary` gains `project: ProjectRef.optional()`; `projectDirectory` is the unit's checkout.
+- Produces, in `src/projects/read-access.ts`:
+
+```ts
+/** Session checks only: the session exists, belongs to this OpenCode project and has an agent.
+ *  No permission is asserted. Returns every registered checkout in registry order. */
+export async function allProjectsAccess(ctx, input): Promise<UnitAccess> // UnitAccess = { units }
+```
+
+**Who is calling (checked in the code, 2026-11-20).** The two callers are told apart by how a read is registered, not by `sessionID`:
+
+- A **GUI read** arrives through a typed RPC registered with `ctx.rpc` (`lazers.observability`, `lazers.tasks`, `lazers.models.decision.v2`, `lz.projects`). It is the Desktop panel of the person who installed the plugin, reading their own machine's database. `sessionID` there is the session whose panel is open; it is a scope and a malformed-call guard, not an identity.
+- An **agent read** arrives through a tool registered with `ctx.tool` (`lz-query-tasks`, `lz-get-task`, `lz-list-tasks`, the `lz-inspect-*` trajectory tools and the Models tools); each asserts `permission.assert` with the model's `context.sessionID` and `context.agent` and its own action name. `sessionID` there identifies the asking agent session.
+- Today's `project`-scope GUI reads: the observability RPC calls `permission.assert` (`read` on the project directory, or `lz-inspect-trajectory` on `*`) and Models calls its own `lz-*` actions; `Tasks.query`, `Tasks.get`, `currentActivity` start no permission check beyond the session check. I did not observe whether any of these prompts in practice; the typings (`@opencode/plugin` 2.3.0, `dist/effect/permission.d.ts`) say `assert` "prompts the user and waits for the reply" when a rule requires approval, and a plain rejection ends the caller's step.
+
+**Authorisation (decided).** The owner is never prompted for looking at their own projects in a panel. A GUI `all` read covers every registered project and asserts no permission: no prompt is possible, and no project is dropped. It keeps the session-existence checks (session exists, belongs to this OpenCode project, has an agent) as a guard against malformed calls, and Models additionally keeps its not-archived check. The `project` and `session` scopes keep today's assertions unchanged.
+
+**Agent tools do not get `all` (not built, by decision).** Tools use `AgentQueryInput` and `AgentGetInput` (the old query and get schemas without `allProjects`), so the schema offers no all-projects field and `TaskReads.query` / `get` also throw if one is smuggled in. The trajectory, Radar and Models tools take no scope. Cross-project reads by agents are a separate product decision (which agent may see which project, and whether that needs a permission and a prompt); nothing here pre-empts it. If it is built later it is a new gate on a new path, not a change to the GUI path.
+
+**Paging.** A page is one checkout of one project, in registry order. The cursor names the next unit by a hash of its checkout path (never the path itself) and, for tasks, the inside cursor of that unit's own paged read, so a long project continues across pages and a short one ends its page. The first page has no cursor and never waits for later projects. Every registered checkout is read; a task page skips a checkout with no matching tasks, and topology and the other page reads return every checkout, empty or not. The last page has `nextCursor: null`. There is no limit on the number of projects or checkouts and no truncation: the page size per project is the existing `limit` (tasks) or one checkout. A cursor whose unit is no longer registered fails with `Invalid project cursor`; the panel restarts from the first page.
+
+**Reads do not write.** Another checkout is opened through `ReadOnlyTaskRepository` (every transaction is a deferred read) and `RunnerStore.readOnly(repository)`, which skips the constructor's lifecycle registration and index build; the caller's own checkout uses the existing read-only trajectory store. A test holds a write lock (`BEGIN IMMEDIATE`) in another connection and shows every all-projects read still returns; the same test fails with `database is locked` when the other checkout is opened through the writable `RunnerStore` constructor.
+
+- [x] **Step 1: Write the failing tests** (`test/projects/three-projects.ts`: temporary database, three projects registered with `registerProject`, codes `AAA`, `BBB`, `CCC`, one task and one plan in each; `loaded` returns the directories of `AAA` and `BBB` only):
+  - `projectUnits` lists the units in registry order with the right codes; `AAA` and `BBB` are `loaded: true`, `CCC` is `loaded: false`; a project with two checkouts yields two units that share one `ProjectRef`.
+  - `topology({ kind: "all" })` first page is `AAA`'s plans with `project.code` `AAA` on the page, each plan and each unplanned task; following `nextCursor` reaches `BBB` then `CCC` (`loaded: false`) and ends with `null`.
+  - The pages of the three projects together hold every plan exactly once; no plan of one project appears under another's `project`.
+  - `queryAll` over the three projects returns each project's tasks with the right `reference` prefix and `project`; paging with `limit: 1` over a project with three tasks returns them across three pages, then moves to the next project.
+  - `session` and `project` topology reads carry no `project` and no `nextCursor` (the existing read tests stay unmodified and green); `all` is project-wide, so it does not filter by the caller's session.
+  - Every project is listed and no permission is asserted (the fake permission service fails the test if called); a cursor holds no path; a cursor for a checkout that is gone is refused.
+  - An all-projects page takes no write lock (see "Reads do not write").
+  - Agent tool schemas have no `allProjects`; `TaskReads.query` and `get` refuse it.
+  - Every other observation method called with `all` throws `All-projects scope is not available for this read`.
+  - `loaded` is not a snapshot: a project whose location registers between two pages is `loaded: true` on the later page.
+- [x] **Step 2: Run** the new files — expect FAIL.
+- [x] **Step 3: Implement** `scope.ts` first (pure, tested alone), then the contract, then `ObservationReads.forUnit` / `atUnit` / `allPage` and `topologyAll` over them (a unit read is the checkout's own project-scope read, no second query path), then `TaskReads.queryAll` (opens the unit's directory read-only, closed in `finally`, runs today's `query`, stamps `project`), then `allProjectsAccess` and the RPC handlers. The two RPCs default their `loaded` source to `loadedProjectDirectories`.
+- [x] **Step 4: Run** the new tests plus `bun test src/observability src/tasks src/projects` (only after `bun scripts/reload-safe.ts` prints `safe to reload: yes`) — expect PASS with no existing test edited, except where a row legitimately gains `project`.
+- [x] **Step 5: Commit** `feat(projects): read plans and tasks across all projects, a page per checkout`.
+
+### Task 8b: the remaining reads under `all` (built)
+
+Same stamp (`project` on the page, and on plan and unplanned-task rows where the contract has them), the same session guard, the same unit cursor. GUI RPC only.
+
+| Read                                                     | Under `all`                                                                                                                                                                               | Where                                                                                                                                                                                              |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `topology`, `snapshot`                                   | A page per checkout; plans and unplanned tasks carry `project`                                                                                                                            | `ObservationReads.topologyAll`, `snapshotAll`                                                                                                                                                      |
+| `radar`, `liveRadar`, `liveGroup`, `progressDiagnostics` | A page per checkout                                                                                                                                                                       | `radarAll`, `liveRadarAll`, `liveGroupAll`, the `progressDiagnostics` handler                                                                                                                      |
+| `trajectory`, `trajectoryHistory`, `trajectoryStatus`    | One task: `taskID`, `attemptID` or `reference` (`<CODE>-<n>`, an old code resolves only where it was and only when one project holds it) of any registered project; no cross-project list | `trajectoryAll` and the `*All` siblings; `src/projects/resolve.ts` `findOwner`                                                                                                                     |
+| `liveAttempt`, `liveHistory`                             | Resolve the attempt by worker session of any registered project                                                                                                                           | `liveAttemptAll`, `liveHistoryAll`                                                                                                                                                                 |
+| `Tasks.query`, `Tasks.get`, `currentActivity`            | `allProjects: true` (query, get) or `scope: "all"` (currentActivity); `project` on pages and rows                                                                                         | `TaskReads.queryAll`, `getAll`, `currentActivityTargetsAll`                                                                                                                                        |
+| Models decision                                          | `overviewAll` (a page per checkout) and `rowsAll` (rows of the checkout a page named by `unit`) with `project`                                                                            | `registerModelsServer`; one threaded decision reader per other checkout, started on first use and closed with the scope; price sources are global, so every project is priced with this location's |
+
+How a project that is not loaded (or belongs to another OpenCode location) reads: its recorded rows are returned and `loaded: false`; native sessions are unreachable from this location, so the reads of another checkout run with a native host whose every call fails. Radar and live radar then report `nativeInventory: "unavailable"` and sessions with `availability: "unavailable"`, `freshness: "unknown"`, `state: "unknown"`; trajectories report their native messages as unavailable; `currentActivity` reports `foreground: "unknown"`. Tests also call the trajectory (by reference), `liveAttempt`, `liveHistory`, `Tasks.get` and `currentActivity` handlers over the RPC. No error, and no live state is invented.
+
+One unit read is built by `ObservationReads.forUnit(unit, ownTracker)`: the caller's own checkout is the same object; another checkout gets reads of its own on a short-lived repository with a fresh tracker that never touches this project's change state, sharing the trajectory caches so a continuation cursor survives. `ObservationReads.atUnit` and `allPage` are the two entry points every `*All` read uses.
+
+Task 10 seam (built here so Tasks 9 and 10 are GUI-only): `src/projects/needs-you.ts` has one read function per source that takes a checkout, `ownerHolds(db, directory)` (the `blocked` filter's tasks, every one, from recorded rows), `openRecoveryBundle(db, directory)` (the latest bundle whose outbox notice is still `pending`, so no live Architect has it), and `architectQuestions(sessions)` (native `pendingForms`, readable only for the caller's own location's sessions); `needsYouPage` pages them by checkout; `lz.projects.needsYou({ sessionID, cursor })` serves it with the same session guard and no permission.
 
 ### Task 9: Tasks, Radar, Trajectory and Models grouped by project
 
-Scope control gains `All projects`; rows group under a project heading (code, name, counts, pause switch from Task 7's RPC). Live controls are not rendered for `loaded: false`.
+**Files:**
+
+- Create: `src/projects/group-view.ts`, `src/projects/group-view.test.ts`, `src/projects/group-heading.tsx`
+- Modify: `src/tasks/panel.tsx` (scope type at `PanelPrefs.scope`, the menu near line 1767, the query and topology calls near 420 to 500), `src/tasks/panel-state.ts`, `src/tasks/panel-view.ts`, `src/gui.tsx` (the per-project scope maps used by `openTask` and `openTaskTrajectory`), `src/radar/monitor-transport.ts`, `src/radar/monitor-model.ts`, `src/radar/monitor-view.tsx`, `src/trajectory-panel/*` (another agent owns those files at the moment; coordinate before editing), `src/models/*`
+- Test: `src/projects/group-view.test.ts`, DOM tests beside each panel
+
+**Interfaces:**
+
+- Consumes: `ProjectRef`, the `all` reads of Tasks 8 and 8b, `lz.projects` `setPause` and `list` from Task 7. Every read it needs exists; this task writes no server code.
+- Produces:
+
+```ts
+export type ProjectGroup<Row> = { project: ProjectRef; rows: Row[]; counts: Record<string, number> }
+/** Appends a page to the groups, in page order; a project appears once however many pages carry it. */
+export function appendPage<Row>(
+  groups: ProjectGroup<Row>[],
+  page: { project?: ProjectRef; rows: Row[]; counts?: Record<string, number> },
+): ProjectGroup<Row>[]
+```
+
+- Scope menu: `Session`, `Project`, `All projects`. The stored preference per panel becomes `"session" | "project" | "all"`; an old stored value keeps its meaning. `all` is global, not per project, so `PanelPrefs` for it is stored once (key `all`), not under a project directory.
+
+- [ ] **Step 1: Write the failing tests:** `appendPage` merges a second page of one project into its group and keeps first-seen order; a group carries code, name and counts from the first page that has them; the heading shows `CODE`, name, the counts as one- or two-word nouns, and `Paused` when the project's pause record is set; a `loaded: false` group shows no start, pause, answer or steer control and its rows are read-only; filters and search apply to every project (the search string is sent with every page); the Tasks panel in `all` requests pages until the list is full and continues on scroll, never fetching every project before the first row; switching scope away from `all` and back keeps the filter.
+- [ ] **Step 2: Run** — expect FAIL.
+- [ ] **Step 3: Implement** the pure helper first, then the Tasks panel (grouped list; the pause switch on a heading calls `lz.projects` `setPause` for that key), then Radar (Flow and Map nodes grouped by project, queue counts per project), Trajectory (picker grouped by project), Models (a project column and a project filter). Every `loaded: false` group omits live controls; opening a row of another project opens its detail from that project's checkout (`Tasks.get` with the owning directory). Labels are the nouns in `Global Constraints`; no row says `unknown`.
+- [ ] **Step 4: Run** the DOM tests and `bun run build:gui` — expect PASS.
+- [ ] **Step 5: Commit** one panel per commit, `feat(tasks): group the Tasks panel by project in All projects`, and likewise for radar, trajectory and models.
+
+**Lead's calls, owner may override:**
+
+- The `All projects` scope choice is remembered globally, not per Desktop session or per project: one stored key `all`, shared by all four panels.
+- A group of a project that is not loaded starts collapsed and shows no live controls (no start, pause, steer or answer); its rows are read-only.
+- Models defaults to the current project, with `All projects` selectable in its scope control; in `All projects` it pages `overviewAll` and reads `rowsAll` for the group a person opens.
+- Trajectory has no cross-project list: in `All projects` its picker takes a task by `<CODE>-<n>` reference (or opens from a task row), and the read resolves the owning project.
 
 ### Task 10: Needs you, across projects
 
-One list of Architect questions, holds with owner actions and recovery bundles with no live Architect, each naming its project and opening it.
+**Files:**
+
+- Create: `src/projects/needs-you.tsx` (the list), `src/projects/needs-you.dom.test.tsx`
+- Modify: `src/tasks/panel.tsx` (the header count), `src/gui.tsx` (open the list)
+- Built in Task 8b, not here: `src/projects/needs-you.ts`, `src/projects/needs-you.test.ts`, the `lz.projects.needsYou` method.
+
+**Interfaces:**
+
+- Consumes `lz.projects.needsYou({ sessionID, cursor? })` returning `{ project?: ProjectRef, items: NeedsYouItem[], nextCursor: string | null }`, one checkout per page:
+
+```ts
+type NeedsYouItem = {
+  project: ProjectRef
+  kind: "owner-hold" | "recovery-bundle" | "architect-question"
+  id: string // task id, outbox id or session id
+  title: string
+  reference?: string // `<CODE>-<n>`
+  reason?: string
+  since?: number // epoch ms
+  count?: number
+}
+```
+
+- [ ] **Step 1: Write the failing DOM tests:** the header shows the count of items across projects and says nothing when there are none; opening it lists the items grouped under their project heading in registry order, oldest first; an item of a project that is not loaded offers only `Open project`; a project under Architect-contact pause shows its questions marked `Paused`; the list is read page by page and the first page renders before the last is fetched; a resolved item is gone on the next read.
+- [ ] **Step 2: Run** — expect FAIL.
+- [ ] **Step 3: Implement** the count and the list; `Open project` opens that project's location (the panel's existing open-project action); an item with a `reference` also opens its task in the Tasks panel through the `openTask` path in `src/gui.tsx`; answering stays in the project's own Architect-contact path, never through this read.
+- [ ] **Step 4: Run** the DOM tests and `bun run build:gui` — expect PASS.
+- [ ] **Step 5: Commit** `feat(projects): a Needs you count and list across projects`.
+
+**Lead's calls, owner may override:**
+
+- Needs you is a count in the Tasks panel header that opens one list across projects.
+- An item of a project that is not loaded can only be opened (opening the project's location), not answered in place.
+- A project under Architect-contact pause shows its questions marked `Paused`; they are not hidden.
+- Native questions come only from this location's own project: another loaded project's questions are readable only from its own location, so in this list they show as holds and bundles only, and the list says which project's questions it cannot read (`Open project`).
 
 ## Stage 4: global scheduling (gated)
 
@@ -297,4 +465,4 @@ A read-only replay script measures peak concurrent slots and check-suite duratio
 
 - Spec coverage: stage 1 → Tasks 1–4; pause, levels and controls → Tasks 5–7; all-projects scope, not-loaded projects, Needs you → Tasks 8–10; slots, scoring, tunables, reasons → Tasks 11–14. Retention per project is noted in the spec as a dependency and belongs to the retention branch.
 - Review Focus lines 1–3 are pinned in Tasks 1–3, line 4 and 5 in Task 6.
-- Stages 3 and 4 are outlines by design: their code will have changed before they start.
+- Stage 3 is built through Task 8b and Tasks 9 and 10 are GUI-only on the read contract; stage 4 remains an outline by design, its code will have changed before it starts.

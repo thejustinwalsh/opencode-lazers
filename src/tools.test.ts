@@ -2,13 +2,14 @@ import { afterEach, expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { Agent, Location } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
+import { Tool } from "@opencode/schema/tool"
 import { Effect, Schema } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
-import { TaskRepository } from "./storage.ts"
+import { SQLITE_BUSY_TIMEOUT_MS, TaskRepository } from "./storage.ts"
 import { submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { GetInstructionsOutput } from "./tasks/contract.ts"
@@ -441,9 +442,9 @@ test("Architect correction controls record, replay, revise, retract, and inspect
   expect(correction.output).toBeUndefined()
   expect(inspect.options).toMatchObject({
     codemode: true,
-    pinned: true,
     permission: "lz-inspect-task-corrections",
   })
+  expect(inspect.options?.pinned).toBeUndefined()
   expect(inspect.output).toBeDefined()
   const input = {
     taskID: childReceipt.taskID,
@@ -887,14 +888,15 @@ test("retained tool callbacks survive disposal of the registration connection", 
   }
 })
 
-test("tool execution returns validation guidance without persisting an invalid task", async () => {
+test("tool execution rejects an invalid task without persisting it", async () => {
   const { tools, repository } = await setup()
-  const result = await Effect.runPromise(
+  const failure = await Effect.runPromise(
     tools.get("lz-submit-task")!.execute({ objective: "Incomplete" }, context),
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
   )
-  const output = JSON.parse(String(result.content))
-  expect(output.status).toBe("invalid")
-  expect(output.errors.length).toBeGreaterThan(0)
+  expect(failure).toBeInstanceOf(Tool.Error)
   expect(repository.list()).toEqual([])
 })
 
@@ -1006,14 +1008,9 @@ test("native schema/runtime require keys, validate before database access, and l
   const query = spyOn(Database.prototype, "query")
   const exec = spyOn(Database.prototype, "exec")
   try {
-    for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)]) {
-      const result = await call("lz-submit-task", { ...validProposal(), idempotencyKey })
-      expect(result.status).toBe("invalid")
-      expect(result.errors[0].path).toBe("idempotencyKey")
-    }
-    const result = await call("lz-submit-task", { ...keyedProposal(), verification: [] })
-    expect(result.status).toBe("invalid")
-    expect(result.errors[0].path).toBe("acceptance.0.evidence.0.verificationID")
+    for (const idempotencyKey of [undefined, null, 1, "", " \t", "k".repeat(201)])
+      await expect(call("lz-submit-task", { ...validProposal(), idempotencyKey })).rejects.toThrow()
+    await expect(call("lz-submit-task", { ...keyedProposal(), verification: [] })).rejects.toThrow()
     expect(query).not.toHaveBeenCalled()
     expect(exec).not.toHaveBeenCalled()
   } finally {
@@ -1162,3 +1159,56 @@ test("lz-submit-task is refused with the typed FALLOW_CONFIG_REQUIRED result whi
   )
   expect(accepted.status).toBe("submitted")
 })
+
+// Another process (second service, CLI) holding the write lock longer than the synchronous
+// busy budget must delay a native tool, not fail it with a raw SQLITE_BUSY.
+const lockedWrites: [string, (taskID: string) => unknown][] = [
+  ["lz-submit-task", () => ({ ...keyedProposal(), idempotencyKey: "locked-submit" })],
+  [
+    "lz-classify-task",
+    (taskID) => ({
+      taskID,
+      requestID: "locked-classify",
+      classification: { taxonomy: "task-kind/v1", primaryKind: "maintenance" },
+      reason: "Repository tooling upkeep.",
+    }),
+  ],
+  [
+    "lz-dispose-task",
+    (taskID) => ({
+      taskID,
+      requestID: "locked-dispose",
+      disposition: "superseded",
+      reason: "Replaced by the integrated implementation.",
+      evidence: [{ kind: "verification", reference: "bun test" }],
+      relatedTaskIDs: [],
+    }),
+  ],
+  ["lz-get-task", (taskID) => ({ taskID, format: "structured" })],
+]
+test.each(lockedWrites)(
+  "%s waits out another process's write lock beyond the synchronous busy budget",
+  async (name, makeInput) => {
+    const { tools, repository } = await setup()
+    const seeded = JSON.parse(
+      String(
+        (await Effect.runPromise(tools.get("lz-submit-task")!.execute(keyedProposal(), context)))
+          .content,
+      ),
+    )
+    const holder = new Database(repository.path, { strict: true })
+    holder.exec("BEGIN IMMEDIATE")
+    setTimeout(() => holder.exec("COMMIT"), SQLITE_BUSY_TIMEOUT_MS * 2)
+    try {
+      const output = await Effect.runPromise(
+        tools.get(name)!.execute(makeInput(seeded.taskID), context),
+      )
+      const body = JSON.parse(String(output.content))
+      expect(body.status).not.toBe("error")
+      expect(JSON.stringify(body)).not.toContain("database is locked")
+    } finally {
+      holder.close()
+    }
+  },
+  30_000,
+)

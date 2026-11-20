@@ -5,7 +5,6 @@ import type { ProgressRow } from "../runner/store.ts"
 import { TaskState } from "../runner/schema.ts"
 import { PlanInput } from "../runner/schema.ts"
 import { machineVersion, taskMachine } from "../runner/machine.ts"
-import type { RunnerStore } from "../runner/store.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TrajectoryHost } from "../trajectory/native.ts"
 import {
@@ -17,7 +16,6 @@ import { TrajectoryHistoryCache } from "../trajectory/history.ts"
 import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
-import type { ObservationChangeTracker } from "./changes.ts"
 import { sourceStampFromDatabase } from "./changes.ts"
 import { projectAssociations, sessionAssociations } from "./associations.ts"
 import { associatedSessionIDs } from "./associations.ts"
@@ -27,9 +25,14 @@ import { LiveRadarReader } from "./live-read.ts"
 import type {
   LiveAttemptRequestInput,
   LiveGroupRequestInput,
+  LiveAttemptResponse,
+  LiveGroupResponse,
+  LiveHistoryResponse,
   LiveHistoryRequestInput,
   LiveRadarRequestInput,
+  LiveRadarResponse,
   ObservationScope,
+  SingleScope,
   ObservationScopeView,
   RadarRequestInput,
   RadarResponse,
@@ -41,6 +44,15 @@ import type {
   TrajectoryHistoryResponse,
   TrajectoryStatusRequest,
 } from "./contract.ts"
+import { singleScope } from "./contract.ts"
+import { findOwner } from "../projects/resolve.ts"
+import type { OwnerQuery } from "../projects/resolve.ts"
+import { canonicalPath, pickUnit } from "../projects/scope.ts"
+import type { ProjectRef, ProjectUnit, UnitAccess } from "../projects/scope.ts"
+import { RunnerStore } from "../runner/store.ts"
+import { ReadOnlyTaskRepository } from "../storage.ts"
+import type { TaskRepository } from "../storage.ts"
+import { ObservationChangeTracker } from "./changes.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
@@ -198,7 +210,7 @@ function planInput(plan: Pick<PlanRecord, "body">) {
   }
 }
 
-function initialAssociations(db: Database, projectDirectory: string, scope: ObservationScope) {
+function initialAssociations(db: Database, projectDirectory: string, scope: SingleScope) {
   return scope.kind === "project"
     ? projectAssociations(db, projectDirectory)
     : sessionAssociations(db, projectDirectory, scope.sessionID)
@@ -207,7 +219,7 @@ function initialAssociations(db: Database, projectDirectory: string, scope: Obse
 function loadTopologyAssociations(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -287,7 +299,7 @@ function loadTopologyAssociations(
 function loadTopologySource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -336,7 +348,7 @@ function loadTopologySource(
 function loadProjectionSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
   signal?: AbortSignal,
@@ -393,7 +405,7 @@ function loadProjectionSource(
 function loadTaskObservationSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   target: { taskID?: string; attemptID?: string },
 ) {
@@ -500,7 +512,7 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
 function loadRadarSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -794,7 +806,7 @@ function reachableSessionIDs(nativeByID: Map<string, RadarNativeSession>, rootID
 
 async function readNativeInventory(
   reader: RadarNativeReader,
-  scope: ObservationScope,
+  scope: SingleScope,
   native: RadarNativeResolution,
   context: RadarSessionContext,
 ) {
@@ -926,7 +938,7 @@ function recordSourceSessionContext(source: RadarSource, context: RadarSessionCo
 }
 
 function selectRadarSessionIDs(
-  scope: ObservationScope,
+  scope: SingleScope,
   source: RadarSource,
   native: RadarNativeResolution,
 ) {
@@ -1909,11 +1921,39 @@ export class ObservationReadChangedError extends Error {
   }
 }
 
+export type UnitReads = {
+  reads: ObservationReads
+  tracker: ObservationChangeTracker
+  release(): void
+}
+
+const unavailable = () =>
+  Promise.reject(new Error("Native sessions of this project are not loaded here"))
+/** Native reads for a checkout that belongs to another OpenCode location: every call fails. */
+const UNAVAILABLE_SESSION_HOST: RadarSessionHost = {
+  get: unavailable,
+  project: unavailable,
+  descendants: unavailable,
+}
+const UNAVAILABLE_TRAJECTORY_HOST: TrajectoryHost = { session: unavailable, status: unavailable }
+
+/** The OpenCode project id recorded for a LAZERS project, when one is. */
+function opencodeProjectIDFor(repository: TaskRepository, key: string): string | undefined {
+  return repository.read(
+    (db) =>
+      db
+        .query<{ alias: string }, [string]>(
+          "SELECT alias FROM lazers_project_aliases WHERE key=? AND kind='opencode-project-id' ORDER BY first_seen_at LIMIT 1",
+        )
+        .get(key)?.alias,
+  )
+}
+
 export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
   private readonly history: TrajectoryHistoryCache
-  private readonly live = new TrajectoryLiveCache()
+  private readonly live: TrajectoryLiveCache
   private readonly liveRadarReader: LiveRadarReader
 
   constructor(
@@ -1925,11 +1965,20 @@ export class ObservationReads {
     private readonly taskValuationProvider?: TaskValuationProvider,
     /** `historyCacheMB` plugin option, in bytes. */
     historyCacheLimitBytes?: number,
+    /** Caches of the reads this one was derived from, so a continuation cursor survives. */
+    shared?: { history: TrajectoryHistoryCache; live: TrajectoryLiveCache },
   ) {
-    this.history = new TrajectoryHistoryCache(
-      secret,
-      historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
-    )
+    this.history =
+      shared?.history ??
+      new TrajectoryHistoryCache(
+        secret,
+        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+      )
+    this.live =
+      shared?.live ??
+      new TrajectoryLiveCache(
+        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+      )
     this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
   }
 
@@ -1939,18 +1988,22 @@ export class ObservationReads {
     signal: AbortSignal,
     streamEpoch: string,
   ) {
+    singleScope(input.scope)
     return this.liveRadarReader.radar(input, tracker, signal, streamEpoch)
   }
 
   liveGroup(input: LiveGroupRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.group(input, signal)
   }
 
   liveAttempt(input: LiveAttemptRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.attempt(input, signal)
   }
 
   liveHistory(input: LiveHistoryRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.history(input, signal)
   }
 
@@ -1961,7 +2014,7 @@ export class ObservationReads {
   ): Promise<RadarResponse> {
     if (!this.nativeSessions) throw new Error("Native session inventory is unavailable")
     const request = RadarInput.parse(input)
-    const scope = request.scope
+    const scope = singleScope(request.scope)
     const includeUnmanagedSessions = request.includeUnmanagedSessions
     signal.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
@@ -2102,7 +2155,7 @@ export class ObservationReads {
     }
   }
 
-  topology(scope: ObservationScope, tracker: ObservationChangeTracker): TopologyResponse {
+  topology(scope: SingleScope, tracker: ObservationChangeTracker): TopologyResponse {
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
@@ -2136,11 +2189,270 @@ export class ObservationReads {
     }
   }
 
+  /**
+   * The reads of one checkout of one project. The caller's own checkout is this object with the
+   * caller's tracker. Any other checkout gets reads of its own whose native host and session
+   * inventory are unavailable (those belong to another OpenCode location), so every live field of
+   * such a project reads as unavailable and nothing is invented. `release` closes what was opened.
+   */
+  forUnit(unit: ProjectUnit, ownTracker: ObservationChangeTracker): UnitReads {
+    const directory = this.store.repository.projectDirectory
+    if (canonicalPath(unit.directory) === canonicalPath(directory))
+      return { reads: this, tracker: ownTracker, release() {} }
+    const repository = new ReadOnlyTaskRepository(this.store.repository.path, unit.directory)
+    const store = RunnerStore.readOnly(repository)
+    const projectID = opencodeProjectIDFor(repository, unit.project.key) ?? unit.project.key
+    const reads = new ObservationReads(
+      store,
+      UNAVAILABLE_TRAJECTORY_HOST,
+      projectID,
+      this.secret,
+      UNAVAILABLE_SESSION_HOST,
+      this.taskValuationProvider,
+      undefined,
+      { history: this.history, live: this.live },
+    )
+    const tracker = new ObservationChangeTracker(repository, this.secret, projectID)
+    return {
+      reads,
+      tracker,
+      release() {
+        tracker.close()
+        repository.close()
+      },
+    }
+  }
+
+  /**
+   * One page of an all-projects read: the first readable checkout at or after the cursor, read
+   * with that checkout's own project-scope read, marked with its project and the next cursor.
+   * Nothing is read for a checkout the caller may not see.
+   */
+  /** The OpenCode project id this reader's rows are labelled with. */
+  get projectIdentity() {
+    return this.projectID
+  }
+
+  /** One read at one checkout with that checkout's project-scope reads, marked with its project. */
+  async atUnit<T extends object>(
+    unit: ProjectUnit,
+    sessionID: string,
+    ownTracker: ObservationChangeTracker,
+    read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
+  ): Promise<Omit<T, "scope"> & { project: ProjectRef }> {
+    const reads = this.forUnit(unit, ownTracker)
+    try {
+      const page = await read(reads, { kind: "project", sessionID })
+      const { scope: _scope, ...rest } = page as T & { scope?: unknown }
+      return {
+        ...rest,
+        // Outputs that name their scope say `all`; the others (a group read) have none to rewrite.
+        ...("scope" in page ? { scope: { kind: "all" as const } } : {}),
+        project: unit.project,
+      } as unknown as Omit<T, "scope"> & { project: ProjectRef }
+    } finally {
+      reads.release()
+    }
+  }
+
+  async allPage<T extends object>(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    ownTracker: ObservationChangeTracker,
+    access: UnitAccess,
+    read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
+  ): Promise<Omit<T, "scope"> & { project: ProjectRef; nextCursor: string | null }> {
+    const picked = await pickUnit(access.units, input.cursor)
+    if (!picked) throw new Error("No project is readable in this scope")
+    const page = await this.atUnit(picked.unit, input.scope.sessionID, ownTracker, read)
+    return { ...page, nextCursor: picked.nextCursor }
+  }
+
+  /** The unit owning what an all-projects read names, or a refusal when nothing does. */
+  private ownerOf(query: OwnerQuery, access: UnitAccess, unavailable: string) {
+    const owner = findOwner(this.store.repository, access.units, query)
+    if (!owner) throw new Error(unavailable)
+    return owner
+  }
+
+  async trajectoryAll(
+    input: TrajectoryRequest,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal | undefined,
+    access: UnitAccess,
+  ): Promise<TrajectoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const query: OwnerQuery = input.reference
+      ? { reference: input.reference }
+      : input.taskID
+        ? { taskID: input.taskID }
+        : { attemptID: input.attemptID! }
+    const owner = this.ownerOf(query, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) => {
+      const taskID = owner.taskID ?? input.taskID
+      const { reference: _reference, ...rest } = input
+      return unit.reads.trajectory(
+        { ...rest, scope, ...(taskID ? { taskID } : {}) },
+        unit.tracker,
+        signal,
+      )
+    }) as Promise<TrajectoryResponse>
+  }
+
+  async trajectoryHistoryAll(
+    input: TrajectoryHistoryRequest,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal | undefined,
+    access: UnitAccess,
+  ): Promise<TrajectoryHistoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.trajectoryHistory({ ...input, scope }, unit.tracker, signal),
+    ) as Promise<TrajectoryHistoryResponse>
+  }
+
+  async trajectoryStatusAll(
+    input: TrajectoryStatusRequest,
+    tracker: ObservationChangeTracker,
+    access: UnitAccess,
+  ): Promise<TrajectoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.trajectoryStatus({ ...input, scope }, unit.tracker),
+    ) as Promise<TrajectoryResponse>
+  }
+
+  /** The attempt of a session of any readable project: the worker pane's counts and lane. */
+  async liveAttemptAll(
+    input: LiveAttemptRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: UnitAccess,
+  ): Promise<LiveAttemptResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = this.ownerOf(
+      { sessionID: input.sessionID },
+      access,
+      "Observation scope is unavailable",
+    )
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.liveAttempt({ ...input, scope }, signal),
+    ) as Promise<LiveAttemptResponse>
+  }
+
+  async liveHistoryAll(
+    input: LiveHistoryRequestInput,
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: UnitAccess,
+  ): Promise<LiveHistoryResponse> {
+    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
+    const owner = this.ownerOf(
+      { sessionID: input.sessionID },
+      access,
+      "Observation scope is unavailable",
+    )
+    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
+      unit.reads.liveHistory({ ...input, scope }, signal),
+    ) as Promise<LiveHistoryResponse>
+  }
+
+  async snapshotAll(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    tracker: ObservationChangeTracker,
+    access: UnitAccess,
+    signal?: AbortSignal,
+  ): Promise<SnapshotResponse> {
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.snapshot(scope, unit.tracker, signal),
+    )
+    return {
+      ...page,
+      scope: { kind: "all" },
+      plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
+      unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
+    }
+  }
+
+  async radarAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      includeUnmanagedSessions: boolean
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: UnitAccess,
+  ): Promise<RadarResponse> {
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.radar(
+        { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+        unit.tracker,
+        signal,
+      ),
+    )
+    return { ...page, scope: { kind: "all" } }
+  }
+
+  async liveRadarAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      includeUnmanagedSessions: boolean
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: UnitAccess,
+  ): Promise<LiveRadarResponse> {
+    const page = await this.allPage(input, tracker, access, async (unit, scope) =>
+      unit.reads.liveRadar(
+        { scope, includeUnmanagedSessions: input.includeUnmanagedSessions },
+        unit.tracker,
+        signal,
+        unit.tracker.streamEpoch,
+      ),
+    )
+    return { ...page, scope: { kind: "all" } }
+  }
+
+  async liveGroupAll(
+    input: {
+      scope: { kind: "all"; sessionID: string }
+      group: "needs-you" | "failed" | "queued"
+      cursor?: string
+    },
+    tracker: ObservationChangeTracker,
+    signal: AbortSignal,
+    access: UnitAccess,
+  ): Promise<LiveGroupResponse> {
+    return this.allPage(input, tracker, access, async (unit, scope) =>
+      unit.reads.liveGroup({ scope, group: input.group }, signal),
+    )
+  }
+
+  async topologyAll(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    tracker: ObservationChangeTracker,
+    access: UnitAccess,
+  ): Promise<TopologyResponse> {
+    const page = await this.allPage(input, tracker, access, (unit, scope) =>
+      unit.reads.topology(scope, unit.tracker),
+    )
+    return {
+      ...page,
+      scope: { kind: "all" },
+      plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
+      unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
+    }
+  }
+
   snapshot(
-    scope: ObservationScope,
+    requested: ObservationScope,
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): SnapshotResponse {
+    const scope = singleScope(requested)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2259,6 +2571,7 @@ export class ObservationReads {
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): Promise<TrajectoryResponse> {
+    const scope = singleScope(input.scope)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2266,13 +2579,10 @@ export class ObservationReads {
     )
     try {
       const before = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID, attemptID: input.attemptID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+          attemptID: input.attemptID,
+        }),
       )
       tracker.observeStamp(before.stamp)
       const nativeRevision = tracker.nativeRevision
@@ -2303,7 +2613,7 @@ export class ObservationReads {
       return {
         schemaVersion: 1,
         projectID: this.projectID,
-        scope: scopeView(input.scope),
+        scope: scopeView(scope),
         boundary: tracker.boundary(after, before.transitionSequence),
         report,
       }
@@ -2317,6 +2627,7 @@ export class ObservationReads {
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): Promise<TrajectoryHistoryResponse> {
+    const scope = singleScope(input.scope)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2324,19 +2635,15 @@ export class ObservationReads {
     )
     try {
       const source = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+        }),
       )
 
       const identity = {
         projectID: this.projectID,
         projectDirectory: this.store.repository.projectDirectory,
-        scope: input.scope,
+        scope: scope,
         taskID: input.taskID,
         limit: input.limit,
       }
@@ -2376,19 +2683,16 @@ export class ObservationReads {
     input: TrajectoryStatusRequest,
     tracker: ObservationChangeTracker,
   ): Promise<TrajectoryResponse> {
+    const scope = singleScope(input.scope)
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
     )
     try {
       const source = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+        }),
       )
       tracker.observeStamp(source.stamp)
       const nativeRevision = tracker.nativeRevision
@@ -2415,8 +2719,8 @@ export class ObservationReads {
             JSON.stringify([
               this.projectID,
               this.store.repository.projectDirectory,
-              input.scope.kind,
-              input.scope.sessionID,
+              scope.kind,
+              scope.sessionID,
               input.taskID,
             ]),
             report.trajectory.events,
@@ -2426,7 +2730,7 @@ export class ObservationReads {
       return {
         schemaVersion: 1,
         projectID: this.projectID,
-        scope: scopeView(input.scope),
+        scope: scopeView(scope),
         boundary: tracker.boundary(after, source.transitionSequence),
         report: delta
           ? { ...report, trajectory: { ...report.trajectory, events: delta.events } }

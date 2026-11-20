@@ -5,11 +5,15 @@ import corner from "./assets/mark-corner.png"
 import flag from "./assets/mark-flag.png"
 import sparkle from "./assets/mark-sparkle.png"
 import stripesMark from "./assets/mark-stripes.png"
+import { Demo } from "./Demo"
+import { DEMOS } from "./demos"
 import { bp, color, type } from "./tokens.stylex"
 import { BeamCanvas, Cat, Field, Stripes, links, srOnly, t, useBeamKit } from "./ui"
 
-/* Scroll-driven transitions read --p (0..1 section entry progress, set from Lenis scroll).
-   Every rule falls back to the finished state, so reduced motion and no-JS read complete. */
+/* Scroll-driven transitions: elements marked data-reveal are animated by scroll.css
+   (animation-timeline: view()); where that is unsupported, motion.ts writes --p (0..1
+   section entry progress). Every rule falls back to the finished state, so reduced
+   motion and no-JS read complete. */
 const P = "var(--p, 1)"
 const fx = stylex.create({
   growX: { transform: `scaleX(${P})`, transformOrigin: "left center" },
@@ -99,8 +103,8 @@ const s = stylex.create({
 function Seam({ onInk = false }: { onInk?: boolean }) {
   return (
     <div aria-hidden="true" {...stylex.props(s.seam)}>
-      <div {...stylex.props(s.seamInk, onInk && s.seamOnInk)} />
-      <div {...stylex.props(s.seamSignal)} />
+      <div data-reveal="clip" {...stylex.props(s.seamInk, onInk && s.seamOnInk)} />
+      <div data-reveal="grow" {...stylex.props(s.seamSignal)} />
     </div>
   )
 }
@@ -321,7 +325,7 @@ export function Loop() {
               <p {...stylex.props(lp.detail)}>{st.detail}</p>
               {i < stations.length - 1 && (
                 <span aria-hidden="true" {...stylex.props(lp.link)}>
-                  <span {...stylex.props(lp.shaft, fx.growX)} />
+                  <span data-reveal="grow" {...stylex.props(lp.shaft, fx.growX)} />
                   <span {...stylex.props(lp.head)} />
                 </span>
               )}
@@ -331,7 +335,7 @@ export function Loop() {
 
         <div aria-hidden="true" {...stylex.props(lp.back)}>
           <span {...stylex.props(lp.backHead)} />
-          <span {...stylex.props(lp.backShaft, fx.growX)} />
+          <span data-reveal="grow" {...stylex.props(lp.backShaft, fx.growX)} />
         </div>
         <p {...stylex.props(lp.backText)}>
           <strong {...stylex.props(s.strong)}>Every candidate comes back with proof.</strong> The
@@ -598,6 +602,7 @@ export function Parts() {
               <li {...stylex.props(pt.state, pt.stateBad)}>Failed</li>
               <li {...stylex.props(pt.state)}>Cancelled</li>
             </ul>
+            <Demo def={DEMOS.tasks} label="Live demo of the Tasks panel" maxWidth={440} />
           </article>
 
           <article
@@ -634,6 +639,7 @@ export function Parts() {
                 Live XState lifecycle view showing where every runner sits and what it is waiting on
               </dd>
             </dl>
+            <Demo def={DEMOS.radar} label="Live demo of the Radar panel" maxWidth={440} />
           </article>
 
           <article
@@ -677,6 +683,7 @@ export function Parts() {
                 </span>
               </li>
             </ul>
+            <Demo def={DEMOS.trajectory} label="Live demo of the Trajectory panel" maxWidth={460} />
           </article>
         </div>
       </div>
@@ -742,6 +749,7 @@ const ck = stylex.create({
   },
   code: { backgroundColor: color.magenta, color: color.paper },
   note: { fontSize: 15, lineHeight: 1.5, color: color.peri },
+  noteLink: { color: color.cyan, textDecorationColor: color.magenta },
   cat: {
     left: { default: "auto", [bp.wide]: "auto" },
     right: { default: "-10vw", [bp.wide]: "-1.4vw" },
@@ -810,17 +818,167 @@ export function Checked() {
                 <span>fast, focused code edits</span>
               </li>
             </ul>
+            <Demo
+              def={DEMOS.models}
+              label="Live demo of the Models panel"
+              tone="ink"
+              maxWidth={460}
+            />
             <p {...stylex.props(s.body, ck.sideBody)}>
               The Compare view benchmarks your actual task histories, retry counts, measured token
               usage, and market-price cost estimates so you can tune your model stack with real
               repository evidence.
             </p>
             <p {...stylex.props(ck.note)}>
-              Optional local WebGPU inference is built in for instant desktop Q&amp;A, dictation,
-              and read-aloud without touching your cloud model routes.
+              A small model can also run on your own GPU, optional and off by default.{" "}
+              <a href="#local" {...stylex.props(ck.noteLink)}>
+                What it does
+              </a>
+              .
             </p>
           </aside>
         </div>
+      </div>
+    </section>
+  )
+}
+
+/* ================================================================== */
+/* The embedded model: optional local inference                        */
+/* ================================================================== */
+const lc = stylex.create({
+  section: {
+    paddingBlockEnd: { default: "clamp(56px, 8vw, 110px)", [bp.wide]: "clamp(64px, 8vw, 128px)" },
+  },
+  top: {
+    display: "grid",
+    gridTemplateColumns: { default: "minmax(0, 1fr)", [bp.wide]: "minmax(0, 5fr) minmax(0, 7fr)" },
+    columnGap: "5vw",
+    rowGap: 36,
+    marginBlockStart: "clamp(28px, 3.4vw, 52px)",
+    alignItems: "start",
+  },
+  statement: {
+    fontFamily: type.face,
+    fontStretch: "70%",
+    fontStyle: "italic",
+    fontWeight: 900,
+    textTransform: "uppercase",
+    fontSize: "clamp(34px, 3.8vw, 58px)",
+    lineHeight: 0.95,
+    color: color.magenta,
+    maxWidth: "13ch",
+    textWrap: "balance",
+  },
+  copy: { display: "grid", gap: 16, marginBlockStart: 22 },
+  facts: {
+    display: "grid",
+    gridTemplateColumns: { default: "minmax(0, 1fr)", [bp.mid]: "repeat(2, minmax(0, 1fr))" },
+    columnGap: "4vw",
+    rowGap: 0,
+    marginBlockStart: "clamp(36px, 4vw, 64px)",
+    borderBlockStart: "3px solid #13095E",
+  },
+  fact: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 11ch) minmax(0, 1fr)",
+    columnGap: 16,
+    paddingBlock: 14,
+    borderBlockEnd: "2px solid rgba(19,9,94,0.22)",
+    fontSize: "clamp(15px, 1.05vw, 17px)",
+    lineHeight: 1.5,
+  },
+  factKey: {
+    fontFamily: type.face,
+    fontStretch: "75%",
+    fontStyle: "italic",
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+  },
+  factDef: { margin: 0 },
+  note: { fontSize: 15, lineHeight: 1.5, maxWidth: "58ch", marginBlockStart: 8 },
+})
+
+export function Local() {
+  return (
+    <section id="local" aria-labelledby="local-title" {...stylex.props(s.section, lc.section)}>
+      <Seam />
+      <div {...stylex.props(s.inner)}>
+        <Heading id="local-title">A small model on your own GPU</Heading>
+        <div {...stylex.props(lc.top)}>
+          <div>
+            <p {...stylex.props(lc.statement)}>Optional. Off until you turn it on.</p>
+            <div {...stylex.props(lc.copy)}>
+              <p {...stylex.props(s.lead)}>
+                LAZERS can run a small model locally in OpenCode Desktop, on WebGPU through
+                ruNNtime. Architect, tasks and the panels work without it.
+              </p>
+              <p {...stylex.props(s.body)}>
+                Local models take the small jobs: answering a question, making a typed decision,
+                reviewing a task before it is submitted. Workers still run as native OpenCode
+                sessions on the models you route in Models.
+              </p>
+              <p {...stylex.props(s.body)}>
+                The session header carries the real status icon. It is hidden while local features
+                are off, and shows Loading, Available, Working or Error while they are on.
+              </p>
+            </div>
+          </div>
+          <Demo def={DEMOS.local} label="Live demo of the local inference indicator" />
+        </div>
+        <dl aria-label="What local inference does" {...stylex.props(lc.facts)}>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Switch</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              Settings, LAZERS:{" "}
+              <strong {...stylex.props(s.strong)}>Run local models on this device</strong>. It
+              starts off. Turning it off stops local work and releases GPU memory.
+            </dd>
+          </div>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Features</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              Local questions, System One decisions, task review, dictation and read aloud. Each is
+              its own switch; task review needs decisions.
+            </dd>
+          </div>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Decisions</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              A typed answer to a question: yes or no, one of a list of choices, or a score in a
+              range. Task review is an advisory check, not a gate.
+            </dd>
+          </div>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Two models</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              D1, about 625 MB, makes the decisions. Omni, about 1.6 GB, handles questions,
+              dictation and read aloud. Each downloads on first use into its own cache.
+            </dd>
+          </div>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Memory</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              <strong {...stylex.props(s.strong)}>Keep model loaded</strong> sets how long an idle
+              model stays in GPU memory: always, 1, 5 or 15 minutes.
+            </dd>
+          </div>
+          <div {...stylex.props(lc.fact)}>
+            <dt {...stylex.props(lc.factKey)}>Disk</dt>
+            <dd {...stylex.props(lc.factDef)}>
+              Downloaded models stay on disk until you remove them in Settings. The next local
+              request downloads them again.
+            </dd>
+          </div>
+        </dl>
+        <p {...stylex.props(lc.note)}>
+          Details in the{" "}
+          <a href={links.controls} {...stylex.props(t.inkLink)}>
+            user controls reference
+          </a>
+          .
+        </p>
       </div>
     </section>
   )

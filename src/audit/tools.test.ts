@@ -6,6 +6,7 @@ import type {
   FallowCheckOutput,
   FallowConfigOutput,
   FallowConfigSetOutput,
+  FallowConfigGuideOutput,
   FallowConfigSuggestOutput,
   FallowDryRunOutput,
   FallowDeadCodeOutput,
@@ -13,6 +14,7 @@ import type {
   FallowHealthOutput,
   FallowHealthRunOutput,
 } from "./contract.ts"
+import { guidanceLedger, pointer, runbook } from "../guidance/index.ts"
 import { afterEach, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
@@ -190,6 +192,7 @@ test("Fallow analysis tools expose dupes, health, dead-code, config and a read-o
   await commit(root, "base")
 
   const { invoke, tools } = await harness(root, repository)
+  guidanceLedger.clear()
 
   const dupes = await invoke<z.infer<typeof FallowDupesOutput>>("lz-fallow-dupes", {})
   expect(dupes.groups.length).toBeGreaterThan(0)
@@ -209,6 +212,21 @@ test("Fallow analysis tools expose dupes, health, dead-code, config and a read-o
   })
   expect(suggestion.evidence.length).toBeGreaterThan(0)
   expect(suggestion.next).toContain("dry-run")
+  // The first suggest of a session carries the runbook; guide mode returns it again.
+  expect(suggestion.guidance).toBe(runbook("fallow-config"))
+  const guide = await invoke<z.infer<typeof FallowConfigGuideOutput>>("lz-fallow-config", {
+    mode: "guide",
+  })
+  expect(guide.guidance).toBe(runbook("fallow-config"))
+  const suppressions = await invoke<z.infer<typeof FallowConfigGuideOutput>>("lz-fallow-config", {
+    mode: "guide",
+    topic: "suppressions",
+  })
+  expect(suppressions.guidance).toBe(runbook("fallow-suppressions"))
+  const again = await invoke<z.infer<typeof FallowConfigSuggestOutput>>("lz-fallow-config", {
+    mode: "suggest",
+  })
+  expect(again.guidance).toBe(pointer("fallow-config"))
 
   const dryRun = await invoke<z.infer<typeof FallowDryRunOutput>>("lz-fallow-config", {
     mode: "dry-run",

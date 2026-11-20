@@ -25,7 +25,9 @@ import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint
 import {
   ModelDecisionConfigurationsOutputSchema,
   ModelDecisionInspectOutputSchema,
+  ModelDecisionOverviewAllOutputSchema,
   ModelDecisionOverviewOutputSchema,
+  ModelDecisionRowsAllOutputSchema,
   ModelDecisionRowsOutputSchema,
 } from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
@@ -3514,5 +3516,69 @@ test("saving an agent route re-applies the agent transforms and the settings rea
     ).rejects.toThrow()
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("ModelsDecision serves an all-projects overview and rows, a page per project with its stamp", async () => {
+  const fixture = makeLedgerFixture()
+  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
+  const { registerProject } = await import("../project-key.ts")
+  const first = await registerProject(repository, {
+    directory: fixture.projectDirectory,
+    opencodeProjectID: fixture.projectID,
+  })
+  const otherDirectory = "/other-project"
+  const other = new TaskRepository(fixture.path, otherDirectory)
+  const second = await registerProject(other, {
+    directory: otherDirectory,
+    opencodeProjectID: "other-opencode-project",
+  })
+  other.close()
+  const harness = await register(repository, {
+    sourceConnections: { openrouter: { status: { status: "connected" } } },
+  })
+  repository.close()
+  try {
+    const filters = { persona: null, taskKind: null, period: { from: null, to: null } }
+    const methods = harness.methods() as unknown as {
+      overviewAll(input: unknown): Effect.Effect<unknown, unknown>
+      rowsAll(input: unknown): Effect.Effect<unknown, unknown>
+    }
+    const pages: ReturnType<typeof ModelDecisionOverviewAllOutputSchema.parse>[] = []
+    let cursor: string | undefined
+    do {
+      const page = ModelDecisionOverviewAllOutputSchema.parse(
+        await Effect.runPromise(
+          methods.overviewAll({ sessionID: "ses-native", filters, ...(cursor ? { cursor } : {}) }),
+        ),
+      )
+      pages.push(page)
+      cursor = page.nextCursor ?? undefined
+    } while (cursor)
+    expect([...new Set(pages.map((page) => page.project.key))]).toEqual([first.key, second.key])
+    expect(pages.every((page) => page.project.loaded === false)).toBe(true)
+    expect(pages[0]?.overview.context.scope).toEqual({ projectDirectory: fixture.projectDirectory })
+    expect(JSON.stringify(pages.map((page) => page.nextCursor))).not.toContain("other-project")
+    const rows = ModelDecisionRowsAllOutputSchema.parse(
+      await Effect.runPromise(
+        methods.rowsAll({
+          sessionID: "ses-native",
+          unit: pages[0]!.unit,
+          filters,
+          snapshotID: pages[0]!.overview.context.snapshotID,
+          limit: 10,
+        }),
+      ),
+    )
+    expect(rows.project.key).toBe(first.key)
+    // Looking at one's own projects in a panel never asks for a permission.
+    expect(harness.permissionCalls).toEqual([])
+    await expect(
+      Effect.runPromise(
+        methods.rowsAll({ sessionID: "ses-native", unit: "0".repeat(32), filters, limit: 10 }),
+      ),
+    ).rejects.toThrow("Models scope is unavailable")
+  } finally {
+    fixture.close()
   }
 })

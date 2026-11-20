@@ -10,10 +10,10 @@ import {
 } from "./submission.ts"
 import { TaskSubmissionSchema } from "./task.ts"
 import {
-  GetInput,
+  AgentGetInput,
   GetInstructionsOutput,
   GetOutput,
-  QueryInput,
+  AgentQueryInput,
   QueryOutput,
 } from "./tasks/contract.ts"
 import { TaskReads } from "./tasks/read.ts"
@@ -23,6 +23,7 @@ import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationToolInput } from "./task-classification.ts"
 import { tolerantJsonSchema } from "./legacy-fields.ts"
+import { declareInput } from "./tool-input.ts"
 import { guardedWrite, observeRevision } from "./tasks/observed-revisions.ts"
 import {
   TaskCorrectionToolInput,
@@ -36,13 +37,13 @@ import type { VerificationTimeoutDefaults } from "./runner/verification-timeout.
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
 function result<T>(
-  run: () => T,
+  run: () => T | Promise<T>,
   structured = false,
   render: (output: T) => string = JSON.stringify,
 ) {
-  return Effect.sync(() => {
+  return Effect.promise(async () => {
     try {
-      const output = run()
+      const output = await run()
       return structured ? { content: render(output), output } : { content: JSON.stringify(output) }
     } catch (error) {
       return {
@@ -74,10 +75,15 @@ export function registerTaskTools(
   // retry a write just because its old connection was disposed.
   const path = repository.path
   const projectDirectory = repository.projectDirectory
-  function withRepository<T>(run: (connection: TaskRepository) => T): T {
+  /**
+   * One connection per execution, with the work retried while another process holds the write
+   * lock (`retryBusy`): every handler here is request-keyed or reads/upserts, so repeating it is
+   * safe, and the wait yields the event loop instead of failing after the synchronous budget.
+   */
+  async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
     const connection = new TaskRepository(path, projectDirectory)
     try {
-      return run(connection)
+      return await connection.retryBusy(() => run(connection))
     } finally {
       connection.close()
     }
@@ -86,8 +92,8 @@ export function registerTaskTools(
     editor.add({
       name: "lz-submit-task",
       description:
-        "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input returns field errors without saving.",
-      input: z.toJSONSchema(TaskSubmissionSchema, { io: "input" }),
+        "Validate and persist a task; does not execute. Required idempotencyKey: 1–200 characters, non-whitespace, compared exactly within the canonical repo across sessions/restarts. Retry the same key/content to recover the original ID. Changed content conflicts; new logical work needs a new key. Object key order is ignored; array order and values matter. Invalid input saves nothing and returns the wrong fields with the full usage.",
+      input: declareInput(TaskSubmissionSchema),
       options: { codemode: true, permission: "lz-submit-task" },
       execute: (input, context) =>
         ctx.permission
@@ -101,17 +107,7 @@ export function registerTaskTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const parsed = TaskSubmissionSchema.safeParse(input)
-                  if (!parsed.success)
-                    return {
-                      content: JSON.stringify({
-                        status: "invalid",
-                        errors: parsed.error.issues.map((issue) => ({
-                          path: issue.path.join("."),
-                          message: issue.message,
-                        })),
-                      }),
-                    }
+                  const parsed = TaskSubmissionSchema.parse(input)
                   const refused = await fallowGate?.()
                   if (refused) return { content: JSON.stringify(refused) }
                   // Observed before the transaction: Git must not run inside it.
@@ -122,10 +118,10 @@ export function registerTaskTools(
                     (revision) => ({ revision }),
                     (error: unknown) => ({ error }),
                   )
-                  const receipt = withRepository((connection) => {
+                  const receipt = await withRepository((connection) => {
                     const submitted = submitTask(
                       connection,
-                      parsed.data,
+                      parsed,
                       () => ({
                         projectID: ctx.location.project.id,
                         projectDirectory: ctx.location.project.canonical,
@@ -166,7 +162,7 @@ export function registerTaskTools(
       name: "lz-dispose-task",
       description:
         "Architect-only durable disposition for an old task: record reviewed fulfillment, supersession, rejection or duplication with a reason, evidence and project-local related task IDs. The immutable task remains readable. This does not accept worker execution, override active work, or force a plan state.",
-      input: z.toJSONSchema(TaskDispositionInput, { io: "input" }),
+      input: declareInput(TaskDispositionInput),
       options: { codemode: true, permission: "lz-dispose-task" },
       execute: (input, context) =>
         ctx.permission
@@ -183,7 +179,7 @@ export function registerTaskTools(
                   if (context.agent !== "architect")
                     throw new Tool.Error({ message: "Task disposition is restricted to Architect" })
                   const parsed = TaskDispositionInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     connection.recordDisposition(parsed, {
                       sessionID: context.sessionID,
                       agent: String(context.agent),
@@ -226,7 +222,7 @@ export function registerTaskTools(
                       message: "Task classification is restricted to Architect",
                     })
                   const parsed = TaskClassificationToolInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     guardedWrite(
                       connection,
                       {
@@ -275,7 +271,7 @@ export function registerTaskTools(
                   if (context.agent !== "architect")
                     throw new Tool.Error({ message: "Task correction is restricted to Architect" })
                   const parsed = TaskCorrectionToolInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     guardedWrite(
                       connection,
                       {
@@ -307,13 +303,9 @@ export function registerTaskTools(
       name: "lz-inspect-task-corrections",
       description:
         "Architect-only project-scoped inspection of effective same-goal correction membership and its complete append-only audit. Unlinked tasks remain separate and unreviewed; a retracted link is explicitly independent. The returned identity pins one coherent read snapshot.",
-      input: z.toJSONSchema(TaskCorrectionInspectionInput, { io: "input" }),
+      input: declareInput(TaskCorrectionInspectionInput),
       output: TaskCorrectionInspection,
-      options: {
-        codemode: true,
-        pinned: true,
-        permission: "lz-inspect-task-corrections",
-      },
+      options: { codemode: true, permission: "lz-inspect-task-corrections" },
       execute: (input, context) =>
         ctx.permission
           .assert({
@@ -335,7 +327,7 @@ export function registerTaskTools(
                   try {
                     const output = reader.inspect(parsed.taskID)
                     if (output.status === "found")
-                      withRepository((connection) =>
+                      await withRepository((connection) =>
                         observeRevision(
                           connection,
                           context.sessionID,
@@ -363,7 +355,7 @@ export function registerTaskTools(
       name: "lz-get-task",
       description:
         "Get a task by ID or project reference. Workers receive the complete readable task, advice, optional skill summaries and focused cached Repomix source in one call; other agents receive structured task/execution data. Optional format overrides that default. Read source directly as needed.",
-      input: GetInput.extend({
+      input: AgentGetInput.extend({
         format: z.enum(["instructions", "structured"]).optional(),
       }),
       output: z.union([GetOutput, GetInstructionsOutput]),
@@ -381,11 +373,11 @@ export function registerTaskTools(
               Effect.tryPromise({
                 try: async (signal) => {
                   const { format, ...query } = input
-                  const detail = withRepository((connection) =>
+                  const detail = await withRepository((connection) =>
                     new TaskReads(connection).get(query),
                   )
                   if (detail.status === "found" && detail.classification)
-                    withRepository((connection) => {
+                    await withRepository((connection) => {
                       observeRevision(
                         connection,
                         context.sessionID,
@@ -471,7 +463,7 @@ export function registerTaskTools(
       name: "lz-query-tasks",
       description:
         "Search this project's persisted open tasks across sessions, including older records. Literal text, task reference, UUID and scopePath substring candidates; no semantic uniqueness or glob-conflict guarantee. Set includeRetired to review disposition history. Page with the returned cursor using unchanged filters.",
-      input: QueryInput,
+      input: AgentQueryInput,
       output: QueryOutput,
       options: { codemode: true, pinned: true, permission: "lz-query-tasks" },
       execute: (input, context) =>
