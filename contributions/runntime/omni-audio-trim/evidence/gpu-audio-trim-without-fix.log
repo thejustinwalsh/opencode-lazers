@@ -1,0 +1,1718 @@
+
+ RUN  v5.0.4 /Users/tjw/Documents/ChatGPT/runntime.worktrees/omni-trim/packages/runntime
+
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + bits): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (2i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (off + (3i * bits)): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  r: u32
+] to i32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  off: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((4i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((8i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  (((12i * bits) + off) % 32i): i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stderr | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+⚠️ [implicit-conversion]  Implicit conversions from [
+  bits: i32
+] to u32 are supported, but not recommended.
+Consider using explicit conversions instead.
+stdout | test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+LFM3_AUDIO_TRIM_MEMORY {"loadedBytes":1825200508,"rows":[{"cycle":0,"gpuBytes":1967372124},{"cycle":1,"gpuBytes":2000906988},{"cycle":2,"gpuBytes":2032201748},{"cycle":3,"gpuBytes":2041678780},{"cycle":4,"gpuBytes":2150670204},{"cycle":5,"gpuBytes":2174278676},{"cycle":6,"gpuBytes":2174278676},{"cycle":7,"gpuBytes":2174278676},{"cycle":8,"gpuBytes":2174278676},{"cycle":9,"gpuBytes":2174278676},{"cycle":10,"gpuBytes":2174278676},{"cycle":11,"gpuBytes":2174278676}],"slack":65536}
+ ❯ |gpu (chromium)| test/zoo/lfm3/audio-trim.gpu.test.ts (1 test | 1 failed) 73983ms
+   × returns to the same GPU size when the same sentences repeat and frees everything on dispose 73982ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |gpu (chromium)| test/zoo/lfm3/audio-trim.gpu.test.ts > returns to the same GPU size when the same sentences repeat and frees everything on dispose
+AssertionError: expected 206906552 to be less than or equal to 65536
+
+Failure screenshot:
+  - .vitest/attachments/failure-screenshots/audio-trim.gpu.test.ts/returns-to-the-same-GPU-size-when-the-same-sentences-repeat-and-frees-everything-on-dispose.png
+
+ ❯ test/zoo/lfm3/audio-trim.gpu.test.ts:65:57
+     63|       for (const row of rows.slice(SENTENCES.length)) {
+     64|         const first = rows[row.cycle - SENTENCES.length]!;
+     65|         expect(Math.abs(row.gpuBytes - first.gpuBytes)).toBeLessThanOr…
+       |                                                         ^
+     66|       }
+     67|     } finally {
+ ❯ node_modules/.vite/vitest/7786424beaf68478f7f2ac35272168ac88ccf09f/deps/plugins.DPQHVT0p-DRUulJcC.js?v=ef87c17f:5235:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  02:53:43
+   Duration  76.03s (tests 99%, import 1%)
+

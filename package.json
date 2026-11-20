@@ -49,7 +49,7 @@
     "elkjs": "0.12.1",
     "ignore": "7.0.14",
     "repomix": "1.18.1",
-    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-a3718c8/runntime-0.2.0-a3718c8.tgz",
+    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-70ab1be/runntime-0.2.0-70ab1be.tgz",
     "xstate": "5.33.3",
     "zod": "4.6.7"
   }
