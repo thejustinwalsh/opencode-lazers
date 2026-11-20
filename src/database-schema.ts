@@ -90,10 +90,10 @@ export const schemaModules = {
     source: "src/runner/priority.ts",
     tables: ["runner_priority_migration"],
   },
-  context: {
+  "repo-map": {
     generation: 1,
-    source: "src/context/index.ts",
-    tables: ["context_workspaces", "context_cache", "context_publications"],
+    source: "src/context/repo-map-store.ts",
+    tables: ["repo_map_sources", "repo_maps", "repo_map_deliveries"],
   },
   "recovery-handoff": {
     generation: 1,

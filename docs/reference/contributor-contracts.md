@@ -87,9 +87,9 @@ Keep existing recorded paths authoritative. Do not relocate them. Shared serial 
 
 ## Context and access
 
-[`src/context/tools.ts`](../../src/context/tools.ts) exposes project indexing and focused reads. Architect publishes a Repomix snapshot. Readers use that snapshot until Architect refreshes it. Responses identify the snapshot and its as-of-refresh freshness.
+Local orientation is one repository map: file paths plus exported names only, over the project's own source files, in plain path order with no ranking and no entry cut ([`src/context/repo-map.ts`](../../src/context/repo-map.ts)). The source definition is a per-project stored setting; the default is derived from the checkout in one function (`deriveSourceDefinition`). The same tree yields identical bytes. Workers read it in `lz-get-task`, frozen per plan ([`src/context/repo-map-store.ts`](../../src/context/repo-map-store.ts)); the first capture wins, so all workers of a plan carry the same bytes. The Architect receives it once per session as a keyed session instruction ([`src/context/architect-map.ts`](../../src/context/architect-map.ts)), including renewed sessions. The map is as of plan or session start; agents use the host's read and grep for current content. Each delivery records the map hash and token size, and the size of the injected source context, in `repo_map_deliveries`, joinable to attempts by session id.
 
-Check native OpenCode permission before access to project data or remote repositories. A missing snapshot does not block normal live source access. Do not treat a cached snapshot as live source.
+Check native OpenCode permission before access to project data or remote repositories. Do not treat the map or a named-source outline as live source.
 
 The remote repository snapshot tool in [`src/context/repository-snapshots.ts`](../../src/context/repository-snapshots.ts) fetches a selected repository and ref through Repomix. It retains source selection, filters, version, and compression basis with the saved source. An unknown resolved revision stays unknown. It complements normal source access; it does not replace it.
 

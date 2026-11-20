@@ -19,6 +19,13 @@ import {
 import { TaskReads } from "./tasks/read.ts"
 import { taskInstructions } from "./tasks/instructions.ts"
 import type { ProjectIndex } from "./context/index.ts"
+import {
+  freezePlanMap,
+  planOfSession,
+  recordMapDelivery,
+  repoMapBlock,
+} from "./context/repo-map-store.ts"
+import type { RepoMap } from "./context/repo-map.ts"
 import { isWorkerAgent } from "./runner/worker-agent.ts"
 import { TaskDispositionInput } from "./task-disposition.ts"
 import { TaskClassificationToolInput } from "./task-classification.ts"
@@ -354,7 +361,7 @@ export function registerTaskTools(
     editor.add({
       name: "lz-get-task",
       description:
-        "Get a task by ID or project reference. Workers receive the complete readable task, advice, optional skill summaries and focused cached Repomix source in one call; other agents receive structured task/execution data. Optional format overrides that default. Read source directly as needed.",
+        "Get a task by ID or project reference. Workers receive the complete readable task, advice, optional skill summaries, the plan's repository map and the source the task names in one call; other agents receive structured task/execution data. Optional format overrides that default. Read source directly as needed.",
       input: AgentGetInput.extend({
         format: z.enum(["instructions", "structured"]).optional(),
       }),
@@ -399,33 +406,61 @@ export function registerTaskTools(
                   )
                     return { content: JSON.stringify(detail), output: detail }
                   let instructions = taskInstructions(detail)
-                  if (index && detail.status === "found") {
-                    try {
-                      const advice = detail.advice?.current
-                      const source = await index.taskContext(
-                        { sessionID: context.sessionID, agent: context.agent, signal },
-                        detail.task.proposal,
-                        [
-                          ...(advice?.findings ?? []),
-                          ...(advice?.implementationAdvice ?? []),
-                          ...(advice?.references.map((ref) => ref.reference) ?? []),
-                        ],
-                      )
-                      instructions += `\n\n## Source context\nRepomix snapshot ${source.snapshotID}; workspace ${source.workspace}; refreshed ${source.refreshedAt} (Unix ms). Cached source may differ from this checkout.\n`
-                      for (const entry of source.entries) {
-                        let fence = "```"
-                        for (const match of entry.text.matchAll(/`+/g))
-                          if (match[0].length >= fence.length)
-                            fence = "`".repeat(match[0].length + 1)
-                        instructions += `\n### ${entry.path} (${entry.level})\n\n${fence}\n${entry.text}\n${fence}\n`
+                  if (detail.status === "found") {
+                    // One orientation map per plan, captured when the plan was submitted, so every
+                    // worker of the plan carries identical bytes ahead of the task's own source.
+                    const planID = planOfSession(repository, context.sessionID)
+                    let map: RepoMap | undefined
+                    if (planID) {
+                      try {
+                        map = await freezePlanMap(repository, planID, ctx.location.directory)
+                        instructions += `\n\n${repoMapBlock(map, "plan start")}`
+                      } catch {
+                        signal.throwIfAborted()
                       }
-                      if (source.deferred.length)
-                        instructions += `\nAdditional source paths: ${source.deferred.join(", ")}. Read directly as needed.\n`
-                    } catch {
-                      signal.throwIfAborted()
-                      instructions +=
-                        "\n\nCached source context is unavailable. Read the referenced source directly."
                     }
+                    let sourceTokens: number | undefined
+                    if (index) {
+                      try {
+                        const advice = detail.advice?.current
+                        const source = await index.taskContext(
+                          { sessionID: context.sessionID, agent: context.agent, signal },
+                          detail.task.proposal,
+                          [
+                            ...(advice?.findings ?? []),
+                            ...(advice?.implementationAdvice ?? []),
+                            ...(advice?.references.map((ref) => ref.reference) ?? []),
+                          ],
+                        )
+                        sourceTokens = source.tokens
+                        instructions += `\n\n## Source context\nWorkspace ${source.workspace}. Read now from the checkout; outlines list declarations, so read the file for bodies.\n`
+                        for (const entry of source.entries) {
+                          let fence = "```"
+                          for (const match of entry.text.matchAll(/`+/g))
+                            if (match[0].length >= fence.length)
+                              fence = "`".repeat(match[0].length + 1)
+                          instructions += `\n### ${entry.path} (${entry.level})\n\n${fence}\n${entry.text}\n${fence}\n`
+                        }
+                        if (source.deferred.length)
+                          instructions += `\nAdditional source paths: ${source.deferred.join(", ")}. Read directly as needed.\n`
+                      } catch {
+                        signal.throwIfAborted()
+                        instructions +=
+                          "\n\nSource context is unavailable. Read the referenced source directly."
+                      }
+                    }
+                    await withRepository((connection) =>
+                      recordMapDelivery(connection, {
+                        sessionID: context.sessionID,
+                        taskID: detail.task.id,
+                        role: "worker",
+                        ...(planID ? { planID } : {}),
+                        ...(map ? { map } : {}),
+                        ...(sourceTokens !== undefined
+                          ? { sourceContextTokens: sourceTokens }
+                          : {}),
+                      }),
+                    )
                   }
                   return { content: instructions, output: instructions }
                 },

@@ -8,7 +8,6 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
-import type { ContextHost } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
 import { createModelsTaskValuationProvider } from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
@@ -124,32 +123,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   )
   built("repository")
   const indexes = new Map<string, ProjectIndex>()
-  const contextHost: ContextHost = {
-    projectID,
-    session: async (id) => {
-      try {
-        const session = await Effect.runPromise(
-          host.session.get({ sessionID: Session.ID.make(id) }),
-        )
-        return {
-          id: session.id,
-          ...(session.parentID ? { parentID: session.parentID } : {}),
-          projectID: session.projectID,
-          directory: session.location.directory,
-          agent: session.agent,
-        }
-      } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "_tag" in error &&
-          error._tag === "SessionNotFoundError"
-        )
-          return null
-        throw error
-      }
-    },
-  }
   const indexFor = (directory: string) => {
     const root = canonical(directory)
     let index = indexes.get(root)
@@ -162,7 +135,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
             join(dirname(repository.path), "context"),
             repository,
             nativeContextPermission(host),
-            contextHost,
           ),
       )
       index = created
