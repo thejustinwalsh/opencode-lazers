@@ -535,6 +535,7 @@ export class TaskRuntime {
       startAuditorReport: (...args) => this.startAuditorReport(...args),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
       activeProfile: () => activeProfile(this.store.repository, this.directory),
+      profileRevision: (id) => profileRevisionByID(this.store.repository, id),
     })
     this.effectReconciliation = new EffectReconciliation(this.core, {
       supersedeEffect: (...args) => this.supersedeEffect(...args),

@@ -44,6 +44,8 @@ import type { AttemptRow, PlanRow } from "./store.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { ActiveProfile } from "../projects/profile-store.ts"
+import { checkRunProfile, runnableFix } from "../projects/profile-runtime.ts"
+import { profileFixChain } from "./profile-fix.ts"
 
 /** What `VerificationCandidate` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type VerificationCandidateDeps = {
@@ -63,6 +65,7 @@ export type VerificationCandidateDeps = {
   startAuditorReport: VerificationReview["startAuditorReport"]
   verificationTimeoutDefaults: VerificationTimeoutDefaults
   activeProfile: () => ActiveProfile | undefined
+  profileRevision: (id: number) => ActiveProfile | undefined
 }
 
 /**
@@ -87,6 +90,7 @@ export class VerificationCandidate {
   private readonly startAuditorReport: VerificationCandidateDeps["startAuditorReport"]
   private readonly verificationTimeoutDefaults: VerificationCandidateDeps["verificationTimeoutDefaults"]
   private readonly activeProfile: VerificationCandidateDeps["activeProfile"]
+  private readonly profileRevision: VerificationCandidateDeps["profileRevision"]
 
   constructor(
     private readonly core: RuntimeCore,
@@ -108,6 +112,7 @@ export class VerificationCandidate {
     this.failAttempt = (...args) => deps.failAttempt(...args)
     this.startAuditorReport = (...args) => deps.startAuditorReport(...args)
     this.activeProfile = () => deps.activeProfile()
+    this.profileRevision = (id) => deps.profileRevision(id)
     this.verificationTimeoutDefaults = deps.verificationTimeoutDefaults
   }
 
@@ -137,6 +142,13 @@ export class VerificationCandidate {
     proposal: TaskProposal,
     fence: number,
   ): Promise<"ready" | "prepared" | "pending" | "held"> {
+    // With a confirmed profile the profile's own fix chain prepares the candidate; the Bun
+    // preparation below runs only without one, or to replay an effect that predates it.
+    const profile = this.activeProfile()
+    if (profile) {
+      const prepared = await this.prepareProfileFix(plan, attempt, proposal, fence, profile)
+      if (prepared !== undefined) return prepared
+    }
     if (!needsMechanicalQualityPreparation(proposal.verification.map((check) => check.command)))
       return "ready"
     const scope = this.store.effectiveWriteScope(attempt.task_id)
@@ -347,6 +359,263 @@ export class VerificationCandidate {
             inputIdentity: inputFingerprint,
             environmentIdentity,
           },
+        )
+        const preparation = {
+          inputFingerprint,
+          resultingFingerprint: await workingTreeIdentity(attempt.workspace, attempt.base_commit),
+          paths,
+          scope,
+        }
+        const result = { ...receipt, preparation }
+        await writeCheckReceipt(payload.receiptPath, result)
+        return result
+      },
+    })
+    return "pending"
+  }
+  /**
+   * Mechanical preparation from the profile: its proven fix commands, in profile order, each on
+   * the changed files its globs select. A recorded effect keeps the revision it started with, so
+   * a replay recomputes from that revision and never from the latest. Returns undefined when an
+   * effect from before the profile exists, which the Bun preparation then replays.
+   */
+  private async prepareProfileFix(
+    plan: PlanRow,
+    attempt: AttemptRow,
+    proposal: TaskProposal,
+    fence: number,
+    active: ActiveProfile,
+  ): Promise<"ready" | "prepared" | "pending" | "held" | undefined> {
+    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
+    const scope = this.store.effectiveWriteScope(attempt.task_id)
+    const shared = attempt.workspace === this.directory
+    const candidates = this.store.effects(plan.id).filter((effect) => {
+      if (effect.attempt_id !== attempt.id || effect.kind !== "mechanical-fix") return false
+      if (effectSuperseded(effect)) return false
+      try {
+        const recorded = JSON.parse(effect.payload)
+        return (
+          recorded.messageID === attempt.message_id && (recorded.repairID ?? undefined) === repairID
+        )
+      } catch {
+        return true
+      }
+    })
+    let inputFingerprint: string | undefined
+    let sharedDirty = false
+    let existing: EffectRow | undefined
+    if (candidates.length) {
+      inputFingerprint = await workingTreeIdentity(attempt.workspace, attempt.base_commit)
+      sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
+      existing = candidates.findLast((effect) => {
+        // A clean shared checkout can contain a newly committed correction.
+        if (shared && !sharedDirty && effect.state === "completed") {
+          try {
+            const recorded = JSON.parse(effect.payload)
+            const receipt = (JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }).check
+            if (
+              receipt?.preparation &&
+              recorded.inputFingerprint !== inputFingerprint &&
+              receipt.preparation.resultingFingerprint !== inputFingerprint
+            )
+              return false
+          } catch {
+            return true
+          }
+        }
+        return true
+      })
+    }
+    let recorded: { profileRevisionID?: number; paths?: string[] } | undefined
+    if (existing) {
+      try {
+        recorded = JSON.parse(existing.payload)
+      } catch {
+        this.hold(
+          plan,
+          "Mechanical candidate preparation journal is unreadable; no check was replayed",
+        )
+        return "held"
+      }
+      if (recorded?.profileRevisionID === undefined) return undefined
+    }
+    const profile =
+      recorded?.profileRevisionID === undefined
+        ? active
+        : this.profileRevision(recorded.profileRevisionID)
+    if (!profile) {
+      this.hold(
+        plan,
+        "Mechanical candidate preparation journal is unreadable; no check was replayed",
+      )
+      return "held"
+    }
+    const runProfile = checkRunProfile(profile)
+    const fix = runnableFix(profile)
+    if (
+      !needsMechanicalQualityPreparation(
+        proposal.verification.map((check) => check.command),
+        { ...runProfile.commands, runnableFix: fix.length },
+      )
+    )
+      return "ready"
+    // A replay works from the files the effect was given, not from what its fix changed since.
+    const paths = recorded?.paths ?? (await changedPaths(attempt.workspace, attempt.base_commit))
+    if (protectedPaths(paths, this.store.effectiveScope(attempt.task_id)).length) return "ready"
+    const filePaths: string[] = []
+    for (const path of paths) {
+      let info: ReturnType<typeof lstatSync>
+      try {
+        info = lstatSync(join(attempt.workspace, path))
+      } catch {
+        continue
+      }
+      if (info.isFile() && !info.isSymbolicLink()) filePaths.push(path)
+    }
+    const chain = profileFixChain(fix, filePaths)
+    if (!chain) return "ready"
+    if (!this.preparationAllowed(attempt))
+      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_OVERLAP_WARNING", {
+        attemptID: attempt.id,
+        phase: "mechanical-preparation",
+      })
+    const command = chain.command
+    const check = verificationCheckWithDefaults(
+      { id: "mechanical-preparation", command },
+      this.verificationTimeoutDefaults,
+    )
+    inputFingerprint ??= await workingTreeIdentity(attempt.workspace, attempt.base_commit)
+    if (!candidates.length)
+      sharedDirty = shared && (await changedPaths(attempt.workspace)).length > 0
+    const environmentIdentity = verificationEnvironmentIdentity(runProfile.identity)
+    const payload = {
+      workspace: attempt.workspace,
+      baseCommit: attempt.base_commit,
+      inputFingerprint,
+      scope,
+      paths,
+      formatPaths: filePaths,
+      lintPaths: [] as string[],
+      command,
+      check,
+      environmentIdentity,
+      messageID: attempt.message_id,
+      ...(repairID ? { repairID } : {}),
+      profileRevisionID: profile.revisionID,
+      fixSteps: chain.steps,
+      planVersion: plan.version,
+      receiptPath: join(
+        this.dataDirectory,
+        "receipts",
+        attempt.id,
+        `mechanical-preparation-${inputFingerprint}.json`,
+      ),
+    }
+    if (existing) {
+      const original = JSON.parse(existing.payload) as typeof payload
+      if (
+        original.baseCommit !== payload.baseCommit ||
+        original.workspace !== payload.workspace ||
+        original.command !== payload.command ||
+        JSON.stringify(original.scope) !== JSON.stringify(scope) ||
+        original.messageID !== attempt.message_id ||
+        original.repairID !== payload.repairID
+      ) {
+        this.hold(
+          plan,
+          "Mechanical candidate preparation inputs changed; the original activity was not replayed",
+        )
+        return "held"
+      }
+      if (existing.state !== "completed") {
+        const activity = this.checkActivity(existing.id, {
+          effectID: existing.id,
+          payload: existing.payload,
+        })
+        if (activity?.state === "running") return "pending"
+        this.hold(plan, "Mechanical candidate preparation is uncertain and was not replayed")
+        return "held"
+      }
+      let receipt: CheckReceipt | undefined
+      try {
+        receipt = (JSON.parse(existing.receipt ?? "{}") as { check?: CheckReceipt }).check
+      } catch {
+        receipt = undefined
+      }
+      if (
+        !receipt?.preparation ||
+        receipt.id !== check.id ||
+        receipt.command !== check.command ||
+        receipt.artifact !== attempt.base_commit ||
+        receipt.inputIdentity !== original.inputFingerprint ||
+        receipt.environmentIdentity !== original.environmentIdentity ||
+        receipt.preparation.inputFingerprint !== original.inputFingerprint ||
+        receipt.preparation.resultingFingerprint !==
+          (await workingTreeIdentity(attempt.workspace, attempt.base_commit))
+      ) {
+        this.hold(
+          plan,
+          "Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted",
+        )
+        return "held"
+      }
+      if (!checkSucceeded(receipt)) {
+        this.hold(
+          plan,
+          `Mechanical candidate preparation failed (${receipt.command}, exit ${receipt.exitCode ?? "unknown"}); the original attempt was preserved without a worker repair`,
+          ["reconcile", "resume", "audit", "cancel"],
+        )
+        return "held"
+      }
+      // The fix may only touch the files it was given.
+      const before = new Set(original.paths)
+      const given = new Set(chain.steps.flatMap((step) => step.paths))
+      const unexpected = (await changedPaths(attempt.workspace, attempt.base_commit)).filter(
+        (path) => !before.has(path) && !given.has(path),
+      )
+      if (unexpected.length) {
+        this.hold(
+          plan,
+          `Mechanical candidate preparation changed files it was not given: ${unexpected.join(", ")}`,
+          ["reconcile", "resume", "audit", "cancel"],
+        )
+        return "held"
+      }
+      return "prepared"
+    }
+    if (sharedDirty) {
+      this.hold(
+        plan,
+        "Commit task edits before verification; shared checkout has uncommitted changes",
+      )
+      return "held"
+    }
+    const effect = this.effect(
+      plan.id,
+      attempt.task_id,
+      attempt.id,
+      "mechanical-fix",
+      payload,
+      fence,
+    )
+    this.startCheckActivity({
+      id: effect.id,
+      identity: { effectID: effect.id, payload: effect.payload },
+      metadata: {
+        kind: "effect",
+        projectDirectory: this.directory,
+        planID: plan.id,
+        taskID: attempt.task_id,
+        attemptID: attempt.id,
+        effectID: effect.id,
+      },
+      run: async (signal) => {
+        const receipt = await runCheck(
+          attempt.workspace,
+          attempt.base_commit,
+          check,
+          payload.receiptPath,
+          { signal, inputIdentity: inputFingerprint, environmentIdentity, profile: runProfile },
         )
         const preparation = {
           inputFingerprint,
