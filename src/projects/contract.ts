@@ -114,7 +114,13 @@ const Outcome = z.discriminatedUnion("ok", [
 
 const NeedsYouItem = z.strictObject({
   project: ProjectRef,
-  kind: z.enum(["owner-hold", "recovery-bundle", "architect-question"]),
+  kind: z.enum([
+    "owner-hold",
+    "recovery-bundle",
+    "architect-question",
+    "project-setup",
+    "profile-confirmation",
+  ]),
   id: z.string().min(1),
   title: z.string(),
   reference: z.string().optional(),
@@ -143,6 +149,24 @@ const ProfileOutcome = z.union([
   z.strictObject({ ok: z.literal(false), refusal: Refusal, message: z.string() }),
 ])
 
+/** The state of a project's profile as the notice needs it, or a refusal. */
+const SetupStatus = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    key: z.string(),
+    code: z.string(),
+    state: z.enum(["none", "pending", "active"]),
+    dismissed: z.boolean(),
+    pendingRevision: z.int().optional(),
+  }),
+  z.strictObject({ ok: z.literal(false), refusal: Refusal, message: z.string() }),
+])
+const SetupStarted = z.union([
+  z.strictObject({ ok: z.literal(true), sessionID: z.string() }),
+  z.strictObject({ ok: z.literal(false), refusal: Refusal, message: z.string() }),
+])
+export type SetupStatusView = z.infer<typeof SetupStatus>
+export type SetupStartedView = z.infer<typeof SetupStarted>
 export type ProfileView = z.infer<typeof ProfileView>
 export type ProfileRevisionView = z.infer<typeof RevisionView>
 export type ProfileOutcomeView = z.infer<typeof ProfileOutcome>
@@ -206,6 +230,18 @@ export const Projects = Rpc.define({
       input: z.strictObject({ key: z.string().min(1), revision: z.int().min(1) }),
       output: Outcome,
     },
+    /** The profile state of the calling session's own project, for the setup notice. */
+    setupStatus: {
+      input: z.strictObject({ sessionID: z.string().min(1).max(200) }),
+      output: SetupStatus,
+    },
+    /** Opens a prompted setup Architect session in the calling session's project; clears a dismissal. */
+    startSetup: {
+      input: z.strictObject({ sessionID: z.string().min(1).max(200) }),
+      output: SetupStarted,
+    },
+    dismissSetup: { input: z.strictObject({ key: z.string().min(1) }), output: Outcome },
+    resumeSetupNotice: { input: z.strictObject({ key: z.string().min(1) }), output: Outcome },
     /** `value: null` clears the stored value, so the plugin option or built-in default applies. */
     setSetting: {
       input: z.strictObject({
