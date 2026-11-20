@@ -19,7 +19,8 @@
     "crates/**",
     ".agents/**",
     "dist/**",
-    "website/public/**"
+    "website/public/**",
+    "test/fixtures/profile/**"
   ],
   "rules": {
     "unused-class-members": "off"
