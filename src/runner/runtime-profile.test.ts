@@ -9,7 +9,7 @@ import {
 } from "node:fs"
 import { tmpdir, userInfo } from "node:os"
 import { join } from "node:path"
-import { fakeTools, requireToolchain } from "../../test/fixtures/profile/toolchain.ts"
+import { fakeTools, fixtureRepo, requireToolchain } from "../../test/fixtures/profile/toolchain.ts"
 import { registerProject, resetProjectAliasCache } from "../project-key.ts"
 import { parseProfile } from "../projects/profile.ts"
 import { confirmRevision, proposeRevision, type ProofRecord } from "../projects/profile-store.ts"
@@ -369,4 +369,41 @@ test.skipIf(!requireToolchain("cargo", "profile fix chain formats with rustfmt")
     )
   },
   90_000,
+)
+
+test.skipIf(
+  !requireToolchain("npm-cache", "profile fix chain runs eslint --fix from the npm cache"),
+)(
+  "a real eslint --fix from the npm toolchain fixes the changed file",
+  async () => {
+    const tools = fixtureRepo("npm-eslint-vitest")
+    cleanup.push(tools.cleanup)
+    const install = Bun.spawnSync(
+      ["npm", "ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"],
+      { cwd: tools.root, stdout: "ignore", stderr: "pipe" },
+    )
+    expect(install.exitCode).toBe(0)
+    const eslint = `${join(tools.root, "node_modules/.bin/eslint")} --config ${join(tools.root, "eslint.config.js")} --rule 'prefer-const: error'`
+    const f = fixture({
+      taskFiles: [{ name: "a", path: "src/sum.js" }],
+      checkCommand: "npm run lint",
+      writes: [{ path: "src/sum.js", content: "let total = 1\nexport const value = total\n" }],
+    })
+    await confirm(
+      f,
+      {
+        toolchains: ["npm"],
+        verify: [{ id: "lint", command: "npm run lint" }],
+        fix: [{ command: `${eslint} --fix`, files: ["**/*.js"] }],
+        source: { include: ["src/**/*.js"] },
+      },
+      [proof("fix:0")],
+    )
+    await runPlan(f)
+    await drive(f.runtime, 14)
+    expect(readFileSync(join(workspaceOf(f), "src/sum.js"), "utf8")).toBe(
+      "const total = 1\nexport const value = total\n",
+    )
+  },
+  120_000,
 )
