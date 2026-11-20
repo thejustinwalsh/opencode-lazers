@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { ObservationChangeTracker } from "./changes.ts"
-import type { LiveHistoryResponse, LiveRadarResponse } from "./contract.ts"
+import type { LiveRadarResponse } from "./contract.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
@@ -168,18 +168,22 @@ test("bounded live read and separately selected history carry only attributed fi
     expect(JSON.stringify(live)).not.toContain("PRIVATE PROPOSED BODY")
     expect(JSON.stringify(live)).not.toContain("PRIVATE ATTACHMENT")
 
-    const history = reads.liveHistory(
-      { scope, sessionID: "ses-failed", limit: 20 },
-      new AbortController().signal,
-    ) as LiveHistoryResponse
-    expect(history.items.find((item) => item.callID === "call-edit-target")).toMatchObject({
-      fileTargets: {
-        coverage: "observed",
-        operation: "edit",
-        paths: ["src/monitor.tsx"],
-      },
-    })
-    expect(JSON.stringify(history)).not.toContain("PRIVATE PROPOSED BODY")
+    // The history list reads the display stored with each progress row.
+    const stored = fixture.store.read((db) =>
+      db
+        .query<{ file_targets_json: string | null }, []>(
+          "SELECT file_targets_json FROM runner_progress_display WHERE call_id='call-edit-target'",
+        )
+        .all(),
+    )
+    expect(stored.map((row) => JSON.parse(row.file_targets_json!))).toEqual([
+      { coverage: "observed", operation: "edit", paths: ["src/monitor.tsx"] },
+    ])
+    expect(
+      JSON.stringify(
+        fixture.store.read((db) => db.query("SELECT * FROM runner_progress_display").all()),
+      ),
+    ).not.toContain("PRIVATE PROPOSED BODY")
   } finally {
     fixture.close()
   }

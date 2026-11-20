@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite"
-import { createHmac, timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import { LIVE_GROUP_TASKS } from "./contract.ts"
-import type { LiveHistoryRequest, ObservationScope } from "./contract.ts"
+import type { ObservationScope } from "./contract.ts"
 import { AttemptModel, readAttemptSummary } from "../tasks/attempt-summary.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
@@ -53,12 +52,6 @@ export const LIVE_LIMITS = {
   retainedStateEntries: 32,
   responseBytes: 512_000,
   nativeInventoryReads: 1,
-} as const
-
-const LIVE_HISTORY_LIMITS = {
-  sourceQueries: 10,
-  sourceRows: 40,
-  sourceBytes: 250_000,
 } as const
 
 const JOURNAL_FACTS = LIVE_LIMITS.journalFacts - 1
@@ -128,15 +121,6 @@ export type LiveSourceSnapshot = LiveStoreMetrics & {
   progress: Map<string, LiveProgressRow[]>
 }
 
-export type LiveHistorySourcePage = LiveStoreMetrics & {
-  runnerRevision: number | null
-  /** Null for an authorized session that has no runner attempt, such as an Architect session. */
-  attemptID: string | null
-  rows: LiveProgressRow[]
-  hasMore: boolean
-  nextCursor: string | null
-}
-
 type AssignmentRow = {
   session_id: string
   plan_id: string
@@ -162,26 +146,9 @@ type JournalFactRow = {
 
 type ProgressRow = LiveProgressRow
 
-const CursorPayload = z.strictObject({
-  version: z.literal(1),
-  projectID: z.string().min(1).max(200),
-  scope: z.unknown(),
-  sessionID: z.string().min(1).max(200),
-  limit: z.int().min(1).max(25),
-  attemptID: z.uuid(),
-  runnerRevision: z.int().nonnegative().nullable(),
-  beforeSequence: z.int().positive(),
-})
-
 export class LiveHistoryUnavailableError extends Error {
-  constructor(readonly reason: "invalid-cursor" | "session-unavailable" | "changed-during-read") {
-    super(
-      reason === "invalid-cursor"
-        ? "Selected history cursor is invalid for this scope"
-        : reason === "changed-during-read"
-          ? "Selected history changed during the read; restart from a fresh page"
-          : "Selected session history is unavailable in this project scope",
-    )
+  constructor(readonly reason: "session-unavailable") {
+    super("Selected session history is unavailable in this project scope")
     this.name = "LiveHistoryUnavailableError"
   }
 }
@@ -508,55 +475,6 @@ function progressRowQuery(db: Database, metrics: LiveStoreMetrics, args: (string
   return rows
 }
 
-function historyCursor(secret: Uint8Array, payload: z.infer<typeof CursorPayload>): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url")
-  const signature = createHmac("sha256", secret).update(body).digest("hex")
-  return `${body}.${signature}`
-}
-
-function readHistoryCursor(
-  secret: Uint8Array,
-  value: string,
-  request: LiveHistoryRequest,
-  projectID: string,
-): z.infer<typeof CursorPayload> {
-  const separator = value.lastIndexOf(".")
-  if (separator <= 0) throw new LiveHistoryUnavailableError("invalid-cursor")
-  const body = value.slice(0, separator)
-  const signature = value.slice(separator + 1)
-  if (!/^[a-f0-9]{64}$/.test(signature)) throw new LiveHistoryUnavailableError("invalid-cursor")
-  const expected = createHmac("sha256", secret).update(body).digest()
-  const supplied = Buffer.from(signature, "hex")
-  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied))
-    throw new LiveHistoryUnavailableError("invalid-cursor")
-  let raw: unknown
-  try {
-    raw = JSON.parse(Buffer.from(body, "base64url").toString("utf8"))
-  } catch {
-    throw new LiveHistoryUnavailableError("invalid-cursor")
-  }
-  const payload = CursorPayload.safeParse(raw)
-  if (!payload.success) throw new LiveHistoryUnavailableError("invalid-cursor")
-  const scope = ObservationScopeSchema.safeParse(payload.data.scope)
-  const sameScope =
-    scope.success &&
-    scope.data.kind === request.scope.kind &&
-    scope.data.sessionID === request.scope.sessionID
-  if (
-    !sameScope ||
-    !sameProject(payload.data.projectID, projectID) ||
-    payload.data.sessionID !== request.sessionID ||
-    payload.data.limit !== request.limit
-  )
-    throw new LiveHistoryUnavailableError("invalid-cursor")
-  return payload.data
-}
-
-const ObservationScopeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
-  z.strictObject({ kind: z.literal("project"), sessionID: z.string().min(1).max(200) }),
-])
-
 /** Read-only bounded SQL projections for the Radar live hot path and selected history. */
 function newLiveStoreMetrics(): LiveStoreMetrics {
   return {
@@ -585,7 +503,6 @@ export class LiveReadStore {
     private readonly path: string,
     private readonly projectDirectory: string,
     private readonly projectID: string,
-    private readonly secret: Uint8Array,
   ) {}
 
   /**
@@ -967,127 +884,6 @@ export class LiveReadStore {
           })),
         }
       })
-    } finally {
-      connection.close()
-    }
-  }
-
-  readHistory(input: LiveHistoryRequest, signal: AbortSignal): LiveHistorySourcePage {
-    if (input.scope.kind === "session" && input.sessionID !== input.scope.sessionID)
-      throw new LiveHistoryUnavailableError("session-unavailable")
-    const cursor = input.cursor
-      ? readHistoryCursor(this.secret, input.cursor, input, this.projectID)
-      : undefined
-    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    const metrics = newLiveStoreMetrics()
-    try {
-      const source = connection.store.read((db) => {
-        signal.throwIfAborted()
-        const { runnerRevision, factsAvailable } = readRevisionAndJournal(
-          db,
-          metrics,
-          this.projectDirectory,
-        )
-
-        countQuery(metrics)
-        const assignment = db
-          .query<{ attempt_id: string }, [string, string]>(
-            `SELECT a.id AS attempt_id FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-              WHERE a.session_id=? AND p.project_directory=? LIMIT 1`,
-          )
-          .get(input.sessionID, this.projectDirectory)
-        if (!assignment) {
-          // Runner progress is the only history source. A session with no runner
-          // attempt (an Architect session) has none: an empty page, not a failure.
-          // A cursor can only have come from an attempt, so it is no longer valid.
-          if (cursor) throw new LiveHistoryUnavailableError("invalid-cursor")
-          return {
-            runnerRevision,
-            attemptID: null,
-            rows: [] as ProgressRow[],
-            hasMore: false,
-            nextCursor: null,
-          }
-        }
-        countRows(metrics, [assignment])
-        if (cursor && cursor.attemptID !== assignment.attempt_id)
-          throw new LiveHistoryUnavailableError("invalid-cursor")
-
-        signal.throwIfAborted()
-        const beforeSequence = cursor?.beforeSequence
-        const predicate = beforeSequence === undefined ? "" : "AND seq<?"
-        const values: (string | number)[] = [
-          EVENT_IDS_BYTES,
-          EVENT_IDS_BYTES,
-          SMALL_ID_BYTES,
-          SMALL_ID_BYTES,
-          LIVE_LIMITS.progressPayloadBytes,
-          LIVE_LIMITS.progressPayloadBytes,
-          this.projectDirectory,
-          assignment.attempt_id,
-          input.sessionID,
-          projectIdsJSON(this.projectID),
-          input.limit + 1,
-        ]
-        if (beforeSequence !== undefined) values.splice(values.length - 1, 0, beforeSequence)
-        countQuery(metrics)
-        const rows = db
-          .query<ProgressRow, (string | number)[]>(
-            `SELECT seq,at,recorded_at,substr(source,1,80) AS source,substr(kind,1,80) AS kind,
-                    CASE WHEN ${boundedBytePrefix("event_ids_json", EVENT_IDS_BYTES)}<=? THEN event_ids_json END AS event_ids_json,
-                    ${boundedBytePrefix("event_ids_json", EVENT_IDS_BYTES)}>? AS event_ids_omitted,
-                    CASE WHEN ${boundedBytePrefix("call_id", SMALL_ID_BYTES)}<=? THEN call_id END AS call_id,
-                    CASE WHEN ${boundedBytePrefix("message_id", SMALL_ID_BYTES)}<=? THEN message_id END AS message_id,
-                    CASE WHEN ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)}<=? THEN payload END AS payload,
-                    ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)} AS payload_bytes,
-                    ${boundedBytePrefix("payload", LIVE_LIMITS.progressPayloadBytes)}>? AS payload_omitted
-               FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id IN (SELECT value FROM json_each(?)) ${predicate}
-              ORDER BY seq DESC LIMIT ?`,
-          )
-          .all(...values)
-        countRows(metrics, rows)
-        for (const row of rows) countPayload(metrics, row)
-        const hasMore = rows.length > input.limit
-        const pageRows = rows.slice(0, input.limit)
-        const nextCursor =
-          hasMore && pageRows.length
-            ? historyCursor(this.secret, {
-                version: 1,
-                projectID: this.projectID,
-                scope: input.scope,
-                sessionID: input.sessionID,
-                limit: input.limit,
-                attemptID: assignment.attempt_id,
-                runnerRevision,
-                beforeSequence: pageRows.at(-1)!.seq,
-              })
-            : null
-        return {
-          runnerRevision,
-          attemptID: assignment.attempt_id,
-          rows: pageRows,
-          hasMore,
-          nextCursor,
-        }
-      })
-
-      signal.throwIfAborted()
-      const latestRevision = connection.store.read((db) => {
-        const available = tableExists(db, metrics, "observation_revisions")
-        return revisionIfAvailable(db, metrics, available, this.projectDirectory)
-      })
-      if (source.runnerRevision !== latestRevision)
-        throw new LiveHistoryUnavailableError("changed-during-read")
-      if (cursor && cursor.runnerRevision !== source.runnerRevision)
-        throw new LiveHistoryUnavailableError("changed-during-read")
-      if (
-        metrics.sourceQueries > LIVE_HISTORY_LIMITS.sourceQueries ||
-        metrics.sourceRowsRead > LIVE_HISTORY_LIMITS.sourceRows ||
-        metrics.sourceBytesRead > LIVE_HISTORY_LIMITS.sourceBytes
-      )
-        throw new Error("Bounded selected history exceeded its declared source budget")
-      return { ...source, ...metrics }
     } finally {
       connection.close()
     }

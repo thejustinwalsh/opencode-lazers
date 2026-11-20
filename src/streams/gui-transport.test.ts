@@ -32,3 +32,33 @@ test("the RPC transport forwards events, and resyncs only after a lost subscript
   off()
   controller.abort()
 })
+
+test("calls carry the location, and an unloaded location is never asked to open a stream", async () => {
+  const seen: unknown[] = []
+  const rpc = {
+    open: async (_input: unknown, options: unknown) => (seen.push(options), { seq: 1, data: "" }),
+    slide: async (_input: unknown, options: unknown) => (seen.push(options), { seq: 2, data: "" }),
+    touch: async () => ({ alive: true }),
+    close: async (_input: unknown, options: unknown) => (seen.push(options), { closed: true }),
+    events: { subscribe: () => (async function* () {})() },
+  } as unknown as StreamsRpc
+  const controller = new AbortController()
+  let loaded = false
+  const transport = rpcStreamsTransport(() => rpc, controller.signal, {
+    location: { directory: "/work/p" },
+    ready: async () => loaded,
+  })
+  const input = { stream: "s", source: "x", filter: {}, order: "o", window: 1 }
+  await expect(transport.open(input)).rejects.toThrow("not loaded")
+  expect(seen).toEqual([])
+  loaded = true
+  await transport.open(input)
+  await transport.slide("s", 1)
+  await transport.close("s")
+  expect(seen).toMatchObject([
+    { location: { directory: "/work/p" } },
+    { location: { directory: "/work/p" } },
+    { location: { directory: "/work/p" } },
+  ])
+  controller.abort()
+})

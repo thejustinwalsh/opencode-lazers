@@ -434,6 +434,31 @@ both return the full `TaskSummary` (effective `status`, `reason`, `recordedState
 `disposition`), and `lz-query-tasks` also filters by search, scope path and session and
 returns `count`, `snapshot` and `stateCounts`. They wait for the stored projection.
 
+#### Findings: live history
+
+The Radar worker pane's older calls (one row per progress event of an attempt) read through
+`observability.liveHistory`, with no statement on the main thread.
+
+1. **Display fields were computed at read time** (`projectProgressFact` plus privacy sanitizing
+   and truncation), so a source could not read them. `runner_progress_display` (one narrow row per
+   progress `seq`) now stores them, written in the transaction that writes the progress row from
+   `progressDisplay` (`src/progress/display.ts`), the one function the old read also used. A
+   separate table, not columns on `runner_progress`: a new column sits after the payload, so a
+   reader of it walks overflow pages for every row past about 4 KB, and the wide rows stay unread.
+2. **Existing rows** get their display from a backfill: a watermark row (`below_seq`) records that
+   every row at or above it has one; pages of 100 rows are written newest first, one small
+   transaction each, from the project core's own timer (longer slices when no attempt is active).
+   A reader sees the display rows that exist, so an attempt's older rows appear as the backfill
+   reaches them; nothing is shown that is not computed. An old-version writer cannot run against the
+   new generation (`installSchema` refuses a stored generation above its own), so only rows older
+   than the upgrade ever need the backfill.
+3. **The list is a scroll area**, sized by the exact count (`count: { exact: "scan" }` over a
+   covering index range), with only the stream's window drawn; scrolling slides the window.
+4. **Left as is:** the history contract bounds still apply to the stored display (a payload past
+   4096 bytes, event ids past 2048 and call or message ids past 200 give a row its columns only),
+   so about one row in nine of the live database shows no tool. Lifting the bounds is one change
+   in `progressDisplay` plus a re-backfill, since nothing reads the payload at read time now.
+
 ## Order and lanes
 
 ```

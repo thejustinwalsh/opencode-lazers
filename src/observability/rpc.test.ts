@@ -14,20 +14,11 @@ import {
   secondAttemptID,
 } from "../../test/trajectory/fixture.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
-import {
-  LiveHistoryOutput,
-  LiveRadarOutput,
-  SnapshotOutput,
-  type RadarRequestInput,
-} from "./contract.ts"
+import { LiveRadarOutput, SnapshotOutput, type RadarRequestInput } from "./contract.ts"
 
 type LiveScope = { kind: "session"; sessionID: string } | { kind: "project"; sessionID: string }
 type LiveHandlers = {
   liveRadar(input: { scope: LiveScope; includeUnmanagedSessions: boolean }): Effect.Effect<unknown>
-  liveHistory(
-    input: { scope: LiveScope; sessionID: string; limit: number; cursor?: string },
-    context: { error(type: string, message: string, data: unknown): unknown },
-  ): Effect.Effect<unknown, unknown>
 }
 type RegisteredHandlers = LiveHandlers & {
   snapshot(input: { scope: LiveScope }): Effect.Effect<unknown>
@@ -1049,11 +1040,6 @@ test("registered live RPCs keep current reads bounded and page selected progress
     await expect(
       Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
     ).rejects.toThrow("native permission denied")
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory({ scope, sessionID: "ses-failed", limit: 2 }, rpcContext),
-      ),
-    ).rejects.toThrow("native permission denied")
     expect(projectReads).toBe(0)
     expect(nativeGetReads).toBe(0)
     denied = false
@@ -1433,124 +1419,6 @@ test("registered live RPCs keep current reads bounded and page selected progress
     expect(changedScope.sessions.map((session) => session.sessionID)).toEqual(["ses-accepted"])
     expect(changedScope.flow.every((edge) => edge.sessionID === "ses-accepted")).toBe(true)
 
-    const historyInput = { scope, sessionID: "ses-failed", limit: 2 }
-    const firstPage = LiveHistoryOutput.parse(
-      await Effect.runPromise(handlers!.liveHistory(historyInput, rpcContext)),
-    )
-    expect(firstPage.items).toHaveLength(2)
-    expect(firstPage.nextCursor).not.toBeNull()
-    expect(firstPage.coverage.nativeInventoryReads).toBe(0)
-    expect(firstPage.coverage.nativeContextLoads).toBe(0)
-    expect(firstPage.coverage.responseBytes).toBeLessThanOrEqual(firstPage.limits.responseBytes)
-    expect(firstPage.coverage.sourceQueries).toBeLessThanOrEqual(firstPage.limits.sourceQueries)
-    expect(firstPage.coverage.sourceRowsRead).toBeLessThanOrEqual(firstPage.limits.sourceRows)
-    expect(firstPage.coverage.sourceBytesRead).toBeLessThanOrEqual(firstPage.limits.sourceBytes)
-    const secondPage = LiveHistoryOutput.parse(
-      await Effect.runPromise(
-        handlers!.liveHistory({ ...historyInput, cursor: firstPage.nextCursor! }, rpcContext),
-      ),
-    )
-    expect(secondPage.items).toHaveLength(2)
-    expect(secondPage.items.map((item) => item.sequence)).not.toEqual(
-      firstPage.items.map((item) => item.sequence),
-    )
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory(
-          {
-            ...historyInput,
-            scope: { kind: "session", sessionID: "ses-accepted" },
-            sessionID: "ses-accepted",
-            cursor: firstPage.nextCursor!,
-          },
-          rpcContext,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      type: "live_history_unavailable",
-      data: { reason: "invalid-cursor", recovery: "restart" },
-    })
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory(
-          { ...historyInput, limit: 3, cursor: firstPage.nextCursor! },
-          rpcContext,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      type: "live_history_unavailable",
-      data: { reason: "invalid-cursor", recovery: "restart" },
-    })
-    const allHistoryItems = [...firstPage.items, ...secondPage.items]
-    let historyCursor = secondPage.nextCursor
-    while (historyCursor) {
-      const page = LiveHistoryOutput.parse(
-        await Effect.runPromise(
-          handlers!.liveHistory({ ...historyInput, cursor: historyCursor }, rpcContext),
-        ),
-      )
-      allHistoryItems.push(...page.items)
-      historyCursor = page.nextCursor
-    }
-    const historySequences = allHistoryItems.map((item) => item.sequence)
-    expect(new Set(historySequences).size).toBe(historySequences.length)
-    expect(historySequences).toHaveLength(
-      fixture.store.atomic(
-        (db) =>
-          db
-            .query<{ count: number }, [string, string, string, string]>(
-              `SELECT COUNT(*) AS count FROM runner_progress
-              WHERE project_directory=? AND attempt_id=? AND session_id=? AND project_id=?`,
-            )
-            .get(fixture.directory, firstAttemptID, "ses-failed", "project")!.count,
-      ),
-    )
-    for (const length of [599, 600, 601]) {
-      const item = allHistoryItems.find(
-        (history) => history.callID === `call-history-cap-${length}`,
-      )!
-      expect(item.result).toHaveLength(Math.min(length, 600))
-      expect(item.error).toHaveLength(Math.min(length, 600))
-      if (length > 600) {
-        expect(item.result).toEndWith("…[truncated]")
-        expect(item.error).toEndWith("…[truncated]")
-      }
-    }
-    const historyAstral = allHistoryItems.find(
-      (history) => history.callID === "call-history-cap-astral",
-    )!
-    expect(historyAstral.result).toHaveLength(600)
-    expect(historyAstral.error).toHaveLength(600)
-    expect(historyAstral.result).toEndWith("…[truncated]")
-    expect(historyAstral.error).toEndWith("…[truncated]")
-    expect(historyAstral.result!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
-    expect(historyAstral.error!.slice(0, -"…[truncated]".length)).not.toMatch(/[\uD800-\uDBFF]$/)
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory(
-          { ...historyInput, cursor: `${firstPage.nextCursor!.slice(0, -1)}x` },
-          rpcContext,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      type: "live_history_unavailable",
-      data: { reason: "invalid-cursor", recovery: "restart" },
-    })
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory(
-          {
-            scope: { kind: "session", sessionID: "ses-accepted" },
-            sessionID: "ses-failed",
-            limit: 2,
-          },
-          rpcContext,
-        ),
-      ),
-    ).rejects.toMatchObject({
-      type: "live_history_unavailable",
-      data: { reason: "session-unavailable", recovery: "restart" },
-    })
     inventoryUnavailable = true
     const unavailableInventory = LiveRadarOutput.parse(
       await Effect.runPromise(handlers!.liveRadar({ scope, includeUnmanagedSessions: true })),
@@ -1617,32 +1485,6 @@ test("registered live RPCs keep current reads bounded and page selected progress
           .get(fixture.directory),
       })),
     ).toEqual(executionStateBeforeReads)
-    fixture.store.atomic((db) =>
-      db
-        .query(
-          "UPDATE runner_progress SET payload=? WHERE project_directory=? AND attempt_id=? AND call_id=?",
-        )
-        .run(
-          JSON.stringify({
-            tool: "Bash",
-            status: "succeeded",
-            callID: "call-live-b",
-            content: "updated after the first page",
-          }),
-          fixture.directory,
-          firstAttemptID,
-          "call-live-b",
-        ),
-    )
-    await expect(
-      Effect.runPromise(
-        handlers!.liveHistory({ ...historyInput, cursor: firstPage.nextCursor! }, rpcContext),
-      ),
-    ).rejects.toMatchObject({
-      type: "live_history_unavailable",
-      data: { reason: "changed-during-read", recovery: "restart" },
-    })
-
     let lastRetainedState: ReturnType<typeof LiveRadarOutput.parse> | undefined
     for (let index = 0; index < 33; index++)
       lastRetainedState = LiveRadarOutput.parse(

@@ -1,5 +1,6 @@
 import { firstAttemptID, type makeFixture } from "../../test/trajectory/fixture.ts"
 import { refreshProgressDisplay } from "./display-store.ts"
+import type { LiveHistoryItem } from "../streams/sources/live-history-ref.ts"
 
 export const secret = "sk-proj-12345678901234567890"
 const route = (n: number) => ({
@@ -136,4 +137,54 @@ export function seedDisplayCorpus(fixture: ReturnType<typeof makeFixture>) {
       refreshProgressDisplay(db, Number(result.lastInsertRowid))
     })
   })
+}
+
+/** A `runner_progress_display` row as the history item it displays. */
+export type StoredDisplay = {
+  seq: number
+  at: number
+  recorded_at: number | null
+  kind: string
+  source: string
+  message_id: string | null
+  call_id: string | null
+  tool: string | null
+  status: string | null
+  agent: string | null
+  result: string | null
+  error: string | null
+  route_provider: string | null
+  route_model: string | null
+  route_variant: string | null
+  file_targets_json: string | null
+  observations_json: string
+  payload_available: number
+}
+
+export function storedDisplayItem(row: StoredDisplay): LiveHistoryItem {
+  return {
+    sequence: row.seq,
+    at: row.at,
+    recordedAt: row.recorded_at,
+    kind: row.kind,
+    source: row.source,
+    messageID: row.message_id,
+    callID: row.call_id,
+    tool: row.tool,
+    status: row.status,
+    agent: row.agent,
+    result: row.result,
+    error: row.error,
+    route:
+      row.route_provider === null
+        ? null
+        : {
+            providerID: row.route_provider,
+            modelID: row.route_model as string,
+            variant: row.route_variant,
+          },
+    observations: JSON.parse(row.observations_json),
+    payloadAvailable: row.payload_available === 1,
+    ...(row.file_targets_json ? { fileTargets: JSON.parse(row.file_targets_json) } : {}),
+  }
 }

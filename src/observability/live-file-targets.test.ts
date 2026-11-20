@@ -4,17 +4,13 @@ import { Effect, Stream } from "effect"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { registerObservability } from "./rpc.ts"
 import type { ObservationReads } from "./read.ts"
-import type { LiveHistoryResponse, LiveRadarResponse } from "./contract.ts"
+import type { LiveRadarResponse } from "./contract.ts"
 import { firstAttemptID, makeFixture } from "../../test/trajectory/fixture.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 
 type Scope = { kind: "session"; sessionID: string } | { kind: "project"; sessionID: string }
 type Handlers = {
   liveRadar(input: { scope: Scope; includeUnmanagedSessions: boolean }): Effect.Effect<unknown>
-  liveHistory(
-    input: { scope: Scope; sessionID: string; limit: number },
-    context: { error(type: string, message: string, data: unknown): unknown },
-  ): Effect.Effect<unknown, unknown>
 }
 
 test("registered liveRadar and progressive history expose supported targets without arguments", async () => {
@@ -156,12 +152,17 @@ test("registered liveRadar and progressive history expose supported targets with
             includeUnmanagedSessions: false,
           })) as LiveRadarResponse
           expect(sessionLive.calls.map((call) => call.callID)).toContain("call-edit-target")
-          const history = (yield* handlers!.liveHistory(
-            { scope, sessionID: "ses-failed", limit: 20 },
-            rpcContext,
-          )) as LiveHistoryResponse
+          const history = fixture.store.read((db) =>
+            db
+              .query<{ call_id: string; file_targets_json: string | null }, []>(
+                "SELECT call_id,file_targets_json FROM runner_progress_display WHERE file_targets_json IS NOT NULL",
+              )
+              .all(),
+          )
           expect(
-            history.items.find((item) => item.callID === "call-edit-target")?.fileTargets,
+            JSON.parse(
+              history.find((row) => row.call_id === "call-edit-target")!.file_targets_json!,
+            ),
           ).toEqual({
             coverage: "observed",
             operation: "edit",

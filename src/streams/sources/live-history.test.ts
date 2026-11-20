@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
-import { corpus, seedDisplayCorpus } from "../../progress/display.fixture.ts"
-import { operationalReads } from "../../../test/radar/operational.ts"
+import {
+  corpus,
+  seedDisplayCorpus,
+  storedDisplayItem,
+  type StoredDisplay,
+} from "../../progress/display.fixture.ts"
 import { firstAttemptID, makeFixture } from "../../../test/trajectory/fixture.ts"
-import type { LiveHistoryResponse } from "../../observability/contract.ts"
 import { meterRepository } from "../../runner/read-meter.fixture.ts"
 import { openStream } from "../client.ts"
 import { readerPool, type ReaderPool } from "../pool.ts"
@@ -28,24 +31,17 @@ afterAll(async () => {
   fixture.close()
 })
 
-function oldRead() {
-  const reads = operationalReads(fixture)
-  const items: LiveHistoryResponse["items"] = []
-  let cursor: string | undefined
-  do {
-    const page = reads.liveHistory(
-      {
-        scope: { kind: "project", sessionID: "ses-owner" },
-        sessionID: "ses-failed",
-        limit: 25,
-        ...(cursor ? { cursor } : {}),
-      },
-      new AbortController().signal,
+/** The stored display rows, newest first, as history items: the table read directly. */
+function expectedItems() {
+  return fixture.store
+    .read((db) =>
+      db
+        .query<StoredDisplay, [string]>(
+          "SELECT * FROM runner_progress_display WHERE attempt_id=? AND session_id='ses-failed' ORDER BY seq DESC",
+        )
+        .all(firstAttemptID),
     )
-    items.push(...page.items)
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  return items.toSorted((left, right) => right.sequence - left.sequence)
+    .map(storedDisplayItem)
 }
 
 async function walk(options: LiveHistoryFilter, window: number) {
@@ -68,8 +64,8 @@ async function walk(options: LiveHistoryFilter, window: number) {
   return { seen, counts }
 }
 
-test("walking the stream by slides gives the history read's items, in its order, field for field", async () => {
-  const expected = oldRead()
+test("walking the stream by slides gives the stored display rows, newest first, field for field", async () => {
+  const expected = expectedItems()
   expect(expected.length).toBeGreaterThanOrEqual(corpus.length)
   for (const window of [1, 4, 9, 100]) {
     const { seen } = await walk(filter, window)
@@ -77,8 +73,8 @@ test("walking the stream by slides gives the history read's items, in its order,
   }
 })
 
-test("a tools-only list before a time is the history read's calls older than it", async () => {
-  const calls = oldRead().filter((item) => item.tool !== null)
+test("a tools-only list before a time is the calls older than it", async () => {
+  const calls = expectedItems().filter((item) => item.tool !== null)
   const expected = calls.filter((item) => item.at < 1_100)
   expect(expected.length).toBeGreaterThan(1)
   expect(expected.length).toBeLessThan(calls.length)
@@ -101,10 +97,10 @@ test("counts are exact, so a list can size its scroll", async () => {
   })
   await stream.ready()
   expect(stream.before).toBe(0)
-  expect(stream.after).toBe(oldRead().length - 10)
+  expect(stream.after).toBe(expectedItems().length - 10)
   await stream.seek("tail")
   expect(stream.after).toBe(0)
-  expect(stream.before).toBe(oldRead().length - 10)
+  expect(stream.before).toBe(expectedItems().length - 10)
   stream.close()
 })
 

@@ -2,7 +2,6 @@ import { RadarLocationNotLoadedError } from "./project.ts"
 import type {
   LiveAttemptResponse,
   LiveGroupResponse,
-  LiveHistoryResponse,
   LiveRadarResponse,
   ObservationChange,
   ObservationScope,
@@ -15,10 +14,6 @@ export type RadarMonitorRPC = {
     input: { scope: ObservationScope; includeUnmanagedSessions: boolean },
     options: RPCOptions,
   ): Promise<LiveRadarResponse>
-  liveHistory(
-    input: { scope: ObservationScope; sessionID: string; limit: number; cursor?: string },
-    options: RPCOptions,
-  ): Promise<LiveHistoryResponse>
   liveAttempt(
     input: { scope: ObservationScope; sessionID: string },
     options: RPCOptions,
@@ -41,12 +36,6 @@ export type RadarMonitorTransport = {
     includeUnmanagedSessions: boolean,
     signal: AbortSignal,
   ): Promise<LiveRadarResponse>
-  liveHistory(
-    scope: ObservationScope,
-    sessionID: string,
-    cursor: string | undefined,
-    signal: AbortSignal,
-  ): Promise<LiveHistoryResponse>
   /** The selected worker's call count, model and tick summary. Absent on older transports. */
   liveAttempt?(
     scope: ObservationScope,
@@ -79,13 +68,6 @@ export function createRadarMonitorTransport(
       await requireLoaded()
       return rpc().liveRadar(
         { scope, includeUnmanagedSessions },
-        { location: { directory }, signal },
-      )
-    },
-    liveHistory: async (scope, sessionID, cursor, signal) => {
-      await requireLoaded()
-      return rpc().liveHistory(
-        { scope, sessionID, limit: 20, ...(cursor ? { cursor } : {}) },
         { location: { directory }, signal },
       )
     },

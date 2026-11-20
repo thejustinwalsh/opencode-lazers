@@ -48,6 +48,8 @@ import { createFlowModel, filterFeed, quietSentences } from "./flow-model.ts"
 import type { FlowSelection } from "./flow-model.ts"
 import { RadarMapView } from "./map-view.tsx"
 import { createRadarMap, mapFacts } from "./map-model.ts"
+import { CallsDisclosure } from "./history-list.tsx"
+import type { HistorySource } from "./history-list.tsx"
 import { RadarHeader } from "./radar-header.tsx"
 import type { RadarScopeChoice, RadarViewChoice } from "./radar-header.tsx"
 import {
@@ -97,7 +99,8 @@ type Props = {
   onScopeChange: (choice: MonitorScopeChoice) => void
   onSelectSession: (sessionID: string) => void
   onRefresh: () => void
-  onLoadMoreHistory: () => void
+  /** Where the selected worker's older calls are read from; absent when there is no stream. */
+  history?: HistorySource
   onView: (view: RadarViewChoice) => void
   onOpenTasks?: () => void
   onOpenWorker?: (sessionID: string) => void
@@ -635,14 +638,6 @@ export function RadarMonitorView(props: Props) {
       : []
   }
   const lane = () => workerLane(paneAttempt(), now())
-  /** Older runner-progress calls that precede every call the live read already lists. */
-  const olderCalls = () => {
-    const oldest = Math.min(...sessionCalls().map((line) => line.startedAt ?? Infinity))
-    return (props.data().history?.items ?? []).filter(
-      (item) => item.tool !== null && item.at < oldest,
-    )
-  }
-  const earlierCount = () => calls().earlier.length + olderCalls().length
   /** One call row: tool, target, duration, time. Target is never blank. */
   const renderCallRow = (line: ActivityLine) => (
     <Row onSelect={() => chooseLine(line)}>
@@ -710,6 +705,22 @@ export function RadarMonitorView(props: Props) {
       : props.view === "map" && mapSelection()?.sessionID !== undefined
         ? selectedSession()
         : undefined
+  /** The attempt whose older calls the Calls list reads, from before the live read's earliest call. */
+  const olderTarget = createMemo(
+    () => {
+      const session = paneSession()
+      const attemptID = session?.assignment?.attemptID
+      if (!session || !attemptID) return undefined
+      const oldest = Math.min(...sessionCalls().map((line) => line.startedAt ?? Infinity))
+      return {
+        attemptID,
+        sessionID: session.sessionID,
+        ...(Number.isFinite(oldest) ? { beforeAt: oldest } : {}),
+      }
+    },
+    undefined,
+    { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) },
+  )
   const paneNode = () =>
     props.view === "map" && mapSelection()?.sessionID === undefined ? mapSelection() : undefined
   /** The selected worker's attempt read, refreshed at most every ten seconds of live updates. */
@@ -1253,65 +1264,13 @@ export function RadarMonitorView(props: Props) {
                 </Show>
 
                 <div class="lazers-radar-disclosures">
-                  <Disclosure
-                    label="Calls"
-                    count={earlierCount() > 0 ? earlierCount() : undefined}
-                    when={earlierCount() > 0 || Boolean(props.data().history?.nextCursor)}
-                  >
-                    <Rows
-                      columns="64px minmax(0, 1fr) 56px 64px"
-                      header={["Tool", "Target", "Duration", "Time"]}
-                      items={calls().earlier}
-                      label="Earlier calls"
-                    >
-                      {(line) => renderCallRow(line)}
-                    </Rows>
-                    <Show when={props.data().historyLoading}>
-                      <p class="lazers-radar-note lazers-radar-loading">
-                        <Ui.Loader size="small" />
-                        <span>Loading history…</span>
-                      </p>
-                    </Show>
-                    <Show when={props.data().historyError}>
-                      <p class="lazers-radar-note" data-error="true">
-                        Couldn't load history.
-                      </p>
-                    </Show>
-                    <Rows
-                      columns="64px minmax(0, 1fr) 64px"
-                      header={["Tool", "Target", "Time"]}
-                      items={olderCalls()}
-                      label="Older calls"
-                    >
-                      {(item) => (
-                        <Row>
-                          <span>{toolName(item.tool ?? "")}</span>
-                          <code
-                            class="lazers-radar-row-target"
-                            data-failed={item.status === "failed"}
-                            style={{ "font-family": props.monoFont }}
-                          >
-                            {item.error ??
-                              (item.fileTargets?.coverage === "observed" &&
-                              item.fileTargets.paths.length > 0
-                                ? item.fileTargets.paths.join(", ")
-                                : (item.status ?? "—"))}
-                          </code>
-                          <span>{clockMinutes(item.at)}</span>
-                        </Row>
-                      )}
-                    </Rows>
-                    <Show when={props.data().history?.nextCursor}>
-                      <button
-                        type="button"
-                        class="lazers-radar-text-button"
-                        onClick={props.onLoadMoreHistory}
-                        disabled={props.data().historyLoading}
-                      >
-                        Load older
-                      </button>
-                    </Show>
-                  </Disclosure>
+                  <CallsDisclosure
+                    earlier={calls().earlier}
+                    renderEarlier={renderCallRow}
+                    source={props.history}
+                    target={olderTarget()}
+                    monoFont={props.monoFont}
+                  />
                   <Disclosure label="Files" count={sessionFiles().length}>
                     <ul class="lazers-radar-inspector-paths" aria-label="Files">
                       <For each={sessionFiles()}>

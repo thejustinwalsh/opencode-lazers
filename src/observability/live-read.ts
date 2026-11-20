@@ -9,7 +9,6 @@ import {
   numeric,
   object,
   observationList,
-  progressDisplay,
   safeRoute,
   text,
   type JsonObject,
@@ -20,16 +19,12 @@ import {
   LiveGroupInput,
   LiveGroupOutput,
   LiveAttemptOutput,
-  LiveHistoryInput,
-  LiveHistoryOutput,
   LiveRadarInput,
   LiveRadarOutput,
   type LiveAttemptRequestInput,
   type LiveGroupRequestInput,
   type LiveGroupResponse,
   type LiveAttemptResponse,
-  type LiveHistoryRequestInput,
-  type LiveHistoryResponse,
   type LiveRadarRequestInput,
   type LiveRadarResponse,
 } from "./contract.ts"
@@ -713,15 +708,6 @@ function toUnassignedNativeSignals(
           ? ("truncated" as const)
           : ("identity-unavailable" as const)
         : ("not-observed" as const),
-  }
-}
-
-function historyItem(row: LiveProgressRow) {
-  return {
-    sequence: row.seq,
-    at: row.at,
-    recordedAt: row.recorded_at,
-    ...progressDisplay(row),
   }
 }
 
@@ -1518,7 +1504,6 @@ export class LiveRadarReader {
       store.repository.path,
       store.repository.projectDirectory,
       projectID,
-      secret,
     )
   }
 
@@ -1714,53 +1699,5 @@ export class LiveRadarReader {
       sessionID: request.sessionID,
       attempt: this.source.readAttempt(request, signal),
     })
-  }
-
-  history(input: LiveHistoryRequestInput, signal: AbortSignal): LiveHistoryResponse {
-    const request = LiveHistoryInput.parse(input)
-    signal.throwIfAborted()
-    const source = this.source.readHistory(request, signal)
-    signal.throwIfAborted()
-    const items = source.rows.map((row) => historyItem(row)).toReversed()
-    const response = {
-      schemaVersion: 1 as const,
-      projectID: this.projectID,
-      scope:
-        request.scope.kind === "session"
-          ? { kind: "session" as const, sessionID: request.scope.sessionID }
-          : { kind: "project" as const },
-      sessionID: request.sessionID,
-      attemptID: source.attemptID,
-      source: "runner-progress" as const,
-      runnerRevision: source.runnerRevision,
-      capturedAt: Date.now(),
-      items,
-      nextCursor: source.nextCursor,
-      limits: {
-        items: 25 as const,
-        payloadBytes: LIVE_LIMITS.progressPayloadBytes,
-        sourceQueries: 10 as const,
-        sourceRows: 40 as const,
-        sourceBytes: 250_000 as const,
-        responseBytes: LIVE_LIMITS.responseBytes,
-      },
-      coverage: {
-        hasMore: source.hasMore,
-        payloadTruncated: source.payloadTruncated,
-        journal: source.journal,
-        sourceQueries: source.sourceQueries,
-        sourceRowsRead: source.sourceRowsRead,
-        sourceBytesRead: source.sourceBytesRead,
-        sourcePayloadBytesRead: source.sourcePayloadBytesRead,
-        nativeInventoryReads: 0 as const,
-        nativeContextLoads: 0 as const,
-        retainedStateEntries: 0 as const,
-        responseBytes: 0,
-      },
-    }
-    response.coverage.responseBytes = measuredResponseBytes(response)
-    if (response.coverage.responseBytes > LIVE_LIMITS.responseBytes)
-      throw new Error("Bounded selected history exceeded its declared byte limit")
-    return LiveHistoryOutput.parse(response)
   }
 }

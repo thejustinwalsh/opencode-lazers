@@ -18,7 +18,6 @@ function spyRPC() {
     snapshot: async () => (calls.push("snapshot"), {}),
     radar: async () => (calls.push("radar"), {}),
     liveRadar: async () => (calls.push("liveRadar"), {}),
-    liveHistory: async () => (calls.push("liveHistory"), {}),
     events: { subscribe: async function* () {} },
   } as never
   return { calls, rpc }
@@ -49,9 +48,6 @@ test("an unloaded directory yields no location-scoped host call", async () => {
     RadarLocationNotLoadedError,
   )
   await expect(monitor.liveRadar(scope, false, signal)).rejects.toBeInstanceOf(
-    RadarLocationNotLoadedError,
-  )
-  await expect(monitor.liveHistory(scope, "ses", undefined, signal)).rejects.toBeInstanceOf(
     RadarLocationNotLoadedError,
   )
   expect(calls).toEqual([])

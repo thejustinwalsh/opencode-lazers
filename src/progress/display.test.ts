@@ -1,55 +1,9 @@
 import { expect, test } from "bun:test"
 import { firstAttemptID, makeFixture } from "../../test/trajectory/fixture.ts"
-import { operationalReads } from "../../test/radar/operational.ts"
-import type { LiveHistoryResponse } from "../observability/contract.ts"
+import { corpus, secret, seedDisplayCorpus, storedDisplayItem } from "./display.fixture.ts"
+import type { StoredDisplay } from "./display.fixture.ts"
+import { progressDisplay } from "./display.ts"
 import { ProgressRecorder } from "./recorder.ts"
-import { corpus, secret, seedDisplayCorpus } from "./display.fixture.ts"
-
-type StoredDisplay = {
-  seq: number
-  at: number
-  recorded_at: number | null
-  kind: string
-  source: string
-  message_id: string | null
-  call_id: string | null
-  tool: string | null
-  status: string | null
-  agent: string | null
-  result: string | null
-  error: string | null
-  route_provider: string | null
-  route_model: string | null
-  route_variant: string | null
-  file_targets_json: string | null
-  observations_json: string
-  payload_available: number
-}
-
-/** A stored display row in the shape of a history item. */
-function itemOf(row: StoredDisplay) {
-  return {
-    sequence: row.seq,
-    at: row.at,
-    recordedAt: row.recorded_at,
-    kind: row.kind,
-    source: row.source,
-    messageID: row.message_id,
-    callID: row.call_id,
-    tool: row.tool,
-    status: row.status,
-    agent: row.agent,
-    result: row.result,
-    error: row.error,
-    route:
-      row.route_provider === null
-        ? null
-        : { providerID: row.route_provider, modelID: row.route_model, variant: row.route_variant },
-    observations: JSON.parse(row.observations_json),
-    payloadAvailable: row.payload_available === 1,
-    ...(row.file_targets_json ? { fileTargets: JSON.parse(row.file_targets_json) } : {}),
-  }
-}
 
 test("the display stored with each progress row equals the read-time history, for every kind", async () => {
   const fixture = makeFixture()
@@ -91,23 +45,34 @@ test("the display stored with each progress row equals the read-time history, fo
       },
     })
 
-    const reads = operationalReads(fixture)
-    const old: LiveHistoryResponse["items"] = []
-    let cursor: string | undefined
-    do {
-      const page = reads.liveHistory(
-        {
-          scope: { kind: "project", sessionID: "ses-owner" },
-          sessionID: "ses-failed",
-          limit: 25,
-          ...(cursor ? { cursor } : {}),
-        },
-        new AbortController().signal,
-      )
-      old.push(...page.items)
-      cursor = page.nextCursor ?? undefined
-    } while (cursor)
-
+    // What the display is for each stored row now: the pure function over the row as it is.
+    const progress = fixture.store.read((db) =>
+      db
+        .query<
+          {
+            seq: number
+            at: number
+            recorded_at: number | null
+            source: string
+            kind: string
+            event_ids_json: string
+            call_id: string | null
+            message_id: string | null
+            payload: string
+          },
+          [string]
+        >(
+          `SELECT seq,at,recorded_at,source,kind,event_ids_json,call_id,message_id,payload
+             FROM runner_progress WHERE attempt_id=? ORDER BY seq`,
+        )
+        .all(firstAttemptID),
+    )
+    const expected = progress.map((row) => ({
+      sequence: row.seq,
+      at: row.at,
+      recordedAt: row.recorded_at,
+      ...progressDisplay(row),
+    }))
     const stored = fixture.store.read((db) =>
       db
         .query<StoredDisplay, [string]>(
@@ -115,12 +80,9 @@ test("the display stored with each progress row equals the read-time history, fo
         )
         .all(firstAttemptID),
     )
-    expect(old.length).toBeGreaterThanOrEqual(corpus.length + 2)
-    expect(stored.map((row) => row.seq)).toEqual(
-      old.map((item) => item.sequence).toSorted((a, b) => a - b),
-    )
-    const byStored = new Map(stored.map((row) => [row.seq, itemOf(row)]))
-    for (const item of old) expect(byStored.get(item.sequence)).toEqual(item)
+    expect(expected.length).toBeGreaterThanOrEqual(corpus.length + 2)
+    expect(stored.map(storedDisplayItem)).toEqual(expected)
+    const old = expected
 
     // The corpus exercises what it claims to.
     const kinds = new Set(old.map((item) => item.kind))
@@ -133,6 +95,13 @@ test("the display stored with each progress row equals the read-time history, fo
     expect(old.some((item) => item.error?.endsWith("…[truncated]"))).toBe(true)
     expect(JSON.stringify(old)).not.toContain(secret)
     expect(old.find((item) => item.callID === "rec-edit")?.error).toBe("native edit failed")
+    // What the contract leaves out of a row stays out: a payload past 4096 bytes is not read, an
+    // id past 200 bytes is dropped, and the row shows the columns it has.
+    const big = old.find(
+      (item) => item.messageID === `msg-${corpus.findIndex((e) => e.callID === "call-big")}`,
+    )
+    expect(big).toMatchObject({ payloadAvailable: false, tool: null, status: null })
+    expect(old.some((item) => item.callID === null && item.kind === "worker-tool")).toBe(true)
   } finally {
     fixture.close()
   }

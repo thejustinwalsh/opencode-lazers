@@ -27,8 +27,6 @@ import type {
   LiveGroupRequestInput,
   LiveAttemptResponse,
   LiveGroupResponse,
-  LiveHistoryResponse,
-  LiveHistoryRequestInput,
   LiveRadarRequestInput,
   LiveRadarResponse,
   ObservationScope,
@@ -2066,11 +2064,6 @@ export class ObservationReads {
     return this.liveRadarReader.attempt(input, signal)
   }
 
-  liveHistory(input: LiveHistoryRequestInput, signal: AbortSignal) {
-    singleScope(input.scope)
-    return this.liveRadarReader.history(input, signal)
-  }
-
   async radar(
     input: RadarRequestInput,
     tracker: ObservationChangeTracker,
@@ -2403,23 +2396,6 @@ export class ObservationReads {
     return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
       unit.reads.liveAttempt({ ...input, scope }, signal),
     ) as Promise<LiveAttemptResponse>
-  }
-
-  async liveHistoryAll(
-    input: LiveHistoryRequestInput,
-    tracker: ObservationChangeTracker,
-    signal: AbortSignal,
-    access: UnitAccess,
-  ): Promise<LiveHistoryResponse> {
-    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = this.ownerOf(
-      { sessionID: input.sessionID },
-      access,
-      "Observation scope is unavailable",
-    )
-    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
-      unit.reads.liveHistory({ ...input, scope }, signal),
-    ) as Promise<LiveHistoryResponse>
   }
 
   async snapshotAll(

@@ -696,82 +696,6 @@ export const LiveRadarOutput = z.strictObject({
   flow: z.array(LiveFlow).max(256),
 })
 
-export const LiveHistoryInput = z.strictObject({
-  scope: ObservationScope,
-  sessionID: z.string().min(1).max(200),
-  limit: z.int().min(1).max(25).default(20),
-  cursor: z.string().min(1).max(2048).optional(),
-})
-const LiveHistoryObservation = z.strictObject({
-  eventID: z.string().max(200).nullable(),
-  eventType: z.string().min(1).max(120),
-  at: z.number().finite().nullable(),
-  status: z.string().max(80).nullable(),
-})
-const LiveHistoryItem = z.strictObject({
-  sequence: z.int().positive(),
-  at: z.number().finite(),
-  recordedAt: z.number().finite().nullable(),
-  kind: z.string().min(1).max(80),
-  source: z.string().min(1).max(80),
-  messageID: z.string().max(200).nullable(),
-  callID: z.string().max(200).nullable(),
-  tool: z.string().max(160).nullable(),
-  status: z.string().max(80).nullable(),
-  agent: z.string().max(200).nullable(),
-  result: z.string().max(600).nullable(),
-  error: z.string().max(600).nullable(),
-  route: z
-    .strictObject({
-      providerID: z.string().min(1).max(200),
-      modelID: z.string().min(1).max(300),
-      variant: z.string().max(200).nullable(),
-    })
-    .nullable(),
-  observations: z.array(LiveHistoryObservation).max(8),
-  payloadAvailable: z.boolean(),
-  fileTargets: z
-    .strictObject({
-      coverage: z.enum(["observed", "partial", "omitted"]),
-      operation: z.enum(["read", "edit", "patch"]).nullable(),
-      paths: z.array(z.string().max(512)).max(8),
-    })
-    .optional(),
-})
-export const LiveHistoryOutput = z.strictObject({
-  schemaVersion: z.literal(1),
-  projectID: z.string().min(1).max(200),
-  scope: ObservationScopeView,
-  project: ProjectRef.optional(),
-  sessionID: z.string().min(1).max(200),
-  attemptID: z.uuid().nullable(),
-  source: z.literal("runner-progress"),
-  runnerRevision: z.int().nonnegative().nullable(),
-  capturedAt: z.number().finite(),
-  items: z.array(LiveHistoryItem).max(25),
-  nextCursor: z.string().max(2048).nullable(),
-  limits: z.strictObject({
-    items: z.literal(25),
-    payloadBytes: z.literal(4096),
-    sourceQueries: z.literal(10),
-    sourceRows: z.literal(40),
-    sourceBytes: z.literal(250_000),
-    responseBytes: z.literal(512_000),
-  }),
-  coverage: z.strictObject({
-    hasMore: z.boolean(),
-    payloadTruncated: z.boolean(),
-    journal: z.enum(["available", "legacy-or-unavailable", "unavailable"]),
-    sourceQueries: z.int().nonnegative(),
-    sourceRowsRead: z.int().nonnegative(),
-    sourceBytesRead: z.int().nonnegative(),
-    sourcePayloadBytesRead: z.int().nonnegative(),
-    nativeInventoryReads: z.literal(0),
-    nativeContextLoads: z.literal(0),
-    retainedStateEntries: z.literal(0),
-    responseBytes: z.int().nonnegative(),
-  }),
-})
 export const LiveAttemptInput = z.strictObject({
   scope: ObservationScope,
   sessionID: z.string().min(1).max(200),
@@ -843,7 +767,7 @@ export const LiveGroupOutput = z.strictObject({
     .max(LIVE_GROUP_TASKS),
 })
 const LiveHistoryErrorData = z.strictObject({
-  reason: z.enum(["invalid-cursor", "session-unavailable", "changed-during-read"]),
+  reason: z.literal("session-unavailable"),
   recovery: z.literal("restart"),
 })
 
@@ -953,11 +877,6 @@ export const Observability = Rpc.define({
       output: LiveAttemptOutput,
       errors: { live_history_unavailable: LiveHistoryErrorData },
     },
-    liveHistory: {
-      input: LiveHistoryInput,
-      output: LiveHistoryOutput,
-      errors: { live_history_unavailable: LiveHistoryErrorData },
-    },
     trajectory: { input: TrajectoryInput, output: TrajectoryOutput },
     trajectoryHistory: {
       input: TrajectoryHistoryInput,
@@ -989,9 +908,6 @@ export type LiveGroupResponse = z.infer<typeof LiveGroupOutput>
 export type LiveAttemptRequest = z.infer<typeof LiveAttemptInput>
 export type LiveAttemptRequestInput = z.input<typeof LiveAttemptInput>
 export type LiveAttemptResponse = z.infer<typeof LiveAttemptOutput>
-export type LiveHistoryRequest = z.infer<typeof LiveHistoryInput>
-export type LiveHistoryRequestInput = z.input<typeof LiveHistoryInput>
-export type LiveHistoryResponse = z.infer<typeof LiveHistoryOutput>
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>
 export type TrajectoryResponse = z.infer<typeof TrajectoryOutput>
 export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
