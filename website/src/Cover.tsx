@@ -412,35 +412,35 @@ const parts = [
   {
     id: "architect",
     name: "Architect",
-    text: "Scopes the plan, settles open questions, and integrates verified work.",
+    text: "Maps the repo, settles open questions up front, defines file boundaries, and integrates verified diffs.",
     mark: sparkle,
     rule: c.ruleM,
   },
   {
     id: "scheduler",
     name: "Scheduler",
-    text: "Dispatches specialist workers in isolated git worktrees.",
+    text: "Runs the dependency queue, dispatches workers into isolated git worktrees, and gates acceptance on real checks.",
     mark: flag,
     rule: c.ruleC,
   },
   {
     id: "radar",
     name: "Radar",
-    text: "Streams every active worker, tool call, and state transition live.",
+    text: "Streams every active worker session, assigned model, in-flight tool call, and task graph live.",
     mark: corner,
     rule: c.ruleC,
   },
   {
     id: "trajectory",
     name: "Trajectory",
-    text: "Preserves every attempt, check output, diff, and token count.",
+    text: "Records every attempt, verification receipt, code-health audit, and measured token cost.",
     mark: stripesMark,
     rule: c.ruleM,
   },
 ] as const
 
 const LEDE =
-  "LAZERS turns OpenCode from a single chat thread into a managed engineering loop. Describe what you want to ship: Architect maps the repo, settles open questions, and defines acceptance checks up front. The runtime dispatches specialist workers in isolated worktrees, runs the verification suite, and integrates the finished code."
+  "Stop babysitting one long chat thread. Describe what you want to ship in OpenCode: Architect maps your repo, asks the questions that actually change behavior, and breaks the job into scoped tasks with executable checks. The LAZERS runtime dispatches workers in isolated git worktrees, verifies every result before it counts, and hands proven diffs back to Architect to integrate."
 
 export function Cover() {
   const kit = useBeamKit("cover", 3, 16)

@@ -204,7 +204,7 @@ export function ChatFrame(props: FrameProps) {
           data-on={String(phase.name === "ready" && !props.readOnly)}
           aria-hidden="true"
         />
-        <span class="lc-title">{props.title ?? "Local model · LAZERS demo"}</span>
+        <span class="lc-title">{props.title ?? "LFM3-Omni-2B · Local WebGPU demo"}</span>
         {props.tag ? <span class="lc-tag">{props.tag}</span> : null}
         {props.barExtra}
       </div>

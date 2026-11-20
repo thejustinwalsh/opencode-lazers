@@ -19,23 +19,26 @@ export const DEMOS = {
     panel: "tasks",
     size: { width: 420, height: 600 },
     summary:
-      "The Tasks panel: four tasks in scheduled order. One runs, then is verified and accepted, and the task waiting on it starts.",
+      "The Tasks panel: four tasks in an Offline sync plan. One runs, enters verification, is accepted once checks pass, and automatically unblocks the next dependent task.",
     steps: [
       {
         name: "queue",
-        caption: "Tasks are listed in scheduled order. A waiting task links to what it waits on.",
+        caption:
+          "Tasks line up in dependency order. Every waiting task links directly to its prerequisite.",
       },
       {
         name: "inspect",
-        caption: "Select a task to open its details: state, attempt, and the model that ran it.",
+        caption:
+          "Click any task to inspect its live state, active attempt, file count, and assigned model.",
       },
       {
         name: "verify",
-        caption: "The runtime verifies the attempt. A worker's report alone does not accept it.",
+        caption:
+          "The runtime runs the verification suite before acceptance—a worker's claim alone never closes a task.",
       },
       {
         name: "next",
-        caption: "Once checks pass the task is accepted and its dependents start.",
+        caption: "Once checks pass, the task is accepted and the runtime dispatches its dependent.",
       },
     ],
   },
@@ -44,27 +47,27 @@ export const DEMOS = {
     panel: "radar",
     size: { width: 420, height: 580 },
     summary:
-      "The Radar panel: an Architect and two workers with their models and current calls, a held worker, then the Map view.",
+      "The Radar panel: live observability of Architect and two workers with their routed models and in-flight tool calls, a worker held on a question, and the project dependency Map.",
     steps: [
       {
         name: "start",
         caption:
-          "Workers appear as tasks start; each row shows its model, state and the call in flight.",
+          "Active workers appear as tasks launch; each row streams its model, status, and current tool call.",
       },
       {
         name: "inspect",
         caption:
-          "Select a worker to open its details: runtime, calls, an activity lane and recent calls.",
+          "Select a worker to open its live activity lane, elapsed runtime, and recent tool calls.",
       },
       {
         name: "attention",
         caption:
-          "A worker waiting on a question is held and counted; Project scope adds the queue.",
+          "When a worker hits an open question, Radar flags and holds it; Project scope reveals the full queue.",
       },
       {
         name: "finish",
         caption:
-          "A task that passes verification leaves the list; the Map shows the same work as a tree.",
+          "Verified tasks clear the active monitor, while Map renders the entire plan and worker tree.",
       },
     ],
   },
@@ -73,24 +76,27 @@ export const DEMOS = {
     panel: "trajectory",
     size: { width: 440, height: 700 },
     summary:
-      "The Trajectory panel: one task's recorded attempts on a timeline. The first attempt fails its tests, the second fills in and is accepted.",
+      "The Trajectory panel: a task's full flight record across two attempts. Attempt 1 fails its test check; Attempt 2 streams in, passes both checks, and is accepted.",
     steps: [
       {
         name: "pick",
-        caption: "Trajectory opens on a task: the picker follows the session or the whole project.",
+        caption:
+          "Switch Trajectory from the current session to the whole project and pick any task to inspect.",
       },
       {
         name: "live",
         caption:
-          "A retry attempt fills in as the worker's calls are recorded; both checks pass and it is accepted.",
+          "Attempt 2 streams onto the timeline as tool calls land, then runs tests and typecheck to reach acceptance.",
       },
       {
         name: "inspect",
-        caption: "Every mark opens its recorded detail; zoom separates calls seconds apart.",
+        caption:
+          "Click any check or tool mark for exact stdout/stderr, and zoom the timeline to separate rapid edits.",
       },
       {
         name: "settle",
-        caption: "Select the accepted attempt to read its summary; its events stay filterable.",
+        caption:
+          "Select the accepted attempt to review its summary and filter its recorded event log.",
       },
     ],
   },
@@ -99,26 +105,27 @@ export const DEMOS = {
     panel: "models",
     size: { width: 440, height: 740 },
     summary:
-      "The Models panel: five real models plotted by cost per accepted task at OpenRouter's published prices as of 2026-11-19, a price refresh that re-prices the same usage, then the Assignments view where Implementor is given a different model.",
+      "The Models panel: five models plotted by measured cost per accepted task using recorded OpenRouter catalog prices (2026-11-19), a live price refresh that re-prices historical usage, and role assignment routing.",
     steps: [
       {
         name: "compare",
         caption:
-          "Compare plots each model by what its accepted tasks cost at the price source's rates, measured from your own runs.",
+          "Compare plots each model by real cost per accepted task—including retries—priced from your measured runs.",
       },
       {
         name: "inspect",
-        caption: "Selecting a model opens its cost per accepted task and the runs behind it.",
+        caption:
+          "Click any model point to inspect its average cost per accepted task and the individual task runs behind it.",
       },
       {
         name: "refresh",
         caption:
-          "A fresh price snapshot re-prices the same recorded usage: DeepSeek V4 Pro's tokens stay and its cost changes.",
+          "Refreshing prices re-evaluates recorded token usage against the latest catalog: DeepSeek V4 Pro's tokens stay fixed while its cost updates.",
       },
       {
         name: "assign",
         caption:
-          "Assignments routes each agent to a model. Moving Implementor off Claude Opus 5.5 changes what its accepted tasks cost.",
+          "Assignments routes each role or persona to a provider and model—moving Implementor off Claude Opus 5.5 immediately shifts execution cost.",
       },
     ],
   },

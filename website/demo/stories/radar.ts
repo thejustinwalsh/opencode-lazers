@@ -156,22 +156,23 @@ export default defineStory<RadarData>({
     {
       name: "start",
       caption:
-        "Workers appear as tasks start; each row shows its model, state and the call in flight.",
+        "Active workers appear as tasks launch; each row streams its model, status, and current tool call.",
     },
     {
       name: "inspect",
       caption:
-        "Select a worker to open its details: runtime, calls, an activity lane and recent calls.",
+        "Select a worker to open its live activity lane, elapsed runtime, and recent tool calls.",
     },
     {
       name: "attention",
-      caption: "A worker waiting on a question is held and counted; Project scope adds the queue.",
+      caption:
+        "When a worker hits an open question, Radar flags and holds it; Project scope reveals the full queue.",
       setup: [row(203)],
     },
     {
       name: "finish",
       caption:
-        "A task that passes verification leaves the list; the Map shows the same work as a tree.",
+        "Verified tasks clear the active monitor, while Map renders the entire plan and worker tree.",
       setup: projectScope,
     },
   ],

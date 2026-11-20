@@ -157,6 +157,17 @@ export const links = {
   controls:
     "https://github.com/thejustinwalsh/opencode-lazers/blob/main/docs/reference/user-controls.md",
   releases: "https://github.com/thejustinwalsh/opencode-lazers/releases",
+  opencode: "https://opencode.ai",
+  xstate: "https://stately.ai/docs/xstate",
+  fallow: "https://fallow.tools",
+  openrouter: "https://openrouter.ai",
+  runntime: "https://docs.swmansion.com/runntime/",
+  typegpu: "https://docs.swmansion.com/TypeGPU/",
+  liquid: "https://www.liquid.ai",
+  omni: "https://huggingface.co/LiquidAI/LFM3-Omni-2B-GGUF",
+  d1: "https://huggingface.co/LiquidAI/d1-omni-600M",
+  huggingface: "https://huggingface.co",
+  bun: "https://bun.sh",
 }
 
 export const srOnly = {
