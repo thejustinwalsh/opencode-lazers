@@ -36,14 +36,18 @@ import type { EndpointPricingRead } from "./endpoint-pricing.ts"
 import { calculateConfiguredKnownUsageMarket, calculateKnownUsageMarket } from "./market-range.ts"
 import type { KnownUsageMarket, KnownUsageMarketSession } from "./market-range.ts"
 import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
-import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
+import { projectTaskEffortUsage } from "../trajectory/accounting.ts"
 import type {
   ObservationLedgerDecisionCapture,
   ObservationLedgerDecisionRead,
   ObservationLedgerDecisionTask,
   ReadOnlyObservationLedger,
 } from "./observation-ledger-read.ts"
-import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
+import {
+  projectTaskValuation,
+  sessionFactDigestsOf,
+  taskValuationPerCallUsage,
+} from "./valuation.ts"
 import { calculateModelDecisionReferenceEstimate } from "./reference-estimate.ts"
 import type { ReferenceEstimateSession } from "./reference-estimate.ts"
 import {
@@ -308,19 +312,26 @@ function collectRoutes(
     add({ route: attempt.accounting.planRoute })
     add({ route: attempt.accounting.frozenRoute })
   }
-  for (const fact of capture.progressFacts) {
-    const progress = fact as Record<string, unknown>
-    if (
-      !attemptIDs.has(String(progress.attemptID ?? "")) &&
-      !sessionIDs.has(String(progress.sessionID ?? ""))
-    )
-      continue
-    const sessionID = typeof progress.sessionID === "string" ? progress.sessionID : undefined
-    add(fact, sessionID)
-    const observations = (fact as Record<string, unknown>).observations
-    if (Array.isArray(observations))
-      for (const observation of observations) add(observation, sessionID)
-  }
+  // Each session's digest lists the routes its facts named, first occurrence only, with the
+  // fact's place in the global order: replaying them in that order inserts every route and
+  // session route where the walk over every fact did.
+  const named: Array<{ ord: number; sessionID: string; route: Record<string, unknown> }> = []
+  for (const [sessionID, digest] of sessionFactDigestsOf(
+    capture.progressDigests ?? capture.progressFacts,
+  ))
+    for (const candidate of digest.routeCandidates)
+      if (sessionIDs.has(sessionID) || attemptIDs.has(candidate.attemptID))
+        named.push({
+          ord: candidate.ord,
+          sessionID,
+          route: {
+            providerID: candidate.providerID,
+            modelID: candidate.modelID,
+            variant: candidate.variant,
+          },
+        })
+  named.sort((left, right) => left.ord - right.ord)
+  for (const { sessionID, route } of named) add({ route }, sessionID)
   const usageBySession = new Map(usageSessions.map((session) => [session.sessionID, session]))
   const observedSessionsByRoute = new Map<string, Set<string>>()
   for (const [sessionID, sessionRoutes] of observedRoutesBySession)
@@ -1328,7 +1339,7 @@ function decisionGraph(rows: ModelDecisionRow[]): DecisionSnapshot["graph"] {
 function buildSnapshotData(
   input: ModelDecisionReadInput,
   capture: ObservationLedgerDecisionCapture,
-  effort: ReturnType<typeof projectTaskEffortBasis>,
+  effort: ReturnType<typeof projectTaskEffortUsage>,
   priceState: ModelDecisionPriceState,
   priceIdentity: string,
   routes: CurrentPriceApplicability[],
@@ -1346,7 +1357,7 @@ function buildSnapshotData(
   )
   const valuationRequest = {
     attempts,
-    progressFacts: capture.progressFacts,
+    progressFacts: capture.progressDigests ?? capture.progressFacts,
     progressTruncated: false,
     truncatedContextSessionIDs: [],
     effort,
@@ -1791,7 +1802,7 @@ export function createModelDecisionReader(
     const ledger = dependencies.openLedger()
     let result: ObservationLedgerDecisionRead
     try {
-      result = ledger.readDecision(signal)
+      result = ledger.readDecision(signal, { digests: true })
     } finally {
       ledger.close()
     }
@@ -1802,9 +1813,9 @@ export function createModelDecisionReader(
       return unavailableSnapshot(input, result, priceState, priceIdentity)
     }
     const { selectedTasks } = filteredTasks(result, input)
-    const effort = projectTaskEffortBasis({
+    const effort = projectTaskEffortUsage({
       attempts: selectedTasks.flatMap((task) => task.attempts.map((attempt) => attempt.accounting)),
-      progressFacts: result.progressFacts,
+      progressFacts: result.progressDigests ?? result.progressFacts,
       progressTruncated: false,
       truncatedContextSessionIDs: [],
     })

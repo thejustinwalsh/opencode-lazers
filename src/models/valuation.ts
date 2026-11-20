@@ -228,12 +228,21 @@ function buildRouteEvidence(sessionID: string, facts: readonly unknown[]): Route
     calls.set(key, created)
     return created
   }
+  // Equal routes are one object, listed once at their last position: the distinct routes of a
+  // call and which of equal-identity routes wins are what is read, and a call names the same
+  // route several times (the step, its route evidence, each observation).
+  const interned = new Map<string, AccountingRoute>()
   const addRoute = (target: CallRouteEvidence, value: unknown) => {
-    const route = progressRoute(value)
-    if (!route) {
+    const parsed = progressRoute(value)
+    if (!parsed) {
       target.unavailable = true
       return
     }
+    const key = JSON.stringify(parsed)
+    const route = interned.get(key) ?? parsed
+    interned.set(key, route)
+    const at = target.routes.indexOf(route)
+    if (at >= 0) target.routes.splice(at, 1)
     target.routes.push(route)
   }
   const addEvidence = (target: CallRouteEvidence, value: unknown) => {
@@ -603,13 +612,15 @@ function digestValuationFacts(
   }
 }
 
-/** Retained size of a digest in bytes (UTF-16 serialized length), to budget the cache. */
+/**
+ * Retained size of a digest in bytes, to budget the cache: the serialized length, one byte per
+ * character. Measured against the heap on the seeded history (4 000 facts in 330 sessions) the
+ * heap grew by about this much; shared routes make it an upper bound.
+ */
 function estimateDigestBytes(digest: Omit<SessionFactDigest, "bytes" | "memo">) {
-  return (
-    2 *
-    JSON.stringify(digest, (_key, value: unknown) => (value instanceof Map ? [...value] : value))
-      .length
-  )
+  return JSON.stringify(digest, (_key, value: unknown) =>
+    value instanceof Map ? [...value] : value,
+  ).length
 }
 
 /**
@@ -624,7 +635,10 @@ export function digestSessionFacts(
 ): SessionFactDigest {
   const memo = options.shared ? new Map<string, unknown>() : undefined
   const accounting: MemoizedAccountingDigest = {
-    ...digestAccountingFacts(entries.map((entry) => entry.fact)),
+    ...digestAccountingFacts(
+      entries.map((entry) => entry.fact),
+      { routes: options.shared ? "keys" : "full" },
+    ),
     ...(memo ? { memo } : {}),
   }
   const parts = {
@@ -634,8 +648,12 @@ export function digestSessionFacts(
     valuation: digestValuationFacts(sessionID, entries),
     routeCandidates: digestRouteCandidates(entries),
   }
-  // Derived results roughly double what a digest holds once its memo fills.
-  return { ...parts, ...(memo ? { memo } : {}), bytes: estimateDigestBytes(parts) * 2 }
+  // The memo of per-attempt-set results adds about a quarter once it fills.
+  return {
+    ...parts,
+    ...(memo ? { memo } : {}),
+    bytes: Math.ceil(estimateDigestBytes(parts) * 1.25),
+  }
 }
 
 const digestsOfArrays = new WeakMap<readonly unknown[], SessionFactDigests>()
@@ -659,11 +677,13 @@ function digestsOfFacts(values: readonly unknown[]): SessionFactDigests {
   return digests
 }
 
-function digestsOf(input: ProgressFactInput): SessionFactDigests {
+/** The per-session digests of raw facts (grouped once per array) or of an incremental read. */
+export function sessionFactDigestsOf(input: ProgressFactInput): SessionFactDigests {
   return Array.isArray(input)
     ? digestsOfFacts(input as readonly unknown[])
     : (input as SessionFactDigests)
 }
+const digestsOf = sessionFactDigestsOf
 
 const noFacts = (sessionID: string) => digestSessionFacts(sessionID, [])
 

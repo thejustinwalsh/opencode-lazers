@@ -8,6 +8,8 @@ export const DECISION_PROJECTION_TABLES = {
   dirty: "model_decision_progress_dirty",
   tasks: "model_decision_task",
   taskDirty: "model_decision_task_dirty",
+  /** Per project and session: the change clock value at which its facts last changed. */
+  sessions: "model_decision_session",
 } as const
 
 /** Progress kinds a decision fact is built from. */
@@ -33,6 +35,12 @@ export const decisionProjectionStats = {
   readStoredTasks: 0,
   /** Tasks decision reads derived from their source rows (queued or not yet folded). */
   readLiveTasks: 0,
+  /** Sessions a decision read considered, and how each was served. */
+  digestSessions: 0,
+  digestHits: 0,
+  digestBuilds: 0,
+  /** Stored progress facts parsed to build digests. */
+  digestFactsRead: 0,
   reset() {
     this.foldSourceRows = 0
     this.foldWrites = 0
@@ -43,5 +51,9 @@ export const decisionProjectionStats = {
     this.foldTasks = 0
     this.readStoredTasks = 0
     this.readLiveTasks = 0
+    this.digestSessions = 0
+    this.digestHits = 0
+    this.digestBuilds = 0
+    this.digestFactsRead = 0
   },
 }

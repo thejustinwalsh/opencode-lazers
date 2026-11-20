@@ -284,12 +284,21 @@ function compareProgressSnapshots(left: ProgressUsageFact, right: ProgressUsageF
   )
 }
 
-function additiveCategory(category: UsageCategory, steps: ProgressUsageFact[]): CategoryMeasure {
+/** What a session's usage needs of one additive step; the rest of the fact is not kept. */
+type AdditiveStep = {
+  values: Record<UsageCategory, number | null>
+  sourceTypes: string[]
+  usageObservedAt: number | null
+  usageObservedAtSourceType: string | null
+  recordedAt: number | null
+}
+
+function additiveCategory(category: UsageCategory, steps: AdditiveStep[]): CategoryMeasure {
   if (!steps.length) return emptyCategory("unavailable", "missing")
 
   const observations = steps.map((step): UsageObservation => {
-    const value = finite(step.usage?.[CATEGORY_FIELDS[category]])
-    const sourceTypes = step.sources.length ? step.sources : [step.source]
+    const value = step.values[category]
+    const sourceTypes = step.sourceTypes
     return {
       source: "worker-progress-step",
       sourceType: step.usageObservedAtSourceType ?? sourceTypes.join("+"),
@@ -340,14 +349,28 @@ function additiveCategory(category: UsageCategory, steps: ProgressUsageFact[]): 
  */
 export type AccountingFactDigest = {
   cumulative: ProgressUsageFact | null
-  additive: ProgressUsageFact[]
-  stepRoutes: AccountingStepRoute[]
+  additive: AdditiveStep[]
+  /** Every observed step route of the session; only digests built with `routes: "full"` have them. */
+  stepRoutes?: AccountingStepRoute[]
+  /** Keys of the session's step routes, which merging with attempts' own routes counts. */
+  stepRouteKeys: string[]
 }
 
-const EMPTY_DIGEST: AccountingFactDigest = { cumulative: null, additive: [], stepRoutes: [] }
+const EMPTY_DIGEST: AccountingFactDigest = {
+  cumulative: null,
+  additive: [],
+  stepRoutes: [],
+  stepRouteKeys: [],
+}
 
-/** Reduce the facts of one session, in their retained order. */
-export function digestAccountingFacts(values: readonly unknown[]): AccountingFactDigest {
+/**
+ * Reduce the facts of one session, in their retained order. `routes: "full"` keeps every observed
+ * step route (the whole effort basis lists them); `"keys"` keeps what counting them needs.
+ */
+export function digestAccountingFacts(
+  values: readonly unknown[],
+  options: { routes: "full" | "keys" } = { routes: "full" },
+): AccountingFactDigest {
   const progress = parseProgressFacts(values)
   const cumulative =
     progress
@@ -378,7 +401,36 @@ export function digestAccountingFacts(values: readonly unknown[]): AccountingFac
       (left.sequence ?? Number.MIN_SAFE_INTEGER) - (right.sequence ?? Number.MIN_SAFE_INTEGER) ||
       left.id.localeCompare(right.id),
   )
-  return { cumulative, additive, stepRoutes: parseObservedProgressRoutes(values, progress) }
+  const stepRoutes = parseObservedProgressRoutes(values, progress)
+  return {
+    cumulative,
+    additive: additive.map((step): AdditiveStep => ({
+      values: Object.fromEntries(
+        CATEGORIES.map((category) => [category, finite(step.usage?.[CATEGORY_FIELDS[category]])]),
+      ) as Record<UsageCategory, number | null>,
+      sourceTypes: step.sources.length ? step.sources : [step.source],
+      usageObservedAt: step.usageObservedAt,
+      usageObservedAtSourceType: step.usageObservedAtSourceType,
+      recordedAt: step.recordedAt,
+    })),
+    ...(options.routes === "full" ? { stepRoutes } : {}),
+    stepRouteKeys: [
+      ...new Set(
+        stepRoutes.flatMap((observed) =>
+          observed.sources.map((source) =>
+            routeSourceKey({
+              sessionID: observed.sessionID,
+              messageID: observed.messageID,
+              route: observed.route,
+              source: source.source,
+              eventID: source.eventID,
+              sourceOccurrence: observed.sourceOccurrence,
+            }),
+          ),
+        ),
+      ),
+    ],
+  }
 }
 
 /** Per-session digests keyed by session id; a session absent from the map has no retained facts. */
@@ -631,6 +683,19 @@ function routeSourceOccurrence(value: {
   ])
 }
 
+/** The identity of one observed route of one call: where sources of the same route merge. */
+function routeSourceKey(value: {
+  sessionID: string
+  messageID: string | null
+  route: AccountingRoute
+  source: string
+  eventID: string | null
+  sourceOccurrence: string
+}) {
+  const identity = value.messageID ?? `${value.source}:${value.eventID ?? "unknown"}`
+  return `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route, value.sourceOccurrence)}`
+}
+
 function addRouteSource(
   map: Map<string, AccountingStepRoute>,
   value: {
@@ -648,9 +713,8 @@ function addRouteSource(
     sourceOccurrence?: string
   },
 ) {
-  const identity = value.messageID ?? `${value.source}:${value.eventID ?? "unknown"}`
   const sourceOccurrence = value.sourceOccurrence ?? routeSourceOccurrence(value)
-  const key = `${value.sessionID}\u0000${identity}\u0000${routeKey(value.route, sourceOccurrence)}`
+  const key = routeSourceKey({ ...value, sourceOccurrence })
   const existing = map.get(key)
   const source: AccountingRouteSource = {
     attemptID: value.attemptID,
@@ -755,7 +819,19 @@ type SessionRouteObservation = {
 /** The routes one session contributes, from its attempts and its digest, each list sorted. */
 type SessionRoutePieces = {
   sessionRoutes: SessionRouteObservation[]
-  stepRoutes: AccountingStepRoute[]
+  /** The merged step routes, when the digest kept them. */
+  stepRoutes?: AccountingStepRoute[]
+  stepRouteCount: number
+}
+
+function sortedSessionRoutes(routes: Map<string, SessionRouteObservation>) {
+  return [...routes.values()].sort(
+    (left, right) =>
+      left.sessionID.localeCompare(right.sessionID) ||
+      routeKey(left.route, left.sourceOccurrence).localeCompare(
+        routeKey(right.route, right.sourceOccurrence),
+      ),
+  )
 }
 
 function sessionRoutePieces(
@@ -796,7 +872,7 @@ function sessionRoutePieces(
         recordedAt: null,
         eventID: null,
       })
-  for (const observed of digest.stepRoutes)
+  for (const observed of digest.stepRoutes ?? [])
     for (const source of observed.sources)
       addRouteSource(stepRoutes, {
         sessionID: observed.sessionID,
@@ -805,14 +881,14 @@ function sessionRoutePieces(
         ...source,
         sourceOccurrence: observed.sourceOccurrence,
       })
+  if (!digest.stepRoutes)
+    return {
+      sessionRoutes: sortedSessionRoutes(sessionRoutes),
+      stepRouteCount: new Set([...digest.stepRouteKeys, ...stepRoutes.keys()]).size,
+    }
   return {
-    sessionRoutes: [...sessionRoutes.values()].sort(
-      (left, right) =>
-        left.sessionID.localeCompare(right.sessionID) ||
-        routeKey(left.route, left.sourceOccurrence).localeCompare(
-          routeKey(right.route, right.sourceOccurrence),
-        ),
-    ),
+    sessionRoutes: sortedSessionRoutes(sessionRoutes),
+    stepRouteCount: stepRoutes.size,
     stepRoutes: [...stepRoutes.values()].sort(
       (left, right) =>
         left.sessionID.localeCompare(right.sessionID) ||
@@ -873,8 +949,8 @@ type EffortInput = {
   truncatedContextSessionIDs: readonly string[]
 }
 
-/** Everything about the sessions and routes except the lists that grow with every call. */
-function composeEffort(input: EffortInput) {
+/** Everything about the sessions and routes; `full` also lists every observed step route. */
+function composeEffort(input: EffortInput, full: boolean) {
   const digests = Array.isArray(input.progressFacts)
     ? accountingDigestsOf(input.progressFacts as readonly unknown[])
     : (input.progressFacts as EffortFactDigests)
@@ -899,13 +975,16 @@ function composeEffort(input: EffortInput) {
   const stepSessionIDs = [...new Set([...attemptSessionIDs, ...digests.keys()])].sort(
     (left, right) => left.localeCompare(right),
   )
-  const stepRoutesBySession = new Map(
-    stepSessionIDs.map((sessionID) => [
-      sessionID,
-      (derived.get(sessionID) ?? sessionDerived(sessionID, [], digests.get(sessionID)?.accounting))
-        .routes.stepRoutes,
-    ]),
-  )
+  const stepPieces = (sessionID: string) =>
+    (derived.get(sessionID) ?? sessionDerived(sessionID, [], digests.get(sessionID)?.accounting))
+      .routes
+  const stepRoutesBySession = new Map<string, AccountingStepRoute[]>()
+  if (full)
+    for (const sessionID of stepSessionIDs) {
+      const routes = stepPieces(sessionID).stepRoutes
+      if (!routes) throw new Error("A full effort basis needs digests that keep step routes")
+      stepRoutesBySession.set(sessionID, routes)
+    }
   const sessionsWithCurrentRoute = new Set(sessionRoutes.map((item) => item.sessionID))
   const uniqueSessionAttempts = [...bySession.values()].flatMap((attempts) =>
     attempts.length ? [attempts[0]!] : [],
@@ -945,7 +1024,7 @@ function composeEffort(input: EffortInput) {
       .filter((session) => !sessionsWithCurrentRoute.has(session.sessionID))
       .map((session) => session.sessionID),
     observedStepRouteCount: stepSessionIDs.reduce(
-      (total, sessionID) => total + stepRoutesBySession.get(sessionID)!.length,
+      (total, sessionID) => total + stepPieces(sessionID).stepRouteCount,
       0,
     ),
     stepContextsByStatus: contextCounts,
@@ -983,7 +1062,7 @@ export type EffortUsageBasis = {
  * `usage.coverage` and `routes.coverage`, without building the lists that grow with every call.
  */
 export function projectTaskEffortUsage(input: EffortInput): EffortUsageBasis {
-  const composed = composeEffort(input)
+  const composed = composeEffort(input, false)
   return {
     usage: {
       categories: Object.fromEntries(
@@ -998,7 +1077,7 @@ export function projectTaskEffortUsage(input: EffortInput): EffortUsageBasis {
 
 /** Versioned, read-only task-wide accounting from frozen attempts and retained observations. */
 export function projectTaskEffortBasis(input: EffortInput) {
-  const composed = composeEffort(input)
+  const composed = composeEffort(input, true)
   const { bySession, sessions } = composed
   const categories = Object.fromEntries(
     CATEGORIES.map((category) => [category, aggregateCategory(category, sessions)]),
@@ -1007,7 +1086,6 @@ export function projectTaskEffortBasis(input: EffortInput) {
   const observedStepRoutes = composed.stepSessionIDs.flatMap((sessionID) =>
     composed.stepRoutesBySession.get(sessionID)!,
   )
-  const totalSessions = sessions.length
 
   const sessionRoutesByID = new Map<string, typeof observedSessionRoutes>()
   for (const observation of observedSessionRoutes) {

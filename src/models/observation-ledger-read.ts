@@ -34,6 +34,14 @@ import {
   FACT_UNREADABLE_SOURCES,
 } from "./decision-progress-fact.ts"
 import type { DecisionProgressSource, JsonObject, Route } from "./decision-progress-fact.ts"
+import {
+  DECISION_PROGRESS_BATCH_SIZE,
+  LIVE_ONE_SQL,
+  LIVE_TAIL_SQL,
+  STORED_PROGRESS_SQL,
+} from "./decision-progress-sql.ts"
+import { readDecisionDigests } from "./decision-progress-digests.ts"
+import type { SessionFactDigests } from "./valuation.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import type {
   AdoptionRow as StoredAdoptionRow,
@@ -53,13 +61,6 @@ import type {
   ObservationLedgerOutput,
   ObservationLedgerReadInput,
 } from "./observation-ledger-schema.ts"
-
-// Decision reads keep only retained usage measurements and route-bearing step
-// observations. The SQL projection is intentionally separate from the public ledger's
-// richer progress view. The batch size is a unit of work, not a ceiling: the reader
-// keeps paging by sequence until the table is exhausted. 512 is not measured;
-// changing it changes only how many queries a read makes.
-const DECISION_PROGRESS_BATCH_SIZE = 512
 
 type SourceStatus = ObservationLedgerOutput["completeness"]["sources"][number]
 type RawTask = { id: string; created_at: string; body: string }
@@ -162,7 +163,14 @@ export type ObservationLedgerDecisionCapture = {
   sources: SourceStatus[]
   notes: string[]
   tasks: ObservationLedgerDecisionTask[]
+  /**
+   * The retained facts, when the read was not asked for digests or the projection could not
+   * serve them; otherwise empty and `progressDigests` carries them reduced per session.
+   */
   progressFacts: Record<string, unknown>[]
+  progressDigests?: SessionFactDigests
+  /** Retained facts, whichever way they are carried. */
+  progressFactCount: number
   classificationCoverage: {
     classifiedTaskCount: number
     unclassifiedTaskCount: number
@@ -376,35 +384,6 @@ function fingerprintOf(value: Record<string, unknown>) {
   write("}")
   return digest.digest("hex")
 }
-
-// F-S10-3: sequence pagination must seek the rowid, not re-sort the project's
-// dedupe index on every page. The payload is projected in JS, not in SQL: building the same
-// objects with json_object/json_each cost about a second on the live 111k-row table and was
-// parsed again here; a plain JSON.parse of the stored text takes a fraction of that.
-const LIVE_PROGRESS_COLUMNS =
-  "r.seq,r.attempt_id,r.session_id,r.at,r.recorded_at,r.source,r.sources_json,r.kind," +
-  "r.event_ids_json,r.message_id,r.payload"
-const LIVE_PROGRESS_JOIN = `
-  JOIN runner_plans p ON p.id=r.plan_id
-  JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory`
-const LIVE_TAIL_SQL = `
-  SELECT ${LIVE_PROGRESS_COLUMNS}
-  FROM runner_progress r NOT INDEXED ${LIVE_PROGRESS_JOIN}
-  WHERE r.project_directory=? AND p.project_directory=? AND r.seq>?
-    AND r.kind IN ('step','usage-snapshot')
-  ORDER BY r.seq LIMIT ?`
-const LIVE_ONE_SQL = `
-  SELECT ${LIVE_PROGRESS_COLUMNS}
-  FROM runner_progress r ${LIVE_PROGRESS_JOIN}
-  WHERE r.seq=? AND r.project_directory=? AND p.project_directory=?
-    AND r.kind IN ('step','usage-snapshot')`
-const STORED_PROGRESS_SQL = `
-  SELECT f.seq,f.flags,f.fact
-  FROM ${DECISION_PROJECTION_TABLES.facts} f
-  JOIN runner_plans p ON p.id=f.plan_id
-  JOIN tasks t ON t.id=f.task_id AND t.project_directory=p.project_directory
-  WHERE f.project_directory=? AND p.project_directory=? AND f.seq>? AND f.seq<=?
-  ORDER BY f.seq LIMIT ?`
 
 /** The stored projection of this project: its watermark and the rows queued for a re-read. */
 /**
@@ -2306,25 +2285,59 @@ function readDecisionTasks(
 }
 
 /** The decision capture of one project: its tasks, retained facts and what the ledger notes. */
-function readDecisionCapture(db: Database, projectDirectory: string, signal?: AbortSignal) {
+function lineageNotes(sourceLineage: number, eventLineage: number) {
+  const notes: string[] = []
+  if (sourceLineage)
+    notes.push(`${sourceLineage} retained decision facts have unreadable source lineage.`)
+  if (eventLineage)
+    notes.push(`${eventLineage} retained decision facts have unreadable event lineage.`)
+  return notes
+}
+
+function readDecisionCapture(
+  db: Database,
+  projectDirectory: string,
+  signal?: AbortSignal,
+  digestsFrom?: string,
+) {
   const sources = captureStatuses(db)
   if (sources.tableInfo.tasks!.status !== "available")
     return { status: "unavailable" as const, sources: sources.statuses }
   const notes = sourceNotes(sources)
   let facts: Record<string, unknown>[] = []
+  let digests: SessionFactDigests | undefined
+  let factCount = 0
   let progressFingerprint = ""
   if (
     sourceAvailable(sources.statuses, "runner_plans") &&
     sourceAvailable(sources.statuses, "runner_progress")
   ) {
-    const retained = readDecisionProgress(db, projectDirectory, signal)
-    facts = retained.facts
-    progressFingerprint = retained.fingerprint
-    notes.push(...retained.notes)
-    if (retained.invalidCount)
+    const incremental =
+      digestsFrom === undefined
+        ? null
+        : readDecisionDigests(db, digestsFrom, projectDirectory, signal)
+    if (incremental) {
+      digests = incremental.digests
+      factCount = incremental.factCount
+      progressFingerprint = hash([incremental.identity, incremental.factCount])
       notes.push(
-        `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
+        ...lineageNotes(incremental.unreadableSourceLineage, incremental.unreadableEventLineage),
       )
+      if (incremental.invalidCount)
+        notes.push(
+          `${incremental.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
+        )
+    } else {
+      const retained = readDecisionProgress(db, projectDirectory, signal)
+      facts = retained.facts
+      factCount = facts.length
+      progressFingerprint = retained.fingerprint
+      notes.push(...retained.notes)
+      if (retained.invalidCount)
+        notes.push(
+          `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
+        )
+    }
   }
   const entries = readDecisionTasks(db, projectDirectory, sources, signal)
   for (const entry of entries) notes.push(...entry.notes)
@@ -2340,6 +2353,8 @@ function readDecisionCapture(db: Database, projectDirectory: string, signal?: Ab
     notes: uniqueNotes(notes),
     tasks: entries.map((entry) => entry.task),
     progressFacts: facts,
+    progressDigests: digests,
+    progressFactCount: factCount,
     fingerprint: digest.digest("hex"),
   }
 }
@@ -2366,13 +2381,15 @@ function decisionCapture(
     sourceFingerprint: hash({
       capture: capture.fingerprint,
       sourceRevision,
-      projectedProgressCount: capture.progressFacts.length,
+      projectedProgressCount: capture.progressFactCount,
     }),
     sourceRevision,
     sources: capture.sources,
     notes: capture.notes,
     tasks,
     progressFacts: capture.progressFacts,
+    ...(capture.progressDigests ? { progressDigests: capture.progressDigests } : {}),
+    progressFactCount: capture.progressFactCount,
     classificationCoverage: {
       classifiedTaskCount,
       unclassifiedTaskCount,
@@ -2685,7 +2702,11 @@ function buildUnavailable(
 
 export type ReadOnlyObservationLedger = {
   read(input?: ObservationLedgerReadInput | unknown): ObservationLedgerOutput
-  readDecision(signal?: AbortSignal): ObservationLedgerDecisionRead
+  /**
+   * `digests` asks for the retained facts as per-session digests read incrementally from the
+   * stored projection (a cached digest costs no read); without it every fact is returned.
+   */
+  readDecision(signal?: AbortSignal, options?: { digests?: boolean }): ObservationLedgerDecisionRead
   decisionRevision(): number | null
   close(): void
 }
@@ -2758,7 +2779,7 @@ export function openReadOnlyObservationLedger(
       }
       return outputFromCapture(capture, projectDirectory, parsed, secret, parsed.cursor)
     },
-    readDecision(signal) {
+    readDecision(signal, options) {
       if (closed) throw new Error("Observation ledger reader is closed")
       signal?.throwIfAborted()
       if (!db)
@@ -2787,7 +2808,12 @@ export function openReadOnlyObservationLedger(
             throw new Error("Project-scoped observation revision tracking is unavailable")
           return {
             sourceRevision,
-            capture: readDecisionCapture(db!, projectDirectory, signal),
+            capture: readDecisionCapture(
+              db!,
+              projectDirectory,
+              signal,
+              options?.digests ? path : undefined,
+            ),
           }
         })
         .deferred()
