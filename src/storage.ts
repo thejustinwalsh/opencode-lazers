@@ -75,7 +75,13 @@ export function taskDatabasePath(dataDirectory?: string): string {
  * `busy_timeout=0` and yields to the event loop between attempts instead.
  */
 export const SQLITE_BUSY_TIMEOUT_MS = 250
-/** Default total budget for `atomicAsync` contention retries. */
+/**
+ * Default total budget for `retryBusy`/`atomicAsync` contention retries. Sized against measured
+ * lock holds: a submit transaction held the write lock for 252-459 ms on a machine under heavy CPU
+ * and disk load (see fix/submission-lock-race), so 5 s is roughly ten times the worst hold seen.
+ * Past it the call fails with a retryable `StorageBusyError`; the deadline is a wait bound, not a
+ * refusal policy, and callers may pass their own.
+ */
 const ATOMIC_ASYNC_DEADLINE_MS = 5_000
 
 /** Thrown by `atomicAsync` when a write lock could not be acquired before its deadline. */
@@ -85,7 +91,10 @@ export class StorageBusyError extends Error {
     readonly waitedMs: number,
     options?: { cause?: unknown },
   ) {
-    super(`LAZERS database stayed locked for ${waitedMs}ms across ${attempts} attempts`, options)
+    super(
+      `LAZERS database is busy: another process held the write lock for ${waitedMs}ms across ${attempts} attempts. Retry this call; repeating it is safe.`,
+      options,
+    )
     this.name = "StorageBusyError"
   }
 }
@@ -447,15 +456,29 @@ export class TaskRepository {
     run: (db: Database) => T,
     options: { deadlineMs?: number } = {},
   ): Promise<T> {
+    return this.retryBusy(() => {
+      const db = this.db
+      return db.transaction(() => run(db)).immediate()
+    }, options)
+  }
+
+  /**
+   * Run a synchronous unit of database work, yielding the event loop and retrying while another
+   * process holds the write lock. Each attempt runs with `busy_timeout=0`, so nothing sleeps inside
+   * SQLite. SQLITE_BUSY surfaces only when a transaction cannot begin, so the failed transaction
+   * has done nothing; `run` may still repeat transactions that already committed in an earlier
+   * attempt, so it must be idempotent (request-keyed writes, upserts, reads). Throws
+   * `StorageBusyError` after `deadlineMs`.
+   */
+  async retryBusy<T>(run: () => T, options: { deadlineMs?: number } = {}): Promise<T> {
     const started = Date.now()
     const deadline = started + (options.deadlineMs ?? ATOMIC_ASYNC_DEADLINE_MS)
     for (let attempt = 1; ; attempt++) {
       const db = this.db
       try {
-        // Attempts never wait inside SQLite; the backoff below yields the loop.
         db.exec("PRAGMA busy_timeout = 0")
         try {
-          return db.transaction(() => run(db)).immediate()
+          return run()
         } finally {
           db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`)
         }
@@ -549,19 +572,6 @@ export class TaskRepository {
     IdempotencyKeySchema.parse(key)
     const validated = TaskProposalSchema.parse(proposal)
     const outcome = this.atomic((db) => this.submitWithin(db, key, validated, create))
-    if (outcome.inserted) this.notify()
-    return outcome.receipt
-  }
-
-  /**
-   * `submitOnce` for async callers: waits out another process's write lock by yielding the event
-   * loop (see `atomicAsync`) instead of failing after the synchronous busy budget. `create` may run
-   * once per attempt, so it must stay side-effect free.
-   */
-  async submitOnceAsync(key: string, proposal: unknown, create: () => unknown) {
-    IdempotencyKeySchema.parse(key)
-    const validated = TaskProposalSchema.parse(proposal)
-    const outcome = await this.atomicAsync((db) => this.submitWithin(db, key, validated, create))
     if (outcome.inserted) this.notify()
     return outcome.receipt
   }

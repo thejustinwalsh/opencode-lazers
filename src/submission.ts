@@ -52,90 +52,48 @@ export async function startingRevision(
   throw new Error("Cannot record Git starting revision; check repository access and HEAD")
 }
 
-function invalidTiming(error: InvalidVerificationTimingError) {
-  return {
-    status: "invalid" as const,
-    errors: [
-      {
-        path: `verification.${error.index}.inactivityTimeoutMs`,
-        message: `${error.message} (check ${error.checkID})`,
-      },
-    ],
-  }
-}
-
-/** Validate once and describe the write; the caller picks the sync or async transaction. */
-function prepareSubmission(
-  input: unknown,
-  provenance: () => TaskSpec["provenance"],
-  timeoutDefaults: VerificationTimeoutDefaults,
-) {
-  const result = TaskSubmissionSchema.safeParse(input)
-  if (!result.success) {
-    return {
-      ok: false as const,
-      invalid: {
-        status: "invalid" as const,
-        errors: result.error.issues.map((issue) => ({
-          path: issue.path.join("."),
-          message: issue.message,
-        })),
-      },
-    }
-  }
-  const { idempotencyKey, ...proposal } = result.data
-  const create = () => {
-    const invalid = invalidVerificationTimings(proposal.verification, timeoutDefaults)[0]
-    if (invalid) throw new InvalidVerificationTimingError(invalid.index, invalid.checkID)
-    return {
-      schemaVersion: 1 as const,
-      id: crypto.randomUUID(),
-      revision: 1 as const,
-      status: "submitted" as const,
-      createdAt: new Date().toISOString(),
-      provenance: provenance(),
-      proposal,
-    }
-  }
-  return { ok: true as const, idempotencyKey, proposal, create }
-}
-
 export function submitTask(
   repository: TaskRepository,
   input: unknown,
   provenance: () => TaskSpec["provenance"],
   timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
 ) {
-  const prepared = prepareSubmission(input, provenance, timeoutDefaults)
-  if (!prepared.ok) return prepared.invalid
-  try {
-    return repository.submitOnce(prepared.idempotencyKey, prepared.proposal, prepared.create)
-  } catch (error) {
-    if (!(error instanceof InvalidVerificationTimingError)) throw error
-    return invalidTiming(error)
+  const result = TaskSubmissionSchema.safeParse(input)
+  if (!result.success) {
+    return {
+      status: "invalid" as const,
+      errors: result.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+      })),
+    }
   }
-}
-
-/** `submitTask` that yields the event loop while another process holds the write lock. */
-export async function submitTaskAsync(
-  repository: TaskRepository,
-  input: unknown,
-  provenance: () => TaskSpec["provenance"],
-  timeoutDefaults: VerificationTimeoutDefaults = verificationTimeoutDefaults(),
-): Promise<
-  Awaited<ReturnType<TaskRepository["submitOnceAsync"]>> | ReturnType<typeof invalidTiming>
-> {
-  const prepared = prepareSubmission(input, provenance, timeoutDefaults)
-  if (!prepared.ok) return prepared.invalid
+  const { idempotencyKey, ...proposal } = result.data
   try {
-    return await repository.submitOnceAsync(
-      prepared.idempotencyKey,
-      prepared.proposal,
-      prepared.create,
-    )
+    return repository.submitOnce(idempotencyKey, proposal, () => {
+      const invalid = invalidVerificationTimings(proposal.verification, timeoutDefaults)[0]
+      if (invalid) throw new InvalidVerificationTimingError(invalid.index, invalid.checkID)
+      return {
+        schemaVersion: 1 as const,
+        id: crypto.randomUUID(),
+        revision: 1 as const,
+        status: "submitted" as const,
+        createdAt: new Date().toISOString(),
+        provenance: provenance(),
+        proposal,
+      }
+    })
   } catch (error) {
     if (!(error instanceof InvalidVerificationTimingError)) throw error
-    return invalidTiming(error)
+    return {
+      status: "invalid" as const,
+      errors: [
+        {
+          path: `verification.${error.index}.inactivityTimeoutMs`,
+          message: `${error.message} (check ${error.checkID})`,
+        },
+      ],
+    }
   }
 }
 

@@ -59,6 +59,12 @@ function safeMessage(error: unknown): string {
 
 export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepository) {
   const store = new HandoffStore(repository)
+  /**
+   * Request-keyed or read-only store work, retried while another process holds the write lock
+   * so a loaded machine yields a late success instead of a raw "database is locked".
+   */
+  const busy = <T>(run: () => T) =>
+    Effect.flatMap(() => Effect.promise(() => repository.retryBusy(run)))
   const reviewer = new HandoffReviewer(
     store,
     {
@@ -99,7 +105,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             action: "lz-inspect-recovery",
             resources: ["*"],
           })
-          .pipe(Effect.map(() => output(store.readConcerns(input, actor(call))))),
+          .pipe(busy(() => output(store.readConcerns(input, actor(call))))),
     })
 
     editor.add({
@@ -123,7 +129,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             resources: ["*"],
           })
           .pipe(
-            Effect.map(() =>
+            busy(() =>
               output(
                 store.recordConcern(
                   { ...input, requestID: input.requestID ?? call.id },
@@ -155,7 +161,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             resources: ["*"],
           })
           .pipe(
-            Effect.map(() =>
+            busy(() =>
               output(
                 store.recordRecoveryDisposition(
                   { ...input, requestID: input.requestID ?? call.id },
@@ -440,7 +446,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             action: "lz-submit-handoff",
             resources: ["*"],
           })
-          .pipe(Effect.map(() => output(store.finalize(input, actor(call))))),
+          .pipe(busy(() => output(store.finalize(input, actor(call))))),
     })
 
     editor.add({
@@ -458,7 +464,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             action: "lz-disposition-handoff",
             resources: ["*"],
           })
-          .pipe(Effect.map(() => output(store.recordDisposition(input, actor(call))))),
+          .pipe(busy(() => output(store.recordDisposition(input, actor(call))))),
     })
 
     editor.add({
@@ -480,7 +486,7 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
             action: "lz-read-handoff",
             resources: ["*"],
           })
-          .pipe(Effect.map(() => output(store.readHandoff(input, actor(call))))),
+          .pipe(busy(() => output(store.readHandoff(input, actor(call))))),
     })
   })
 }
