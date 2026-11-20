@@ -2,11 +2,7 @@ import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { terminalPlanStates as terminal } from "./plan-control.ts"
 
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
-import {
-  actualCheckResultFromEffect,
-  checkSettlementProblem,
-  errorText,
-} from "./runtime-helpers.ts"
+import { checkSettlementProblem, errorText } from "./runtime-helpers.ts"
 import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
@@ -25,6 +21,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { PlanStep } from "./plan-step.ts"
 import { CommandPipeline } from "./command-pipeline.ts"
 import { CommandsRecovery } from "./commands-recovery.ts"
 import { CommandsRetained } from "./commands-retained.ts"
@@ -42,7 +39,7 @@ import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { RecoveryBundles } from "./recovery-bundle.ts"
-import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
+import { RecoveryDetector } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 
@@ -55,8 +52,6 @@ import { fingerprint } from "../identity.ts"
 
 import { verificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
-
-import { checkResourcesSettled, scopePatternsConflict } from "./artifacts.ts"
 
 import { defaultFallowPlanReview, defaultFallowReview, type FallowReview } from "./fallow-check.ts"
 
@@ -74,7 +69,7 @@ import { stampChangeIdentity } from "./identity-stamp.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import { ModelPolicy, PlanInput } from "./schema.ts"
 
-import type { PlanRow, NodeRow, AttemptRow } from "./store.ts"
+import type { PlanRow } from "./store.ts"
 import { RunnerStore } from "./store.ts"
 
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
@@ -87,14 +82,9 @@ import { ProgressRecorder } from "../progress/recorder.ts"
 
 import { sharedScheduler } from "./scheduler-coordinator.ts"
 
-import { selectSchedulingCandidates } from "./scheduling-selection.ts"
-import type { SchedulingReservation } from "./scheduling-selection.ts"
 import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 
-import {
-  activeRetainedVerifications,
-  retainedVerificationsForPlan,
-} from "./retained-verification/store.ts"
+import { activeRetainedVerifications } from "./retained-verification/store.ts"
 import {
   abortVerificationActivities,
   forgetVerificationActivity,
@@ -194,6 +184,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly planStep: PlanStep
   private readonly commandPipeline: CommandPipeline
   private readonly commandsRecovery: CommandsRecovery
   private readonly commandsRetained: CommandsRetained
@@ -633,6 +624,44 @@ export class TaskRuntime {
       validArchitect: this.validArchitect.bind(this),
       verificationDeadline: (...args) => this.verificationDeadline(...args),
       verificationTarget: (...args) => this.verificationTarget(...args),
+    })
+    this.planStep = new PlanStep(this.core, {
+      advanceAttempt: (...args) => this.advanceAttempt(...args),
+      architectRoute: (...args) => this.architectRoute(...args),
+      recordArchitectRoute: (...args) => this.recordArchitectRoute(...args),
+      ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
+      cancelCheckActivities: (...args) => this.cancelCheckActivities(...args),
+      reconcileCancelledCheckActivities: (...args) =>
+        this.reconcileCancelledCheckActivities(...args),
+      recoverCancelledRetainedChecks: (...args) => this.recoverCancelledRetainedChecks(...args),
+      retainedCheckSettlementProblem: (...args) => this.retainedCheckSettlementProblem(...args),
+      cancelReservedAttempt: (...args) => this.cancelReservedAttempt(...args),
+      cancelWorkers: (...args) => this.cancelWorkers(...args),
+      command: (...args) => this.command(...args),
+      considerArchitectRenewal: (...args) => this.considerArchitectRenewal(...args),
+      continueArchitectRenewal: (...args) => this.continueArchitectRenewal(...args),
+      dispatch: (...args) => this.dispatch(...args),
+      integratedPrerequisiteBaseline: (...args) => this.integratedPrerequisiteBaseline(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      taskDependencyIDs: (...args) => this.taskDependencyIDs(...args),
+      taskDependencyIntegration: (...args) => this.taskDependencyIntegration(...args),
+      finish: (...args) => this.finish(...args),
+      hold: (...args) => this.hold(...args),
+      outcome: (...args) => this.outcome(...args),
+      holdAbandonedTakeover: (...args) => this.holdAbandonedTakeover(...args),
+      reconcileEffect: (...args) => this.reconcileEffect(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      settledStartupEffect: (...args) => this.settledStartupEffect(...args),
+      verify: (...args) => this.verify(...args),
+      requestRetick: () => {
+        this.tickRequested = true
+      },
+      adoptionExecution: this.adoptionExecution,
+      takeovers: this.takeovers,
+      worktreeCleanup: this.worktreeCleanup,
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+      timed: (name, run) => this.timed(name, run),
     })
     this.renewal = new ArchitectRenewal(this.core, {
       architectPromptHook: this.architectPromptHook,
@@ -1609,514 +1638,12 @@ export class TaskRuntime {
       )
   }
 
-  /**
-   * A cancelled prerequisite drops its dependency edge and notifies the
-   * Architect; dependents are never held on it. The dropped edge is recorded
-   * in a plan revision. A hold left by an earlier version is released through
-   * the task and plan machines.
-   */
-  private reconcileCancelledDependencies(planID: string, fence: number) {
-    return this.store.fenced(this.owner, fence, (db) => {
-      const plan = this.store.plan(planID)!
-      if (!["running", "blocked"].includes(plan.state)) return plan
-      const input = PlanInput.parse(JSON.parse(plan.body))
-      const cancelledPlan = (id: string) =>
-        ["cancelling", "cancelled"].includes(this.store.plan(id)?.state ?? "")
-      const nodes = this.store.nodes(planID)
-      const planEdges = (input.afterPlans ?? []).filter(cancelledPlan)
-      const pause = this.store.dispatchPause(planID)
-      const pausedUntil = (pause?.untilPlans ?? []).filter(cancelledPlan)
-      const taskEdges = input.dependencies.filter(
-        (edge) => nodes.find((node) => node.task_id === edge.prerequisite)?.state === "cancelled",
-      )
-      if (planEdges.length || taskEdges.length) {
-        this.store.revisePlan(
-          plan,
-          PlanInput.parse({
-            ...input,
-            afterPlans: (input.afterPlans ?? []).filter((id) => !planEdges.includes(id)),
-            dependencies: input.dependencies.filter((edge) => !taskEdges.includes(edge)),
-          }),
-          "DEPENDENCY_EDGE_DROPPED",
-          {
-            planPrerequisites: planEdges,
-            taskEdges: taskEdges.map((edge) => ({
-              prerequisite: edge.prerequisite,
-              successor: edge.successor,
-            })),
-          },
-        )
-        for (const edge of taskEdges)
-          db.query(
-            "DELETE FROM runner_dependencies WHERE plan_id=? AND prerequisite=? AND successor=?",
-          ).run(planID, edge.prerequisite, edge.successor)
-      }
-      if (pause && pausedUntil.length) {
-        const remaining = pause.untilPlans.filter((id) => !pausedUntil.includes(id))
-        this.store.setDispatchPause(
-          planID,
-          remaining.length ? { reason: pause.reason, untilPlans: remaining } : null,
-          { droppedCancelledPrerequisites: pausedUntil },
-        )
-      }
-      if (planEdges.length || taskEdges.length || pausedUntil.length)
-        this.outcome(
-          planID,
-          {
-            status: "dependency-dropped",
-            reason: "A cancelled prerequisite was dropped; dependent work continues",
-            droppedPlanPrerequisites: planEdges,
-            droppedTaskPrerequisites: taskEdges.map((edge) => edge.prerequisite),
-            droppedPauseConditions: pausedUntil,
-            allowedActions: ["schedule", "audit"],
-          },
-          true,
-        )
-      this.releaseLegacyDependencyHold(plan.id)
-      return this.store.plan(planID)!
-    })
+  private interruptedChecksFor(...args: Parameters<PlanStep["interruptedChecksFor"]>) {
+    return this.planStep.interruptedChecksFor(...args)
   }
 
-  /** Releases a hold applied by an earlier version for a cancelled prerequisite. */
-  private releaseLegacyDependencyHold(planID: string) {
-    type Saved = {
-      roots: string[]
-      nodes: Array<{ taskID: string; version: number; reason: string }>
-      planHold: { previousState: string; previousReason: string | null; reason: string } | null
-    }
-    const previous = this.store.latestTransition<Saved>(planID, null, "DEPENDENCY_CANCELLATION")
-    if (!previous || (!previous.nodes.length && !previous.planHold)) return
-    for (const node of this.store.nodes(planID)) {
-      const saved = previous.nodes.find((item) => item.taskID === node.task_id)
-      if (saved && node.state === "blocked" && node.version === saved.version)
-        this.store.move(planID, node.task_id, "RECONCILE")
-    }
-    const plan = this.store.plan(planID)!
-    const hold = previous.planHold
-    if (hold && plan.state === "blocked" && plan.reason === hold.reason)
-      this.store.atomic((db) =>
-        db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,?),reason=?,version=version+1 WHERE id=?",
-          )
-          .run(hold.previousState, hold.previousReason, planID),
-      )
-    this.store.record(planID, null, "DEPENDENCY_CANCELLATION", {
-      roots: [],
-      nodes: [],
-      planHold: null,
-    } satisfies Saved)
-  }
-
-  private interruptedChecksFor(plan: PlanRow, attempt: AttemptRow) {
-    return this.store.effects(plan.id).filter((effect) => {
-      const receipt = actualCheckResultFromEffect(effect)
-      return (
-        effect.state === "uncertain" &&
-        effect.attempt_id === attempt.id &&
-        effect.kind.startsWith("verify:") &&
-        receipt?.aborted === true &&
-        receipt.cwd === attempt.workspace &&
-        receipt.artifact === attempt.artifact &&
-        receipt.inputIdentity === attempt.artifact &&
-        checkResourcesSettled(receipt)
-      )
-    })
-  }
-
-  private async step(initialPlan: PlanRow, fence: number) {
-    let plan = this.store.plan(initialPlan.id)
-    if (!plan) return
-    if (plan.state !== "running") await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-    if (plan.state === "cancelling") {
-      const activities = await this.timed("step:cancelCheckActivities", () =>
-        this.cancelCheckActivities(plan!.id),
-      )
-      await this.timed("step:reconcileCancelledCheckActivities", () =>
-        this.reconcileCancelledCheckActivities(plan!, activities, fence),
-      )
-      const cancelledOperations = this.store.atomic((db) =>
-        retainedVerificationsForPlan(db, this.directory, plan!.id).filter(
-          (operation) => operation.state === "cancelled",
-        ),
-      )
-      for (const operation of cancelledOperations)
-        await this.timed("step:recoverCancelledRetainedChecks", () =>
-          this.recoverCancelledRetainedChecks(operation.id),
-        )
-      const retainedProblem = this.store.atomic((db) =>
-        retainedVerificationsForPlan(db, this.directory, plan!.id).some(
-          (operation) =>
-            operation.state === "cancelled" &&
-            Boolean(this.retainedCheckSettlementProblem(operation.id)),
-        ),
-      )
-      const unsettled = activities.find((activity) => checkSettlementProblem(activity))
-      if (unsettled || retainedProblem) {
-        // Process uncertainty fences terminal settlement, not interruption of
-        // other owned workers. Continue cancellation without declaring idle.
-        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence, false))
-        const reason = `Verification cancellation settlement is uncertain: ${unsettled ? checkSettlementProblem(unsettled) : "retained check resources remain unconfirmed"}`
-        this.store.fenced(this.owner, fence, (db) => {
-          if (this.store.plan(plan!.id)?.reason === reason) return
-          db.query("UPDATE runner_plans SET reason=? WHERE id=? AND state='cancelling'").run(
-            reason,
-            plan!.id,
-          )
-          this.store.record(plan!.id, null, "VERIFICATION_CANCELLATION_UNCERTAIN", { reason })
-        })
-        return
-      }
-      await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
-      const pending = this.store
-        .effects(plan.id)
-        .find((e) => ["intended", "uncertain"].includes(e.state))
-      if (pending)
-        await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
-      return
-    }
-    const contactPaused = this.store.architectContactPaused()
-    const planRenewal = contactPaused ? undefined : this.store.architectRenewalForPlan(plan.id)
-    if (
-      planRenewal &&
-      ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
-    ) {
-      await this.timed("step:continueArchitectRenewal", () =>
-        this.continueArchitectRenewal(planRenewal, fence),
-      )
-      return
-    }
-    // Routing always reaches a live Architect: the owner is advisory, so a
-    // missing or archived one is replaced before any branch can return early.
-    const owner = await this.timed("step:host.session", () => this.host.session(plan!.owner))
-    if (!this.validArchitect(owner) && !contactPaused) {
-      this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-      await this.timed("step:ensureArchitectOwner", () => this.ensureArchitectOwner(plan!, owner))
-      plan = this.store.plan(plan.id)!
-    }
-    if (plan.state === "cleaning") {
-      await this.timed("step:cleanupWorktrees", () =>
-        this.worktreeCleanup.cleanupWorktrees(plan!, fence),
-      )
-      return
-    }
-    const adoption = this.store.activeAdoptions(plan.id)[0]
-    if (adoption) {
-      await this.timed("step:advanceAdoption", () =>
-        this.adoptionExecution.advanceAdoption(plan!, adoption, fence),
-      )
-      return
-    }
-    if (this.validArchitect(owner) && !contactPaused) {
-      const renewal = this.store.architectRenewalForSource(owner.id)
-      if (
-        renewal &&
-        ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state)
-      ) {
-        await this.timed("step:continueArchitectRenewal", () =>
-          this.continueArchitectRenewal(renewal, fence),
-        )
-        return
-      }
-      // Only work that needs judgement routes; a cold, large Architect is replaced.
-      if (["blocked", "accepted", "cleanup-blocked"].includes(plan.state)) {
-        this.recordArchitectRoute(plan, this.architectRoute(owner), owner)
-        if (
-          await this.timed("step:considerArchitectRenewal", () =>
-            this.considerArchitectRenewal(plan!, owner, fence),
-          )
-        )
-          return
-      }
-    }
-    // An owner read can overlap an authorized resume, cancellation, or reassignment.
-    if (this.store.plan(plan.id)?.version !== plan.version) return
-    plan = this.reconcileCancelledDependencies(plan.id, fence)
-    const unresolved = this.store
-      .effects(plan.id)
-      .filter((e) => ["intended", "uncertain"].includes(e.state))
-    const pending = unresolved[0]
-    if (pending) {
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-      const attempt = pending.attempt_id
-        ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
-        : undefined
-      if (
-        plan.state === "blocked" &&
-        plan.reason?.startsWith(`Recovery uncertain for ${pending.kind} ${pending.id}:`) &&
-        attempt?.state === "verifying" &&
-        unresolved.length === 1 &&
-        actualCheckResultFromEffect(pending)?.processCleanup &&
-        this.interruptedChecksFor(plan, attempt).some((effect) => effect.id === pending.id)
-      ) {
-        await this.command(
-          {
-            requestID: `resume-settled-check:${pending.id}:${plan.version}`,
-            planID: plan.id,
-            action: "resume",
-            taskID: attempt.task_id,
-            attemptID: attempt.id,
-            reason: "Resume the interrupted check after confirming subprocess cleanup",
-          },
-          plan.owner,
-        )
-        this.tickRequested = true
-        return
-      }
-      await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
-      // A settled effect of a running plan unblocks the rest of its step: continue now, not at
-      // the next periodic pass. An unsettled effect waits for new facts instead of spinning, and
-      // a held plan waits for its Architect.
-      const settled = this.store.effects(plan.id).find((effect) => effect.id === pending.id)
-      if (
-        this.store.plan(plan.id)?.state === "running" &&
-        settled &&
-        !["intended", "uncertain"].includes(settled.state)
-      )
-        this.tickRequested = true
-      return
-    }
-    // A takeover in progress owns its worker attempt: advance it, and leave that worker alone.
-    for (const takeover of this.takeovers.open(plan.id))
-      await this.timed("step:takeover", () => this.takeovers.advance(takeover, true))
-    plan = this.store.plan(plan.id)!
-    const heldByTakeover = this.takeovers.heldAttempts(plan.id)
-    const active = this.store
-      .attempts(plan.id)
-      .filter((a) => ["preparing", "running", "verifying"].includes(a.state))
-      .filter((a) => !heldByTakeover.has(a.id))
-    if (active.length) {
-      await Promise.all(
-        active.map((attempt) => {
-          // The Architect works its own attempt; it is verified once submitted.
-          if (isTakeoverAttempt(attempt.policy)) {
-            if (attempt.state !== "verifying")
-              return this.timed("step:takeoverLiveness", () =>
-                this.holdAbandonedTakeover(this.store.plan(plan!.id)!, attempt),
-              )
-            const task = this.store.repository.get(attempt.task_id)!
-            return this.timed("step:verifyTakeover", () =>
-              this.verify(this.store.plan(plan!.id)!, attempt, task.proposal, fence),
-            )
-          }
-          const promptCompleted = this.store
-            .effects(plan!.id)
-            .some(
-              (effect) =>
-                effect.attempt_id === attempt.id &&
-                effect.kind === "prompt" &&
-                JSON.parse(effect.payload).messageID === attempt.message_id &&
-                effect.state === "completed",
-            )
-          const settledStartup = this.settledStartupEffect(plan!.id, attempt)
-          if (
-            plan!.state === "blocked" &&
-            attempt.state === "preparing" &&
-            !promptCompleted &&
-            !settledStartup &&
-            !this.retainedRepairForAttempt(attempt)
-          )
-            return this.cancelReservedAttempt(plan!, attempt, fence)
-          if (plan!.state === "blocked" && settledStartup) return
-          const scopeWait = this.store.latestTransition<{ attemptID: string; reason: string }>(
-            plan!.id,
-            attempt.task_id,
-            "SCOPE_DECISION_REQUIRED",
-          )
-          if (
-            plan!.state === "blocked" &&
-            scopeWait?.attemptID === attempt.id &&
-            scopeWait.reason === plan!.reason
-          )
-            return
-          return this.timed("step:advanceAttempt", () =>
-            this.advanceAttempt(this.store.plan(plan!.id)!, attempt, fence),
-          )
-        }),
-      )
-      plan = this.store.plan(plan.id)!
-      if (plan.state === "cancelling") {
-        await this.timed("step:cancelWorkers", () => this.cancelWorkers(plan!, fence))
-        return
-      }
-    }
-    if (plan.state === "blocked") return
-
-    let rawInput = JSON.parse(plan.body)
-    let input = PlanInput.parse(rawInput)
-    const prerequisites = input.afterPlans ?? []
-    const prerequisiteBaseline = prerequisites.length
-      ? await this.timed("step:integratedPrerequisiteBaseline", () =>
-          this.integratedPrerequisiteBaseline(prerequisites),
-        )
-      : undefined
-    if (prerequisites.length && !prerequisiteBaseline) {
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
-      if (
-        !this.store.effectiveDispatchPause(plan.id) &&
-        this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
-      )
-        return { planID: plan.id, prerequisitePlanIDs: prerequisites }
-      return
-    }
-    if (prerequisites.length && !this.store.attempts(plan.id).length) {
-      // Dependents inherit the selected checkout after every prerequisite's
-      // current combined integration proof is present in its Git history.
-      const baseCommit = prerequisiteBaseline!
-      if (input.baseCommit !== baseCommit) {
-        input = PlanInput.parse({ ...rawInput, baseCommit })
-        this.store.revisePlan(plan, input, "DEPENDENCIES_INTEGRATED", { prerequisites, baseCommit })
-        plan = this.store.plan(plan.id)!
-        rawInput = JSON.parse(plan.body)
-      }
-    }
-    if (rawInput.workspaceMode === undefined) {
-      const attempts = this.store.attempts(plan.id)
-      if (attempts.length)
-        input.workspaceMode = attempts.at(-1)!.workspace === this.directory ? "shared" : "isolated"
-    }
-    const nodes = this.store.nodes(plan.id)
-    const occupied = this.store.dispatchReservations()
-    let pause = this.store.dispatchPause(plan.id)
-    if (
-      pause?.untilPlans.length &&
-      (await this.timed("step:integratedPrerequisiteBaseline", () =>
-        this.integratedPrerequisiteBaseline(pause!.untilPlans),
-      ))
-    ) {
-      this.store.fenced(this.owner, fence, () =>
-        this.store.setDispatchPause(plan!.id, null, { source: "resume-condition" }),
-      )
-      plan = this.store.plan(plan.id)!
-      this.outcome(
-        plan.id,
-        { status: "dispatch-resumed", reason: "Resume prerequisites integrated" },
-        true,
-      )
-      pause = undefined
-    }
-    // A project or global pause holds new dispatch whatever the plan's own pause says.
-    const held = this.store.effectiveDispatchPause(plan.id)
-    const ready: NodeRow[] = []
-    for (const node of nodes) {
-      if (
-        held ||
-        !["queued", "ready"].includes(node.state) ||
-        this.store.execution(node.task_id)!.waitingOn.length > 0
-      )
-        continue
-      const prerequisites = this.taskDependencyIDs(input, node)
-      if (
-        prerequisites.length === 0 ||
-        (
-          await this.timed("step:taskDependencyIntegration", () =>
-            this.taskDependencyIntegration(plan!, input, node),
-          )
-        ).status === "ready"
-      )
-        ready.push(node)
-    }
-    const selection = selectSchedulingCandidates(
-      input.workspaceMode,
-      ready.map((node) => ({
-        taskID: node.task_id,
-        scopes: this.store.effectiveReservationScope(node.task_id),
-      })),
-      occupied as SchedulingReservation[],
-    )
-    const selected = selection.selectedTaskIDs.flatMap((taskID) => {
-      const node = ready.find((candidate) => candidate.task_id === taskID)
-      return node ? [node] : []
-    })
-    if (selected.length) {
-      const admissionRequests = new Map<string, string>()
-      for (const node of selected) {
-        const attemptNumber =
-          this.store.attempts(plan.id).filter((attempt) => attempt.task_id === node.task_id)
-            .length + 1
-        admissionRequests.set(
-          node.task_id,
-          await this.delegatedAgentCapacity.ensureRunnerQueued({
-            planID: plan.id,
-            taskID: node.task_id,
-            attemptNumber,
-          }),
-        )
-      }
-      const activeTaskIDs = this.store
-        .attempts(plan.id)
-        .filter(
-          (attempt) =>
-            attempt.state === "running" ||
-            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
-        )
-        .map((attempt) => attempt.task_id)
-      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id, [
-        ...new Set([...selected.map((node) => node.task_id), ...activeTaskIDs]),
-      ])
-      await Promise.all(
-        selected.map(async (node) => {
-          try {
-            await this.timed("step:dispatch", () =>
-              this.dispatch(plan!, node, fence, admissionRequests.get(node.task_id)!),
-            )
-          } catch (error) {
-            const current = this.store.plan(plan!.id)
-            if (current && current.state !== "blocked")
-              this.hold(current, `Dispatch failed for ${node.task_id}: ${errorText(error)}`)
-          }
-        }),
-      )
-      return
-    }
-    const outstanding = this.store
-      .attempts(plan.id)
-      .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
-    await this.delegatedAgentCapacity.cancelRunnerQueue(
-      plan.id,
-      outstanding
-        .filter(
-          (attempt) =>
-            attempt.state === "running" ||
-            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
-        )
-        .map((attempt) => attempt.task_id),
-    )
-    if (outstanding.length) {
-      if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
-        return {
-          planID: plan.id,
-          reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
-        }
-      return
-    }
-    const failed = nodes.find((n) =>
-      ["failed", "cancelled", "exhausted", "blocked"].includes(n.state),
-    )
-    if (failed) {
-      this.hold(plan, `Task ${failed.task_id}: ${failed.reason ?? failed.state}`)
-      return
-    }
-    if (nodes.every((n) => n.state === "accepted" || n.state === "incorporated")) {
-      await this.timed("step:finish", () => this.finish(plan!, fence))
-      return
-    }
-    if (ready.length && occupied.length) {
-      const reservationTaskIDs = occupied
-        .filter(
-          (entry) =>
-            input.workspaceMode === "shared" ||
-            entry.shared ||
-            ready.some((node) =>
-              scopePatternsConflict(
-                entry.scopes,
-                this.store.effectiveReservationScope(node.task_id),
-              ),
-            ),
-        )
-        .map((entry) => entry.taskID)
-      return { planID: plan.id, reservationTaskIDs: [...new Set(reservationTaskIDs)].sort() }
-    }
+  private step(...args: Parameters<PlanStep["step"]>) {
+    return this.planStep.step(...args)
   }
 
   private cancelWorkers(...args: Parameters<Cancellation["cancelWorkers"]>) {
