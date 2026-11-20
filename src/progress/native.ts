@@ -6,6 +6,7 @@ import { Tool } from "@opencode/schema/tool"
 import { Effect, Stream } from "effect"
 import { z } from "zod"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
+import { declareInput } from "../tool-input.ts"
 import { ProgressInput } from "./schema.ts"
 import { toolObservationScope } from "./tool-observation.ts"
 import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
@@ -270,7 +271,7 @@ export function registerProgress(
         name: "lz-report-progress",
         description:
           "Record a concise progress note or handoff for this assigned worker attempt. Commentary is an annotation only: it cannot verify, accept, schedule, or change task state. Identity is resolved from the current native worker session.",
-        input: z.toJSONSchema(ProgressInput, { io: "input" }),
+        input: declareInput(ProgressInput),
         output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
         options: {
           codemode: true,
