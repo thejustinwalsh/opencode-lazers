@@ -48,12 +48,12 @@ command results and cleanup are retained separately. There is no
 
 ## Deleted-worker cancellation defect
 
-Previously, both missing-session branches in `TaskRuntime.cancelWorkers()` set
+Previously, both missing-session branches in `Cancellation.cancelWorkers()` set
 `waiting = true` indefinitely. Native `RunnerHost.session()` null means an
 authoritative missing session; transport errors throw instead. The plan remained
 `cancelling` and could not reach its normal retry flow.
 
-`TaskRuntime.cancelMissingWorker()` now rechecks the exact latest attempt and
+`Cancellation.cancelMissingWorker()` now rechecks the exact latest attempt and
 current plan ownership/state, refuses unsettled attempt effects, and uses the
 existing cancellation transition. `WORKER_SESSION_ABSENT` records the observation
 with Unix milliseconds. It does not fabricate a worker success, interrupt another
@@ -79,7 +79,7 @@ reports it now: session not busy, no pending input, permission or form, no
 running shell whose cwd is inside the worktree, and no active child session.
 `RunnerHost.session()` supplies `busy`, `pendingInput`, `pendingPermissions`,
 `pendingForms`, `runningShells` and `activeChildren` from the same reads every
-tick; `TaskRuntime.backgroundBlockReason()` turns a positive shell or child
+tick; `WorkerObservation.backgroundBlockReason()` turns a positive shell or child
 count into a visible `WORKER_BACKGROUND_WAIT` hold. `unknown` no longer exists:
 an unreadable host throws and the next tick asks again.
 
@@ -197,7 +197,7 @@ classified, so a stall-capable state cannot be added silently.
 ### Holds advertise their unblocking actions
 
 `hold-actions.ts` maps each hold-reason family to the actions that unblock it.
-`TaskRuntime.hold()` advertises the caller's actions merged with that family's
+`RuntimeJournal.hold()` advertises the caller's actions merged with that family's
 actions; read-only `audit` never counts. A reason that matches no family still
 advertises `reconcile` and `cancel`. `hold-actions.test.ts` checks every family
 and that every literal reason in the runtime maps to a named family.
