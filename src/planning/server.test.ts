@@ -35,15 +35,13 @@ function fixture(features: unknown) {
                 q.type === "predicate"
                   ? { type: "predicate", name: q.name, probability: 0.4 }
                   : {
-                      type: "choice",
+                      type: "score",
                       name: q.name,
-                      choice: "a few tasks",
                       probabilities: [
-                        { value: "one task", probability: 0.1 },
-                        { value: "a few tasks", probability: 0.8 },
-                        { value: "a large effort", probability: 0.1 },
+                        { value: 0, label: "one", probability: 0.1 },
+                        { value: 1, label: "few", probability: 0.8 },
+                        { value: 2, label: "many", probability: 0.1 },
                       ],
-                      confidence: 0.8,
                     },
             ),
             tokens: { input: 30 },
@@ -73,7 +71,7 @@ test("a switched-off decisions feature is recorded as feature-off and the note g
   service.start(ask)
   const note = await service.noteFor("s1", "m1")
   expect(note).toContain("decision model not run (feature-off)")
-  expect(note).toContain("answer these yourself")
+  expect(note).toContain("answer these about the ask yourself")
   const row = repository.read((db) =>
     db
       .query<{ status: string; reason: string }, []>(
@@ -94,7 +92,7 @@ test("Settings choose the external model and the slicer", async () => {
   setGlobalSetting(repository, "decisionSlicer", "whole")
   service.start(ask)
   const note = await service.noteFor("s1", "m1")
-  expect(note).toContain("size: a few tasks")
+  expect(note).toContain("Size guess: a few tasks")
   expect(sent.length).toBeGreaterThan(0)
   const row = repository.read((db) =>
     db

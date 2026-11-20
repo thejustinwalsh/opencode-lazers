@@ -1,5 +1,6 @@
 import type { FindingSeverity } from "./contract.ts"
 import type { PlanningBody, Validation } from "./draft.ts"
+import { OBSERVATIONS, bandOf, observationWord, type Band } from "./decision/observations.ts"
 import { AGENT_ORDER, SIZE_CHOICES, SIZE_CRITERIA, useWhen } from "./decision/tree.ts"
 import { planMarkdownLink } from "./links.ts"
 import { firstSentence } from "./sentence.ts"
@@ -117,16 +118,26 @@ export type DecisionDelivery = {
 
 const score = (n: number) => n.toFixed(2)
 
+const bandWord = { yes: "yes", architect: "Architect decides", no: "no" } as const
+
 /**
- * The one block delivered with the Architect's user message, in the model request only. Its
- * numbers are context, never routing: every planning agent runs on a stored plan. With no decision
- * model it carries the decision model's own questions, from the same definitions, so the
- * Architect classifies the ask itself and says so in one line.
+ * The one block delivered with the Architect's user message, in the model request only. The
+ * decision model's judgments are stated in plain words, then what the rules make of them for each
+ * agent. Nothing here routes: every planning agent runs on a stored plan, and the size is a
+ * recorded guess. With no decision model the note carries the same observations as questions, from
+ * the same definitions, so the Architect classifies the ask itself and says so in one line.
  */
 export function decisionNote(
   row: Pick<
     DecisionRow,
-    "messageId" | "status" | "reason" | "size" | "scoresJson" | "threshold" | "deciderModel"
+    | "messageId"
+    | "status"
+    | "reason"
+    | "size"
+    | "scoresJson"
+    | "observationsJson"
+    | "threshold"
+    | "deciderModel"
   >,
   openPlannings: readonly { title: string; state: string }[] = [],
   delivery: DecisionDelivery = {},
@@ -138,25 +149,35 @@ export function decisionNote(
   if (row.status === "unavailable") {
     return [
       `${header} decision model not run (${row.reason ?? "unavailable"})${open}`,
-      'Before planning, answer these yourself and state your picks in one line ("size: <choice> · agents: <ids>"), and pass them as `architectPick` when you store the plan with `lz-plan-draft`. All five agents run on a stored plan; your picks are recorded as context.',
+      'Before planning, answer these about the ask yourself (yes, unsure or no) and state your picks in one line ("size: <choice> · agents: <ids>"), and pass them as `architectPick` when you store the plan with `lz-plan-draft`. All five agents run on a stored plan; your picks are recorded as context.',
+      "The text:",
+      ...OBSERVATIONS.map((observation) => `- ${observation.phrase}?`),
       `size, one of: ${SIZE_CHOICES.map((choice) => `${choice} (${SIZE_CRITERIA[choice]})`).join("; ")}`,
       "agents, use when:",
       ...AGENT_ORDER.map((id) => `- ${id}: ${useWhen(id)}`),
       ...(delivery.runbook ? [delivery.runbook] : []),
     ].join("\n")
   }
-  const size = row.size ?? "unknown"
-  if (size === "one task")
-    return `${header} size: one task — no planning flow; ask one question first if the ask is unclear.${open}`
-  const scores = row.scoresJson
-    ? (JSON.parse(row.scoresJson) as Record<string, { score: number }>)
+  const observations = row.observationsJson
+    ? (JSON.parse(row.observationsJson) as Record<string, { score: number }>)
     : {}
-  const listed = AGENT_ORDER.filter((id) => scores[id]).map(
-    (id) => `${id} ${score(scores[id]!.score)}`,
+  const scores = row.scoresJson
+    ? (JSON.parse(row.scoresJson) as Record<string, { score: number; band?: Band }>)
+    : {}
+  const stated = OBSERVATIONS.filter((observation) => observations[observation.id]).map(
+    (observation) => {
+      const value = observations[observation.id]!.score
+      return `${observation.phrase}: ${observationWord(bandOf(value))} ${score(value)}`
+    },
+  )
+  const agents = AGENT_ORDER.filter((id) => scores[id]).map(
+    (id) => `${id} ${bandWord[scores[id]!.band ?? bandOf(scores[id]!.score)]}`,
   )
   return [
-    `${header} size: ${size}${listed.length ? ` · agent scores: ${listed.join(", ")}` : ""}${open}`,
-    `All five planning agents run on a stored plan; the scores are context (threshold ${row.threshold ?? 0}, hand-picked; cuts none).`,
+    `${header} The decision model read the ask piece by piece${open}`,
+    ...(stated.length ? [`It says: ${stated.join(" · ")}`] : []),
+    ...(agents.length ? [`Planning agents: ${agents.join(", ")}`] : []),
+    `Size guess: ${row.size ?? "unknown"} (unreliable, about 40% right; judge it yourself). All five planning agents run on a stored plan; this is context, not routing.`,
     ...(delivery.runbook ? [delivery.runbook] : []),
   ].join("\n")
 }

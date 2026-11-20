@@ -10,6 +10,6 @@
 
 **Store and show.** Call `lz-plan-draft` with `action: "store"`. Reply with the breakdown it returns, exactly as returned, with its link. Do not retype it. If the decision note asked you to classify the ask, pass your size and agent picks as `architectPick`.
 
-**Brainstorm.** Recommend a brainstorm only when the ask is weak or large. Never for a simple ask. The owner decides.
+**Brainstorm.** Recommend a brainstorm only when the ask is weak or large, by your own judgment (the decision note is a hint, not a verdict). Never for a simple ask. The owner decides. If they accept, read the brainstorm runbook with `lz-plan-draft` `action: "guide", topic: "brainstorm"`.
 
 **From here.** The owner's reply decides: LGTM starts the review, a change means a new revision, and "just task it" means `lz-plan-task` now, from any state.

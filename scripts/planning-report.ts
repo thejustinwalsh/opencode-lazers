@@ -2,7 +2,8 @@
  * Read-only report and replay of recorded planning decisions.
  *
  *   bun scripts/planning-report.ts [--db <tasks.sqlite>] [--project <key>] [--since <iso>] [--json]
- *                                  [--replay --strategy windows|whole|pre-slice|uncertainty]
+ *                                  [--replay --strategy windows|whole|pre-slice|uncertainty
+ *                                   --form observations|yesno|choice]
  *
  * The database opens read-only (`mode=ro`); nothing is written. `--replay` re-runs the decision
  * procedure on the recorded ask texts through the live local model and prints how its answers
@@ -18,6 +19,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
+import { bandOf } from "../src/planning/decision/observations.ts"
 import { AGENT_ORDER } from "../src/planning/decision/tree.ts"
 import { localDecider } from "../src/planning/decision/deciders.ts"
 import { decide } from "../src/planning/decision/procedure.ts"
@@ -71,6 +73,10 @@ export type DecisionReport = {
   flags: { agent: string; flag: "picked-for-nearly-every-ask" }[]
   nodeLatency: Record<string, { calls: number; p50Ms: number; p95Ms: number }>
   strategies: Record<string, number>
+  /** Per observation: how many decisions had it at yes, unsure or no (rule bands 0.7 / 0.3). */
+  observations: Record<string, { yes: number; unsure: number; no: number; yesRate: number }>
+  /** Per agent: the rule's band over the decisions that recorded one. */
+  agentBands: Record<string, { yes: number; architect: number; no: number }>
   architectAgreement?: { compared: number; sizeAgree: number }
 }
 
@@ -135,6 +141,33 @@ export function decisionReport(
       ]
     }),
   )
+  const observations: DecisionReport["observations"] = {}
+  const agentBands: DecisionReport["agentBands"] = {}
+  const withObservations = db
+    .query<{ observations_json: string | null; scores_json: string | null }, (string | number)[]>(
+      `SELECT observations_json, scores_json FROM planning_decisions${sql}`,
+    )
+    .all(...args)
+  for (const row of withObservations) {
+    if (row.observations_json)
+      for (const [id, value] of Object.entries(
+        JSON.parse(row.observations_json) as Record<string, { score: number }>,
+      )) {
+        const entry = (observations[id] ??= { yes: 0, unsure: 0, no: 0, yesRate: 0 })
+        const band = bandOf(value.score)
+        entry[band === "architect" ? "unsure" : band]++
+      }
+    if (row.scores_json)
+      for (const [agent, value] of Object.entries(
+        JSON.parse(row.scores_json) as Record<string, { score: number; band?: string }>,
+      )) {
+        if (!value.band) continue
+        const entry = (agentBands[agent] ??= { yes: 0, architect: 0, no: 0 })
+        entry[value.band as "yes" | "architect" | "no"]++
+      }
+  }
+  for (const entry of Object.values(observations))
+    entry.yesRate = entry.yes / (entry.yes + entry.unsure + entry.no)
   return {
     decisions: { total: rows.length },
     byStatus: {
@@ -145,6 +178,8 @@ export function decisionReport(
     flags,
     nodeLatency,
     strategies,
+    observations,
+    agentBands,
   }
 }
 
@@ -163,6 +198,8 @@ export async function replayDecisions(
   strategy: SlicerStrategy,
   decider: Parameters<typeof decide>[1]["decider"],
   filter: Filter = {},
+  /** `observations` is the live form; `yesno` and `choice` are the old question forms, for comparison. */
+  form: "observations" | "yesno" | "choice" = "observations",
 ): Promise<ReplayResult> {
   const { sql, args } = where(filter)
   const rows = db
@@ -181,7 +218,7 @@ export async function replayDecisions(
     const outcome = await decide(row.ask_text, {
       decider,
       clock: () => performance.now(),
-      constants: { strategy },
+      constants: { strategy, agentForm: form },
       signal: new AbortController().signal,
     })
     if (outcome.status !== "decided") {
@@ -224,6 +261,14 @@ function text(report: DecisionReport): string {
     "node latency by input chars:",
     ...Object.entries(report.nodeLatency).map(
       ([label, v]) => `  ${label}: ${v.calls} calls, p50 ${v.p50Ms} ms, p95 ${v.p95Ms} ms`,
+    ),
+    "observations (yes / unsure / no):",
+    ...Object.entries(report.observations).map(
+      ([id, v]) => `  ${id}: ${v.yes} / ${v.unsure} / ${v.no} (yes ${percent(v.yesRate)})`,
+    ),
+    "agent bands (yes / Architect decides / no):",
+    ...Object.entries(report.agentBands).map(
+      ([agent, v]) => `  ${agent}: ${v.yes} / ${v.architect} / ${v.no}`,
     ),
     `strategies: ${Object.entries(report.strategies)
       .map(([name, n]) => `${name} ${n}`)
@@ -585,7 +630,8 @@ async function main() {
       (input) => rpc.systemOne(SystemOneRequest.parse(input)) as never,
     )
     const strategy = (value("--strategy") ?? "windows") as SlicerStrategy
-    const result = await replayDecisions(db, strategy, decider, filter)
+    const form = (value("--form") ?? "observations") as "observations" | "yesno" | "choice"
+    const result = await replayDecisions(db, strategy, decider, filter, form)
     console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : JSON.stringify(result))
     return
   }

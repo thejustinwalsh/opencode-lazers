@@ -46,6 +46,11 @@ export function localDecider(
             probabilities: answer.probabilities as Record<string, number>,
             confidence: answer.confidence as number,
           }
+        else if (answer.type === "score")
+          answers[name] = {
+            type: "score",
+            probabilities: answer.probabilities as Record<string, number>,
+          }
       }
       return { answers, inputTokens: reply.usage.input_tokens }
     },
@@ -65,6 +70,7 @@ type ExternalQuestion =
       instructions: string
       choices: { value: string; description?: string }[]
     }
+  | { type: "score"; name: string; instructions: string; levels: { label: string }[] }
 type ExternalAnswer =
   | { type: "predicate"; name: string; probability: number }
   | {
@@ -74,7 +80,11 @@ type ExternalAnswer =
       probabilities: { value: string | boolean; probability: number }[]
       confidence: number
     }
-  | { type: "score"; name: string }
+  | {
+      type: "score"
+      name: string
+      probabilities: { value: number; label: string; probability: number }[]
+    }
   | { type: "error"; name: string; reason: string; message?: string }
 
 /** The host's `generate.decisions`, narrowed to what the decider sends and reads. */
@@ -121,7 +131,12 @@ function externalQuestion(name: string, question: SystemOneQuestion): ExternalQu
         ...(description ? { description: String(description) } : {}),
       })),
     }
-  throw new Error("The decision procedure asks only yes/no and choice questions")
+  return {
+    type: "score",
+    name,
+    instructions,
+    levels: question.criteria.map((level) => ({ label: String(level) })),
+  }
 }
 
 /**
@@ -157,6 +172,13 @@ export function externalDecider(
         if (answer.type === "error") throw new Error(`${answer.reason}: ${answer.message ?? ""}`)
         if (answer.type === "predicate")
           answers[answer.name] = { type: "noul", noul: answer.probability }
+        else if (answer.type === "score")
+          answers[answer.name] = {
+            type: "score",
+            probabilities: Object.fromEntries(
+              answer.probabilities.map((p) => [String(p.value), p.probability]),
+            ),
+          }
         else if (answer.type === "choice")
           answers[answer.name] = {
             type: "choice",

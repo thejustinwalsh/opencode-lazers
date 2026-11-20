@@ -153,7 +153,7 @@ test("replay compares a strategy with the recorded decisions on the same asks an
   const before = repository.read((db) =>
     db.query("SELECT COUNT(*) n FROM planning_decisions").get(),
   )
-  const result = await repository.read((db) => replayDecisions(db, "whole", decider))
+  const result = await repository.read((db) => replayDecisions(db, "whole", decider, {}, "yesno"))
   expect(result).toMatchObject({ strategy: "whole", compared: 11, skipped: 0 })
   expect(result.sizeAgree).toBe(8)
   expect(result.simpleOrComplexAgree).toBe(8)
@@ -360,4 +360,52 @@ test("reviews: cost appears only when every run of the agent is priced", () => {
     repository.read((db) => reviewsReport(db, {}, () => undefined)).agents.grounding!.costUSD,
   ).toBeUndefined()
   expect(repository.read((db) => reviewsReport(db)).agents.grounding!.costUSD).toBeUndefined()
+})
+
+test("per-observation yes rates and agent bands are reported", () => {
+  const { repository, store } = database()
+  const band = (score: number) => (score >= 0.7 ? "yes" : score <= 0.3 ? "no" : "architect")
+  const decision = (n: number, names: number, choice: number) =>
+    store.recordDecision(
+      row(n, {
+        observationsJson: JSON.stringify({
+          names_code: { score: names, nodeID: "0" },
+          open_choice: { score: choice, nodeID: "0" },
+        }),
+        scoresJson: JSON.stringify({
+          grounding: { score: names, band: band(names) },
+          readiness: { score: choice, band: band(choice) },
+        }),
+      }),
+    )
+  decision(1, 0.9, 0.5)
+  decision(2, 0.8, 0.1)
+  decision(3, 0.2, 0.5)
+  const report = repository.read((db) => decisionReport(db))
+  if ("empty" in report) throw new Error("empty")
+  expect(report.observations.names_code).toMatchObject({ yes: 2, unsure: 0, no: 1 })
+  expect(report.observations.names_code!.yesRate).toBeCloseTo(2 / 3)
+  expect(report.observations.open_choice).toMatchObject({ yes: 0, unsure: 2, no: 1 })
+  expect(report.agentBands.grounding).toEqual({ yes: 2, architect: 0, no: 1 })
+  expect(report.agentBands.readiness).toEqual({ yes: 0, architect: 2, no: 1 })
+})
+
+test("replay runs the observation form by default", async () => {
+  const { repository } = fixture()
+  const decider: Decider = {
+    id: "local",
+    model: "stub",
+    available: () => ({ ok: true }),
+    async ask(_state, questions) {
+      const answers: Answers = {}
+      for (const name of Object.keys(questions))
+        answers[name] =
+          name === "breadth"
+            ? { type: "score", probabilities: { "0": 0.9, "1": 0.1, "2": 0 } }
+            : { type: "noul", noul: 0.8 }
+      return { answers, inputTokens: 10 }
+    },
+  }
+  const result = await repository.read((db) => replayDecisions(db, "whole", decider))
+  expect(result).toMatchObject({ strategy: "whole", compared: 11, skipped: 0 })
 })
