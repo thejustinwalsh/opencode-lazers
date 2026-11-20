@@ -62,9 +62,9 @@ test("read-only ledger retains failed/retried work, genuine artifact acceptance,
   try {
     const output = reader.read({ limit: 100 })
     const retry = task(output, fixture.tasks.retry!.id)
-    expect(output.status).toBe("partial")
-    expect(output.completeness.status).toBe("partial")
-    expect(output.pin?.completeness).toBe("partial")
+    expect(output.status).toBe("available")
+    expect(output.completeness.status).toBe("complete")
+    expect(output.pin?.completeness).toBe("complete")
     expect(retry).toMatchObject({
       submittedStatus: "submitted",
       classification: {
@@ -224,12 +224,13 @@ test("shared sessions are captured once, never allocated to tasks, and route occ
       totalTokens: { value: 70, status: "observed" },
     })
 
-    const fact = first.progressFacts.find((item) => item.observationCoverage === "truncated")
+    // The fact carries 27 observations: every one is reachable, none is dropped.
+    const fact = first.progressFacts.find((item) => item.observations.length === 27)
     assert.ok(fact)
-    expect(fact).toMatchObject({ observationCoverage: "truncated", omittedObservationCount: 2 })
-    expect(fact.observations[0]).toMatchObject({ routeStatus: "unavailable", route: null })
-    expect(fact.observations).toHaveLength(25)
-    expect(new Set(fact.observations.map((item) => item.occurrenceID)).size).toBe(25)
+    expect(fact).toMatchObject({ observationCoverage: "complete", omittedObservationCount: 0 })
+    expect(fact.observations[2]).toMatchObject({ routeStatus: "unavailable", route: null })
+    expect(fact.observations[3]).toMatchObject({ routeStatus: "unavailable", route: null })
+    expect(new Set(fact.observations.map((item) => item.occurrenceID)).size).toBe(27)
     expect(fact.observations.every((item) => item.observedAt === null)).toBe(true)
     expect(fact.observations.every((item) => item.eventID === null)).toBe(true)
 
@@ -238,9 +239,9 @@ test("shared sessions are captured once, never allocated to tasks, and route occ
     expect(attempt.observedRoutes).toMatchObject({
       status: "mixed-routes",
       route: null,
-      coverage: "truncated",
-      omittedOccurrenceCount: 2,
-      attribution: "incomplete-truncated-route-observations",
+      coverage: "complete",
+      omittedOccurrenceCount: 0,
+      attribution: "ambiguous-mixed-routes",
     })
     expect(new Set(attempt.observedRoutes.occurrences.map((item) => item.occurrenceID)).size).toBe(
       attempt.observedRoutes.occurrences.length,
@@ -287,7 +288,7 @@ test("all pages share one complete capture pin and reject tampered, foreign, mis
     expect(new Set(pages.map((item) => item.pin?.snapshotID)).size).toBe(1)
     expect(new Set(pages.map((item) => item.pin?.sourceFingerprint)).size).toBe(1)
     expect(new Set(pages.map((item) => item.pin?.capturedAt)).size).toBe(1)
-    expect(pages.every((item) => item.completeness.status === "partial")).toBe(true)
+    expect(pages.every((item) => item.completeness.status === "complete")).toBe(true)
     expect(
       pages
         .flatMap((item) => item.sessionContributions)

@@ -40,7 +40,7 @@ const ClassificationSchema = z.strictObject({
   kind: TaskKind.nullable(),
   revision: z.number().int().nonnegative().nullable(),
   provenance: TaskClassificationProvenance.nullable(),
-  history: z.array(TaskClassificationRevision).max(20_001),
+  history: z.array(TaskClassificationRevision),
   status: z.enum(["available", "unavailable"]),
 })
 
@@ -67,8 +67,8 @@ const RouteObservationsSchema = z.strictObject({
   status: z.enum(["none", "single-route", "mixed-routes", "unavailable"]),
   coverage: z.enum(["complete", "truncated"]),
   route: Route.nullable(),
-  distinctRoutes: z.array(Route).max(250_000),
-  occurrences: z.array(RouteOccurrenceSchema).max(250_000),
+  distinctRoutes: z.array(Route),
+  occurrences: z.array(RouteOccurrenceSchema),
   omittedOccurrenceCount: z.number().int().nonnegative(),
   attribution: z.enum([
     "unknown",
@@ -115,7 +115,7 @@ const TotalTokensSchema = z.strictObject({
   status: z.enum(["observed", "partial", "missing", "unavailable", "ambiguous"]),
   valueScope: z.enum(["selected-session-categories", "observed-subtotal", "unknown"]),
   basis: z.literal("sum-of-categorized-session-usage; legacy attempt scalars are not added"),
-  unallocatedSessionIDs: z.array(z.string().min(1).max(2048)).max(20_000),
+  unallocatedSessionIDs: z.array(z.string().min(1).max(2048)),
 })
 
 const AttemptSchema = z.strictObject({
@@ -164,8 +164,8 @@ const ProgressFactSchema = z.strictObject({
   messageID: z.string().max(2048).nullable(),
   callID: z.string().max(2048).nullable(),
   source: z.string().max(160),
-  sources: z.array(z.string().max(160)).max(100),
-  eventIDs: z.array(z.string().max(2048)).max(100),
+  sources: z.array(z.string().max(160)),
+  eventIDs: z.array(z.string().max(2048)),
   kind: z.string().max(160),
   at: z.number().int(),
   recordedAt: z.number().int().nullable(),
@@ -182,7 +182,7 @@ const ProgressFactSchema = z.strictObject({
     .nullable(),
   route: Route.nullable(),
   routeStatus: z.enum(["not-observed", "exact", "unavailable"]),
-  observations: z.array(ProgressObservationSchema).max(25),
+  observations: z.array(ProgressObservationSchema),
   observationCoverage: z.enum(["complete", "truncated"]),
   omittedObservationCount: z.number().int().nonnegative(),
 })
@@ -192,7 +192,7 @@ const ExecutionSchema = z.strictObject({
   planState: z.string().max(160),
   nodeState: z.string().max(160),
   artifact: z.string().max(2048).nullable(),
-  attemptIDs: z.array(z.string().min(1).max(2048)).max(20_000),
+  attemptIDs: z.array(z.string().min(1).max(2048)),
 })
 
 const AcceptanceEvidenceSchema = z.strictObject({
@@ -219,7 +219,7 @@ const DispositionSchema = z.strictObject({
       }),
     )
     .max(20),
-  relatedTaskIDs: z.array(z.string().min(1).max(2048)).max(20),
+  relatedTaskIDs: z.array(z.string().min(1).max(2048)),
   sessionID: z.string().max(2048),
   agent: z.string().max(200),
   createdAt: z.string().max(64),
@@ -259,23 +259,23 @@ const TaskSchema = z.strictObject({
     accepted: z.boolean(),
     acceptedAt: z.number().int().nullable(),
     acceptedTaskCount: z.literal(1).or(z.literal(0)),
-    evidence: z.array(AcceptanceEvidenceSchema).max(50_000),
+    evidence: z.array(AcceptanceEvidenceSchema),
   }),
-  executions: z.array(ExecutionSchema).max(20_000),
-  attempts: z.array(AttemptSchema).max(20_000),
-  sessionIDs: z.array(z.string().min(1).max(2048)).max(20_000),
-  progressFacts: z.array(ProgressFactSchema).max(10_000),
+  executions: z.array(ExecutionSchema),
+  attempts: z.array(AttemptSchema),
+  sessionIDs: z.array(z.string().min(1).max(2048)),
+  progressFacts: z.array(ProgressFactSchema),
   usage: z.strictObject({ categories: UsageCategoriesSchema, totalTokens: TotalTokensSchema }),
-  dispositions: z.array(DispositionSchema).max(20_000),
-  adoptions: z.array(AdoptionSchema).max(20_000),
-  transitions: z.array(TransitionSchema).max(50_000),
+  dispositions: z.array(DispositionSchema),
+  adoptions: z.array(AdoptionSchema),
+  transitions: z.array(TransitionSchema),
 })
 
 const SessionContributionSchema = z.strictObject({
   sessionID: z.string().min(1).max(2048),
   pageAnchorTaskID: z.string().min(1).max(2048),
-  taskIDs: z.array(z.string().min(1).max(2048)).max(20_000),
-  attemptIDs: z.array(z.string().min(1).max(2048)).max(20_000),
+  taskIDs: z.array(z.string().min(1).max(2048)),
+  attemptIDs: z.array(z.string().min(1).max(2048)),
   allocation: z.enum(["one-logical-task", "ambiguous-shared-logical-tasks"]),
   categories: UsageCategoriesSchema,
   totalTokens: TotalTokensSchema,
@@ -285,7 +285,7 @@ const SessionContributionSchema = z.strictObject({
 const SourceSchema = z.strictObject({
   name: z.string().min(1).max(160),
   status: z.enum(["available", "missing-table", "missing-columns", "legacy-absent", "unavailable"]),
-  missingColumns: z.array(z.string().max(160)).max(100),
+  missingColumns: z.array(z.string().max(160)),
 })
 
 export const ObservationLedgerOutputSchema = z.strictObject({
@@ -307,20 +307,8 @@ export const ObservationLedgerOutputSchema = z.strictObject({
     .nullable(),
   completeness: z.strictObject({
     status: z.enum(["complete", "partial", "incomplete", "unavailable"]),
-    reasons: z.array(z.string().max(500)).max(100),
-    sources: z.array(SourceSchema).max(20),
-    limits: z.strictObject({
-      tasks: z.number().int().positive(),
-      plans: z.number().int().positive(),
-      attempts: z.number().int().positive(),
-      transitions: z.number().int().positive(),
-      adoptions: z.number().int().positive(),
-      dispositions: z.number().int().positive(),
-      classifications: z.number().int().positive(),
-      progressFacts: z.number().int().positive(),
-      captureBytes: z.number().int().positive(),
-      observationsPerFact: z.number().int().positive(),
-    }),
+    reasons: z.array(z.string().max(500)),
+    sources: z.array(SourceSchema),
   }),
   classificationCoverage: z.strictObject({
     classifiedTaskCount: z.number().int().nonnegative().nullable(),
@@ -337,7 +325,7 @@ export const ObservationLedgerOutputSchema = z.strictObject({
     totalSessionContributionCount: z.number().int().nonnegative().nullable(),
   }),
   tasks: z.array(TaskSchema).max(100),
-  sessionContributions: z.array(SessionContributionSchema).max(20_000),
+  sessionContributions: z.array(SessionContributionSchema),
   nextCursor: z.string().max(8192).nullable(),
   unavailableReason: z
     .enum(["database-missing", "database-unavailable", "task-table-missing"])
