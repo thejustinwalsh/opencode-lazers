@@ -7,8 +7,8 @@ import { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
-import { decodeUnitCursor, encodeUnitCursor, unitIndex } from "../projects/scope.ts"
-import type { ProjectUnit } from "../projects/scope.ts"
+import { allowAll, encodeUnitCursor, pickUnit } from "../projects/scope.ts"
+import type { CanRead, ProjectUnit } from "../projects/scope.ts"
 import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
@@ -114,32 +114,34 @@ export class TaskReads {
    * across pages; a checkout with no matching task is skipped. `units` are the checkouts the
    * caller may read and `sessionID` is the caller, not a filter.
    */
-  queryAll(input: unknown, units: readonly ProjectUnit[]): TaskPage {
+  async queryAll(
+    input: unknown,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<TaskPage> {
     const { allProjects, sessionID: _caller, cursor, ...rest } = QueryInput.parse(input)
     if (!allProjects) throw new Error("Not an all-projects query")
-    const position = cursor ? decodeUnitCursor(cursor) : undefined
-    let inner = position?.inner
-    for (let index = unitIndex(units, position); index < units.length; index++) {
-      const unit = units[index]!
-      const repository = new TaskRepository(this.repository.path, unit.directory)
+    const canRead = access.canRead ?? allowAll
+    let from = cursor
+    for (;;) {
+      const picked = await pickUnit(access.units, from, canRead)
+      if (!picked) break
+      const repository = new TaskRepository(this.repository.path, picked.unit.directory)
       try {
         const page = new TaskReads(repository).query({
           ...rest,
-          ...(inner ? { cursor: inner } : {}),
+          ...(picked.inner ? { cursor: picked.inner } : {}),
         })
-        inner = undefined
-        if (page.tasks.length === 0 && !page.nextCursor) continue
-        const next = units[index + 1]
-        return {
-          ...page,
-          project: unit.project,
-          tasks: page.tasks.map((task) => ({ ...task, project: unit.project })),
-          nextCursor: page.nextCursor
-            ? encodeUnitCursor({ directory: unit.directory, inner: page.nextCursor })
-            : next
-              ? encodeUnitCursor({ directory: next.directory })
-              : null,
-        }
+        if (page.tasks.length > 0 || page.nextCursor)
+          return {
+            ...page,
+            project: picked.unit.project,
+            tasks: page.tasks.map((task) => ({ ...task, project: picked.unit.project })),
+            nextCursor: page.nextCursor
+              ? encodeUnitCursor({ directory: picked.unit.directory, inner: page.nextCursor })
+              : picked.nextCursor,
+          }
+        if (!picked.nextCursor) break
+        from = picked.nextCursor
       } finally {
         repository.close()
       }

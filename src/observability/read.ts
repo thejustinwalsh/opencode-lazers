@@ -5,7 +5,6 @@ import type { ProgressRow } from "../runner/store.ts"
 import { TaskState } from "../runner/schema.ts"
 import { PlanInput } from "../runner/schema.ts"
 import { machineVersion, taskMachine } from "../runner/machine.ts"
-import type { RunnerStore } from "../runner/store.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TrajectoryHost } from "../trajectory/native.ts"
 import {
@@ -17,7 +16,6 @@ import { TrajectoryHistoryCache } from "../trajectory/history.ts"
 import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
-import type { ObservationChangeTracker } from "./changes.ts"
 import { sourceStampFromDatabase } from "./changes.ts"
 import { projectAssociations, sessionAssociations } from "./associations.ts"
 import { associatedSessionIDs } from "./associations.ts"
@@ -43,8 +41,11 @@ import type {
   TrajectoryStatusRequest,
 } from "./contract.ts"
 import { singleScope } from "./contract.ts"
-import { decodeUnitCursor, encodeUnitCursor, unitIndex } from "../projects/scope.ts"
-import type { ProjectUnit } from "../projects/scope.ts"
+import { allowAll, canonicalPath, pickUnit } from "../projects/scope.ts"
+import type { CanRead, ProjectRef, ProjectUnit } from "../projects/scope.ts"
+import { RunnerStore } from "../runner/store.ts"
+import { TaskRepository } from "../storage.ts"
+import { ObservationChangeTracker } from "./changes.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
@@ -1913,6 +1914,34 @@ export class ObservationReadChangedError extends Error {
   }
 }
 
+export type UnitReads = {
+  reads: ObservationReads
+  tracker: ObservationChangeTracker
+  release(): void
+}
+
+const unavailable = () =>
+  Promise.reject(new Error("Native sessions of this project are not loaded here"))
+/** Native reads for a checkout that belongs to another OpenCode location: every call fails. */
+const UNAVAILABLE_SESSION_HOST: RadarSessionHost = {
+  get: unavailable,
+  project: unavailable,
+  descendants: unavailable,
+}
+const UNAVAILABLE_TRAJECTORY_HOST: TrajectoryHost = { session: unavailable, status: unavailable }
+
+/** The OpenCode project id recorded for a LAZERS project, when one is. */
+function opencodeProjectIDFor(repository: TaskRepository, key: string): string | undefined {
+  return repository.read(
+    (db) =>
+      db
+        .query<{ alias: string }, [string]>(
+          "SELECT alias FROM lazers_project_aliases WHERE key=? AND kind='opencode-project-id' ORDER BY first_seen_at LIMIT 1",
+        )
+        .get(key)?.alias,
+  )
+}
+
 export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
@@ -1929,14 +1958,20 @@ export class ObservationReads {
     private readonly taskValuationProvider?: TaskValuationProvider,
     /** `historyCacheMB` plugin option, in bytes. */
     historyCacheLimitBytes?: number,
+    /** Caches of the reads this one was derived from, so a continuation cursor survives. */
+    shared?: { history: TrajectoryHistoryCache; live: TrajectoryLiveCache },
   ) {
-    this.history = new TrajectoryHistoryCache(
-      secret,
-      historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
-    )
-    this.live = new TrajectoryLiveCache(
-      historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
-    )
+    this.history =
+      shared?.history ??
+      new TrajectoryHistoryCache(
+        secret,
+        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+      )
+    this.live =
+      shared?.live ??
+      new TrajectoryLiveCache(
+        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+      )
     this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
   }
 
@@ -2148,75 +2183,83 @@ export class ObservationReads {
   }
 
   /**
-   * One page of the all-projects topology: the plans of one checkout of one project, each marked
-   * with its project, and the cursor of the next checkout. `units` are the checkouts the caller
-   * may read; the page never reads another.
+   * The reads of one checkout of one project. The caller's own checkout is this object with the
+   * caller's tracker. Any other checkout gets reads of its own whose native host and session
+   * inventory are unavailable (those belong to another OpenCode location), so every live field of
+   * such a project reads as unavailable and nothing is invented. `release` closes what was opened.
    */
-  topologyAll(
-    input: { scope: Extract<ObservationScope, { kind: "all" }>; cursor?: string },
-    tracker: ObservationChangeTracker,
-    units: readonly ProjectUnit[],
-  ): TopologyResponse {
-    const index = unitIndex(units, input.cursor ? decodeUnitCursor(input.cursor) : undefined)
-    const unit = units[index]
-    const next = units[index + 1]
-    const nextCursor = next ? encodeUnitCursor({ directory: next.directory }) : null
-    if (!unit)
-      return {
-        schemaVersion: 1,
-        projectID: this.projectID,
-        scope: { kind: "all" },
-        observedAt: new Date().toISOString(),
-        boundary: {
-          repositoryVersion: 0,
-          sourceRevision: 0,
-          sourceFingerprint: "0".repeat(64),
-          nativeRevision: 0,
-          eventSequence: 0,
-        },
-        nextCursor: null,
-        plans: [],
-        unplannedTasks: [],
-      }
-    const connection = openReadOnlyTrajectoryStore(
-      this.store.repository.path,
-      this.store.repository.projectDirectory,
+  forUnit(unit: ProjectUnit, ownTracker: ObservationChangeTracker): UnitReads {
+    const directory = this.store.repository.projectDirectory
+    if (canonicalPath(unit.directory) === canonicalPath(directory))
+      return { reads: this, tracker: ownTracker, release() {} }
+    const repository = new TaskRepository(this.store.repository.path, unit.directory)
+    const store = new RunnerStore(repository)
+    const projectID = opencodeProjectIDFor(repository, unit.project.key) ?? unit.project.key
+    const reads = new ObservationReads(
+      store,
+      UNAVAILABLE_TRAJECTORY_HOST,
+      projectID,
+      this.secret,
+      UNAVAILABLE_SESSION_HOST,
+      this.taskValuationProvider,
+      undefined,
+      { history: this.history, live: this.live },
     )
+    const tracker = new ObservationChangeTracker(repository, this.secret, projectID)
+    return {
+      reads,
+      tracker,
+      release() {
+        tracker.close()
+        repository.close()
+      },
+    }
+  }
+
+  /**
+   * One page of an all-projects read: the first readable checkout at or after the cursor, read
+   * with that checkout's own project-scope read, marked with its project and the next cursor.
+   * Nothing is read for a checkout the caller may not see.
+   */
+  async allPage<T extends object>(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    ownTracker: ObservationChangeTracker,
+    access: { units: readonly ProjectUnit[]; canRead: CanRead },
+    read: (unit: UnitReads, scope: { kind: "project"; sessionID: string }) => T | Promise<T>,
+  ): Promise<
+    Omit<T, "scope"> & { scope: { kind: "all" }; project: ProjectRef; nextCursor: string | null }
+  > {
+    const picked = await pickUnit(access.units, input.cursor, access.canRead)
+    if (!picked) throw new Error("No project is readable in this scope")
+    const unit = this.forUnit(picked.unit, ownTracker)
     try {
-      const source = connection.store.read((db) =>
-        loadTopologySource(
-          db,
-          unit.directory,
-          { kind: "project", sessionID: input.scope.sessionID },
-          this.secret,
-        ),
-      )
-      const topology = projectTopology(source)
-      const latest = connection.store.read((db) =>
-        sourceStampFromDatabase(db, unit.directory, this.secret),
-      )
-      if (
-        source.stamp.repositoryVersion !== latest.repositoryVersion ||
-        source.stamp.sourceFingerprint !== latest.sourceFingerprint
-      )
-        throw new Error("Observation changed while reading; restart from a fresh snapshot")
-      const { transitionSequence: _transitionSequence, ...boundary } = tracker.boundaryFor(
-        latest,
-        0,
-      )
+      const page = await read(unit, { kind: "project", sessionID: input.scope.sessionID })
       return {
-        schemaVersion: 1,
-        projectID: this.projectID,
+        ...page,
         scope: { kind: "all" },
-        project: unit.project,
-        nextCursor,
-        observedAt: new Date().toISOString(),
-        boundary,
-        plans: topology.plans.map((plan) => ({ ...plan, project: unit.project })),
-        unplannedTasks: topology.unplannedTasks.map((task) => ({ ...task, project: unit.project })),
+        project: picked.unit.project,
+        nextCursor: picked.nextCursor,
       }
     } finally {
-      connection.close()
+      unit.release()
+    }
+  }
+
+  async topologyAll(
+    input: { scope: { kind: "all"; sessionID: string }; cursor?: string },
+    tracker: ObservationChangeTracker,
+    access: { units: readonly ProjectUnit[]; canRead?: CanRead },
+  ): Promise<TopologyResponse> {
+    const page = await this.allPage(
+      input,
+      tracker,
+      { units: access.units, canRead: access.canRead ?? allowAll },
+      (unit, scope) => unit.reads.topology(scope, unit.tracker),
+    )
+    return {
+      ...page,
+      plans: page.plans.map((plan) => ({ ...plan, project: page.project })),
+      unplannedTasks: page.unplannedTasks.map((task) => ({ ...task, project: page.project })),
     }
   }
 

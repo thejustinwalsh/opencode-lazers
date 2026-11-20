@@ -1,7 +1,15 @@
 import { afterEach, expect, test } from "bun:test"
 import { threeProjects } from "../../test/projects/three-projects.ts"
-import { readableUnits } from "./read-access.ts"
-import { decodeUnitCursor, encodeUnitCursor, isLoaded, projectUnits, unitIndex } from "./scope.ts"
+import { lazyGate } from "./read-access.ts"
+import {
+  decodeUnitCursor,
+  encodeUnitCursor,
+  isLoaded,
+  pickUnit,
+  projectUnits,
+  unitIndex,
+  unitToken,
+} from "./scope.ts"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -40,20 +48,23 @@ test("a project is loaded when any checkout is live, and loaded is read on every
 test("a cursor round-trips, a gone unit is refused, and garbage is refused", async () => {
   const three = await fixture()
   const units = projectUnits(three.projects[0]!.repository, () => [])
-  const cursor = { directory: units[1]!.directory, inner: "abc" }
-  expect(decodeUnitCursor(encodeUnitCursor(cursor))).toEqual(cursor)
+  const cursor = decodeUnitCursor(
+    encodeUnitCursor({ directory: units[1]!.directory, inner: "abc" }),
+  )
+  expect(cursor).toEqual({ unit: unitToken(units[1]!.directory), inner: "abc" })
+  expect(JSON.stringify(cursor)).not.toContain(units[1]!.directory)
   expect(unitIndex(units, cursor)).toBe(1)
   expect(unitIndex(units)).toBe(0)
-  expect(() => unitIndex(units, { directory: "/gone" })).toThrow("Invalid project cursor")
+  expect(() => unitIndex(units, { unit: unitToken("/gone") })).toThrow("Invalid project cursor")
   expect(() => decodeUnitCursor("not-a-cursor")).toThrow("Invalid project cursor")
 })
 
-test("readable units drop a refused project and always keep the caller's own", async () => {
+test("the gate asks lazily, once per project, never for the caller's own, and a refusal is skipped", async () => {
   const three = await fixture()
   const [a, b, c] = three.projects
   const units = projectUnits(a!.repository, () => [])
   const asked: string[][] = []
-  const allowed = await readableUnits(
+  const gate = lazyGate(
     async (resources) => {
       asked.push(resources)
       return !resources.includes(b!.directory)
@@ -61,6 +72,13 @@ test("readable units drop a refused project and always keep the caller's own", a
     units,
     a!.directory,
   )
-  expect(allowed.map((unit) => unit.project.code)).toEqual(["AAA", "CCC"])
+  const first = await pickUnit(units, undefined, gate)
+  expect(first?.unit.project.code).toBe("AAA")
+  expect(asked).toEqual([])
+  const second = await pickUnit(units, first!.nextCursor!, gate)
+  expect(second?.unit.project.code).toBe("CCC")
   expect(asked).toEqual([[b!.directory], [c!.directory]])
+  expect(second!.nextCursor).toBeNull()
+  await pickUnit(units, first!.nextCursor!, gate)
+  expect(asked).toHaveLength(2)
 })

@@ -8,7 +8,7 @@ import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability, singleScope, type ObservationChange } from "./contract.ts"
-import { allowedUnitsFor, callerSession } from "../projects/read-access.ts"
+import { allProjectsAccess, callerSession } from "../projects/read-access.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationReadChangedError } from "./read.ts"
@@ -83,8 +83,8 @@ export function registerObservability(
 ) {
   const loaded = options.loaded ?? loadedProjectDirectories
   /** The checkouts an all-projects read may show this caller; see `readableUnits`. */
-  const allowedUnits = (scope: { sessionID: string }) =>
-    allowedUnitsFor(ctx, {
+  const accessFor = (scope: { sessionID: string }) =>
+    allProjectsAccess(ctx, {
       sessionID: scope.sessionID,
       projectID,
       repository: reads.store.repository,
@@ -116,7 +116,7 @@ export function registerObservability(
               return reads.topologyAll(
                 { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
                 tracker,
-                await allowedUnits(input.scope),
+                await accessFor(input.scope),
               )
             await authorize(
               ctx,

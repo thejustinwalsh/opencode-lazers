@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
 import { addPlan, addTask, threeProjects } from "../../test/projects/three-projects.ts"
-import { projectUnits } from "../projects/scope.ts"
+import { encodeUnitCursor, projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -33,15 +33,17 @@ async function fixture(live: (three: Awaited<ReturnType<typeof threeProjects>>) 
 
 const all = { kind: "all" as const, sessionID: "ses-caller" }
 
-function pages(
+async function pages(
   reads: ObservationReads,
   tracker: ObservationChangeTracker,
   units: () => ProjectUnit[],
 ) {
-  const result: ReturnType<ObservationReads["topologyAll"]>[] = []
+  const result: Awaited<ReturnType<ObservationReads["topologyAll"]>>[] = []
   let cursor: string | undefined
   do {
-    const page = reads.topologyAll({ scope: all, ...(cursor ? { cursor } : {}) }, tracker, units())
+    const page = await reads.topologyAll({ scope: all, ...(cursor ? { cursor } : {}) }, tracker, {
+      units: units(),
+    })
     result.push(page)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
@@ -53,7 +55,7 @@ test("all returns each project's plans on its own page with the right code and l
     t.projects[0]!.directory,
     t.projects[1]!.directory,
   ])
-  const result = pages(reads, tracker, units)
+  const result = await pages(reads, tracker, units)
   expect(result.map((page) => [page.project?.code, page.project?.loaded])).toEqual([
     ["AAA", true],
     ["BBB", true],
@@ -73,11 +75,13 @@ test("all returns each project's plans on its own page with the right code and l
 test("a project that is not loaded is still readable, and later pages see a location that loads", async () => {
   let live: string[] = []
   const { three, reads, tracker, units } = await fixture(() => live)
-  const first = reads.topologyAll({ scope: all }, tracker, units())
+  const first = await reads.topologyAll({ scope: all }, tracker, { units: units() })
   expect(first.project?.loaded).toBe(false)
   expect(first.plans).toHaveLength(1)
   live = [three.projects[1]!.directory]
-  const second = reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, units())
+  const second = await reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, {
+    units: units(),
+  })
   expect(second.project).toMatchObject({ code: "BBB", loaded: true })
 })
 
@@ -101,7 +105,7 @@ test("a second checkout of one project is its own page under the same project", 
   expect(registered.key).toBe(a!.key)
   const planned = addTask(repository, "second checkout task")
   const planID = addPlan(repository, [planned])
-  const result = pages(reads, tracker, units)
+  const result = await pages(reads, tracker, units)
   expect(result.map((page) => page.project?.code)).toEqual(["AAA", "AAA", "BBB", "CCC"])
   expect(result[1]?.plans.map((plan) => plan.id)).toEqual([planID])
   expect(result[1]?.plans[0]?.project?.key).toBe(a!.key)
@@ -143,11 +147,11 @@ test("every other observation read refuses the all-projects scope", async () => 
 
 test("a cursor for another unit's directory is refused once that unit is not allowed", async () => {
   const { three, reads, tracker, units } = await fixture(() => [])
-  const first = reads.topologyAll({ scope: all }, tracker, units())
+  const first = await reads.topologyAll({ scope: all }, tracker, { units: units() })
   const allowed = units().filter((unit) => unit.project.code !== "BBB")
-  expect(() =>
-    reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, allowed),
-  ).toThrow("Invalid project cursor")
+  await expect(
+    reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: allowed }),
+  ).rejects.toThrow("Invalid project cursor")
   expect(three.projects).toHaveLength(3)
 })
 
@@ -159,9 +163,9 @@ test("tasks across projects carry the project and a reference with its code, pag
   let cursor: string | undefined
   let pageCount = 0
   do {
-    const page = reads.queryAll(
+    const page = await reads.queryAll(
       { allProjects: true, sessionID: "ses-caller", limit: 2, ...(cursor ? { cursor } : {}) },
-      units(),
+      { units: units() },
     )
     pageCount++
     expect(page.tasks.length).toBeLessThanOrEqual(2)
@@ -183,9 +187,9 @@ test("tasks across projects carry the project and a reference with its code, pag
 test("a task page reports the project's loaded flag and skips a project with no tasks", async () => {
   const { three, units } = await fixture(() => [])
   const reads = new AssociationTaskReads(three.projects[0]!.repository)
-  const page = reads.queryAll(
+  const page = await reads.queryAll(
     { allProjects: true, sessionID: "ses-caller", limit: 10, state: "all" },
-    units().filter((unit) => unit.project.code !== "AAA"),
+    { units: units().filter((unit) => unit.project.code !== "AAA") },
   )
   expect(page.project).toMatchObject({ code: "BBB", loaded: false })
   expect(page.projectDirectory).toBe(three.projects[1]!.directory)
@@ -254,7 +258,12 @@ test("rpc: all asserts the caller's own project as before and every other projec
   } while (cursor)
   expect(codes).toEqual(["AAA", "BBB", "CCC"])
   const [a, b, c] = f.three.projects
-  expect(f.asserts.slice(0, 3)).toEqual([[a!.directory], [b!.directory], [c!.directory]])
+  // The caller's own project is asserted on every page; another project only on its own page.
+  expect(f.asserts.filter((resources) => resources[0] === a!.directory)).toHaveLength(3)
+  expect(f.asserts.filter((resources) => resources[0] !== a!.directory)).toEqual([
+    [b!.directory],
+    [c!.directory],
+  ])
 })
 
 test("rpc: a project the caller may not read never appears in a page or a cursor", async () => {
@@ -269,11 +278,10 @@ test("rpc: a project the caller may not read never appears in a page or a cursor
     cursor = page.nextCursor ?? undefined
   } while (cursor)
   expect(codes).toEqual(["AAA", "CCC"])
-  expect(Buffer.from(afterAlpha!, "base64url").toString()).not.toContain("beta")
-  const beta = Buffer.from(
-    JSON.stringify({ v: 1, directory: f.three.projects[1]!.directory }),
-  ).toString("base64url")
-  await expect(f.call(beta)).rejects.toThrow("Invalid project cursor")
+  expect(Buffer.from(afterAlpha!, "base64url").toString()).not.toContain("/")
+  const beta = encodeUnitCursor({ directory: f.three.projects[1]!.directory })
+  // A cursor at the refused unit moves on to the next readable one, saying nothing about it.
+  expect((await f.call(beta)).project?.code).toBe("CCC")
 })
 
 test("rpc: all from a session of another OpenCode project is refused like the other scopes", async () => {

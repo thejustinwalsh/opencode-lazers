@@ -4,7 +4,7 @@ import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import type { TaskRepository } from "../storage.ts"
 import { canonicalPath, projectUnits } from "./scope.ts"
-import type { ProjectUnit } from "./scope.ts"
+import type { CanRead, ProjectUnit } from "./scope.ts"
 
 type AccessContext = Pick<Plugin.Context, "permission" | "session">
 
@@ -33,25 +33,28 @@ export async function callerSession(
 }
 
 /**
- * The units of an all-projects read the caller may see: its own project (already asserted by the
- * caller's usual check) and every other project whose checkouts pass the same `read` assertion.
- * A refused project is dropped without a trace, so no page, cursor or error names it.
+ * A lazy gate over the other projects: the caller's own project is always readable (its usual
+ * assertion has already run); any other project is asked once per call, on its first page, with
+ * the same `read` assertion on its checkouts. `permission.assert` may prompt the owner when a rule
+ * says to ask, so a project is asked only when a page of it is about to be read, never up front.
+ * A refused project is skipped without a trace.
  */
-export async function readableUnits(
+export function lazyGate(
   assertRead: (resources: string[]) => Promise<boolean>,
   units: readonly ProjectUnit[],
   ownDirectory: string,
-): Promise<ProjectUnit[]> {
+): CanRead {
   const own = canonicalPath(ownDirectory)
-  const paths = new Map<string, string[]>()
-  for (const unit of units)
-    paths.set(unit.project.key, [...(paths.get(unit.project.key) ?? []), unit.directory])
-  const allowed = new Set<string>()
-  for (const [key, checkouts] of paths) {
-    if (checkouts.some((path) => canonicalPath(path) === own) || (await assertRead(checkouts)))
-      allowed.add(key)
+  const answers = new Map<string, Promise<boolean>>()
+  return (unit) => {
+    const checkouts = units
+      .filter((candidate) => candidate.project.key === unit.project.key)
+      .map((candidate) => candidate.directory)
+    if (checkouts.some((path) => canonicalPath(path) === own)) return Promise.resolve(true)
+    let answer = answers.get(unit.project.key)
+    if (!answer) answers.set(unit.project.key, (answer = assertRead(checkouts)))
+    return answer
   }
-  return units.filter((unit) => allowed.has(unit.project.key))
 }
 
 /** `permission.assert` as a yes or no for one session and the `read` action. */
@@ -70,12 +73,14 @@ export function readAssertion(ctx: AccessContext, session: { id: string; agent: 
     )
 }
 
+export type UnitAccess = { units: ProjectUnit[]; canRead: CanRead }
+
 /**
  * Everything an all-projects read checks before it reads: today's session checks, the caller's own
- * project asserted exactly as the project scope asserts it (a refusal fails the read), then the
- * readable subset of the other projects. `unavailable` is the message of the failed session check.
+ * project asserted exactly as the project scope asserts it (a refusal fails the read), then a lazy
+ * gate over the other projects. `unavailable` is the message of the failed session check.
  */
-export async function allowedUnitsFor(
+export async function allProjectsAccess(
   ctx: AccessContext,
   input: {
     sessionID: string
@@ -84,7 +89,7 @@ export async function allowedUnitsFor(
     loaded: () => Iterable<string>
     unavailable: string
   },
-): Promise<ProjectUnit[]> {
+): Promise<UnitAccess> {
   const session = await callerSession(ctx, input.sessionID, input.projectID)
   if (!session) throw new Error(input.unavailable)
   const directory = input.repository.projectDirectory
@@ -96,9 +101,6 @@ export async function allowedUnitsFor(
       resources: [directory],
     }),
   )
-  return readableUnits(
-    readAssertion(ctx, session),
-    projectUnits(input.repository, input.loaded),
-    directory,
-  )
+  const units = projectUnits(input.repository, input.loaded)
+  return { units, canRead: lazyGate(readAssertion(ctx, session), units, directory) }
 }

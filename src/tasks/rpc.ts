@@ -18,7 +18,7 @@ import { revisionPublishers } from "../database-events.ts"
 import { TaskAdviceToolInput, recordTaskAdvice } from "./advice.ts"
 import { tolerantJsonSchema } from "../legacy-fields.ts"
 import { guardedWrite } from "./observed-revisions.ts"
-import { allowedUnitsFor } from "../projects/read-access.ts"
+import { allProjectsAccess } from "../projects/read-access.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
@@ -79,7 +79,7 @@ export function registerTaskReads(
               try: async () => {
                 const sessionService = ctx.session
                 if (!sessionService) throw new Error("Task scope is unavailable")
-                const units = await allowedUnitsFor(
+                const access = await allProjectsAccess(
                   { permission: ctx.permission, session: sessionService },
                   {
                     sessionID: input.sessionID!,
@@ -89,7 +89,7 @@ export function registerTaskReads(
                     unavailable: "Task scope is unavailable",
                   },
                 )
-                return reads.queryAll(input, units)
+                return reads.queryAll(input, access)
               },
               catch: (error) => (error instanceof Error ? error : new Error(String(error))),
             }).pipe(Effect.orDie)

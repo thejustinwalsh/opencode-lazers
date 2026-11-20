@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { resolve } from "node:path"
 import { z } from "zod"
@@ -56,16 +57,26 @@ export function projectUnits(
 }
 
 /** Cursor of the next page: the unit to read and, inside it, that read's own cursor. */
-export type UnitCursor = { directory: string; inner?: string }
+export type UnitCursor = { unit: string; inner?: string }
+
+/** A unit is named by a hash of its checkout path, so a cursor never carries a path. */
+export const unitToken = (directory: string) =>
+  createHash("sha256").update(directory).digest("hex").slice(0, 32)
 
 const Cursor = z.strictObject({
   v: z.literal(1),
-  directory: z.string().min(1),
+  unit: z.string().min(1),
   inner: z.string().min(1).optional(),
 })
 
-export function encodeUnitCursor(cursor: UnitCursor): string {
-  return Buffer.from(JSON.stringify({ v: 1, ...cursor })).toString("base64url")
+export function encodeUnitCursor(cursor: { directory: string; inner?: string }): string {
+  return Buffer.from(
+    JSON.stringify({
+      v: 1,
+      unit: unitToken(cursor.directory),
+      ...(cursor.inner ? { inner: cursor.inner } : {}),
+    }),
+  ).toString("base64url")
 }
 
 export function decodeUnitCursor(value: string): UnitCursor {
@@ -82,7 +93,38 @@ export function decodeUnitCursor(value: string): UnitCursor {
 /** Index of the unit a cursor names; 0 without a cursor. A unit that is gone is a refused cursor. */
 export function unitIndex(units: readonly ProjectUnit[], cursor?: UnitCursor): number {
   if (!cursor) return 0
-  const index = units.findIndex((unit) => unit.directory === cursor.directory)
+  const index = units.findIndex((unit) => unitToken(unit.directory) === cursor.unit)
   if (index < 0) throw new Error("Invalid project cursor")
   return index
+}
+
+/** Whether the caller may read a unit; asked lazily, only for the unit about to be read. */
+export type CanRead = (unit: ProjectUnit) => Promise<boolean>
+export const allowAll: CanRead = async () => true
+
+/**
+ * The first readable unit at or after the cursor and the cursor that follows it. An unreadable
+ * unit is skipped without a trace; the follow-up cursor names the next unit whether or not it is
+ * readable (it is checked when its page is asked for).
+ */
+export async function pickUnit(
+  units: readonly ProjectUnit[],
+  cursor: string | undefined,
+  canRead: CanRead,
+): Promise<
+  { unit: ProjectUnit; index: number; inner?: string; nextCursor: string | null } | undefined
+> {
+  const position = cursor ? decodeUnitCursor(cursor) : undefined
+  for (let index = unitIndex(units, position); index < units.length; index++) {
+    const unit = units[index]!
+    if (!(await canRead(unit))) continue
+    const next = units[index + 1]
+    return {
+      unit,
+      index,
+      ...(position?.inner && index === unitIndex(units, position) ? { inner: position.inner } : {}),
+      nextCursor: next ? encodeUnitCursor({ directory: next.directory }) : null,
+    }
+  }
+  return undefined
 }
