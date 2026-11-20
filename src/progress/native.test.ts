@@ -5,7 +5,7 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { DateTime, Effect, Fiber, Queue, Stream } from "effect"
+import { DateTime, Effect, Exit, Fiber, Queue, Scope, Stream } from "effect"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
@@ -1769,6 +1769,43 @@ test("finished sessions with an unchanged native stamp are neither re-read nor r
           expect(contexts.filter((id) => id === "ses-accepted").length).toBe(2)
         }),
       ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("plugin copies of one project share one native event subscription and promote on leave", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const copies = [0, 1, 2].map(() => makeContext(fixture, { holdEvents: true }))
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const scopes = yield* Effect.all(copies.map(() => Scope.make()))
+        for (const [index, copy] of copies.entries())
+          yield* registerProgress(copy.context, recorder, "project").pipe(
+            Scope.provide(scopes[index]!),
+          )
+        yield* Effect.promise(() =>
+          waitForNativeState(
+            async () => copies.reduce((sum, c) => sum + c.subscriptions(), 0) >= 1,
+          ),
+        )
+        yield* Effect.sleep(50)
+        // Three copies, one subscriber: the first to join leads.
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 0, 0])
+
+        // The leader leaves: exactly one other copy takes the subscription over.
+        yield* Scope.close(scopes[0]!, Exit.void)
+        yield* Effect.promise(() =>
+          waitForNativeState(
+            async () => copies[1]!.subscriptions() + copies[2]!.subscriptions() === 1,
+          ),
+        )
+        yield* Scope.close(scopes[1]!, Exit.void)
+        yield* Scope.close(scopes[2]!, Exit.void)
+      }),
     )
   } finally {
     fixture.close()

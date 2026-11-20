@@ -8,10 +8,12 @@ import { z } from "zod"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { declareInput } from "../tool-input.ts"
 import { ProgressInput } from "./schema.ts"
-import { toolObservationScope } from "./tool-observation.ts"
+import { endObservedSession, toolObservationScope } from "./tool-observation.ts"
+import { endStalenessSession } from "./stale-reminder.ts"
 import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { dateMillis, type ProgressAssignment, type ProgressRecorder } from "./recorder.ts"
 import {
+  progressReconstructionKey,
   registerProgressReconstruction,
   sameProgressAssignment,
   type ReconstructionRead,
@@ -234,6 +236,109 @@ async function reconstructSession(
   }
 }
 
+/** Events after which a session holds nothing worth caching. */
+const SESSION_END_EVENTS = new Set([
+  "session.deleted",
+  "session.moved",
+  "session.idle",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+])
+
+type HubMember = {
+  id: symbol
+  generationID: string
+  recorder: ProgressRecorder
+  reconstruction: { changed(sessionID: string): void }
+  /** Cheap per-copy reactions: source invalidation, scheduler wake, ownership cache. */
+  memberEvent(sessionID: string | undefined, type: string | undefined): void
+  owns(sessionID: string): Promise<boolean>
+  streamLost(reason: "failed" | "ended"): void
+  /** The native event loop of this copy's host connection. */
+  listen: Effect.Effect<void>
+  fiber?: { interruptUnsafe(): void }
+}
+
+/** Identifies this loaded bundle; a newer bundle's member takes the subscription over. */
+const nativeGenerationID = crypto.randomUUID()
+
+type EventHub = { members: Map<symbol, HubMember>; leader?: symbol }
+
+/**
+ * One native event subscriber per project per process. Every plugin copy of a project joins
+ * the same hub; one member (the newest to join) owns the subscription and each event is
+ * recorded once, with cheap per-copy reactions fanned out to the other members. When the
+ * leader leaves, another member starts its own loop.
+ */
+const hubsKey = Symbol.for("opencode-lazers.progress-event-hubs.v1")
+const hubHost = globalThis as typeof globalThis & { [hubsKey]?: Map<string, EventHub> }
+const hubs: Map<string, EventHub> = (hubHost[hubsKey] ??= new Map())
+
+function lead(hub: EventHub, member: HubMember) {
+  const previous = hub.leader ? hub.members.get(hub.leader) : undefined
+  previous?.fiber?.interruptUnsafe()
+  if (previous) previous.fiber = undefined
+  hub.leader = member.id
+  member.fiber = Effect.runFork(Effect.sleep(0).pipe(Effect.andThen(member.listen)))
+}
+
+function joinHub(key: string, member: HubMember): () => void {
+  let hub = hubs.get(key)
+  if (!hub) {
+    hub = { members: new Map() }
+    hubs.set(key, hub)
+  }
+  const joined = hub
+  joined.members.set(member.id, member)
+  const leader = joined.leader ? joined.members.get(joined.leader) : undefined
+  if (!leader || leader.generationID !== member.generationID) lead(joined, member)
+  return () => {
+    member.fiber?.interruptUnsafe()
+    member.fiber = undefined
+    joined.members.delete(member.id)
+    if (joined.leader === member.id) {
+      joined.leader = undefined
+      const next = [...joined.members.values()].at(-1)
+      if (next) lead(joined, next)
+    }
+    if (joined.members.size === 0 && hubs.get(key) === joined) hubs.delete(key)
+  }
+}
+
+async function dispatchNativeEvent(hub: EventHub, leader: HubMember, event: unknown) {
+  const rawType = object(event)?.type
+  const rawSessionID = object(object(event)?.data)?.sessionID
+  const type = typeof rawType === "string" ? rawType : undefined
+  const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
+  for (const member of [...hub.members.values()]) {
+    try {
+      member.memberEvent(sessionID, type)
+    } catch {
+      // One copy's reaction cannot stop the others or the recording.
+    }
+  }
+  if (sessionID && type && SESSION_END_EVENTS.has(type)) {
+    endObservedSession(sessionID)
+    endStalenessSession(sessionID)
+  }
+  if (sessionID) leader.reconstruction.changed(sessionID)
+  try {
+    let toolSession = false
+    if (sessionID && type?.startsWith("session.tool.")) {
+      for (const member of [...hub.members.values()]) {
+        if (await member.owns(sessionID)) {
+          toolSession = true
+          break
+        }
+      }
+    }
+    leader.recorder.recordNativeEvent(event, toolSession)
+  } catch {
+    // A later retained-session reconciliation can recover public event facts.
+  }
+}
+
 export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
@@ -395,6 +500,11 @@ export function registerProgress(
       }).pipe(Effect.catch(() => Effect.void)),
     )
 
+    const hubKey = progressReconstructionKey(
+      recorder.store.repository.path,
+      recorder.store.repository.projectDirectory,
+      projectID,
+    )
     const reconstruction = registerProgressReconstruction({
       databasePath: recorder.store.repository.path,
       projectDirectory: recorder.store.repository.projectDirectory,
@@ -410,80 +520,82 @@ export function registerProgress(
     })
     yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))
 
-    const observeNativeEvent = async (event: unknown) => {
-      const rawType = object(event)?.type
-      const rawSessionID = object(object(event)?.data)?.sessionID
-      const type = typeof rawType === "string" ? rawType : undefined
-      const sessionID = typeof rawSessionID === "string" ? rawSessionID : undefined
-      if (sessionID && observing) {
-        sourceStreamGap = false
-        try {
-          sourceChanged?.(sessionID)
-        } catch {
-          // A later source event or prompt retries without dropping worker facts.
-        }
-      }
-      if (sessionID && (type === "session.deleted" || type === "session.moved"))
-        toolScope.forget(sessionID)
-      if (sessionID) reconstruction.changed(sessionID)
-      if (
-        observing &&
-        sessionID &&
-        (type === "session.execution.succeeded" ||
-          type === "session.execution.failed" ||
-          type === "session.execution.interrupted" ||
-          type === "session.shell.ended" ||
-          type === "session.idle") &&
-        recorder.assignmentForSession(sessionID)
-      )
-        workerIdle?.()
-      try {
-        const toolSession =
-          sessionID && type?.startsWith("session.tool.") ? await toolScope.owns(sessionID) : false
-        recorder.recordNativeEvent(event, Boolean(toolSession))
-      } catch {
-        // A later retained-session reconciliation can recover public event facts.
+    const memberID = Symbol("progress-event-member")
+    const gaps = (reason: string) => {
+      for (const assignment of recorder.assignments()) {
+        recorder.markRecoveryGap(
+          assignment.sessionID,
+          `Native event stream ${reason}; retained public session facts are reconciled at startup.`,
+          "event-stream",
+        )
       }
     }
-
-    const listen = Effect.forever(
+    const listen: Effect.Effect<void> = Effect.forever(
       Effect.suspend(() => {
         return Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
           Effect.tryPromise({
-            try: () => sectionAsync(`event:${event.type}`, () => observeNativeEvent(event)),
+            try: () =>
+              sectionAsync(`event:${event.type}`, () => {
+                const hub = hubs.get(hubKey)
+                const self = hub?.members.get(memberID)
+                return hub && self ? dispatchNativeEvent(hub, self, event) : Promise.resolve()
+              }),
             catch: (error) => new Error(safeError(error, privacyStats())),
           }).pipe(Effect.catch(() => Effect.void)),
         ).pipe(
           Effect.match({
             onFailure: (error) => {
-              invalidateSources()
-              toolScope.clear()
+              const hub = hubs.get(hubKey)
+              for (const member of hub?.members.values() ?? []) member.streamLost("failed")
               trace("unknown", "stream-failed", { error })
-              for (const assignment of recorder.assignments()) {
-                recorder.markRecoveryGap(
-                  assignment.sessionID,
-                  "Native event stream disconnected; retained public session facts are reconciled at startup.",
-                  "event-stream",
-                )
-              }
+              gaps("disconnected")
             },
             onSuccess: () => {
-              invalidateSources()
-              toolScope.clear()
+              const hub = hubs.get(hubKey)
+              for (const member of hub?.members.values() ?? []) member.streamLost("ended")
               trace("unknown", "stream-ended")
-              for (const assignment of recorder.assignments()) {
-                recorder.markRecoveryGap(
-                  assignment.sessionID,
-                  "Native event stream ended; retained public session facts are reconciled at startup.",
-                  "event-stream",
-                )
-              }
+              gaps("ended")
             },
           }),
           Effect.andThen(Effect.sleep(1_000)),
         )
       }),
     )
-    yield* Effect.forkScoped(listen)
+    const leave = joinHub(hubKey, {
+      id: memberID,
+      generationID: nativeGenerationID,
+      recorder,
+      reconstruction,
+      listen,
+      owns: (sessionID) => toolScope.owns(sessionID),
+      memberEvent: (sessionID, type) => {
+        if (sessionID && observing) {
+          sourceStreamGap = false
+          try {
+            sourceChanged?.(sessionID)
+          } catch {
+            // A later source event or prompt retries without dropping worker facts.
+          }
+        }
+        if (sessionID && (type === "session.deleted" || type === "session.moved"))
+          toolScope.forget(sessionID)
+        if (
+          observing &&
+          sessionID &&
+          (type === "session.execution.succeeded" ||
+            type === "session.execution.failed" ||
+            type === "session.execution.interrupted" ||
+            type === "session.shell.ended" ||
+            type === "session.idle") &&
+          recorder.assignmentForSession(sessionID)
+        )
+          workerIdle?.()
+      },
+      streamLost: () => {
+        invalidateSources()
+        toolScope.clear()
+      },
+    })
+    yield* Effect.addFinalizer(() => Effect.sync(leave))
   })
 }

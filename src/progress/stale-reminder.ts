@@ -21,20 +21,54 @@ export const STALE_PROGRESS_REMINDER = (calls: number) =>
 
 type Count = { calls: number; reminded: boolean }
 
+/**
+ * Sessions counted per instance. An entry is a session id plus two fields, about 150 bytes, so
+ * 20_000 entries stay near 3 MB. Entries are normally deleted when their session ends; eviction
+ * only restarts one worker's count.
+ */
+const STALENESS_ENTRIES = 20_000
+
+const instancesKey = Symbol.for("opencode-lazers.progress-staleness.v1")
+const instanceHost = globalThis as typeof globalThis & {
+  [instancesKey]?: Set<WeakRef<ProgressStaleness>>
+}
+const instances: Set<WeakRef<ProgressStaleness>> = (instanceHost[instancesKey] ??= new Set())
+
+/** A session ended: every staleness counter in the process drops its entry. */
+export function endStalenessSession(sessionID: string) {
+  for (const ref of instances) {
+    const instance = ref.deref()
+    if (instance) instance.forget(sessionID)
+    else instances.delete(ref)
+  }
+}
+
 export class ProgressStaleness {
   private readonly sessions = new Map<string, Count>()
 
-  constructor(private readonly threshold = STALE_PROGRESS_CALLS) {}
+  constructor(private readonly threshold = STALE_PROGRESS_CALLS) {
+    instances.add(new WeakRef(this))
+  }
+
+  private touch(sessionID: string, count: Count) {
+    this.sessions.delete(sessionID)
+    this.sessions.set(sessionID, count)
+    while (this.sessions.size > STALENESS_ENTRIES) {
+      const oldest = this.sessions.keys().next().value
+      if (oldest === undefined) break
+      this.sessions.delete(oldest)
+    }
+  }
 
   /** A tool call finished for this worker. A completed report resets the count. */
   record(sessionID: string, tool: string, completed: boolean): void {
     if (tool === "lz-report-progress" && completed) {
-      this.sessions.set(sessionID, { calls: 0, reminded: false })
+      this.touch(sessionID, { calls: 0, reminded: false })
       return
     }
     const count = this.sessions.get(sessionID) ?? { calls: 0, reminded: false }
     count.calls += 1
-    this.sessions.set(sessionID, count)
+    this.touch(sessionID, count)
   }
 
   /** The reminder for the result being delivered now, once per stale stretch. */

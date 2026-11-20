@@ -5,48 +5,89 @@ import type { ProgressRecorder, ToolInvocation } from "./recorder.ts"
 
 const originalExecution = Symbol.for("opencode-lazers.tool-observation.original")
 
+type ScopeEntry = { read: Promise<boolean>; valid: { current: boolean } }
+type ObservationScope = {
+  clear(): void
+  forget(sessionID: string): void
+  owns(sessionID: string, refresh?: boolean): Promise<boolean>
+}
+
+/**
+ * Warm ownership answers per scope. An entry is a session id, a settled promise and a flag,
+ * roughly 300 bytes, so 4_096 entries stay near 1.2 MB. Eviction costs one `session.get`.
+ */
+const SCOPE_ENTRIES = 4_096
+
+const scopesKey = Symbol.for("opencode-lazers.tool-observation-scopes.v1")
+const scopeHost = globalThis as typeof globalThis & { [scopesKey]?: Set<WeakRef<ObservationScope>> }
+const liveScopes: Set<WeakRef<ObservationScope>> = (scopeHost[scopesKey] ??= new Set())
+
+/** A session ended or moved: every live scope in the process drops what it knows about it. */
+export function endObservedSession(sessionID: string) {
+  for (const ref of liveScopes) {
+    const scope = ref.deref()
+    if (scope) scope.forget(sessionID)
+    else liveScopes.delete(ref)
+  }
+}
+
 /** One owner per native location; event subscriptions themselves are server-wide. */
 export function toolObservationScope(
   ctx: Pick<Plugin.Context, "session" | "location">,
   projectID: string,
   directory: string,
 ) {
-  const sessions = new Map<string, Promise<boolean>>()
-  const sessionRevisions = new Map<string, number>()
+  const sessions = new Map<string, ScopeEntry>()
   let revision = 0
-  return {
+  const read = (sessionID: string, valid: { current: boolean }, readRevision: number) => {
+    const result: Promise<boolean> = Promise.resolve()
+      .then(() => Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) })))
+      .then(
+        (session) =>
+          revision === readRevision &&
+          valid.current &&
+          session.projectID === projectID &&
+          session.location.directory === directory,
+      )
+    return result
+  }
+  const scope: ObservationScope = {
     clear: () => {
       revision++
+      for (const entry of sessions.values()) entry.valid.current = false
       sessions.clear()
-      sessionRevisions.clear()
     },
     forget: (sessionID: string) => {
-      sessionRevisions.set(sessionID, (sessionRevisions.get(sessionID) ?? 0) + 1)
+      const entry = sessions.get(sessionID)
+      if (!entry) return
+      entry.valid.current = false
       sessions.delete(sessionID)
     },
     owns: (sessionID: string, refresh = false): Promise<boolean> => {
-      if (refresh) sessions.delete(sessionID)
+      // A refreshing caller wants a fresh answer for this call only; nothing is retained.
+      if (refresh) return read(sessionID, { current: true }, revision).catch(() => false)
       const cached = sessions.get(sessionID)
-      if (cached) return cached
-      const readRevision = revision
-      const sessionRevision = sessionRevisions.get(sessionID) ?? 0
-      const read: Promise<boolean> = Promise.resolve()
-        .then(() => Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) })))
-        .then(
-          (session) =>
-            revision === readRevision &&
-            (sessionRevisions.get(sessionID) ?? 0) === sessionRevision &&
-            session.projectID === projectID &&
-            session.location.directory === directory,
-        )
-        .catch(() => {
-          if (sessions.get(sessionID) === read) sessions.delete(sessionID)
-          return false
-        })
-      sessions.set(sessionID, read)
-      return read
+      if (cached) {
+        sessions.delete(sessionID)
+        sessions.set(sessionID, cached)
+        return cached.read
+      }
+      const valid = { current: true }
+      const result: Promise<boolean> = read(sessionID, valid, revision).catch(() => {
+        if (sessions.get(sessionID)?.read === result) sessions.delete(sessionID)
+        return false
+      })
+      sessions.set(sessionID, { read: result, valid })
+      while (sessions.size > SCOPE_ENTRIES) {
+        const oldest = sessions.keys().next().value
+        if (oldest === undefined) break
+        sessions.delete(oldest)
+      }
+      return result
     },
   }
+  liveScopes.add(new WeakRef(scope))
+  return scope
 }
 
 /** Observe only our callbacks. Do not replace native tools or alter their contracts. */
