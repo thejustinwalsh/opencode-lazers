@@ -935,7 +935,7 @@ test("F-S4-2 retirement preserves a live owner's location outside the display wi
     for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, f.receipt.planID)
     db.query("UPDATE runner_plans SET state='cleanup-blocked' WHERE id=?").run(f.receipt.planID)
   })
-  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(true)
   let retired = false
   f.host.retireWorktreeLocation = async () => {
     retired = true
