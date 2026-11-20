@@ -1,4 +1,3 @@
-import Lenis from "lenis"
 import { CAT_CYAN_EYE, CAT_MAGENTA_EYE } from "../assets/cat-geometry"
 
 /* ------------------------------------------------------------------ */
@@ -26,6 +25,21 @@ interface State extends BeamTarget {
   queue: number[]
   ctx: CanvasRenderingContext2D
   ro: ResizeObserver
+  /** Section CSS size, cached from ResizeObserver so frames never read layout for it. */
+  w: number
+  h: number
+}
+
+/** Eye origins and beam length for one frame, measured once. */
+interface Geo {
+  c: Origin
+  m: Origin
+  length: number
+}
+interface Origin {
+  x: number
+  y: number
+  scale: number
 }
 
 const LIFE = 340 // ms: extend, hold, fade
@@ -62,15 +76,14 @@ if (import.meta.env.DEV) {
     },
     unfreeze() {
       frozen = null
-      for (const s of states.values()) clear(s)
+      for (const s of states.values()) release(s)
     },
   }
 }
 
 function sizeCanvas(s: State) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  const w = s.section.clientWidth
-  const h = s.section.clientHeight
+  const { w, h } = s
   if (s.canvas.width !== Math.round(w * dpr) || s.canvas.height !== Math.round(h * dpr)) {
     s.canvas.width = Math.round(w * dpr)
     s.canvas.height = Math.round(h * dpr)
@@ -84,15 +97,23 @@ function clear(s: State) {
   sizeCanvas(s)
 }
 
-/** Eye origin = normalized pupil anchor x the sprite's current rendered rect. */
-function origin(s: State, anchor: readonly [number, number]) {
+/** An idle canvas holds no backing store: a full-section bitmap per section is GPU memory
+ *  Safari keeps composited over the scrolling page. Resized again when a volley starts. */
+function release(s: State) {
+  if (s.canvas.width !== 0) s.canvas.width = s.canvas.height = 0
+}
+
+/** Eye origin = normalized pupil anchor x the sprite's current rendered rect.
+ *  Two rect reads per frame, taken before any drawing, not four plus size reads. */
+function measureGeo(s: State): Geo {
   const r = s.sprite.getBoundingClientRect()
-  const c = s.canvas.getBoundingClientRect()
-  return {
-    x: r.left + anchor[0] * r.width - c.left,
-    y: r.top + anchor[1] * r.height - c.top,
+  const cv = s.canvas.getBoundingClientRect()
+  const at = (a: readonly [number, number]): Origin => ({
+    x: r.left + a[0] * r.width - cv.left,
+    y: r.top + a[1] * r.height - cv.top,
     scale: Math.min(1.4, Math.max(0.3, r.width / REF_CAT_WIDTH)),
-  }
+  })
+  return { c: at(CAT_CYAN_EYE), m: at(CAT_MAGENTA_EYE), length: Math.hypot(s.w, s.h) }
 }
 
 const ease = (t: number) => 1 - Math.pow(1 - t, 3)
@@ -149,10 +170,8 @@ function beam(
   layer(1.6 * s, 6.5 * s, grad(0.95 * a, true))
 }
 
-function drawPair(s: State, k: number, strength: number, glow: boolean, flash: boolean) {
-  const c = origin(s, CAT_CYAN_EYE)
-  const m = origin(s, CAT_MAGENTA_EYE)
-  const length = Math.hypot(s.canvas.clientWidth, s.canvas.clientHeight)
+function drawPair(s: State, g: Geo, k: number, strength: number, glow: boolean, flash: boolean) {
+  const { c, m, length } = g
   beam(s.ctx, c, ANGLE.cyan, CYAN, k, length, strength, glow)
   beam(s.ctx, m, ANGLE.magenta, MAGENTA, k, length, strength, glow)
   if (flash && k < 0.4) {
@@ -161,11 +180,11 @@ function drawPair(s: State, k: number, strength: number, glow: boolean, flash: b
       [m, MAGENTA],
     ] as const) {
       const r = 20 * o.scale * (1 + k)
-      const g = s.ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, r)
-      g.addColorStop(0, "rgba(255,255,255,0.95)")
-      g.addColorStop(0.35, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.6)`)
-      g.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`)
-      s.ctx.fillStyle = g
+      const rg = s.ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, r)
+      rg.addColorStop(0, "rgba(255,255,255,0.95)")
+      rg.addColorStop(0.35, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.6)`)
+      rg.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`)
+      s.ctx.fillStyle = rg
       s.ctx.beginPath()
       s.ctx.arc(o.x, o.y, r, 0, Math.PI * 2)
       s.ctx.fill()
@@ -174,35 +193,35 @@ function drawPair(s: State, k: number, strength: number, glow: boolean, flash: b
 }
 
 function drawFrame(s: State, now: number) {
+  const g = measureGeo(s) // reads first, then canvas writes
   clear(s)
   if (frozen && frozen.id === s.id) {
-    drawPair(s, frozen.k, 1, true, true)
+    drawPair(s, g, frozen.k, 1, true, true)
     return
   }
-  s.queue = s.queue.filter((t0) => now - t0 < LIFE)
   for (const t0 of s.queue) {
     const k = (now - t0) / LIFE
-    if (k >= 0) drawPair(s, k, 1, true, true)
+    if (k >= 0) drawPair(s, g, k, 1, true, true)
   }
 }
 
 /** Reduced motion: one static, low-intensity pair per cat, part of the composition. */
 function drawStatic(s: State) {
+  const g = measureGeo(s)
   clear(s)
-  drawPair(s, 0.5, 0.5, false, false)
+  drawPair(s, g, 0.5, 0.5, false, false)
 }
 
 function tick(now: number) {
   raf = 0
   for (const s of active) {
-    if (!s.visible) {
-      s.queue = []
-    }
-    drawFrame(s, now)
+    s.queue = s.visible ? s.queue.filter((t0) => now - t0 < LIFE) : []
     if (s.queue.length === 0) {
       active.delete(s)
-      clear(s)
+      release(s)
+      continue
     }
+    drawFrame(s, now)
   }
   if (active.size > 0) raf = requestAnimationFrame(tick)
 }
@@ -226,12 +245,11 @@ function onIntersect(entries: IntersectionObserverEntry[]) {
       s.visible = false
       s.armed = true
       s.queue = []
-      parallaxVisible.delete(s.section)
+      setInView(s.section, false)
       continue
     }
     s.visible = true
-    parallaxVisible.add(s.section)
-    if (!isReduced()) s.section.style.setProperty("--p", progressOf(s.section))
+    setInView(s.section, true)
     const share = Math.max(e.intersectionRatio, e.intersectionRect.height / window.innerHeight)
     if (s.armed && share >= FIRE_AT) {
       s.armed = false
@@ -247,10 +265,21 @@ export function registerBeams(t: BeamTarget): () => void {
   const ro = new ResizeObserver(() => {
     const s = states.get(t.section)
     if (!s) return
-    sizeCanvas(s)
+    s.w = t.section.clientWidth
+    s.h = t.section.clientHeight
     if (isReduced()) drawStatic(s)
+    else if (active.has(s)) sizeCanvas(s)
   })
-  const s: State = { ...t, armed: true, visible: false, queue: [], ctx, ro }
+  const s: State = {
+    ...t,
+    armed: true,
+    visible: false,
+    queue: [],
+    ctx,
+    ro,
+    w: t.section.clientWidth,
+    h: t.section.clientHeight,
+  }
   const fireOnClick = (event: MouseEvent) => {
     if (event.target instanceof Element && event.target.closest("a, button")) return
     if (document.elementsFromPoint(event.clientX, event.clientY).includes(t.sprite)) fire(s, 1)
@@ -259,7 +288,6 @@ export function registerBeams(t: BeamTarget): () => void {
   ro.observe(t.section)
   t.sprite.addEventListener("load", () => isReduced() && drawStatic(s))
   t.section.addEventListener("click", fireOnClick)
-  sizeCanvas(s)
   if (isReduced()) {
     requestAnimationFrame(() => drawStatic(s))
     document.fonts?.ready.then(() => isReduced() && drawStatic(s))
@@ -274,124 +302,202 @@ export function registerBeams(t: BeamTarget): () => void {
     ro.disconnect()
     states.delete(t.section)
     active.delete(s)
+    release(s)
+    setInView(t.section, false)
   }
 }
 
 /* ------------------------------------------------------------------ */
-/* Parallax (transform only, driven by Lenis scroll)                   */
+/* Scroll-linked motion: native scrolling, never script-driven.         */
+/*                                                                      */
+/* Parallax and the section "print-in" transitions are CSS scroll-driven */
+/* animations (src/scroll.css, animation-timeline: view()), which run   */
+/* off the main thread and need no scroll listener. This module only    */
+/* marks the elements. Browsers without the feature get a fallback:     */
+/* one passive scroll listener that schedules one rAF, which writes     */
+/* transforms for sections currently in view from cached geometry.      */
+/* Nothing in the scroll path reads layout.                             */
+/*                                                                      */
+/* --p is a section's entry progress, 0..1: 0 while its top edge sits   */
+/* at the viewport bottom, 1 once the top reaches 30% of the viewport.  */
+/* Styles read var(--p, 1), so the static (reduced motion or no-JS)     */
+/* composition is the finished state.                                   */
 /* ------------------------------------------------------------------ */
-interface Para {
+const NATIVE = typeof CSS !== "undefined" && CSS.supports("animation-timeline: view()")
+const REVEAL_SPAN = 0.7 // viewport fractions of scroll over which --p goes 0 to 1
+
+interface Section {
   el: HTMLElement
-  section: HTMLElement
-  amp: number
+  /** Document-space geometry, cached; refreshed on resize, never read while scrolling. */
+  top: number
+  height: number
+  parallax: Map<HTMLElement, number>
+  reveal: boolean
+  p: string
 }
-const parallax = new Set<Para>()
-const parallaxVisible = new Set<HTMLElement>()
+const sections = new Map<HTMLElement, Section>()
+const inView = new Set<Section>()
+let vh = window.innerHeight
+let dirty = true
+let scrollRaf = 0
+let engaged = false
+let sectionRo: ResizeObserver | null = null
+
+function sectionFor(el: HTMLElement): Section {
+  let sec = sections.get(el)
+  if (!sec) {
+    sec = { el, top: 0, height: 0, parallax: new Map(), reveal: false, p: "" }
+    sections.set(el, sec)
+    el.dataset.scrollSection = ""
+    if (!NATIVE) {
+      dirty = true
+      sectionRo ??= new ResizeObserver(markDirty)
+      sectionRo.observe(el)
+      if (engaged) requestScrollFrame()
+    }
+  }
+  return sec
+}
+
+function releaseSection(sec: Section) {
+  if (sec.reveal || sec.parallax.size > 0) return
+  sectionRo?.unobserve(sec.el)
+  delete sec.el.dataset.scrollSection
+  inView.delete(sec)
+  sections.delete(sec.el)
+}
 
 export function registerParallax(el: HTMLElement, section: HTMLElement, amp: number) {
-  const p: Para = { el, section, amp }
-  parallax.add(p)
+  const sec = sectionFor(section)
+  sec.parallax.set(el, amp)
+  el.dataset.parallax = ""
+  el.style.setProperty("--amp", `${amp}px`)
   return () => {
-    parallax.delete(p)
+    sec.parallax.delete(el)
+    delete el.dataset.parallax
+    el.style.removeProperty("--amp")
     el.style.transform = ""
+    releaseSection(sec)
   }
-}
-
-/* ------------------------------------------------------------------ */
-/* Section transitions: --p is a section's entry progress, 0..1.        */
-/* 0 while its top edge sits at the viewport bottom, 1 once the top     */
-/* reaches 30% of the viewport. Styles read var(--p, 1), so the static  */
-/* (reduced motion or no-JS) composition is the finished state.         */
-/* ------------------------------------------------------------------ */
-const reveals = new Set<HTMLElement>()
-
-function progressOf(el: HTMLElement) {
-  const vh = window.innerHeight
-  const t = (vh - el.getBoundingClientRect().top) / (vh * 0.7)
-  return Math.max(0, Math.min(1, t)).toFixed(3)
 }
 
 export function registerReveal(section: HTMLElement) {
-  reveals.add(section)
-  section.style.setProperty("--p", isReduced() ? "1" : progressOf(section))
+  const sec = sectionFor(section)
+  sec.reveal = true
   return () => {
-    reveals.delete(section)
+    sec.reveal = false
     section.style.removeProperty("--p")
+    sec.p = ""
+    releaseSection(sec)
   }
 }
 
-function updateReveals() {
-  for (const el of reveals) {
-    // Only sections in view do layout reads; off-screen ones keep their last value.
-    if (parallaxVisible.has(el)) el.style.setProperty("--p", progressOf(el))
+function markDirty() {
+  dirty = true
+  if (engaged) requestScrollFrame()
+}
+
+function requestScrollFrame() {
+  if (!scrollRaf) scrollRaf = requestAnimationFrame(scrollFrame)
+}
+
+/** Reads layout once per invalidation (resize, content shift), never per scroll event. */
+function measure() {
+  vh = window.innerHeight
+  const y = window.scrollY
+  for (const sec of sections.values()) {
+    const r = sec.el.getBoundingClientRect()
+    sec.top = r.top + y
+    sec.height = r.height
+  }
+  dirty = false
+}
+
+function scrollFrame() {
+  scrollRaf = 0
+  if (dirty) measure()
+  const y = window.scrollY
+  for (const sec of inView) {
+    const top = sec.top - y
+    if (sec.reveal) {
+      const p = Math.max(0, Math.min(1, (vh - top) / (vh * REVEAL_SPAN))).toFixed(3)
+      if (p !== sec.p) {
+        sec.p = p
+        sec.el.style.setProperty("--p", p)
+      }
+    }
+    if (sec.parallax.size === 0) continue
+    // +1 when the section centre sits a half-viewport+half-section below centre, -1 above.
+    const t = (top + sec.height / 2 - vh / 2) / (vh / 2 + sec.height / 2)
+    const k = Math.max(-1, Math.min(1, t))
+    for (const [el, amp] of sec.parallax) {
+      el.style.transform = `translate3d(0, ${(k * amp).toFixed(2)}px, 0)`
+    }
   }
 }
 
-function settleReveals() {
-  for (const el of reveals) el.style.setProperty("--p", "1")
+function setInView(el: HTMLElement, visible: boolean) {
+  const sec = sections.get(el)
+  if (!sec) return
+  if (visible) {
+    inView.add(sec)
+    if (engaged) requestScrollFrame()
+  } else inView.delete(sec)
 }
 
-function updateParallax() {
-  if (isReduced()) return
-  updateReveals()
-  const vh = window.innerHeight
-  for (const p of parallax) {
-    if (!parallaxVisible.has(p.section)) continue
-    const r = p.section.getBoundingClientRect()
-    // -1 when the section centre sits a half-viewport+half-section below centre, +1 above.
-    const t = (r.top + r.height / 2 - vh / 2) / (vh / 2 + r.height / 2)
-    const y = Math.max(-1, Math.min(1, t)) * p.amp
-    p.el.style.transform = `translate3d(0, ${y.toFixed(2)}px, 0)`
+/** Fallback only: start or stop the passive scroll path. */
+function engageFallback() {
+  if (NATIVE || engaged) return
+  engaged = true
+  window.addEventListener("scroll", requestScrollFrame, { passive: true })
+  dirty = true
+  requestScrollFrame()
+}
+
+function disengageFallback() {
+  if (!engaged) return
+  engaged = false
+  window.removeEventListener("scroll", requestScrollFrame)
+  cancelAnimationFrame(scrollRaf)
+  scrollRaf = 0
+  for (const sec of sections.values()) {
+    for (const el of sec.parallax.keys()) el.style.transform = ""
+    sec.el.style.removeProperty("--p")
+    sec.p = ""
   }
 }
 
 /* ------------------------------------------------------------------ */
-/* Lenis + in-page focus                                               */
+/* Anchors: native smooth scrolling (scroll.css); this only moves focus */
 /* ------------------------------------------------------------------ */
-let lenis: Lenis | null = null
-
-function startLenis() {
-  if (lenis || isReduced()) return
-  lenis = new Lenis({ autoRaf: true, anchors: true })
-  lenis.on("scroll", updateParallax)
-  updateParallax()
-}
-
-function stopLenis() {
-  lenis?.destroy()
-  lenis = null
-  for (const p of parallax) p.el.style.transform = ""
-  settleReveals()
-}
-
 function onAnchorClick(e: MouseEvent) {
   const a = (e.target as Element).closest?.('a[href^="#"]') as HTMLAnchorElement | null
   if (!a || a.getAttribute("href") === "#") return
   const target = document.getElementById(a.getAttribute("href")!.slice(1))
   if (!target) return
-  // Lenis does not move focus; land keyboard and screen reader users on the section heading.
+  // Land keyboard and screen reader users on the section heading without a second scroll.
   const heading = target.querySelector<HTMLElement>('[tabindex="-1"]') ?? target
   requestAnimationFrame(() => heading.focus({ preventScroll: true }))
 }
 
 export function startMotion() {
   document.addEventListener("click", onAnchorClick)
-  startLenis()
+  if (!isReduced()) engageFallback()
   reducedQuery.addEventListener("change", () => {
     if (isReduced()) {
-      stopLenis()
+      disengageFallback()
       for (const s of states.values()) {
         s.queue = []
         active.delete(s)
         drawStatic(s)
       }
     } else {
-      startLenis()
-      for (const s of states.values()) clear(s)
+      engageFallback()
+      for (const s of states.values()) release(s)
     }
   })
   window.addEventListener("resize", () => {
+    markDirty()
     for (const s of states.values()) if (isReduced()) drawStatic(s)
-    updateParallax()
   })
 }
