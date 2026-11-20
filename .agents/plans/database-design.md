@@ -6,8 +6,8 @@ Follows [data handling](../../design/data-handling.md). Measured on the live
 SQLite in the host runtime is 3.54.0 with JSON, JSONB, generated columns, expression
 indexes, triggers and FTS5.
 
-Who writes and reads each table has not been fully traced yet (a read-only search was
-interrupted). Every compaction below must first confirm its readers and keep feature
+Who writes and reads each table is summarized under "Traced facts" below. Every
+compaction keeps feature
 parity; items marked **verify** depend on that.
 
 ## Measurements
@@ -71,3 +71,34 @@ retention of settled history.
 3. Per-table compaction in the order of the table, each as its own change with
    before and after sizes.
 4. Retention rules in `src/retention`, then incremental vacuum.
+
+## Traced facts (read-only search, HEAD d1cb7900)
+
+These settle the **verify** column above; file and line references are in the search
+report summarized here.
+
+| Table                                    | Readers and lifecycle                                                                                                                                                                | Decision                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `runner_conflict_scans`                  | No writer since commit `77df0c3c`; no reader; retention kind `scan-history` already deletes by age                                                                                   | Delete all rows now; drop the table in a later migration (~341 MB)                        |
+| `task_changes`                           | Every reader takes only `MAX(id)`; retention prunes `mutation` rows but never `insert` rows from the `tasks_changed` trigger                                                         | One counter row per project (or prune `insert` rows too); drop the 154 MB index (~300 MB) |
+| `recovery_progress_facts`                | Written by triggers on every `runner_progress` insert and update; the only reader is a live diagnostic (limit 257); the consumer API (`pageIn`/`advanceIn`) has no production caller | Stop the triggers or keep only a bounded recent window for the diagnostic (~200 MB)       |
+| `native_tool_calls` vs `runner_progress` | Every tool fact is written to both with the same payload; `toolCalls()` has no caller; `native_tool_calls_session` index serves only it                                              | Store the tool payload once and reference it; drop the unused index                       |
+| Check receipts                           | Same receipt stored in `runner_effects.receipt`, `runner_evidence.body` and a progress verification row                                                                              | Store once (effects), reference by id from evidence and progress                          |
+| `model_evidence_snapshots`               | Each price refresh merges the previous snapshot's records into the new body; retention keeps the latest per source                                                                   | Store per-record changes or keep two generations (lane D)                                 |
+| `runner_commands`                        | Read only for idempotent replay (whole receipt parsed) and audit receipts                                                                                                            | Store a receipt hash and outcome for replay; audit findings move to the findings table    |
+| No retention at all                      | `runner_effects`, `runner_evidence`, `audit_sections`, `audit_runs`                                                                                                                  | Add retention kinds tied to plan retirement                                               |
+| Retention only when configured           | Automatic retention runs only when `retention_settings.auto_days` is set                                                                                                             | Default a retention period so growth is bounded out of the box                            |
+
+Likely unused or redundant indexes: `native_tool_calls_session`,
+`recovery_progress_facts_project_source`, `runner_progress_plan_seq` (plan reads use
+`runner_progress_plan_recency`), `model_evidence_snapshots_project_source` (duplicates
+the unique index), and one of `runner_transitions_lookup` / `runner_transitions_task_latest`.
+
+Unbounded readers to page or aggregate in SQL: `recovery/trajectory-facts.ts` usage sums
+over a whole attempt, `models/observation-ledger-read.ts` full reads of
+`runner_progress` and `runner_transitions`, `store.effects(planID)`, `audit/history.ts`
+`sections()`.
+
+Fastest safe wins, in order: delete `runner_conflict_scans` rows; collapse
+`task_changes`; stop or window `recovery_progress_facts`; drop unused indexes. Together
+about 1 GB of the 2.58 GB, with no reader affected.
