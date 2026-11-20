@@ -380,7 +380,7 @@ export type DetectorDeps = {
   handoff: Pick<HandoffStore, "recordConcern">
   now: () => number
   /** `workerSpendCeilingTokens`: record a takeover concern past this many tokens; off when undefined. */
-  spendCeilingTokens?: number
+  spendCeilingTokens?: number | (() => number | undefined)
 }
 
 export class RecoveryDetector {
@@ -410,8 +410,11 @@ export class RecoveryDetector {
         }))
         const where = `attempt ${attempt.id} of task ${node.task_id} in plan ${plan.id}`
         const options: RuleOptions = {}
-        if (this.deps.spendCeilingTokens !== undefined)
-          options.spendCeilingTokens = this.deps.spendCeilingTokens
+        const ceiling =
+          typeof this.deps.spendCeilingTokens === "function"
+            ? this.deps.spendCeilingTokens()
+            : this.deps.spendCeilingTokens
+        if (ceiling !== undefined) options.spendCeilingTokens = ceiling
         for (const finding of evaluateRules(facts, tail, where, options))
           recorded.push(
             ...this.record(owner, fence, plan.id, node.task_id, attempt.id, finding, tail),

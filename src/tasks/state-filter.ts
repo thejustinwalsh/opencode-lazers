@@ -57,9 +57,13 @@ export function taskStatePredicate(state: TaskQueryState, taskAlias: "tasks" | "
     WHERE n.task_id=${taskAlias}.id AND p.project_directory=${taskAlias}.project_directory
       AND (${predicate})
   )`
-  const paused = `n.state IN ('queued','ready') AND EXISTS (
+  const paused = `n.state IN ('queued','ready') AND (EXISTS (
     SELECT 1 FROM runner_dispatch_controls c WHERE c.plan_id=p.id AND c.state='paused'
-  )`
+  ) OR EXISTS (
+    SELECT 1 FROM lazers_dispatch_pause d WHERE d.state='paused' AND (
+      d.scope='global' OR d.scope=(SELECT k.key FROM lazers_project_paths k WHERE k.path=p.project_directory)
+    )
+  ))`
   if (state === "paused")
     return matchingExecution(`p.state NOT IN ('blocked','cancelled') AND (${paused})`)
   if (state === "queued" || state === "running")
