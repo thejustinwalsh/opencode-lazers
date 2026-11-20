@@ -15,6 +15,12 @@ import type { PathScope } from "./tool-detail.ts"
 import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
+import {
+  installSessionStampSchema,
+  readSessionStamp,
+  writeSessionStamp,
+  type SessionStamp,
+} from "./session-stamps.ts"
 
 type ProgressSource =
   "tool-commentary" | "tool-hook" | "native-event" | "runtime" | "recovery" | "reminder"
@@ -216,7 +222,7 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 const number = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined
 
-function dateMillis(value: unknown): number | undefined {
+export function dateMillis(value: unknown): number | undefined {
   let millis: number
   if (typeof value === "number" && Number.isFinite(value)) millis = value
   else {
@@ -1392,7 +1398,18 @@ export class ProgressRecorder {
   constructor(
     readonly store: RunnerStore,
     readonly projectID: string,
-  ) {}
+  ) {
+    installSessionStampSchema(store.repository)
+  }
+
+  /** Native `time.updated` (and derived handoff) at this attempt's last complete reconstruction. */
+  sessionStamp(attemptID: string): SessionStamp | undefined {
+    return readSessionStamp(this.store.repository, attemptID)
+  }
+
+  recordSessionStamp(assignment: ProgressAssignment, stamp: SessionStamp): void {
+    writeSessionStamp(this.store.repository, assignment.attemptID, assignment.sessionID, stamp)
+  }
 
   /**
    * O(1) prefilter: false means no runner attempt owns this session, so assignment-only

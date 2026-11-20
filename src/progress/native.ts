@@ -10,7 +10,7 @@ import { declareInput } from "../tool-input.ts"
 import { ProgressInput } from "./schema.ts"
 import { toolObservationScope } from "./tool-observation.ts"
 import { timedHooks, sectionAsync } from "../diagnostics/stall-probe.ts"
-import type { ProgressAssignment, ProgressRecorder } from "./recorder.ts"
+import { dateMillis, type ProgressAssignment, type ProgressRecorder } from "./recorder.ts"
 import {
   registerProgressReconstruction,
   sameProgressAssignment,
@@ -126,8 +126,17 @@ function reminderEffect(
         session.location.directory !== assignment.workspace
       )
         return
-      const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
-      if (hasVisibleHandoff(messages)) return
+      // An unchanged native stamp means the retained context is the one already reconciled:
+      // reuse its recorded handoff verdict instead of reading the conversation again.
+      const updated = dateMillis(session.time?.updated)
+      const stamp = updated === undefined ? undefined : recorder.sessionStamp(assignment.attemptID)
+      const handoff =
+        stamp && updated !== undefined && updated <= stamp.updated
+          ? stamp.handoff
+          : hasVisibleHandoff(
+              await Effect.runPromise(ctx.session.context({ sessionID: session.id })),
+            )
+      if (handoff) return
       const proposedMessageID = SessionMessage.ID.create()
       const claim = recorder.claimReminder(sessionID, HANDOFF_REMINDER, proposedMessageID)
       if (!claim) return
@@ -196,6 +205,12 @@ async function reconstructSession(
     return "retry" as const
   }
 
+  // Boot and event-driven checks both land here: a session whose native `time.updated` has not
+  // moved since its last complete reconstruction has nothing new to read or record.
+  const updated = dateMillis(session.time?.updated)
+  const stamp = updated === undefined ? undefined : recorder.sessionStamp(assignment.attemptID)
+  if (stamp && updated !== undefined && updated <= stamp.updated) return "complete" as const
+
   recorder.recordSessionSnapshot(assignment.sessionID, session)
   recorder.recordSessionOutcome(assignment.sessionID, session)
   const finishContext = readStarted("context")
@@ -205,6 +220,8 @@ async function reconstructSession(
     if (!assignmentIsCurrent()) return "stale" as const
     await recorder.reconcileMessagesAsync(assignment.sessionID, messages)
     if (!assignmentIsCurrent()) return "stale" as const
+    if (updated !== undefined)
+      recorder.recordSessionStamp(assignment, { updated, handoff: hasVisibleHandoff(messages) })
     return "complete" as const
   } catch (error) {
     finishContext("failed")

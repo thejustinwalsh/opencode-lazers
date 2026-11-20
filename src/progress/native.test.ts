@@ -1714,3 +1714,63 @@ test.each(["get", "context"] as const)(
     }
   },
 )
+
+test("finished sessions with an unchanged native stamp are neither re-read nor re-reconciled", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const updated = new Map([
+      ["ses-failed", 100],
+      ["ses-accepted", 100],
+    ])
+    const gets: string[] = []
+    const contexts: string[] = []
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      readSession: (sessionID) => {
+        gets.push(sessionID)
+        return Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "lazers-implementor",
+          location: { directory: fixture.directory },
+          time: { updated: updated.get(sessionID) },
+        })
+      },
+      readContext: (sessionID) => {
+        contexts.push(sessionID)
+        return Effect.succeed([])
+      },
+    })
+    const idle = (sessionID: string) => ctx.emitEvent(executionEvent("session.idle", sessionID, 1))
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          // Boot baseline: no stamp exists yet, so each finished session is read once.
+          yield* Effect.promise(() => waitForNativeState(async () => contexts.length === 2))
+          expect(gets.length).toBe(2)
+
+          // Events for unchanged sessions cost one cheap session.get and no context read.
+          yield* Effect.promise(async () => {
+            await idle("ses-failed")
+            await idle("ses-accepted")
+            await waitForNativeState(async () => gets.length === 4, 6_000)
+          })
+          expect(contexts.length).toBe(2)
+
+          // A newer native stamp reads that session's context again.
+          updated.set("ses-accepted", 200)
+          yield* Effect.promise(async () => {
+            await idle("ses-accepted")
+            await waitForNativeState(async () => contexts.length === 3, 6_000)
+          })
+          expect(contexts.filter((id) => id === "ses-accepted").length).toBe(2)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
