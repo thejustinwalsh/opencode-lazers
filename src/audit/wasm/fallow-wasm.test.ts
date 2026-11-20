@@ -205,13 +205,17 @@ describe("fallow-threads.wasm", () => {
         { op: "duplicationReport", root: dir, options: { threads: 2 } },
         { maxThreads: 2, threadPool: pool },
       ).stdout.replace(/"elapsed_ms":[0-9.]+/g, "")
-    const first = text()
-    expect(pool.created).toBe(2)
-    const second = text()
-    expect(pool.created).toBe(2)
-    expect(pool.reused).toBe(2)
-    expect(second).toBe(first)
-    await pool.terminateAll()
+    try {
+      const first = text()
+      expect(pool.created).toBe(2)
+      const second = text()
+      expect(pool.created).toBe(2)
+      expect(pool.reused).toBe(2)
+      expect(second).toBe(first)
+    } finally {
+      await pool.terminateAll()
+      Bun.gc(true)
+    }
     expect(pool.idleCount).toBe(0)
     expect(pool.liveCount).toBe(0)
   })

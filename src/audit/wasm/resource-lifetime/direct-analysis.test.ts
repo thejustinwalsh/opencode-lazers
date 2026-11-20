@@ -14,6 +14,9 @@ test("repeated direct analyses reclaim memory and bound helper lifetimes", async
   const result = JSON.parse(stdout.trim()) as {
     completed: number
     expectedFailures: number
+    instancesByKind: { single: number; threads: number }
+    observedInstances: number
+    distinctMemorySizes: number[]
     retainedInstances: number
     retainedMemories: number
     peakRssMb: number
@@ -21,6 +24,9 @@ test("repeated direct analyses reclaim memory and bound helper lifetimes", async
   }
   expect(result.completed).toBe(12)
   expect(result.expectedFailures).toBe(8)
+  expect(result.instancesByKind).toEqual({ single: 8, threads: 12 })
+  expect(result.observedInstances).toBe(20)
+  expect(result.distinctMemorySizes).toHaveLength(2)
   expect(result.retainedInstances).toBe(0)
   expect(result.retainedMemories).toBe(0)
   expect(result.peakRssMb).toBeLessThan(700)

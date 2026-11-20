@@ -7,7 +7,6 @@ import {
   disposeFixture,
   makeFixture,
   repoRoot,
-  runOp,
   threadedWasmModule,
   wasmModule,
   type ModuleKind,
@@ -19,6 +18,8 @@ const modules = {
 } satisfies Record<ModuleKind, { module: WebAssembly.Module; threads: number }>
 const instanceRefs: WeakRef<WebAssembly.Instance>[] = []
 const memoryRefs: WeakRef<WebAssembly.Memory>[] = []
+const memorySizes: number[] = []
+const instancesByKind: Record<ModuleKind, number> = { single: 0, threads: 0 }
 let completed = 0
 let expectedFailures = 0
 let peakRssMb = 0
@@ -31,12 +32,14 @@ Worker.prototype.terminate = function (this: Worker): Promise<number> {
   return terminateWorker.call(this).finally(() => pendingTerminations--)
 }
 
-const observeInstance = (instance: WebAssembly.Instance) => {
+const observeInstance = (kind: ModuleKind) => (instance: WebAssembly.Instance) => {
   instanceRefs.push(new WeakRef(instance))
   const memory = instance.exports.memory
   if (!(memory instanceof WebAssembly.Memory))
     throw new Error("analysis instance did not export its linear memory")
   memoryRefs.push(new WeakRef(memory))
+  memorySizes.push(memory.buffer.byteLength)
+  instancesByKind[kind]++
 }
 
 const recordRss = () => {
@@ -53,24 +56,34 @@ try {
       for (const outcome of ["success", "failure"] as const) {
         const options = {
           maxThreads: threads,
-          onInstance: observeInstance,
+          onInstance: observeInstance(kind),
           ...(outcome === "failure" ? { extraRoots: [join(fixture, "config")] } : {}),
         }
-        if (outcome === "success") {
-          await runOp("deadCode", repoRoot, {}, options, kind)
+        const failed = outcome === "failure"
+        const result = await runDirectFallowModule(
+          modules[kind].module,
+          {
+            op: failed ? "duplicationReport" : "deadCode",
+            root: repoRoot,
+            ...(failed ? { configPath: badConfig } : {}),
+            options: { threads, explain: true, css: true, cache: false },
+          },
+          options,
+        )
+        const parsed = JSON.parse(result.stdout) as {
+          report?: unknown
+          error?: { code?: string; message?: string }
+        }
+        if (!failed) {
+          if (parsed.error || parsed.report === undefined)
+            throw new Error(`unexpected ${kind} analysis result: ${JSON.stringify(parsed.error)}`)
           completed++
         } else {
-          try {
-            await runOp("duplicationReport", repoRoot, { configPath: badConfig }, options, kind)
-            throw new Error(`${kind} module unexpectedly accepted an invalid configuration`)
-          } catch (error) {
-            if (
-              !(error instanceof Error) ||
-              !error.message.startsWith("FALLOW_CONFIG_LOAD_FAILED:")
+          if (parsed.error?.code !== "FALLOW_CONFIG_LOAD_FAILED")
+            throw new Error(
+              `${kind} module unexpectedly accepted an invalid configuration: ${JSON.stringify(parsed.error)}`,
             )
-              throw error
-            expectedFailures++
-          }
+          expectedFailures++
         }
         if (pendingTerminations !== 0)
           throw new Error(
@@ -94,7 +107,7 @@ try {
         },
         {
           maxThreads: modules.threads.threads,
-          onInstance: observeInstance,
+          onInstance: observeInstance("threads"),
           onSpawn: () => {
             throw new Error("intentional helper teardown probe")
           },
@@ -126,6 +139,9 @@ try {
     JSON.stringify({
       completed,
       expectedFailures,
+      instancesByKind,
+      observedInstances: instanceRefs.length,
+      distinctMemorySizes: [...new Set(memorySizes)],
       retainedInstances,
       retainedMemories,
       peakRssMb,
