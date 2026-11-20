@@ -532,4 +532,4 @@ bun scripts/runtime-split-fallow.ts src/runner/runtime.ts src/runner/<module>.ts
 | `runtime.test.ts` | 643    | 58       | 11.1        | 585 (91.0%)            | 230 of 397 ranged (57.9%)     | 1,356,817           |
 | all files         | 14,597 | 230      | 63.5        | 10,033 (68.7%)         | 4,980 of 9,809 ranged (50.8%) | 33,057,450          |
 
-The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) is higher than the 35% in `rediscovery-measurements.md`; I count a read as overlapping when its range touches any earlier range of the same file, the older figure may use a stricter intersection. Compare future runs with the same script (`scratchpad/reads.py`, derived from the appendix queries), not with the older number.
+The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) is higher than the 35% in `rediscovery-measurements.md`; I count a read as overlapping when its range touches any earlier range of the same file, the older figure may use a stricter intersection. Compare future runs with this definition (the appendix queries and derivation rules, with that overlap test), not with the older number.
