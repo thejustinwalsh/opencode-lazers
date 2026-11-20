@@ -1,3 +1,4 @@
+import { installProgressDisplayBackfill } from "../progress/display-backfill.ts"
 import { installProgressDisplaySchema } from "../progress/display-store.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
@@ -1309,6 +1310,7 @@ export class RunnerStore {
           END;
         `)
         installProgressDisplaySchema(db)
+        installProgressDisplayBackfill(db)
         const attemptColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_attempts)")

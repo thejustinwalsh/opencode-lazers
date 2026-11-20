@@ -87,6 +87,7 @@ export const schemaModules = {
       "runner_change_identity",
       "runner_progress",
       "runner_progress_display",
+      "runner_progress_display_backfill",
       "native_tool_calls",
       "runner_progress_reminders",
       "runner_progress_reconciled",
