@@ -161,8 +161,14 @@ test("the planning runbooks exist, are retrievable, and the Architect's prompt g
   )
   const architect = readFileSync(join(here, "../architect.md"), "utf8")
   expect(architect).toContain("lz-plan-draft")
-  // The file was 13,507 characters before the planning paragraph.
-  expect(architect.length).toBeLessThanOrEqual(13_507 + 600)
+  // The planning section itself stays one short paragraph (measured: 393 characters with its
+  // heading). The whole file is not capped here: other features add to it too.
+  const planning = architect.slice(
+    architect.indexOf("## Planning"),
+    architect.indexOf("## Situational guidance"),
+  )
+  expect(planning.length).toBeGreaterThan(0)
+  expect(planning.length).toBeLessThanOrEqual(600)
   for (const topic of [
     "planning-draft",
     "planning-brainstorm",
