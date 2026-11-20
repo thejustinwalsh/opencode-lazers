@@ -89,3 +89,23 @@ test("rotates past the size cap", async () => {
   expect(await lines(`${sampler.outputPath}.1`)).toHaveLength(1)
   expect(await lines(sampler.outputPath)).toHaveLength(1)
 })
+
+test("each line carries the synchronous database time per site", async () => {
+  const { directory, sampler } = await fixture()
+  await writeFile(join(directory, "heap.on"), "")
+  const { TaskRepository } = await import("../storage.ts")
+  await sampler.sample()
+  const repository = new TaskRepository(join(directory, "tasks.sqlite"), join(directory, "project"))
+  try {
+    repository.read(() => {
+      const end = performance.now() + 5
+      while (performance.now() < end);
+    })
+  } finally {
+    repository.close()
+  }
+  await sampler.sample()
+  const [, second] = await lines(sampler.outputPath)
+  expect(second!.storageSyncMs).toBeGreaterThanOrEqual(5)
+  expect(second!.storage.some((row) => row.kind === "read" && row.maxMs >= 5)).toBe(true)
+})

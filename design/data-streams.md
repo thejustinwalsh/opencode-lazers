@@ -72,16 +72,16 @@ const stream = data.open("runner.plans", {
   order: "updated desc",
   window: 100, // items, slop included; the consumer decides
   anchor: "head", // or a row key
-});
+})
 
-stream.items; // at most `window` keyed rows, in order, read from the frame
-stream.before; // rows outside the window toward the start
-stream.after; // rows outside the window toward the end
-stream.revision; // the database revision the window reflects
-stream.slide(+25); // move the window by items
-stream.seek(key); // jump; the window refills around the key
-stream.on("change", listener); // items in the window changed
-stream.close(); // the buffer goes back to its worker
+stream.items // at most `window` keyed rows, in order, read from the frame
+stream.before // rows outside the window toward the start
+stream.after // rows outside the window toward the end
+stream.revision // the database revision the window reflects
+stream.slide(+25) // move the window by items
+stream.seek(key) // jump; the window refills around the key
+stream.on("change", listener) // items in the window changed
+stream.close() // the buffer goes back to its worker
 ```
 
 | Consumer             | Use                                                      |

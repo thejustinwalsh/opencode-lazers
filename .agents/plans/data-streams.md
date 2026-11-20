@@ -89,14 +89,14 @@ test `src/runner/transition-indexes.test.ts` (create or extend).
 
 ```ts
 export type StorageTiming = {
-  site: string;
-  kind: "read" | "atomic";
-  count: number;
-  totalMs: number;
-  maxMs: number;
-};
-export function timeStorage<T>(kind: "read" | "atomic", run: () => T): T; // records under the caller's site
-export function drainStorageTiming(top: number): StorageTiming[]; // top sites by totalMs since last drain
+  site: string
+  kind: "read" | "atomic"
+  count: number
+  totalMs: number
+  maxMs: number
+}
+export function timeStorage<T>(kind: "read" | "atomic", run: () => T): T // records under the caller's site
+export function drainStorageTiming(top: number): StorageTiming[] // top sites by totalMs since last drain
 ```
 
 - `site` is `file:line` of the first stack frame outside `src/storage.ts`, resolved only
@@ -120,17 +120,17 @@ export function drainStorageTiming(top: number): StorageTiming[]; // top sites b
 **Interfaces — Produces:**
 
 ```ts
-export type ColumnType = "int" | "float" | "text" | "json" | "bool"; // nullable always allowed
-export type Columns = Readonly<Record<string, ColumnType>>;
+export type ColumnType = "int" | "float" | "text" | "json" | "bool" // nullable always allowed
+export type Columns = Readonly<Record<string, ColumnType>>
 export type FrameHeader = {
-  revision: number;
-  count: number;
-  before: number | "more";
-  after: number | "more";
-};
+  revision: number
+  count: number
+  before: number | "more"
+  after: number | "more"
+}
 
 /** Bytes needed for `rows`; exact. */
-export function frameSize(columns: Columns, rows: readonly unknown[][]): number;
+export function frameSize(columns: Columns, rows: readonly unknown[][]): number
 /** Writes header + rows at `offset`; throws RangeError if it does not fit (callers size first). */
 export function writeFrame(
   target: ArrayBufferLike,
@@ -138,17 +138,17 @@ export function writeFrame(
   columns: Columns,
   header: FrameHeader,
   rows: readonly unknown[][],
-): number;
+): number
 /** Zero-copy reader. `row(i)` returns an object whose getters decode one field on access. */
 export function readFrame<C extends Columns>(
   source: ArrayBufferLike,
   offset: number,
   columns: C,
 ): {
-  header: FrameHeader;
-  row(index: number): { readonly [K in keyof C]: unknown };
-  key(index: number, keyColumns: readonly (keyof C)[]): string;
-};
+  header: FrameHeader
+  row(index: number): { readonly [K in keyof C]: unknown }
+  key(index: number, keyColumns: readonly (keyof C)[]): string
+}
 ```
 
 - Little endian. Frame: `u32 count | u32 usedBytes | f64 revision | f64 before | f64 after`
@@ -173,64 +173,60 @@ export function readFrame<C extends Columns>(
 
 ```ts
 export type SourceDefinition<F, C extends Columns> = {
-  name: string; // "tasks.list"
-  table: string; // FROM clause (table or view)
-  key: readonly (keyof C & string)[]; // stable row key
-  orders: Readonly<
-    Record<string, readonly { column: string; direction: "asc" | "desc" }[]>
-  >; // each ends with the key
+  name: string // "tasks.list"
+  table: string // FROM clause (table or view)
+  key: readonly (keyof C & string)[] // stable row key
+  orders: Readonly<Record<string, readonly { column: string; direction: "asc" | "desc" }[]>> // each ends with the key
   filter(input: F): {
-    where: string;
-    params: readonly (string | number | null)[];
-  }; // indexed columns only
-  columns: C; // list row
-  detail?: Columns; // cold fields added when window === 1
-  count: "exact" | "more"; // "exact" requires an indexed count
-};
-export function defineSource<F, C extends Columns>(
-  definition: SourceDefinition<F, C>,
-): Source<F, C>;
+    where: string
+    params: readonly (string | number | null)[]
+  } // indexed columns only
+  columns: C // list row
+  detail?: Columns // cold fields added when window === 1
+  count: "exact" | "more" // "exact" requires an indexed count
+}
+export function defineSource<F, C extends Columns>(definition: SourceDefinition<F, C>): Source<F, C>
 export function windowQuery(
   source: Source<any, any>,
   input: {
-    filter: unknown;
-    order: string;
-    anchor: "head" | "tail" | { key: readonly unknown[] };
-    window: number;
+    filter: unknown
+    order: string
+    anchor: "head" | "tail" | { key: readonly unknown[] }
+    window: number
   },
-): { rows: SQL; before: SQL; after: SQL };
+): { rows: SQL; before: SQL; after: SQL }
 
 // protocol.ts
 export type ToReader =
   | {
-      type: "open";
-      stream: number;
-      source: string;
-      filter: unknown;
-      order: string;
-      anchor: Anchor;
-      window: number;
-      tier: "shared" | "transfer" | "copy";
+      type: "open"
+      stream: number
+      source: string
+      filter: unknown
+      order: string
+      anchor: Anchor
+      window: number
+      tier: "shared" | "transfer" | "copy"
     }
   | { type: "slide"; stream: number; delta: number }
   | { type: "seek"; stream: number; anchor: Anchor }
   | { type: "revision"; revision: number } // main thread committed; refresh affected streams
   | { type: "return"; buffer: ArrayBuffer } // transfer tier: buffer goes home
-  | { type: "close"; stream: number };
+  | { type: "close"; stream: number }
 export type FromReader =
   | { type: "opened"; stream: number; shared?: SharedArrayBuffer }
   | {
-      type: "frame";
-      stream: number;
-      buffer?: ArrayBuffer;
-      bytes?: Uint8Array;
-      sequence: number;
+      type: "frame"
+      stream: number
+      buffer?: ArrayBuffer
+      bytes?: Uint8Array
+      sequence: number
     }
   | { type: "regrow"; stream: number; shared: SharedArrayBuffer }
-  | { type: "failed"; stream: number; message: string };
+  | { type: "failed"; stream: number; message: string }
 
 // pool.ts
-export function readerPool(databasePath: string): ReaderPool; // one per database per process
+export function readerPool(databasePath: string): ReaderPool // one per database per process
 ```
 
 - The reader keeps per stream: source, filter, order, the keys of the window's two
@@ -265,29 +261,29 @@ export function readerPool(databasePath: string): ReaderPool; // one per databas
 
 ```ts
 export type StreamOptions<F> = {
-  filter: F;
-  order: string;
-  window: number;
-  anchor?: "head" | "tail" | { key: readonly unknown[] };
-};
+  filter: F
+  order: string
+  window: number
+  anchor?: "head" | "tail" | { key: readonly unknown[] }
+}
 export type Stream<C extends Columns> = {
-  readonly items: readonly { readonly [K in keyof C]: unknown }[]; // lazy rows over the frame
-  readonly before: number | "more";
-  readonly after: number | "more";
-  readonly revision: number;
-  ready(): Promise<void>; // first frame
-  slide(delta: number): Promise<void>;
-  seek(anchor: "head" | "tail" | { key: readonly unknown[] }): Promise<void>;
-  on(event: "change", listener: () => void): () => void;
-  close(): void;
-  [Symbol.dispose](): void;
-};
+  readonly items: readonly { readonly [K in keyof C]: unknown }[] // lazy rows over the frame
+  readonly before: number | "more"
+  readonly after: number | "more"
+  readonly revision: number
+  ready(): Promise<void> // first frame
+  slide(delta: number): Promise<void>
+  seek(anchor: "head" | "tail" | { key: readonly unknown[] }): Promise<void>
+  on(event: "change", listener: () => void): () => void
+  close(): void
+  [Symbol.dispose](): void
+}
 export function openStream<F, C extends Columns>(
   pool: ReaderPool,
   source: Source<F, C>,
   options: StreamOptions<F>,
   owner?: { onDispose(run: () => void): void },
-): Stream<C>;
+): Stream<C>
 ```
 
 - Tier choice: shared if `typeof SharedArrayBuffer === "function"` and the pool is

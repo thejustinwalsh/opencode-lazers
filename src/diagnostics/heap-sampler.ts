@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs"
 import { appendFile, mkdir, rename, stat } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { drainStorageReport, setStorageTiming, type StorageTiming } from "./storage-timing.ts"
 
 export type HeapContext = { locations: number; cores: number }
 export type HeapSamplerOptions = {
@@ -58,6 +59,10 @@ export type HeapRecord = {
   cores: number
   /** Wall time of `heapStats()`. */
   sampleMs: number
+  /** Top 20 call sites by synchronous database time since the previous sample. */
+  storage: StorageTiming[]
+  /** Total synchronous database ms since the previous sample. */
+  storageSyncMs: number
 }
 
 const INTERVAL_MS = 60_000
@@ -83,12 +88,14 @@ export class HeapSampler {
   ) {
     this.flagPath = join(options.directory, "heap.on")
     this.outputPath = join(options.directory, "heap.jsonl")
+    setStorageTiming(existsSync(this.flagPath))
     this.timer = setInterval(() => void this.sample(), options.intervalMs ?? INTERVAL_MS)
     this.timer.unref?.()
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer)
+    setStorageTiming(false)
     this.timer = undefined
   }
 
@@ -98,7 +105,9 @@ export class HeapSampler {
 
   /** Takes one sample when the flag file exists; resolves once written. Never throws. */
   sample(): Promise<void> {
-    if (!existsSync(this.flagPath)) return this.writing
+    const flagged = existsSync(this.flagPath)
+    setStorageTiming(flagged)
+    if (!flagged) return this.writing
     let line: string
     try {
       const jsc = this.options.jsc ?? (require("bun:jsc") as Jsc)
@@ -131,6 +140,9 @@ export class HeapSampler {
         protectedObjectTypeCounts: top(protectedObjectTypeCounts),
         ...context,
         sampleMs,
+        ...(({ storage, syncMs }) => ({ storage, storageSyncMs: Math.round(syncMs * 100) / 100 }))(
+          drainStorageReport(20),
+        ),
       }
       line = `${JSON.stringify(record)}\n`
     } catch {

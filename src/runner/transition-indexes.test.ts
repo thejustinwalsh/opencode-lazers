@@ -59,9 +59,7 @@ test("large tables are indexed by a worker without blocking the opener", async (
   const repository = database()
   await new RunnerStore(repository).transitionIndexes
   dropIndexes(repository)
-  const pending = repository.atomic((db) =>
-    ensureTransitionIndexes(db, repository.path, { inlineRowLimit: 0 }),
-  )
+  const pending = ensureTransitionIndexes(repository, { inlineRowLimit: 0 })
   // The opener returned without building them inline.
   expect(missing(repository)).toHaveLength(3)
   await pending
@@ -79,14 +77,34 @@ test("separate module copies share one in-flight build per database", async () =
   expect(copies[0]!.ensureTransitionIndexes).not.toBe(ensureTransitionIndexes)
   let spawned = 0
   const builds = copies.map((copy) =>
-    repository.atomic((db) =>
-      copy.ensureTransitionIndexes(db, repository.path, {
-        inlineRowLimit: 0,
-        onSpawn: () => spawned++,
-      }),
-    ),
+    copy.ensureTransitionIndexes(repository, {
+      inlineRowLimit: 0,
+      onSpawn: () => spawned++,
+    }),
   )
   await Promise.all(builds)
   expect(spawned).toBe(1)
+  expect(missing(repository)).toEqual([])
+})
+
+test("the worker is spawned only after the requesting transaction has committed", async () => {
+  const repository = database()
+  await new RunnerStore(repository).transitionIndexes
+  dropIndexes(repository)
+  const states: boolean[] = []
+  let db: import("bun:sqlite").Database | undefined
+  const wrapped = {
+    path: repository.path,
+    atomic: <T>(run: (database: import("bun:sqlite").Database) => T): T =>
+      repository.atomic((database) => {
+        db = database
+        return run(database)
+      }),
+  }
+  await ensureTransitionIndexes(wrapped, {
+    inlineRowLimit: 0,
+    onSpawn: () => states.push(db!.inTransaction),
+  })
+  expect(states).toEqual([false])
   expect(missing(repository)).toEqual([])
 })

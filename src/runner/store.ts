@@ -1503,7 +1503,7 @@ export class RunnerStore {
     )
     installPrioritySchema(repository)
     // Not generation-gated: existing databases lack these and large tables build off-thread.
-    this.transitionIndexes = repository.atomic((db) => ensureTransitionIndexes(db, repository.path))
+    this.transitionIndexes = ensureTransitionIndexes(repository)
     // An older still-loaded plugin can recreate its table after the generation was installed.
     if (
       repository.read((db) =>
