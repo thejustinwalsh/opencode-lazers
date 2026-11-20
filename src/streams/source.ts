@@ -37,6 +37,24 @@ export type SourceDefinition<F, C extends Columns> = {
    * and re-probes `"more"` sources.
    */
   count?: SourceCount<F>
+  /**
+   * Runs on the main thread when a stream over this source is opened through the Streams RPC
+   * (a filter cannot change after `open`, so `seek` needs no second call). It decides who may
+   * read what: it returns the filter to use, possibly narrowed or overwritten, or throws. Keep it
+   * to point reads and permission checks, never history. Server-side `openStream` callers are
+   * trusted code and do not pass through it.
+   */
+  authorize?(filter: F, context: StreamContext): F | Promise<F>
+}
+
+/** What `authorize` may ask of the service that registered the Streams RPC. */
+export type StreamContext = {
+  projectID: string
+  projectDirectory: string
+  /** Every OpenCode project id known to share a project with `id`; always includes `id`. */
+  projectIds(id: string): string[]
+  /** Rejects unless the caller's session may read this project. */
+  assertRead(sessionID: string): Promise<void>
 }
 
 export type CountBuilder<F> = (input: { filter: F; edge: readonly unknown[] }) => SQL

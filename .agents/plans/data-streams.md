@@ -386,17 +386,23 @@ panel or tool.
 4. **Read-meter test:** wrap the main repository with `meterRepository`, open the stream,
    slide and seek, and assert `statements` is empty; assert the same meter sees the old
    path's statements so the test is not vacuous.
-5. **Consumer.** Server side (tool, report, fold): `openStream(pool, source, ...)` with the
+5. **Carry over the old read's scope checks.** List every check the replaced RPC made (the
+   permission assert on the caller's session, the session-scope rule, project id aliases, the
+   project directory) and declare them in the source's `authorize(filter, context)`. It runs on
+   the main thread at `open` (point reads only), returns the filter to use (overwrite what the
+   caller must not choose, such as the project directory) or throws. A filter column the check
+   needs must be stored on the row and indexed.
+6. **Consumer.** Server side (tool, report, fold): `openStream(pool, source, ...)` with the
    pool from `acquireReaderPool` held by the project core, window = the tool's page size,
    read one window, return the edge key as the continue marker, close in the same call.
    GUI: `createStream(transport, sourceRef, options)` over `Streams` RPC; window from the
    view (visible rows plus slop each side), `slide` on scroll, rows keyed by the source key.
-6. **Delete** the replaced read, its paging state and caches, and its
+7. **Delete** the replaced read, its paging state and caches, and its
    `scripts/unbounded-reads.allowlist` entries; list remaining callers by file:line.
-7. **Verify:** `bun run verify`, the new tests, the consumer's DOM or tool tests, a server
+8. **Verify:** `bun run verify`, the new tests, the consumer's DOM or tool tests, a server
    and GUI build in the worktree. The heap sampler's `readerPools` line shows the pool
    (workers, streams, statements, buffers) in the live service.
-8. **Report** each filter or order with no index, each field that blocked the migration,
+9. **Report** each filter or order with no index, each field that blocked the migration,
    and each caller left behind.
 
 #### Findings: the Tasks panel

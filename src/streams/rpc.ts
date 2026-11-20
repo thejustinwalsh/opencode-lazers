@@ -4,7 +4,7 @@ import { timedRpc } from "../diagnostics/stall-probe.ts"
 import { openStream, type Stream } from "./client.ts"
 import { STREAM_LEASE_MS, Streams, type StreamAnchorInput, type StreamFrame } from "./contract.ts"
 import { acquireReaderPool, type ReaderPool } from "./pool.ts"
-import { findSource } from "./source.ts"
+import { findSource, type StreamContext } from "./source.ts"
 import "./sources/index.ts"
 import type { Columns } from "./frame.ts"
 
@@ -47,6 +47,8 @@ export function createStreamsService(options: {
   /** Called after a frame arrives that no response carried. */
   changed(stream: string, seq: number): void
   leaseMs?: number
+  /** Given to a source's `authorize`; a source that has one cannot be opened without it. */
+  context?: StreamContext
 }) {
   const leaseMs = options.leaseMs ?? STREAM_LEASE_MS
   const streams = new Map<string, Entry>()
@@ -100,8 +102,20 @@ export function createStreamsService(options: {
       drop(input.stream)
       const source = findSource(input.source)
       if (!source) throw new StreamFailedError(input.stream, `Unknown source ${input.source}`)
+      let filter = input.filter
+      if (source.authorize) {
+        try {
+          if (!options.context) throw new Error("This service cannot authorize the source")
+          filter = await source.authorize(input.filter as never, options.context)
+        } catch (error) {
+          throw new StreamFailedError(
+            input.stream,
+            error instanceof Error ? error.message : String(error),
+          )
+        }
+      }
       const stream = openStream(options.pool, source, {
-        filter: input.filter as never,
+        filter: filter as never,
         order: input.order,
         window: input.window,
         transport: "copy",
@@ -163,7 +177,12 @@ export function createStreamsService(options: {
  */
 export function registerStreams(
   ctx: Pick<Plugin.Context, "rpc">,
-  options: { databasePath: string; pool?: Pick<ReaderPool, "attach">; leaseMs?: number },
+  options: {
+    databasePath: string
+    pool?: Pick<ReaderPool, "attach">
+    leaseMs?: number
+    context?: StreamContext
+  },
 ) {
   return Effect.gen(function* () {
     const lease = yield* Effect.acquireRelease(
@@ -176,6 +195,7 @@ export function registerStreams(
       pool,
       changed: (stream, seq) => emit?.(stream, seq),
       ...(options.leaseMs ? { leaseMs: options.leaseMs } : {}),
+      ...(options.context ? { context: options.context } : {}),
     })
     yield* Effect.acquireRelease(Effect.void, () => Effect.sync(() => service.dispose()))
     const run = <T>(work: () => T | Promise<T>) =>
