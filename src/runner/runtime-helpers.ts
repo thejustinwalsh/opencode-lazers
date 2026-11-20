@@ -1,3 +1,13 @@
+import { GitObservations } from "./git-observations.ts"
+import { type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { type BaseReach, type IntegrationProof } from "./integration-proof.ts"
+import type { CommandInput as PlanCommand } from "./schema.ts"
+import type { AttemptRow } from "./store.ts"
+import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
+import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
+import type { HostSession } from "./host.ts"
+import { ModelPolicy } from "./schema.ts"
+import type { RetainedVerification } from "./retained-verification/schema.ts"
 import { fallowOutcome } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
 import type { FallowDisposition } from "../audit/contract.ts"
@@ -153,4 +163,92 @@ export type PlanFallowContext = {
   baseCommit: string
   sourceGeneration: string | undefined
   verificationEpoch: number
+}
+
+export type RunnerTransitionRecord = {
+  id: number
+  task_id: string | null
+  event: string
+  payload: string
+}
+
+export type RetainedVerificationSeed = RetainedVerification
+
+export type RetainedRepairRecoverySeed = {
+  operationID: string
+  attemptID: string
+  taskID: string
+  failedMessageID: string
+  interruptedInputID: string
+  owner: string
+  taskRevision: number
+  planVersion: number
+  planRevision: number
+  resumedTransitionID: number
+  blockedTransitionID: number
+  cancelledTransitionID: number
+  usage: { tokenCount: number | null; toolCount: number; cost: number | null }
+  worker: HostSession
+  workerObservation: string
+}
+
+export type RetainedRepairSeed = {
+  taskID: string
+  attemptID: string
+  artifact: string
+  previousMessageID: string
+  nativeInputID: string
+  messageID: string
+  operationID: string
+  owner: string
+  sessionID: string
+  workspace: string
+  model: ModelPolicy
+  workerObservation: string
+}
+
+export type AdoptionSeed = {
+  taskID: string
+  taskRevision: number
+  attemptID: string
+  nodeState: string
+  attemptState: string
+  oldArtifact: string
+  descendantCommit: string
+  targetBranch: string
+  landingHead: string
+  reviewedBaseline: string
+  candidateTree: string
+  environmentIdentity: string
+  inputFingerprint: string
+  reason: string
+  combinedArtifact: string
+}
+
+export type CommandContext = {
+  command: PlanCommand
+  caller: string
+  baseVersion: number
+  continuedOwner: string | undefined
+  configuredWorker: ModelPolicy | undefined
+  ownerSession: HostSession | null | undefined
+  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
+  terminalContinuation:
+    { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
+  terminalRepairContinuation: { operationID: string; owner: string } | undefined
+  retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
+  adoptionSeed: AdoptionSeed | undefined
+  retainedVerificationSeed: RetainedVerificationSeed | undefined
+  retainedRepair: RetainedRepairSeed | undefined
+  reviewInput: { binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined
+  startupSettlement:
+    | {
+        attempt: AttemptRow
+        effect: EffectRow
+        failure: StartupWorktreeFailureEvidence
+        evidence: StartupAbsenceEvidence
+      }
+    | undefined
+  cleanupDiagnostics: CleanupAuditDiagnostics | undefined
+  obs: GitObservations
 }

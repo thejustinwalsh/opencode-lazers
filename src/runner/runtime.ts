@@ -10,14 +10,19 @@ import { GitObservations, ObservationRequired } from "./git-observations.ts"
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import {
   messageID,
-  isCommitID,
-  isRecord,
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
   isRerunnableEffect,
 } from "./runtime-helpers.ts"
-import type { RetainedRepairRecord, StartupRecoveryAuthorization } from "./runtime-helpers.ts"
+import type {
+  CommandContext,
+  RetainedRepairRecoverySeed,
+  RetainedRepairSeed,
+  RetainedVerificationSeed,
+  RunnerTransitionRecord,
+  StartupRecoveryAuthorization,
+} from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -25,14 +30,22 @@ import { ArchitectSources } from "./architect-sources.ts"
 import { ArchitectRenewal } from "./architect-renewal.ts"
 import { Dispatch } from "./dispatch.ts"
 import { WorkerObservation } from "./worker-observation.ts"
-import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { CleanupAudit } from "./cleanup-audit.ts"
 import { AttemptAdvance } from "./attempt-advance.ts"
 import { Cancellation } from "./cancellation.ts"
+import { activeProfile, profileRevisionByID } from "../projects/profile-store.ts"
+import { checkRunProfile } from "../projects/profile-runtime.ts"
 import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { ContinuationPreparation } from "./continuation-preparation.ts"
+import { StartupSettlement } from "./startup-settlement.ts"
+import { AdoptionPreparation } from "./adoption-preparation.ts"
+import { RetainedRepairPreparation } from "./retained-repair-preparation.ts"
+import { RetainedVerificationPreparation } from "./retained-verification-preparation.ts"
+import { RetainedRepairRecords } from "./retained-repair-records.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -40,30 +53,21 @@ import { RecoveryBundles } from "./recovery-bundle.ts"
 import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
 import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
-import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
+import { sameModelSnapshot } from "./model-route.ts"
 
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
-import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
+import { workerAgent } from "./worker-agent.ts"
 import { defaultAuditorReport, type AuditorReport } from "./auditor-report.ts"
-import { existsSync, lstatSync, realpathSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 
 import { verificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 
-import {
-  commitIsAncestor,
-  checkResourcesSettled,
-  combineArtifacts,
-  gitAsync,
-  worktreeListPorcelain,
-  reviewedScopeBase,
-  scopePatternsConflict,
-  verificationEnvironmentIdentity,
-} from "./artifacts.ts"
+import { checkResourcesSettled, scopePatternsConflict } from "./artifacts.ts"
 
-import { classifyChanges, protectedPaths } from "./scope.ts"
+import { classifyChanges } from "./scope.ts"
 
 import { defaultFallowPlanReview, defaultFallowReview, type FallowReview } from "./fallow-check.ts"
 
@@ -77,7 +81,7 @@ import {
   type ArchitectRoutingOptions,
 } from "./architect-routing.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
-import { FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
+
 import {
   baseReachable,
   proofForArtifact,
@@ -95,54 +99,29 @@ import {
   planCommandProblem,
   withoutLegacyVersion,
 } from "./plan-commands.ts"
-import type {
-  PlanRow,
-  NodeRow,
-  AttemptRow,
-  EffectRow,
-  OutboxRow,
-  AdoptionRow,
-  ProgressRow,
-} from "./store.ts"
+import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 
-import {
-  resolveRetainedRepairInputLineage,
-  RETAINED_REPAIR_FENCE_FAILURE_REASON,
-  terminalWorkerContinuationProblem as checkTerminalWorkerContinuation,
-} from "./interrupted-continuation.ts"
-import type {
-  RetainedRepairContinuationTransition,
-  TerminalWorkerHold,
-  TerminalWorkerContinuationFacts,
-} from "./interrupted-continuation.ts"
+import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation.ts"
+
 import type { StartTaskInput, StartTaskResult } from "../tasks/contract.ts"
 import type { SchedulingInput, SchedulingPage } from "../tasks/scheduling-contract.ts"
 import { TaskSchedulingRead } from "../tasks/scheduling-read.ts"
 import { workerPersonaLabels, workerPersonaOverlay } from "../personas/index.ts"
-import { DispatchRouteDecisionSchema } from "../models/dispatch-resolution.ts"
+
 import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
 import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
-import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
+import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
 import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
-import {
-  matchesReviewInputAlias,
-  observeReviewInput,
-  parseReviewInputAlias,
-} from "./review-input.ts"
-import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
-import {
-  isStartupWorktreeCandidate,
-  startupFailureSettlementFromReceipt,
-  startupWorktreeFailureEvidence,
-  startupWorktreeCandidates,
-} from "./startup-recovery.ts"
-import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
+import { matchesReviewInputAlias, parseReviewInputAlias } from "./review-input.ts"
+
+import { startupFailureSettlementFromReceipt } from "./startup-recovery.ts"
+
 import {
   activeRetainedVerifications,
   createRetainedVerification,
@@ -157,8 +136,7 @@ import {
   verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
-import type { RetainedVerification } from "./retained-verification/schema.ts"
-import { retainedVerificationEnvironmentIdentity } from "./retained-verification/isolation.ts"
+
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 
@@ -166,32 +144,6 @@ import { sameProject } from "../project-key.ts"
 
 const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 
-/** Activity completion means a receipt exists, not that its process tree is idle. */
-function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
-  if (
-    fact.kind !== "gap" ||
-    fact.source !== "recovery" ||
-    fact.call_id !== null ||
-    fact.message_id !== null
-  )
-    return false
-  try {
-    const sources: unknown = JSON.parse(fact.sources_json)
-    const eventIDs: unknown = JSON.parse(fact.event_ids_json)
-    const payload: unknown = JSON.parse(fact.payload)
-    return (
-      Array.isArray(sources) &&
-      sources.every((source) => source === "recovery") &&
-      Array.isArray(eventIDs) &&
-      eventIDs.length === 0 &&
-      isRecord(payload) &&
-      typeof payload.reason === "string" &&
-      payload.reason.startsWith("Assigned native session is unavailable:")
-    )
-  } catch {
-    return false
-  }
-}
 // Recheck external/native facts periodically, but don't repeat full safety
 // observations on every ordinary scheduler tick when durable facts are stable.
 export type TaskRuntimeOptions = {
@@ -237,66 +189,6 @@ export type TaskRuntimeOptions = {
   }) => Promise<void>
 }
 
-type AdoptionSeed = {
-  taskID: string
-  taskRevision: number
-  attemptID: string
-  nodeState: string
-  attemptState: string
-  oldArtifact: string
-  descendantCommit: string
-  targetBranch: string
-  landingHead: string
-  reviewedBaseline: string
-  candidateTree: string
-  environmentIdentity: string
-  inputFingerprint: string
-  reason: string
-  combinedArtifact: string
-}
-
-type RetainedRepairSeed = {
-  taskID: string
-  attemptID: string
-  artifact: string
-  previousMessageID: string
-  nativeInputID: string
-  messageID: string
-  operationID: string
-  owner: string
-  sessionID: string
-  workspace: string
-  model: ModelPolicy
-  workerObservation: string
-}
-
-type RetainedRepairRecoverySeed = {
-  operationID: string
-  attemptID: string
-  taskID: string
-  failedMessageID: string
-  interruptedInputID: string
-  owner: string
-  taskRevision: number
-  planVersion: number
-  planRevision: number
-  resumedTransitionID: number
-  blockedTransitionID: number
-  cancelledTransitionID: number
-  usage: { tokenCount: number | null; toolCount: number; cost: number | null }
-  worker: HostSession
-  workerObservation: string
-}
-
-type RunnerTransitionRecord = {
-  id: number
-  task_id: string | null
-  event: string
-  payload: string
-}
-
-type RetainedVerificationSeed = RetainedVerification
-
 /** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
 const SLOW_RECONCILE_MS = 30_000
 
@@ -312,53 +204,6 @@ function explicitDraft(plan: PlanRow): boolean {
 /** Deprecated alias of `architectCacheWindowMs`; the plugin entry point still passes this option. */
 export function architectIdleWindowMs(value: unknown): number {
   return architectCacheWindowMs(value)
-}
-
-type AdoptionFingerprintInput = {
-  plan: PlanRow
-  originalPlanVersion: number
-  taskID: string
-  taskRevision: number
-  attemptID: string
-  nodeState: string
-  attemptState: string
-  oldArtifact: string
-  descendantCommit: string
-  targetBranch: string
-  landingHead: string
-  reviewedBaseline: string
-  candidateTree: string
-  combinedArtifact: string
-  reason: string
-  environmentIdentity: string
-}
-
-type CommandContext = {
-  command: PlanCommand
-  caller: string
-  baseVersion: number
-  continuedOwner: string | undefined
-  configuredWorker: ModelPolicy | undefined
-  ownerSession: HostSession | null | undefined
-  preflight: { bases: Map<string, BaseReach>; integration: IntegrationProof | undefined }
-  terminalContinuation:
-    { attemptID: string; messageID: string; inputID: string; worker: HostSession } | undefined
-  terminalRepairContinuation: { operationID: string; owner: string } | undefined
-  retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
-  adoptionSeed: AdoptionSeed | undefined
-  retainedVerificationSeed: RetainedVerificationSeed | undefined
-  retainedRepair: RetainedRepairSeed | undefined
-  reviewInput: { binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined
-  startupSettlement:
-    | {
-        attempt: AttemptRow
-        effect: EffectRow
-        failure: StartupWorktreeFailureEvidence
-        evidence: StartupAbsenceEvidence
-      }
-    | undefined
-  cleanupDiagnostics: CleanupAuditDiagnostics | undefined
-  obs: GitObservations
 }
 
 /** Whether a command's outcome leaves work the scheduler should pick up now. */
@@ -420,6 +265,12 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly continuationPreparation: ContinuationPreparation
+  private readonly startupSettlement: StartupSettlement
+  private readonly adoptionPreparation: AdoptionPreparation
+  private readonly retainedRepairPreparation: RetainedRepairPreparation
+  private readonly retainedVerificationPrep: RetainedVerificationPreparation
+  private readonly repairRecords: RetainedRepairRecords
   private running = false
   private stopped = false
   private tickRequested = false
@@ -514,6 +365,7 @@ export class TaskRuntime {
       retainedVerificationExecution: () => this.retainedVerificationExecution,
       adoptionExecution: () => this.adoptionExecution,
       reconcileEffect: (...args) => this.reconcileEffect(...args),
+      checkProfile: (revisionID) => this.activeCheckProfile(revisionID),
     })
     this.verificationCandidate = new VerificationCandidate(this.core, {
       hold: (...args) => this.hold(...args),
@@ -531,6 +383,8 @@ export class TaskRuntime {
       failAttempt: (...args) => this.failAttempt(...args),
       startAuditorReport: (...args) => this.startAuditorReport(...args),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
+      activeProfile: () => activeProfile(this.store.repository, this.directory),
+      profileRevision: (id) => profileRevisionByID(this.store.repository, id),
     })
     this.effectReconciliation = new EffectReconciliation(this.core, {
       supersedeEffect: (...args) => this.supersedeEffect(...args),
@@ -586,6 +440,49 @@ export class TaskRuntime {
     this.ownership = new ArchitectOwnership(this.core, {
       architectRouting: this.architectRouting,
       journal: this.journal,
+    })
+    this.repairRecords = new RetainedRepairRecords(this.core, {
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+    })
+    this.retainedVerificationPrep = new RetainedVerificationPreparation(this.core, {
+      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.retainedRepairPreparation = new RetainedRepairPreparation(this.core, {
+      transitionHistory: (...args) => this.transitionHistory(...args),
+      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
+      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      retainedRepairBackgroundProblem: (...args) => this.retainedRepairBackgroundProblem(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
+      parseTransitionPayload: this.repairRecords.parseTransitionPayload.bind(this.repairRecords),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.adoptionPreparation = new AdoptionPreparation(this.core, {
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.startupSettlement = new StartupSettlement(this.core, {
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      effect: (...args) => this.effect(...args),
+      uncertain: (...args) => this.uncertain(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
+    })
+    this.continuationPreparation = new ContinuationPreparation(this.core, {
+      matchesWorkerInput: (...args) => this.matchesWorkerInput(...args),
+      interruptedChecksFor: (...args) => this.interruptedChecksFor(...args),
+      prepareRetainedRepairRecovery: (...args) => this.prepareRetainedRepairRecovery(...args),
+      preparationAllowed: (...args) => this.preparationAllowed(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -660,6 +557,7 @@ export class TaskRuntime {
       adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
       adoptionWorkerIdle: (...args) => this.adoptionWorkerIdle(...args),
       checkActivity: (...args) => this.checkActivity(...args),
+      checkProfile: () => this.activeCheckProfile(),
       conflictingActiveAttempt: (...args) => this.conflictingActiveAttempt(...args),
       currentAdoptionInputFingerprint: (...args) => this.currentAdoptionInputFingerprint(...args),
       dataDirectory: this.dataDirectory,
@@ -847,6 +745,15 @@ export class TaskRuntime {
     return this.checkActivities.startCheckActivity(...args)
   }
 
+  /** The profile for a check run: a verify effect's pinned revision, else the active one. */
+  private activeCheckProfile(revisionID?: number) {
+    const active =
+      revisionID === undefined
+        ? activeProfile(this.store.repository, this.directory)
+        : profileRevisionByID(this.store.repository, revisionID)
+    return active ? checkRunProfile(active) : undefined
+  }
+
   private checkActivity(...args: Parameters<CheckActivities["checkActivity"]>) {
     return this.checkActivities.checkActivity(...args)
   }
@@ -901,2333 +808,174 @@ export class TaskRuntime {
     return this.schedulingRead.read(input)
   }
 
-  private retainedVerificationWorkspacePath(operationID: string, phase: "task") {
-    return canonicalProjectWorktreePath(this.directory, `retained-${operationID}-${phase}`)
-  }
-
-  /**
-   * Versioned. `v1` (no prefix) hashes commit SHAs and stays valid for rows
-   * already stored. `v2:` hashes tree OIDs and stable ids, so rewriting history
-   * cannot invalidate it. New rows use v2; stored rows keep the version they
-   * were written with.
-   */
-  private adoptionInputFingerprint(input: AdoptionFingerprintInput, version: "v1" | "v2" = "v2") {
-    const task = this.store.repository.get(input.taskID)
-    if (!task) throw new Error("Adoption task is missing")
-    const base = {
-      projectID: this.projectID,
-      planID: input.plan.id,
-      planRevision: input.plan.revision,
-      planVersion: input.originalPlanVersion,
-      taskID: input.taskID,
-      taskRevision: input.taskRevision,
-      taskProposal: task.proposal,
-      attemptID: input.attemptID,
-      nodeState: input.nodeState,
-      attemptState: input.attemptState,
-      targetBranch: input.targetBranch,
-      candidateTree: input.candidateTree,
-      effectiveWriteScope: this.store.effectiveWriteScope(input.taskID),
-      reason: input.reason,
-      environmentIdentity: input.environmentIdentity,
-    }
-    if (version === "v1")
-      return fingerprint({
-        ...base,
-        planBody: input.plan.body,
-        oldArtifact: input.oldArtifact,
-        descendantCommit: input.descendantCommit,
-        landingHead: input.landingHead,
-        reviewedBaseline: input.reviewedBaseline,
-        combinedArtifact: input.combinedArtifact,
-      })
-    const ref = (sha: string) => this.store.treeRef(sha)
-    return `${FINGERPRINT_V2_PREFIX}${fingerprint({
-      ...base,
-      planBody: this.store.planBodyIdentity(input.plan.body),
-      oldArtifact: ref(input.oldArtifact),
-      descendantCommit: ref(input.descendantCommit),
-      landingHead: ref(input.landingHead),
-      reviewedBaseline: input.reviewedBaseline ? ref(input.reviewedBaseline) : "",
-      combinedArtifact: ref(input.combinedArtifact),
-    })}`
-  }
-
-  private currentAdoptionInputFingerprint(plan: PlanRow, adoption: AdoptionRow) {
-    // Recompute with the version the row was stored with.
-    return this.adoptionInputFingerprint(
-      {
-        plan,
-        originalPlanVersion: adoption.plan_version,
-        taskID: adoption.task_id,
-        taskRevision: adoption.task_revision,
-        attemptID: adoption.attempt_id,
-        nodeState: adoption.node_state,
-        attemptState: adoption.attempt_state,
-        oldArtifact: adoption.old_artifact,
-        descendantCommit: adoption.descendant_commit,
-        targetBranch: adoption.target_branch,
-        landingHead: adoption.landing_head,
-        reviewedBaseline: adoption.reviewed_baseline,
-        candidateTree: adoption.candidate_tree,
-        combinedArtifact: adoption.combined_artifact,
-        reason: adoption.reason,
-        environmentIdentity: adoption.environment_identity,
-      },
-      isFingerprintV2(adoption.input_fingerprint) ? "v2" : "v1",
-    )
-  }
-
-  private conflictingActiveAttempt(taskID: string): AttemptRow | undefined {
-    const scope = this.store.effectiveReservationScope(taskID)
-    return this.store
-      .activeProjectAttempts()
-      .find(
-        (attempt) =>
-          ["preparing", "running", "verifying"].includes(attempt.state) &&
-          (attempt.workspace === this.directory ||
-            scopePatternsConflict(scope, this.store.effectiveReservationScope(attempt.task_id))),
-      )
-  }
-
-  private async reviewedAdoptionBaseline(
-    targetBranch: string,
-    oldArtifact: string,
-    candidate: string,
+  private retainedVerificationWorkspacePath(
+    ...args: Parameters<RetainedVerificationPreparation["retainedVerificationWorkspacePath"]>
   ) {
-    const rows = this.store.atomic((db) =>
-      db
-        .query<{ event: string; payload: string }, [string]>(
-          `SELECT t.event,t.payload FROM runner_transitions t
-           JOIN runner_plans p ON p.id=t.plan_id
-           WHERE p.project_directory=? AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
-           ORDER BY t.id`,
-        )
-        .all(this.directory),
-    )
-    const firstParent = (await gitAsync(this.directory, ["rev-list", "--first-parent", candidate]))
-      .split(/\s+/)
-      .filter(Boolean)
-    const firstParentIndex = new Map(firstParent.map((commit, index) => [commit, index]))
-    let baseline = oldArtifact
-    let nearest = Number.POSITIVE_INFINITY
-    for (const row of rows) {
-      let payload: { artifact?: unknown; branch?: unknown; head?: unknown }
-      try {
-        payload = JSON.parse(row.payload) as typeof payload
-      } catch {
-        continue
-      }
-      if (
-        payload.branch !== targetBranch ||
-        typeof payload.artifact !== "string" ||
-        typeof payload.head !== "string" ||
-        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.artifact) ||
-        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.head) ||
-        payload.head === candidate
-      )
-        continue
-      const position = firstParentIndex.get(payload.head)
-      if (position === undefined || position >= nearest) continue
-      try {
-        await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
-        await gitAsync(this.directory, [
-          "merge-base",
-          "--is-ancestor",
-          payload.artifact,
-          payload.head,
-        ])
-      } catch {
-        continue
-      }
-      baseline = payload.head
-      nearest = position
-    }
-    return baseline
+    return this.retainedVerificationPrep.retainedVerificationWorkspacePath(...args)
   }
 
-  private async adoptionArtifactScopeViolations(
-    attempt: AttemptRow,
-    artifact: string,
-    branch: string,
+  private currentAdoptionInputFingerprint(
+    ...args: Parameters<AdoptionPreparation["currentAdoptionInputFingerprint"]>
   ) {
-    // Worker scope belongs to its patch. The owner reviews the integrated branch
-    // separately, and fresh checks qualify that exact descendant.
-    const reviewed = await this.reviewedAdoptionBaseline(branch, attempt.base_commit, artifact)
-    const base = await reviewedScopeBase(this.directory, attempt.base_commit, artifact, reviewed)
-    const paths = (
-      await gitAsync(this.directory, ["diff", "--name-only", "--no-renames", "-z", base, artifact])
-    )
-      .split("\0")
-      .filter(Boolean)
-    return protectedPaths(paths, this.store.effectiveScope(attempt.task_id))
+    return this.adoptionPreparation.currentAdoptionInputFingerprint(...args)
   }
 
-  private adoptionWorkerIdle(attempt: AttemptRow, worker: HostSession): boolean {
-    return (
-      worker.busy === false &&
-      worker.pendingInput !== true &&
-      !worker.observationUnstable &&
-      (worker.pendingPermissions ?? 0) === 0 &&
-      (worker.pendingForms ?? 0) === 0 &&
-      Boolean(worker.outcome) &&
-      ["completed", "interrupted"].includes(worker.turn?.state ?? "unknown") &&
-      !this.backgroundBlockReason(worker)
-    )
+  private conflictingActiveAttempt(
+    ...args: Parameters<AdoptionPreparation["conflictingActiveAttempt"]>
+  ) {
+    return this.adoptionPreparation.conflictingActiveAttempt(...args)
   }
 
-  private async prepareAdoption(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ): Promise<AdoptionSeed> {
-    if (
-      !command.taskID ||
-      !command.attemptID ||
-      !command.artifact ||
-      !command.descendantCommit ||
-      !command.targetBranch ||
-      !command.reason
-    )
-      throw new Error(
-        "Descendant adoption requires taskID, attemptID, exact old artifact, descendantCommit, targetBranch and reason",
-      )
-    if (!this.validArchitect(ownerSession))
-      throw new Error("Descendant adoption requires the current same-project Architect owner")
-    if (plan.state !== "blocked")
-      throw new Error("Descendant adoption is only available for a blocked, non-finalized plan")
-    if (this.store.activeAdoptions(plan.id).length)
-      throw new Error("A descendant adoption is already pending for this plan")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Uncertain effects must be resolved before descendant adoption")
+  private reviewedAdoptionBaseline(
+    ...args: Parameters<AdoptionPreparation["reviewedAdoptionBaseline"]>
+  ) {
+    return this.adoptionPreparation.reviewedAdoptionBaseline(...args)
+  }
 
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    const task = this.store.repository.get(command.taskID)
-    const attempts = this.store
-      .attempts(plan.id)
-      .filter((attempt) => attempt.task_id === command.taskID)
-    const latest = attempts.at(-1)
-    if (!node || !task || !latest || latest.id !== command.attemptID)
-      throw new Error("Descendant adoption must name the exact latest task attempt")
-    if (
-      task.revision !== 1 ||
-      task.revision !== input.nodes.find((entry) => entry.taskID === task.id)?.revision
-    )
-      throw new Error("Task revision changed since plan admission")
-    if (
-      !["ready", "failed", "accepted"].includes(node.state) ||
-      (node.state === "accepted" && latest.state !== "accepted") ||
-      (node.state !== "accepted" && latest.state !== "failed")
-    )
-      throw new Error("Adoption requires the latest failed attempt or its accepted task result")
-    if (
-      !latest.artifact ||
-      node.artifact !== latest.artifact ||
-      command.artifact !== latest.artifact
-    )
-      throw new Error("Old artifact does not match the exact latest attempt and task result")
-    if (
-      this.store
-        .nodes(plan.id)
-        .some(
-          (candidate) =>
-            candidate.task_id !== command.taskID &&
-            !["accepted", "incorporated"].includes(candidate.state),
-        )
-    )
-      throw new Error("All other plan tasks must be accepted before adopting a descendant")
+  private adoptionArtifactScopeViolations(
+    ...args: Parameters<AdoptionPreparation["adoptionArtifactScopeViolations"]>
+  ) {
+    return this.adoptionPreparation.adoptionArtifactScopeViolations(...args)
+  }
 
-    if (this.conflictingActiveAttempt(command.taskID))
-      throw new Error("A conflicting worker prevents descendant adoption")
-    const scopes = this.store.effectiveReservationScope(command.taskID)
-    if (
-      this.store
-        .activeAdoptions()
-        .some((adoption) =>
-          scopePatternsConflict(scopes, this.store.effectiveReservationScope(adoption.task_id)),
-        )
-    )
-      throw new Error("An active descendant reservation conflicts with this task scope")
+  private adoptionWorkerIdle(...args: Parameters<AdoptionPreparation["adoptionWorkerIdle"]>) {
+    return this.adoptionPreparation.adoptionWorkerIdle(...args)
+  }
 
-    const worker = await this.host.session(latest.session_id, { messages: true })
-    if (
-      !worker ||
-      worker.id !== latest.session_id ||
-      worker.projectID !== this.projectID ||
-      worker.directory !== latest.workspace ||
-      !isWorkerAgent(worker.agent) ||
-      worker.archived ||
-      worker.metadata?.lazersAttemptID !== latest.id
-    )
-      throw new Error("Latest worker session is not the owned attempt")
-    if (!this.adoptionWorkerIdle(latest, worker))
-      throw new Error("Latest worker activity or control state is not conclusively idle")
-
-    const branch = await gitAsync(this.directory, ["branch", "--show-current"])
-    const head = await gitAsync(this.directory, ["rev-parse", "HEAD"])
-    if (branch !== command.targetBranch || command.descendantCommit !== head)
-      throw new Error("Reviewed descendant must be the exact current HEAD of targetBranch")
-    if (
-      (await gitAsync(this.directory, ["status", "--porcelain", "--untracked-files=all"])) ||
-      (await gitAsync(this.directory, ["ls-files", "-u", "-z"]))
-    )
-      throw new Error("Dirty or unmerged candidate checkout cannot be adopted")
-    const oldArtifact = await gitAsync(this.directory, [
-      "rev-parse",
-      `${command.artifact}^{commit}`,
-    ])
-    const descendantCommit = await gitAsync(this.directory, [
-      "rev-parse",
-      `${command.descendantCommit}^{commit}`,
-    ])
-    if (oldArtifact !== command.artifact || descendantCommit !== command.descendantCommit)
-      throw new Error("Adoption artifacts must be exact full commit identities")
-    if (oldArtifact === descendantCommit)
-      throw new Error("Reviewed candidate must be a strict descendant of the old artifact")
-    await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, descendantCommit])
-    const reviewedBaseline = await this.reviewedAdoptionBaseline(
-      branch,
-      oldArtifact,
-      descendantCommit,
-    )
-    const violations = await this.adoptionArtifactScopeViolations(latest, oldArtifact, branch)
-    if (violations.length)
-      throw new Error(
-        `Worker artifact contains changes outside the task's authorized scope: ${violations.slice(0, 20).join(", ")}`,
-      )
-    const candidateTree = await gitAsync(this.directory, [
-      "rev-parse",
-      `${descendantCommit}^{tree}`,
-    ])
-    const branches = input.integrationOrder.map((taskID) => {
-      if (taskID === command.taskID) return descendantCommit
-      const other = this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
-      if (!other?.artifact || !["accepted", "incorporated"].includes(other.state))
-        throw new Error("Combined adoption requires every other task's accepted artifact")
-      return other.artifact
-    })
-    const combinedArtifact = await combineArtifacts(this.directory, input.baseCommit, branches)
-    const seed = {
-      taskID: task.id,
-      taskRevision: task.revision,
-      attemptID: latest.id,
-      nodeState: node.state,
-      attemptState: latest.state,
-      oldArtifact,
-      descendantCommit,
-      targetBranch: branch,
-      landingHead: head,
-      reviewedBaseline,
-      candidateTree,
-      combinedArtifact,
-      reason: command.reason,
-    }
-    const environmentIdentity = verificationEnvironmentIdentity()
-    return {
-      ...seed,
-      environmentIdentity,
-      inputFingerprint: this.adoptionInputFingerprint({
-        plan,
-        originalPlanVersion: plan.version,
-        ...seed,
-        environmentIdentity,
-      }),
-    }
+  private prepareAdoption(...args: Parameters<AdoptionPreparation["prepareAdoption"]>) {
+    return this.adoptionPreparation.prepareAdoption(...args)
   }
 
   private retainedRepairCandidateCurrent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    binding: NonNullable<RetainedVerification["repair"]>,
+    ...args: Parameters<RetainedVerificationPreparation["retainedRepairCandidateCurrent"]>
   ) {
-    const repair = this.retainedRepairForAttempt(attempt)
-    if (
-      !repair ||
-      repair.operationID !== binding.operationID ||
-      repair.sessionID !== attempt.session_id ||
-      repair.workspace !== attempt.workspace
-    )
-      return false
-    try {
-      const route = this.retainedAttemptModel(plan, attempt)
-      const repairRoute = ModelPolicy.parse(repair.route)
-      if (!route || !sameModelSnapshot(route, repairRoute)) return false
-      const effects = this.store.effects(plan.id)
-      if (
-        effects.some(
-          (effect) =>
-            effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-        )
-      )
-        return false
-      return effects.some((effect) => {
-        if (
-          effect.attempt_id !== attempt.id ||
-          effect.kind !== "prompt" ||
-          effect.state !== "completed"
-        )
-          return false
-        const payload = JSON.parse(effect.payload) as { repairID?: unknown; messageID?: unknown }
-        return payload.repairID === binding.operationID && payload.messageID === attempt.message_id
-      })
-    } catch {
-      return false
-    }
+    return this.retainedVerificationPrep.retainedRepairCandidateCurrent(...args)
   }
 
-  private async observeRetainedRepairCandidate(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    binding: NonNullable<RetainedVerification["repair"]>,
-    observeOwner?: () => Promise<void>,
+  private observeRetainedRepairCandidate(
+    ...args: Parameters<RetainedVerificationPreparation["observeRetainedRepairCandidate"]>
   ) {
-    const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
-    const validate = (worker: HostSession | null | undefined) => {
-      const problem = this.retainedRepairWorkerProblem(
-        plan,
-        attempt,
-        worker,
-        attempt.message_id,
-        model,
-      )
-      if (problem) throw new Error(problem)
-      const backgroundProblem = worker ? this.backgroundBlockReason(worker) : undefined
-      if (backgroundProblem) throw new Error(`Retained repair is not idle: ${backgroundProblem}`)
-    }
-    const before = await this.host.session(attempt.session_id, { messages: true })
-    validate(before)
-    await observeOwner?.()
-    const after = await this.host.session(attempt.session_id, { messages: true })
-    validate(after)
-    if (
-      !before ||
-      !after ||
-      this.retainedRepairObservation(before) !== this.retainedRepairObservation(after) ||
-      !this.retainedRepairCandidateCurrent(plan, attempt, binding)
-    )
-      throw new Error("Retained repair changed during candidate observation")
+    return this.retainedVerificationPrep.observeRetainedRepairCandidate(...args)
   }
 
   private assertRetainedVerificationScopeAvailable(
-    planID: string,
-    taskID: string,
-    attemptID: string,
-    taskWorkspace: string,
+    ...args: Parameters<RetainedVerificationPreparation["assertRetainedVerificationScopeAvailable"]>
   ) {
-    // Checks use private worktrees/resources, not an implementor's source scope.
-    // Serialize shared authority and physical destinations, not unrelated paths
-    // with the same relative names in different checkouts.
-    const occupiesDestination = (workspace: string | null | undefined) =>
-      Boolean(workspace && samePhysicalWorkspace(workspace, taskWorkspace))
-    const competingAttempt = this.store
-      .activeProjectAttempts()
-      .find(
-        (candidate) =>
-          candidate.id !== attemptID &&
-          ["preparing", "running", "verifying"].includes(candidate.state) &&
-          (candidate.task_id === taskID || occupiesDestination(candidate.workspace)),
-      )
-    if (competingAttempt)
-      throw new Error(
-        "A conflicting active implementation attempt uses this task or verification checkout",
-      )
-    const conflictingAdoption = this.store
-      .activeAdoptions()
-      .find(
-        (candidate) =>
-          candidate.plan_id === planID ||
-          candidate.task_id === taskID ||
-          occupiesDestination(candidate.task_workspace) ||
-          occupiesDestination(candidate.combined_workspace),
-      )
-    if (conflictingAdoption)
-      throw new Error("A conflicting descendant adoption prevents retained verification")
-    const conflictingVerification = this.store.atomic((db) =>
-      activeRetainedVerifications(db, this.directory).find(
-        (candidate) =>
-          candidate.planID === planID ||
-          candidate.taskID === taskID ||
-          occupiesDestination(candidate.taskWorkspace),
-      ),
-    )
-    if (conflictingVerification)
-      throw new Error("A conflicting retained verification authority is already active")
+    return this.retainedVerificationPrep.assertRetainedVerificationScopeAvailable(...args)
   }
 
-  private async prepareRetainedVerification(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ): Promise<RetainedVerificationSeed> {
-    if (
-      !command.projectID ||
-      !command.planRevision ||
-      !command.taskRevision ||
-      !command.taskID ||
-      !command.attemptID ||
-      !command.artifact ||
-      !command.reason
-    )
-      throw new Error(
-        "Retained verification requires current project, plan, task, attempt and candidate bindings",
-      )
-    if (!this.validArchitect(ownerSession) || command.projectID !== this.projectID)
-      throw new Error("Retained verification requires the current same-project Architect owner")
-    if (command.planRevision !== plan.revision)
-      throw new Error("Retained verification plan revision is stale")
-    if (this.store.activeAdoptions(plan.id).length)
-      throw new Error("A descendant adoption conflicts with retained verification")
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const task = this.store.repository.get(command.taskID)
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((item) => item.task_id === command.taskID)
-      .at(-1)
-    if (
-      !task ||
-      !node ||
-      !attempt ||
-      attempt.id !== command.attemptID ||
-      task.revision !== command.taskRevision ||
-      input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(task.id)
-    )
-      throw new Error(
-        "Retained verification must name the current task revision and latest original attempt",
-      )
-    const stoppedPlan = ["blocked", "accepted", "cleanup-blocked"].includes(plan.state)
-    if (!stoppedPlan) throw new Error("Retained verification requires a stopped or accepted plan")
-    const repairingCandidate = attempt.artifact !== null && attempt.artifact !== command.artifact
-    const repair = repairingCandidate ? this.retainedRepairForAttempt(attempt) : undefined
-    const repairBinding =
-      repair && attempt.artifact
-        ? { operationID: repair.operationID, previousArtifact: attempt.artifact }
-        : undefined
-    if (
-      repairingCandidate &&
-      (!repairBinding ||
-        node.artifact !== null ||
-        node.state !== "running" ||
-        attempt.state !== "running" ||
-        !this.retainedRepairCandidateCurrent(plan, attempt, repairBinding))
-    )
-      throw new Error(
-        "Candidate does not match the recorded result or current authorized retained repair",
-      )
-    if (
-      !repairingCandidate &&
-      ((attempt.artifact !== null && attempt.artifact !== command.artifact) ||
-        (node.artifact !== null && node.artifact !== command.artifact))
-    )
-      throw new Error(
-        "Candidate does not match the exact committed result recorded for the latest attempt",
-      )
-    if (node.state === "cancelled" || node.state === "exhausted" || node.state === "incorporated")
-      throw new Error("A cancelled, exhausted or incorporated task cannot be retained-verified")
-    const id = crypto.randomUUID()
-    const taskWorkspace = this.retainedVerificationWorkspacePath(id, "task")
-    this.assertRetainedVerificationScopeAvailable(plan.id, task.id, attempt.id, taskWorkspace)
-    if (!existsSync(attempt.workspace)) throw new Error("Original attempt workspace is unavailable")
-    const originalWorkspace = realpathSync(attempt.workspace)
-    if (
-      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
-      originalWorkspace
-    )
-      throw new Error("Original attempt workspace is not a canonical repository checkout")
-    if (originalWorkspace !== realpathSync(this.directory)) {
-      const worktrees = await this.host.worktrees()
-      if (!worktrees.some((workspace) => samePhysicalWorkspace(workspace, originalWorkspace)))
-        throw new Error(
-          "Original attempt checkout is not positively owned by the native worktree adapter",
-        )
-    }
-    if (
-      (await gitAsync(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`])) !==
-      command.artifact
-    )
-      throw new Error(
-        "Candidate must be an exact committed Git identity in the original attempt repository",
-      )
-    if (
-      (attempt.artifact === null || repairingCandidate) &&
-      (await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])) !== command.artifact
-    )
-      throw new Error(
-        "Unrecorded candidate must be the exact committed HEAD of the original attempt",
-      )
-    if (repairBinding) {
-      if (
-        !(await commitIsAncestor(
-          attempt.workspace,
-          repairBinding.previousArtifact,
-          command.artifact,
-        ))
-      )
-        throw new Error("Retained repair candidate must descend from its prior artifact")
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        throw new Error("Uncertain original effects prevent repaired-candidate verification")
-      await this.observeRetainedRepairCandidate(plan, attempt, repairBinding)
-    }
-    if (!(await commitIsAncestor(attempt.workspace, attempt.base_commit, command.artifact)))
-      throw new Error("Candidate is not based on the original attempt's committed baseline")
-    const changed = (
-      await gitAsync(attempt.workspace, [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "-z",
-        attempt.base_commit,
-        command.artifact,
-      ])
-    )
-      .split("\0")
-      .filter(Boolean)
-    const violations = protectedPaths(changed, this.store.effectiveScope(task.id))
-    if (violations.length)
-      throw new Error(
-        `Retained candidate changes protected paths: ${violations.slice(0, 20).join(", ")}`,
-      )
-
-    const environmentIdentity = retainedVerificationEnvironmentIdentity()
-    const seed = {
-      schemaVersion: 1 as const,
-      id,
-      projectID: this.projectID,
-      projectDirectory: this.directory,
-      planID: plan.id,
-      planRevision: plan.revision,
-      owner: caller,
-      taskID: task.id,
-      taskRevision: task.revision,
-      attemptID: attempt.id,
-      originalSessionID: attempt.session_id,
-      originalMessageID: attempt.message_id,
-      originalWorkspace: originalWorkspace,
-      artifact: command.artifact,
-      ...(repairBinding ? { repair: repairBinding } : {}),
-      taskWorkspace,
-      taskWorkspaceState: null,
-      environmentIdentity,
-      reason: command.reason,
-      state: "pending" as const,
-      failureReason: null,
-      cleanupState: "pending" as const,
-      createdAt: this.now(),
-      updatedAt: this.now(),
-    }
-    return seed
+  private prepareRetainedVerification(
+    ...args: Parameters<RetainedVerificationPreparation["prepareRetainedVerification"]>
+  ) {
+    return this.retainedVerificationPrep.prepareRetainedVerification(...args)
   }
 
-  private sameModel(left: ModelPolicy | undefined, right: ModelPolicy | undefined) {
-    return sameNativeModel(left, right)
+  private sameModel(...args: Parameters<RetainedRepairRecords["sameModel"]>) {
+    return this.repairRecords.sameModel(...args)
   }
 
-  private retainedAttemptPlanModelMatches(plan: PlanRow, model: ModelPolicy) {
-    try {
-      const planModel = plan.model ? ModelPolicy.safeParse(JSON.parse(plan.model)) : undefined
-      return Boolean(planModel?.success && sameModelSnapshot(model, planModel.data))
-    } catch {
-      return false
-    }
+  private retainedAttemptModel(...args: Parameters<RetainedRepairRecords["retainedAttemptModel"]>) {
+    return this.repairRecords.retainedAttemptModel(...args)
   }
 
-  private retainedAttemptDecisionModel(
-    plan: PlanRow,
-    model: ModelPolicy,
-    routeDecision: unknown,
-  ): ModelPolicy | undefined {
-    const decision = DispatchRouteDecisionSchema.safeParse(routeDecision)
-    if (
-      !decision.success ||
-      decision.data.status !== "resolved" ||
-      !sameModelSnapshot(model, decision.data.route)
-    )
-      return undefined
-    if (
-      decision.data.source === "explicit-plan-selection" &&
-      !this.retainedAttemptPlanModelMatches(plan, model)
-    )
-      return undefined
-    return model
-  }
-
-  private retainedAttemptModel(plan: PlanRow, attempt: AttemptRow): ModelPolicy | undefined {
-    try {
-      const policy = JSON.parse(attempt.policy) as {
-        model?: unknown
-        routeDecision?: unknown
-      }
-      const model = ModelPolicy.safeParse(policy.model)
-      if (!model.success) return undefined
-      if (policy.routeDecision === undefined)
-        return this.retainedAttemptPlanModelMatches(plan, model.data) ? model.data : undefined
-      return this.retainedAttemptDecisionModel(plan, model.data, policy.routeDecision)
-    } catch {
-      return undefined
-    }
-  }
-
-  private retainedRepairObservation(worker: HostSession) {
-    return JSON.stringify({
-      id: worker.id,
-      parentID: worker.parentID ?? null,
-      projectID: worker.projectID,
-      directory: worker.directory,
-      agent: worker.agent,
-      archived: worker.archived,
-      attemptID: worker.metadata?.lazersAttemptID,
-      model: worker.model ?? null,
-      busy: worker.busy,
-      pendingInput: worker.pendingInput,
-      pendingPermissions: worker.pendingPermissions,
-      pendingForms: worker.pendingForms,
-      observationUnstable: worker.observationUnstable ?? false,
-      outcome: worker.outcome ?? null,
-      turn: worker.turn ?? null,
-      runningShells: worker.runningShells ?? 0,
-      activeChildren: worker.activeChildren ?? 0,
-      idleAt: worker.idleAt ?? null,
-      messages: worker.messages.map((message) => ({ id: message.id, type: message.type ?? null })),
-    })
+  private retainedRepairObservation(
+    ...args: Parameters<RetainedRepairRecords["retainedRepairObservation"]>
+  ) {
+    return this.repairRecords.retainedRepairObservation(...args)
   }
 
   private retainedRepairWorkerProblem(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    worker: HostSession | null | undefined,
-    expectedInputID: string,
-    model: ModelPolicy,
-    expectedOutcome: "succeeded" | "interrupted" | "failed" = "succeeded",
+    ...args: Parameters<RetainedRepairRecords["retainedRepairWorkerProblem"]>
   ) {
-    if (
-      !worker ||
-      worker.id !== attempt.session_id ||
-      worker.projectID !== this.projectID ||
-      worker.directory !== attempt.workspace ||
-      !isWorkerAgent(worker.agent) ||
-      worker.archived ||
-      worker.metadata?.lazersAttemptID !== attempt.id ||
-      !this.sameModel(worker.model, model)
-    )
-      return "Retained repair worker identity, location, or route changed"
-    if (
-      worker.busy !== false ||
-      worker.pendingInput !== false ||
-      worker.observationUnstable ||
-      worker.pendingPermissions !== 0 ||
-      worker.pendingForms !== 0
-    )
-      return "Retained repair worker has active foreground or pending executable controls"
-    const expectedTurnState = expectedOutcome === "interrupted" ? "interrupted" : "completed"
-    if (
-      worker.outcome !== expectedOutcome ||
-      worker.turn?.state !== expectedTurnState ||
-      worker.turn.inputID !== expectedInputID
-    )
-      return expectedOutcome === "interrupted"
-        ? "Retained repair worker's exact interrupted input is no longer its current turn"
-        : "Retained repair worker's accepted input is no longer its completed current turn"
-    return undefined
+    return this.repairRecords.retainedRepairWorkerProblem(...args)
   }
 
   private retainedRepairBackgroundProblem(
-    worker: HostSession | null | undefined,
-    inputID: string | undefined,
+    ...args: Parameters<RetainedRepairRecords["retainedRepairBackgroundProblem"]>
   ) {
-    if (!worker) return "Retained repair worker session is unavailable"
-    const reason = this.backgroundBlockReason(worker)
-    if (reason) return `${reason}; it must finish before the retained repair can continue`
-    if (!inputID || worker.turn?.inputID !== inputID)
-      return "Retained repair worker's current turn is not the repaired input"
-    return undefined
+    return this.repairRecords.retainedRepairBackgroundProblem(...args)
   }
 
-  private transitionHistory(planID: string): RunnerTransitionRecord[] {
-    return this.store.atomic((db) =>
-      db
-        .query<RunnerTransitionRecord, [string]>(
-          "SELECT id,task_id,event,payload FROM runner_transitions WHERE plan_id=? ORDER BY id",
-        )
-        .all(planID),
-    )
+  private transitionHistory(...args: Parameters<RetainedRepairRecords["transitionHistory"]>) {
+    return this.repairRecords.transitionHistory(...args)
   }
 
   private parseTransitionPayload<T>(transition: RunnerTransitionRecord | undefined): T | undefined {
-    if (!transition) return undefined
-    try {
-      return JSON.parse(transition.payload) as T
-    } catch {
-      return undefined
-    }
+    return this.repairRecords.parseTransitionPayload<T>(transition)
   }
 
-  private async prepareRetainedRepairRecovery(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-    attempt: AttemptRow,
-  ): Promise<RetainedRepairRecoverySeed> {
-    if (!command.taskID || !command.attemptID || !command.reason)
-      throw new Error("Retained repair recovery requires the exact task, attempt and reason")
-    if (!this.validArchitect(ownerSession) || ownerSession.projectID !== this.projectID)
-      throw new Error("Retained repair recovery requires the current same-project Architect owner")
-    if (plan.state !== "blocked" || plan.artifact !== null)
-      throw new Error("Retained repair recovery requires the original blocked, unintegrated plan")
-
-    const task = this.store.repository.get(command.taskID)
-    const node = this.store.nodes(plan.id).find((candidate) => candidate.task_id === command.taskID)
-    const latest = this.store
-      .attempts(plan.id)
-      .filter((candidate) => candidate.task_id === command.taskID)
-      .at(-1)
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const admitted = input.nodes.find((candidate) => candidate.taskID === command.taskID)
-    if (
-      !task ||
-      !node ||
-      !latest ||
-      latest.id !== attempt.id ||
-      latest.id !== command.attemptID ||
-      latest.state !== "cancelled" ||
-      node.state !== "cancelled" ||
-      task.revision !== admitted?.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(task.id)
-    )
-      throw new Error("Retained repair recovery must name the exact current cancelled attempt")
-
-    const history = this.transitionHistory(plan.id)
-    const repairTransition = history
-      .filter(
-        (transition) =>
-          transition.task_id === task.id && transition.event === "RETAINED_REPAIR_REQUESTED",
-      )
-      .at(-1)
-    const repair = this.parseTransitionPayload<Record<string, unknown>>(repairTransition)
-    const operationID = repair?.operationID
-    const repairMessageID = repair?.messageID
-    const previousMessageID = repair?.previousMessageID
-    const repairRoute = ModelPolicy.safeParse(repair?.route)
-    const policy = (() => {
-      try {
-        return JSON.parse(attempt.policy) as { workspaceMode?: unknown; model?: unknown }
-      } catch {
-        return undefined
-      }
-    })()
-    const attemptRoute = this.retainedAttemptModel(plan, attempt)
-    const artifact = repair?.artifact
-    if (
-      !repairTransition ||
-      typeof operationID !== "string" ||
-      typeof repairMessageID !== "string" ||
-      typeof previousMessageID !== "string" ||
-      repair?.attemptID !== attempt.id ||
-      repairTransition.task_id !== task.id ||
-      typeof repair?.sessionID !== "string" ||
-      repair.sessionID !== attempt.session_id ||
-      repair.workspace !== attempt.workspace ||
-      artifact !== attempt.artifact ||
-      node.artifact !== null ||
-      !isCommitID(artifact) ||
-      !attemptRoute ||
-      !repairRoute.success ||
-      policy?.workspaceMode !== "isolated" ||
-      !sameModelSnapshot(attemptRoute, repairRoute.data) ||
-      this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED")
-    )
-      throw new Error("Retained repair recovery authority, artifact, route or task lineage changed")
-
-    const repairEffects = this.store
-      .effects(plan.id)
-      .filter((effect) => effect.attempt_id === attempt.id)
-    const unresolved = this.store
-      .effects(plan.id)
-      .some((effect) => ["intended", "uncertain"].includes(effect.state))
-    const sessionReceipt = repairEffects.some((effect) => {
-      if (effect.kind !== "session" || effect.state !== "completed") return false
-      try {
-        const payload = JSON.parse(effect.payload) as Record<string, unknown>
-        const receipt = JSON.parse(effect.receipt ?? "null") as Record<string, unknown> | null
-        return payload.sessionID === attempt.session_id && receipt?.sessionID === attempt.session_id
-      } catch {
-        return false
-      }
-    })
-    const repairPromptReceipt = repairEffects.some((effect) => {
-      if (effect.kind !== "prompt" || effect.state !== "completed") return false
-      try {
-        const payload = JSON.parse(effect.payload) as Record<string, unknown>
-        const receipt = JSON.parse(effect.receipt ?? "null") as Record<string, unknown> | null
-        return (
-          payload.sessionID === attempt.session_id &&
-          payload.messageID === repairMessageID &&
-          payload.workspace === attempt.workspace &&
-          payload.repairID === operationID &&
-          receipt?.messageID === repairMessageID &&
-          receipt?.taskID === task.id &&
-          receipt?.repairID === operationID
-        )
-      } catch {
-        return false
-      }
-    })
-    if (!sessionReceipt || !repairPromptReceipt || unresolved)
-      throw new Error(
-        "Retained repair recovery requires completed original receipts and no uncertain effects",
-      )
-    if (
-      repairEffects.some((effect) => {
-        if (effect.kind !== "prompt") return false
-        try {
-          return JSON.parse(effect.payload).messageID === attempt.message_id
-        } catch {
-          return false
-        }
-      })
-    )
-      throw new Error("Retained repair recovery refuses an already-admitted reservation input")
-
-    const matchingResume = history
-      .filter(
-        (transition) => transition.task_id === task.id && transition.event === "ATTEMPT_RESUMED",
-      )
-      .map((transition) => ({
-        transition,
-        payload: this.parseTransitionPayload<Record<string, unknown>>(transition),
-      }))
-      .filter(({ payload }) => payload?.attemptID === attempt.id)
-      .at(-1)
-    const resumed = matchingResume?.payload
-    const priorHoldTransition = matchingResume
-      ? history
-          .filter(
-            (transition) =>
-              transition.task_id === null &&
-              transition.event === "BLOCKED" &&
-              transition.id < matchingResume.transition.id,
-          )
-          .at(-1)
-      : undefined
-    const priorHold = this.parseTransitionPayload<{ workerObservation?: TerminalWorkerHold }>(
-      priorHoldTransition,
-    )?.workerObservation
-    const fenceBlockTransition = matchingResume
-      ? history
-          .filter(
-            (transition) =>
-              transition.task_id === null &&
-              transition.event === "BLOCKED" &&
-              transition.id > matchingResume.transition.id,
-          )
-          .at(-1)
-      : undefined
-    const fenceBlock = this.parseTransitionPayload<{
-      reason?: unknown
-      workerObservation?: unknown
-    }>(fenceBlockTransition)
-    const cancelTransition = history
-      .filter((transition) => transition.task_id === task.id && transition.event === "CANCEL")
-      .at(-1)
-    const cancel = this.parseTransitionPayload<{ from?: unknown; to?: unknown; reason?: unknown }>(
-      cancelTransition,
-    )
-    if (
-      !matchingResume ||
-      !resumed ||
-      resumed.previousMessageID !== repairMessageID ||
-      resumed.messageID !== attempt.message_id ||
-      resumed.terminalOutcome !== "interrupted" ||
-      resumed.terminalInputID !== repairMessageID ||
-      resumed.interruptedInputID !== repairMessageID ||
-      resumed.retainedRepairContinuation !== undefined ||
-      resumed.retainedRepairRecovery !== undefined ||
-      !priorHoldTransition ||
-      priorHoldTransition.id <= repairTransition.id ||
-      priorHold?.kind !== "terminal-worker-observation" ||
-      priorHold.attemptID !== attempt.id ||
-      priorHold.sessionID !== attempt.session_id ||
-      priorHold.workspace !== attempt.workspace ||
-      priorHold.inputID !== repairMessageID ||
-      priorHold.outcome !== "interrupted" ||
-      priorHold.turnState !== "interrupted" ||
-      !fenceBlockTransition ||
-      fenceBlock?.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
-      fenceBlock.workerObservation !== undefined ||
-      plan.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
-      !cancelTransition ||
-      cancelTransition.id <= fenceBlockTransition.id ||
-      cancel?.from !== "running" ||
-      cancel.to !== "cancelled" ||
-      cancel.reason !== null ||
-      history.some(
-        (transition) =>
-          transition.task_id === null &&
-          transition.event === "CANCEL_REQUESTED" &&
-          transition.id > repairTransition.id,
-      )
-    )
-      throw new Error(
-        "Retained repair cancellation is not the exact runtime-created interrupted fence failure",
-      )
-
-    const stopped = history
-      .filter(
-        (transition) =>
-          transition.task_id === task.id &&
-          transition.event === "WORKER_STOPPED" &&
-          transition.id < matchingResume.transition.id,
-      )
-      .map((transition) => ({
-        transition,
-        payload: this.parseTransitionPayload<Record<string, unknown>>(transition),
-      }))
-      .filter(
-        ({ payload }) =>
-          payload?.attemptID === attempt.id &&
-          payload.sessionID === attempt.session_id &&
-          payload.workspace === attempt.workspace &&
-          payload.outcome === "interrupted" &&
-          payload.inputID === repairMessageID,
-      )
-      .at(-1)?.payload
-    if (!stopped)
-      throw new Error(
-        "Retained repair recovery has no matching durable interrupted-worker stop receipt",
-      )
-
-    this.assertNoDispatchedDependents(plan, task.id, input)
-    if (
-      !existsSync(attempt.workspace) ||
-      attempt.workspace === this.directory ||
-      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
-        realpathSync(attempt.workspace) ||
-      (await gitAsync(attempt.workspace, ["rev-parse", `${artifact}^{commit}`])) !== artifact ||
-      !(await commitIsAncestor(
-        attempt.workspace,
-        artifact,
-        await gitAsync(attempt.workspace, ["rev-parse", "HEAD"]),
-      )) ||
-      !isCommitID(attempt.base_commit) ||
-      !(await commitIsAncestor(attempt.workspace, attempt.base_commit, artifact)) ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error("Retained repair recovery no longer matches the original retained checkout")
-    const nativeWorktrees = await this.host.worktrees()
-    if (!nativeWorktrees.some((workspace) => samePhysicalWorkspace(workspace, attempt.workspace)))
-      throw new Error(
-        "Retained repair recovery checkout is not owned by the native worktree adapter",
-      )
-
-    const freshOwner = async () => {
-      const current = await this.host.session(plan.owner)
-      if (
-        !this.validArchitect(current) ||
-        current.id !== caller ||
-        current.projectID !== this.projectID
-      )
-        throw new Error("Retained repair recovery owner changed during native revalidation")
-      return current
-    }
-    const firstWorker = await this.host.session(attempt.session_id, { messages: true })
-    const currentOwner = await freshOwner()
-    const confirmedWorker = await this.host.session(attempt.session_id, { messages: true })
-    const route = attemptRoute
-    const problem = this.retainedRepairWorkerProblem(
-      plan,
-      attempt,
-      confirmedWorker,
-      repairMessageID,
-      route,
-      "interrupted",
-    )
-    if (
-      problem ||
-      !firstWorker ||
-      !confirmedWorker ||
-      this.retainedRepairObservation(firstWorker) !==
-        this.retainedRepairObservation(confirmedWorker) ||
-      confirmedWorker.messages.some((message) => message.id === attempt.message_id)
-    )
-      throw new Error(problem ?? "Retained repair recovery worker changed during revalidation")
-
-    const historicalAttempt = { ...attempt, state: "running" as const, message_id: repairMessageID }
-    const continuationProblem = checkTerminalWorkerContinuation({
-      plan: { state: "blocked", owner: plan.owner, model: JSON.stringify(route), artifact: null },
-      node: { task_id: node.task_id, state: "running" },
-      attempt: historicalAttempt,
-      latestAttemptID: attempt.id,
-      commandTaskID: command.taskID,
-      commandAttemptID: command.attemptID,
-      caller,
-      owner: currentOwner,
-      worker: confirmedWorker,
-      projectID: this.projectID,
-      taskCurrent: true,
-      assignedInputMatches: confirmedWorker.turn?.inputID === repairMessageID,
-      stopObservation: stopped,
-      planHoldObservation: priorHold,
-      retainedSession: sessionReceipt,
-      retainedPrompt: repairPromptReceipt,
-      hasUnresolvedEffects: unresolved,
-      reservationAvailable: this.preparationAllowed(attempt),
-    } satisfies TerminalWorkerContinuationFacts)
-    if (continuationProblem) throw new Error(continuationProblem)
-    if (this.store.plan(plan.id)?.version !== plan.version)
-      throw new Error(
-        "Retained repair recovery plan or owner authorization changed during revalidation",
-      )
-
-    return {
-      operationID,
-      attemptID: attempt.id,
-      taskID: task.id,
-      failedMessageID: attempt.message_id,
-      interruptedInputID: repairMessageID,
-      owner: caller,
-      taskRevision: task.revision,
-      planVersion: plan.version,
-      planRevision: plan.revision,
-      resumedTransitionID: matchingResume.transition.id,
-      blockedTransitionID: fenceBlockTransition.id,
-      cancelledTransitionID: cancelTransition.id,
-      usage: {
-        tokenCount: attempt.token_count,
-        toolCount: attempt.tool_count,
-        cost: attempt.cost,
-      },
-      worker: confirmedWorker,
-      workerObservation: this.retainedRepairObservation(confirmedWorker),
-    }
+  private prepareRetainedRepairRecovery(
+    ...args: Parameters<RetainedRepairPreparation["prepareRetainedRepairRecovery"]>
+  ) {
+    return this.retainedRepairPreparation.prepareRetainedRepairRecovery(...args)
   }
 
   private retainedRepairRecoveryCurrent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    recovery: RetainedRepairRecoverySeed,
+    ...args: Parameters<RetainedRepairPreparation["retainedRepairRecoveryCurrent"]>
   ) {
-    const currentPlan = this.store.plan(plan.id)
-    const currentAttempt = this.store
-      .attempts(plan.id)
-      .find((candidate) => candidate.id === attempt.id)
-    const currentNode = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)
-    const currentRepair = currentAttempt ? this.retainedRepairForAttempt(currentAttempt) : undefined
-    const history = this.transitionHistory(plan.id)
-    const matching = (id: number, event: string, taskID: string | null) =>
-      history.find(
-        (transition) =>
-          transition.id === id && transition.event === event && transition.task_id === taskID,
-      )
-    return Boolean(
-      currentPlan?.state === "blocked" &&
-      currentPlan.version === recovery.planVersion &&
-      currentPlan.revision === recovery.planRevision &&
-      currentPlan.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
-      currentAttempt?.state === "cancelled" &&
-      currentAttempt.message_id === recovery.failedMessageID &&
-      currentAttempt.session_id === attempt.session_id &&
-      currentAttempt.workspace === attempt.workspace &&
-      currentAttempt.base_commit === attempt.base_commit &&
-      currentAttempt.policy === attempt.policy &&
-      currentRepair?.operationID === recovery.operationID &&
-      currentAttempt.token_count === recovery.usage.tokenCount &&
-      currentAttempt.tool_count === recovery.usage.toolCount &&
-      currentAttempt.cost === recovery.usage.cost &&
-      currentNode?.state === "cancelled" &&
-      matching(recovery.resumedTransitionID, "ATTEMPT_RESUMED", attempt.task_id) &&
-      matching(recovery.blockedTransitionID, "BLOCKED", null) &&
-      matching(recovery.cancelledTransitionID, "CANCEL", attempt.task_id) &&
-      !history.some(
-        (transition) =>
-          transition.task_id === null &&
-          transition.event === "CANCEL_REQUESTED" &&
-          transition.id > recovery.blockedTransitionID,
-      ) &&
-      !this.store
-        .effects(plan.id)
-        .some((effect) => ["intended", "uncertain"].includes(effect.state)) &&
-      this.preparationAllowed(attempt),
-    )
+    return this.retainedRepairPreparation.retainedRepairRecoveryCurrent(...args)
   }
 
-  private assertNoDispatchedDependents(plan: PlanRow, taskID: string, input: PlanInput) {
-    const reachable = new Set<string>([taskID])
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const edge of input.dependencies)
-        if (reachable.has(edge.prerequisite) && !reachable.has(edge.successor)) {
-          reachable.add(edge.successor)
-          changed = true
-        }
-    }
-    const dependentTask = [...reachable].find(
-      (candidate) =>
-        candidate !== taskID &&
-        this.store.attempts(plan.id).some((attempt) => attempt.task_id === candidate),
-    )
-    if (dependentTask)
-      throw new Error(
-        `A dispatched transitive dependent prevents retained repair: ${dependentTask}`,
-      )
-
-    const dependentPlan = this.store.startedDependentPlan(plan.id)
-    if (dependentPlan)
-      throw new Error(
-        `A dispatched cross-plan dependent prevents retained repair: ${dependentPlan.id}`,
-      )
-  }
-
-  private retainedRepairAttemptAccepted(plan: PlanRow, attempt: AttemptRow, taskRevision: number) {
-    if (attempt.state === "accepted") return true
-    if (attempt.state !== "failed") return false
-    return this.store
-      .atomic((db) => retainedVerificationsForPlan(db, this.directory, plan.id))
-      .some(
-        (operation) =>
-          operation.state === "accepted" &&
-          operation.projectID === this.projectID &&
-          operation.taskID === attempt.task_id &&
-          operation.taskRevision === taskRevision &&
-          operation.attemptID === attempt.id &&
-          operation.artifact === attempt.artifact &&
-          operation.originalSessionID === attempt.session_id &&
-          operation.originalMessageID === attempt.message_id,
-      )
-  }
-
-  private async prepareRetainedRepair(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ): Promise<RetainedRepairSeed> {
-    if (!command.taskID || !command.attemptID || !command.artifact || !command.reason?.trim())
-      throw new Error(
-        "Retained repair requires taskID, attemptID, exact artifact and concrete defect reason",
-      )
-    if (!this.validArchitect(ownerSession))
-      throw new Error("Retained repair requires the current same-project Architect owner")
-    if (!["running", "accepted", "blocked"].includes(plan.state))
-      throw new Error("Retained repair requires a running, accepted or blocked, unintegrated plan")
-    if (this.store.activeAdoptions(plan.id).length)
-      throw new Error("A descendant adoption prevents retained repair")
-    if (
-      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
-    )
-      throw new Error("Uncertain effects must be resolved before retained repair")
-
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const task = this.store.repository.get(command.taskID)
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    const attempts = this.store
-      .attempts(plan.id)
-      .filter((attempt) => attempt.task_id === command.taskID)
-    const attempt = attempts.at(-1)
-    const admitted = input.nodes.find((item) => item.taskID === command.taskID)
-    if (
-      !task ||
-      !node ||
-      !attempt ||
-      attempt.id !== command.attemptID ||
-      node.state !== "accepted" ||
-      !this.retainedRepairAttemptAccepted(plan, attempt, task.revision) ||
-      !admitted ||
-      admitted.revision !== task.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(task.id)
-    )
-      throw new Error("Retained repair must name the latest accepted task and attempt")
-    if (
-      !isCommitID(command.artifact) ||
-      attempt.artifact !== command.artifact ||
-      node.artifact !== command.artifact
-    )
-      throw new Error("Retained repair artifact must exactly match the accepted task and attempt")
-
-    let policy: { workspaceMode?: unknown }
-    try {
-      policy = JSON.parse(attempt.policy) as typeof policy
-    } catch {
-      throw new Error("Retained attempt policy is unavailable")
-    }
-    const attemptModel = this.retainedAttemptModel(plan, attempt)
-    if (
-      attempt.workspace === this.directory ||
-      policy.workspaceMode !== "isolated" ||
-      !attemptModel
-    )
-      throw new Error(
-        "Retained repair requires the original isolated workspace and execution route",
-      )
-
-    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
-    const sessionEffect = effects.find((effect) => effect.kind === "session")
-    const originalPrompt = effects.find(
-      (effect) =>
-        effect.kind === "prompt" &&
-        (() => {
-          try {
-            const payload = JSON.parse(effect.payload)
-            return (
-              payload.messageID === attempt.message_id &&
-              payload.sessionID === attempt.session_id &&
-              payload.workspace === attempt.workspace
-            )
-          } catch {
-            return false
-          }
-        })(),
-    )
-    if (sessionEffect?.state !== "completed" || originalPrompt?.state !== "completed")
-      throw new Error("Retained session or assigned prompt is not conclusively owned")
-    if (this.store.latestTransition(plan.id, task.id, "TASK_INTEGRATION_RECORDED"))
-      throw new Error("Source-landed task work cannot be repaired in its retained workspace")
-
-    this.assertNoDispatchedDependents(plan, task.id, input)
-    if (!this.host.waitForSession)
-      throw new Error("Public foreground wait is unavailable for retained repair")
-    if (!existsSync(attempt.workspace)) throw new Error("Retained repair workspace is missing")
-    const worktrees = await this.host.worktrees()
-    if (
-      !worktrees.some((directory) => samePhysicalWorkspace(directory, attempt.workspace)) ||
-      realpathSync(attempt.workspace) === realpathSync(this.directory) ||
-      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
-        realpathSync(attempt.workspace)
-    )
-      throw new Error("Retained repair requires the exact native-owned isolated worktree")
-    const workspaceHead = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-    if (
-      (await gitAsync(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`])) !==
-        command.artifact ||
-      workspaceHead !== command.artifact
-    )
-      throw new Error("Retained repair artifact is missing or not the workspace HEAD")
-    const sourceHead = await gitAsync(this.directory, ["rev-parse", "HEAD"])
-    if (await commitIsAncestor(this.directory, command.artifact, sourceHead))
-      throw new Error("Source-landed task work cannot be repaired in its retained workspace")
-    if (!this.preparationAllowed(attempt))
-      throw new Error("A conflicting reservation prevents retained repair")
-    if (
-      this.store
-        .activeProjectAttempts()
-        .some(
-          (other) =>
-            other.id !== attempt.id && samePhysicalWorkspace(other.workspace, attempt.workspace),
-        )
-    )
-      throw new Error("Another active attempt owns the retained repair workspace")
-
-    const previousMessageID = attempt.message_id
-    await this.host.waitForSession(attempt.session_id)
-    const observed = await this.host.session(attempt.session_id, { messages: true })
-    const nativeInputID = observed?.turn?.inputID ?? undefined
-    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, nativeInputID)
-    if (!nativeInputID || !this.matchesWorkerInput(attempt, nativeInputID))
-      throw new Error("Retained repair requires the exact captured successful native input")
-    const problem = this.retainedRepairWorkerProblem(
-      plan,
-      attempt,
-      observed,
-      nativeInputID,
-      attemptModel,
-    )
-    if (backgroundProblem || problem) throw new Error(backgroundProblem ?? problem)
-    const currentOwner = await this.host.session(plan.owner)
-    if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
-      throw new Error("Retained repair owner changed during native observation")
-    const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedProblem = this.retainedRepairWorkerProblem(
-      plan,
-      attempt,
-      confirmed,
-      nativeInputID,
-      attemptModel,
-    )
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmed,
-      nativeInputID,
-    )
-    if (
-      confirmedProblem ||
-      confirmedBackgroundProblem ||
-      !observed ||
-      !confirmed ||
-      this.retainedRepairObservation(observed) !== this.retainedRepairObservation(confirmed)
-    )
-      throw new Error(
-        confirmedProblem ??
-          confirmedBackgroundProblem ??
-          "Retained worker input or ownership changed during repair admission",
-      )
-    if (this.store.plan(plan.id)?.version !== plan.version) throw new PlanMovedDuringCommand()
-    return {
-      taskID: task.id,
-      attemptID: attempt.id,
-      artifact: command.artifact,
-      previousMessageID,
-      nativeInputID,
-      messageID: messageID(),
-      operationID: crypto.randomUUID(),
-      owner: caller,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      model: attemptModel,
-      workerObservation: this.retainedRepairObservation(confirmed),
-    }
-  }
-
-  private async prepareReviewInputReconciliation(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ): Promise<{ binding: ReviewInputBinding; evidence: ReviewInputEvidence } | undefined> {
-    if (command.reviewInputID === undefined) return undefined
-    if (command.action !== "reconcile" || !command.taskID || !command.attemptID)
-      throw new Error("Review input reconciliation requires reconcile, taskID and attemptID")
-    if (!this.validArchitect(ownerSession))
-      throw new Error(
-        "Review input reconciliation requires the current same-project Architect owner",
-      )
-    if (!(["running", "blocked"] as const).includes(plan.state as "running" | "blocked"))
-      throw new Error("Review input reconciliation requires a running or blocked plan")
-    if (this.store.activeAdoptions(plan.id).length)
-      throw new Error(
-        "A descendant adoption is pending; review input reconciliation is unavailable",
-      )
-
-    const proposal = PlanInput.parse(JSON.parse(plan.body))
-    const task = this.store.repository.get(command.taskID)
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    const latest = this.store
-      .attempts(plan.id)
-      .filter((attempt) => attempt.task_id === command.taskID)
-      .at(-1)
-    const proposalNode = proposal.nodes.find((item) => item.taskID === command.taskID)
-    if (
-      !task ||
-      !node ||
-      !proposalNode ||
-      !latest ||
-      latest.id !== command.attemptID ||
-      !["running", "verifying"].includes(latest.state) ||
-      node.state !== latest.state ||
-      task.revision !== proposalNode.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory
-    )
-      throw new Error(
-        "Review input reconciliation must name the exact current running or verifying task attempt",
-      )
-
-    const model = ModelPolicy.parse(JSON.parse(latest.policy).model)
-    const binding: ReviewInputBinding = {
-      projectDirectory: this.directory,
-      projectID: this.projectID,
-      planID: plan.id,
-      taskID: latest.task_id,
-      attemptID: latest.id,
-      sessionID: latest.session_id,
-      workspace: latest.workspace,
-      assignedMessageID: latest.message_id,
-      reviewInputID: command.reviewInputID,
-      ownerSessionID: plan.owner,
-      commandRequestID: command.requestID,
-      expectedPlanVersion: plan.version,
-      model,
-    }
-    const worker = await this.host.session(latest.session_id, { messages: true })
-    if (!worker) throw new Error("Exact review-input worker session is unavailable")
-    const observedEvidence = observeReviewInput(worker, binding)
-
-    // Recheck owner liveness after the asynchronous worker observation. The
-    // worker is then read again so input/execution changes during that owner
-    // read cannot leave a stale relationship in the journal. The transaction
-    // below separately fences durable reassignment/version/attempt races.
-    const currentOwner = await this.host.session(plan.owner)
-    if (!this.validArchitect(currentOwner) || currentOwner.id !== caller)
-      throw new Error("Review input reconciliation owner is no longer current and active")
-    const currentWorker = await this.host.session(latest.session_id, { messages: true })
-    if (!currentWorker) throw new Error("Exact review-input worker session is unavailable")
-    const evidence = observeReviewInput(currentWorker, binding)
-    if (JSON.stringify(evidence) !== JSON.stringify(observedEvidence))
-      throw new Error("Review input native observation changed during owner revalidation")
-    return { binding, evidence }
-  }
-
-  private terminalWorkerContinuationProblem(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    owner: HostSession | null | undefined,
-    worker: HostSession | null | undefined,
+  private assertNoDispatchedDependents(
+    ...args: Parameters<RetainedRepairPreparation["assertNoDispatchedDependents"]>
   ) {
-    const taskID = command.taskID
-    const attempt = taskID
-      ? this.store
-          .attempts(plan.id)
-          .filter((candidate) => candidate.task_id === taskID)
-          .at(-1)
-      : undefined
-    const node = taskID
-      ? this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
-      : undefined
-    const stopObservation = taskID
-      ? this.store.latestTransition<Record<string, unknown>>(plan.id, taskID, "WORKER_STOPPED")
-      : undefined
-    const blockedObservation = this.store.latestTransition<{ workerObservation?: unknown }>(
-      plan.id,
-      null,
-      "BLOCKED",
-    )?.workerObservation
-    let continuationPlan = plan
-    if (attempt) {
-      try {
-        const attemptPolicy = JSON.parse(attempt.policy) as {
-          model?: unknown
-          routeDecision?: unknown
-        }
-        const decision = DispatchRouteDecisionSchema.safeParse(attemptPolicy.routeDecision)
-        const route = ModelPolicy.safeParse(attemptPolicy.model)
-        if (
-          decision.success &&
-          decision.data.status === "resolved" &&
-          route.success &&
-          sameModelSnapshot(decision.data.route, route.data)
-        )
-          continuationPlan = { ...plan, model: JSON.stringify(route.data) }
-      } catch {
-        // The retained attempt remains fail-closed if its route snapshot is malformed.
-      }
-    }
-    const planHoldObservation =
-      typeof blockedObservation === "object" && blockedObservation !== null
-        ? (blockedObservation as TerminalWorkerHold)
-        : undefined
-    const effects = this.store.effects(plan.id)
-    let taskCurrent = false
-    if (attempt) {
-      try {
-        const admitted = PlanInput.parse(JSON.parse(plan.body)).nodes.find(
-          (candidate) => candidate.taskID === attempt.task_id,
-        )
-        const task = this.store.repository.get(attempt.task_id)
-        taskCurrent = Boolean(
-          admitted &&
-          task &&
-          task.revision === admitted.revision &&
-          task.provenance.projectID === this.projectID &&
-          task.provenance.projectDirectory === this.directory &&
-          !this.store.repository.taskDisposition(task.id),
-        )
-      } catch {
-        taskCurrent = false
-      }
-    }
-    return checkTerminalWorkerContinuation({
-      plan: continuationPlan,
-      node,
-      attempt,
-      latestAttemptID: attempt?.id,
-      commandTaskID: command.taskID,
-      commandAttemptID: command.attemptID,
-      caller,
-      owner,
-      worker,
-      projectID: this.projectID,
-      taskCurrent,
-      assignedInputMatches: Boolean(
-        attempt && worker?.turn && this.matchesWorkerInput(attempt, worker.turn.inputID),
-      ),
-      stopObservation,
-      planHoldObservation,
-      retainedSession: Boolean(
-        attempt &&
-        effects.some((effect) => {
-          if (
-            effect.attempt_id !== attempt.id ||
-            effect.kind !== "session" ||
-            effect.state !== "completed"
-          )
-            return false
-          try {
-            return JSON.parse(effect.payload).sessionID === attempt.session_id
-          } catch {
-            return false
-          }
-        }),
-      ),
-      retainedPrompt: Boolean(
-        attempt &&
-        effects.some((effect) => {
-          if (
-            effect.attempt_id !== attempt.id ||
-            effect.kind !== "prompt" ||
-            effect.state !== "completed"
-          )
-            return false
-          try {
-            const payload = JSON.parse(effect.payload)
-            return (
-              payload.sessionID === attempt.session_id &&
-              payload.messageID === attempt.message_id &&
-              payload.workspace === attempt.workspace
-            )
-          } catch {
-            return false
-          }
-        }),
-      ),
-      hasUnresolvedEffects: effects.some((effect) =>
-        ["intended", "uncertain"].includes(effect.state),
-      ),
-      reservationAvailable: attempt ? this.preparationAllowed(attempt) : false,
-    })
+    return this.retainedRepairPreparation.assertNoDispatchedDependents(...args)
   }
 
-  private startupSettlementCandidate(
-    plan: PlanRow,
-    taskID: string,
-    attemptID: string,
-  ): { attempt: AttemptRow; effect: EffectRow; failure: StartupWorktreeFailureEvidence } {
-    if (plan.state !== "blocked") throw new Error("Startup settlement requires a blocked plan")
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    if (input.workspaceMode !== "isolated")
-      throw new Error("Startup settlement applies only to isolated worktree creation")
-    const node = this.store.nodes(plan.id).find((candidate) => candidate.task_id === taskID)
-    const attempt = this.store.attempts(plan.id).find((candidate) => candidate.id === attemptID)
-    if (
-      !node ||
-      node.state !== "running" ||
-      !attempt ||
-      attempt.task_id !== taskID ||
-      attempt.plan_id !== plan.id ||
-      attempt.state !== "preparing" ||
-      attempt.workspace === this.directory
-    )
-      throw new Error("Startup settlement identity does not match a preparing attempt")
-    const effects = this.store.effects(plan.id)
-    const authorization = this.startupRecoveryAuthorization(plan, attempt)
-    let effect: EffectRow | undefined
-    if (authorization) {
-      effect = this.historicalStartupRecoveryOperation(plan, attempt, effects, authorization)
-      if (!effect)
-        throw new Error("Startup settlement requires the current linked recovery operation")
-    } else {
-      effect = effects.find(
-        (candidate) =>
-          candidate.kind === "worktree" &&
-          candidate.task_id === taskID &&
-          candidate.attempt_id === attemptID,
-      )
-    }
-    if (!effect || effect.state !== "uncertain")
-      throw new Error("Startup settlement requires the current uncertain startup worktree effect")
-    const failure = startupWorktreeFailureEvidence({
-      planID: plan.id,
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      effectID: effect.id,
-      kind: effect.kind,
-      state: effect.state,
-      receipt: effect.receipt,
-      payload: effect.payload,
-      sessionID: attempt.session_id,
-      messageID: attempt.message_id,
-      workspace: attempt.workspace,
-      base: attempt.base_commit,
-    })
-    if (!failure || startupFailureSettlementFromReceipt(effect.receipt))
-      throw new Error(
-        "Startup worktree effect lacks bound terminal native failure evidence or exact legacy inference",
-      )
-
-    if (
-      effects.some(
-        (candidate) =>
-          ["intended", "uncertain"].includes(candidate.state) && candidate.id !== effect.id,
-      ) ||
-      effects.some(
-        (candidate) =>
-          candidate.attempt_id === attemptID &&
-          (candidate.kind === "session" ||
-            candidate.kind === "prompt" ||
-            candidate.kind.startsWith("verify:") ||
-            candidate.kind.startsWith("graph-verify:")),
-      ) ||
-      this.hasMeaningfulWorkerProgress(attemptID) ||
-      this.store.latestTransition<{ attemptID?: string }>(plan.id, taskID, "WORKER_STARTED")
-        ?.attemptID === attemptID ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error("Startup settlement is unsafe after downstream work or conflicting ownership")
-    return { attempt, effect, failure }
-  }
-
-  private hasMeaningfulWorkerProgress(attemptID: string) {
-    return this.store
-      .progressFacts([attemptID])
-      .some((fact) => !isUnavailableSessionRecoveryGap(fact))
-  }
-
-  private startupSettlementForEffect(
-    planID: string,
-    attempt: AttemptRow,
-    effect: EffectRow,
-    effects = this.store.effects(planID),
-  ): StartupAbsenceEvidence | undefined {
-    if (
-      effect.plan_id !== planID ||
-      effect.task_id !== attempt.task_id ||
-      effect.attempt_id !== attempt.id ||
-      effect.state !== "failed" ||
-      !["worktree", "worktree-recovery"].includes(effect.kind)
-    )
-      return undefined
-    const settlement = startupFailureSettlementFromReceipt(effect.receipt)
-    if (
-      !settlement ||
-      settlement.effectID !== effect.id ||
-      settlement.planID !== planID ||
-      settlement.attemptID !== attempt.id ||
-      settlement.taskID !== attempt.task_id ||
-      settlement.sessionID !== attempt.session_id ||
-      settlement.workspace !== attempt.workspace ||
-      settlement.base !== attempt.base_commit
-    )
-      return undefined
-    if (settlement.legacyFailure) {
-      const binding = settlement.legacyFailure.binding
-      if (
-        binding.planID !== planID ||
-        binding.taskID !== attempt.task_id ||
-        binding.attemptID !== attempt.id ||
-        binding.effectID !== effect.id ||
-        binding.sessionID !== attempt.session_id ||
-        binding.messageID !== attempt.message_id ||
-        binding.workspace !== attempt.workspace ||
-        binding.base !== attempt.base_commit
-      )
-        return undefined
-    }
-
-    if (effect.kind === "worktree") {
-      return effect.payload ===
-        JSON.stringify({ workspace: attempt.workspace, base: attempt.base_commit })
-        ? settlement
-        : undefined
-    }
-
-    let operation: Record<string, unknown> | undefined
-    try {
-      const parsed: unknown = JSON.parse(effect.payload)
-      operation = isRecord(parsed) ? parsed : undefined
-    } catch {
-      return undefined
-    }
-    if (!operation) return undefined
-    const sourceIndex = effects.findIndex((candidate) => candidate.id === operation?.sourceEffectID)
-    const effectIndex = effects.findIndex((candidate) => candidate.id === effect.id)
-    if (
-      sourceIndex < 0 ||
-      sourceIndex >= effectIndex ||
-      operation.schema !== "lazers-worktree-recovery-operation/v1" ||
-      operation.workspace !== attempt.workspace ||
-      operation.base !== attempt.base_commit ||
-      operation.sessionID !== attempt.session_id ||
-      operation.messageID !== attempt.message_id ||
-      operation.policy !== attempt.policy ||
-      typeof operation.recoveryID !== "string" ||
-      typeof operation.sourceEffectID !== "string" ||
-      typeof operation.settlementRequestID !== "string" ||
-      typeof operation.authorizationRequestID !== "string" ||
-      typeof operation.authorizedOwner !== "string" ||
-      typeof operation.authorizedVersion !== "number"
-    )
-      return undefined
-    const source = effects.find((candidate) => candidate.id === operation.sourceEffectID)
-    if (!source) return undefined
-    const sourceSettlement = this.startupSettlementForEffect(planID, attempt, source, effects)
-    if (
-      !sourceSettlement ||
-      sourceSettlement.requestID !== operation.settlementRequestID ||
-      !this.store.activity(planID, attempt.task_id).some((entry) => {
-        if (entry.event !== "STARTUP_RECOVERY_AUTHORIZED") return false
-        try {
-          const authorization = JSON.parse(entry.payload) as Record<string, unknown>
-          return (
-            authorization.schema === "lazers-worktree-startup-authorization/v1" &&
-            authorization.recoveryID === operation.recoveryID &&
-            authorization.sourceEffectID === source.id &&
-            authorization.settlementRequestID === sourceSettlement.requestID &&
-            authorization.requestID === operation.authorizationRequestID &&
-            authorization.owner === operation.authorizedOwner &&
-            authorization.planVersion === operation.authorizedVersion &&
-            authorization.taskID === attempt.task_id &&
-            authorization.attemptID === attempt.id &&
-            authorization.sessionID === attempt.session_id &&
-            authorization.messageID === attempt.message_id &&
-            authorization.workspace === attempt.workspace &&
-            authorization.base === attempt.base_commit &&
-            authorization.policy === attempt.policy
-          )
-        } catch {
-          return false
-        }
-      })
-    )
-      return undefined
-    return settlement
-  }
-
-  private settledStartupEffect(planID: string, attempt: AttemptRow): EffectRow | undefined {
-    const effects = this.store.effects(planID)
-    return effects
-      .filter((effect) => this.startupSettlementForEffect(planID, attempt, effect, effects))
-      .at(-1)
-  }
-
-  private historicalStartupRecoveryOperation(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    effects: EffectRow[],
-    authorization: StartupRecoveryAuthorization,
-  ): EffectRow | undefined {
-    if (
-      authorization.planVersion > plan.version ||
-      authorization.planRevision !== plan.revision ||
-      authorization.taskID !== attempt.task_id ||
-      authorization.attemptID !== attempt.id ||
-      authorization.sessionID !== attempt.session_id ||
-      authorization.messageID !== attempt.message_id ||
-      authorization.workspace !== attempt.workspace ||
-      authorization.base !== attempt.base_commit ||
-      authorization.policy !== attempt.policy
-    )
-      return undefined
-    const source = effects.find((candidate) => candidate.id === authorization.sourceEffectID)
-    const sourceSettlement = source
-      ? this.startupSettlementForEffect(plan.id, attempt, source, effects)
-      : undefined
-    if (!sourceSettlement || sourceSettlement.requestID !== authorization.settlementRequestID)
-      return undefined
-    const matching = effects.filter((candidate) => {
-      if (
-        candidate.kind !== "worktree-recovery" ||
-        candidate.task_id !== attempt.task_id ||
-        candidate.attempt_id !== attempt.id
-      )
-        return false
-      try {
-        const parsed: unknown = JSON.parse(candidate.payload)
-        if (!isRecord(parsed)) return false
-        const operation = parsed
-        return (
-          operation.recoveryID === authorization.recoveryID &&
-          operation.sourceEffectID === authorization.sourceEffectID &&
-          operation.settlementRequestID === authorization.settlementRequestID &&
-          operation.authorizationRequestID === authorization.requestID &&
-          operation.authorizedOwner === authorization.owner &&
-          operation.authorizedVersion === authorization.planVersion &&
-          operation.sessionID === authorization.sessionID &&
-          operation.messageID === authorization.messageID &&
-          operation.workspace === authorization.workspace &&
-          operation.base === authorization.base &&
-          operation.policy === authorization.policy
-        )
-      } catch {
-        return false
-      }
-    })
-    return matching.length === 1 ? matching[0] : undefined
-  }
-
-  private currentStartupRecoveryOperation(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    effects: EffectRow[],
-    authorization: StartupRecoveryAuthorization,
+  private retainedRepairAttemptAccepted(
+    ...args: Parameters<RetainedRepairPreparation["retainedRepairAttemptAccepted"]>
   ) {
-    if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return undefined
-    return this.historicalStartupRecoveryOperation(plan, attempt, effects, authorization)
+    return this.retainedRepairPreparation.retainedRepairAttemptAccepted(...args)
   }
 
-  private completeStartupRecovery(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    operation: EffectRow,
-    authorization: StartupRecoveryAuthorization,
-    workspace: string,
-    fence: number,
-  ): boolean {
-    return this.store.fenced(this.owner, fence, (db) => {
-      const currentPlan = db
-        .query<PlanRow, [string, string]>(
-          "SELECT * FROM runner_plans WHERE id=? AND project_directory=?",
-        )
-        .get(plan.id, this.store.repository.projectDirectory)
-      const currentAttempt = db
-        .query<AttemptRow, [string]>("SELECT * FROM runner_attempts WHERE id=?")
-        .get(attempt.id)
-      const currentOperation = db
-        .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
-        .get(operation.id)
-      const latestAuthorization = db
-        .query<{ payload: string }, [string, string]>(
-          `SELECT payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='STARTUP_RECOVERY_AUTHORIZED'
-           ORDER BY id DESC LIMIT 1`,
-        )
-        .get(plan.id, attempt.task_id)
-      let operationPayload: Record<string, unknown> | undefined
-      try {
-        const parsed: unknown = JSON.parse(currentOperation?.payload ?? "null")
-        operationPayload = isRecord(parsed) ? parsed : undefined
-      } catch {
-        operationPayload = undefined
-      }
-      if (
-        !currentPlan ||
-        !currentAttempt ||
-        !currentOperation ||
-        currentPlan.state !== "running" ||
-        currentPlan.version < authorization.planVersion ||
-        currentPlan.revision !== authorization.planRevision ||
-        !latestAuthorization ||
-        fingerprint(JSON.parse(latestAuthorization.payload)) !== fingerprint(authorization) ||
-        currentAttempt.state !== "preparing" ||
-        currentAttempt.task_id !== attempt.task_id ||
-        currentAttempt.session_id !== authorization.sessionID ||
-        currentAttempt.message_id !== authorization.messageID ||
-        currentAttempt.workspace !== authorization.workspace ||
-        currentAttempt.base_commit !== authorization.base ||
-        currentAttempt.policy !== authorization.policy ||
-        currentOperation.plan_id !== plan.id ||
-        currentOperation.task_id !== attempt.task_id ||
-        currentOperation.attempt_id !== attempt.id ||
-        currentOperation.kind !== "worktree-recovery" ||
-        !["intended", "uncertain"].includes(currentOperation.state) ||
-        operationPayload?.schema !== "lazers-worktree-recovery-operation/v1" ||
-        operationPayload.recoveryID !== authorization.recoveryID ||
-        operationPayload.sourceEffectID !== authorization.sourceEffectID ||
-        operationPayload.settlementRequestID !== authorization.settlementRequestID ||
-        operationPayload.authorizationRequestID !== authorization.requestID ||
-        operationPayload.authorizedOwner !== authorization.owner ||
-        operationPayload.authorizedVersion !== authorization.planVersion ||
-        operationPayload.sessionID !== authorization.sessionID ||
-        operationPayload.messageID !== authorization.messageID ||
-        operationPayload.workspace !== authorization.workspace ||
-        operationPayload.base !== authorization.base ||
-        operationPayload.policy !== authorization.policy ||
-        workspace !== authorization.workspace
-      )
-        return false
-      const changed = db
-        .query(
-          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'completed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
-        )
-        .run(
-          JSON.stringify({
-            workspace,
-            base: authorization.base,
-            recoveryID: authorization.recoveryID,
-            sourceEffectID: authorization.sourceEffectID,
-            ready: true,
-          }),
-          operation.id,
-        ).changes
-      if (changed !== 1) return false
-      this.store.record(plan.id, attempt.task_id, "EFFECT_COMPLETED", {
-        effectID: operation.id,
-        kind: operation.kind,
-      })
-      this.store.record(plan.id, attempt.task_id, "STARTUP_RECOVERY_WORKTREE_READY", {
-        effectID: operation.id,
-        sourceEffectID: authorization.sourceEffectID,
-        recoveryID: authorization.recoveryID,
-        attemptID: attempt.id,
-        workspace,
-        base: authorization.base,
-      })
-      return true
-    })
+  private prepareRetainedRepair(
+    ...args: Parameters<RetainedRepairPreparation["prepareRetainedRepair"]>
+  ) {
+    return this.retainedRepairPreparation.prepareRetainedRepair(...args)
+  }
+
+  private prepareReviewInputReconciliation(
+    ...args: Parameters<RetainedRepairPreparation["prepareReviewInputReconciliation"]>
+  ) {
+    return this.retainedRepairPreparation.prepareReviewInputReconciliation(...args)
+  }
+
+  private hasMeaningfulWorkerProgress(
+    ...args: Parameters<StartupSettlement["hasMeaningfulWorkerProgress"]>
+  ) {
+    return this.startupSettlement.hasMeaningfulWorkerProgress(...args)
+  }
+
+  private settledStartupEffect(...args: Parameters<StartupSettlement["settledStartupEffect"]>) {
+    return this.startupSettlement.settledStartupEffect(...args)
   }
 
   private assertStartupSettlementCurrent(
-    expectedPlan: PlanRow,
-    expectedAttempt: AttemptRow,
-    expectedEffect: EffectRow,
-    failure: StartupWorktreeFailureEvidence,
+    ...args: Parameters<StartupSettlement["assertStartupSettlementCurrent"]>
   ) {
-    const plan = this.store.plan(expectedPlan.id)
-    const attempt = this.store
-      .attempts(expectedPlan.id)
-      .find((candidate) => candidate.id === expectedAttempt.id)
-    const effect = this.store
-      .effects(expectedPlan.id)
-      .find((candidate) => candidate.id === expectedEffect.id)
-    let currentCandidate:
-      | { attempt: AttemptRow; effect: EffectRow; failure: StartupWorktreeFailureEvidence }
-      | undefined
-    try {
-      if (plan && attempt)
-        currentCandidate = this.startupSettlementCandidate(plan, attempt.task_id, attempt.id)
-    } catch {
-      currentCandidate = undefined
-    }
-    if (
-      !plan ||
-      plan.version !== expectedPlan.version ||
-      plan.state !== "blocked" ||
-      !attempt ||
-      attempt.task_id !== expectedAttempt.task_id ||
-      attempt.number !== expectedAttempt.number ||
-      attempt.session_id !== expectedAttempt.session_id ||
-      attempt.message_id !== expectedAttempt.message_id ||
-      attempt.workspace !== expectedAttempt.workspace ||
-      attempt.base_commit !== expectedAttempt.base_commit ||
-      attempt.policy !== expectedAttempt.policy ||
-      attempt.state !== "preparing" ||
-      !effect ||
-      effect.state !== "uncertain" ||
-      effect.attempt_id !== expectedAttempt.id ||
-      effect.task_id !== expectedAttempt.task_id ||
-      currentCandidate?.effect.id !== expectedEffect.id ||
-      fingerprint(currentCandidate.failure) !== fingerprint(failure) ||
-      startupFailureSettlementFromReceipt(effect.receipt) ||
-      !this.preparationAllowed(attempt)
-    )
-      throw new Error("Startup settlement identity, version, or ownership changed")
-  }
-
-  private async observeStartupAbsence(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    effect: EffectRow,
-    failure: StartupWorktreeFailureEvidence,
-    requestID: string,
-  ): Promise<StartupAbsenceEvidence> {
-    const candidates = startupWorktreeCandidates(attempt.workspace)
-    const assertCurrent = () => this.assertStartupSettlementCurrent(plan, attempt, effect, failure)
-
-    const worker = await this.host.session(attempt.session_id)
-    assertCurrent()
-    if (worker)
-      throw new Error("Reserved worker session already exists; startup settlement refused")
-
-    const nativeWorktrees = await this.host.worktrees()
-    assertCurrent()
-    if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
-      throw new Error("Native worktree or collision candidate exists; startup settlement refused")
-
-    const gitWorktrees = (await worktreeListPorcelain(this.directory))
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("worktree "))
-      .map((line) => line.slice("worktree ".length))
-    if (gitWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
-      throw new Error("Git worktree or collision candidate exists; startup settlement refused")
-
-    for (const candidate of candidates) {
-      let present = false
-      try {
-        lstatSync(candidate)
-        present = true
-      } catch (error) {
-        if (!isRecord(error) || error.code !== "ENOENT")
-          throw new Error(
-            `Filesystem absence observation failed for ${candidate}: ${errorText(error)}`,
-            { cause: error },
-          )
-      }
-      if (present)
-        throw new Error(
-          "Filesystem worktree or collision candidate exists; startup settlement refused",
-        )
-    }
-
-    const owner = await this.host.session(plan.owner)
-    assertCurrent()
-    if (!this.validArchitect(owner) || owner.id !== plan.owner)
-      throw new Error("Current Architect owner changed during startup settlement")
-
-    const evidence = {
-      kind: "worktree-startup-failure-settled-absent" as const,
-      schema: "lazers-worktree-startup-settlement/v1" as const,
-      requestID,
-      planID: plan.id,
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      effectID: effect.id,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      base: attempt.base_commit,
-      observedAt: this.now(),
-      observations: {
-        candidates,
-        nativeAbsent: true as const,
-        gitAbsent: true as const,
-        filesystemAbsent: true as const,
-        sessionAbsent: true as const,
-      },
-    }
-    return failure.kind === "native-typed-failure"
-      ? { ...evidence, nativeFailure: failure.nativeFailure }
-      : { ...evidence, legacyFailure: failure.legacyFailure }
+    return this.startupSettlement.assertStartupSettlementCurrent(...args)
   }
 
   private startupRecoveryAuthorization(
-    plan: PlanRow,
-    attempt: AttemptRow,
-  ): StartupRecoveryAuthorization | undefined {
-    const authorization = this.store.latestTransition<unknown>(
-      plan.id,
-      attempt.task_id,
-      "STARTUP_RECOVERY_AUTHORIZED",
-    )
-    if (!isRecord(authorization)) return undefined
-    if (
-      authorization.schema !== "lazers-worktree-startup-authorization/v1" ||
-      typeof authorization.recoveryID !== "string" ||
-      typeof authorization.sourceEffectID !== "string" ||
-      typeof authorization.settlementRequestID !== "string" ||
-      typeof authorization.requestID !== "string" ||
-      typeof authorization.owner !== "string" ||
-      typeof authorization.planVersion !== "number" ||
-      typeof authorization.planRevision !== "number" ||
-      authorization.taskID !== attempt.task_id ||
-      authorization.attemptID !== attempt.id ||
-      typeof authorization.sessionID !== "string" ||
-      typeof authorization.messageID !== "string" ||
-      typeof authorization.workspace !== "string" ||
-      typeof authorization.base !== "string" ||
-      typeof authorization.policy !== "string"
-    )
-      return undefined
-    return authorization as StartupRecoveryAuthorization
+    ...args: Parameters<StartupSettlement["startupRecoveryAuthorization"]>
+  ) {
+    return this.startupSettlement.startupRecoveryAuthorization(...args)
   }
 
   private startupRecoveryAuthorityCurrent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    authorization: StartupRecoveryAuthorization,
+    ...args: Parameters<StartupSettlement["startupRecoveryAuthorityCurrent"]>
   ) {
-    const current = this.store.plan(plan.id)
-    const currentAttempt = this.store
-      .attempts(plan.id)
-      .find((candidate) => candidate.id === attempt.id)
-    return Boolean(
-      current &&
-      currentAttempt &&
-      current.state === "running" &&
-      current.version >= authorization.planVersion &&
-      current.revision === authorization.planRevision &&
-      currentAttempt.state === "preparing" &&
-      currentAttempt.task_id === authorization.taskID &&
-      currentAttempt.session_id === authorization.sessionID &&
-      currentAttempt.message_id === authorization.messageID &&
-      currentAttempt.workspace === authorization.workspace &&
-      currentAttempt.base_commit === authorization.base &&
-      currentAttempt.policy === authorization.policy,
-    )
+    return this.startupSettlement.startupRecoveryAuthorityCurrent(...args)
   }
 
-  private async startupWorkspaceReady(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-  ): Promise<boolean> {
-    if (attempt.workspace === this.directory) return true
-    const effects = this.store.effects(plan.id).filter((effect) => effect.attempt_id === attempt.id)
-    const matchingReceipt = (effect: EffectRow) => {
-      if (effect.state !== "completed" || !effect.receipt) return false
-      try {
-        const receipt = JSON.parse(effect.receipt) as { workspace?: unknown; base?: unknown }
-        return receipt.workspace === attempt.workspace && receipt.base === attempt.base_commit
-      } catch {
-        return false
-      }
-    }
-    const recoveryAuthorization = this.startupRecoveryAuthorization(plan, attempt)
-    const authorizedRecovery = recoveryAuthorization
-      ? this.currentStartupRecoveryOperation(
-          plan,
-          attempt,
-          this.store.effects(plan.id),
-          recoveryAuthorization,
-        )
-      : undefined
-    if (
-      effects.some((effect) => effect.kind === "worktree" && matchingReceipt(effect)) ||
-      (authorizedRecovery?.kind === "worktree-recovery" && matchingReceipt(authorizedRecovery))
-    ) {
-      try {
-        if (!existsSync(attempt.workspace)) return false
-        const head = await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])
-        const workerWasAdmitted =
-          effects.some(
-            (effect) =>
-              effect.kind === "prompt" &&
-              effect.state === "completed" &&
-              effect.attempt_id === attempt.id,
-          ) || this.hasMeaningfulWorkerProgress(attempt.id)
-        return workerWasAdmitted || head === attempt.base_commit
-      } catch {
-        return false
-      }
-    }
-
-    const authorization = this.startupRecoveryAuthorization(plan, attempt)
-    if (!authorization || !this.startupRecoveryAuthorityCurrent(plan, attempt, authorization))
-      return false
-    const sourceEffect = effects.find((effect) => effect.id === authorization.sourceEffectID)
-    const settlement = sourceEffect
-      ? this.startupSettlementForEffect(plan.id, attempt, sourceEffect, effects)
-      : undefined
-    if (
-      sourceEffect?.state !== "failed" ||
-      !settlement ||
-      settlement.planID !== plan.id ||
-      settlement.taskID !== attempt.task_id ||
-      settlement.attemptID !== attempt.id ||
-      settlement.sessionID !== attempt.session_id ||
-      settlement.workspace !== attempt.workspace ||
-      settlement.base !== attempt.base_commit ||
-      settlement.requestID !== authorization.settlementRequestID ||
-      !this.preparationAllowed(attempt)
-    )
-      return false
-
-    const recoveryEffect = effects.find((effect) => {
-      if (effect.kind !== "worktree-recovery") return false
-      try {
-        return (
-          (JSON.parse(effect.payload) as { recoveryID?: unknown }).recoveryID ===
-          authorization.recoveryID
-        )
-      } catch {
-        return false
-      }
-    })
-    if (recoveryEffect) return false
-
-    const workerEffects = this.store
-      .effects(plan.id)
-      .some(
-        (effect) =>
-          effect.attempt_id === attempt.id &&
-          (effect.kind === "session" || effect.kind === "prompt"),
-      )
-    if (workerEffects || this.hasMeaningfulWorkerProgress(attempt.id)) return false
-
-    const candidates = startupWorktreeCandidates(attempt.workspace)
-    try {
-      const worker = await this.host.session(attempt.session_id)
-      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization) || worker)
-        return false
-      const nativeWorktrees = await this.host.worktrees()
-      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
-      if (nativeWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
-        return false
-      const gitWorktrees = (await worktreeListPorcelain(this.directory))
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("worktree "))
-        .map((line) => line.slice("worktree ".length))
-      if (gitWorktrees.some((path) => isStartupWorktreeCandidate(attempt.workspace, path)))
-        return false
-      for (const candidate of candidates) {
-        try {
-          lstatSync(candidate)
-          return false
-        } catch (error) {
-          if (!isRecord(error) || error.code !== "ENOENT") return false
-        }
-      }
-      if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
-    } catch {
-      return false
-    }
-
-    const operation = this.effect(
-      plan.id,
-      attempt.task_id,
-      attempt.id,
-      "worktree-recovery",
-      {
-        schema: "lazers-worktree-recovery-operation/v1",
-        recoveryID: authorization.recoveryID,
-        sourceEffectID: authorization.sourceEffectID,
-        settlementRequestID: authorization.settlementRequestID,
-        authorizationRequestID: authorization.requestID,
-        authorizedOwner: authorization.owner,
-        authorizedVersion: authorization.planVersion,
-        sessionID: attempt.session_id,
-        messageID: attempt.message_id,
-        workspace: attempt.workspace,
-        base: attempt.base_commit,
-        policy: attempt.policy,
-      },
-      fence,
-    )
-    if (!this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)) return false
-    try {
-      const actual = await this.host.worktree({
-        directory: attempt.workspace,
-        base: attempt.base_commit,
-      })
-      if (
-        actual !== attempt.workspace ||
-        (await gitAsync(actual, ["rev-parse", "HEAD"])) !== attempt.base_commit
-      )
-        throw new Error("Recovered native worktree did not match the reserved workspace and source")
-      return this.completeStartupRecovery(plan, attempt, operation, authorization, actual, fence)
-    } catch (error) {
-      this.uncertain(operation, error, fence)
-      return false
-    }
+  private startupWorkspaceReady(...args: Parameters<StartupSettlement["startupWorkspaceReady"]>) {
+    return this.startupSettlement.startupWorkspaceReady(...args)
   }
 
-  /**
-   * `resume` without a task re-runs the combined check on the current
-   * candidate. It needs a live Architect and a blocked, unaccepted plan; no
-   * earlier receipt, fingerprint or deadline has to match.
-   */
   private assertCombinedVerificationResume(
-    plan: PlanRow,
-    command: PlanCommand,
-    ownerSession: HostSession | null | undefined,
+    ...args: Parameters<ContinuationPreparation["assertCombinedVerificationResume"]>
   ) {
-    if (
-      !command.reason?.trim() ||
-      command.attemptID !== undefined ||
-      command.workspaceMode !== undefined ||
-      command.baseCommit !== undefined
-    )
-      throw new Error("Plan-level verification resume requires only a reason, not task controls")
-    if (!this.validArchitect(ownerSession))
-      throw new Error("Combined verification resume requires the current same-project Architect")
-    if (plan.state !== "blocked" || plan.artifact !== null)
-      throw new Error("Combined verification resume requires a blocked, unaccepted plan")
+    return this.continuationPreparation.assertCombinedVerificationResume(...args)
   }
 
   async command(input: unknown, caller: string): Promise<unknown> {
@@ -3413,137 +1161,16 @@ export class TaskRuntime {
     return this.host.session(target)
   }
 
-  /** Resume of a task: the worker continuation or retained-repair recovery its latest attempt allows. */
-  private async prepareResumeContinuation(
-    old: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-    taskID: string,
-  ): Promise<
-    Pick<
-      CommandContext,
-      "terminalContinuation" | "terminalRepairContinuation" | "retainedRepairRecovery"
-    >
-  > {
-    const attempt = this.store
-      .attempts(old.id)
-      .filter((candidate) => candidate.task_id === taskID)
-      .at(-1)
-    const latestStop = attempt
-      ? this.store.latestTransition<Record<string, unknown>>(
-          old.id,
-          attempt.task_id,
-          "WORKER_STOPPED",
-        )
-      : undefined
-    const terminalNativeFailure = attempt?.state === "failed" && latestStop?.outcome === "failed"
-    const interruptedVerification = Boolean(
-      attempt?.state === "verifying" && this.interruptedChecksFor(old, attempt).length > 0,
-    )
-    let continuation: Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation"> =
-      {
-        terminalContinuation: undefined,
-        terminalRepairContinuation: undefined,
-      }
-    if (
-      attempt &&
-      !interruptedVerification &&
-      (attempt.state === "running" || attempt.state === "verifying" || terminalNativeFailure)
-    )
-      continuation = await this.prepareTerminalContinuation(
-        old,
-        command,
-        caller,
-        ownerSession,
-        attempt,
-      )
-    let retainedRepairRecovery: RetainedRepairRecoverySeed | undefined
-    if (
-      !continuation.terminalContinuation &&
-      attempt?.state === "cancelled" &&
-      this.store.nodes(old.id).find((candidate) => candidate.task_id === attempt.task_id)?.state ===
-        "cancelled" &&
-      old.state === "blocked" &&
-      old.reason === RETAINED_REPAIR_FENCE_FAILURE_REASON &&
-      this.store.latestRetainedRepair<{ attemptID?: unknown }>(old.id, attempt.task_id)
-        ?.attemptID === attempt.id
-    )
-      retainedRepairRecovery = await this.prepareRetainedRepairRecovery(
-        old,
-        command,
-        caller,
-        ownerSession,
-        attempt,
-      )
-    return { ...continuation, retainedRepairRecovery }
-  }
-
-  private async prepareTerminalContinuation(
-    old: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-    attempt: AttemptRow,
-  ): Promise<Pick<CommandContext, "terminalContinuation" | "terminalRepairContinuation">> {
-    if (!command.attemptID || command.attemptID !== attempt.id)
-      throw new Error("Terminal worker continuation requires the exact latest attemptID")
-    const worker = await this.host.session(attempt.session_id, { messages: true })
-    const problem = this.terminalWorkerContinuationProblem(
-      old,
-      command,
-      caller,
-      ownerSession,
-      worker,
-    )
-    if (problem) throw new Error(problem)
-    const terminalContinuation = {
-      attemptID: attempt.id,
-      messageID: attempt.message_id,
-      inputID: worker!.turn!.inputID!,
-      worker: worker!,
-    }
-    let terminalRepairContinuation: { operationID: string; owner: string } | undefined
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      old.id,
-      attempt.task_id,
-    )
-    if (latestRepair?.attemptID === attempt.id) {
-      const repair = this.retainedRepairForAttempt(attempt)
-      if (!repair || repair.messageID !== attempt.message_id)
-        throw new Error(
-          "Retained repair continuation is missing its current owner/control authorization",
-        )
-      terminalRepairContinuation = { operationID: repair.operationID, owner: repair.owner }
-    }
-    return { terminalContinuation, terminalRepairContinuation }
-  }
-
-  private async prepareStartupSettlement(
-    old: PlanRow,
-    command: PlanCommand,
-    ownerSession: HostSession | null | undefined,
+  private prepareResumeContinuation(
+    ...args: Parameters<ContinuationPreparation["prepareResumeContinuation"]>
   ) {
-    if (
-      !command.taskID ||
-      !command.attemptID ||
-      !command.reason ||
-      !ownerSession ||
-      !this.validArchitect(ownerSession)
-    )
-      throw new Error(
-        "Startup settlement requires the current Architect owner and exact task attempt",
-      )
-    const candidate = this.startupSettlementCandidate(old, command.taskID, command.attemptID)
-    const evidence = await this.observeStartupAbsence(
-      old,
-      candidate.attempt,
-      candidate.effect,
-      candidate.failure,
-      command.requestID,
-    )
-    this.assertStartupSettlementCurrent(old, candidate.attempt, candidate.effect, candidate.failure)
-    return { ...candidate, evidence }
+    return this.continuationPreparation.prepareResumeContinuation(...args)
+  }
+
+  private prepareStartupSettlement(
+    ...args: Parameters<StartupSettlement["prepareStartupSettlement"]>
+  ) {
+    return this.startupSettlement.prepareStartupSettlement(...args)
   }
 
   /** Re-reads the owner (and repair candidate) at the last moment before a retained verification reserves. */
@@ -4813,40 +2440,9 @@ export class TaskRuntime {
   }
 
   private assertTerminalContinuation(
-    ctx: CommandContext,
-    plan: PlanRow,
-    attempt: AttemptRow | undefined,
+    ...args: Parameters<ContinuationPreparation["assertTerminalContinuation"]>
   ) {
-    const { command, caller, ownerSession, terminalContinuation, terminalRepairContinuation } = ctx
-    const retainedMode = attempt!.workspace === this.directory ? "shared" : "isolated"
-    if (
-      (command.workspaceMode !== undefined && command.workspaceMode !== retainedMode) ||
-      (command.baseCommit !== undefined && command.baseCommit !== attempt!.base_commit)
-    )
-      throw new Error("Terminal continuation preserves its workspace and baseline")
-    const problem = this.terminalWorkerContinuationProblem(
-      plan,
-      command,
-      caller,
-      ownerSession,
-      terminalContinuation!.worker,
-    )
-    if (problem) throw new Error(problem)
-    if (terminalContinuation!.worker.turn?.inputID !== terminalContinuation!.inputID)
-      throw new Error("Native terminal observation changed before continuation admission")
-    const latestRepair = this.store.latestRetainedRepair<{ attemptID?: unknown }>(
-      plan.id,
-      attempt!.task_id,
-    )
-    const currentRepair = this.retainedRepairForAttempt(attempt!)
-    if (
-      (latestRepair?.attemptID === attempt!.id &&
-        (!terminalRepairContinuation ||
-          !currentRepair ||
-          currentRepair.operationID !== terminalRepairContinuation.operationID)) ||
-      (terminalRepairContinuation && latestRepair?.attemptID !== attempt!.id)
-    )
-      throw new Error("Retained repair continuation authority changed before reservation")
+    return this.continuationPreparation.assertTerminalContinuation(...args)
   }
 
   private commandRequeueUnstartedTask(
@@ -6498,296 +4094,22 @@ export class TaskRuntime {
     return this.dispatchModule.resolveTaskDispatchRoute(...args)
   }
 
-  private retainedRepairForAttempt(attempt: AttemptRow): RetainedRepairRecord | undefined {
-    const repair = this.store.latestRetainedRepair<{
-      operationID?: unknown
-      attemptID?: unknown
-      previousMessageID?: unknown
-      nativeInputID?: unknown
-      nativeAssignmentID?: unknown
-      messageID?: unknown
-      owner?: unknown
-      sessionID?: unknown
-      workspace?: unknown
-      route?: unknown
-      defect?: unknown
-      workerObservation?: unknown
-    }>(attempt.plan_id, attempt.task_id)
-    if (
-      !repair ||
-      typeof repair.operationID !== "string" ||
-      !repair.operationID ||
-      typeof repair.attemptID !== "string" ||
-      typeof repair.previousMessageID !== "string" ||
-      !repair.previousMessageID ||
-      typeof repair.messageID !== "string" ||
-      !repair.messageID ||
-      typeof repair.owner !== "string" ||
-      !repair.owner.trim() ||
-      typeof repair.sessionID !== "string" ||
-      typeof repair.workspace !== "string" ||
-      typeof repair.defect !== "string" ||
-      repair.attemptID !== attempt.id ||
-      repair.sessionID !== attempt.session_id ||
-      repair.workspace !== attempt.workspace ||
-      repair.route === undefined
-    )
-      return undefined
-    const plan = this.store.plan(attempt.plan_id)
-    if (!plan || plan.owner !== repair.owner) return undefined
-    const repairRoute = ModelPolicy.safeParse(repair.route)
-    const attemptRoute = this.retainedAttemptModel(plan, attempt)
-    if (!repairRoute.success || !attemptRoute || !sameModelSnapshot(repairRoute.data, attemptRoute))
-      return undefined
-    const admissionInputID =
-      typeof repair.nativeInputID === "string" ? repair.nativeInputID : repair.previousMessageID
-    const admissionAssignmentID =
-      typeof repair.nativeAssignmentID === "string"
-        ? repair.nativeAssignmentID
-        : repair.previousMessageID
-    if (typeof repair.nativeInputID === "string") {
-      if (typeof repair.workerObservation !== "string") return undefined
-      let captured: unknown
-      try {
-        captured = JSON.parse(repair.workerObservation) as unknown
-      } catch {
-        return undefined
-      }
-      if (!isRecord(captured)) return undefined
-      const turn = isRecord(captured.turn) ? captured.turn : undefined
-      if (
-        captured.id !== attempt.session_id ||
-        captured.projectID !== this.projectID ||
-        captured.directory !== attempt.workspace ||
-        captured.attemptID !== attempt.id ||
-        captured.busy !== false ||
-        captured.pendingInput !== false ||
-        captured.observationUnstable !== false ||
-        captured.pendingPermissions !== 0 ||
-        captured.pendingForms !== 0 ||
-        captured.archived !== false ||
-        captured.outcome !== "succeeded" ||
-        turn?.inputID !== admissionInputID ||
-        turn?.state !== "completed" ||
-        Number(captured.runningShells ?? 0) !== 0 ||
-        Number(captured.activeChildren ?? 0) !== 0
-      )
-        return undefined
-    }
-    const history = this.transitionHistory(attempt.plan_id)
-    const repairTransition = history
-      .filter(
-        (entry) => entry.task_id === attempt.task_id && entry.event === "RETAINED_REPAIR_REQUESTED",
-      )
-      .at(-1)
-    const transitions: RetainedRepairContinuationTransition[] = history
-      .filter((entry) => entry.task_id === attempt.task_id && entry.event === "ATTEMPT_RESUMED")
-      .flatMap((entry) => {
-        const receipt = this.parseTransitionPayload<RetainedRepairContinuationTransition>(entry)
-        if (!receipt) return []
-        const recovery = isRecord(receipt.retainedRepairRecovery)
-          ? receipt.retainedRepairRecovery
-          : undefined
-        if (recovery) {
-          const failedResumeID = recovery.failedResumeTransitionID
-          const blockedID = recovery.blockedTransitionID
-          const cancelledID = recovery.cancelledTransitionID
-          const failedResumeTransition = history.find(
-            (candidate) => candidate.id === failedResumeID,
-          )
-          const blockedTransition = history.find((candidate) => candidate.id === blockedID)
-          const cancelledTransition = history.find((candidate) => candidate.id === cancelledID)
-          const failedResume =
-            this.parseTransitionPayload<Record<string, unknown>>(failedResumeTransition)
-          const blocked = this.parseTransitionPayload<{
-            reason?: unknown
-            workerObservation?: unknown
-          }>(blockedTransition)
-          const cancelled = this.parseTransitionPayload<{
-            from?: unknown
-            to?: unknown
-            reason?: unknown
-          }>(cancelledTransition)
-          if (
-            recovery.schema !== "lazers-retained-repair-recovery/v1" ||
-            recovery.operationID !== repair.operationID ||
-            recovery.interruptedInputID !== repair.messageID ||
-            !repairTransition ||
-            !Number.isSafeInteger(failedResumeID) ||
-            !Number.isSafeInteger(blockedID) ||
-            !Number.isSafeInteger(cancelledID) ||
-            failedResumeTransition?.event !== "ATTEMPT_RESUMED" ||
-            failedResumeTransition.task_id !== attempt.task_id ||
-            blockedTransition?.event !== "BLOCKED" ||
-            blockedTransition.task_id !== null ||
-            cancelledTransition?.event !== "CANCEL" ||
-            cancelledTransition.task_id !== attempt.task_id ||
-            failedResumeTransition.id <= repairTransition.id ||
-            blockedTransition.id <= failedResumeTransition.id ||
-            cancelledTransition.id <= blockedTransition.id ||
-            failedResume?.attemptID !== attempt.id ||
-            failedResume.previousMessageID !== repair.messageID ||
-            failedResume.messageID !== recovery.failedMessageID ||
-            failedResume.terminalInputID !== repair.messageID ||
-            failedResume.interruptedInputID !== repair.messageID ||
-            failedResume.terminalOutcome !== "interrupted" ||
-            failedResume.retainedRepairContinuation !== undefined ||
-            failedResume.retainedRepairRecovery !== undefined ||
-            blocked?.reason !== RETAINED_REPAIR_FENCE_FAILURE_REASON ||
-            blocked.workerObservation !== undefined ||
-            cancelled?.from !== "running" ||
-            cancelled.to !== "cancelled" ||
-            cancelled.reason !== null ||
-            history.some(
-              (candidate) =>
-                candidate.task_id === null &&
-                candidate.event === "CANCEL_REQUESTED" &&
-                repairTransition &&
-                candidate.id > repairTransition.id &&
-                candidate.id < cancelledTransition.id,
-            )
-          )
-            return []
-        }
-        return [receipt]
-      })
-    const lineage = resolveRetainedRepairInputLineage({
-      operationID: repair.operationID,
-      attemptID: attempt.id,
-      originalMessageID: repair.messageID,
-      assignedMessageID: attempt.message_id,
-      owner: repair.owner,
-      allowLegacyReceipt: true,
-      transitions,
-    })
-    if (lineage.status === "invalid") return undefined
-    const currentContinuation =
-      lineage.status === "continued"
-        ? transitions.findLast((candidate) => candidate.messageID === attempt.message_id)
-        : undefined
-    const nativeAssignmentID =
-      lineage.status === "continued"
-        ? currentContinuation?.previousMessageID
-        : admissionAssignmentID
-    if (typeof nativeAssignmentID !== "string" || !nativeAssignmentID) return undefined
-    return {
-      operationID: repair.operationID,
-      attemptID: repair.attemptID,
-      previousMessageID: repair.previousMessageID,
-      repairMessageID: repair.messageID,
-      messageID: attempt.message_id,
-      nativeInputID: lineage.status === "continued" ? lineage.nativeInputID : admissionInputID,
-      nativeAssignmentID,
-      admissionInputID,
-      admissionAssignmentID,
-      continued: lineage.status === "continued",
-      ...(lineage.status === "continued" ? { terminalOutcome: lineage.terminalOutcome } : {}),
-      owner: repair.owner,
-      sessionID: repair.sessionID,
-      workspace: repair.workspace,
-      route: repair.route,
-      defect: repair.defect,
-    }
-  }
-
-  private retainedRepairGeneration(planID: string, taskID?: string) {
-    const repairForTask = (candidateTaskID: string) => {
-      const repair = this.store.latestRetainedRepair<{
-        operationID?: unknown
-      }>(planID, candidateTaskID)
-      // Once a repair supersedes acceptance evidence, keep that invalidation
-      // across later attempts; only a newer repair creates a new generation.
-      return typeof repair?.operationID === "string" ? repair.operationID : undefined
-    }
-    if (taskID !== undefined) return repairForTask(taskID)
-
-    const plan = this.store.plan(planID)
-    if (!plan) return undefined
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const nodes = this.store.nodes(planID)
-    const generations = input.integrationOrder.flatMap((candidateTaskID) => {
-      const node = nodes.find((candidate) => candidate.task_id === candidateTaskID)
-      if (!node || !["accepted", "incorporated"].includes(node.state)) return []
-      const attempt = this.store
-        .attempts(planID)
-        .filter((candidate) => candidate.task_id === candidateTaskID)
-        .at(-1)
-      if (!attempt || attempt.state !== "accepted" || attempt.artifact !== node.artifact) return []
-      const operationID = repairForTask(candidateTaskID)
-      return operationID ? [[candidateTaskID, operationID]] : []
-    })
-    return generations.length ? fingerprint({ planID, generations }) : undefined
-  }
-
-  private async retainedRepairPromptCurrent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    repair: RetainedRepairRecord,
+  private retainedRepairForAttempt(
+    ...args: Parameters<RetainedRepairRecords["retainedRepairForAttempt"]>
   ) {
-    const current = () => {
-      const latestPlan = this.store.plan(plan.id)
-      const latestAttempt = this.store.attempts(plan.id).find((item) => item.id === attempt.id)
-      const latestNode = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      const latestRepair = this.retainedRepairForAttempt(attempt)
-      return Boolean(
-        latestPlan?.state === "running" &&
-        latestAttempt?.state === "preparing" &&
-        latestAttempt.message_id === attempt.message_id &&
-        latestAttempt.session_id === attempt.session_id &&
-        latestAttempt.workspace === attempt.workspace &&
-        latestNode?.state === (repair.continued ? "running" : "ready") &&
-        latestRepair?.operationID === repair.operationID &&
-        latestRepair?.messageID === repair.messageID &&
-        latestRepair?.nativeInputID === repair.nativeInputID &&
-        latestRepair?.continued === repair.continued,
-      )
-    }
-    if (!this.host.waitForSession || !current()) return false
-    const model = ModelPolicy.safeParse(repair.route)
-    if (!model.success) return false
-    await this.host.waitForSession(attempt.session_id)
-    const observed = await this.host.session(attempt.session_id, { messages: true })
-    const expectedInputID = repair.nativeInputID
-    const expectedOutcome = repair.continued ? repair.terminalOutcome! : "succeeded"
-    const backgroundProblem = this.retainedRepairBackgroundProblem(observed, expectedInputID)
-    if (
-      backgroundProblem ||
-      this.retainedRepairWorkerProblem(
-        plan,
-        attempt,
-        observed,
-        expectedInputID,
-        model.data,
-        expectedOutcome,
-      ) ||
-      observed?.messages.some((message) => message.id === attempt.message_id) ||
-      !current()
-    )
-      return false
-    const owner = await this.host.session(repair.owner)
-    if (!this.validArchitect(owner) || owner.id !== repair.owner || !current()) return false
-    const confirmed = await this.host.session(attempt.session_id, { messages: true })
-    const confirmedBackgroundProblem = this.retainedRepairBackgroundProblem(
-      confirmed,
-      expectedInputID,
-    )
-    return Boolean(
-      !this.retainedRepairWorkerProblem(
-        plan,
-        attempt,
-        confirmed,
-        expectedInputID,
-        model.data,
-        expectedOutcome,
-      ) &&
-      !confirmedBackgroundProblem &&
-      !confirmed?.messages.some((message) => message.id === attempt.message_id) &&
-      observed &&
-      confirmed &&
-      this.retainedRepairObservation(observed) === this.retainedRepairObservation(confirmed) &&
-      current() &&
-      this.preparationAllowed(attempt),
-    )
+    return this.repairRecords.retainedRepairForAttempt(...args)
+  }
+
+  private retainedRepairGeneration(
+    ...args: Parameters<RetainedRepairRecords["retainedRepairGeneration"]>
+  ) {
+    return this.repairRecords.retainedRepairGeneration(...args)
+  }
+
+  private retainedRepairPromptCurrent(
+    ...args: Parameters<RetainedRepairRecords["retainedRepairPromptCurrent"]>
+  ) {
+    return this.repairRecords.retainedRepairPromptCurrent(...args)
   }
 
   /**
@@ -7178,69 +4500,7 @@ export class TaskRuntime {
     return this.effectReconciliation.reconcileEffect(...args)
   }
 
-  /** Unblocks the plan that startup recovery parked on this worktree effect, once it is ready. */
-  private resumeStartupRecovery(
-    effect: EffectRow,
-    fence: number,
-    workspace: string,
-    startupRecoveryReason: string,
-  ) {
-    const plan = this.store.plan(effect.plan_id)
-    const attempt = plan
-      ? this.store.attempts(plan.id).find((item) => item.id === effect.attempt_id)
-      : undefined
-    const authorization =
-      effect.kind === "worktree-recovery" && plan && attempt
-        ? this.startupRecoveryAuthorization(plan, attempt)
-        : undefined
-    let recoveryBinding = true
-    if (effect.kind === "worktree-recovery") {
-      try {
-        const operation = JSON.parse(effect.payload) as {
-          recoveryID?: unknown
-          sourceEffectID?: unknown
-        }
-        recoveryBinding = Boolean(
-          authorization &&
-          plan &&
-          plan.version >= authorization.planVersion &&
-          operation.recoveryID === authorization.recoveryID &&
-          operation.sourceEffectID === authorization.sourceEffectID,
-        )
-      } catch {
-        recoveryBinding = false
-      }
-    }
-    if (!(
-      plan?.state === "blocked" &&
-      plan.reason === startupRecoveryReason &&
-      attempt?.state === "preparing" &&
-      recoveryBinding
-    ))
-      return
-    this.store.fenced(this.owner, fence, (db) => {
-      const changed =
-        db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=?",
-          )
-          .run(plan.id, startupRecoveryReason).changes === 1
-      if (!changed) return
-      if (effect.kind === "worktree-recovery" && authorization)
-        this.store.record(plan.id, attempt!.task_id, "STARTUP_RECOVERY_OPERATION_RESUMED", {
-          effectID: effect.id,
-          sourceEffectID: authorization.sourceEffectID,
-          recoveryID: authorization.recoveryID,
-          attemptID: effect.attempt_id,
-          workspace,
-          planVersion: plan.version + 2,
-        })
-      else
-        this.store.record(plan.id, null, "WORKTREE_RECOVERY_RESUMED", {
-          effectID: effect.id,
-          attemptID: effect.attempt_id,
-          workspace,
-        })
-    })
+  private resumeStartupRecovery(...args: Parameters<StartupSettlement["resumeStartupRecovery"]>) {
+    return this.startupSettlement.resumeStartupRecovery(...args)
   }
 }

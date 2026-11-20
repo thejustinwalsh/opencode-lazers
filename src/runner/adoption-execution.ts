@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { fingerprint } from "../identity.ts"
 import { FINGERPRINT_V2_PREFIX } from "./identity-store.ts"
 import type { TaskProposal } from "../task.ts"
+import type { CheckRunProfile } from "../projects/profile-runtime.ts"
 import {
   artifactUnchanged,
   checkResourcesSettled,
@@ -33,6 +34,7 @@ export class AdoptionExecution {
       adoptionArtifactScopeViolations: TaskRuntime["adoptionArtifactScopeViolations"]
       adoptionWorkerIdle: TaskRuntime["adoptionWorkerIdle"]
       checkActivity: TaskRuntime["checkActivity"]
+      checkProfile: () => CheckRunProfile | undefined
       conflictingActiveAttempt: TaskRuntime["conflictingActiveAttempt"]
       currentAdoptionInputFingerprint: TaskRuntime["currentAdoptionInputFingerprint"]
       dataDirectory: TaskRuntime["dataDirectory"]
@@ -505,7 +507,9 @@ export class AdoptionExecution {
       const row = this.runtime.store
         .adoptionChecks(adoption.id, phase)
         .find((item) => item.check_id === check.id)
-      const environmentIdentity = row?.environment_identity ?? verificationEnvironmentIdentity()
+      const profile = this.runtime.checkProfile()
+      const environmentIdentity =
+        row?.environment_identity ?? verificationEnvironmentIdentity(profile?.identity)
       const inputFingerprint = `${FINGERPRINT_V2_PREFIX}${fingerprint({
         adoptionID: adoption.id,
         adoptionInputFingerprint: adoption.input_fingerprint,
@@ -659,7 +663,13 @@ export class AdoptionExecution {
             checkID: check.id,
           },
           run: (signal) =>
-            runDeclaredCheck(workspace, artifact, effectiveCheck, receiptPath, { signal }),
+            runDeclaredCheck(
+              workspace,
+              artifact,
+              effectiveCheck,
+              receiptPath,
+              profile ? { signal, profile, environmentIdentity } : { signal },
+            ),
         })
         return undefined
       } catch (error) {

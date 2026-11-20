@@ -847,7 +847,8 @@ test("adoption input fingerprints are versioned: new rows are v2, stored v1 rows
     currentAdoptionInputFingerprint(plan: unknown, adoption: unknown): string
     adoptionInputFingerprint(input: Record<string, unknown>, version: "v1" | "v2"): string
   }
-  const runtime = f.runtime as unknown as Versioned
+  // The fingerprint methods live on the adoption preparation module.
+  const runtime = Reflect.get(f.runtime, "adoptionPreparation") as Versioned
   const plan = f.store.plan(f.planID)!
   expect(runtime.currentAdoptionInputFingerprint(plan, adoption)).toBe(adoption.input_fingerprint)
 

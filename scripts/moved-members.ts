@@ -104,7 +104,7 @@ export function classMembers(source: string): Member[] {
       // A parameter list closes at two spaces and still opens the body: `  ): Row {`.
       if (indent === 2 && /^ {2}[})\]>]/.test(next)) {
         end = j
-        if (next.trimEnd().endsWith("{")) continue
+        if (/[{<(]$/.test(next.trimEnd())) continue
       }
       break
     }

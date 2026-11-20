@@ -579,3 +579,12 @@ The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) 
 - Coordinator forwarders after S10: `verify`, `failAttempt`, `missingEvidence`, `repairAvailable`, `taskChainBase`, `fallowReviewResult`, `planFallowReview`, `startAuditorReport`, `repairFailureBrief`. After S11: `finish`.
 - Five identical alias-assignment lines in two modules made a 12th clone group again; `PlanFinish` assigns its aliases in alphabetical order to avoid it. Sort the alias block in every new module.
 - `scripts/runtime-split-fallow.ts` must list every module of the split, not only the ones moved in the step, or the totals are not comparable. Sixteen files give 49 findings and 11 clone groups.
+
+## 13. Corrections found while doing S13a to S13d and S12
+
+- S13a also moves `retainedRepairObservation`, `retainedRepairWorkerProblem` and `retainedRepairBackgroundProblem`: `retainedRepairPromptCurrent` needs them, and the preparation modules reach them through `RetainedRepairRecords[...]` types instead of hand-written ones. `parseTransitionPayload<T>` is generic, so its coordinator forwarder is written by hand and the modules take it as a bound value, not a lazy arrow.
+- Shared types moved to `runtime-helpers.ts`: `RunnerTransitionRecord`, `RetainedVerificationSeed`, `RetainedRepairSeed`, `RetainedRepairRecoverySeed`, `AdoptionSeed`, `CommandContext` (until S19a). `AdoptionFingerprintInput` and `isUnavailableSessionRecoveryGap` moved into their only users.
+- A one-line `type X = Y` was swallowed together with the declarations after it by the helper that moves top-level declarations; check `git diff` for deleted neighbours after moving a type.
+- A member whose signature wraps as `): Promise<` at two spaces continues; the moved-member check now treats a closer line ending in `{`, `<` or `(` as continuing.
+- S12 became two modules: `StartupSettlement` (with `prepareStartupSettlement` and `resumeStartupRecovery`) and `ContinuationPreparation`. `adopted-descendant.test.ts` reaches the fingerprint methods through `Reflect.get(f.runtime, "adoptionPreparation")`.
+- Fallow baseline after the profile work (Tasks 2.3 and 2.4 add `prepareProfileFix`): 50 complexity findings and 15 clone groups across the split modules; every step since kept both numbers.
