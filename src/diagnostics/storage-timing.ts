@@ -30,16 +30,31 @@ export function setStorageTiming(on: boolean) {
   state.on = on
 }
 
-const SKIP = /storage-timing\.[jt]s|[\\/]storage\.[jt]s/
+/** Storage entry points whose own frame may sit between `timeStorage` and the caller. */
+const WRAPPERS = new Set(["read", "atomic", "atomicAsync", "retryBusy"])
+const FRAME = /^at (?:async )?(?:(.*?) \()?([^()]+?):(\d+):\d+\)?$/
 
+/**
+ * `fn (file:line)` of the first frame outside the storage layer, or `file:line` for an
+ * anonymous function. Frames are skipped by what they are (`callSite`, `timeStorage`, and at
+ * most one storage wrapper by function name), not by file, because the service runs one
+ * bundled file. The engine may elide the wrapper's frame (tail calls), so it is optional.
+ */
 function callSite(): string {
-  const lines = new Error().stack?.split("\n") ?? []
-  for (const line of lines.slice(1)) {
-    if (SKIP.test(line)) continue
-    const at = line.match(/\(?([^()\s]+:\d+):\d+\)?\s*$/)
-    if (at?.[1]) return at[1]
-  }
-  return "(unknown)"
+  const frames = (new Error().stack ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("at "))
+    .map((line) => FRAME.exec(line))
+  let index = 0
+  while (index < frames.length && ["callSite", "timeStorage"].includes(frames[index]?.[1] ?? ""))
+    index++
+  const method = frames[index]?.[1]?.split(".").pop()
+  if (method !== undefined && WRAPPERS.has(method)) index++
+  const match = frames[index]
+  if (!match) return "(unknown)"
+  const [, name, file, line] = match
+  return name ? `${name} (${file}:${line})` : `${file}:${line}`
 }
 
 function record(kind: "read" | "atomic", site: string, ms: number) {

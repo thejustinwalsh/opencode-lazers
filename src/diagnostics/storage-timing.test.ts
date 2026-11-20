@@ -36,7 +36,7 @@ test("a slow read is reported under this file's site", () => {
   expect(entry?.kind).toBe("read")
   expect(entry?.count).toBe(1)
   expect(entry!.maxMs).toBeGreaterThanOrEqual(20)
-  expect(entry?.site).toMatch(/storage-timing\.test\.ts:\d+$/)
+  expect(entry?.site).toMatch(/^.*storage-timing\.test\.ts:\d+\)?$/)
 })
 
 test("a fast read adds to totals without resolving a site", () => {
@@ -83,4 +83,54 @@ test("drain keeps the top sites by total and resets", () => {
   expect(rows).toHaveLength(1)
   expect(rows[0]?.kind).toBe("atomic")
   expect(drainStorageTiming(20)).toEqual([])
+})
+
+function slowReadCaller(repo: TaskRepository) {
+  repo.read(() => spin(5))
+  return 1
+}
+
+test("the site names the calling function", () => {
+  setStorageTiming(true)
+  slowReadCaller(repository)
+  expect(drainStorageTiming(20)[0]?.site).toMatch(/^slowReadCaller \(.*storage-timing\.test\.ts:\d+\)$/)
+})
+
+test("the site names the caller when everything is one bundled file", async () => {
+  const out = join(directory, "bundle")
+  const entry = join(directory, "entry.ts")
+  await Bun.write(
+    entry,
+    `import { TaskRepository } from ${JSON.stringify(join(import.meta.dir, "../storage.ts"))}
+export function bundledCaller(repo: TaskRepository) {
+  repo.read(() => { const end = performance.now() + 5; while (performance.now() < end); })
+  return 1
+}
+export function bundledWriter(repo: TaskRepository) {
+  repo.atomic(() => { const end = performance.now() + 5; while (performance.now() < end); })
+  return 1
+}
+`,
+  )
+  const result = await Bun.build({
+    entrypoints: [entry],
+    outdir: out,
+    naming: "bundle.js",
+    target: "bun",
+    format: "esm",
+    packages: "external",
+    external: ["bun:sqlite"],
+  })
+  expect(result.success).toBe(true)
+  const built = (await import(join(out, "bundle.js"))) as {
+    bundledCaller(repo: TaskRepository): number
+    bundledWriter(repo: TaskRepository): number
+  }
+  setStorageTiming(true)
+  built.bundledCaller(repository)
+  built.bundledWriter(repository)
+  const sites = drainStorageTiming(20).map((row) => row.site)
+  console.log("bundled sites:", sites)
+  expect(sites.some((site) => /^bundledCaller \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
+  expect(sites.some((site) => /^bundledWriter \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
 })
