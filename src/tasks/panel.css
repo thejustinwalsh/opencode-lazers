@@ -566,7 +566,6 @@
   margin-left: calc(var(--task-depth, 1) * 18px - 4px);
   padding-left: 4px;
   border-left: 1px solid var(--border-weak-base);
-  border-radius: 0 6px 6px 0;
 }
 /* Elapsed time, running rows only: mono, weak, right before the state glyph. */
 .lazers-tasks-row-elapsed {
