@@ -505,3 +505,31 @@ Expected direction: fewer slices per file, a re-read rate well under 69%, and re
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/runner/scope.ts (`FILE_SIZE_WARNING_LINES`)
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/design/reviews/runner-runtime-maintenance.md (the module map to extend)
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/.agents/research/rediscovery-measurements.md (the agent-read baseline and queries)
+
+## 8. Baselines recorded in S0 (2026-11-20, `main` at `8a75f610` plus S0b)
+
+**Tooling (run from the repository root):**
+
+```
+bun scripts/moved-members.ts [--base main] [--allow <member>]... src/runner/<module>.ts...
+bun scripts/literal-conservation.ts [--base main] src/runner/<module>.ts...
+bun scripts/runtime-split-fallow.ts src/runner/runtime.ts src/runner/<module>.ts...
+```
+
+- Members are cut by indentation (a two-space-indented declaration to the next two-space line that does not close a bracket), so the check depends on the formatter. Leading comments are not part of a member. Members that exist only in the module are listed as "new", not failures.
+- The literal check uses its own lexer, because this repository's TypeScript is the native port and has no compiler API. It ignores import and export specifiers and `Capitalised["member"]` indexed-access types. On `main` it counts 2,341 fragments.
+- Fallow runs in the WebAssembly worker with the cache off and writes nothing into the tree.
+
+**Fallow (`runtime.ts`, 12,769 lines, cache off):** 49 complexity findings (worst cognitive 85 at `<arrow>:6580`, worst cyclomatic 105 at `prepareRetainedRepairRecovery`), 11 clone groups, 0 unused exports. The WebAssembly cycle query on the whole root returns 0 cycles, not the 1 that the whole-repository audit records; compare later runs against 0 from this tool. The full per-function list matches section 6.
+
+**Tests (`bun test --timeout 120000 --reporter=junit src/runner/runtime.test.ts`, Bun 1.4.4):** the junit reporter flag exists. 415 test cases (303 `test(` declarations plus the cases that 29 `test.each` blocks expand to; the "332" earlier in this plan is wrong), 0 failures, 6,246 assertions, 432.9 s wall time (7.2 min) with one other verification running on the machine. Per case: median 0.34 s, p90 2.7 s, max 9.6 s. Seconds per planned topic file (approximate, cut by source line): scope 40, start-routes 28, retained-repair 19, verification 36, combined 46, fallow-review 26, retry 47, cleanup 38, dependencies 31, worker-observation 8, review-input 15, continuation 9, architect-renewal 6, architect-sources 2, delivery 12, takeover 15. Every topic file is already under one minute, so the "about 2 minutes or less" acceptance holds with room to spare. One process runs all cases; I did not test files in parallel.
+
+**Agent reads (`runner_progress kind='tool'`, tool `read`, 230 attempts, 14,597 path-known reads):**
+
+| Files             | Reads  | Attempts | Per attempt | Re-reads in an attempt | Overlapping range re-reads    | Recorded characters |
+| ----------------- | ------ | -------- | ----------- | ---------------------- | ----------------------------- | ------------------- |
+| `runtime.ts`      | 2,106  | 73       | 28.8        | 2,033 (96.5%)          | 726 of 1,098 ranged (66.1%)   | 3,902,339           |
+| `runtime.test.ts` | 643    | 58       | 11.1        | 585 (91.0%)            | 230 of 397 ranged (57.9%)     | 1,356,817           |
+| all files         | 14,597 | 230      | 63.5        | 10,033 (68.7%)         | 4,980 of 9,809 ranged (50.8%) | 33,057,450          |
+
+The runtime-only re-read rate is 96.5%. My overlap figure for all files (50.8%) is higher than the 35% in `rediscovery-measurements.md`; I count a read as overlapping when its range touches any earlier range of the same file, the older figure may use a stricter intersection. Compare future runs with this definition (the appendix queries and derivation rules, with that overlap test), not with the older number.
