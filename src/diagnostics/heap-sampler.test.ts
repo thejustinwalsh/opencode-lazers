@@ -109,3 +109,41 @@ test("each line carries the synchronous database time per site", async () => {
   expect(second!.storageSyncMs).toBeGreaterThanOrEqual(5)
   expect(second!.storage.some((row) => row.kind === "read" && row.maxMs >= 5)).toBe(true)
 })
+
+test("each line carries the stream reader pool counters, only when a pool exists", async () => {
+  const { directory, sampler } = await fixture()
+  await writeFile(join(directory, "heap.on"), "")
+  await sampler.sample()
+  const { seedItems, openHarness, testPool } = await import("../streams/test-harness.ts")
+  const { itemSource } = await import("../streams/test-source.ts")
+  const seeded = seedItems(50)
+  const pool = testPool(seeded.path)
+  try {
+    const harness = openHarness(pool, itemSource, {
+      filter: {},
+      order: "id",
+      anchor: "head",
+      window: 5,
+    })
+    await harness.next()
+    await sampler.sample()
+    await Bun.sleep(100)
+    await sampler.sample()
+    const [first, second, third] = await lines(sampler.outputPath)
+    expect(first!.readerPools).toBeUndefined()
+    const pooled = second!.readerPools!.find((entry: { key: string }) =>
+      entry.key.includes(seeded.path),
+    )
+    expect(pooled.workers).toBe(1)
+    expect(pooled.streams).toBe(1)
+    const later = third!.readerPools!.find((entry: { key: string }) =>
+      entry.key.includes(seeded.path),
+    )
+    expect(later.statements).toBeGreaterThan(0)
+    expect(later.rowsRead).toBeGreaterThan(0)
+    harness.stream.close()
+  } finally {
+    await pool.close()
+    seeded.close()
+  }
+})

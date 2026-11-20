@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs"
 import { appendFile, mkdir, rename, stat } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { readerPoolSnapshot } from "../streams/pool.ts"
 import { drainStorageReport, setStorageTiming, type StorageTiming } from "./storage-timing.ts"
 
 export type HeapContext = { locations: number; cores: number }
@@ -63,6 +64,8 @@ export type HeapRecord = {
   storage: StorageTiming[]
   /** Total synchronous database ms since the previous sample. */
   storageSyncMs: number
+  /** Stream reader pools of this process; absent when none exists. Worker counters lag one sample. */
+  readerPools?: ReturnType<typeof readerPoolSnapshot>
 }
 
 const INTERVAL_MS = 60_000
@@ -117,6 +120,7 @@ export class HeapSampler {
       const memory = process.memoryUsage()
       const { objectTypeCounts, protectedObjectTypeCounts, ...heap } = stats
       const context = this.options.context?.() ?? { locations: 0, cores: 0 }
+      const pools = readerPoolSnapshot()
       const record: HeapRecord = {
         event: "lazers.heap",
         at: new Date().toISOString(),
@@ -143,6 +147,7 @@ export class HeapSampler {
         ...(({ storage, syncMs }) => ({ storage, storageSyncMs: Math.round(syncMs * 100) / 100 }))(
           drainStorageReport(20),
         ),
+        ...(pools.length > 0 ? { readerPools: pools } : {}),
       }
       line = `${JSON.stringify(record)}\n`
     } catch {
