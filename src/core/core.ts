@@ -35,6 +35,7 @@ import { ownsRecordedWorkspace } from "../runner/workspace-location.ts"
 import { InferenceBroker } from "../webgpu/broker.ts"
 import type { CapabilityHub } from "./capabilities.ts"
 import { moduleGeneration } from "./generation.ts"
+import { LruMap, SESSION_MEMO_ENTRIES } from "./process-shared.ts"
 import { acquireCore } from "./registry.ts"
 import type { CoreHandle } from "./registry.ts"
 
@@ -67,6 +68,8 @@ export type LazersCore = {
   wake(): void
   /** Workspace index for one checkout; built lazily and shared by every location using it. */
   indexFor(directory: string): ProjectIndex
+  /** The agent of each prompted session: one memo per project, shared by every plugin copy. */
+  readonly sessionAgents: LruMap<string, string>
 }
 
 export type LazersCoreInfo = {
@@ -273,6 +276,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     verificationDefaults,
     wake: () => scheduler?.request(),
     indexFor,
+    sessionAgents: new LruMap<string, string>(SESSION_MEMO_ENTRIES),
   }
   const disposeCore = async () => {
     scheduler = undefined

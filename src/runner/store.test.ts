@@ -10,7 +10,12 @@ import { TaskRepository } from "../storage.ts"
 import { scopePatternsConflict } from "./artifacts.ts"
 import { meterReads } from "./read-meter.fixture.ts"
 import { PlanInput } from "./schema.ts"
-import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
+import {
+  appendEffectObservation,
+  appendRunnerEffectReceipt,
+  CLEANUP_OBSERVATION_SCHEMA,
+  RunnerStore,
+} from "./store.ts"
 
 const directories: string[] = []
 const repositories: TaskRepository[] = []
@@ -1688,4 +1693,70 @@ test("task activity is filtered in SQL: counts, existence and the latest row rea
   meter.stop()
   // The 400 padded noise rows (800 KB) are never returned.
   expect(meter.bytes).toBeLessThan(2_000)
+})
+
+test("cleanup observations are child rows: appends leave the receipt document alone, and old histories move in pages", () => {
+  const directory = mkdtempSync(join(tmpdir(), "lazers-effect-observations-"))
+  directories.push(directory)
+  const path = join(directory, "tasks.sqlite")
+  const projectDirectory = join(directory, "project")
+  const first = new TaskRepository(path, projectDirectory)
+  new RunnerStore(first)
+  const observation = (error: string) => ({ schema: CLEANUP_OBSERVATION_SCHEMA, error })
+  const settlement = { kind: "worktree-startup-failure-settled-absent" }
+  // A raw connection: foreign keys are off, so the legacy rows need no plan row.
+  const raw = new Database(path)
+  ;((db) => {
+    // 250 legacy effects whose receipts carry their observations in the history array.
+    for (let index = 0; index < 250; index++)
+      db.query(
+        "INSERT INTO runner_effects(id,plan_id,kind,state,payload,receipt,fence) VALUES(?,?,?,?,?,?,1)",
+      ).run(
+        `effect-${index}`,
+        "plan",
+        "worktree-remove",
+        "uncertain",
+        "{}",
+        JSON.stringify({
+          error: "first",
+          history: [observation("first"), settlement, observation("second")],
+        }),
+      )
+  })(raw)
+  raw.close()
+  // Reopen at an older generation so the install runs the migration.
+  first.atomic((db) =>
+    db.query("UPDATE schema_modules SET generation=16 WHERE module='runner'").run(),
+  )
+  first.close()
+  const reopened = new TaskRepository(path, projectDirectory)
+  repositories.push(reopened)
+  new RunnerStore(reopened)
+  reopened.atomic((db) => {
+    const rows = db
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM runner_effect_observations")
+      .get()!
+    expect(rows.n).toBe(500)
+    const doc = JSON.parse(
+      db
+        .query<{ receipt: string }, []>("SELECT receipt FROM runner_effects WHERE id='effect-7'")
+        .get()!.receipt,
+    )
+    expect(doc).toEqual({
+      error: "first",
+      history: [settlement],
+      observationCount: 2,
+      lastObservation: { error: "second", notSent: false },
+    })
+    // Appending is one row; the document is untouched.
+    const before = db
+      .query<{ receipt: string }, []>("SELECT receipt FROM runner_effects WHERE id='effect-7'")
+      .get()!
+    expect(appendEffectObservation(db, "effect-7", observation("third"))).toBe(2)
+    expect(
+      db
+        .query<{ receipt: string }, []>("SELECT receipt FROM runner_effects WHERE id='effect-7'")
+        .get()!.receipt,
+    ).toBe(before.receipt)
+  })
 })

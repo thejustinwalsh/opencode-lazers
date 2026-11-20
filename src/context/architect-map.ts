@@ -1,3 +1,4 @@
+import { sharedInFlight, sharedSessionSet } from "../core/process-shared.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
@@ -8,9 +9,9 @@ import { currentRepoMap, recordMapDelivery, repoMapBlock } from "./repo-map-stor
 export const architectMapKey = "lazers-repo-map"
 
 type SessionApi = Pick<Plugin.Context["session"], "get" | "instructions">
-const inFlight = new Map<string, Promise<boolean>>()
+const inFlight = sharedInFlight<boolean>("architect-map.inFlight")
 /** Sessions known to hold the entry, so later prompts cost nothing. */
-const installed = new Set<string>()
+const installed = sharedSessionSet("architect-map.installed")
 
 /**
  * Install the repository map as a keyed session instruction on an Architect session: once, at the

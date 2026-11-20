@@ -1,3 +1,4 @@
+import { schemaModules } from "./database-schema.ts"
 import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
@@ -146,7 +147,11 @@ test("S2-4 startup inventory reports three drift classes without mutating tables
   const drift = repository.schemaDrift()
   expect(drift.undeclaredTables).toContain("legacy_orphan")
   expect(drift.missingTables).toContain("runner_plans")
-  expect(drift.generationDrift).toContainEqual({ module: "runner", installed: 99, declared: 16 })
+  expect(drift.generationDrift).toContainEqual({
+    module: "runner",
+    installed: 99,
+    declared: schemaModules.runner.generation,
+  })
   expect(repository.read((db) => db.query("SELECT * FROM legacy_orphan").all())).toEqual([
     { value: "keep" },
   ])

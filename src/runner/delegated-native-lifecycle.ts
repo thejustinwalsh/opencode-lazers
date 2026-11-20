@@ -1,3 +1,4 @@
+import { joinNativeEvents } from "../core/event-hub.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { DateTime, Effect, Predicate, Stream } from "effect"
@@ -109,15 +110,20 @@ export function nativeChildLifecycle(
         // generation happens to be current when a delayed event arrives.
         yield* watch(data.sessionID)
       })
-    yield* Effect.forkScoped(
-      Effect.forever(
-        Effect.suspend(() =>
-          Stream.runForEach(ctx.event.subscribe({ types: eventTypes }), observe).pipe(
-            Effect.catch(() => Effect.void),
-            Effect.andThen(Effect.sleep(1_000)),
-          ),
+    // The host stream is server-wide: one subscription per process feeds every copy's observer.
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        joinNativeEvents(
+          ctx,
+          eventTypes,
+          {
+            event: (event) =>
+              void Effect.runFork(observe(event).pipe(Effect.catch(() => Effect.void))),
+          },
+          (ctx as { location?: { directory?: string } }).location?.directory,
         ),
       ),
+      (leave) => Effect.sync(leave),
     )
     for (const execution of yield* Effect.promise(() => capacity.admittedNativeExecutions()))
       yield* watch(execution.sessionID)

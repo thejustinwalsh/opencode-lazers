@@ -731,7 +731,18 @@ test("an unchanged cleanup blocker records no further CLEANUP_BLOCKED transition
   expect(countTransitions(f, plan.id, "CLEANUP_BLOCKED")).toBe(1)
   const removal = () =>
     f.store.effects(plan.id).find((effect) => effect.kind === "worktree-remove")!
-  const history = () => (JSON.parse(removal().receipt!).history as unknown[]).length
+  // Observations are child rows; the document only counts them and never grows.
+  const history = () => {
+    const rows = f.store.atomic((db) =>
+      db
+        .query<{ n: number }, [string]>(
+          "SELECT COUNT(*) AS n FROM runner_effect_observations WHERE effect_id=?",
+        )
+        .get(removal().id),
+    )!.n
+    expect(JSON.parse(removal().receipt!).observationCount).toBe(rows)
+    return rows
+  }
   const first = history()
   for (let n = 0; n < 5; n++) {
     clock.offset += 61_000

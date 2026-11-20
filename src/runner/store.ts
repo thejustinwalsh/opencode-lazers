@@ -528,6 +528,83 @@ function moveLegacyReceipts(db: Database, legacy: { id: string; receipt: string 
   }
 }
 
+/** The schema tag of a cleanup observation: repeated, so it lives in child rows. */
+export const CLEANUP_OBSERVATION_SCHEMA = "lazers-worktree-cleanup-observation/v1"
+
+/**
+ * Append one cleanup observation as a child row: O(1), the effect's receipt document is not
+ * parsed or grown. Returns the observation's sequence number (its count minus one).
+ */
+export function appendEffectObservation(db: Database, effectID: string, entry: unknown): number {
+  const seq =
+    db
+      .query<{ next: number }, [string]>(
+        "SELECT COALESCE(MAX(seq)+1,0) AS next FROM runner_effect_observations WHERE effect_id=?",
+      )
+      .get(effectID)?.next ?? 0
+  db.query("INSERT INTO runner_effect_observations(effect_id,seq,body) VALUES(?,?,?)").run(
+    effectID,
+    seq,
+    JSON.stringify(entry),
+  )
+  return seq
+}
+
+/**
+ * Cleanup observations used to be appended to the effect receipt's `history` array, rewriting the
+ * whole document on every change of blocker. Move them to child rows, keeping order, and leave
+ * the document with its other entries plus `observationCount` and `lastObservation`.
+ */
+function migrateCleanupObservations(db: Database) {
+  // A moved row no longer mentions the schema tag, so each page reads the next 100 rows.
+  const page = db.query<{ id: string; receipt: string }, []>(
+    `SELECT id,receipt FROM runner_effects
+     WHERE receipt LIKE '%${CLEANUP_OBSERVATION_SCHEMA}%' LIMIT 100`,
+  )
+  for (let rows = page.all(); rows.length > 0; rows = page.all()) {
+    for (const row of rows) {
+      let document: Record<string, unknown>
+      try {
+        const parsed: unknown = JSON.parse(row.receipt)
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+          throw new Error()
+        document = parsed as Record<string, unknown>
+      } catch {
+        // Not a document this migration understands; remove it from the page predicate safely.
+        db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(
+          JSON.stringify({ legacyReceipt: row.receipt }),
+          row.id,
+        )
+        continue
+      }
+      const history = Array.isArray(document.history) ? (document.history as unknown[]) : []
+      const isObservation = (entry: unknown) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as { schema?: unknown }).schema === CLEANUP_OBSERVATION_SCHEMA
+      const moved = history.filter(isObservation)
+      const kept = history.filter((entry) => !isObservation(entry))
+      let count = 0
+      for (const entry of moved) {
+        db.query(
+          "INSERT OR REPLACE INTO runner_effect_observations(effect_id,seq,body) VALUES(?,?,?)",
+        ).run(row.id, count++, JSON.stringify(entry))
+      }
+      const last = moved.at(-1) as { error?: unknown; notSent?: unknown } | undefined
+      const { history: _history, ...rest } = document
+      const next = {
+        ...rest,
+        ...(kept.length > 0 ? { history: kept } : {}),
+        observationCount: count,
+        ...(last
+          ? { lastObservation: { error: last.error ?? null, notSent: Boolean(last.notSent) } }
+          : {}),
+      }
+      db.query("UPDATE runner_effects SET receipt=? WHERE id=?").run(JSON.stringify(next), row.id)
+    }
+  }
+}
+
 /** Preserve the first effect receipt while adding durable, append-only recovery evidence. */
 export function appendRunnerEffectReceipt(previous: string | null, next: unknown) {
   let prior: Record<string, unknown> | undefined
@@ -878,6 +955,12 @@ export class RunnerStore {
         PRIMARY KEY(outbox_id,seq)
       ) WITHOUT ROWID;
       CREATE INDEX IF NOT EXISTS runner_outbox_receipts_kind ON runner_outbox_receipts(kind,outbox_id);
+      CREATE TABLE IF NOT EXISTS runner_effect_observations (
+        effect_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        PRIMARY KEY(effect_id,seq)
+      ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS runner_continuations (
         plan_id TEXT PRIMARY KEY REFERENCES runner_plans(id), session_id TEXT NOT NULL,
         parent_id TEXT, directory TEXT NOT NULL, model TEXT, generation INTEGER NOT NULL
@@ -1152,6 +1235,7 @@ export class RunnerStore {
         if (!columns.has("receipt_last_kind"))
           db.exec("ALTER TABLE runner_outbox ADD COLUMN receipt_last_kind TEXT")
         migrateOutboxReceipts(db)
+        migrateCleanupObservations(db)
         const renewalColumns = db
           .query<{ name: string }, []>("PRAGMA table_info(runner_architect_renewals)")
           .all()

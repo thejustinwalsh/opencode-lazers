@@ -1,4 +1,5 @@
 import type { RuntimeJournal } from "./runtime-journal.ts"
+import type { Database } from "bun:sqlite"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
@@ -8,7 +9,11 @@ import type { WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
 import { containmentReason, headContained, proofForArtifact } from "./integration-proof.ts"
 import type { PlanRow, AttemptRow, EffectRow } from "./store.ts"
-import { appendRunnerEffectReceipt } from "./store.ts"
+import {
+  appendEffectObservation,
+  appendRunnerEffectReceipt,
+  CLEANUP_OBSERVATION_SCHEMA,
+} from "./store.ts"
 
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText } from "./runtime-helpers.ts"
@@ -814,7 +819,15 @@ export class WorktreeCleanup {
         )
         .get(effect.id)
       if (!current) throw new Error("Native cleanup effect changed before uncertainty was recorded")
-      const receipt = this.cleanupObservationReceipt(current.receipt, reason, held, run, error)
+      const receipt = this.cleanupObservationReceipt(
+        db,
+        effect.id,
+        current.receipt,
+        reason,
+        held,
+        run,
+        error,
+      )
       const recorded = db
         .query(
           "UPDATE runner_effects SET state=lz_runner_transition('effect',state,?),receipt=? WHERE id=? AND state IN ('held','intended','uncertain')",
@@ -853,6 +866,8 @@ export class WorktreeCleanup {
 
   /** The effect receipt after one more observed blocker; a repeat of the last one only moves the check time. */
   private cleanupObservationReceipt(
+    db: Database,
+    effectID: string,
     currentReceipt: string | null,
     reason: string,
     held: boolean,
@@ -875,24 +890,33 @@ export class WorktreeCleanup {
     } catch {
       priorReceipt = undefined
     }
-    const last = Array.isArray(priorReceipt?.history) ? priorReceipt.history.at(-1) : undefined
-    // The same blocker observed again is not new history; only the check time moves.
+    // The same blocker observed again is not a new observation; only the check time moves. A
+    // changed blocker is one child row, so the receipt document never grows with observations.
+    const last = isRecord(priorReceipt?.lastObservation) ? priorReceipt.lastObservation : undefined
     const unchanged = isRecord(last) && last.error === reason && Boolean(last.notSent) === held
     const { retryFacts } = run
-    const base =
-      unchanged && priorReceipt
-        ? priorReceipt
-        : (JSON.parse(
-            appendRunnerEffectReceipt(currentReceipt, {
-              schema: "lazers-worktree-cleanup-observation/v1",
-              error: reason,
-              ...(held ? { notSent: true } : {}),
-              ...(retryFacts ? { retryFacts } : {}),
-              retryCheckedAt: checkedAt,
-            }),
-          ) as Record<string, unknown>)
+    let observationCount =
+      typeof priorReceipt?.observationCount === "number" ? priorReceipt.observationCount : 0
+    let base: Record<string, unknown> = priorReceipt ?? {}
+    if (!priorReceipt && currentReceipt) {
+      // A non-document legacy receipt stays as the first observation row.
+      appendEffectObservation(db, effectID, { legacyReceipt: currentReceipt })
+      observationCount++
+    }
+    if (!unchanged) {
+      appendEffectObservation(db, effectID, {
+        schema: CLEANUP_OBSERVATION_SCHEMA,
+        error: reason,
+        ...(held ? { notSent: true } : {}),
+        ...(retryFacts ? { retryFacts } : {}),
+        retryCheckedAt: checkedAt,
+      })
+      observationCount++
+      base = { ...base, lastObservation: { error: reason, notSent: held } }
+    }
     return JSON.stringify({
       ...base,
+      observationCount,
       error: previousError ?? reason,
       ...(held ? { notSent: true } : {}),
       ...(retryFacts ? { retryFacts } : {}),
