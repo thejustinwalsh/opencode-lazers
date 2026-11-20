@@ -18,6 +18,12 @@ export const HOLD_FAMILIES: readonly HoldFamily[] = [
     actions: ["takeover-submit", "cancel"],
   },
   {
+    // The Architect that took the task over is gone; another live Architect continues or cancels.
+    name: "takeover-abandoned",
+    match: /^Takeover abandoned/,
+    actions: ["takeover-submit", "cancel"],
+  },
+  {
     name: "fallow-config-required",
     match: /^FALLOW_CONFIG_REQUIRED/,
     actions: ["run", "reconcile", "cancel"],

@@ -5,7 +5,9 @@ import { ARCHITECT_TURN_STALE_MS, reloadSafety } from "./reload-safety.ts"
 function database() {
   const db = new Database(":memory:")
   db.run("CREATE TABLE runner_plans(id TEXT, state TEXT)")
-  db.run("CREATE TABLE runner_attempts(id TEXT, plan_id TEXT, state TEXT)")
+  db.run(
+    "CREATE TABLE runner_attempts(id TEXT, plan_id TEXT, state TEXT, session_id TEXT DEFAULT 'ses_worker')",
+  )
   db.run("CREATE TABLE runner_effects(id TEXT, kind TEXT, state TEXT)")
   return db
 }
@@ -16,8 +18,8 @@ test("a reload is unsafe while a worker or a verification is running", () => {
     "0 workers running, 0 verifications running, 0 Architect turns in flight, safe to reload: yes",
   )
   db.run("INSERT INTO runner_plans VALUES('p','running')")
-  db.run("INSERT INTO runner_attempts VALUES('a','p','running')")
-  db.run("INSERT INTO runner_attempts VALUES('b','p','accepted')")
+  db.run("INSERT INTO runner_attempts(id,plan_id,state) VALUES('a','p','running')")
+  db.run("INSERT INTO runner_attempts(id,plan_id,state) VALUES('b','p','accepted')")
   expect(reloadSafety(db)).toMatchObject({ safe: false, workers: 1 })
   db.run("UPDATE runner_attempts SET state='accepted'")
   db.run("INSERT INTO runner_effects VALUES('e','verify:quality','intended')")
@@ -29,7 +31,7 @@ test("a reload is unsafe while a worker or a verification is running", () => {
 test("work of a cancelled plan does not block a reload", () => {
   const db = database()
   db.run("INSERT INTO runner_plans VALUES('p','cancelled')")
-  db.run("INSERT INTO runner_attempts VALUES('a','p','preparing')")
+  db.run("INSERT INTO runner_attempts(id,plan_id,state) VALUES('a','p','preparing')")
   expect(reloadSafety(db).safe).toBe(true)
 })
 
@@ -66,7 +68,7 @@ test("open takeovers hold a reload and a missing takeover table does not", () =>
     db.run("UPDATE runner_takeovers SET state=?", [state])
     const result = reloadSafety(db)
     expect(result).toMatchObject({ safe: false, takeovers: 1 })
-    expect(result.line).toContain("1 takeover open, safe to reload: no")
+    expect(result.line).toContain("1 takeover handoff open, safe to reload: no")
   }
 })
 
@@ -104,4 +106,17 @@ test("an Architect with an unfinished assistant turn holds a reload until it fin
   db.run("UPDATE runner_plans SET state='cancelled'")
   message(4, now, false)
   expect(reloadSafety(db, opencode, now).safe).toBe(true)
+})
+
+test("a task an Architect took over is named as such, never as a running worker", () => {
+  const db = database()
+  db.run("INSERT INTO runner_plans VALUES('p','running')")
+  db.run(
+    "INSERT INTO runner_attempts(id,plan_id,state,session_id) VALUES('t','p','verifying','lazers-takeover:x')",
+  )
+  const result = reloadSafety(db)
+  expect(result).toMatchObject({ workers: 0, architectTakeovers: 1, safe: true })
+  expect(result.line).toBe(
+    "0 workers running, 0 verifications running, 0 Architect turns in flight, 1 task taken over by an Architect, safe to reload: yes",
+  )
 })

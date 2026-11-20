@@ -15831,3 +15831,178 @@ test("takeover: a failed verification goes back to the Architect on the same att
       .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
   ).toHaveLength(2)
 })
+
+test("takeover: every submission is a fresh candidate; the mechanical fix and checks re-run on the resubmitted tree", async () => {
+  const { f, worker } = await takeoverFixture({
+    taskFiles: [{ name: "a", path: "src/result.ts" }],
+    beforeCheck: "grep -q good src/result.ts",
+    checkCommand: "bun fmt --check src/result.ts",
+    combinedCheckCommand: "test -f src/result.ts",
+  })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const submit = async (requestID: string, source: string) => {
+    writeFileSync(join(worker.workspace, "src/result.ts"), source)
+    git(worker.workspace, ["add", "-A"])
+    git(worker.workspace, [
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "-m",
+      requestID,
+    ])
+    await f.runtime.command(
+      {
+        requestID,
+        planID: f.receipt.planID,
+        action: "takeover-submit",
+        taskID: worker.task_id,
+        reason: "Architect result",
+      },
+      "owner",
+    )
+    await drive(f.runtime, 18)
+  }
+  // Unformatted and wrong: the mechanical fix formats it, then the check fails.
+  await submit("submit-1", 'export const x="bad"')
+  expect(f.store.plan(f.receipt.planID)!.reason).toStartWith("Takeover verification failed:")
+  // Unformatted again, now right: the fix must run again on this tree, not reuse the first receipt.
+  await submit("submit-2", 'export const x="good"')
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.reason ?? "").not.toContain("Mechanical candidate changed")
+  const mine = f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!
+  expect(mine.state).toBe("accepted")
+  const fixes = f.store
+    .effects(plan.id)
+    .filter((effect) => effect.kind === "mechanical-fix" && effect.attempt_id === mine.id)
+  expect(fixes.length).toBeGreaterThanOrEqual(2)
+})
+
+async function submitTakeover(
+  f: ReturnType<typeof fixture>,
+  taskID: string,
+  requestID: string,
+  sessionID = "owner",
+) {
+  return f.runtime.command(
+    {
+      requestID,
+      planID: f.receipt.planID,
+      action: "takeover-submit",
+      taskID,
+      reason: "Architect result",
+    },
+    sessionID,
+  )
+}
+
+test("takeover: the stale-attempt settler never fails a takeover attempt for its absent synthetic session", async () => {
+  let offset = 0
+  // A check that cannot run holds the verification without journaling new effects each tick,
+  // as the live mechanical-fix hold did.
+  const { f, worker } = await takeoverFixture({
+    now: () => Date.now() + offset,
+    beforeCheck: "lazers-no-such-command",
+  })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  const state = () =>
+    f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!.state
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-1")
+  await drive(f.runtime, 8)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("blocked")
+  expect(state()).toBe("verifying")
+  for (let n = 0; n < 4; n++) {
+    offset += 120_000
+    await f.runtime.tick()
+  }
+  expect(state()).toBe("verifying")
+  expect(
+    f.store.latestTransition(f.receipt.planID, worker.task_id, "ATTEMPT_STALE_SETTLED"),
+  ).toBeUndefined()
+  // A held verification is resubmitted as a new candidate.
+  const resubmitted = (await submitTakeover(f, worker.task_id, "submit-2")) as { status: string }
+  expect(resubmitted.status).toBe("takeover-submitted")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  expect(
+    f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!.message_id,
+  ).toEndWith("submission-2")
+})
+
+test("takeover: an abandoned takeover holds for any live Architect, is bundled, and continues on takeover-submit", async () => {
+  let offset = 0
+  const { f, worker } = await takeoverFixture({ now: () => Date.now() + offset })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  f.sessions.get("owner")!.archived = true
+  f.sessions.set("owner-2", {
+    ...structuredClone(f.sessions.get("owner")!),
+    id: "owner-2",
+    archived: false,
+  })
+  await drive(f.runtime, 3)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Takeover abandoned:")
+  expect(f.store.attempts(plan.id).find((a) => a.id === taken.attemptID)!.state).toBe("running")
+  offset += RECOVERY_STALE_MS + 60_000
+  await drive(f.runtime, 3)
+  const bundle = f.notifications.findLast((n) => n.text.includes("LAZERS recovery bundle"))
+  expect(bundle?.text).toContain("Takeover abandoned")
+  expect(bundle?.text).toContain("takeover-submit")
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-by-successor", "owner-2")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(plan.id).find((a) => a.id === taken.attemptID)!.state).toBe("accepted")
+})
+
+test("takeover: from a failed takeover attempt on a held plan, lz-request-handoff and takeover-submit continue the committed work", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.host.steerWorker = async () => {}
+  const first = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  // The live LZ-200 state: the Architect committed its fix, the takeover attempt was failed by the
+  // stale settler while its verification was held, the node stayed verifying.
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  git(worker.workspace, ["add", "-A"])
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "Architect fix",
+  ])
+  const architectCommit = git(worker.workspace, ["rev-parse", "HEAD"])
+  f.store.move(f.receipt.planID, worker.task_id, "VERIFY")
+  f.store.atomic((db) => {
+    db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(first.attemptID!)
+    db.query(
+      "UPDATE runner_plans SET state='blocked',reason='Mechanical candidate changed after its authorized fix receipt; no stale artifact was accepted' WHERE id=?",
+    ).run(f.receipt.planID)
+  })
+  const steersBefore = f.events.filter((e) => e.startsWith("stop:")).length
+  const again = await f.runtime.takeover(
+    { attemptID: first.attemptID!, reason: "Continue the takeover" },
+    "owner",
+  )
+  expect(again.status).toBe("taken-over")
+  expect(again.handoff?.author).toBe("runtime")
+  expect(again.head).toBe(architectCommit)
+  expect(again.commits?.some((line) => line.includes("Architect fix"))).toBe(true)
+  expect(f.events.filter((e) => e.startsWith("stop:")).length).toBe(steersBefore)
+  const second = f.store.attempts(f.receipt.planID).find((a) => a.id === again.attemptID)!
+  expect(second.workspace).toBe(worker.workspace)
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
+  await submitTakeover(f, worker.task_id, "submit-continued")
+  await drive(f.runtime, 10)
+  const accepted = f.store.attempts(f.receipt.planID).find((a) => a.id === again.attemptID)!
+  expect(accepted.state).toBe("accepted")
+  expect(
+    git(worker.workspace, ["merge-base", "--is-ancestor", architectCommit, accepted.artifact!]),
+  ).toBe("")
+})
