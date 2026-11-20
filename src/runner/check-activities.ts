@@ -33,6 +33,7 @@ import {
 } from "./retained-verification/procedure.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
 import type { RetainedVerificationExecution } from "./retained-verification-execution.ts"
+import type { CheckRunProfile } from "../projects/profile-runtime.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { EffectRow } from "./store.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
@@ -45,6 +46,8 @@ export type CheckActivitiesDeps = {
   retainedVerificationExecution: () => RetainedVerificationExecution
   adoptionExecution: () => AdoptionExecution
   reconcileEffect: (effect: EffectRow, fence: number) => Promise<void>
+  /** The profile a check run uses: the pinned revision when given, else the active one. */
+  checkProfile: (revisionID?: number) => CheckRunProfile | undefined
 }
 
 /**
@@ -58,6 +61,7 @@ export class CheckActivities {
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly retainedVerificationAborts: Map<string, AbortController>
   private readonly reconcileEffect: CheckActivitiesDeps["reconcileEffect"]
+  private readonly checkProfile: CheckActivitiesDeps["checkProfile"]
   private readonly adoptionExecution: {
     adoptionCheckReceiptMatches: AdoptionExecution["adoptionCheckReceiptMatches"]
   }
@@ -76,6 +80,7 @@ export class CheckActivities {
     this.verificationTimeoutDefaults = deps.verificationTimeoutDefaults
     this.retainedVerificationAborts = deps.retainedVerificationAborts
     this.reconcileEffect = (...args) => deps.reconcileEffect(...args)
+    this.checkProfile = (...args) => deps.checkProfile(...args)
     this.adoptionExecution = {
       adoptionCheckReceiptMatches: (...args) =>
         deps.adoptionExecution().adoptionCheckReceiptMatches(...args),
@@ -195,14 +200,19 @@ export class CheckActivities {
     check: TaskProposal["verification"][number],
     deadline: VerificationDeadline,
     receiptPath: string,
-    options?: Parameters<typeof runDeclaredCheck>[4],
+    options?: Parameters<typeof runDeclaredCheck>[4] & { profileRevisionID?: number },
   ): Promise<CheckReceipt> {
+    // A verify effect pins the revision it started with; every other run reads the active one.
+    const { profileRevisionID, ...runOptions } = options ?? {}
+    const profile = runOptions.profile ?? this.checkProfile(profileRevisionID)
     const receipt = await runDeclaredCheck(
       workspace,
       artifact,
       effectiveVerificationCheck(check, deadline),
       receiptPath,
-      options,
+      options === undefined && !profile
+        ? undefined
+        : { ...runOptions, ...(profile ? { profile } : {}) },
     )
     const annotated = {
       ...receipt,

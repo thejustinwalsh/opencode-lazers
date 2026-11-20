@@ -43,6 +43,7 @@ import type { VerificationReview } from "./verification-review.ts"
 import type { AttemptRow, PlanRow } from "./store.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
+import type { ActiveProfile } from "../projects/profile-store.ts"
 
 /** What `VerificationCandidate` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type VerificationCandidateDeps = {
@@ -61,6 +62,7 @@ export type VerificationCandidateDeps = {
   failAttempt: VerificationReview["failAttempt"]
   startAuditorReport: VerificationReview["startAuditorReport"]
   verificationTimeoutDefaults: VerificationTimeoutDefaults
+  activeProfile: () => ActiveProfile | undefined
 }
 
 /**
@@ -84,6 +86,7 @@ export class VerificationCandidate {
   private readonly failAttempt: VerificationCandidateDeps["failAttempt"]
   private readonly startAuditorReport: VerificationCandidateDeps["startAuditorReport"]
   private readonly verificationTimeoutDefaults: VerificationCandidateDeps["verificationTimeoutDefaults"]
+  private readonly activeProfile: VerificationCandidateDeps["activeProfile"]
 
   constructor(
     private readonly core: RuntimeCore,
@@ -104,6 +107,7 @@ export class VerificationCandidate {
     this.retainedRepairGeneration = (...args) => deps.retainedRepairGeneration(...args)
     this.failAttempt = (...args) => deps.failAttempt(...args)
     this.startAuditorReport = (...args) => deps.startAuditorReport(...args)
+    this.activeProfile = () => deps.activeProfile()
     this.verificationTimeoutDefaults = deps.verificationTimeoutDefaults
   }
 
@@ -599,6 +603,8 @@ export class VerificationCandidate {
       attempt.id,
       `${check.id}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}${known ? `-${known.id}` : ""}.json`,
     )
+    // A confirmed profile is pinned into the effect, so a later revision never disturbs the run.
+    const profileRevisionID = this.activeProfile()?.revisionID
     const effect = this.effect(
       plan.id,
       attempt.task_id,
@@ -615,6 +621,7 @@ export class VerificationCandidate {
         ...(known ? { previousCheckID: known.id } : {}),
         ...(verificationEpoch ? { verificationEpoch } : {}),
         ...(repairID ? { repairID } : {}),
+        ...(profileRevisionID === undefined ? {} : { profileRevisionID }),
       },
       fence,
     )
@@ -641,6 +648,7 @@ export class VerificationCandidate {
             receiptPath,
             {
               signal,
+              ...(profileRevisionID === undefined ? {} : { profileRevisionID }),
             },
           ),
       })

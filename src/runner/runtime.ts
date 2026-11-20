@@ -28,6 +28,8 @@ import { WorkerObservation } from "./worker-observation.ts"
 import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
 import { AttemptAdvance } from "./attempt-advance.ts"
 import { Cancellation } from "./cancellation.ts"
+import { activeProfile, profileRevisionByID } from "../projects/profile-store.ts"
+import { checkRunProfile } from "../projects/profile-runtime.ts"
 import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
@@ -514,6 +516,7 @@ export class TaskRuntime {
       retainedVerificationExecution: () => this.retainedVerificationExecution,
       adoptionExecution: () => this.adoptionExecution,
       reconcileEffect: (...args) => this.reconcileEffect(...args),
+      checkProfile: (revisionID) => this.activeCheckProfile(revisionID),
     })
     this.verificationCandidate = new VerificationCandidate(this.core, {
       hold: (...args) => this.hold(...args),
@@ -531,6 +534,7 @@ export class TaskRuntime {
       failAttempt: (...args) => this.failAttempt(...args),
       startAuditorReport: (...args) => this.startAuditorReport(...args),
       verificationTimeoutDefaults: this.verificationTimeoutDefaults,
+      activeProfile: () => activeProfile(this.store.repository, this.directory),
     })
     this.effectReconciliation = new EffectReconciliation(this.core, {
       supersedeEffect: (...args) => this.supersedeEffect(...args),
@@ -660,6 +664,7 @@ export class TaskRuntime {
       adoptionArtifactScopeViolations: (...args) => this.adoptionArtifactScopeViolations(...args),
       adoptionWorkerIdle: (...args) => this.adoptionWorkerIdle(...args),
       checkActivity: (...args) => this.checkActivity(...args),
+      checkProfile: () => this.activeCheckProfile(),
       conflictingActiveAttempt: (...args) => this.conflictingActiveAttempt(...args),
       currentAdoptionInputFingerprint: (...args) => this.currentAdoptionInputFingerprint(...args),
       dataDirectory: this.dataDirectory,
@@ -845,6 +850,15 @@ export class TaskRuntime {
 
   private startCheckActivity(...args: Parameters<CheckActivities["startCheckActivity"]>) {
     return this.checkActivities.startCheckActivity(...args)
+  }
+
+  /** The profile for a check run: a verify effect's pinned revision, else the active one. */
+  private activeCheckProfile(revisionID?: number) {
+    const active =
+      revisionID === undefined
+        ? activeProfile(this.store.repository, this.directory)
+        : profileRevisionByID(this.store.repository, revisionID)
+    return active ? checkRunProfile(active) : undefined
   }
 
   private checkActivity(...args: Parameters<CheckActivities["checkActivity"]>) {
