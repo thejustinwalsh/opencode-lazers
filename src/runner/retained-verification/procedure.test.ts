@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { retainedProcedurePlan } from "./procedure.ts"
+import { retainedProcedurePlan, retainedProjectResourceNames } from "./procedure.ts"
 
 test("automatic formatting and lint fixes compose with behavior and type checks", () => {
   expect(
@@ -74,3 +74,13 @@ test.each([
 ])("authorized verification commands are not restricted by a syntax allowlist: %s", (command) => {
   expect(retainedProcedurePlan(command).status).toBe("supported")
 })
+
+test.each(["cargo fmt --check && cargo test --locked", "npm run lint", "make check"])(
+  "a project profile's commands are supported with every resource: %s",
+  (command) => {
+    const result = retainedProcedurePlan(command)
+    expect(result.status).toBe("supported")
+    if (result.status === "supported")
+      expect(result.plan.resources).toEqual([...retainedProjectResourceNames])
+  },
+)

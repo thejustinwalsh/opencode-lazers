@@ -1,3 +1,5 @@
+import type { ProfileCommands } from "../projects/profile-runtime.ts"
+
 const qualitySteps = new Set([
   "bun fmt",
   "bun fmt --check",
@@ -25,17 +27,49 @@ function recognizedStep(command: string): boolean {
   return false
 }
 
+/** An option token of a profile command: a flag with no shell metacharacter. */
+const safeFlag = (value: string) => /^-[A-Za-z0-9_=.,:@+/-]*$/.test(value)
+
+/**
+ * With a profile, a step is recognised when it is a profile `verify`/`fix` command, such a
+ * command followed by safe flags and file targets, or (when `bun` is declared) a Bun step.
+ */
+function profileStep(command: string, profile: ProfileCommands): boolean {
+  const known = [...profile.verify, ...profile.fix]
+  if (known.includes(command)) return true
+  for (const prefix of known) {
+    if (!command.startsWith(`${prefix} `)) continue
+    const rest = command.slice(prefix.length + 1)
+    if (rest.split(" ").every((token) => safeFlag(token) || safeTarget(token))) return true
+  }
+  return profile.toolchains.includes("bun") && recognizedStep(command)
+}
+
 /** Preserve simple declared sequencing, not a baseline comparison/classification gate.
  * A previous draft's baseline execution and environment-equality machinery is
  * intentionally not retained: command outcomes apply to the authorized candidate.
  */
-export function recognizedVerificationPhases(command: string): string[] | undefined {
+export function recognizedVerificationPhases(
+  command: string,
+  profile?: ProfileCommands,
+): string[] | undefined {
   const phases = command.split(" && ")
-  if (phases.length === 0 || phases.some((phase) => !recognizedStep(phase))) return undefined
+  const recognised = profile
+    ? (phase: string) => profileStep(phase, profile)
+    : (phase: string) => recognizedStep(phase)
+  if (phases.length === 0 || phases.some((phase) => !recognised(phase))) return undefined
   return phases
 }
 
-export function needsMechanicalQualityPreparation(commands: string[]): boolean {
+export function needsMechanicalQualityPreparation(
+  commands: string[],
+  profile?: ProfileCommands & { runnableFix: number },
+): boolean {
+  if (profile)
+    return (
+      profile.runnableFix > 0 &&
+      commands.some((command) => recognizedVerificationPhases(command, profile) !== undefined)
+    )
   return commands.some((command) => {
     const phases = recognizedVerificationPhases(command)
     return Boolean(

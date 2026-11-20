@@ -1,7 +1,8 @@
 /**
- * The only module that knows how `bun test` spells its per-test timeout. A per-project
- * verification profile will supply other runners' equivalents here; callers only ask for the
- * effective command.
+ * The only module that knows how `bun test` spells its per-test timeout; callers only ask for the
+ * effective command. A project profile does not change this: a Bun profile carries `--timeout
+ * 120000` in its own `bun test` command, which makes the rewrite a no-op there; other runners'
+ * commands are never rewritten; task-authored `bun test` commands keep this as their safety net.
  *
  * Bun's per-test timeout defaults to 5 s. On this Bun (1.4.4-canary) nothing but the command-line
  * flag applies to every test file in a run: `setDefaultTimeout` from a preload or a shared import
