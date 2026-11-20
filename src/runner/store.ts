@@ -1,3 +1,4 @@
+import { ensureTaskScheduleSchema } from "../tasks/schedule/schema.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
@@ -1516,6 +1517,7 @@ export class RunnerStore {
     )
       repository.atomic(retireConflictScans)
     new RecoveryJournal(repository)
+    ensureTaskScheduleSchema(repository)
   }
   atomic<T>(run: (db: Database) => T): T {
     return this.repository.atomic((db) => {
@@ -4066,6 +4068,18 @@ export class RunnerStore {
       ).run(planID, taskID, plan.version, event, JSON.stringify(payload), Date.now())
       this.repository.changed()
     })
+  }
+  /**
+   * The dispatcher's newest proof of a task's prerequisite integration, recorded when it changes.
+   * It is a fact about git that no database write reveals; the Tasks list stores it as the task's
+   * scheduling decision. It decides nothing: the dispatcher still re-proves at every dispatch.
+   */
+  recordPrerequisiteObservation(
+    planID: string,
+    taskID: string,
+    observation: { decision: "ready" | "waiting"; reason: string | null },
+  ): boolean {
+    return this.recordOnce(planID, taskID, "PREREQUISITE_OBSERVED", observation)
   }
   /** Record a changed condition without rewriting the same fact on every scheduler drain. */
   recordOnce(planID: string, taskID: string | null, event: string, payload: unknown): boolean {

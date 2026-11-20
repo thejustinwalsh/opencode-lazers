@@ -1,3 +1,4 @@
+import { drainScheduleHook, enrollScheduleConnection } from "./tasks/schedule/hook.ts"
 import { scheduledTaskPageSQL } from "./tasks/schedule-order.ts"
 import { taskReferenceFor } from "./task-reference.ts"
 import { Database, SQLiteError } from "bun:sqlite"
@@ -536,7 +537,15 @@ export class TaskRepository {
    */
   atomic<T>(run: (db: Database) => T): T {
     const db = this.db
-    return timeStorage("atomic", () => db.transaction(() => run(db)).immediate())
+    return timeStorage("atomic", () =>
+      db
+        .transaction(() => {
+          const result = run(db)
+          drainScheduleHook(db)
+          return result
+        })
+        .immediate(),
+    )
   }
 
   /**
@@ -552,7 +561,13 @@ export class TaskRepository {
   ): Promise<T> {
     return this.retryBusy(() => {
       const db = this.db
-      return db.transaction(() => run(db)).immediate()
+      return db
+        .transaction(() => {
+          const result = run(db)
+          drainScheduleHook(db)
+          return result
+        })
+        .immediate()
     }, options)
   }
 

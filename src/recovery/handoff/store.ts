@@ -1,3 +1,4 @@
+import { installScheduleTriggers } from "../../tasks/schedule/schema.ts"
 import type { Database } from "bun:sqlite"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { canonical } from "../../identity.ts"
@@ -341,6 +342,8 @@ export class HandoffStore {
         CREATE INDEX IF NOT EXISTS recovery_control_events_attempt
           ON recovery_control_events(project_directory, attempt_id, sequence DESC);
       `)
+      // The schedule projection queues a task when its concerns change.
+      installScheduleTriggers(db)
     })
   }
 
