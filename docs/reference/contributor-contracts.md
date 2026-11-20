@@ -42,7 +42,7 @@ The runtime owns plan admission, dispatch, dependencies, verification, configure
 
 ## Routes and workers
 
-[`ModelMappingResolver.resolve()`](../../src/models/mapping-resolver.ts) resolves task, project, then shared mappings. [`TaskRuntime.resolveTaskDispatchRoute()`](../../src/runner/runtime.ts) selects the task route. An explicit plan `workerModel` overrides mappings. Otherwise, the runtime uses the selected persona route, then the configured implementor route.
+[`ModelMappingResolver.resolve()`](../../src/models/mapping-resolver.ts) resolves task, project, then shared mappings. [`Dispatch.resolveTaskDispatchRoute()`](../../src/runner/dispatch.ts) selects the task route. An explicit plan `workerModel` overrides mappings. Otherwise, the runtime uses the selected persona route, then the configured implementor route.
 
 Preserve the exact provider, model, and variant. Catalog metadata does not veto a configured route. Keep native route failures visible; do not substitute another model or effort. Running attempts keep their recorded route.
 
