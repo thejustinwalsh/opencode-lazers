@@ -1,5 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads"
 import { createModelDecisionReader } from "./decision-read.ts"
+import { observationRevisionStamp } from "../core/stamp-gate.ts"
+import { acquireSharedConnection } from "../storage.ts"
+import { WarmGate } from "./warm-pass.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readDecisionPriceState, readPriceIdentity } from "./price-state.ts"
 import type { PriceInputs } from "./price-state.ts"
@@ -94,6 +97,9 @@ const WARM_IDLE_MS = 10 * 60_000
 const MAX_WARM_INPUTS = 3
 let warmTimer: ReturnType<typeof setInterval> | undefined
 let warming = false
+const warmGate = new WarmGate()
+/** The revision stamp is one indexed row on the shared read-only connection. */
+const readonlyDatabase = () => acquireSharedConnection(path, "readonly").db
 
 const warmTick = async () => {
   // A person's read in flight is already doing this work; never queue behind or ahead of it.
@@ -110,15 +116,21 @@ const warmTick = async () => {
   if (readers.size === 0) {
     clearInterval(warmTimer)
     warmTimer = undefined
+    warmGate.clear()
     return
   }
   warming = true
   try {
-    for (const entry of readers.values())
-      for (const { input } of entry.warmInputs.values()) {
-        if (controllers.size > 0) return
-        await entry.reader.warm(input as never).catch(() => undefined)
-      }
+    for (const [projectDirectory, entry] of readers) {
+      if (controllers.size > 0) return
+      await warmGate.pass(
+        projectDirectory,
+        observationRevisionStamp(readonlyDatabase(), projectDirectory),
+        entry.warmInputs,
+        (input) => entry.reader.warm(input as never),
+        () => controllers.size > 0,
+      )
+    }
   } finally {
     warming = false
   }
