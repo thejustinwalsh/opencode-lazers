@@ -8,7 +8,7 @@ import { projects } from "./registry.ts"
 /** A project as every row of an all-projects read names it. */
 export const ProjectRef = z.strictObject({
   key: z.string().min(1),
-  code: z.string().min(2).max(6),
+  code: z.string().min(2),
   name: z.string(),
   /** A live OpenCode location of this project exists in this server. */
   loaded: z.boolean(),
