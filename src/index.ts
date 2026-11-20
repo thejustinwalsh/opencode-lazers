@@ -1,5 +1,6 @@
 import { registerAuditTools } from "./audit/tools.ts"
 import { registerBudget } from "./budget/server.ts"
+import { registerRetention } from "./retention/rpc.ts"
 import { Plugin } from "@opencode/plugin/effect"
 import { dirname } from "node:path"
 import { Effect } from "effect"
@@ -64,6 +65,9 @@ export default Plugin.define({
       const core = handle.core
       const { repository, runtime, progress } = core
       const projectID = ctx.location.project.id
+      yield* sectionEffect("setup:Retention", () =>
+        registerRetention(ctx, core.retention).pipe(Effect.orDie),
+      )
       yield* sectionEffect("setup:Budget", () =>
         registerBudget(ctx, fetch, core.usageCache).pipe(Effect.orDie),
       )

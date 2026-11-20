@@ -172,4 +172,9 @@ export const schemaModules = {
     source: "src/observability/source-revision.ts",
     tables: ["observation_revisions"],
   },
+  retention: {
+    generation: 1,
+    source: "src/retention/store.ts",
+    tables: ["retention_settings", "retention_runs"],
+  },
 } as const

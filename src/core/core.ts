@@ -26,6 +26,7 @@ import {
   sharedScheduler,
 } from "../runner/scheduler-coordinator.ts"
 import { RunnerStore } from "../runner/store.ts"
+import { RetentionService } from "../retention/service.ts"
 import { verificationTimeoutDefaults } from "../runner/verification-timeout.ts"
 import { TaskRepository, taskDatabasePath } from "../storage.ts"
 import { nativeTrajectoryHost } from "../trajectory/native.ts"
@@ -57,6 +58,7 @@ export type LazersCore = {
   readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
   readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
   readonly usageCache: UsageCache
+  readonly retention: RetentionService
   readonly inferenceBroker: InferenceBroker
   readonly verificationDefaults: ReturnType<typeof verificationTimeoutDefaults>
   /** Scheduler tick wake-up for this project (exactly one participant). */
@@ -239,11 +241,23 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
 
+  const retention = new RetentionService({ repository, host: nativeRunnerHost })
+  built("retention")
   scheduler = sharedScheduler.register(
     schedulerProjectKey(repository.path, repository.projectDirectory, projectID),
     {
       intervalMs: PROJECT_RECONCILIATION_INTERVAL_MS,
-      run: () => runtime.tick(),
+      run: async () => {
+        await runtime.tick()
+        // At a quiet point only; one bounded slice, never awaited by the tick.
+        void retention
+          .autoTick()
+          .catch((error) =>
+            Effect.runPromise(
+              Effect.logWarning("LAZERS automatic retention failed", { error: String(error) }),
+            ),
+          )
+      },
       onError: (error) =>
         Effect.runPromise(
           Effect.logError("LAZERS scheduler reconciliation failed", { error: String(error) }),
@@ -266,6 +280,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     trajectoryHost,
     taskValuationProvider,
     usageCache,
+    retention,
     inferenceBroker,
     verificationDefaults,
     wake: () => scheduler?.request(),

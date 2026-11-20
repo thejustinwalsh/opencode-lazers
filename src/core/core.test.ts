@@ -68,6 +68,7 @@ test("N adapters on one project share exactly one of each core object", async ()
     runnerStore: 1,
     progress: 1,
     runtime: 1,
+    retention: 1,
     observationReads: 1,
     schedulerParticipant: 1,
   })
@@ -99,6 +100,7 @@ test("before: constructing the full stack per location multiplies every object",
     runnerStore: 5,
     progress: 5,
     runtime: 5,
+    retention: 5,
     observationReads: 5,
     schedulerParticipant: 5,
   })

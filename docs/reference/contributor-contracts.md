@@ -98,6 +98,16 @@ The permission-checked [`lz-inspect-trajectory`](../../src/trajectory/tools.ts) 
 
 The pinned OpenCode API exposes `session.context`, not `client.message.list`. Do not claim that trajectory data contains a complete transcript.
 
+## Retention
+
+[`src/retention/`](../../src/retention/retention.ts) retires recorded detail of finished work. It is one typed command, `lz.retention` (`status`, `preview`, `retire`, `setAuto`), not a workflow: no XState state, and every batch is its own transaction that re-selects what is still retirable, so an interrupted purge continues and a repeated one finds nothing. `preview` is the dry run; `retire` requires `confirmed: true` and runs a time-boxed slice, called again with its `runID` until `done`. Every purge is one `retention_runs` row.
+
+A plan is retired only when it is `integrated` or `cancelled`, its last activity is older than the chosen age, and nothing waits on it: no pending notice, open takeover, adoption, handoff or worker concern, no held, uncertain or unfinished effect, and none of its tasks also belongs to an unfinished plan. For such plans it removes activity detail (tool, step and observation progress records), the progress facts every consumer has already read, native tool call records, delivery and renewal transition events (each plan and task keeps its latest transition), and delivered or superseded notices. Independent of plans it removes conflict scan history older than the age, superseded model and price snapshots older than the age that are not the latest, bulky read-only audit receipts beyond the newest five per project, and superseded task change counters (only `MAX(id)` per project is read).
+
+It never removes tasks, references, titles, states, dispositions, check, verification, artifact, outcome and usage records, integration and acceptance transitions, commit identity, effects, evidence, attempts, git notes, settings or model assignments. A retired plan's panels show what remains and omit the rest.
+
+Worktrees: a recorded workspace of a retired plan is removed only through the native API, never forced, and only when it is a registered native worktree under `<project>.worktrees` or the plugin's `runner/worktrees`, no unfinished work records it, `git status` is clean and its HEAD is contained in the project checkout. Any other is listed with its reason. Freed pages stay inside the SQLite file for reuse; `auto_vacuum` is off, so shrinking the file is a separate, explicit `VACUUM` that a purge never runs. Automatic retention (`retention_settings.auto_days`, off by default) runs one slice from the scheduler tick when no attempt is preparing, running or verifying, at most every six hours, continuing an unfinished run on the next tick.
+
 ## Cost and measurement
 
 Use configured ordered price sources independently of execution provider or subscription. The initial order is OpenRouter, then OpenCode, reusing access configured in OpenCode. Skip unavailable sources. Preserve chosen-source provenance, exact provider, model and effort, and measured tokens.
