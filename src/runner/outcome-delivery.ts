@@ -427,6 +427,7 @@ export class OutcomeDelivery {
         id: carrier.message_id,
         text: coalescedOutcomeText(
           summary.map((row) => ({ planID: row.plan_id, payload: row.payload })),
+          this.runtime.store.repository.projectCode(),
         ),
         resume: rows.some((row) => Boolean(row.resume)),
         metadata: ownership,

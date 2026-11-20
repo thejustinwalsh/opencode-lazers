@@ -1830,6 +1830,7 @@ test("a lost continuation-create response is reconciled by stable native session
 
 test("a missing task owner gets a same-project continuation without foreign parent context", async () => {
   const f = fixture({ shared: true, commit: true, startOnly: true })
+  codeProject(f, "ONS")
   const originalOwner = f.sessions.get("owner")!
   f.sessions.delete("owner")
   f.sessions.set("ses_starter", {
@@ -1853,6 +1854,7 @@ test("a missing task owner gets a same-project continuation without foreign pare
   const continuation = f.store.continuation(plan.id)!
   const owner = f.sessions.get(continuation.session_id)!
   expect(result).toMatchObject({ status: "started", state: "running" })
+  expect(nativeInput?.title).toStartWith("ONS · continue ")
   expect(nativeInput?.parentID).toBeUndefined()
   expect(nativeInput?.model).toBeUndefined()
   expect(continuation.parent_id).toBeNull()
@@ -2456,6 +2458,21 @@ async function runPlan(
   )
 }
 
+test("worker sessions are titled with the project code", async () => {
+  const f = fixture({ delayed: true })
+  codeProject(f, "ONS")
+  const titles: string[] = []
+  const create = f.host.create
+  f.host.create = async (input) => {
+    titles.push(input.title)
+    return create(input)
+  }
+  await runPlan(f)
+  await f.runtime.tick()
+  expect(titles.length).toBeGreaterThan(0)
+  for (const title of titles) expect(title).toStartWith("ONS · ")
+})
+
 test("F-S4-1 admission and dispatch do not invoke the full project audit", async () => {
   const f = fixture({ delayed: true })
   f.store.audit = () => {
@@ -3021,6 +3038,23 @@ async function pauseRecoveryAtWorktrees(state: LegacyFenceState, requestID: stri
       state.f.host.worktrees = originalWorktrees
     },
   }
+}
+
+/** Give the fixture's checkout a registered project with `code`, as registration would. */
+function codeProject(f: ReturnType<typeof fixture>, code: string) {
+  f.repository.atomic((db) => {
+    db.query("INSERT INTO lazers_projects(key,created_at,code,name) VALUES(?,?,?,?)").run(
+      `path:${f.root}`,
+      "2026-01-01",
+      code,
+      "fixture",
+    )
+    db.query("INSERT INTO lazers_project_paths(path,key,last_seen_at) VALUES(?,?,?)").run(
+      f.root,
+      `path:${f.root}`,
+      "2026-01-01",
+    )
+  })
 }
 
 function reopenRuntime(
@@ -11659,6 +11693,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
     now: () => now,
     taskFiles: [{ name: "a", path: "a.txt" }],
   })
+  codeProject(f, "ONS")
   expect(architectIdleWindowMs(undefined)).toBe(5 * 60 * 1000)
   expect(DEFAULT_ARCHITECT_CACHE_WINDOW_MS).toBe(5 * 60 * 1000)
   expect(() => architectIdleWindowMs(0)).toThrow("positive integer")
@@ -11726,7 +11761,7 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(createInputs[0]).toMatchObject({
     planID: f.receipt.planID,
     sourceSessionID: "owner",
-    title: expect.stringContaining("Implement a"),
+    title: expect.stringMatching(/^ONS · .*Implement a/),
     model: owner.model,
   })
   expect(f.store.attempts(f.receipt.planID)[0]?.session_id).toBe(attempt.session_id)

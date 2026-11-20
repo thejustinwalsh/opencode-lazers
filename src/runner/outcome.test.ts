@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { outcomeText } from "./outcome.ts"
+import { coalescedOutcomeText, outcomeText } from "./outcome.ts"
 
 test("notifications carry a concise action and identity, not full check logs", () => {
   for (const status of ["task-accepted", "accepted", "blocked", "cleanup-blocked", "cancelled"]) {
@@ -79,4 +79,14 @@ test("an accepted plan lists its Fallow findings with the tasks to send them bac
   expect(text).toContain("- warn code-duplication b.ts:4 40 lines repeat x.ts:1-40 (task t3)")
   expect(text).toContain("- warn circular-dependency c.ts:4")
   expect(outcomeText('{"status":"accepted","artifact":"x"}')).not.toContain("Fallow")
+})
+
+test("a notice names its project code", () => {
+  const payload = JSON.stringify({ status: "integrated", planID: "plan" })
+  expect(outcomeText(payload, "ONS")).toStartWith("LAZERS outcome · ONS\n")
+  const two = [
+    { planID: "a", payload },
+    { planID: "b", payload },
+  ]
+  expect(coalescedOutcomeText(two, "ONS")).toStartWith("LAZERS outcomes · ONS: 2 updates")
 })

@@ -1,3 +1,4 @@
+import { sessionTitle } from "./session-title.ts"
 import type { Database } from "bun:sqlite"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import {
@@ -5856,7 +5857,7 @@ export class TaskRuntime {
           ...(continuation.parent_id ? { parentID: continuation.parent_id } : {}),
           directory: continuation.directory,
           ...(continuation.model ? { model: JSON.parse(continuation.model) } : {}),
-          title: `LAZERS · continue ${plan.id.slice(0, 8)}`,
+          title: this.sessionTitle(`continue ${plan.id.slice(0, 8)}`),
           planID: plan.id,
           sourceSessionID: plan.owner,
         })
@@ -6298,6 +6299,11 @@ export class TaskRuntime {
     return { revision: parsed.revision, ...content }
   }
 
+  /** `<CODE> · <text>`; `LAZERS` stands in until the project has a code. */
+  private sessionTitle(text: string): string {
+    return sessionTitle(this.store.repository.projectCode() ?? "LAZERS", text)
+  }
+
   private renewalContinuityCoverage(renewal: ArchitectRenewalRow) {
     const coverage = this.store.architectRenewalCoverageEvidence(renewal.id)
     if (!coverage) throw new Error("Architect renewal continuity coverage is unavailable")
@@ -6309,7 +6315,7 @@ export class TaskRuntime {
   }
 
   private renewalWakeContext(renewal: ArchitectRenewalRow, payload: unknown) {
-    const text = outcomeText(JSON.stringify(payload))
+    const text = outcomeText(JSON.stringify(payload), this.store.repository.projectCode())
     return {
       bytes: new TextEncoder().encode(text).byteLength,
       tokens: null,
@@ -6533,7 +6539,7 @@ export class TaskRuntime {
                 id: renewal.successor_session_id,
                 directory: renewal.directory,
                 model: JSON.parse(renewal.model),
-                title: `LAZERS · ${knownLabel ?? this.renewalLabel(renewal)}`.slice(0, 120),
+                title: this.sessionTitle(knownLabel ?? this.renewalLabel(renewal)),
                 planID: renewal.anchor_plan_id,
                 planIDs,
                 sourceSessionID: renewal.previous_session_id,
@@ -9841,7 +9847,9 @@ export class TaskRuntime {
           agent: workerAgent(JSON.parse(attempt.policy).agent),
           model: ModelPolicy.parse(JSON.parse(attempt.policy).model),
           directory: attempt.workspace,
-          title: `LAZERS · ${this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100)}`,
+          title: this.sessionTitle(
+            this.store.repository.get(attempt.task_id)!.proposal.objective.slice(0, 100),
+          ),
           attemptID: attempt.id,
         })
         this.receipt(effect, { sessionID: attempt.session_id }, fence)
