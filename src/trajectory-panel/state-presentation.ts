@@ -1,4 +1,4 @@
-import type { ExecutionListRow } from "../tasks/execution-list.ts"
+import type { ExecutionListRow } from "../tasks/task-row.ts"
 import { taskRowPresentation } from "../tasks/row-presentation.ts"
 import type { TaskGlyph, TaskTone } from "../tasks/row-presentation.ts"
 

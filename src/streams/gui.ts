@@ -45,6 +45,8 @@ export type GuiStream<C extends Columns> = {
   revision: Accessor<number>
   /** The last failure, cleared by the next frame. */
   error: Accessor<Error | undefined>
+  /** The first frame of the current options has arrived; false again while a reopen is pending. */
+  loaded: Accessor<boolean>
   /** Move the window by items; the new frame replaces `items`. */
   slide(delta: number): void
   seek(anchor: StreamAnchorInput): void
@@ -80,10 +82,12 @@ export function createStream<F, C extends Columns>(
   const [after, setAfter] = createSignal<number | "more">(0)
   const [revision, setRevision] = createSignal(0)
   const [error, setError] = createSignal<Error | undefined>(undefined)
+  const [loaded, setLoaded] = createSignal(false)
   let controls: { slide(delta: number): void; seek(anchor: StreamAnchorInput): void } | undefined
 
   createEffect(() => {
     const opts = options()
+    setLoaded(false)
     const stream = newStreamID()
     const columns = streamColumns(source, opts.window)
     let applied = -1
@@ -100,6 +104,7 @@ export function createStream<F, C extends Columns>(
         setAfter(decoded.header.after)
         setRevision(decoded.header.revision)
         setError(undefined)
+        setLoaded(true)
       })
     }
     const open = () => {
@@ -162,6 +167,7 @@ export function createStream<F, C extends Columns>(
     after,
     revision,
     error,
+    loaded,
     slide: (delta) => controls?.slide(delta),
     seek: (anchor) => controls?.seek(anchor),
   }

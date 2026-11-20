@@ -43,6 +43,8 @@ export type TaskScheduleFilter = {
   state?: TaskStateFilter
   /** One task by id. */
   taskID?: string
+  /** The tasks of one plan; read them with order `plan`. */
+  planID?: string
   includeRetired?: boolean
   /** Tasks the session created, owns a plan of, or ran an attempt of. */
   session?: string
@@ -106,6 +108,8 @@ export const taskDependencyColumns = {
   child_state: "text",
   waiting: "bool",
   child_plan_id: "text",
+  parent_reference: "text",
+  parent_title: "text",
 } as const satisfies Columns
 
 /** The child's own list row, so a nested row renders exactly as a listed one. */
@@ -196,7 +200,10 @@ export const taskIndexColumns = {
 
 export type TaskChildFilter = {
   scope?: TaskScope
+  /** Set by the service: the project the task belongs to. */
   project?: string
+  /** Set by the service in a session view: the session the task is linked to. */
+  session?: string
   task?: string
   parent?: string
 }

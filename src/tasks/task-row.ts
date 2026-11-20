@@ -58,7 +58,7 @@ const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) 
 /**
  * One list row from the stored columns of a `tasks.schedule` row (or the `c_`-prefixed child
  * columns of a `tasks.dependencies` row). It applies the rules the merged model applied to a
- * topology node and a task summary (`execution-list.ts` `row` and `makeNodeRow`), now over stored
+ * topology node and a task summary (the former merged model), now over stored
  * columns: the displayed status is the recorded node state, and `waiting` is the held-back test.
  */
 export function listRowOf(

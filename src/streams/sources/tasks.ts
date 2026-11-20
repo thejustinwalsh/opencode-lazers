@@ -48,20 +48,36 @@ async function scopeOf(filter: { scope?: TaskScope }, context: StreamContext): P
   return scope
 }
 
-/** A task of this project, and in a session view a task linked to the session. */
-function assertTaskInScope(context: StreamContext, scope: TaskScope, task: string | undefined) {
-  if (!task) throw new Error("A tasks read names its task")
-  if (!context.read) throw new Error("This service cannot check the task")
-  const linked = context.read((db) =>
-    db
-      .query<{ one: number }, [string, string, number, string]>(
-        `SELECT 1 AS one FROM task_schedule t WHERE t.task_id=? AND t.project_directory=?
-         AND (?=0 OR EXISTS (SELECT 1 FROM task_schedule_sessions s
-                             WHERE s.task_id=t.task_id AND s.session_id=?))`,
-      )
-      .get(task, context.projectDirectory, scope.kind === "session" ? 1 : 0, scope.sessionID),
-  )
-  if (!linked) throw new Error("Task is unavailable in this scope")
+/**
+ * The scope check of a read about one task, as part of its filter: the task belongs to this
+ * project and, in a session view, is linked to the session. A task outside the scope lists nothing,
+ * and `authorize` reads no row.
+ */
+function taskInScope(column: string, input: { project?: string; session?: string }) {
+  const linked =
+    input.session !== undefined
+      ? " AND EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=t.task_id AND s.session_id=?)"
+      : ""
+  return {
+    clause: `EXISTS (SELECT 1 FROM task_schedule t WHERE t.task_id=${column} AND t.project_directory=?${linked})`,
+    params: [input.project ?? null, ...(input.session !== undefined ? [input.session] : [])],
+  }
+}
+
+/** The caller's scope is checked; the project is the service's, and a session view is forced. */
+async function scopedChild(
+  input: TaskChildFilter,
+  context: StreamContext,
+  named: string | undefined,
+) {
+  const scope = await scopeOf(input, context)
+  if (!named) throw new Error("A tasks read names its task")
+  const { session: _caller, ...rest } = input as TaskChildFilter & { session?: string }
+  return {
+    ...rest,
+    project: context.projectDirectory,
+    ...(scope.kind === "session" ? { session: scope.sessionID } : {}),
+  }
 }
 
 const placeholders = (values: readonly unknown[]) => values.map(() => "?").join(",")
@@ -75,6 +91,11 @@ export const taskScheduleSource = defineSource({
     // The old `sort: "schedule"`: one stored key holds all seven terms.
     schedule: [
       { column: "sort_key", direction: "asc" },
+      { column: "task_id", direction: "asc" },
+    ],
+    // The tasks of one plan, in plan order (the first step first).
+    plan: [
+      { column: "ordinal", direction: "asc" },
       { column: "task_id", direction: "asc" },
     ],
     // The old `sort: "recent"`: newest first.
@@ -98,6 +119,10 @@ export const taskScheduleSource = defineSource({
     if (input.taskID !== undefined) {
       clauses.push("task_schedule.task_id = ?")
       params.push(input.taskID)
+    }
+    if (input.planID !== undefined) {
+      clauses.push("task_schedule.plan_id = ?")
+      params.push(input.planID)
     }
     if (input.includeRetired !== true) clauses.push("task_schedule.retired = 0")
     const buckets: readonly Bucket[] | undefined = bucketsFor(input.state)
@@ -137,6 +162,7 @@ export const taskDependenciesSource = defineSource({
   table: `(SELECT e.parent_task_id AS parent_task_id, e.ord AS ord, e.child_task_id AS child_task_id,
       e.kind AS kind, e.child_reference AS child_reference, e.child_title AS child_title,
       e.child_state AS child_state, e.waiting AS waiting, e.child_plan_id AS child_plan_id,
+      p.reference AS parent_reference, p.title AS parent_title,
       c.status AS c_status, c.reason AS c_reason, c.node_reason AS c_node_reason,
       c.plan_reason AS c_plan_reason, c.node_state AS c_node_state, c.plan_state AS c_plan_state,
       c.ordinal AS c_ordinal, c.priority_key AS c_priority_key, c.started_at AS c_started_at,
@@ -146,7 +172,8 @@ export const taskDependenciesSource = defineSource({
       c.blocker_task_ids AS c_blocker_task_ids, c.dependency_waiting AS c_dependency_waiting,
       c.decision AS c_decision, c.decision_reason AS c_decision_reason, c.stale AS c_stale,
       c.source_plan AS c_source_plan, c.session_id AS c_session_id
-    FROM task_schedule_edges e LEFT JOIN task_schedule c ON c.task_id=e.child_task_id) AS task_schedule_edges`,
+    FROM task_schedule_edges e LEFT JOIN task_schedule c ON c.task_id=e.child_task_id
+      LEFT JOIN task_schedule p ON p.task_id=e.parent_task_id) AS task_schedule_edges`,
   tables: ["task_schedule_edges", "task_schedule"],
   key: ["parent_task_id", "ord"],
   orders: {
@@ -155,16 +182,20 @@ export const taskDependenciesSource = defineSource({
       { column: "ord", direction: "asc" },
     ],
   },
-  async authorize(input: TaskChildFilter, context) {
-    const scope = await scopeOf(input, context)
-    assertTaskInScope(context, scope, input.parent ?? input.task)
-    return input
-  },
+  authorize: (input: TaskChildFilter, context) =>
+    scopedChild(input, context, input.parent ?? input.task),
   // `parent` lists a task's dependencies; `task` lists the tasks that depend on it.
-  filter: (input: TaskChildFilter) =>
-    input.parent !== undefined
-      ? { where: "task_schedule_edges.parent_task_id = ?", params: [input.parent] }
-      : { where: "task_schedule_edges.child_task_id = ?", params: [input.task!] },
+  filter(input: TaskChildFilter) {
+    const column =
+      input.parent !== undefined
+        ? "task_schedule_edges.parent_task_id"
+        : "task_schedule_edges.child_task_id"
+    const scoped = taskInScope(column, input)
+    return {
+      where: `${column} = ? AND ${scoped.clause}`,
+      params: [(input.parent ?? input.task)!, ...scoped.params],
+    }
+  },
   columns: taskDependencyRowColumns,
 })
 
@@ -232,15 +263,14 @@ export const taskBlockersSource = defineSource({
       { column: "blocker_task_id", direction: "asc" },
     ],
   },
-  async authorize(input: TaskChildFilter, context) {
-    const scope = await scopeOf(input, context)
-    assertTaskInScope(context, scope, input.task)
-    return input
+  authorize: (input: TaskChildFilter, context) => scopedChild(input, context, input.task),
+  filter(input: TaskChildFilter) {
+    const scoped = taskInScope("task_schedule_blockers.task_id", input)
+    return {
+      where: `task_schedule_blockers.task_id = ? AND ${scoped.clause}`,
+      params: [input.task!, ...scoped.params],
+    }
   },
-  filter: (input: TaskChildFilter) => ({
-    where: "task_schedule_blockers.task_id = ?",
-    params: [input.task!],
-  }),
   columns: taskBlockerColumns,
 })
 
@@ -255,12 +285,14 @@ export const taskWaitsSource = defineSource({
       { column: "ord", direction: "asc" },
     ],
   },
-  async authorize(input: TaskChildFilter, context) {
-    const scope = await scopeOf(input, context)
-    assertTaskInScope(context, scope, input.task)
-    return input
+  authorize: (input: TaskChildFilter, context) => scopedChild(input, context, input.task),
+  filter(input: TaskChildFilter) {
+    const scoped = taskInScope("task_schedule_waits.task_id", input)
+    return {
+      where: `task_schedule_waits.task_id = ? AND ${scoped.clause}`,
+      params: [input.task!, ...scoped.params],
+    }
   },
-  filter: (input: TaskChildFilter) => ({ where: "task_id = ?", params: [input.task!] }),
   columns: taskWaitColumns,
 })
 

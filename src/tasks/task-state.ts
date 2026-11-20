@@ -1,6 +1,6 @@
 import type { LabelTone } from "../details/tone.ts"
 import type { CurrentTaskActivity } from "./contract.ts"
-import type { ExecutionListRow } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 import { taskReasonView } from "./presentation.ts"
 import { taskRowPresentation } from "./row-presentation.ts"
 import type { TaskRowPresentation, TaskTone } from "./row-presentation.ts"

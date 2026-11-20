@@ -202,7 +202,7 @@ test("a task id filter reads one task and another project's tasks never appear",
 
 test("dependency children, plans, and bucket counts read as sources", async () => {
   const dependencies = openStream(pool, taskDependenciesSource, {
-    filter: { parent: ids.successor! },
+    filter: { project: PROJECT, parent: ids.successor! },
     order: "ord",
     window: 10,
   })
@@ -263,7 +263,7 @@ test("dependency children, plans, and bucket counts read as sources", async () =
 
 test("dependents read through the child index, and plans read by a list of ids", async () => {
   const dependents = openStream(pool, taskDependenciesSource, {
-    filter: { task: ids["task0-0"]! },
+    filter: { project: PROJECT, task: ids["task0-0"]! },
     order: "ord",
     window: 10,
   })
@@ -287,6 +287,24 @@ test("dependents read through the child index, and plans read by a list of ids",
   await some.ready()
   expect(some.items.map((row) => row.plan_id)).toEqual(wanted)
   some.close()
+})
+
+test("the tasks of one plan read in plan order", async () => {
+  const planned = (await walk({ project: PROJECT, state: "all" }, "recent", 50)).find(
+    (row) => row.plan_id,
+  )!
+  const plan_id = planned.plan_id
+  const stream = openStream(pool, taskScheduleSource, {
+    filter: { project: PROJECT, state: "all", planID: plan_id as string },
+    order: "plan",
+    window: 20,
+  })
+  await stream.ready()
+  expect(stream.items.length).toBeGreaterThan(0)
+  const ordinals = stream.items.map((row) => row.ordinal as number)
+  expect(ordinals).toEqual([...ordinals].sort((a, b) => a - b))
+  expect(new Set(stream.items.map((row) => row.plan_id))).toEqual(new Set([plan_id]))
+  stream.close()
 })
 
 test("a window anchored on a task keeps its place when a priority change re-keys it", async () => {
@@ -384,21 +402,52 @@ test("authorize checks the caller, overwrites the project and forces the session
   )
 })
 
-test("a child read of a task outside the session view is refused", async () => {
+test("a child read of a task outside the session view lists nothing, with no statement on the main repository", async () => {
   const c = context()
   // task0-1 is a session-b task; task0-0 is session-a (see the seed above).
-  const inScope = { kind: "session", sessionID: "session-a" } as const
-  await taskDependenciesSource.authorize!({ scope: inScope, parent: ids["task0-0"]! }, c.value)
-  await expect(
-    taskDependenciesSource.authorize!({ scope: inScope, parent: ids["task0-1"]! }, c.value),
-  ).rejects.toThrow("unavailable")
-  await taskDependenciesSource.authorize!(
-    { scope: { kind: "project", sessionID: "session-a" }, parent: ids["task0-1"]! },
-    c.value,
+  const scoped = async (
+    scope: { kind: "session" | "project"; sessionID: string },
+    parent: string,
+  ) => {
+    const filter = await taskDependenciesSource.authorize!({ scope, parent }, c.value)
+    const stream = openStream(pool, taskDependenciesSource, { filter, order: "ord", window: 10 })
+    await stream.ready()
+    const count = stream.items.length
+    stream.close()
+    return { filter, count }
+  }
+  const session = { kind: "session", sessionID: "session-a" } as const
+  const meter = meterRepository(repository)
+  try {
+    expect((await scoped(session, ids.successor!)).filter).toMatchObject({
+      project: PROJECT,
+      session: "session-a",
+    })
+    expect((await scoped(session, ids.successor!)).count).toBe(1)
+    // The successor is a session-a task; a session-b task of the same shape lists nothing.
+    const other = repository.read(
+      (db) =>
+        db
+          .query<{ parent_task_id: string }, []>(
+            `SELECT e.parent_task_id FROM task_schedule_edges e
+             WHERE NOT EXISTS (SELECT 1 FROM task_schedule_sessions s
+                               WHERE s.task_id=e.parent_task_id AND s.session_id='session-a')`,
+          )
+          .all()[0]?.parent_task_id,
+    )
+    if (other) expect((await scoped(session, other)).count).toBe(0)
+    expect((await scoped(session, crypto.randomUUID())).count).toBe(0)
+    const project = await scoped({ kind: "project", sessionID: "session-a" }, ids.successor!)
+    expect(project.count).toBe(1)
+    expect((project.filter as { session?: string }).session).toBeUndefined()
+  } finally {
+    meter.stop()
+  }
+  // Opening a child stream reads nothing on the main thread: the scope is in the filter.
+  expect(meter.statements.filter((s) => s.includes("FROM task_schedule t WHERE"))).toEqual([])
+  await expect(taskDependenciesSource.authorize!({ scope: session }, c.value)).rejects.toThrow(
+    "names its task",
   )
-  await expect(
-    taskDependenciesSource.authorize!({ scope: inScope, parent: crypto.randomUUID() }, c.value),
-  ).rejects.toThrow("unavailable")
 })
 
 test("plans and counts follow the same scope", async () => {

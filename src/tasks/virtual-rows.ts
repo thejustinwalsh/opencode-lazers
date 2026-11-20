@@ -1,4 +1,4 @@
-import type { ExecutionList, ExecutionListRow } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 import { TASK_ROW_HEIGHT } from "./panel-layout.ts"
 
 export const LOADER_HEIGHT = 32
@@ -36,131 +36,6 @@ export type VirtualItem = VirtualTaskItem | VirtualLoaderItem
 
 export const LOADER_KEY = "loader:more"
 export const taskKey = (taskID: string) => `task:${taskID}`
-
-/** Dependencies of a row: recorded prerequisites plus topology dependency references. */
-export function dependencyRefs(row: ExecutionListRow) {
-  const refs = new Map<
-    string,
-    { taskID: string; reference?: string; title?: string; state?: string }
-  >()
-  for (const dependency of row.dependencyTasks ?? [])
-    refs.set(dependency.taskID, {
-      taskID: dependency.taskID,
-      ...(dependency.reference ? { reference: dependency.reference } : {}),
-      title: dependency.title,
-      state: dependency.state,
-    })
-  for (const taskID of row.prerequisites) if (!refs.has(taskID)) refs.set(taskID, { taskID })
-  return [...refs.values()]
-}
-
-export const hasDependencies = (row: ExecutionListRow) => dependencyRefs(row).length > 0
-
-/** A dependency row for a task no list or plan node describes: only what the reference carries. */
-function referenceRow(ref: ReturnType<typeof dependencyRefs>[number]): ExecutionListRow {
-  return {
-    taskID: ref.taskID,
-    title: ref.title ?? `Task ${ref.taskID.slice(0, 8)}`,
-    status: ref.state ?? "unknown",
-    reason: null,
-    waiting: false,
-    holdReason: null,
-    ordinal: 0,
-    ...(ref.reference ? { reference: ref.reference } : {}),
-    contextOnly: true,
-    prerequisites: [],
-    successors: [],
-  }
-}
-
-/** Every listed row in order: plans by priority, then unplanned tasks. */
-export function listedRows(model: ExecutionList) {
-  return [...model.plans.flatMap((group) => group.rows), ...model.unplanned]
-}
-
-export function flattenExecutionList(input: {
-  model: ExecutionList
-  /** Item keys of expanded rows; everything else is collapsed. */
-  expanded: ReadonlySet<string>
-  /** Append a loader row while another page exists. */
-  hasMore?: boolean
-  /**
-   * Task IDs in the read's order. The read is the one sort key (state, priority, recency), so the
-   * top-level rows follow it; the plan grouping only supplies nesting and priority. Rows the read
-   * did not list keep their model order after the listed ones.
-   */
-  order?: readonly string[]
-}): VirtualItem[] {
-  const position = new Map((input.order ?? []).map((taskID, index) => [taskID, index]))
-  const top = listedRows(input.model)
-    .map((row, index) => ({ row, index }))
-    .toSorted(
-      (left, right) =>
-        (position.get(left.row.taskID) ?? Number.MAX_SAFE_INTEGER) -
-          (position.get(right.row.taskID) ?? Number.MAX_SAFE_INTEGER) || left.index - right.index,
-    )
-    .map(({ row }) => row)
-  const priorityOf = new Map<string, number>()
-  for (const group of input.model.plans)
-    if (group.priority && group.priority > 0)
-      for (const row of group.rows) priorityOf.set(row.taskID, group.priority)
-  const known = new Map<string, ExecutionListRow>()
-  for (const row of [...input.model.related, ...top]) known.set(row.taskID, row)
-  const items: VirtualItem[] = []
-  const push = (
-    row: ExecutionListRow,
-    key: string,
-    depth: number,
-    setSize: number,
-    posInSet: number,
-    ancestors: ReadonlySet<string>,
-    parentKey?: string,
-  ) => {
-    const priority = depth === 0 ? priorityOf.get(row.taskID) : undefined
-    const refs = dependencyRefs(row)
-    const expandable = refs.length > 0
-    const expanded = expandable && input.expanded.has(key)
-    items.push({
-      kind: "task",
-      key,
-      row,
-      depth,
-      level: depth + 1,
-      setSize,
-      posInSet,
-      ...(parentKey ? { parentKey } : {}),
-      ...(priority ? { priority } : {}),
-      expandable,
-      expanded,
-    })
-    if (!expanded) return
-    const next = new Set([...ancestors, row.taskID])
-    const children = refs
-    children.forEach((ref, index) => {
-      const child = known.get(ref.taskID) ?? referenceRow(ref)
-      if (next.has(ref.taskID)) {
-        // Cycle: show the row without a subtree so the loop is visible but finite.
-        items.push({
-          kind: "task",
-          key: `${key}>${ref.taskID}`,
-          row: child,
-          depth: depth + 1,
-          level: depth + 2,
-          setSize: children.length,
-          posInSet: index + 1,
-          parentKey: key,
-          expandable: false,
-          expanded: false,
-        })
-        return
-      }
-      push(child, `${key}>${ref.taskID}`, depth + 1, children.length, index + 1, next, key)
-    })
-  }
-  top.forEach((row, index) => push(row, taskKey(row.taskID), 0, top.length, index + 1, new Set()))
-  if (input.hasMore) items.push({ kind: "loader", key: LOADER_KEY })
-  return items
-}
 
 export const taskItems = (items: readonly VirtualItem[]) =>
   items.filter((item): item is VirtualTaskItem => item.kind === "task")
@@ -251,7 +126,7 @@ export function estimateItemSize(item: VirtualItem) {
 }
 
 /**
- * The same flat sequence as `flattenExecutionList`, from stream windows: the listed rows of the
+ * The Tasks list as one flat sequence, from stream windows: the listed rows of the
  * `tasks.schedule` window, and for every expanded row the children its own `tasks.dependencies`
  * stream holds (`children`, by the parent's item key). A row is expandable when it stores
  * dependencies; a cycle is cut on the ancestor path, which is view state.
