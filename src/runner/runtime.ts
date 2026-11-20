@@ -17,7 +17,11 @@ import {
   actualCheckResultFromEffect,
   checkSettlementProblem,
   errorText,
+  isRerunnableEffect,
 } from "./runtime-helpers.ts"
+import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
+import type { RuntimeCore } from "./runtime-core.ts"
+import { RuntimeJournal } from "./runtime-journal.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -116,7 +120,6 @@ import {
   type ArchitectRoute,
   type ArchitectRoutingOptions,
 } from "./architect-routing.ts"
-import { holdActions } from "./hold-actions.ts"
 import { stampChangeIdentity } from "./identity-stamp.ts"
 import { FINGERPRINT_V2_PREFIX, isFingerprintV2 } from "./identity-store.ts"
 import {
@@ -194,12 +197,10 @@ import {
 import type { ReviewInputBinding, ReviewInputEvidence } from "./review-input.ts"
 import {
   isStartupWorktreeCandidate,
-  nativeWorktreeFailureEvidence,
   nativeWorktreeFailureFromReceipt,
   startupFailureSettlementFromReceipt,
   startupWorktreeFailureEvidence,
   startupWorktreeCandidates,
-  UNCERTAIN_EFFECT_RECEIPT_SCHEMA,
 } from "./startup-recovery.ts"
 import type { StartupAbsenceEvidence, StartupWorktreeFailureEvidence } from "./startup-recovery.ts"
 import {
@@ -327,24 +328,6 @@ type AdoptionSeed = {
   combinedArtifact: string
 }
 
-type StartupRecoveryAuthorization = {
-  schema: "lazers-worktree-startup-authorization/v1"
-  recoveryID: string
-  sourceEffectID: string
-  settlementRequestID: string
-  requestID: string
-  owner: string
-  planVersion: number
-  planRevision: number
-  taskID: string
-  attemptID: string
-  sessionID: string
-  messageID: string
-  workspace: string
-  base: string
-  policy: string
-}
-
 type RetainedRepairSeed = {
   taskID: string
   attemptID: string
@@ -402,23 +385,6 @@ type RunnerTransitionRecord = {
   task_id: string | null
   event: string
   payload: string
-}
-
-type WorkerObservationFence = {
-  planID: string
-  planVersion: number
-  planState: string
-  owner: string
-  reconcileRequestID: number
-  taskID: string
-  attemptID: string
-  attemptState: string
-  sessionID: string
-  workspace: string
-  messageID: string
-  policy: string
-  nodeState: string
-  nodeVersion: number
 }
 
 type RetainedVerificationSeed = RetainedVerification
@@ -506,11 +472,6 @@ function fallowAcceptance(
 
 /** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
 const SLOW_RECONCILE_MS = 30_000
-
-/** Verification effects only read the candidate; a missing receipt means run the check again. */
-function isRerunnableEffect(kind: string): boolean {
-  return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
-}
 
 /** Only a plan submitted with `draft: true` stays a draft; older drafts predate that choice. */
 function explicitDraft(plan: PlanRow): boolean {
@@ -708,6 +669,8 @@ export class TaskRuntime {
   private readonly retainedVerificationExecution: RetainedVerificationExecution
   readonly owner = crypto.randomUUID()
   readonly progress: ProgressRecorder
+  private readonly core: RuntimeCore
+  private readonly journal: RuntimeJournal
   private running = false
   private stopped = false
   private tickRequested = false
@@ -791,6 +754,22 @@ export class TaskRuntime {
     this.retainedDependencyInstaller = options.retainedDependencyInstaller
     this.beforeRetainedCheckBegin = options.beforeRetainedCheckBegin
     this.modelMappingResolver = new ModelMappingResolver(new ModelMappingStore(store.repository))
+    this.core = {
+      store: this.store,
+      host: this.host,
+      projectID: this.projectID,
+      owner: this.owner,
+      directory: this.directory,
+      dataDirectory: this.dataDirectory,
+      now: this.now,
+      progress: this.progress,
+    }
+    this.journal = new RuntimeJournal(this.core, {
+      workerObservationCurrent: (...args) => this.workerObservationCurrent(...args),
+      startupRecoveryAuthorization: (...args) => this.startupRecoveryAuthorization(...args),
+      startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
+      holdAdoption: (...args) => this.adoptionExecution.holdAdoption(...args),
+    })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
       ensureArchitectOwner: (...args) => this.ensureArchitectOwner(...args),
@@ -6992,288 +6971,34 @@ export class TaskRuntime {
     )
   }
 
-  private hold(
-    plan: PlanRow,
-    reason: string,
-    requestedActions: readonly string[] = ["audit", "reconcile", "cancel"],
-    workerObservation?: TerminalWorkerHold,
-    observationFence?: WorkerObservationFence,
-  ) {
-    // A hold advertises every action that unblocks its reason.
-    const allowedActions = holdActions(reason, requestedActions)
-    const currentObservation = this.store.atomic((db) => {
-      if (observationFence && !this.workerObservationCurrent(observationFence)) return false
-      const current = db
-        .query<{ state: string; reason: string | null }, [string]>(
-          "SELECT state,reason FROM runner_plans WHERE id=?",
-        )
-        .get(plan.id)
-      if (!current) throw new Error("Plan not found")
-      const previousBlocked = db
-        .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_transitions WHERE plan_id=? AND task_id IS NULL AND event='BLOCKED' ORDER BY id DESC LIMIT 1",
-        )
-        .get(plan.id)
-      let previousObservation: unknown
-      try {
-        previousObservation = previousBlocked
-          ? (JSON.parse(previousBlocked.payload) as { workerObservation?: unknown })
-              .workerObservation
-          : undefined
-      } catch {
-        previousObservation = undefined
-      }
-      const observationChanged =
-        workerObservation !== undefined
-          ? JSON.stringify(previousObservation) !== JSON.stringify(workerObservation)
-          : previousObservation !== undefined
-      const changedReason = current.state !== "blocked" || current.reason !== reason
-      if (!observationChanged && !changedReason) return true
-      db.query(
-        "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'blocked'),reason=?,version=version+1 WHERE id=?",
-      ).run(reason, plan.id)
-      this.store.record(plan.id, null, "BLOCKED", {
-        reason,
-        ...(workerObservation ? { workerObservation } : {}),
-      })
-      this.outcome(plan.id, { status: "blocked", reason, allowedActions }, true)
-      return true
-    })
-    if (!currentObservation) return undefined
-    return {
-      status: "blocked",
-      reason,
-      planID: plan.id,
-      version: this.store.plan(plan.id)!.version,
-    }
+  private hold(...args: Parameters<RuntimeJournal["hold"]>) {
+    return this.journal.hold(...args)
   }
 
   private terminalWorkerObservation(
-    attempt: AttemptRow,
-    worker: HostSession,
-  ): TerminalWorkerHold | undefined {
-    if (
-      worker.outcome !== "interrupted" &&
-      worker.outcome !== "failed" &&
-      worker.outcome !== "succeeded"
-    )
-      return undefined
-    return {
-      kind: "terminal-worker-observation",
-      attemptID: attempt.id,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      inputID: worker.turn?.inputID,
-      outcome: worker.outcome,
-      turnState: worker.turn?.state,
-      idleAt: worker.idleAt,
-      busy: worker.busy,
-      pendingInput: worker.pendingInput ?? false,
-      pendingPermissions: worker.pendingPermissions ?? 0,
-      pendingForms: worker.pendingForms ?? 0,
-      observationUnstable: worker.observationUnstable ?? false,
-    }
+    ...args: Parameters<RuntimeJournal["terminalWorkerObservation"]>
+  ) {
+    return this.journal.terminalWorkerObservation(...args)
   }
-  private outcome(planID: string, payload: unknown, resume: boolean) {
-    const plan = this.store.plan(planID)!
-    const full = {
-      planID,
-      planRevision: plan.revision,
-      version: plan.version,
-      ...(payload as object),
-      currentPlan: { state: plan.state, reason: plan.reason },
-      reviewableTasks: this.store
-        .nodes(planID)
-        .filter((node) => node.state === "accepted" && node.artifact)
-        .map((node) => {
-          const attempt = this.store
-            .attempts(planID)
-            .findLast(
-              (candidate) =>
-                candidate.task_id === node.task_id &&
-                candidate.state === "accepted" &&
-                candidate.artifact === node.artifact,
-            )
-          const adoption = this.store
-            .adoptions(planID)
-            .find(
-              (candidate) =>
-                candidate.state === "accepted" &&
-                candidate.task_id === node.task_id &&
-                candidate.descendant_commit === node.artifact,
-            )
-          return {
-            taskID: node.task_id,
-            artifact: node.artifact,
-            attemptID: attempt?.id ?? null,
-            ...(adoption ? { adoptionID: adoption.id } : {}),
-            evidence: this.store.repository
-              .get(node.task_id)!
-              .proposal.verification.map((check) => check.id),
-          }
-        }),
-    }
-    const id = fingerprint(full)
-    const nativeMessageID = messageID()
-    const metadata: OutcomeOwnership = {
-      lazersKind: "runner-outcome",
-      lazersProjectID: this.projectID,
-      lazersProjectDirectory: this.directory,
-      lazersPlanID: planID,
-      lazersOutboxID: id,
-      lazersMessageID: nativeMessageID,
-      lazersSessionID: plan.owner,
-      lazersStatus:
-        typeof payload === "object" &&
-        payload !== null &&
-        "status" in payload &&
-        typeof payload.status === "string"
-          ? payload.status
-          : "update",
-      lazersVersion: plan.version,
-    }
-    this.store.atomic((db) => {
-      db.query(
-        "INSERT OR IGNORE INTO runner_outbox(id,plan_id,session_id,message_id,payload,state,resume,metadata,receipt) VALUES(?,?,?,?,?,'pending',?,?,NULL)",
-      ).run(
-        id,
-        planID,
-        plan.owner,
-        nativeMessageID,
-        JSON.stringify(full),
-        Number(resume),
-        JSON.stringify(metadata),
-      )
-      this.store.repository.changed()
-    })
+
+  private outcome(...args: Parameters<RuntimeJournal["outcome"]>) {
+    return this.journal.outcome(...args)
   }
-  private effect(
-    planID: string,
-    taskID: string | null,
-    attemptID: string | null,
-    kind: string,
-    payload: unknown,
-    fence: number,
-  ): EffectRow {
-    const baseID = fingerprint({ planID, taskID, attemptID, kind, payload })
-    return this.store.fenced(this.owner, fence, (db) => {
-      let id = baseID
-      const existing = db
-        .query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?")
-        .get(baseID)
-      if (existing) {
-        // A verification effect is re-runnable: once its earlier run was
-        // superseded (no receipt), the same check runs again on the candidate.
-        if (!isRerunnableEffect(kind))
-          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
-        const runs = db
-          .query<{ id: string; state: string }, [string, string, string]>(
-            "SELECT id,state FROM runner_effects WHERE plan_id=? AND kind=? AND payload=?",
-          )
-          .all(planID, kind, JSON.stringify(payload))
-          .filter((row) => row.id === baseID || row.id.startsWith(`${baseID}:`))
-        if (runs.some((row) => row.state !== "failed"))
-          throw new Error(`Existing ${kind} effect must be reconciled, never replayed`)
-        id = `${baseID}:${runs.length}`
-      }
-      db.query("INSERT INTO runner_effects VALUES(?,?,?,?,?,'intended',?,NULL,?)").run(
-        id,
-        planID,
-        taskID,
-        attemptID,
-        kind,
-        JSON.stringify(payload),
-        fence,
-      )
-      this.store.record(planID, taskID, "EFFECT_INTENDED", { effectID: id, kind, attemptID })
-      return db.query<EffectRow, [string]>("SELECT * FROM runner_effects WHERE id=?").get(id)!
-    })
+
+  private effect(...args: Parameters<RuntimeJournal["effect"]>) {
+    return this.journal.effect(...args)
   }
-  private receipt(effect: EffectRow, receipt: unknown, fence: number) {
-    this.store.fenced(this.owner, fence, (db) => {
-      const changed = db
-        .query(
-          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'completed'),receipt=? WHERE id=? AND state IN ('intended','uncertain','held')",
-        )
-        .run(JSON.stringify(receipt), effect.id).changes
-      if (changed !== 1) return
-      this.store.record(effect.plan_id, effect.task_id, "EFFECT_COMPLETED", {
-        effectID: effect.id,
-        kind: effect.kind,
-      })
-    })
+
+  private receipt(...args: Parameters<RuntimeJournal["receipt"]>) {
+    return this.journal.receipt(...args)
   }
-  /** A re-runnable effect with no receipt is replaced, not left uncertain. */
-  private supersedeEffect(effect: EffectRow, reason: string, fence: number) {
-    this.store.fenced(this.owner, fence, (db) => {
-      const changed = db
-        .query(
-          "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'failed'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
-        )
-        .run(JSON.stringify({ superseded: true, reason }), effect.id).changes
-      if (changed !== 1) return
-      this.store.record(effect.plan_id, effect.task_id, "EFFECT_SUPERSEDED", {
-        effectID: effect.id,
-        kind: effect.kind,
-        reason,
-      })
-    })
+
+  private supersedeEffect(...args: Parameters<RuntimeJournal["supersedeEffect"]>) {
+    return this.journal.supersedeEffect(...args)
   }
-  private uncertain(effect: EffectRow, error: unknown, fence: number, result?: unknown) {
-    const nativeFailure =
-      effect.kind === "worktree" || effect.kind === "worktree-recovery"
-        ? nativeWorktreeFailureEvidence(error)
-        : undefined
-    const changed = this.store.fenced(
-      this.owner,
-      fence,
-      (db) =>
-        db
-          .query(
-            "UPDATE runner_effects SET state=lz_runner_transition('effect',state,'uncertain'),receipt=? WHERE id=? AND state IN ('intended','uncertain')",
-          )
-          .run(
-            JSON.stringify({
-              ...(!nativeFailure ? { schema: UNCERTAIN_EFFECT_RECEIPT_SCHEMA } : {}),
-              error: errorText(error),
-              ...(result === undefined ? {} : { result }),
-              ...(nativeFailure ? { nativeFailure } : {}),
-            }),
-            effect.id,
-          ).changes,
-    )
-    if (changed !== 1) return
-    const plan = this.store.plan(effect.plan_id)
-    if (!plan || plan.state === "cancelling" || terminal.has(plan.state)) return
-    if (effect.kind === "worktree-recovery" && effect.attempt_id) {
-      const attempt = this.store
-        .attempts(effect.plan_id)
-        .find((item) => item.id === effect.attempt_id)
-      const authorization = attempt ? this.startupRecoveryAuthorization(plan, attempt) : undefined
-      if (
-        !attempt ||
-        !authorization ||
-        !this.startupRecoveryAuthorityCurrent(plan, attempt, authorization)
-      )
-        return
-    }
-    {
-      const reason = `Recovery uncertain for ${effect.kind} ${effect.id}: ${errorText(error)}`
-      const payload = JSON.parse(effect.payload) as { adoptionID?: unknown }
-      if (effect.kind.startsWith("adoption-") && typeof payload.adoptionID === "string")
-        this.adoptionExecution.holdAdoption(plan, payload.adoptionID, reason, "pending", fence)
-      else
-        this.hold(
-          plan,
-          reason,
-          effect.kind.startsWith("verify:") &&
-            isRecord(result) &&
-            isRecord(result.check) &&
-            result.check.aborted === true
-            ? ["resume", "reconcile", "audit", "cancel"]
-            : undefined,
-        )
-    }
+
+  private uncertain(...args: Parameters<RuntimeJournal["uncertain"]>) {
+    return this.journal.uncertain(...args)
   }
 
   async tick() {

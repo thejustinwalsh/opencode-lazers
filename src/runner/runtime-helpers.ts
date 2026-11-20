@@ -63,3 +63,43 @@ export function pathEntryExists(path: string): boolean {
 export const WORKTREE_CLEANUP_FALLBACK_MS = 60_000
 /** A live-activity blocker (running shell, busy session) is cheap to re-observe. */
 export const WORKTREE_CLEANUP_LIVE_RETRY_MS = 5_000
+
+/** Verification effects only read the candidate; a missing receipt means run the check again. */
+export function isRerunnableEffect(kind: string): boolean {
+  return kind.startsWith("verify:") || kind.startsWith("graph-verify:") || kind === "mechanical-fix"
+}
+
+export type StartupRecoveryAuthorization = {
+  schema: "lazers-worktree-startup-authorization/v1"
+  recoveryID: string
+  sourceEffectID: string
+  settlementRequestID: string
+  requestID: string
+  owner: string
+  planVersion: number
+  planRevision: number
+  taskID: string
+  attemptID: string
+  sessionID: string
+  messageID: string
+  workspace: string
+  base: string
+  policy: string
+}
+
+export type WorkerObservationFence = {
+  planID: string
+  planVersion: number
+  planState: string
+  owner: string
+  reconcileRequestID: number
+  taskID: string
+  attemptID: string
+  attemptState: string
+  sessionID: string
+  workspace: string
+  messageID: string
+  policy: string
+  nodeState: string
+  nodeVersion: number
+}
