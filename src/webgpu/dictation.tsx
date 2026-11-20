@@ -4,6 +4,7 @@ import { createEffect, createSignal } from "solid-js"
 import { audioFilePCM16, MAX_AUDIO_SECONDS } from "./audio.ts"
 import type { InferenceRuntime } from "./runtime.ts"
 import { CaptureResources } from "./capture.ts"
+import { modifierTracker } from "./modifier-keys.ts"
 import { normalizeASR } from "../verification/opencode/audio-fixture-contract.ts"
 import { NativeAudioFixture } from "../verification/opencode/audio-fixture-ipc.ts"
 
@@ -307,45 +308,34 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
       toggle()
     },
   })
-  window.addEventListener(
-    "keydown",
-    (event) => {
-      if (!runtime.enabled("dictation")) return
-      if (event.key === "Escape" && operation) {
-        event.preventDefault()
-        event.stopPropagation()
-        cancel()
-        return
-      }
-      if (!event.repeat && !event.isComposing && ctx.keybinds.matches(commandID, event))
-        heldKey = event.code
-    },
-    { capture: true, signal: ctx.signal },
-  )
-  window.addEventListener(
-    "keyup",
-    (event) => {
-      // The host can consume keydown before our listener. Match the public effective
-      // binding on keyup as well, so hold-to-talk still releases in that case.
-      if (
-        !ctx.keybinds.matches(commandID, event) &&
-        (!heldKey ||
-          (event.code !== heldKey && !["Meta", "Control", "Alt", "Shift"].includes(event.key)))
-      )
-        return
-      heldKey = undefined
-      if (state() === "recording") stop()
-      else if (state() === "permission") cancel()
-    },
-    { capture: true, signal: ctx.signal },
-  )
-  window.addEventListener(
-    "blur",
-    () => {
-      if (operation) cancel()
-    },
-    { signal: ctx.signal },
-  )
+  const modifiers = modifierTracker(ctx)
+  modifiers.onKeyDown((event) => {
+    if (!runtime.enabled("dictation")) return
+    if (event.key === "Escape" && operation) {
+      event.preventDefault()
+      event.stopPropagation()
+      cancel()
+      return
+    }
+    if (!event.repeat && !event.isComposing && ctx.keybinds.matches(commandID, event))
+      heldKey = event.code
+  })
+  modifiers.onKeyUp((event) => {
+    // The host can consume keydown before our listener. Match the public effective
+    // binding on keyup as well, so hold-to-talk still releases in that case.
+    if (
+      !ctx.keybinds.matches(commandID, event) &&
+      (!heldKey ||
+        (event.code !== heldKey && !["Meta", "Control", "Alt", "Shift"].includes(event.key)))
+    )
+      return
+    heldKey = undefined
+    if (state() === "recording") stop()
+    else if (state() === "permission") cancel()
+  })
+  modifiers.onBlur(() => {
+    if (operation) cancel()
+  })
   ctx.signal.addEventListener("abort", cancel, { once: true })
   const microphone =
     "data:image/svg+xml," +
