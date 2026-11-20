@@ -80,6 +80,58 @@ export const parsedSnapshotCacheStats = () => ({
 })
 export const clearParsedSnapshotCache = () => parsedSnapshots.clear()
 
+/**
+ * One snapshot by immutable id: its metadata row, then its parsed body from the shared cache or,
+ * on a miss, the stored text. Every reader of a snapshot body (a page, the latest of a source, a
+ * comparison) goes through here, so a body is read and parsed once per id however it is asked for.
+ */
+function loadSnapshot(
+  db: Database,
+  projectDirectory: string,
+  snapshotID: string,
+): ModelEvidenceSnapshot | null {
+  const meta = db
+    .query<SnapshotMetaRow, [string, string]>(
+      `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
+              record_count, length(body) AS body_bytes FROM model_evidence_snapshots
+       WHERE project_directory=? AND snapshot_id=?`,
+    )
+    .get(projectDirectory, snapshotID)
+  return meta ? parsedSnapshotFor(db, projectDirectory, meta) : null
+}
+
+function parsedSnapshotFor(
+  db: Database,
+  projectDirectory: string,
+  meta: SnapshotMetaRow,
+): ModelEvidenceSnapshot {
+  // Snapshots are immutable by id, so a parsed one is reused; only metadata is read per call.
+  const cacheKey = `${projectDirectory}\u0000${meta.snapshot_id}\u0000${meta.generation}:${meta.record_count}:${meta.body_bytes}`
+  let snapshot = parsedSnapshots.get(cacheKey)
+  if (!snapshot) {
+    const row = db
+      .query<{ body: string }, [string, string]>(
+        `SELECT body FROM model_evidence_snapshots WHERE project_directory=? AND snapshot_id=?`,
+      )
+      .get(projectDirectory, meta.snapshot_id)
+    if (!row) throw new Error("Model evidence snapshot is inconsistent")
+    snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
+    parsedSnapshots.set(cacheKey, snapshot, meta.body_bytes)
+  }
+  if (
+    snapshot.snapshotID !== meta.snapshot_id ||
+    snapshot.projectDirectory !== meta.project_directory ||
+    snapshot.source !== meta.source ||
+    snapshot.generation !== meta.generation ||
+    snapshot.retrievedAt !== meta.retrieved_at ||
+    snapshot.records.length !== meta.record_count
+  ) {
+    parsedSnapshots.delete(cacheKey)
+    throw new Error("Model evidence snapshot is inconsistent")
+  }
+  return snapshot
+}
+
 type EndpointPricingGeneration = Record<EndpointPricingProductID, number>
 
 type EndpointPricingRefreshRow = {
@@ -506,13 +558,13 @@ export class ModelEvidenceStore {
   /** The latest stored snapshot of a source, or null before the first successful fetch. */
   latestSnapshot(source: ModelEvidenceSource): ModelEvidenceSnapshot | null {
     const row = this.db
-      .query<{ body: string }, [string, string]>(
-        `SELECT s.body FROM model_evidence_refreshes r
-         JOIN model_evidence_snapshots s ON s.snapshot_id = r.latest_snapshot_id
-         WHERE r.project_directory=? AND r.source=?`,
+      .query<{ latest_snapshot_id: string | null }, [string, string]>(
+        "SELECT latest_snapshot_id FROM model_evidence_refreshes WHERE project_directory=? AND source=?",
       )
       .get(this.projectDirectory, source)
-    return row ? ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body)) : null
+    return row?.latest_snapshot_id
+      ? loadSnapshot(this.db, this.projectDirectory, row.latest_snapshot_id)
+      : null
   }
 
   /**
@@ -674,25 +726,8 @@ export class ModelEvidenceStore {
   }
 
   private readPage(snapshotID: string, cursor: string, limit: number) {
-    const row = this.db
-      .query<SnapshotRow, [string, string]>(
-        `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
-                record_count, body FROM model_evidence_snapshots
-         WHERE project_directory=? AND snapshot_id=?`,
-      )
-      .get(this.projectDirectory, snapshotID)
-    if (!row) throw new Error("Model evidence snapshot is unavailable in this project")
-
-    const snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
-    if (
-      snapshot.snapshotID !== row.snapshot_id ||
-      snapshot.projectDirectory !== row.project_directory ||
-      snapshot.source !== row.source ||
-      snapshot.generation !== row.generation ||
-      snapshot.retrievedAt !== row.retrieved_at ||
-      snapshot.records.length !== row.record_count
-    )
-      throw new Error("Model evidence snapshot is inconsistent")
+    const snapshot = loadSnapshot(this.db, this.projectDirectory, snapshotID)
+    if (!snapshot) throw new Error("Model evidence snapshot is unavailable in this project")
     const offset = Number(cursor)
     if (!Number.isSafeInteger(offset) || offset > snapshot.records.length)
       throw new Error("Model evidence page cursor is unavailable")
@@ -876,30 +911,7 @@ export class ModelEvidenceReadStore {
             },
           }
 
-        // Snapshots are immutable by id, so a parsed one is reused; only metadata is read per call.
-        const cacheKey = `${this.projectDirectory}\u0000${snapshotID}\u0000${meta.generation}:${meta.record_count}:${meta.body_bytes}`
-        let snapshot = parsedSnapshots.get(cacheKey)
-        if (!snapshot) {
-          const row = this.db
-            .query<{ body: string }, [string, string]>(
-              `SELECT body FROM model_evidence_snapshots WHERE project_directory=? AND snapshot_id=?`,
-            )
-            .get(this.projectDirectory, snapshotID)
-          if (!row) throw new Error("Model evidence snapshot is inconsistent")
-          snapshot = ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body))
-          parsedSnapshots.set(cacheKey, snapshot, meta.body_bytes)
-        }
-        if (
-          snapshot.snapshotID !== meta.snapshot_id ||
-          snapshot.projectDirectory !== meta.project_directory ||
-          snapshot.source !== meta.source ||
-          snapshot.generation !== meta.generation ||
-          snapshot.retrievedAt !== meta.retrieved_at ||
-          snapshot.records.length !== meta.record_count
-        ) {
-          parsedSnapshots.delete(cacheKey)
-          throw new Error("Model evidence snapshot is inconsistent")
-        }
+        const snapshot = parsedSnapshotFor(this.db, this.projectDirectory, meta)
         return {
           source,
           storage,
