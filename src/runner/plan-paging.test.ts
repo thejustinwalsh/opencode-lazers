@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -6,6 +7,7 @@ import { TaskRepository } from "../storage.ts"
 import { meterReads } from "./read-meter.fixture.ts"
 import { planPrioritySortSQL } from "./priority.ts"
 import { RunnerStore } from "./store.ts"
+import { FULL_VIEW_PLANS_PER_PAGE, inspectPlan } from "./inspection.ts"
 
 /**
  * `plans()` and `planHeads()` used to stop at 1,000 rows, so plan 1,001 was invisible to ticks,
@@ -70,7 +72,7 @@ test("plans() and planHeads() return plan 1,001 and every plan after it", () => 
   )
   expect(capped).toHaveLength(1_000)
 
-  const all = f.store.plans()
+  const all = allPlans(f.store)
   expect(all.map((plan) => plan.id)).toEqual(expected.map((row) => row.id))
   expect(new Set(all.map((plan) => plan.id)).size).toBe(TOTAL)
   expect([...f.store.eachPlan()]).toHaveLength(TOTAL)
@@ -99,7 +101,7 @@ test("a walk reads only what its caller uses: heads read ids, not bodies", () =>
   const ids = [...f.store.planHeads(["running"])]
   walk.stop()
   const full = meterReads(f.store)
-  const bodies = f.store.plans()
+  const bodies = allPlans(f.store)
   full.stop()
 
   expect(ids).toHaveLength(TOTAL / 4)
@@ -109,4 +111,58 @@ test("a walk reads only what its caller uses: heads read ids, not bodies", () =>
   expect(full.of(/runner_plans/).rows).toBe(TOTAL)
   show("plans() / full view", old.of(/runner_plans/), full.of(/runner_plans/))
   show("planHeads(running)", old.of(/runner_plans/), walk.of(/runner_plans/))
+})
+
+test("the project-wide full view pages: a cursor in, a page out, the same content across pages", () => {
+  const f = seeded()
+  const everything = allPlans(f.store)
+  const pages: { ids: string[]; first: boolean }[] = []
+  let after: string | undefined
+  const seen: unknown[] = []
+  for (;;) {
+    const page = inspectPlan(f.store, {
+      full: true,
+      limit: 100,
+      ...(after ? { plansAfter: after } : {}),
+    }) as {
+      plans: Array<{ id: string; waitingOnPlans: unknown }>
+      paging: { plans: { next: string | null; returned: number } }
+      audit?: unknown
+    }
+    pages.push({ ids: page.plans.map((plan) => plan.id), first: page.audit !== undefined })
+    seen.push(...page.plans)
+    expect(page.paging.plans.returned).toBe(page.plans.length)
+    expect(page.plans.length).toBeLessThanOrEqual(100)
+    if (page.paging.plans.next === null) break
+    after = page.paging.plans.next
+  }
+  // Same plans, same order, same bodies as the old single call; the audit rides on page one only.
+  expect(pages.flatMap((page) => page.ids)).toEqual(everything.map((plan) => plan.id))
+  expect(pages).toHaveLength(Math.ceil(TOTAL / 100))
+  expect(pages.map((page) => page.first)).toEqual(pages.map((_, index) => index === 0))
+  expect(seen.map((plan) => (plan as { body: string }).body)).toEqual(
+    everything.map((plan) => plan.body),
+  )
+  // The default page, and a cursor that does not decode.
+  const defaultPage = inspectPlan(f.store, { full: true }) as { plans: unknown[] }
+  expect(defaultPage.plans).toHaveLength(FULL_VIEW_PLANS_PER_PAGE)
+  expect(() => inspectPlan(f.store, { full: true, plansAfter: "not-a-cursor" })).toThrow(
+    "Invalid plan cursor",
+  )
+})
+
+test("a full-view call holds one page of bodies, where the old call read every plan", () => {
+  const f = seeded()
+  const old = meterReads(f.store)
+  allPlans(f.store)
+  old.stop()
+  const call = meterReads(f.store)
+  inspectPlan(f.store, { full: true })
+  call.stop()
+  const rows = (meter: ReturnType<typeof meterReads>) => meter.of(/FROM runner_plans/)
+  show("full view first page", rows(old), rows(call))
+  // One page plus the look-ahead row; the waiting-on reads are by plan id, never a project scan.
+  expect(rows(old).rows).toBe(TOTAL)
+  expect(rows(call).rows).toBeLessThan(TOTAL / 4)
+  expect(rows(call).bytes).toBeLessThan(rows(old).bytes / 4)
 })

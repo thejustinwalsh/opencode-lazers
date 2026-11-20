@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { afterEach, expect, test } from "bun:test"
 import { runbook } from "../guidance/index.ts"
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
@@ -430,7 +431,7 @@ test("nothing is sent while contact is paused; one bundle is sent on unpause", a
   expect(f.sent[0]!.text).toContain("LAZERS recovery bundle")
   expect(f.sent[0]!.text).toMatch(/LZ-\d+/)
   expect(f.outbox().map((row) => row.state)).toEqual(["delivered"])
-  expect(f.store.plans().length).toBeGreaterThan(1)
+  expect(allPlans(f.store).length).toBeGreaterThan(1)
   const status = await a.bundles.status()
   expect(status.items).toBe(bundle!.count)
   expect(status.open).toMatchObject({ state: "delivered", count: bundle!.count })

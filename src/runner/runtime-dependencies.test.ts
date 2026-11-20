@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { expect, test } from "bun:test"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -46,7 +47,7 @@ test("priority orders conflicting plans without rejecting their overlapping scop
   const attempt = f.store.attempts(later.planID)[0]!
   expect(attempt).toBeDefined()
   expect(projection.selectedTaskIDs).toEqual(
-    f.store.plans().flatMap((plan) => f.store.attempts(plan.id).map((row) => row.task_id)),
+    allPlans(f.store).flatMap((plan) => f.store.attempts(plan.id).map((row) => row.task_id)),
   )
   expect(f.sessions.get(attempt.session_id)?.busy).toBe(true)
   const updated = await f.runtime.command(
@@ -99,9 +100,9 @@ test("runtime dispatch matches scheduling projection for submission ties and sha
   expect(projection.selectedTaskIDs).toEqual([f.tasks[0]!.id])
 
   await f.runtime.tick()
-  const actual = f.store
-    .plans()
-    .flatMap((plan) => f.store.attempts(plan.id).map((attempt) => attempt.task_id))
+  const actual = allPlans(f.store).flatMap((plan) =>
+    f.store.attempts(plan.id).map((attempt) => attempt.task_id),
+  )
   expect(actual).toEqual(projection.selectedTaskIDs)
   expect(actual).toEqual([f.tasks[0]!.id])
 })

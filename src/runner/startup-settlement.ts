@@ -148,9 +148,7 @@ export class StartupSettlement {
     return { attempt, effect, failure }
   }
   hasMeaningfulWorkerProgress(attemptID: string) {
-    return this.store
-      .progressFacts([attemptID])
-      .some((fact) => !isUnavailableSessionRecoveryGap(fact))
+    return this.store.hasProgressBeyond(attemptID, isUnavailableSessionRecoveryGap)
   }
   startupSettlementForEffect(
     planID: string,
@@ -843,7 +841,7 @@ export class StartupSettlement {
 }
 
 /** Activity completion means a receipt exists, not that its process tree is idle. */
-function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
+export function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
   if (
     fact.kind !== "gap" ||
     fact.source !== "recovery" ||

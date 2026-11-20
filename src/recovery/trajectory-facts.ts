@@ -89,95 +89,113 @@ export function readTrajectoryFacts(
   options: { replay?: boolean; projectDirectory?: string } = {},
 ): TrajectoryFacts {
   const replay = options.replay === true
-  const transitions = db
-    .query<{ event: string; payload: string; created_at: number }, [string, string, number]>(
-      `SELECT event,payload,created_at FROM runner_transitions
-       WHERE plan_id=? AND task_id=? AND created_at<=? AND event IN
-         ('VERIFY','REPAIR','RESUME','RETAINED_REPAIR','RETRY_REQUESTED','WORKER_STARTED','ATTEMPT_RESUMED','WORKER_STOPPED','BLOCKED')
-       ORDER BY id`,
+  const until = replay ? now : Number.MAX_SAFE_INTEGER
+  // The caller counts events and walks worker start/stop pairs, so the database does both:
+  // counting events are grouped by what they are counted on (`from` of a repair, the reason of a
+  // block) and ordered by first appearance, so ties between hold families resolve as a scan of
+  // the journal would; only the worker start/stop events come back one row each, without payload.
+  const counted = db
+    .query<
+      { event: string; from_state: string | null; reason: string | null; n: number },
+      [string, string, number]
+    >(
+      `SELECT event,
+              CASE WHEN event IN ('REPAIR','RETAINED_REPAIR') THEN json_extract(payload,'$.from') END AS from_state,
+              CASE WHEN event='BLOCKED' THEN json_extract(payload,'$.reason') END AS reason,
+              count(*) AS n
+         FROM runner_transitions
+        WHERE plan_id=? AND task_id=? AND created_at<=? AND event IN
+          ('VERIFY','REPAIR','RESUME','RETAINED_REPAIR','RETRY_REQUESTED','BLOCKED')
+        GROUP BY event,from_state,reason ORDER BY min(id)`,
     )
-    .all(planID, taskID, replay ? now : Number.MAX_SAFE_INTEGER)
-  const parse = (payload: string) => {
-    try {
-      return JSON.parse(payload) as Record<string, unknown>
-    } catch {
-      return {}
-    }
-  }
+    .all(planID, taskID, until)
+  const worker = db
+    .query<{ event: string; outcome: string | null; created_at: number }, [string, string, number]>(
+      `SELECT event,
+              CASE WHEN event='WORKER_STOPPED' THEN json_extract(payload,'$.outcome') END AS outcome,
+              created_at
+         FROM runner_transitions
+        WHERE plan_id=? AND task_id=? AND created_at<=? AND event IN
+          ('WORKER_STARTED','ATTEMPT_RESUMED','WORKER_STOPPED')
+        ORDER BY id`,
+    )
+    .all(planID, taskID, until)
   let verifyRounds = 0
   let verifyFailures = 0
   let repairsAndResumes = 0
   let interruptions = 0
   let reopenedAfterAccept = 0
   const holds = new Map<string, number>()
+  for (const row of counted) {
+    if (row.event === "VERIFY") verifyRounds += row.n
+    else if (REPAIR_EVENTS.includes(row.event)) {
+      repairsAndResumes += row.n
+      if (row.event === "REPAIR" && row.from_state === "verifying") verifyFailures += row.n
+      if (row.event === "RETAINED_REPAIR" && row.from_state === "accepted")
+        reopenedAfterAccept += row.n
+    } else if (row.event === "BLOCKED" && typeof row.reason === "string") {
+      const family = holdFamily(row.reason)?.name ?? "unclassified"
+      holds.set(family, (holds.get(family) ?? 0) + row.n)
+    }
+  }
   // Worker time: from a start or resume to the next stop; time on hold in between is not work.
   let attemptMs = 0
   let runningSince: number | null = null
-  for (const row of transitions) {
-    const body = parse(row.payload)
-    if (row.event === "VERIFY") verifyRounds += 1
-    else if (REPAIR_EVENTS.includes(row.event)) {
-      repairsAndResumes += 1
-      if (row.event === "REPAIR" && body.from === "verifying") verifyFailures += 1
-      if (row.event === "RETAINED_REPAIR" && body.from === "accepted") reopenedAfterAccept += 1
-    } else if (row.event === "WORKER_STARTED" || row.event === "ATTEMPT_RESUMED") {
-      runningSince ??= row.created_at
-    } else if (row.event === "WORKER_STOPPED") {
-      if (body.outcome === "interrupted") interruptions += 1
+  for (const row of worker) {
+    if (row.event === "WORKER_STOPPED") {
+      if (row.outcome === "interrupted") interruptions += 1
       if (runningSince !== null) attemptMs += Math.max(0, row.created_at - runningSince)
       runningSince = null
-    } else if (row.event === "BLOCKED" && typeof body.reason === "string") {
-      const family = holdFamily(body.reason)?.name ?? "unclassified"
-      holds.set(family, (holds.get(family) ?? 0) + 1)
-    }
+    } else runningSince ??= row.created_at
   }
-  const attempts = db
+  // One row of sums for the task's attempts; no attempt row is read.
+  const totals = db
     .query<
       {
-        id: string
-        state: string
-        started_at: number
-        token_count: number | null
-        tool_count: number
+        attempts: number
+        live: number | null
+        tokens: number | null
+        tools: number | null
+        priced: number
         cost: number | null
       },
       [string, string, number]
     >(
-      "SELECT id,state,started_at,token_count,tool_count,cost FROM runner_attempts WHERE plan_id=? AND task_id=? AND started_at<=?",
+      `SELECT count(*) AS attempts,
+              sum(state IN ('preparing','running')) AS live,
+              sum(token_count) AS tokens, sum(tool_count) AS tools,
+              count(cost) AS priced, sum(cost) AS cost
+         FROM runner_attempts WHERE plan_id=? AND task_id=? AND started_at<=?`,
     )
-    .all(planID, taskID, replay ? now : Number.MAX_SAFE_INTEGER)
+    .get(planID, taskID, until)!
   // A worker that never stopped is still working when its attempt is live (or, replaying, at `now`).
-  if (
-    runningSince !== null &&
-    (replay || attempts.some((a) => ["preparing", "running"].includes(a.state)))
-  )
+  if (runningSince !== null && (replay || (totals.live ?? 0) > 0))
     attemptMs += Math.max(0, now - runningSince)
-  const priced = attempts.filter((attempt) => attempt.cost !== null)
   const [family, count] = [...holds.entries()].toSorted((a, b) => b[1] - a[1])[0] ?? []
-  let tokens = attempts.reduce((sum, attempt) => sum + (attempt.token_count ?? 0), 0)
-  let toolCalls = attempts.reduce((sum, attempt) => sum + attempt.tool_count, 0)
+  let tokens = totals.tokens ?? 0
+  let toolCalls = totals.tools ?? 0
   if (replay && options.projectDirectory) {
-    tokens = 0
-    toolCalls = 0
-    for (const attempt of attempts) {
-      const used = db
-        .query<{ tokens: number | null }, [string, string, number]>(
-          `SELECT sum(${STEP_TOKENS}) AS tokens FROM runner_progress
-            WHERE project_directory=? AND attempt_id=? AND kind='step' AND at<=?`,
-        )
-        .get(options.projectDirectory, attempt.id, now)
-      tokens += used?.tokens ?? 0
-      const calls = db
-        .query<{ n: number }, [string, string, number]>(
-          `SELECT count(*) AS n FROM runner_progress
-            WHERE project_directory=? AND attempt_id=? AND kind='tool' AND call_id IS NOT NULL AND at<=?`,
-        )
-        .get(options.projectDirectory, attempt.id, now)
-      toolCalls += calls?.n ?? 0
-    }
+    // Replaying measures from the journal's steps: the attempt row only holds the latest total.
+    const attemptIDs =
+      "SELECT id FROM runner_attempts WHERE plan_id=? AND task_id=? AND started_at<=?"
+    const used = db
+      .query<{ tokens: number | null }, [string, string, string, number, number]>(
+        `SELECT sum(${STEP_TOKENS}) AS tokens FROM runner_progress
+          WHERE project_directory=? AND attempt_id IN (${attemptIDs}) AND kind='step' AND at<=?`,
+      )
+      .get(options.projectDirectory, planID, taskID, until, now)
+    tokens = used?.tokens ?? 0
+    const calls = db
+      .query<{ n: number }, [string, string, string, number, number]>(
+        `SELECT count(*) AS n FROM runner_progress
+          WHERE project_directory=? AND attempt_id IN (${attemptIDs})
+            AND kind='tool' AND call_id IS NOT NULL AND at<=?`,
+      )
+      .get(options.projectDirectory, planID, taskID, until, now)
+    toolCalls = calls?.n ?? 0
   }
   return {
-    attempts: attempts.length,
+    attempts: totals.attempts,
     verifyRounds,
     verifyFailures,
     repairsAndResumes,
@@ -187,7 +205,7 @@ export function readTrajectoryFacts(
     attemptMs,
     tokens,
     toolCalls,
-    costUSD: priced.length ? priced.reduce((sum, attempt) => sum + attempt.cost!, 0) : null,
+    costUSD: totals.priced > 0 ? (totals.cost ?? 0) : null,
   }
 }
 
@@ -232,27 +250,27 @@ export function readTrajectoryTail(
     trailingToolFailures += 1
   }
   // Edits are read over the whole attempt: their last position and the paths outside the scope.
-  // Older journal rows carry no `fileTargets`; their patch result lists the files instead.
+  // The database drops failed edits and groups identical target lists, so a row is one distinct
+  // list of files with the newest sequence that wrote it. Older journal rows carry no
+  // `fileTargets`; only those return their patch result, which lists the files instead.
   const edits = db
-    .query<
-      { seq: number; paths: string | null; content: string | null; status: string | null },
-      [string, string, number]
-    >(
-      `SELECT seq,json_extract(payload,'$.fileTargets.paths') AS paths,
-              substr(json_extract(payload,'$.content'),1,4000) AS content,
-              json_extract(payload,'$.status') AS status
+    .query<{ seq: number; paths: string | null; content: string | null }, [string, string, number]>(
+      `SELECT max(seq) AS seq,
+              json_extract(payload,'$.fileTargets.paths') AS paths,
+              CASE WHEN json_type(payload,'$.fileTargets.paths')='array' THEN NULL
+                   ELSE substr(json_extract(payload,'$.content'),1,4000) END AS content
          FROM runner_progress
         WHERE project_directory=? AND attempt_id=? AND kind='tool' AND seq<=?
           AND (json_extract(payload,'$.tool') IN ('edit','write','patch','multiedit')
                OR json_extract(payload,'$.fileTargets.operation') IN ('edit','patch'))
-        ORDER BY seq`,
+          AND coalesce(json_extract(payload,'$.status'),'') NOT IN ('failed','not-executed')
+        GROUP BY paths,content ORDER BY seq`,
     )
     .all(projectDirectory, attemptID, throughSequence)
   const edited = new Set<string>()
   let lastEditSeq = 0
   for (const row of edits) {
-    if (row.status === "failed" || row.status === "not-executed") continue
-    lastEditSeq = row.seq
+    lastEditSeq = Math.max(lastEditSeq, row.seq)
     try {
       const paths = JSON.parse(row.paths ?? "null") as unknown
       if (Array.isArray(paths)) {

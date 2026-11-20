@@ -600,7 +600,7 @@ export function registerProgress(
         ctx as never,
         NATIVE_EVENT_TYPES,
         { event: onEvent, gap: onGap },
-        ctx.location?.directory ?? projectDirectory,
+        ctx.location?.directory,
       ),
       owns: (sessionID) => toolScope.owns(sessionID),
       memberEvent: (sessionID, type) => {

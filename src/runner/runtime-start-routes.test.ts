@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { expect, test } from "bun:test"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
@@ -144,7 +145,7 @@ test("inspector Start admits one real runtime plan and returns record-backed tas
   expect(concurrent.planID).toBe(first.planID)
   const second = await f.runtime.startTask(input)
   expect(second).toMatchObject({ status: "existing", planID: first.planID })
-  expect(f.store.plans()).toHaveLength(1)
+  expect(allPlans(f.store)).toHaveLength(1)
   expect(f.store.attempts(first.planID)).toHaveLength(1)
   expect(f.events.filter((event) => event.startsWith("create:"))).toHaveLength(1)
 
@@ -179,7 +180,7 @@ test("Start recovers a lost native continuation-create response after restart", 
   await expect(f.runtime.startTask(input)).rejects.toThrow(
     "native create interrupted before commit",
   )
-  const draft = f.store.plans()[0]!
+  const draft = allPlans(f.store)[0]!
   const continuation = f.store.continuation(draft.id)!
   expect(draft.state).toBe("draft")
   expect(f.sessions.get(continuation.session_id)).toBeUndefined()
@@ -234,7 +235,7 @@ test("Start admits an existing queued plan, keeps its selected worker route and 
     sessionID: "owner",
   })
   expect(result.planID).toBe(f.receipt.planID)
-  expect(f.store.plans()).toHaveLength(1)
+  expect(allPlans(f.store)).toHaveLength(1)
   expect(f.store.plan(result.planID)!.state).toBe("running")
   expect(JSON.parse(f.store.plan(result.planID)!.model!)).toEqual(selected)
   expect(f.store.attempts(result.planID).map((attempt) => attempt.task_id)).toEqual([
@@ -363,7 +364,7 @@ test("Start admits the configured route independently of the Architect model", a
       sessionID: "owner",
     }),
   ).rejects.toThrow("Select an implementor model")
-  expect(noModel.store.plans()).toHaveLength(0)
+  expect(allPlans(noModel.store)).toHaveLength(0)
   expect(noModel.events).toEqual([])
 })
 
@@ -894,7 +895,7 @@ test("Start rejects stale, foreign and ended work without changing runtime state
   const cancelled = await f.runtime.startTask({ taskID: task.id, revision: 1, sessionID: "owner" })
   expect(cancelled).toMatchObject({ status: "existing", state: "cancelled" })
   expect(f.store.execution(task.id)?.state).toBe("cancelled")
-  expect(f.store.plans()).toHaveLength(1) // the fixture plan only
+  expect(allPlans(f.store)).toHaveLength(1) // the fixture plan only
 })
 
 test("worker sessions are titled with the project code", async () => {
@@ -935,7 +936,7 @@ test("F-S4-2 retirement preserves a live owner's location outside the display wi
     for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, f.receipt.planID)
     db.query("UPDATE runner_plans SET state='cleanup-blocked' WHERE id=?").run(f.receipt.planID)
   })
-  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(true)
+  expect(allPlans(f.store).some((plan) => plan.id === f.receipt.planID)).toBe(true)
   let retired = false
   f.host.retireWorktreeLocation = async () => {
     retired = true

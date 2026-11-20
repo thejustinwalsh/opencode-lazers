@@ -18,8 +18,7 @@ import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { sourceStampFromDatabase } from "./changes.ts"
-import { projectAssociations, sessionAssociations } from "./associations.ts"
-import { associatedSessionIDs } from "./associations.ts"
+import { projectAssociations, projectSessionIDs, sessionAssociations } from "./associations.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import type { TaskValuationProvider } from "../models/task-valuation.ts"
 import { LiveRadarReader } from "./live-read.ts"
@@ -585,7 +584,7 @@ function loadRadarSource(
   const planIDs = [...projection.associations.planIDs]
   const managedSessionIDs =
     scope.kind === "project"
-      ? associatedSessionIDs(db, projectDirectory)
+      ? projectSessionIDs(db, projectDirectory, secret)
       : new Set<string>([scope.sessionID])
   for (const task of projection.tasks)
     if (task.provenance.sessionID) managedSessionIDs.add(task.provenance.sessionID)

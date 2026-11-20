@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite"
+import { observationRevisionStamp, StampGate } from "../core/stamp-gate.ts"
 
 export type SessionAssociations = {
   taskIDs: Set<string>
@@ -89,38 +90,82 @@ export function projectAssociations(db: Database, projectDirectory: string): Ses
   }
 }
 
+/**
+ * Every session id the project's tasks, plans, attempts and continuations name. The caller needs
+ * a set of session ids, so each statement returns DISTINCT ids (rows are bounded by the number of
+ * sessions, not by tasks or attempts) and the NULL provenance of tasks without one is dropped in
+ * SQL. Run it through {@link projectSessionIDs} so an unchanged project reads nothing.
+ */
 export function associatedSessionIDs(db: Database, projectDirectory: string) {
   const ids = new Set<string>()
   for (const row of db
     .query<{ session_id: string }, [string]>(
-      `SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.provenance.sessionID') END AS session_id
-       FROM tasks WHERE project_directory=?`,
-    )
-    .all(projectDirectory))
-    if (row.session_id) ids.add(row.session_id)
-  for (const row of db
-    .query<{ session_id: string }, [string]>(
-      "SELECT owner AS session_id FROM runner_plans WHERE project_directory=?",
+      `SELECT DISTINCT session_id FROM (
+         SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.provenance.sessionID') END AS session_id
+         FROM tasks WHERE project_directory=?
+       ) WHERE session_id IS NOT NULL AND session_id<>''`,
     )
     .all(projectDirectory))
     ids.add(row.session_id)
   for (const row of db
     .query<{ session_id: string }, [string]>(
-      `SELECT a.session_id FROM runner_attempts a
+      "SELECT DISTINCT owner AS session_id FROM runner_plans WHERE project_directory=?",
+    )
+    .all(projectDirectory))
+    ids.add(row.session_id)
+  for (const row of db
+    .query<{ session_id: string }, [string]>(
+      `SELECT DISTINCT a.session_id FROM runner_attempts a
        JOIN runner_plans p ON p.id=a.plan_id WHERE p.project_directory=?`,
     )
     .all(projectDirectory))
     ids.add(row.session_id)
   for (const row of db
-    .query<{ session_id: string | null; parent_id: string | null }, [string]>(
-      `SELECT c.session_id,c.parent_id FROM runner_continuations c
-       JOIN runner_plans p ON p.id=c.plan_id WHERE p.project_directory=?`,
+    .query<{ session_id: string | null }, [string]>(
+      `SELECT DISTINCT c.session_id FROM runner_continuations c
+       JOIN runner_plans p ON p.id=c.plan_id
+       WHERE p.project_directory=? AND c.session_id IS NOT NULL AND c.session_id<>''`,
     )
-    .all(projectDirectory)) {
-    if (row.session_id) ids.add(row.session_id)
-    if (row.parent_id) ids.add(row.parent_id)
-  }
+    .all(projectDirectory))
+    ids.add(row.session_id!)
+  for (const row of db
+    .query<{ parent_id: string | null }, [string]>(
+      `SELECT DISTINCT c.parent_id FROM runner_continuations c
+       JOIN runner_plans p ON p.id=c.plan_id
+       WHERE p.project_directory=? AND c.parent_id IS NOT NULL AND c.parent_id<>''`,
+    )
+    .all(projectDirectory))
+    ids.add(row.parent_id!)
   return ids
+}
+
+/**
+ * Gate instances, one per observation secret (one per core), like the topology gate. The stamp
+ * is the project's observation revision: every write to tasks, plans, attempts and continuations
+ * bumps it (source-revision.ts), so an unchanged project returns the held list and reads nothing.
+ * Each entry is one id list per project and location database; the byte budget is a ceiling for
+ * many projects, estimated at 40 bytes an id and not measured on live data.
+ */
+const sessionGates = new WeakMap<Uint8Array, StampGate<string[]>>()
+
+/** {@link associatedSessionIDs}, read once per observation revision. Returns a fresh set. */
+export function projectSessionIDs(
+  db: Database,
+  projectDirectory: string,
+  secret: Uint8Array,
+): Set<string> {
+  let gate = sessionGates.get(secret)
+  if (!gate) {
+    gate = new StampGate<string[]>({ maxBytes: 4 * 1024 * 1024 })
+    sessionGates.set(secret, gate)
+  }
+  return new Set(
+    gate.runSync(
+      JSON.stringify([db.filename, projectDirectory]),
+      observationRevisionStamp(db, projectDirectory),
+      () => [...associatedSessionIDs(db, projectDirectory)],
+    ),
+  )
 }
 
 type MembershipState = {

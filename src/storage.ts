@@ -1268,8 +1268,8 @@ export class TaskRepository {
   /** Return the latest durable disposition without changing the immutable task. */
   taskDisposition(taskID: string): TaskDispositionRecordType | undefined {
     const row = this.db
-      .query<DispositionRow, [string, string]>(
-        "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1",
+      .query<DispositionRecordRow, [string, string]>(
+        `SELECT ${DISPOSITION_COLUMNS} FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1`,
       )
       .get(this.projectDirectory, taskID)
     return row ? dispositionRecord(row) : undefined
@@ -1278,8 +1278,8 @@ export class TaskRepository {
   /** Return the append-only disposition history for a project-local task. */
   taskDispositionHistory(taskID: string): TaskDispositionRecordType[] {
     return this.db
-      .query<DispositionRow, [string, string]>(
-        "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id",
+      .query<DispositionRecordRow, [string, string]>(
+        `SELECT ${DISPOSITION_COLUMNS} FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id`,
       )
       .all(this.projectDirectory, taskID)
       .map(dispositionRecord)
@@ -1328,8 +1328,8 @@ export class TaskRepository {
           throw new Error("Related task must belong to this project")
       }
       const current = db
-        .query<DispositionRow, [string, string]>(
-          "SELECT * FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1",
+        .query<DispositionRecordRow, [string, string]>(
+          `SELECT ${DISPOSITION_COLUMNS} FROM task_dispositions WHERE project_directory=? AND task_id=? ORDER BY id DESC LIMIT 1`,
         )
         .get(this.projectDirectory, parsed.taskID)
       if (current)
@@ -1470,6 +1470,14 @@ type DispositionRow = {
   created_at: string
 }
 
+/**
+ * The columns a disposition record is built from. `payload` (the canonical request, only compared
+ * on a replayed request id) and `project_directory` (already the filter) are not read.
+ */
+const DISPOSITION_COLUMNS =
+  "id,task_id,request_id,disposition,reason,evidence,related_task_ids,session_id,agent,created_at"
+type DispositionRecordRow = Omit<DispositionRow, "project_directory" | "payload">
+
 export type DispositionReceipt =
   | {
       status: "recorded" | "replayed" | "already_disposed"
@@ -1516,7 +1524,7 @@ function hasTable(db: Database, name: string): boolean {
   )
 }
 
-function dispositionRecord(row: DispositionRow): TaskDispositionRecordType {
+function dispositionRecord(row: DispositionRecordRow): TaskDispositionRecordType {
   return TaskDispositionRecord.parse({
     id: row.id,
     taskID: row.task_id,

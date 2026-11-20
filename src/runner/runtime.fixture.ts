@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { afterEach, expect } from "bun:test"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -367,8 +368,7 @@ export function fixture(
       } else session.outcome = "succeeded"
     },
     updateInstruction: async (input) => {
-      const effect = store
-        .plans()
+      const effect = allPlans(store)
         .flatMap((plan) => store.effects(plan.id))
         .find(
           (item) => item.kind === "scope-instruction" && JSON.parse(item.payload).key === input.key,

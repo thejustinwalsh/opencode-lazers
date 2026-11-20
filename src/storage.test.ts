@@ -1,5 +1,5 @@
 import { schemaModules } from "./database-schema.ts"
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -9,6 +9,7 @@ import { keyedProposal, validProposal } from "../test/proposal.ts"
 import { TaskRepository, taskDatabasePath } from "./storage.ts"
 import { startingRevision, submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
+import { meterDatabase } from "./runner/read-meter.fixture.ts"
 import { ensureRetainedVerificationTables } from "./runner/retained-verification/store.ts"
 import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 
@@ -230,6 +231,66 @@ test("task dispositions are project-local, durable, idempotent, and hide retired
   const reopened = open(path)
   expect(reopened.taskDisposition(first.taskID)?.reason).toContain("integrated runner")
   expect(reopened.list()).toHaveLength(1)
+})
+
+test("disposition reads return the record's columns, not the stored request payload", () => {
+  const path = join(directory(), "tasks.sqlite")
+  const repository = open(path)
+  const task = submitTask(repository, keyedProposal(), provenance)
+  if (task.status !== "submitted") throw new Error("Expected submission")
+  repository.recordDisposition(
+    {
+      taskID: task.taskID,
+      requestID: "columns-1",
+      disposition: "superseded" as const,
+      reason: "Replaced by the integrated runner plan.",
+      evidence: [{ kind: "artifact" as const, reference: "a".repeat(2_000) }],
+      relatedTaskIDs: [],
+    },
+    { sessionID: "architect", agent: "architect" },
+  )
+  // The record the previous `SELECT *` produced: the stored columns mapped by hand.
+  const stored = repository.read((db) =>
+    db
+      .query<Record<string, string | number>, [string]>(
+        "SELECT * FROM task_dispositions WHERE task_id=?",
+      )
+      .get(task.taskID)!,
+  )
+  const expected = {
+    id: stored.id,
+    taskID: stored.task_id,
+    requestID: stored.request_id,
+    disposition: stored.disposition,
+    reason: stored.reason,
+    evidence: JSON.parse(String(stored.evidence)),
+    relatedTaskIDs: JSON.parse(String(stored.related_task_ids)),
+    sessionID: stored.session_id,
+    agent: stored.agent,
+    createdAt: stored.created_at,
+  }
+  expect(repository.taskDisposition(task.taskID)).toEqual(expected as never)
+  expect(repository.taskDispositionHistory(task.taskID)).toEqual([expected as never])
+
+  // The two reads' statements, measured on the same row: `SELECT *` (before) and as issued (after).
+  const issued = spyOn(
+    repository.read((db) => db),
+    "query",
+  )
+  repository.taskDisposition(task.taskID)
+  repository.taskDispositionHistory(task.taskID)
+  const statements = issued.mock.calls.map(([sql]) => String(sql))
+  issued.mockRestore()
+  const measure = (sqls: string[]) => {
+    const metered = meterDatabase(repository.read((db) => db))
+    for (const sql of sqls) metered.db.query(sql).all("/repo", task.taskID)
+    return { rows: metered.meter.rows, bytes: metered.meter.bytes }
+  }
+  const before = measure(statements.map((sql) => sql.replace(/SELECT .+? FROM/, "SELECT * FROM")))
+  const after = measure(statements)
+  console.log("task_dispositions read-meter, 1 row with 2 KB evidence:", { before, after })
+  expect(after.rows).toBe(before.rows)
+  expect(after.bytes).toBeLessThan(before.bytes * 0.6)
 })
 
 test("classification annotations use exact CAS replay and preserve every immutable or execution record", () => {

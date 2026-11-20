@@ -18,8 +18,13 @@ type DelegatedAgentInspection = DelegatedAgentStatus & {
 const CompactInspectPlanInput = z.strictObject({
   planID: z.uuid().optional(),
   full: z.boolean().optional().default(false),
-  /** Full view only: rows per history list (activity, evidence, delivery); newest first page. */
+  /**
+   * Full view only: rows per history list (activity, evidence, delivery), newest first page; for
+   * the project-wide full view (no planID), plans per page.
+   */
   limit: z.number().int().min(1).max(1000).optional(),
+  /** Project-wide full view only: `paging.plans.next` from a prior result, for the next plans. */
+  plansAfter: z.string().min(1).max(200).optional(),
   /** Full view only: `paging.<list>.next` from a prior result, to read the next older page. */
   activityBefore: z.number().int().min(0).optional(),
   evidenceBefore: z.number().int().min(0).optional(),
@@ -549,6 +554,14 @@ function retainedInspection(store: RunnerStore, plan: InspectablePlan) {
   )
 }
 
+/**
+ * Plans per page of the project-wide full view when `limit` is not given. Each plan row carries
+ * its whole body, so a page is bounded by plans, not by bytes: 25 plans of the sizes the plan
+ * schema allows stay far below the tool output limits. Estimated, not measured on live data; the
+ * caller can ask for 1 to 1,000 per page and the cursor reaches every plan.
+ */
+export const FULL_VIEW_PLANS_PER_PAGE = 25
+
 export function inspectPlan(
   store: RunnerStore,
   input: InspectPlanInput,
@@ -559,9 +572,10 @@ export function inspectPlan(
   if ("view" in input)
     throw new Error("Selected source messages require an authenticated active Architect read")
   if (input.full) {
-    if (!input.planID)
+    if (!input.planID) {
+      const page = store.planPage(input.limit ?? FULL_VIEW_PLANS_PER_PAGE, input.plansAfter)
       return {
-        plans: Array.from(store.eachPlan(), (plan) => {
+        plans: page.plans.map((plan) => {
           const prerequisiteFacts = waitingOnPlans(store, plan)
           return {
             ...plan,
@@ -570,9 +584,13 @@ export function inspectPlan(
             waitingOnPlansComplete: prerequisiteFacts.complete,
           }
         }),
-        audit: store.audit(),
-        delegatedAgentCapacity: capacity ?? null,
+        paging: { plans: { next: page.next, returned: page.plans.length } },
+        // The audit and capacity describe the project, not a plan: the first page carries them.
+        ...(input.plansAfter === undefined
+          ? { audit: store.audit(), delegatedAgentCapacity: capacity ?? null }
+          : {}),
       }
+    }
     const detail = store.detail(input.planID, {
       limit: input.limit,
       activityBefore: input.activityBefore,
