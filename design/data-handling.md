@@ -119,6 +119,46 @@ and reports bytes reclaimed.
 - A source check fails on new `SELECT *` or unbounded `.all()` against history tables
   outside migrations.
 
+## Models valuation by session
+
+A decision snapshot values every retained step and usage-snapshot fact. Facts and tasks
+are already stored projections; the valuation over them is still rebuilt whole after each
+revision. It is made incremental by session.
+
+- **Unit.** One worker session. Every quantity the valuation derives from facts (usage
+  selection, route evidence, cost evidence, per-call usage rows, route candidates) is a
+  function of that session's facts alone; attempts only select and label. The _fact
+  digest_ of a session is that attempt-independent reduction; per-session results that
+  also read the session's attempts are memoized on the digest, keyed by a hash of those
+  attempts.
+- **Stored.** `model_decision_progress` gains `session_id` (indexed with `seq`; a partial
+  index lists the few flagged rows). A small table
+  `model_decision_session(project, session_id, changed)` holds a per-project change clock:
+  a fold that writes or removes a fact, or folds a task that owns facts, stamps the
+  affected sessions with the next clock value in the same transaction. A read asks only for
+  sessions with `changed` above the clock it last saw (O(changed), not O(facts)) and reads
+  the facts of exactly those sessions through the index, joined to plans and tasks as
+  before. Rows the fold has not reached (queued rows, rows above the watermark, tasks
+  entering or leaving) are read live and their sessions are keyed by the content read, so
+  the facts are the same however far the fold lags. Digests are _not_ stored: they live in a
+  process-wide LRU bounded by a byte budget (`LAZERS_DECISION_DIGEST_MB`, default 96 MiB,
+  about 0.85 KiB per fact measured); a miss re-reads that one session and nothing is
+  refused. After a restart the cache is cold and one pass reads every session once, then
+  reads are incremental again. Existing rows get their session from a paged backfill in the
+  fold; until it finishes, reads use the full path. The schema installer reruns on a
+  generation change, so a plugin reload upgrades as a restart does.
+- **Composition.** Totals are recomposed from per-session pieces by the same fold the full
+  rebuild used, over the same sorted session order: category sums add the same numbers in
+  the same order (IEEE results are bit-identical, nothing is reassociated), costs and
+  market values are exact decimals, per-call rows are merged by the global fact sequence
+  they were first seen at, and route candidates are replayed by sequence. Price changes
+  recompute the market value of every session from the stored usage pieces without
+  touching facts. If a refactor ever changes a total, the parity tests (golden hashes
+  taken on the pre-change code, plus full-versus-incremental equality) fail.
+- **Cost.** Reads: facts of changed sessions only. Compute: digests of changed sessions,
+  then O(sessions + attempts) arithmetic to recompose. An unchanged revision still reads
+  nothing (the snapshot is returned as is).
+
 ## Applying it
 
 The lanes in `.agents/plans/memory-audit.md` implement this design area by area:

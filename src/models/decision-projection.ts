@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { databaseChanges } from "../database-events.ts"
 import { schemaModules } from "../database-schema.ts"
 import { acquireSharedConnection } from "../storage.ts"
@@ -169,6 +170,7 @@ export function installDecisionProjectionSchema(db: Database) {
         task_id TEXT NOT NULL,
         flags INTEGER NOT NULL,
         fact TEXT,
+        session_id TEXT,
         PRIMARY KEY(project_directory, seq)
       ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS ${TABLES.state} (
@@ -177,8 +179,19 @@ export function installDecisionProjectionSchema(db: Database) {
         folded_at INTEGER NOT NULL,
         tasks_folded_rowid INTEGER NOT NULL DEFAULT 0,
         last_read_at INTEGER NOT NULL DEFAULT 0,
-        dropping INTEGER NOT NULL DEFAULT 0
+        dropping INTEGER NOT NULL DEFAULT 0,
+        epoch TEXT NOT NULL DEFAULT '',
+        session_clock INTEGER NOT NULL DEFAULT 0,
+        sessions_ready INTEGER NOT NULL DEFAULT 0
       ) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS ${TABLES.sessions} (
+        project_directory TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        changed INTEGER NOT NULL,
+        PRIMARY KEY(project_directory, session_id)
+      ) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS model_decision_session_changed
+        ON ${TABLES.sessions}(project_directory, changed, session_id);
       CREATE TABLE IF NOT EXISTS ${TABLES.dirty} (
         project_directory TEXT NOT NULL,
         seq INTEGER NOT NULL,
@@ -199,20 +212,38 @@ export function installDecisionProjectionSchema(db: Database) {
         task_id TEXT NOT NULL,
         PRIMARY KEY(project_directory, task_id)
       ) WITHOUT ROWID;`)
-    // Generation 1 had no task watermark, last-read time or drop mark.
-    const columns = new Set(
-      db
-        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('${TABLES.state}')`)
-        .all()
-        .map((column) => column.name),
-    )
-    for (const [name, definition] of [
+    // Generation 1 had no task watermark, last-read time or drop mark; generation 2 had no
+    // session stamps. A project's existing state row keeps `sessions_ready=0` until the fold has
+    // labelled its stored facts with their session (a paged backfill), and reads use the live
+    // path for it until then.
+    const addColumns = (table: string, wanted: ReadonlyArray<readonly [string, string]>) => {
+      const columns = new Set(
+        db
+          .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('${table}')`)
+          .all()
+          .map((column) => column.name),
+      )
+      for (const [name, definition] of wanted)
+        if (!columns.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`)
+    }
+    addColumns(TABLES.state, [
       ["tasks_folded_rowid", "INTEGER NOT NULL DEFAULT 0"],
       ["last_read_at", "INTEGER NOT NULL DEFAULT 0"],
       ["dropping", "INTEGER NOT NULL DEFAULT 0"],
-    ] as const)
-      if (!columns.has(name))
-        db.exec(`ALTER TABLE ${TABLES.state} ADD COLUMN ${name} ${definition}`)
+      ["epoch", "TEXT NOT NULL DEFAULT ''"],
+      ["session_clock", "INTEGER NOT NULL DEFAULT 0"],
+      ["sessions_ready", "INTEGER NOT NULL DEFAULT 0"],
+    ])
+    addColumns(TABLES.facts, [["session_id", "TEXT"]])
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS model_decision_progress_session
+        ON ${TABLES.facts}(project_directory, session_id, seq);
+      CREATE INDEX IF NOT EXISTS model_decision_progress_task
+        ON ${TABLES.facts}(project_directory, task_id, session_id);
+      CREATE INDEX IF NOT EXISTS model_decision_progress_unlabelled
+        ON ${TABLES.facts}(project_directory, seq) WHERE session_id IS NULL;
+      CREATE INDEX IF NOT EXISTS model_decision_progress_flagged
+        ON ${TABLES.facts}(project_directory, seq) WHERE flags<>0;`)
     db.exec(`
       DROP TRIGGER IF EXISTS model_decision_progress_updated;
       DROP TRIGGER IF EXISTS model_decision_progress_deleted;
@@ -271,15 +302,103 @@ export type FoldStats = {
   tasks: number
 }
 
-const upsertFact = (db: Database, project: string, row: SourceRow, stats: FoldStats) => {
+/** The session a stored fact belongs to; facts of a malformed row have none. */
+const sessionOfRow = (row: { session_id: string | null }) => row.session_id ?? ""
+
+const upsertFact = (
+  db: Database,
+  project: string,
+  row: SourceRow,
+  stats: FoldStats,
+  touched: Set<string>,
+) => {
   const { flags, fact } = projectDecisionProgressRow(row, privacyStats())
+  const previous = db
+    .query<{ session_id: string | null }, [string, number]>(
+      `SELECT session_id FROM ${TABLES.facts} WHERE project_directory=? AND seq=?`,
+    )
+    .get(project, row.seq)
+  // A fact that changes session leaves a change behind in both.
+  if (previous?.session_id != null) touched.add(previous.session_id)
+  touched.add(sessionOfRow(row))
   db.query(
-    `INSERT INTO ${TABLES.facts}(project_directory,seq,plan_id,task_id,flags,fact)
-     VALUES(?,?,?,?,?,?)
+    `INSERT INTO ${TABLES.facts}(project_directory,seq,plan_id,task_id,flags,fact,session_id)
+     VALUES(?,?,?,?,?,?,?)
      ON CONFLICT(project_directory,seq) DO UPDATE SET plan_id=excluded.plan_id,
-       task_id=excluded.task_id,flags=excluded.flags,fact=excluded.fact`,
-  ).run(project, row.seq, row.plan_id, row.task_id, flags, fact ? JSON.stringify(fact) : null)
+       task_id=excluded.task_id,flags=excluded.flags,fact=excluded.fact,
+       session_id=excluded.session_id`,
+  ).run(
+    project,
+    row.seq,
+    row.plan_id,
+    row.task_id,
+    flags,
+    fact ? JSON.stringify(fact) : null,
+    sessionOfRow(row),
+  )
   stats.written++
+}
+
+/**
+ * Stamp sessions as changed at the project's next change-clock value. A read compares the
+ * clock it last saw with the stored one and asks only for sessions stamped above it.
+ */
+function touchSessions(db: Database, project: string, sessions: ReadonlySet<string>) {
+  if (!sessions.size) return
+  const clock =
+    db
+      .query<{ session_clock: number }, [string]>(
+        `SELECT session_clock FROM ${TABLES.state} WHERE project_directory=?`,
+      )
+      .get(project)!.session_clock + 1
+  const stamp = db.query(
+    `INSERT INTO ${TABLES.sessions}(project_directory,session_id,changed) VALUES(?,?,?)
+     ON CONFLICT(project_directory,session_id) DO UPDATE SET changed=excluded.changed`,
+  )
+  for (const session of sessions) stamp.run(project, session, clock)
+  db.query(`UPDATE ${TABLES.state} SET session_clock=? WHERE project_directory=?`).run(
+    clock,
+    project,
+  )
+}
+
+/** The session id inside a stored fact (a database from before facts carried one). */
+function sessionOfStoredFact(fact: string | null) {
+  if (fact === null) return ""
+  try {
+    const value = (JSON.parse(fact) as { sessionID?: unknown }).sessionID
+    return typeof value === "string" ? value : ""
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Label the stored facts of a project upgraded from generation 2 with their session, a page at a
+ * time, and stamp their sessions. Reads treat the project as unlabelled (live path) until the
+ * last page. Returns whether more work remains.
+ */
+function backfillSessions(db: Database, project: string, batch: number, touched: Set<string>) {
+  const rows = db
+    .query<{ seq: number; fact: string | null }, [string, number]>(
+      `SELECT seq,fact FROM ${TABLES.facts}
+       WHERE project_directory=? AND session_id IS NULL ORDER BY seq LIMIT ?`,
+    )
+    .all(project, batch)
+  const label = db.query(
+    `UPDATE ${TABLES.facts} SET session_id=? WHERE project_directory=? AND seq=?`,
+  )
+  for (const row of rows) {
+    const session = sessionOfStoredFact(row.fact)
+    label.run(session, project, row.seq)
+    touched.add(session)
+  }
+  if (rows.length >= batch) return true
+  db.query(
+    `UPDATE ${TABLES.state} SET sessions_ready=1,epoch=CASE WHEN epoch='' THEN ? ELSE epoch END
+     WHERE project_directory=?`,
+  ).run(randomUUID(), project)
+  return false
 }
 
 /**
@@ -289,9 +408,17 @@ const upsertFact = (db: Database, project: string, row: SourceRow, stats: FoldSt
  */
 function foldPage(db: Database, project: string, batch: number, stats: FoldStats): boolean {
   db.query(
-    `INSERT OR IGNORE INTO ${TABLES.state}(project_directory,folded_seq,folded_at,last_read_at)
-     VALUES(?,0,?,?)`,
-  ).run(project, Date.now(), Date.now())
+    `INSERT OR IGNORE INTO ${TABLES.state}
+       (project_directory,folded_seq,folded_at,last_read_at,epoch,sessions_ready)
+     VALUES(?,0,?,?,?,1)`,
+  ).run(project, Date.now(), Date.now(), randomUUID())
+  const touched = new Set<string>()
+  const ready = db
+    .query<{ sessions_ready: number }, [string]>(
+      `SELECT sessions_ready FROM ${TABLES.state} WHERE project_directory=?`,
+    )
+    .get(project)!.sessions_ready
+  const backfilling = ready ? false : backfillSessions(db, project, batch, touched)
   const watermark = db
     .query<{ folded_seq: number }, [string]>(
       `SELECT folded_seq FROM ${TABLES.state} WHERE project_directory=?`,
@@ -306,6 +433,9 @@ function foldPage(db: Database, project: string, batch: number, stats: FoldStats
   const readOne = db.query<SourceRow, [number]>(
     `SELECT ${SOURCE_COLUMNS} FROM runner_progress r WHERE r.seq=?`,
   )
+  const sessionOf = db.query<{ session_id: string | null }, [string, number]>(
+    `SELECT session_id FROM ${TABLES.facts} WHERE project_directory=? AND seq=?`,
+  )
   for (const { seq } of queued) {
     const row = readOne.get(seq)
     stats.sourceRows++
@@ -315,9 +445,11 @@ function foldPage(db: Database, project: string, batch: number, stats: FoldStats
       row.project_directory === project &&
       (DECISION_PROGRESS_KINDS as readonly string[]).includes(row.kind)
     ) {
-      upsertFact(db, project, row, stats)
+      upsertFact(db, project, row, stats, touched)
       decisionProjectionStats.foldWrites++
     } else {
+      const removedSession = sessionOf.get(project, seq)?.session_id
+      if (removedSession != null) touched.add(removedSession)
       stats.removed += db
         .query(`DELETE FROM ${TABLES.facts} WHERE project_directory=? AND seq=?`)
         .run(project, seq).changes
@@ -335,7 +467,7 @@ function foldPage(db: Database, project: string, batch: number, stats: FoldStats
     )
     .all(project, watermark, batch)
   for (const row of tail) {
-    upsertFact(db, project, row, stats)
+    upsertFact(db, project, row, stats, touched)
     decisionProjectionStats.foldWrites++
   }
   stats.sourceRows += tail.length
@@ -353,10 +485,11 @@ function foldPage(db: Database, project: string, batch: number, stats: FoldStats
     Date.now(),
     project,
   )
+  touchSessions(db, project, touched)
   stats.foldedSeq = foldedSeq
   stats.pages++
   decisionProjectionStats.foldPages++
-  return tail.length >= batch || queued.length >= batch
+  return tail.length >= batch || queued.length >= batch || backfilling
 }
 
 /**
@@ -388,6 +521,16 @@ function foldTaskPage(db: Database, project: string, foldBatch: number, stats: F
     )
     .all(project, watermark, batch)
   const ids = [...new Set([...queued, ...tail.map((row) => row.id)])]
+  // A task entering, changing or leaving decides which stored facts are visible, so the sessions
+  // of its facts change with it.
+  const taskSessions = new Set<string>()
+  const sessionsOfTask = db.query<{ session_id: string | null }, [string, string]>(
+    `SELECT DISTINCT session_id FROM ${TABLES.facts}
+     WHERE project_directory=? AND task_id=? AND session_id IS NOT NULL`,
+  )
+  for (const id of ids)
+    for (const row of sessionsOfTask.all(project, id)) taskSessions.add(row.session_id!)
+  touchSessions(db, project, taskSessions)
   const computed = new Map(
     computeDecisionTasks(db, project, ids, sources).map((entry) => [entry.taskID, entry]),
   )
@@ -500,6 +643,7 @@ export async function dropIdleProjections(
     db.transaction(() => {
       db.query(`DELETE FROM ${TABLES.dirty} WHERE project_directory=?`).run(project)
       db.query(`DELETE FROM ${TABLES.taskDirty} WHERE project_directory=?`).run(project)
+      db.query(`DELETE FROM ${TABLES.sessions} WHERE project_directory=?`).run(project)
       db.query(`DELETE FROM ${TABLES.state} WHERE project_directory=?`).run(project)
     }).immediate()
   }

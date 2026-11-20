@@ -1,7 +1,12 @@
 import {
-  projectTaskEffortBasis,
+  attemptsKey,
+  digestAccountingFacts,
+  memoizedOnDigest,
+  projectTaskEffortUsage,
   type AccountingAttempt,
   type AccountingRoute,
+  type EffortUsageBasis,
+  type MemoizedAccountingDigest,
 } from "../trajectory/accounting.ts"
 import { CurrentPriceIndexSchema, TaskValuationSchema } from "./valuation-schema.ts"
 import type { CurrentPriceIndex, CurrentPricePin, TaskValuation } from "./valuation-schema.ts"
@@ -19,6 +24,8 @@ type ProgressFact = {
   recordedAt: number | null
   measurementBasis: string | null
   usage: Record<string, unknown> | null
+  /** Position in the project's global fact order. */
+  ord: number
 }
 
 const USAGE_CATEGORIES = [
@@ -200,16 +207,17 @@ function progressRoute(value: unknown): AccountingRoute | null {
 }
 
 type CallRouteEvidence = { routes: AccountingRoute[]; unavailable: boolean }
+type RouteEvidence = {
+  calls: Map<string, CallRouteEvidence>
+  unscopedRoutes: Array<AccountingRoute | null>
+}
 
 function callKey(sessionID: string, messageID: string) {
   return `${sessionID}\u0000${messageID}`
 }
 
-function routeEvidenceByCall(
-  progressFacts: readonly unknown[],
-  sessionID: string,
-  attempts: AccountingAttempt[],
-) {
+/** The route evidence the facts of one session carry; it does not depend on any attempt. */
+function buildRouteEvidence(sessionID: string, facts: readonly unknown[]): RouteEvidence {
   const calls = new Map<string, CallRouteEvidence>()
   const unscopedRoutes: Array<AccountingRoute | null> = []
   const getCall = (messageID: string) => {
@@ -220,12 +228,21 @@ function routeEvidenceByCall(
     calls.set(key, created)
     return created
   }
+  // Equal routes are one object, listed once at their last position: the distinct routes of a
+  // call and which of equal-identity routes wins are what is read, and a call names the same
+  // route several times (the step, its route evidence, each observation).
+  const interned = new Map<string, AccountingRoute>()
   const addRoute = (target: CallRouteEvidence, value: unknown) => {
-    const route = progressRoute(value)
-    if (!route) {
+    const parsed = progressRoute(value)
+    if (!parsed) {
       target.unavailable = true
       return
     }
+    const key = JSON.stringify(parsed)
+    const route = interned.get(key) ?? parsed
+    interned.set(key, route)
+    const at = target.routes.indexOf(route)
+    if (at >= 0) target.routes.splice(at, 1)
     target.routes.push(route)
   }
   const addEvidence = (target: CallRouteEvidence, value: unknown) => {
@@ -241,7 +258,7 @@ function routeEvidenceByCall(
     addRoute(target, evidence.route)
   }
 
-  for (const raw of factsForSession(progressFacts, sessionID)) {
+  for (const raw of facts) {
     const fact = object(raw)
     const kind = typeof fact?.kind === "string" ? fact.kind : ""
     const normalizedKind = kind.startsWith("worker-") ? kind.slice("worker-".length) : kind
@@ -281,24 +298,38 @@ function routeEvidenceByCall(
       }
     }
   }
-
-  for (const attempt of attempts)
-    for (const step of attempt.stepRoutes) {
-      const target = getCall(step.messageID)
-      target.routes.push(step.route)
-    }
-
   return { calls, unscopedRoutes }
 }
 
-function routeEvidenceForCall(
-  progressFacts: readonly unknown[],
+/** The facts' evidence plus the routes the attempts saw in native context; the input is not changed. */
+function evidenceWithAttempts(
+  evidence: RouteEvidence,
   sessionID: string,
   attempts: AccountingAttempt[],
-) {
-  const { calls, unscopedRoutes } = routeEvidenceByCall(progressFacts, sessionID, attempts)
-  const routes = [...unscopedRoutes]
-  for (const call of calls.values()) {
+): RouteEvidence {
+  if (!attempts.some((attempt) => attempt.stepRoutes.length)) return evidence
+  const calls = new Map(
+    [...evidence.calls].map(([key, call]) => [
+      key,
+      { routes: [...call.routes], unavailable: call.unavailable },
+    ]),
+  )
+  for (const attempt of attempts)
+    for (const step of attempt.stepRoutes) {
+      const key = callKey(sessionID, step.messageID)
+      let target = calls.get(key)
+      if (!target) {
+        target = { routes: [], unavailable: false }
+        calls.set(key, target)
+      }
+      target.routes.push(step.route)
+    }
+  return { calls, unscopedRoutes: evidence.unscopedRoutes }
+}
+
+function routeEvidenceForCall(evidence: RouteEvidence) {
+  const routes = [...evidence.unscopedRoutes]
+  for (const call of evidence.calls.values()) {
     const distinctCallRoutes = new Map<string, AccountingRoute | null>()
     for (const route of call.routes) {
       const identity = sourceRouteIdentity(route)
@@ -310,11 +341,7 @@ function routeEvidenceForCall(
   return routes
 }
 
-function sessionRouteAllocation(
-  sessionID: string,
-  attempts: AccountingAttempt[],
-  progressFacts: readonly unknown[],
-) {
+function sessionRouteAllocation(attempts: AccountingAttempt[], evidence: RouteEvidence) {
   const exact = new Map<
     string,
     { identity: NonNullable<ReturnType<typeof sourceRouteIdentity>>; route: AccountingRoute }
@@ -329,7 +356,7 @@ function sessionRouteAllocation(
         : []),
     )
   }
-  routes.push(...routeEvidenceForCall(progressFacts, sessionID, attempts))
+  routes.push(...routeEvidenceForCall(evidence))
   for (const route of routes) {
     observedCount++
     if (!route) {
@@ -399,39 +426,69 @@ export function currentPricePinBlockers(pin: CurrentPricePin): string[] {
   return blockers
 }
 
-/**
- * Decision reads hand every cohort the same captured fact array. Parsing it and grouping it by
- * session is O(facts), so it is done once per array, not once per cohort or per session.
- */
-const parsedFacts = new WeakMap<readonly unknown[], ProgressFact[]>()
-const factsBySessionIndex = new WeakMap<readonly unknown[], Map<string, unknown[]>>()
-
-function factsForSession(values: readonly unknown[], sessionID: string): readonly unknown[] {
-  let index = factsBySessionIndex.get(values)
-  if (!index) {
-    index = new Map()
-    for (const raw of values) {
-      const key = object(raw)?.sessionID
-      if (typeof key !== "string") continue
-      const group = index.get(key)
-      if (group) group.push(raw)
-      else index.set(key, [raw])
-    }
-    factsBySessionIndex.set(values, index)
-  }
-  return index.get(sessionID) ?? []
+function compareFacts(left: ProgressFact, right: ProgressFact) {
+  return (
+    (right.at ?? Number.MIN_SAFE_INTEGER) - (left.at ?? Number.MIN_SAFE_INTEGER) ||
+    (right.recordedAt ?? Number.MIN_SAFE_INTEGER) - (left.recordedAt ?? Number.MIN_SAFE_INTEGER) ||
+    (right.sequence ?? Number.MIN_SAFE_INTEGER) - (left.sequence ?? Number.MIN_SAFE_INTEGER) ||
+    left.id.localeCompare(right.id)
+  )
 }
 
-function parseProgressFacts(values: readonly unknown[]): ProgressFact[] {
-  const cached = parsedFacts.get(values)
-  if (cached) return cached
-  const parsed = parseProgressFactsUncached(values)
-  parsedFacts.set(values, parsed)
-  return parsed
+/** A fact with its place in the project's global fact order (its sequence; an index in an array). */
+export type OrderedFact = { ord: number; fact: unknown }
+
+/** A route a fact or one of its observations named, for the decision's price selectors. */
+export type RouteCandidate = {
+  ord: number
+  attemptID: string
+  providerID: string
+  modelID: string
+  variant: string | null
 }
 
-function parseProgressFactsUncached(values: readonly unknown[]): ProgressFact[] {
-  return values.flatMap((raw) => {
+type CallDigest = {
+  messageID: string
+  /** Order of the call's first additive fact: calls come out in the order they first appeared. */
+  ord: number
+  categories: Record<UsageCategory, number | null>
+  usageDiffers: boolean
+}
+
+/** What the valuation reads from one session's facts; it never depends on an attempt. */
+export type ValuationFactDigest = {
+  /** The latest cumulative snapshot's reported cost, as retained (unvalidated). */
+  cumulativeCost: { value: unknown } | null
+  /** Numeric `costUSD` values over the session's facts, and whether every one is zero. */
+  factCosts: { count: number; allZero: boolean }
+  /** The reported cost of each unique additive step, in first-seen order. */
+  additiveCosts: unknown[]
+  evidence: RouteEvidence
+  calls: CallDigest[]
+  /** An additive step with no message id: its call cannot be told apart. */
+  unscopedAdditive: boolean
+}
+
+/** Every attempt-independent reduction of one session's retained facts. */
+export type SessionFactDigest = {
+  sessionID: string
+  factCount: number
+  accounting: MemoizedAccountingDigest
+  valuation: ValuationFactDigest
+  routeCandidates: RouteCandidate[]
+  /** Results derived from this digest and a session's attempts; absent on throwaway digests. */
+  memo?: Map<string, unknown>
+  /** Estimated retained size, for the cache budget. */
+  bytes: number
+}
+
+export type SessionFactDigests = ReadonlyMap<string, SessionFactDigest>
+
+/** Raw facts, or the digests of an incremental read. */
+export type ProgressFactInput = readonly unknown[] | SessionFactDigests
+
+function parseOrderedFacts(entries: readonly OrderedFact[]): ProgressFact[] {
+  return entries.flatMap(({ ord, fact: raw }) => {
     const fact = object(raw)
     if (!fact) return []
     const usage = object(fact.usage) ?? object(object(fact.payload)?.usage)
@@ -449,194 +506,391 @@ function parseProgressFactsUncached(values: readonly unknown[]): ProgressFact[] 
         recordedAt: finiteNonnegative(fact.recordedAt),
         measurementBasis: typeof fact.measurementBasis === "string" ? fact.measurementBasis : null,
         usage,
+        ord,
       },
     ]
   })
 }
 
-function compareFacts(left: ProgressFact, right: ProgressFact) {
-  return (
-    (right.at ?? Number.MIN_SAFE_INTEGER) - (left.at ?? Number.MIN_SAFE_INTEGER) ||
-    (right.recordedAt ?? Number.MIN_SAFE_INTEGER) - (left.recordedAt ?? Number.MIN_SAFE_INTEGER) ||
-    (right.sequence ?? Number.MIN_SAFE_INTEGER) - (left.sequence ?? Number.MIN_SAFE_INTEGER) ||
-    left.id.localeCompare(right.id)
+/** The route a fact or observation names, when it is a well-formed provider and model. */
+function routeCandidate(value: unknown): Omit<RouteCandidate, "ord" | "attemptID"> | null {
+  const item = object(value)
+  if (!item) return null
+  const routeValue =
+    typeof item.routeEvidence === "object" && item.routeEvidence !== null
+      ? (item.routeEvidence as Record<string, unknown>).status === "observed"
+        ? (item.routeEvidence as Record<string, unknown>).route
+        : null
+      : item.route
+  const raw = object(routeValue)
+  if (!raw) return null
+  const modelID = raw.modelID ?? raw.id
+  if (
+    typeof raw.providerID !== "string" ||
+    typeof modelID !== "string" ||
+    (raw.variant !== null && raw.variant !== undefined && typeof raw.variant !== "string")
+  )
+    return null
+  return {
+    providerID: raw.providerID,
+    modelID,
+    variant: typeof raw.variant === "string" ? raw.variant : null,
+  }
+}
+
+function digestRouteCandidates(entries: readonly OrderedFact[]): RouteCandidate[] {
+  const found = new Map<string, RouteCandidate>()
+  for (const { ord, fact } of entries) {
+    const record = object(fact)
+    if (!record) continue
+    const attemptID = String(record.attemptID ?? "")
+    const candidates = [record, ...(Array.isArray(record.observations) ? record.observations : [])]
+    for (const candidate of candidates) {
+      const route = routeCandidate(candidate)
+      if (!route) continue
+      const key = JSON.stringify([attemptID, route.providerID, route.modelID, route.variant])
+      if (!found.has(key)) found.set(key, { ord, attemptID, ...route })
+    }
+  }
+  return [...found.values()]
+}
+
+function digestValuationFacts(
+  sessionID: string,
+  entries: readonly OrderedFact[],
+): ValuationFactDigest {
+  const facts = parseOrderedFacts(entries)
+  const costs = facts.flatMap((fact) =>
+    typeof fact.usage?.costUSD === "number" ? [fact.usage.costUSD] : [],
+  )
+  const cumulative = facts
+    .filter(
+      (fact) =>
+        fact.kind === "usage-snapshot" && fact.measurementBasis === "cumulative-session-snapshot",
+    )
+    .sort(compareFacts)[0]
+  const additiveByIdentity = new Map<string, ProgressFact>()
+  const callFacts = new Map<string, ProgressFact[]>()
+  let unscopedAdditive = false
+  for (const fact of facts) {
+    if (fact.kind !== "step" || fact.measurementBasis !== "additive-step-measurement") continue
+    const identity = fact.messageID ?? fact.id
+    const previous = additiveByIdentity.get(identity)
+    if (!previous || compareFacts(previous, fact) > 0) additiveByIdentity.set(identity, fact)
+    if (!fact.messageID) {
+      unscopedAdditive = true
+      continue
+    }
+    const group = callFacts.get(fact.messageID)
+    if (group) group.push(fact)
+    else callFacts.set(fact.messageID, [fact])
+  }
+  const calls = [...callFacts].map(([messageID, group]): CallDigest => {
+    const selected = [...group].sort(compareFacts)[0]!
+    return {
+      messageID,
+      ord: group[0]!.ord,
+      categories: Object.fromEntries(
+        USAGE_CATEGORIES.map((category) => [
+          category,
+          finiteNonnegative(selected.usage?.[USAGE_FIELD_FOR_CATEGORY[category]]),
+        ]),
+      ) as Record<UsageCategory, number | null>,
+      usageDiffers: group.some((fact) => !sameUsage(fact.usage, selected.usage)),
+    }
+  })
+  return {
+    cumulativeCost: cumulative ? { value: cumulative.usage?.costUSD } : null,
+    factCosts: { count: costs.length, allZero: costs.every((value) => value === 0) },
+    additiveCosts: [...additiveByIdentity.values()].map((fact) => fact.usage?.costUSD),
+    evidence: buildRouteEvidence(
+      sessionID,
+      entries.map((entry) => entry.fact),
+    ),
+    calls,
+    unscopedAdditive,
+  }
+}
+
+/**
+ * Retained size of a digest in bytes, to budget the cache: the serialized length, one byte per
+ * character. Measured against the heap on the seeded history (4 000 facts in 330 sessions) the
+ * heap grew by about this much; shared routes make it an upper bound.
+ */
+function estimateDigestBytes(digest: Omit<SessionFactDigest, "bytes" | "memo">) {
+  return JSON.stringify(digest, (_key, value: unknown) =>
+    value instanceof Map ? [...value] : value,
+  ).length
+}
+
+/**
+ * Reduce one session's facts, in their retained order, to everything the valuation derives from
+ * them. `shared` digests (the cache's) carry a memo for per-attempt-set results; throwaway ones
+ * (a raw array) do not, so results derived from them are never shared between calls.
+ */
+export function digestSessionFacts(
+  sessionID: string,
+  entries: readonly OrderedFact[],
+  options: { shared?: boolean } = {},
+): SessionFactDigest {
+  const memo = options.shared ? new Map<string, unknown>() : undefined
+  const accounting: MemoizedAccountingDigest = {
+    ...digestAccountingFacts(
+      entries.map((entry) => entry.fact),
+      { routes: options.shared ? "keys" : "full" },
+    ),
+    ...(memo ? { memo } : {}),
+  }
+  const parts = {
+    sessionID,
+    factCount: entries.length,
+    accounting,
+    valuation: digestValuationFacts(sessionID, entries),
+    routeCandidates: digestRouteCandidates(entries),
+  }
+  // The memo of per-attempt-set results adds about a quarter once it fills.
+  return {
+    ...parts,
+    ...(memo ? { memo } : {}),
+    bytes: Math.ceil(estimateDigestBytes(parts) * 1.25),
+  }
+}
+
+const digestsOfArrays = new WeakMap<readonly unknown[], SessionFactDigests>()
+
+/** Digest a raw fact array by session, once per array. */
+function digestsOfFacts(values: readonly unknown[]): SessionFactDigests {
+  const cached = digestsOfArrays.get(values)
+  if (cached) return cached
+  const groups = new Map<string, OrderedFact[]>()
+  values.forEach((fact, ord) => {
+    const raw = object(fact)?.sessionID
+    const key = typeof raw === "string" ? raw : ""
+    const group = groups.get(key)
+    if (group) group.push({ ord, fact })
+    else groups.set(key, [{ ord, fact }])
+  })
+  const digests = new Map(
+    [...groups].map(([sessionID, entries]) => [sessionID, digestSessionFacts(sessionID, entries)]),
+  )
+  digestsOfArrays.set(values, digests)
+  return digests
+}
+
+/** The per-session digests of raw facts (grouped once per array) or of an incremental read. */
+export function sessionFactDigestsOf(input: ProgressFactInput): SessionFactDigests {
+  return Array.isArray(input)
+    ? digestsOfFacts(input as readonly unknown[])
+    : (input as SessionFactDigests)
+}
+const digestsOf = sessionFactDigestsOf
+
+const noFacts = (sessionID: string) => digestSessionFacts(sessionID, [])
+
+/** The attempts of each session of `attempts`. */
+function attemptsBySession(attempts: readonly AccountingAttempt[]) {
+  const grouped = new Map<string, AccountingAttempt[]>()
+  for (const attempt of attempts) {
+    const group = grouped.get(attempt.sessionID)
+    if (group) group.push(attempt)
+    else grouped.set(attempt.sessionID, [attempt])
+  }
+  return grouped
+}
+
+/** The route evidence of a session with its attempts' native context folded in; memoized. */
+function evidenceFor(
+  sessionID: string,
+  attempts: AccountingAttempt[],
+  key: string,
+  digest: SessionFactDigest,
+) {
+  return memoizedOnDigest(digest, `evidence:${key}`, () =>
+    evidenceWithAttempts(digest.valuation.evidence, sessionID, attempts),
   )
 }
 
-function costContributions(input: {
-  attempts: AccountingAttempt[]
-  progressFacts: readonly unknown[]
-  sessions: ReturnType<typeof projectTaskEffortBasis>["usage"]["sessions"]
-}) {
-  const facts = parseProgressFacts(input.progressFacts)
-  return input.sessions.map((session) => {
-    const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
-    const sessionFacts = facts.filter((fact) => fact.sessionID === session.sessionID)
-    const numericCosts = [
-      ...sessionFacts.map((fact) => fact.usage?.costUSD),
-      ...attempts.map((attempt) => attempt.recordedCostUSD),
-    ].filter((value): value is number => typeof value === "number")
-    const unmetered =
-      numericCosts.length > 0 &&
-      numericCosts.every((value) => value === 0) &&
-      USAGE_CATEGORIES.some((category) => (session.categories[category].value ?? 0) > 0)
-    const cumulative = sessionFacts
-      .filter(
-        (fact) =>
-          fact.kind === "usage-snapshot" && fact.measurementBasis === "cumulative-session-snapshot",
-      )
-      .sort(compareFacts)[0]
-    const additiveByIdentity = new Map<string, ProgressFact>()
-    for (const fact of sessionFacts) {
-      if (fact.kind !== "step" || fact.measurementBasis !== "additive-step-measurement") continue
-      const identity = fact.messageID ?? fact.id
-      const previous = additiveByIdentity.get(identity)
-      if (!previous || compareFacts(previous, fact) > 0) additiveByIdentity.set(identity, fact)
-    }
-    const additiveSteps = [...additiveByIdentity.values()]
-    const cumulativeValue = cumulative?.usage?.costUSD
-    const cumulativeCost =
-      typeof cumulativeValue === "number" &&
-      Number.isFinite(cumulativeValue) &&
-      cumulativeValue >= 0
-        ? cumulativeValue
-        : null
-    if (
-      cumulative &&
-      cumulativeValue !== null &&
-      cumulativeValue !== undefined &&
-      cumulativeCost === null
-    ) {
-      return {
-        sessionID: session.sessionID,
-        attemptIDs: session.attemptIDs,
-        basis: "unavailable" as const,
-        valueUSD: null,
-        status: "unavailable" as const,
-        source:
-          "runner-progress-store cumulative session snapshot contains a nonfinite or negative cost",
-        measurementCount: 1,
-        missingMeasurements: 0,
-        ignoredAdditiveStepCount: additiveSteps.length,
-      }
-    }
-    if (cumulativeCost !== null) {
-      return {
-        sessionID: session.sessionID,
-        attemptIDs: session.attemptIDs,
-        basis: "cumulative-session-snapshot" as const,
-        valueUSD: unmetered ? null : cumulativeCost,
-        status: unmetered ? ("unmetered" as const) : ("observed" as const),
-        source: "runner-progress-store cumulative session snapshot",
-        measurementCount: 1,
-        missingMeasurements: 0,
-        ignoredAdditiveStepCount: additiveSteps.length,
-      }
-    }
+function allocationFor(
+  sessionID: string,
+  attempts: AccountingAttempt[],
+  key: string,
+  digest: SessionFactDigest,
+) {
+  return memoizedOnDigest(digest, `allocation:${key}`, () =>
+    sessionRouteAllocation(attempts, evidenceFor(sessionID, attempts, key, digest)),
+  )
+}
 
-    const attemptCosts = attempts.flatMap((attempt) => {
-      const cost = attempt.recordedCostUSD
-      if (cost === null) return []
-      return [{ value: cost, valid: Number.isFinite(cost) && cost >= 0 }]
-    })
-    if (attemptCosts.some((cost) => !cost.valid)) {
-      return {
-        sessionID: session.sessionID,
-        attemptIDs: session.attemptIDs,
-        basis: "unavailable" as const,
-        valueUSD: null,
-        status: "unavailable" as const,
-        source: "runner_attempt.cost contains a nonfinite or negative contribution",
-        measurementCount: attemptCosts.length,
-        missingMeasurements: 0,
-        ignoredAdditiveStepCount: additiveSteps.length,
-      }
-    }
-    if (attemptCosts.length) {
-      return {
-        sessionID: session.sessionID,
-        attemptIDs: session.attemptIDs,
-        basis: "attempt-session-cumulative-snapshot" as const,
-        valueUSD: unmetered
-          ? null
-          : attemptCosts.reduce((largest, cost) => Math.max(largest, cost.value), 0),
-        status: unmetered ? ("unmetered" as const) : ("observed" as const),
-        source:
-          "largest retained runner_attempt.cost for this unique session; contributions are not summed",
-        measurementCount: attemptCosts.length,
-        missingMeasurements: 0,
-        ignoredAdditiveStepCount: additiveSteps.length,
-      }
-    }
-
-    if (additiveSteps.length) {
-      let subtotal: Decimal = { coefficient: 0n, scale: 0 }
-      let observed = 0
-      let missing = 0
-      let invalid = false
-      for (const step of additiveSteps) {
-        const value = step.usage?.costUSD
-        if (value === null || value === undefined) {
-          missing++
-          continue
-        }
-        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-          invalid = true
-          continue
-        }
-        const parsed = decimal(value)
-        if (!parsed) {
-          invalid = true
-          continue
-        }
-        subtotal = addDecimal(subtotal, parsed)
-        observed++
-      }
-      const subtotalUSD = decimalNumber(subtotal)
-      if (invalid || (observed && subtotalUSD === null)) {
-        return {
-          sessionID: session.sessionID,
-          attemptIDs: session.attemptIDs,
-          basis: "unavailable" as const,
-          valueUSD: null,
-          status: "unavailable" as const,
-          source:
-            "worker-progress unique-step cost subtotal overflowed or contained an invalid value",
-          measurementCount: observed,
-          missingMeasurements: missing,
-          ignoredAdditiveStepCount: 0,
-        }
-      }
-      return {
-        sessionID: session.sessionID,
-        attemptIDs: session.attemptIDs,
-        basis: observed ? ("retained-additive-step-subtotal" as const) : ("unavailable" as const),
-        valueUSD: observed && !unmetered ? subtotalUSD : null,
-        status: unmetered
-          ? ("unmetered" as const)
-          : observed
-            ? ("partial" as const)
-            : ("missing" as const),
-        source: observed
-          ? "deduplicated worker-progress additive steps; subtotal only, not a cumulative session cost"
-          : "No numeric cost was present in the retained additive steps",
-        measurementCount: observed,
-        missingMeasurements: missing,
-        ignoredAdditiveStepCount: 0,
-      }
-    }
-
+function costContribution(
+  session: EffortUsageBasis["usage"]["sessions"][number],
+  attempts: AccountingAttempt[],
+  digest: SessionFactDigest,
+) {
+  const facts = digest.valuation
+  const attemptCosts = attempts
+    .map((attempt) => attempt.recordedCostUSD)
+    .filter((value): value is number => typeof value === "number")
+  const numericCount = facts.factCosts.count + attemptCosts.length
+  const unmetered =
+    numericCount > 0 &&
+    (facts.factCosts.count === 0 || facts.factCosts.allZero) &&
+    attemptCosts.every((value) => value === 0) &&
+    USAGE_CATEGORIES.some((category) => (session.categories[category].value ?? 0) > 0)
+  const cumulativeValue = facts.cumulativeCost?.value
+  const cumulativeCost =
+    typeof cumulativeValue === "number" && Number.isFinite(cumulativeValue) && cumulativeValue >= 0
+      ? cumulativeValue
+      : null
+  const ignoredAdditive = facts.additiveCosts.length
+  if (
+    facts.cumulativeCost &&
+    cumulativeValue !== null &&
+    cumulativeValue !== undefined &&
+    cumulativeCost === null
+  ) {
     return {
       sessionID: session.sessionID,
       attemptIDs: session.attemptIDs,
       basis: "unavailable" as const,
       valueUSD: null,
-      status: "missing" as const,
-      source: null,
-      measurementCount: 0,
-      missingMeasurements: 1,
+      status: "unavailable" as const,
+      source:
+        "runner-progress-store cumulative session snapshot contains a nonfinite or negative cost",
+      measurementCount: 1,
+      missingMeasurements: 0,
+      ignoredAdditiveStepCount: ignoredAdditive,
+    }
+  }
+  if (cumulativeCost !== null) {
+    return {
+      sessionID: session.sessionID,
+      attemptIDs: session.attemptIDs,
+      basis: "cumulative-session-snapshot" as const,
+      valueUSD: unmetered ? null : cumulativeCost,
+      status: unmetered ? ("unmetered" as const) : ("observed" as const),
+      source: "runner-progress-store cumulative session snapshot",
+      measurementCount: 1,
+      missingMeasurements: 0,
+      ignoredAdditiveStepCount: ignoredAdditive,
+    }
+  }
+
+  const attemptCostRows = attempts.flatMap((attempt) => {
+    const cost = attempt.recordedCostUSD
+    if (cost === null) return []
+    return [{ value: cost, valid: Number.isFinite(cost) && cost >= 0 }]
+  })
+  if (attemptCostRows.some((cost) => !cost.valid)) {
+    return {
+      sessionID: session.sessionID,
+      attemptIDs: session.attemptIDs,
+      basis: "unavailable" as const,
+      valueUSD: null,
+      status: "unavailable" as const,
+      source: "runner_attempt.cost contains a nonfinite or negative contribution",
+      measurementCount: attemptCostRows.length,
+      missingMeasurements: 0,
+      ignoredAdditiveStepCount: ignoredAdditive,
+    }
+  }
+  if (attemptCostRows.length) {
+    return {
+      sessionID: session.sessionID,
+      attemptIDs: session.attemptIDs,
+      basis: "attempt-session-cumulative-snapshot" as const,
+      valueUSD: unmetered
+        ? null
+        : attemptCostRows.reduce((largest, cost) => Math.max(largest, cost.value), 0),
+      status: unmetered ? ("unmetered" as const) : ("observed" as const),
+      source:
+        "largest retained runner_attempt.cost for this unique session; contributions are not summed",
+      measurementCount: attemptCostRows.length,
+      missingMeasurements: 0,
+      ignoredAdditiveStepCount: ignoredAdditive,
+    }
+  }
+
+  if (ignoredAdditive) {
+    let subtotal: Decimal = { coefficient: 0n, scale: 0 }
+    let observed = 0
+    let missing = 0
+    let invalid = false
+    for (const value of facts.additiveCosts) {
+      if (value === null || value === undefined) {
+        missing++
+        continue
+      }
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        invalid = true
+        continue
+      }
+      const parsed = decimal(value)
+      if (!parsed) {
+        invalid = true
+        continue
+      }
+      subtotal = addDecimal(subtotal, parsed)
+      observed++
+    }
+    const subtotalUSD = decimalNumber(subtotal)
+    if (invalid || (observed && subtotalUSD === null)) {
+      return {
+        sessionID: session.sessionID,
+        attemptIDs: session.attemptIDs,
+        basis: "unavailable" as const,
+        valueUSD: null,
+        status: "unavailable" as const,
+        source:
+          "worker-progress unique-step cost subtotal overflowed or contained an invalid value",
+        measurementCount: observed,
+        missingMeasurements: missing,
+        ignoredAdditiveStepCount: 0,
+      }
+    }
+    return {
+      sessionID: session.sessionID,
+      attemptIDs: session.attemptIDs,
+      basis: observed ? ("retained-additive-step-subtotal" as const) : ("unavailable" as const),
+      valueUSD: observed && !unmetered ? subtotalUSD : null,
+      status: unmetered
+        ? ("unmetered" as const)
+        : observed
+          ? ("partial" as const)
+          : ("missing" as const),
+      source: observed
+        ? "deduplicated worker-progress additive steps; subtotal only, not a cumulative session cost"
+        : "No numeric cost was present in the retained additive steps",
+      measurementCount: observed,
+      missingMeasurements: missing,
       ignoredAdditiveStepCount: 0,
     }
+  }
+
+  return {
+    sessionID: session.sessionID,
+    attemptIDs: session.attemptIDs,
+    basis: "unavailable" as const,
+    valueUSD: null,
+    status: "missing" as const,
+    source: null,
+    measurementCount: 0,
+    missingMeasurements: 1,
+    ignoredAdditiveStepCount: 0,
+  }
+}
+
+function costContributions(input: {
+  attempts: AccountingAttempt[]
+  digests: SessionFactDigests
+  sessions: EffortUsageBasis["usage"]["sessions"]
+}) {
+  const bySession = attemptsBySession(input.attempts)
+  return input.sessions.map((session) => {
+    const attempts = bySession.get(session.sessionID) ?? []
+    const digest = input.digests.get(session.sessionID) ?? noFacts(session.sessionID)
+    return memoizedOnDigest(digest, `cost:${attemptsKey(attempts)}`, () =>
+      costContribution(session, attempts, digest),
+    )
   })
 }
 
@@ -721,7 +975,7 @@ function safeUsageValue(value: unknown) {
   return finiteNonnegative(value)
 }
 
-function projectUsage(effort: ReturnType<typeof projectTaskEffortBasis>): TaskValuation["usage"] {
+function projectUsage(effort: EffortUsageBasis): TaskValuation["usage"] {
   const categories = Object.fromEntries(
     USAGE_CATEGORIES.map((category) => {
       const measure = effort.usage.categories[category]
@@ -979,12 +1233,14 @@ function sessionMarketValue(input: {
 function marketEquivalentCost(input: {
   usage: TaskValuation["usage"]
   attempts: AccountingAttempt[]
-  progressFacts: readonly unknown[]
+  digests: SessionFactDigests
   currentIndex: CurrentPriceIndex
 }) {
+  const bySession = attemptsBySession(input.attempts)
   const sessions = input.usage.sessions.map((session) => {
-    const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
-    const allocation = sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
+    const attempts = bySession.get(session.sessionID) ?? []
+    const digest = input.digests.get(session.sessionID) ?? noFacts(session.sessionID)
+    const allocation = allocationFor(session.sessionID, attempts, attemptsKey(attempts), digest)
     const candidates = allocation.identity
       ? input.currentIndex.pins.filter((pin) => pinMatches(pin, allocation.identity!))
       : []
@@ -1057,15 +1313,16 @@ function marketEquivalentCost(input: {
 
 export type ProjectTaskValuationInput = {
   attempts: AccountingAttempt[]
-  progressFacts: readonly unknown[]
+  /** Raw retained facts, or the per-session digests of an incremental read. */
+  progressFacts: ProgressFactInput
   progressTruncated: boolean
   truncatedContextSessionIDs: readonly string[]
   currentIndex: CurrentPriceIndex
   /**
-   * The effort basis of exactly these attempts and facts, when the caller already computed it.
-   * It is the costliest step (about 55 ms for 20 000 facts), so one snapshot computes it once.
+   * The usage and route coverage of exactly these attempts and facts, when the caller already
+   * composed it, so one snapshot composes it once.
    */
-  effort?: ReturnType<typeof projectTaskEffortBasis>
+  effort?: EffortUsageBasis
 }
 
 export type ProjectTaskValuationRequest = Omit<ProjectTaskValuationInput, "currentIndex">
@@ -1077,85 +1334,44 @@ function sameUsage(left: Record<string, unknown> | null, right: Record<string, u
   )
 }
 
-/** Deduplicate retained additive call measurements and require exact route/category evidence. */
-export function taskValuationPerCallUsage(
-  input: ProjectTaskValuationRequest,
-  route: MarketRangeRoute,
-): { calls: KnownUsagePerCall[]; complete: boolean } {
-  const effort = input.effort ?? projectTaskEffortBasis(input)
-  const usage = projectUsage(effort)
-  const sessions = new Map(usage.sessions.map((session) => [session.sessionID, session]))
-  const attemptsBySession = new Map<string, AccountingAttempt[]>()
-  for (const attempt of input.attempts) {
-    const values = attemptsBySession.get(attempt.sessionID) ?? []
-    values.push(attempt)
-    attemptsBySession.set(attempt.sessionID, values)
-  }
-  const routesBySession = new Map<string, ReturnType<typeof routeEvidenceByCall>>()
-  const callsByMessage = new Map<
-    string,
-    { sessionID: string; messageID: string; facts: ProgressFact[] }
-  >()
-  let complete = !input.progressTruncated
-  for (const fact of parseProgressFacts(input.progressFacts)) {
-    if (fact.kind !== "step" || fact.measurementBasis !== "additive-step-measurement") continue
-    if (!fact.messageID) {
-      complete = false
-      continue
-    }
-    const key = callKey(fact.sessionID, fact.messageID)
-    const existing = callsByMessage.get(key)
-    if (existing) existing.facts.push(fact)
-    else
-      callsByMessage.set(key, {
-        sessionID: fact.sessionID,
-        messageID: fact.messageID,
-        facts: [fact],
-      })
-  }
+function effortOf(input: ProjectTaskValuationRequest, digests: SessionFactDigests) {
+  return (
+    input.effort ??
+    projectTaskEffortUsage({
+      attempts: input.attempts,
+      progressFacts: digests,
+      progressTruncated: input.progressTruncated,
+      truncatedContextSessionIDs: input.truncatedContextSessionIDs,
+    })
+  )
+}
 
-  const calls: KnownUsagePerCall[] = []
-  const totalsBySession = new Map<string, Record<UsageCategory, number>>()
-  const seenCallIDs = new Set<string>()
-  const allocationsBySession = new Map<string, ReturnType<typeof sessionRouteAllocation>>()
-  for (const { sessionID, messageID, facts } of callsByMessage.values()) {
-    if (!sessionID || !messageID) {
-      complete = false
-      continue
-    }
-    const session = sessions.get(sessionID)
-    const attempts = attemptsBySession.get(sessionID) ?? []
-    if (!session) {
-      complete = false
-      continue
-    }
-    let allocation = allocationsBySession.get(sessionID)
-    if (!allocation) {
-      allocation = sessionRouteAllocation(sessionID, attempts, input.progressFacts)
-      allocationsBySession.set(sessionID, allocation)
-    }
-    if (
-      allocation.status === "single-observed-route" &&
-      allocation.identity &&
-      (allocation.identity.providerID !== route.providerID ||
-        allocation.identity.modelID !== route.modelID ||
-        allocation.identity.variant !== route.variant)
-    )
-      continue
-    if (allocation.status !== "single-observed-route" || !allocation.identity) {
-      complete = false
-      continue
-    }
-    let routes = routesBySession.get(sessionID)
-    if (!routes) {
-      routes = routeEvidenceByCall(input.progressFacts, sessionID, attempts)
-      routesBySession.set(sessionID, routes)
-    }
-    const routeEvidence = routes.calls.get(callKey(sessionID, messageID))
+/** The priced calls of one session, assuming its single observed route is the one asked about. */
+type SessionCalls = {
+  rows: Array<{ ord: number; call: KnownUsagePerCall }>
+  /** A call of the session cannot be priced for that route. */
+  incomplete: boolean
+  totals: Record<UsageCategory, number>
+}
+
+function sessionCalls(
+  sessionID: string,
+  digest: SessionFactDigest,
+  evidence: RouteEvidence,
+  identity: NonNullable<ReturnType<typeof sourceRouteIdentity>>,
+): SessionCalls {
+  const rows: SessionCalls["rows"] = []
+  let incomplete = false
+  const totals = Object.fromEntries(USAGE_CATEGORIES.map((category) => [category, 0])) as Record<
+    UsageCategory,
+    number
+  >
+  for (const call of digest.valuation.calls) {
+    const routeEvidence = evidence.calls.get(callKey(sessionID, call.messageID))
     const distinctRoutes = new Map<string, AccountingRoute>()
     for (const observed of routeEvidence?.routes ?? []) {
-      const identity = sourceRouteIdentity(observed)
-      if (identity) distinctRoutes.set(routeKey(identity), observed)
+      const observedIdentity = sourceRouteIdentity(observed)
+      if (observedIdentity) distinctRoutes.set(routeKey(observedIdentity), observed)
     }
     if (
       routeEvidence?.unavailable ||
@@ -1163,95 +1379,145 @@ export function taskValuationPerCallUsage(
       distinctRoutes.size !== 1 ||
       routeEvidence.routes.length === 0
     ) {
-      complete = false
+      incomplete = true
       continue
     }
-    const observedRoute = [...distinctRoutes.values()][0]!
-    const identity = sourceRouteIdentity(observedRoute)
-    if (!identity) {
-      complete = false
+    const observedIdentity = sourceRouteIdentity([...distinctRoutes.values()][0]!)
+    if (!observedIdentity) {
+      incomplete = true
       continue
     }
     if (
-      identity.providerID !== route.providerID ||
-      identity.modelID !== route.modelID ||
-      identity.variant !== route.variant
+      observedIdentity.providerID !== identity.providerID ||
+      observedIdentity.modelID !== identity.modelID ||
+      observedIdentity.variant !== identity.variant
     ) {
       // A different exact route is evidence of a mixed-call session, not a selector for this route.
-      complete = false
+      incomplete = true
       continue
     }
-
-    const ordered = [...facts].sort(compareFacts)
-    const selected = ordered[0]!
-    if (facts.some((fact) => !sameUsage(fact.usage, selected.usage))) complete = false
-    const categories = Object.fromEntries(
-      USAGE_CATEGORIES.map((category) => [
-        category,
-        finiteNonnegative(selected.usage?.[USAGE_FIELD_FOR_CATEGORY[category]]),
-      ]),
-    ) as Record<UsageCategory, number | null>
-    if (Object.values(categories).some((value) => value === null)) {
-      complete = false
+    if (call.usageDiffers) incomplete = true
+    if (Object.values(call.categories).some((value) => value === null)) {
+      incomplete = true
       continue
     }
-    const callID = `${sessionID}\u0000${messageID}`
-    if (seenCallIDs.has(callID)) {
-      complete = false
-      continue
-    }
-    seenCallIDs.add(callID)
-    calls.push({
-      callID,
-      route: identity,
-      categories: categories as Record<UsageCategory, number>,
+    rows.push({
+      ord: call.ord,
+      call: {
+        callID: `${sessionID}\u0000${call.messageID}`,
+        route: observedIdentity,
+        categories: call.categories as Record<UsageCategory, number>,
+      },
     })
-    const totals =
-      totalsBySession.get(sessionID) ??
-      (Object.fromEntries(USAGE_CATEGORIES.map((category) => [category, 0])) as Record<
-        UsageCategory,
-        number
-      >)
-    for (const category of USAGE_CATEGORIES) totals[category] += categories[category]!
-    totalsBySession.set(sessionID, totals)
+    for (const category of USAGE_CATEGORIES) totals[category] += call.categories[category]!
   }
+  return { rows, incomplete, totals }
+}
 
-  for (const session of usage.sessions) {
-    const attempts = attemptsBySession.get(session.sessionID) ?? []
-    const allocation =
-      allocationsBySession.get(session.sessionID) ??
-      sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
-    if (
-      allocation.status !== "single-observed-route" ||
-      !allocation.identity ||
-      allocation.identity.providerID !== route.providerID ||
-      allocation.identity.modelID !== route.modelID ||
-      allocation.identity.variant !== route.variant
-    )
+type PerCallIndex = {
+  /** No route can be complete: truncated facts, calls nobody owns, or calls without one route. */
+  blocked: boolean
+  /** The selected sessions whose one observed route is the key, with their calls if any. */
+  byRoute: Map<
+    string,
+    Array<{ session: TaskValuation["usage"]["sessions"][number]; calls: SessionCalls | undefined }>
+  >
+}
+
+/** Route-independent state of one request: built once, then each route reads only its sessions. */
+const perCallIndexes = new WeakMap<ProjectTaskValuationRequest, PerCallIndex>()
+
+function perCallIndex(input: ProjectTaskValuationRequest): PerCallIndex {
+  const cached = perCallIndexes.get(input)
+  if (cached) return cached
+  const digests = digestsOf(input.progressFacts)
+  const usage = projectUsage(effortOf(input, digests))
+  const bySession = attemptsBySession(input.attempts)
+  const selected = new Set(usage.sessions.map((session) => session.sessionID))
+  let blocked = input.progressTruncated
+  const callsBySession = new Map<string, SessionCalls>()
+  for (const [sessionID, digest] of digests) {
+    if (digest.valuation.unscopedAdditive) blocked = true
+    if (!digest.valuation.calls.length) continue
+    // Calls of a session no selected attempt owns cannot be attributed to any route.
+    if (!sessionID || !selected.has(sessionID)) {
+      blocked = true
       continue
-    const totals = totalsBySession.get(session.sessionID)
+    }
+    const attempts = bySession.get(sessionID) ?? []
+    const key = attemptsKey(attempts)
+    const allocation = allocationFor(sessionID, attempts, key, digest)
+    if (allocation.status !== "single-observed-route" || !allocation.identity) {
+      blocked = true
+      continue
+    }
+    const identity = allocation.identity
+    callsBySession.set(
+      sessionID,
+      memoizedOnDigest(digest, `calls:${key}`, () =>
+        sessionCalls(sessionID, digest, evidenceFor(sessionID, attempts, key, digest), identity),
+      ),
+    )
+  }
+  const byRoute: PerCallIndex["byRoute"] = new Map()
+  for (const session of usage.sessions) {
+    const attempts = bySession.get(session.sessionID) ?? []
+    const digest = digests.get(session.sessionID) ?? noFacts(session.sessionID)
+    const allocation = allocationFor(session.sessionID, attempts, attemptsKey(attempts), digest)
+    if (allocation.status !== "single-observed-route" || !allocation.identity) continue
+    const route = routeKey(allocation.identity)
+    const entry = { session, calls: callsBySession.get(session.sessionID) }
+    const group = byRoute.get(route)
+    if (group) group.push(entry)
+    else byRoute.set(route, [entry])
+  }
+  const index = { blocked, byRoute }
+  perCallIndexes.set(input, index)
+  return index
+}
+
+/** Deduplicate retained additive call measurements and require exact route/category evidence. */
+export function taskValuationPerCallUsage(
+  input: ProjectTaskValuationRequest,
+  route: MarketRangeRoute,
+): { calls: KnownUsagePerCall[]; complete: boolean } {
+  const index = perCallIndex(input)
+  const matched = index.byRoute.get(routeKey(route)) ?? []
+  let complete = !index.blocked
+  const rows: SessionCalls["rows"] = []
+  let sessionsWithCalls = 0
+  for (const { session, calls } of matched) {
+    if (calls) {
+      if (calls.incomplete) complete = false
+      if (calls.rows.length) sessionsWithCalls++
+      rows.push(...calls.rows)
+    }
     for (const category of USAGE_CATEGORIES) {
       const measure = session.categories[category]
       if (
         measure.status !== "observed" ||
         measure.value === null ||
-        (totals?.[category] ?? 0) !== measure.value
+        (calls?.totals[category] ?? 0) !== measure.value
       )
         complete = false
     }
   }
-  return { calls, complete }
+  // Each session's calls are in call order; calls come out in the order they first appeared.
+  if (sessionsWithCalls > 1) rows.sort((left, right) => left.ord - right.ord)
+  return { calls: rows.map((row) => row.call), complete }
 }
 
 /** Build price selectors from the same deduplicated usage and exact route allocation as valuation. */
 export function taskValuationApplicabilities(
   input: ProjectTaskValuationRequest,
 ): CurrentPriceApplicability[] {
-  const effort = projectTaskEffortBasis(input)
-  const usage = projectUsage(effort)
+  const digests = digestsOf(input.progressFacts)
+  const usage = projectUsage(effortOf(input, digests))
+  const bySession = attemptsBySession(input.attempts)
   return usage.sessions.flatMap((session) => {
-    const attempts = input.attempts.filter((attempt) => attempt.sessionID === session.sessionID)
-    const allocation = sessionRouteAllocation(session.sessionID, attempts, input.progressFacts)
+    const attempts = bySession.get(session.sessionID) ?? []
+    const digest = digests.get(session.sessionID) ?? noFacts(session.sessionID)
+    const allocation = allocationFor(session.sessionID, attempts, attemptsKey(attempts), digest)
     if (allocation.status !== "single-observed-route" || !allocation.identity) return []
     return [
       {
@@ -1270,11 +1536,12 @@ export function taskValuationApplicabilities(
 /** Revalue one deduplicated effort projection from explicitly supplied current product/price pins. */
 export function projectTaskValuation(input: ProjectTaskValuationInput): TaskValuation {
   const currentIndex = CurrentPriceIndexSchema.parse(input.currentIndex)
-  const effort = input.effort ?? projectTaskEffortBasis(input)
+  const digests = digestsOf(input.progressFacts)
+  const effort = effortOf(input, digests)
   const usage = projectUsage(effort)
   const costFacts = costContributions({
     attempts: input.attempts,
-    progressFacts: input.progressFacts,
+    digests,
     sessions: effort.usage.sessions,
   })
   const output = {
@@ -1284,7 +1551,7 @@ export function projectTaskValuation(input: ProjectTaskValuationInput): TaskValu
     marketEquivalentCost: marketEquivalentCost({
       usage,
       attempts: input.attempts,
-      progressFacts: input.progressFacts,
+      digests,
       currentIndex,
     }),
     architectReviewIntegrationOverheadUSD: {
