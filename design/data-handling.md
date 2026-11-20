@@ -87,10 +87,15 @@ the project's LAZERS core (`core/registry.ts`, `acquireCore`), which is already 
 project per process and generation-keyed. Module scope and per-plugin-copy instances
 hold nothing that grows.
 
-- Two host event subscriptions per process (from two different locations) fan out to the
-  project cores; one event reaches each listener once. If the pair ever shows a stream scoped
-  to one location (`singleSourceEvents`), every copy subscribes for the rest of the process
-  (`core/event-hub.ts`).
+- Every plugin copy holds a host event subscription, and one hub fans each event out to the
+  project cores once (`core/event-hub.ts`). A pair of subscriptions from two locations exists
+  behind `LAZERS_NATIVE_EVENT_PAIR=1`, off by default: an event that reaches only locations
+  outside the pair is invisible to it, so the pair cannot detect that loss itself. In the
+  default mode the hub records the evidence: per first-seen event, whether every subscribed
+  location delivered it (`fullyDelivered`) or some did not (`partiallyDelivered`, with a
+  byte-budgeted sample of type, delivering and subscribed locations), reported by the heap
+  sampler. A pair is safe only if `partiallyDelivered` stays 0 over a long session with many
+  copies.
 - A cache has one byte budget per process, a measurement beside its constant, and
   evicts least recently used entries. It never refuses work.
 - Worker threads are per process (or per database), not per location, and receive ids

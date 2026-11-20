@@ -13,7 +13,6 @@ import { ProgressRecorder } from "./recorder.ts"
 import { progressReconstructionDiagnostics } from "./reconstruction.ts"
 import { registerProgress as registerNativeProgress } from "./native.ts"
 import type { HostMessageClient } from "../core/host-messages.ts"
-import { resetNativeEventFallback, setNativeEventHubDefaults } from "../core/event-hub.ts"
 
 /** Each fixture context's host message client, paging the same messages its context serves. */
 const fixtureMessages = new WeakMap<object, HostMessageClient>()
@@ -1901,7 +1900,7 @@ test("reconstruction pages the host by cursor: unchanged stamps read nothing, a 
   }
 })
 
-test("plugin copies of one project share two subscriptions, and a standby leaving resubscribes nothing", async () => {
+test("plugin copies of one project each keep a subscription, and leaving resubscribes nothing", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -1914,19 +1913,16 @@ test("plugin copies of one project share two subscriptions, and a standby leavin
             Scope.provide(scopes[index]!),
           )
         yield* Effect.promise(() =>
-          waitForNativeState(async () => copies.filter((c) => c.subscriptions() >= 1).length >= 2),
+          waitForNativeState(async () => copies.every((c) => c.subscriptions() >= 1)),
         )
         yield* Effect.sleep(50)
-        // The event hub keeps two subscriptions from two locations; the third copy stands by.
-        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 0])
-        yield* Scope.close(scopes[2]!, Exit.void)
-        yield* Effect.sleep(50)
-        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 0])
-        // A subscribed copy leaving hands its subscription to the standby copy at once.
+        // A stream may be scoped to its location, so no copy relies on another's.
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 1])
         yield* Scope.close(scopes[0]!, Exit.void)
         yield* Effect.sleep(50)
-        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 0])
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 1])
         yield* Scope.close(scopes[1]!, Exit.void)
+        yield* Scope.close(scopes[2]!, Exit.void)
       }),
     )
   } finally {
@@ -1934,14 +1930,10 @@ test("plugin copies of one project share two subscriptions, and a standby leavin
   }
 })
 
-/** The event hub's grace period in these worlds; short so a scoped stream falls back quickly. */
-const WORLD_GRACE_MS = 60
-
 /**
  * Three copies of one project at three locations (the last a worker worktree) over one
  * recorder. `scoped` models a stream that carries only its own location's events; otherwise
- * every live stream carries every event. A copy the hub never subscribed hears nothing from the
- * host, so an event is offered only to copies that hold a subscription.
+ * every copy's stream carries every event.
  */
 async function projectWorld(
   scoped: boolean,
@@ -1955,8 +1947,6 @@ async function projectWorld(
   }) => Promise<void>,
 ) {
   const fixture = makeFixture()
-  resetNativeEventFallback()
-  const restoreDefaults = setNativeEventHubDefaults({ graceMs: WORLD_GRACE_MS })
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
     const recordedEvents: string[] = []
@@ -1986,9 +1976,7 @@ async function projectWorld(
       await Effect.runPromise(
         registerProgress(copy.context, recorder, "project").pipe(Scope.provide(scopes[index]!)),
       )
-    await waitForNativeState(
-      async () => copies.filter((copy) => copy.subscriptions() >= 1).length >= 2,
-    )
+    await waitForNativeState(async () => copies.every((copy) => copy.subscriptions() >= 1))
     await new Promise<void>((resolve) => setTimeout(resolve, 30))
     const open = new Set(copies.keys())
     try {
@@ -2001,8 +1989,7 @@ async function projectWorld(
             location: locations[location],
           }
           for (const [index, copy] of copies.entries())
-            if (open.has(index) && copy.subscriptions() >= 1 && (!scoped || index === location))
-              await copy.emitEvent(event)
+            if (open.has(index) && (!scoped || index === location)) await copy.emitEvent(event)
         },
         recorded: () => [...recordedEvents],
         copies,
@@ -2017,8 +2004,6 @@ async function projectWorld(
       for (const index of open) await Effect.runPromise(Scope.close(scopes[index]!, Exit.void))
     }
   } finally {
-    restoreDefaults()
-    resetNativeEventFallback()
     fixture.close()
   }
 }
@@ -2034,17 +2019,9 @@ test("server-wide streams: each event is recorded once for the project", async (
   })
 })
 
-test("location-scoped streams: the hub falls back, then every location's events are recorded, a worker worktree's included", async () => {
+test("location-scoped streams: every location's events are recorded, a worker worktree's included", async () => {
   await projectWorld(true, async (world) => {
-    // Both subscriptions attached for the grace period: now an event from only one is evidence.
-    await new Promise<void>((resolve) => setTimeout(resolve, WORLD_GRACE_MS + 40))
     await world.emit(0, "evt_checkout")
-    // The worker worktree has no subscription yet: this event reaches no stream and is lost.
-    await world.emit(2, "evt_worker_before_fallback")
-    await waitForNativeState(async () => world.copies[2]!.subscriptions() >= 1, 3_000)
-    await settle()
-    // The hub fell back and raised the project's gap handling for what it may have missed.
-    expect(world.gapMarks()).toBeGreaterThan(0)
     await world.emit(1, "evt_main")
     await world.emit(2, "evt_worker")
     await settle()
@@ -2056,9 +2033,6 @@ test("a copy leaving loses nothing the others still deliver, the recording copy 
   for (const scoped of [false, true])
     await projectWorld(scoped, async (world) => {
       await world.leave(0)
-      // The standby copy takes the freed subscription; its stream attaches within a tick.
-      await waitForNativeState(async () => world.copies[2]!.subscriptions() >= 1, 3_000)
-      await settle()
       await world.emit(1, "evt_after_b")
       await world.emit(2, "evt_after_w")
       await settle()

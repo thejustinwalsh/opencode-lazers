@@ -1,8 +1,26 @@
 import { Effect, Stream } from "effect"
 
 /**
- * One process-wide fan-out of host events, with two live host subscriptions instead of one per
- * plugin copy, and a proven way back to one per copy.
+ * One process-wide fan-out of host events. Two modes:
+ *
+ * - every-copy (the default): every plugin copy holds its own host subscription. Nothing can be
+ *   lost to a location-scoped stream, at the price of the host delivering each event once per
+ *   copy. In this mode the hub records the evidence that would justify the pair mode, below.
+ * - pair (opt in with LAZERS_NATIVE_EVENT_PAIR=1, or `setNativeEventHubDefaults({ pair: true })`):
+ *   two live host subscriptions instead of one per copy, with a proven way back to every-copy.
+ *
+ * Evidence recorded in every-copy mode. For each first-seen event the hub compares the locations
+ * that delivered it within the grace period with the locations subscribed for that whole period
+ * (every subscription attached for at least the grace period before the event, and no attach,
+ * drop, join or leave until the period ended). `fullyDelivered` counts events every subscribed
+ * location delivered, `partiallyDelivered` events some did not, and `partialSamples` keeps a
+ * byte-budgeted sample (oldest evicted) with type, delivering and subscribed locations. A pair is
+ * safe only if `partiallyDelivered` stays 0 over a long session with many copies: an event that
+ * reaches only locations outside a pair can never be seen by the pair, so the pair mode cannot
+ * detect that loss itself. Both are reported by `nativeEventSubscriptions()`, which the heap
+ * sampler records.
+ *
+ * The pair mode in detail:
  *
  * OpenCode loads one plugin copy per location. The server protocol says the event stream spans
  * "all server locations" and each event carries its own `location`
@@ -93,8 +111,12 @@ const ENTRY_LOCATION_BYTES = 64
 export const SINGLE_SOURCE_GRACE_MS = 10_000
 
 /** Hub options applied to hubs created after this call; tests shorten the grace period. */
-let defaults: { maxBytes?: number; graceMs?: number } = {}
-export function setNativeEventHubDefaults(options: { maxBytes?: number; graceMs?: number }) {
+let defaults: { maxBytes?: number; graceMs?: number; pair?: boolean } = {}
+export function setNativeEventHubDefaults(options: {
+  maxBytes?: number
+  graceMs?: number
+  pair?: boolean
+}) {
   const previous = defaults
   defaults = options
   return () => {
@@ -110,7 +132,28 @@ export function resetNativeEventFallback() {
 /** Live subscriptions kept while at least two copies are joined. */
 const SUBSCRIPTIONS = 2
 
-type Pending = { id: string; at: number; epoch: number }
+/**
+ * Partially delivered events kept as evidence: 64 KiB, about 300 samples at the roughly 200 bytes
+ * of a type plus two location lists of ten copies. An estimate, not measured on live data; oldest
+ * samples are evicted, the counter keeps the total.
+ */
+export const PARTIAL_SAMPLE_BUDGET_BYTES = 64 * 1024
+
+export type PartialSample = {
+  id: string
+  type: string | undefined
+  delivered: string[]
+  subscribed: string[]
+}
+
+/** `subscribed` is set only for evidence in every-copy mode; the pair rule needs no snapshot. */
+type Pending = {
+  id: string
+  at: number
+  epoch: number
+  type?: string
+  subscribed?: string[]
+}
 
 type Hub = {
   key: string
@@ -131,6 +174,8 @@ type Hub = {
   seen: Map<string, Seen>
   seenBytes: number
   maxBytes: number
+  partialSamples: PartialSample[]
+  partialBytes: number
   counts: {
     /** Subscriptions opened (attach events), across all copies. */
     opened: number
@@ -148,6 +193,10 @@ type Hub = {
     fallbacks: number
     /** Standby copies promoted to a subscription after a subscribed copy left. */
     promotions: number
+    /** Every-copy evidence: events every subscribed location delivered within the grace period. */
+    fullyDelivered: number
+    /** Every-copy evidence: events some subscribed location did not deliver. Pair needs 0. */
+    partiallyDelivered: number
   }
 }
 
@@ -187,6 +236,28 @@ function pairEligible(hub: Hub) {
   return pair.every((member) => now - member.attachedAt! >= hub.graceMs)
 }
 
+/**
+ * Every-copy evidence: at least two subscriptions, all attached for the grace period. Returns the
+ * subscribed locations, or undefined when the event cannot count.
+ */
+function evidenceLocations(hub: Hub): string[] | undefined {
+  if (!hub.all || hub.subscribed.size < SUBSCRIPTIONS) return undefined
+  const members = [...hub.subscribed].map((id) => hub.members.get(id)!)
+  const now = hub.now()
+  if (members.some((m) => m.attachedAt === undefined || now - m.attachedAt < hub.graceMs))
+    return undefined
+  return [...new Set(members.map((m) => m.location))].toSorted()
+}
+
+function recordPartial(hub: Hub, sample: PartialSample) {
+  const bytes = JSON.stringify(sample).length
+  hub.partialSamples.push(sample)
+  hub.partialBytes += bytes
+  while (hub.partialBytes > PARTIAL_SAMPLE_BUDGET_BYTES && hub.partialSamples.length > 1) {
+    hub.partialBytes -= JSON.stringify(hub.partialSamples.shift()).length
+  }
+}
+
 function schedule(hub: Hub, ms: number) {
   if (hub.timer !== undefined) return
   hub.timer = setTimeout(() => sweep(hub), Math.max(1, ms))
@@ -204,10 +275,25 @@ function sweep(hub: Hub) {
       break
     }
     hub.pendingHead++
-    // The pair changed since this event arrived: it proves nothing about either stream.
-    if (hub.all || pending.epoch !== hub.epoch) continue
+    // The subscriptions changed since this event arrived: it proves nothing about any stream.
+    if (pending.epoch !== hub.epoch) continue
     const known = hub.seen.get(pending.id)
-    if (!known || known.locations.size >= SUBSCRIPTIONS) continue
+    if (!known) continue
+    if (pending.subscribed) {
+      const delivered = pending.subscribed.filter((location) => known.locations.has(location))
+      if (delivered.length === pending.subscribed.length) hub.counts.fullyDelivered++
+      else {
+        hub.counts.partiallyDelivered++
+        recordPartial(hub, {
+          id: pending.id,
+          type: pending.type,
+          delivered,
+          subscribed: pending.subscribed,
+        })
+      }
+      continue
+    }
+    if (hub.all || known.locations.size >= SUBSCRIPTIONS) continue
     hub.counts.singleSourceEvents++
     fallBack(hub)
     return
@@ -272,9 +358,15 @@ function deliver(hub: Hub, member: Member, event: unknown) {
     const k = oldest[1].locations.size
     hub.counts.deliveredByLocations[k] = (hub.counts.deliveredByLocations[k] ?? 1) - 1
   }
-  if (pairEligible(hub)) {
-    const at = hub.now()
-    hub.pending.push({ id, at, epoch: hub.epoch })
+  const subscribed = evidenceLocations(hub)
+  if (subscribed || pairEligible(hub)) {
+    const type = (event as { type?: unknown }).type
+    hub.pending.push({
+      id,
+      at: hub.now(),
+      epoch: hub.epoch,
+      ...(subscribed ? { subscribed, type: typeof type === "string" ? type : undefined } : {}),
+    })
     schedule(hub, hub.graceMs)
   }
   each(hub, (listener) => listener.event(event))
@@ -351,7 +443,7 @@ export function joinNativeEvents(
   types: readonly string[],
   listener: NativeEventListener,
   location?: string,
-  options: { maxBytes?: number; graceMs?: number; now?: () => number } = {},
+  options: { maxBytes?: number; graceMs?: number; now?: () => number; pair?: boolean } = {},
 ): () => void {
   const key = [...types].sort().join("|")
   const all = hubs()
@@ -362,7 +454,9 @@ export function joinNativeEvents(
       types,
       members: new Map(),
       subscribed: new Set(),
-      all: fellBack().has(key),
+      all:
+        !(options.pair ?? defaults.pair ?? process.env.LAZERS_NATIVE_EVENT_PAIR === "1") ||
+        fellBack().has(key),
       epoch: 0,
       pending: [],
       pendingHead: 0,
@@ -370,6 +464,8 @@ export function joinNativeEvents(
       now: options.now ?? Date.now,
       seen: new Map(),
       seenBytes: 0,
+      partialSamples: [],
+      partialBytes: 0,
       maxBytes: options.maxBytes ?? defaults.maxBytes ?? EVENT_ID_BUDGET_BYTES,
       counts: {
         opened: 0,
@@ -380,6 +476,8 @@ export function joinNativeEvents(
         singleSourceEvents: 0,
         fallbacks: 0,
         promotions: 0,
+        fullyDelivered: 0,
+        partiallyDelivered: 0,
       },
     }
     all.set(key, hub)
@@ -423,6 +521,8 @@ export function nativeEventSubscriptions() {
     mode: hub.all ? ("every-copy" as const) : ("two-locations" as const),
     ...hub.counts,
     deliveredByLocations: { ...hub.counts.deliveredByLocations },
+    partialSamples: hub.partialSamples.map((sample) => ({ ...sample })),
+    partialSampleBytes: hub.partialBytes,
     retainedIDs: hub.seen.size,
     retainedBytes: hub.seenBytes,
   }))

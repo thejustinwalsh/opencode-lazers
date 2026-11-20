@@ -13,7 +13,7 @@ const tick = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
 let restore = () => {}
 beforeEach(() => {
   resetNativeEventFallback()
-  restore = setNativeEventHubDefaults({ graceMs: GRACE })
+  restore = setNativeEventHubDefaults({ graceMs: GRACE, pair: true })
 })
 afterEach(() => restore())
 
@@ -46,7 +46,7 @@ function world(count: number, scoped: boolean) {
       },
     }
   })
-  const emit = async (event: { id?: string; location: string }) => {
+  const emit = async (event: { id?: string; type?: string; location: string }) => {
     for (const copy of copies)
       if (copy.state.queue && (!scoped || copy.state.directory === event.location))
         await Effect.runPromise(Queue.offer(copy.state.queue, event))
@@ -71,6 +71,10 @@ function world(count: number, scoped: boolean) {
 }
 
 const ids = (events: unknown[]) => events.map((event) => (event as { id: string }).id)
+
+test("pair mode is selected by the setting: every test below this line runs it", () => {
+  expect(world(2, false).stats().mode).toBe("two-locations")
+})
 
 test("server-wide stream, three copies: two subscriptions, each listener hears each event once", async () => {
   const w = world(3, false)
@@ -320,4 +324,79 @@ test("a reattach asks the host for a fresh stream and the gap names its cause", 
   expect(gaps).toEqual(["failed"])
   expect(subscribes).toBe(2)
   leave()
+})
+
+/** The default: no pair setting, so every copy subscribes. */
+function defaultWorld(count: number, scoped: boolean) {
+  restore()
+  restore = setNativeEventHubDefaults({ graceMs: GRACE })
+  return world(count, scoped)
+}
+
+test("every-copy is the default: every copy subscribes and each listener hears each event once", async () => {
+  for (const count of [3, 10]) {
+    const w = defaultWorld(count, false)
+    await tick(GRACE + 40)
+    expect(w.subscribes()).toEqual(Array(count).fill(1))
+    expect(w.stats()).toMatchObject({ mode: "every-copy", subscriptions: count })
+    for (let index = 0; index < 5; index++)
+      await w.emit({ id: `evt_${index}`, type: "session.idle", location: `/loc-${index}` })
+    await tick(GRACE + 80)
+    const expected = Array.from({ length: 5 }, (_, index) => `evt_${index}`)
+    for (const heard of w.heard) expect(ids(heard)).toEqual(expected)
+    // Every subscribed location delivered every event: the evidence a pair would be safe.
+    expect(w.stats()).toMatchObject({
+      fullyDelivered: 5,
+      partiallyDelivered: 0,
+      singleSourceEvents: 0,
+      fallbacks: 0,
+    })
+    expect(w.stats().partialSamples).toEqual([])
+    w.leaveAll()
+  }
+})
+
+test("every-copy default loses nothing on a location-scoped stream, and counts and samples the partial deliveries", async () => {
+  const w = defaultWorld(3, true)
+  await tick(GRACE + 40)
+  await w.emit({ id: "evt_a", type: "session.idle", location: "/loc-0" })
+  await w.emit({ id: "evt_b", type: "session.status", location: "/loc-1" })
+  await w.emit({ id: "evt_c", type: "session.idle", location: "/loc-2" })
+  await tick(GRACE + 80)
+  for (const heard of w.heard) expect(ids(heard).sort()).toEqual(["evt_a", "evt_b", "evt_c"])
+  const stats = w.stats()
+  expect(stats).toMatchObject({ fullyDelivered: 0, partiallyDelivered: 3, fallbacks: 0 })
+  expect(stats.partialSamples).toHaveLength(3)
+  expect(stats.partialSamples[0]).toEqual({
+    id: "evt_a",
+    type: "session.idle",
+    delivered: ["/loc-0"],
+    subscribed: ["/loc-0", "/loc-1", "/loc-2"],
+  })
+  expect(stats.partialSampleBytes).toBeGreaterThan(0)
+  w.leaveAll()
+})
+
+test("an event inside a membership change is not evidence; the sample is byte-budgeted", async () => {
+  const w = defaultWorld(3, true)
+  await tick(GRACE + 40)
+  await w.emit({ id: "evt_x", type: "t", location: "/loc-0" })
+  // A copy leaves during the grace period: the subscribed set was not stable, so no verdict.
+  w.leave[2]!()
+  await tick(GRACE + 80)
+  expect(w.stats()).toMatchObject({ fullyDelivered: 0, partiallyDelivered: 0 })
+  w.leaveAll()
+
+  const big = defaultWorld(3, true)
+  await tick(GRACE + 40)
+  for (let index = 0; index < 1_500; index++)
+    await big.emit({ id: `evt_${index}`, type: "x".repeat(100), location: "/loc-0" })
+  await tick(GRACE + 200)
+  const stats = big.stats()
+  expect(stats.partiallyDelivered).toBe(1_500)
+  expect(stats.partialSampleBytes).toBeLessThanOrEqual(64 * 1024)
+  expect(stats.partialSamples.length).toBeLessThan(1_500)
+  // Oldest evicted: the newest sample is the last event.
+  expect(stats.partialSamples.at(-1)!.id).toBe("evt_1499")
+  big.leaveAll()
 })
