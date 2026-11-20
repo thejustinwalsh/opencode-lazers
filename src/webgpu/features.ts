@@ -9,6 +9,16 @@ import { z } from "zod"
  */
 export const DEFAULT_MODEL_KEEP_ALIVE_MS = 15 * 60_000
 
+/** The stored "Always" choice: weights stay loaded when idle. Only a user picks it. */
+export const NEVER_UNLOAD_MS = -1
+
+/**
+ * The "Keep model loaded" setting before the user has chosen. The store persists only a value
+ * somebody set, so this reaches users who never chose and leaves every stored value (including an
+ * explicit Always) as it is.
+ */
+export const RUNTIME_SETTINGS_INITIAL = { keepAliveMs: DEFAULT_MODEL_KEEP_ALIVE_MS }
+
 export const FeatureSettings = z.strictObject({
   enabled: z.boolean(),
   questions: z.boolean(),

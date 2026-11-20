@@ -9,6 +9,7 @@ import {
   CompactionRefused,
   INCREMENTAL_VACUUM_PAGES,
   compactOnce,
+  databaseInUse,
   incrementalVacuum,
   spaceState,
 } from "./vacuum.ts"
@@ -126,4 +127,64 @@ test("the retention service reports the mode and reclaims space once the databas
   const slice = await service.retire({ days: 30 })
   expect(slice.reclaimedBytes).toBeGreaterThan(0)
   expect(slice.freeBytes).toBeLessThan(filled.freeBytes)
+})
+
+/** A second process that keeps the database open until its stdin closes. */
+async function holder(path: string) {
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      `const { Database } = require("bun:sqlite"); const db = new Database(process.argv[1]); db.query("SELECT count(*) FROM t").get(); console.log("ready"); await Bun.stdin.text()`,
+      path,
+    ],
+    { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+  )
+  const reader = child.stdout.getReader()
+  await reader.read()
+  return {
+    release: async () => {
+      child.stdin.end()
+      await child.exited
+    },
+  }
+}
+
+test("another process holding the database open is detected, and a closed one is not", async () => {
+  const { db, path } = database(10)
+  db.close()
+  expect(databaseInUse(path)).toBe(false)
+  const other = await holder(path)
+  expect(databaseInUse(path)).toBe(true)
+  await other.release()
+  expect(databaseInUse(path)).toBe(false)
+  // The probe leaves the journal mode as it found it.
+  const check = new Database(path)
+  expect(check.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()!.journal_mode).toBe(
+    "wal",
+  )
+  check.close()
+})
+
+test("the compaction script refuses while another process has the database open, unless --force", async () => {
+  const { db, path } = database(10)
+  db.close()
+  const script = new URL("../../scripts/compact-database.ts", import.meta.url).pathname
+  const run = (...flags: string[]) =>
+    Bun.spawnSync([process.execPath, script, "--db", path, ...flags], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+  const other = await holder(path)
+  const refused = run("--yes")
+  expect(refused.exitCode).toBe(1)
+  expect(refused.stderr.toString()).toContain("another process has")
+  expect(refused.stderr.toString()).toContain("Quit OpenCode Desktop")
+  expect(refused.stderr.toString()).toContain("--force")
+  // Report only changes nothing and does not refuse.
+  expect(run().exitCode).toBe(0)
+  await other.release()
+  const done = run("--yes")
+  expect(done.exitCode).toBe(0)
+  expect(done.stdout.toString()).toContain("compacted")
 })

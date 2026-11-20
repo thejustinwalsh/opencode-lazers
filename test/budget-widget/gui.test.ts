@@ -183,4 +183,4 @@ test("native header/settings remain reactive, compact, shared and opt-in across 
     }
     await dom.happyDOM.close()
   }
-}, 60_000)
+})

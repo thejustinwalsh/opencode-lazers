@@ -1,4 +1,5 @@
 import { MAX_RETENTION_DAYS } from "./contract.ts"
+import type { RetentionStatusView } from "./contract.ts"
 
 export const CUSTOM = "custom"
 
@@ -26,3 +27,19 @@ export function formatBytes(bytes: number): string {
 export const formatCount = (count: number) => count.toLocaleString("en-US")
 export const plural = (count: number, noun: string) =>
   `${formatCount(count)} ${noun}${count === 1 ? "" : "s"}`
+
+/**
+ * Free pages are "large" once they are a tenth of the file or more: the point where a compaction
+ * returns a visible share of the disk. Display only; nothing is refused below it.
+ */
+export const COMPACTION_FREE_SHARE = 0.1
+
+export const COMPACTION_COMMAND = "bun scripts/compact-database.ts --db <path> --yes"
+
+/** The one-time compaction notice: only for a database that never returns free pages by itself. */
+export function compactionNotice(status: RetentionStatusView): string | undefined {
+  if (status.autoVacuum !== "none") return undefined
+  if (status.freeBytes <= 0 || status.freeBytes < status.fileBytes * COMPACTION_FREE_SHARE)
+    return undefined
+  return `${formatBytes(status.freeBytes)} of the file is free, and it will not shrink until a one-time compaction. Stop the service and Desktop, then run ${COMPACTION_COMMAND} (needs ${formatBytes(status.compactionDiskBytes)} of free disk).`
+}

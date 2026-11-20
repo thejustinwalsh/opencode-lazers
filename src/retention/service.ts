@@ -121,7 +121,12 @@ export class RetentionService {
     const db = this.deps.repository.read((handle) => handle)
     const presets: RetentionStatus["presets"] = []
     for (const days of RETENTION_PRESET_DAYS) {
-      const preview = await previewRetention(db, { now, days, ageIndependent: false })
+      const preview = await previewRetention(db, {
+        now,
+        days,
+        ageIndependent: false,
+        dataDirectory: dirname(this.deps.repository.path),
+      })
       presets.push({ days, rows: preview.rows, bytes: preview.bytes })
     }
     const superseded = await previewRetention(db, {
@@ -142,7 +147,11 @@ export class RetentionService {
   async preview(input: { days: number; asOf?: number }): Promise<RetentionPreviewWithTrees> {
     const asOf = this.asOf(input.asOf)
     const db = this.deps.repository.read((handle) => handle)
-    const preview = await previewRetention(db, { now: asOf, days: input.days })
+    const preview = await previewRetention(db, {
+      now: asOf,
+      days: input.days,
+      dataDirectory: dirname(this.deps.repository.path),
+    })
     const { retired } = classifyPlans(db, asOf, input.days)
     const worktrees = await this.inspect(retired)
     return {
@@ -215,6 +224,7 @@ export class RetentionService {
         budgetMs: SLICE_MS,
         batch: BATCH_ROWS,
         ageDependent: !supersededOnly,
+        dataDirectory: dirname(repository.path),
       },
     )
     const reclaimedBytes = await this.reclaim(started)

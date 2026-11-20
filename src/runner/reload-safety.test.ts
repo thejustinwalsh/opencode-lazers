@@ -41,7 +41,7 @@ test("running check kinds, retained operations and adoption checks hold a reload
   db.run("CREATE TABLE runner_adoption_checks(adoption_id TEXT, state TEXT)")
   for (const kind of ["graph-verify:fallow-audit", "mechanical-fix", "verify:lazers-fallow"]) {
     db.run("DELETE FROM runner_effects")
-    db.run("INSERT INTO runner_effects VALUES('e',?, 'uncertain')", [kind])
+    db.run("INSERT INTO runner_effects VALUES('e',?, 'intended')", [kind])
     expect(reloadSafety(db)).toMatchObject({ safe: false, verifications: 1 })
   }
   db.run("DELETE FROM runner_effects")
@@ -119,4 +119,19 @@ test("a task an Architect took over is named as such, never as a running worker"
   expect(result.line).toBe(
     "0 workers running, 0 verifications running, 0 Architect turns in flight, 1 task taken over by an Architect, safe to reload: yes",
   )
+})
+
+test("an uncertain or held check step is reported apart and does not hold a reload", () => {
+  const db = database()
+  db.run("CREATE TABLE runner_adoption_checks(adoption_id TEXT, state TEXT)")
+  db.run("INSERT INTO runner_effects VALUES('e','graph-verify:all','uncertain')")
+  db.run("INSERT INTO runner_effects VALUES('h','verify:quality','held')")
+  const result = reloadSafety(db)
+  expect(result).toMatchObject({ safe: true, verifications: 0, uncertainSteps: 2 })
+  expect(result.uncertainLine).toBe("2 uncertain steps on a blocked plan")
+  expect(result.line).toContain("0 verifications running")
+  db.run("DELETE FROM runner_effects WHERE id='h'")
+  expect(reloadSafety(db).uncertainLine).toBe("1 uncertain step on a blocked plan")
+  db.run("UPDATE runner_effects SET state='failed'")
+  expect(reloadSafety(db).uncertainLine).toBeUndefined()
 })

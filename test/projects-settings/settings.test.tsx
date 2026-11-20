@@ -314,4 +314,4 @@ test("49f6a84a-1: a poll with equal data keeps the row, its focus and an unsent 
   expect(ui.q("Reason to pause alpha")).toBe(before)
   expect(ui.q("Reason to pause alpha").value).toBe("Rebuild in prog")
   ui.close()
-}, 15_000)
+})

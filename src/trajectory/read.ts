@@ -175,24 +175,6 @@ function accountingRoute(model: ReturnType<typeof modelView>): AccountingRoute |
   }
 }
 
-function sessionStepRoutes(session: TrajectorySession | null, stats: PrivacyStats) {
-  if (!session?.messages) return []
-  return session.messages.slice(0, MAX_CONTEXT_MESSAGES).flatMap((raw) => {
-    const message = object(raw)
-    if (message?.type !== "assistant") return []
-    const model = accountingRoute(modelView(message.model, stats))
-    const id = typeof message.id === "string" ? safeText(message.id, stats, 200) : null
-    if (!model || !id) return []
-    return [
-      {
-        messageID: id,
-        route: model,
-        observedAt: dateMillis(object(message.time)?.created),
-      },
-    ]
-  })
-}
-
 function frozenPersona(policy: Record<string, unknown> | null) {
   const value = policy?.persona
   return value === "ui" || value === "systems" || value === "small-refactoring" ? value : null
@@ -574,12 +556,23 @@ function messageSliceEvents(ctx: MessageContext, slice: MessageSlice) {
   else ctx.stats.omittedUnsupportedParts++
 }
 
-function messageEvents(
-  rawMessages: ReadonlyArray<SessionMessage.Info>,
-  attempt: AttemptRow,
-  session: TrajectorySession,
-  stats: PrivacyStats,
-) {
+/** What one attempt's transcript contributes to a report, folded a page at a time. */
+type MessageFold = {
+  events: Record<string, unknown>[]
+  models: NonNullable<ReturnType<typeof modelView>>[]
+  routes: Array<{ messageID: string; route: AccountingRoute; observedAt: number | null }>
+  /** Messages seen, up to one past the transcript bound. */
+  count: number
+  /** Digest of the raw messages: binds a continuation cursor to the transcript without holding it. */
+  digest: string
+}
+
+/**
+ * One accumulator per fold over a transcript (events, models seen, step routes, digest), fed a
+ * page at a time so the report holds one page of messages, never the transcript. Events and
+ * routes cover the first MAX_CONTEXT_MESSAGES messages; models cover every message read.
+ */
+function messageFold(attempt: AttemptRow, stats: PrivacyStats) {
   const events: Record<string, unknown>[] = []
   const ctx: MessageContext = {
     stats,
@@ -587,27 +580,63 @@ function messageEvents(
       id: safeText(id, stats, 256),
       at,
       attemptID: safeText(attempt.id, stats, 128),
-      sessionID: safeText(session.id, stats, 128),
+      sessionID: safeText(attempt.session_id, stats, 128),
       kind,
     }),
     add: (event) => events.push(event),
   }
-
-  const messages = rawMessages.slice(0, MAX_CONTEXT_MESSAGES)
-  if (rawMessages.length > messages.length) stats.truncated++
-  for (const [index, raw] of messages.entries()) {
-    const message = object(raw)
-    if (!message || typeof message.type !== "string") {
-      stats.omittedUnsupportedParts++
-      continue
-    }
-    messageSliceEvents(ctx, {
-      message,
-      messageID: typeof message.id === "string" ? message.id : `unknown-${index}`,
-      createdAt: dateMillis(object(message.time)?.created),
-    })
+  const models = new Map<string, NonNullable<ReturnType<typeof modelView>>>()
+  const routes: MessageFold["routes"] = []
+  const digest = createHash("sha256")
+  let index = 0
+  let fed = false
+  return {
+    /** True once a page (possibly empty) has been given: the transcript was read. */
+    get fed() {
+      return fed
+    },
+    page(page: ReadonlyArray<SessionMessage.Info>) {
+      fed = true
+      for (const raw of page) {
+        const message = object(raw)
+        digest.update(JSON.stringify(raw) ?? "null")
+        if (message?.type === "assistant") {
+          const model = modelView(message.model, stats)
+          if (model) models.set(modelKey(model), model)
+        }
+        if (index < MAX_CONTEXT_MESSAGES) {
+          if (message?.type === "assistant") {
+            const route = accountingRoute(modelView(message.model, stats))
+            const id = typeof message.id === "string" ? safeText(message.id, stats, 200) : null
+            if (route && id)
+              routes.push({
+                messageID: id,
+                route,
+                observedAt: dateMillis(object(message.time)?.created),
+              })
+          }
+          if (!message || typeof message.type !== "string") stats.omittedUnsupportedParts++
+          else
+            messageSliceEvents(ctx, {
+              message,
+              messageID: typeof message.id === "string" ? message.id : `unknown-${index}`,
+              createdAt: dateMillis(object(message.time)?.created),
+            })
+        }
+        index++
+      }
+    },
+    finish(): MessageFold {
+      if (index > MAX_CONTEXT_MESSAGES) stats.truncated++
+      return {
+        events,
+        models: [...models.values()],
+        routes,
+        count: index,
+        digest: digest.digest("hex"),
+      }
+    },
   }
-  return events
 }
 
 function checkView(
@@ -838,17 +867,6 @@ function usage(session: TrajectorySession | null) {
   }
 }
 
-function safeMessageModels(session: TrajectorySession | null, stats: PrivacyStats) {
-  const found = new Map<string, NonNullable<ReturnType<typeof modelView>>>()
-  for (const raw of session?.messages ?? []) {
-    const message = object(raw)
-    if (message?.type !== "assistant") continue
-    const model = modelView(message.model, stats)
-    if (model) found.set(modelKey(model), model)
-  }
-  return [...found.values()]
-}
-
 function modelFromPolicy(policy: string, stats: PrivacyStats) {
   const data = parseObject(policy)
   return modelView(data?.model, stats)
@@ -858,6 +876,7 @@ function attemptView(
   attempt: AttemptRow,
   snapshot: PlanSnapshot,
   session: TrajectorySession | null,
+  messageModels: NonNullable<ReturnType<typeof modelView>>[],
   sessionStatus: "available" | "missing" | "unavailable",
   sessionError: string | null,
   stats: PrivacyStats,
@@ -867,7 +886,6 @@ function attemptView(
   const admitted =
     modelFromPolicy(attempt.policy, stats) ?? modelView(parseObject(snapshot.row.model), stats)
   const observed = session ? modelView(session.model, stats) : null
-  const messageModels = safeMessageModels(session, stats)
   const uniqueModels = new Map<string, NonNullable<typeof observed>>()
   for (const model of [...messageModels, ...(observed ? [observed] : [])])
     uniqueModels.set(modelKey(model), model)
@@ -956,7 +974,10 @@ type InspectOptions = {
 type AttemptEntry = { attempt: AttemptRow; snapshot: PlanSnapshot }
 type SessionStatus = "available" | "missing" | "unavailable"
 type SessionReads = {
+  /** Sessions as read; a transcript is never kept here, only folded into `folds`. */
   sessions: Map<string, TrajectorySession | null>
+  /** Per attempt, what its transcript contributes, when the transcript was read. */
+  folds: Map<string, MessageFold>
   errors: Map<string, string>
   statuses: Map<string, SessionStatus>
 }
@@ -1026,7 +1047,12 @@ async function readAttemptSessions(
   if (options.includeMessages === false && !statusReader)
     throw new Error("Metadata-only trajectory status is unavailable")
 
-  const reads: SessionReads = { sessions: new Map(), errors: new Map(), statuses: new Map() }
+  const reads: SessionReads = {
+    sessions: new Map(),
+    folds: new Map(),
+    errors: new Map(),
+    statuses: new Map(),
+  }
   const sessionsByAssignment = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
     // An Architect takeover has no native worker session to read; nothing is missing.
@@ -1034,18 +1060,24 @@ async function readAttemptSessions(
     try {
       const sessionKey = JSON.stringify([attempt.session_id, attempt.id, attempt.workspace])
       let read = sessionsByAssignment.get(sessionKey)
+      // The host hands the transcript to the fold page by page; this attempt's fold sees it once.
+      const fold = options.includeMessages === false ? undefined : messageFold(attempt, stats)
       if (!read) {
         const sessionID = attempt.session_id
         read =
           options.includeMessages === false
             ? statusReader!(sessionID, attempt)
-            : host.session(sessionID, attempt)
+            : host.session(sessionID, attempt, fold!.page)
         sessionsByAssignment.set(sessionKey, read)
       }
       const session = await read
       if (session && (session.id !== attempt.session_id || session.projectID !== projectID))
         throw new TrajectoryIdentityError()
-      reads.sessions.set(attempt.id, session)
+      // A host that returns the transcript whole (a fixture, an older host) feeds the same fold.
+      if (session?.messages && fold) fold.page(session.messages)
+      if (session && fold?.fed && session.messageStatus === "available")
+        reads.folds.set(attempt.id, fold.finish())
+      reads.sessions.set(attempt.id, session?.messages ? { ...session, messages: null } : session)
       reads.statuses.set(attempt.id, session ? "available" : "missing")
       if (session?.messageStatus === "unavailable" && session.messageError)
         reads.errors.set(attempt.id, session.messageError)
@@ -1079,13 +1111,13 @@ function collectTrajectoryEvents(
     allChecks.push(...planChecks)
     checksByPlan.set(snapshot.row.id, planChecks)
     for (const attempt of snapshot.attempts) {
-      const session = reads.sessions.get(attempt.id) ?? null
+      const fold = reads.folds.get(attempt.id)
       if (
         options.includeMessages !== false &&
-        session?.messages &&
+        fold &&
         reads.statuses.get(attempt.id) === "available"
       )
-        rawEvents.push(...messageEvents(session.messages, attempt, session, stats))
+        rawEvents.push(...fold.events)
     }
   }
   rawEvents.push(...projectedProgressFacts)
@@ -1150,8 +1182,8 @@ function truncatedContextSessions(
   return [
     ...new Set(
       allAttempts.flatMap(({ attempt }) => {
-        const session = reads.sessions.get(attempt.id)
-        return session?.messages && session.messages.length > MAX_CONTEXT_MESSAGES
+        const fold = reads.folds.get(attempt.id)
+        return fold && fold.count > MAX_CONTEXT_MESSAGES
           ? [safeText(attempt.session_id, stats, 128)]
           : []
       }),
@@ -1162,6 +1194,7 @@ function truncatedContextSessions(
 function valuationAttempt(
   { attempt, snapshot }: AttemptEntry,
   session: TrajectorySession | null,
+  stepRoutes: MessageFold["routes"],
   sessionStatus: SessionStatus,
   stats: PrivacyStats,
 ): ProjectTaskValuationRequest["attempts"][number] {
@@ -1208,7 +1241,7 @@ function valuationAttempt(
         }
       : null,
     sessionUsageObservedAt: session ? dateMillis(session.time.updated) : null,
-    stepRoutes: sessionStepRoutes(session, stats),
+    stepRoutes,
   }
 }
 
@@ -1394,9 +1427,7 @@ function coverageView(
       reads.statuses.get(attempt.id) === "unavailable" ||
       reads.sessions.get(attempt.id)?.messageStatus === "unavailable",
   ).length
-  const messageSessions = allAttempts.filter(
-    ({ attempt }) => reads.sessions.get(attempt.id)?.messages,
-  ).length
+  const messageSessions = allAttempts.filter(({ attempt }) => reads.folds.has(attempt.id)).length
   return {
     sessionRead:
       options.includeMessages === false
@@ -1477,7 +1508,11 @@ function paginateEvents(
               targetScope,
               task,
               plans: rawPlans,
-              sessions: [...reads.sessions.entries()],
+              sessions: [...reads.sessions.entries()].map(([id, session]) => [
+                id,
+                session,
+                reads.folds.get(id)?.digest ?? null,
+              ]),
               sessionErrors: [...reads.errors.entries()],
               events: rawEvents,
             },
@@ -1580,6 +1615,7 @@ export async function inspectTrajectory(
       attempt,
       snapshot,
       reads.sessions.get(attempt.id) ?? null,
+      reads.folds.get(attempt.id)?.models ?? [],
       reads.statuses.get(attempt.id) ?? "missing",
       reads.errors.get(attempt.id) ?? null,
       stats,
@@ -1595,6 +1631,7 @@ export async function inspectTrajectory(
         valuationAttempt(
           entry,
           reads.sessions.get(entry.attempt.id) ?? null,
+          reads.folds.get(entry.attempt.id)?.routes ?? [],
           reads.statuses.get(entry.attempt.id) ?? "missing",
           stats,
         ),

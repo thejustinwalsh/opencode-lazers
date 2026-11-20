@@ -253,9 +253,39 @@ export async function precedesInSession(
 }
 
 /**
- * The first `limit` messages of a session, oldest first, read a page at a time. For a report
- * that needs the transcript itself: the host serves each page on request, and no more than
- * `limit` messages are ever held.
+ * The first `limit` messages of a session, oldest first, handed to `visit` one page at a time.
+ * Nothing is kept between pages: a caller that folds the transcript into a result holds at most
+ * `pageSize` messages. Returns how many messages were visited.
+ */
+export async function eachMessagePage(
+  client: HostMessageClient,
+  sessionID: string,
+  limit: number,
+  visit: (page: HostMessage[]) => void,
+  pageSize = HOST_MESSAGE_PAGE_SIZE,
+): Promise<number> {
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  let visited = 0
+  while (visited < limit) {
+    const page = await client.message.list({
+      sessionID: sessionID as never,
+      limit: Math.min(pageSize, limit - visited),
+      ...(cursor ? { cursor } : { order: "asc" as const }),
+    })
+    visit(page.data)
+    visited += page.data.length
+    const next = page.cursor.next
+    if (!next || seen.has(next)) break
+    seen.add(next)
+    cursor = next
+  }
+  return visited
+}
+
+/**
+ * The first `limit` messages of a session, oldest first, read a page at a time. For a caller that
+ * needs the whole list; one that can fold page by page should use `eachMessagePage`.
  */
 export async function pagedMessages(
   client: HostMessageClient,
@@ -264,19 +294,6 @@ export async function pagedMessages(
   pageSize = HOST_MESSAGE_PAGE_SIZE,
 ): Promise<HostMessage[]> {
   const messages: HostMessage[] = []
-  const seen = new Set<string>()
-  let cursor: string | undefined
-  while (messages.length < limit) {
-    const page = await client.message.list({
-      sessionID: sessionID as never,
-      limit: Math.min(pageSize, limit - messages.length),
-      ...(cursor ? { cursor } : { order: "asc" as const }),
-    })
-    messages.push(...page.data)
-    const next = page.cursor.next
-    if (!next || seen.has(next)) break
-    seen.add(next)
-    cursor = next
-  }
+  await eachMessagePage(client, sessionID, limit, (page) => messages.push(...page), pageSize)
   return messages
 }
