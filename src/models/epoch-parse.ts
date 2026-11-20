@@ -1,6 +1,6 @@
-import { parseCSV } from "./csv.ts"
+import { iterateCSV } from "./csv.ts"
 import { parseModelName } from "./name-identity.ts"
-import { readZipEntries } from "./zip-reader.ts"
+import { openZip } from "./zip-reader.ts"
 import type { EpochBenchmarkRecordSchema } from "./source-schema.ts"
 
 type EpochRecord = typeof EpochBenchmarkRecordSchema._output
@@ -89,14 +89,16 @@ const clean = (text: string | undefined) => {
   return value === "" ? null : value.slice(0, 200)
 }
 
-/** Parse the coding rows out of the hub archive; rows without a usable model id or score drop. */
+/** Parse the coding rows out of the hub archive, one file at a time; rows without a usable model id or score drop. */
 export function parseEpochArchive(bytes: Uint8Array): EpochRecord[] {
-  const entries = readZipEntries(bytes, new Set(EPOCH_CODING_BENCHMARKS.map((item) => item.file)))
+  const zip = openZip(bytes, new Set(EPOCH_CODING_BENCHMARKS.map((item) => item.file)))
   const records: EpochRecord[] = []
   for (const benchmark of EPOCH_CODING_BENCHMARKS) {
-    const file = entries.get(benchmark.file)
+    // One file is inflated, decoded and walked row by row at a time; its text is dropped before
+    // the next file is opened, so the peak is the largest file, not all of them.
+    const file = zip.read(benchmark.file)
     if (!file) continue
-    for (const row of parseCSV(new TextDecoder().decode(file))) {
+    for (const row of iterateCSV(new TextDecoder().decode(file))) {
       const modelVersion = clean(row["Model version"])
       const raw = finite(row[benchmark.score])
       if (!modelVersion || raw === null) continue

@@ -6,13 +6,13 @@ import { buildCatalog, entryProvenanceText } from "./catalog-projection.ts"
 import type { ModelCandidate } from "./comparison-state.ts"
 import { freeEntries, projectedRankRows, shortModelLabel } from "./chart-data.ts"
 import { sourceState } from "./comparison-presentation.ts"
-import { parseCSV } from "./csv.ts"
+import { iterateCSV, parseCSV } from "./csv.ts"
 import { EPOCH_CODING_BENCHMARKS, parseEpochArchive } from "./epoch-parse.ts"
 import { parseModelsDev, parseModelsDevStream } from "./models-dev-parse.ts"
 import { createPublicJoin } from "./public-join.ts"
 import { chooseScoreBasis, epochScore } from "./public-score.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
-import { ZipError, readZipEntries } from "./zip-reader.ts"
+import { ZipError, openZip, readZipEntries } from "./zip-reader.ts"
 
 const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name))
 const modelsDevPayload = () => JSON.parse(fixture("models-dev.excerpt.json").toString("utf8"))
@@ -904,4 +904,39 @@ test("a streamed models.dev body that is not a complete object is rejected", asy
   await expect(parseModelsDevStream(chunked('{"a":{"models":{}}} x', 3))).rejects.toThrow()
   await expect(parseModelsDevStream(chunked('{"a":{"models":{"b":}}}', 5))).rejects.toThrow()
   expect(await parseModelsDevStream(chunked(" {} ", 1))).toEqual([])
+})
+
+test("CSV rows stream one at a time and match the whole-file parse on awkward input", () => {
+  const cases = [
+    "",
+    "a,b\n",
+    "a,b",
+    "a,b\r\n1,2\r\n\r\n3\r\n",
+    "﻿a,b\n1,2\n",
+    'a,b\n"x\r\ny",""\n,\n"unterminated,2',
+    "a,b\n\n\n1,2",
+  ]
+  for (const text of cases) {
+    const streamed: Array<Record<string, string>> = []
+    for (const row of iterateCSV(text)) streamed.push(row)
+    expect(streamed).toEqual(parseCSV(text))
+  }
+  expect(parseCSV("a,b\r\n1,2\r\n\r\n3\r\n")).toEqual([
+    { a: "1", b: "2" },
+    { a: "3", b: "" },
+  ])
+  // Nothing is read ahead: the first row is available before the rest of the text is walked.
+  const walk = iterateCSV("a\n1\n2\n3\n")
+  expect(walk.next().value).toEqual({ a: "1" })
+})
+
+test("a zip entry is inflated when it is read, and only the wanted ones are listed", () => {
+  const zip = new Uint8Array(fixture("epoch-benchmark-data.excerpt.zip"))
+  const wanted = new Set(EPOCH_CODING_BENCHMARKS.map((item) => item.file))
+  const all = readZipEntries(zip, wanted)
+  const lazy = openZip(zip, wanted)
+  expect(all.size).toBeGreaterThan(0)
+  for (const [name, bytes] of all) expect(lazy.read(name)).toEqual(bytes)
+  expect(lazy.read("not-wanted.csv")).toBeUndefined()
+  expect(openZip(zip, new Set(["nope.csv"])).read("nope.csv")).toBeUndefined()
 })

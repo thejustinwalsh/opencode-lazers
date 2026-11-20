@@ -1,10 +1,21 @@
-/** RFC 4180 CSV: quoted fields may hold commas, doubled quotes and line breaks. */
-export function parseCSV(text: string): Array<Record<string, string>> {
-  const rows: string[][] = []
+/**
+ * RFC 4180 CSV: quoted fields may hold commas, doubled quotes and line breaks. Rows are produced
+ * one at a time; nothing holds the whole file as rows.
+ */
+export function* iterateCSV(text: string): Generator<Record<string, string>> {
+  let header: string[] | undefined
   let row: string[] = []
   let field = ""
   let quoted = false
   const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  const finish = (cells: string[]): Record<string, string> | undefined => {
+    if (!header) {
+      header = cells
+      return undefined
+    }
+    if (!cells.some((cell) => cell !== "")) return undefined
+    return Object.fromEntries(header.map((name, at) => [name, cells[at] ?? ""]))
+  }
   for (let index = 0; index < body.length; index++) {
     const char = body[index]!
     if (quoted) {
@@ -22,17 +33,18 @@ export function parseCSV(text: string): Array<Record<string, string>> {
       if (char === "\r" && body[index + 1] === "\n") index++
       row.push(field)
       field = ""
-      rows.push(row)
+      const record = finish(row)
       row = []
+      if (record) yield record
     } else field += char
   }
   if (field !== "" || row.length) {
     row.push(field)
-    rows.push(row)
+    const record = finish(row)
+    if (record) yield record
   }
-  const [header, ...data] = rows
-  if (!header) return []
-  return data
-    .filter((cells) => cells.some((cell) => cell !== ""))
-    .map((cells) => Object.fromEntries(header.map((name, at) => [name, cells[at] ?? ""])))
+}
+
+export function parseCSV(text: string): Array<Record<string, string>> {
+  return [...iterateCSV(text)]
 }

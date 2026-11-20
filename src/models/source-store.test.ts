@@ -582,3 +582,50 @@ test("comparison reads parse a snapshot once per immutable id and read only its 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("paging a snapshot and reading a source's latest share the parse of one immutable id", () => {
+  clearParsedSnapshotCache()
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  try {
+    const generations = writer.beginRefresh(["native-catalog"])
+    const saved = snapshot(
+      "native-catalog",
+      projectDirectory,
+      generations["native-catalog"],
+      Array.from({ length: 300 }, (_, index) => nativeRecord(`model-${index}`)),
+    )
+    writer.saveSnapshot(saved)
+    clearParsedSnapshotCache()
+    const parse = JSON.parse
+    let parsedBytes = 0
+    JSON.parse = ((text: string, reviver?: never) => {
+      parsedBytes += text.length
+      return parse(text, reviver)
+    }) as typeof JSON.parse
+    try {
+      // A cursor walk of the whole snapshot, then the latest of the source: one parse in all.
+      let cursor: string | null = "0"
+      let records = 0
+      let pages = 0
+      while (cursor !== null) {
+        const page = writer.read({ snapshotID: saved.snapshotID, cursor, limit: 25 })
+        records += page.snapshot!.records.length
+        cursor = page.snapshot!.nextCursor
+        pages++
+      }
+      expect(records).toBe(300)
+      expect(pages).toBe(12)
+      const afterWalk = parsedBytes
+      expect(afterWalk).toBeGreaterThan(50_000)
+      expect(writer.latestSnapshot("native-catalog")?.snapshotID).toBe(saved.snapshotID)
+      expect(parsedBytes).toBe(afterWalk)
+    } finally {
+      JSON.parse = parse
+    }
+  } finally {
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

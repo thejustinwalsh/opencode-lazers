@@ -655,3 +655,71 @@ test("candidates carry their models.dev entry and Epoch rows, and coverage lists
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test("a comparison reads the records of only the sources it has to build from", () => {
+  const root = directory()
+  const path = join(root, "tasks.sqlite")
+  const writer = new ModelEvidenceStore(path, projectDirectory)
+  const reader = new ModelEvidenceReadStore(path, projectDirectory)
+  const fixtureFile = (name: string) => join(import.meta.dir, "fixtures", name)
+  const loaded: string[][] = []
+  const counting = {
+    readComparisonSources(
+      selection?: Parameters<typeof reader.readComparisonSources>[0],
+      options?: Parameters<typeof reader.readComparisonSources>[1],
+    ) {
+      const sources = reader.readComparisonSources(selection, options)
+      loaded.push(sources.filter((source) => source.snapshot).map((source) => source.source))
+      return sources
+    },
+  }
+  try {
+    const generations = writer.beginRefresh()
+    writer.saveSnapshot(
+      snapshot("native-catalog", projectDirectory, generations["native-catalog"], [
+        nativeRecord({ providerID: "anthropic", id: "claude-haiku-4-5", variants: null, price: 1 }),
+        nativeRecord({ providerID: "openai", id: "gpt-5", variants: null, price: 2 }),
+        nativeRecord({ providerID: "openai", id: "gpt-6", variants: null, price: 3 }),
+      ]),
+    )
+    writer.saveSnapshot(
+      snapshot(
+        "models-dev",
+        projectDirectory,
+        generations["models-dev"],
+        parseModelsDev(JSON.parse(readFileSync(fixtureFile("models-dev.excerpt.json"), "utf8"))),
+      ),
+    )
+    writer.saveSnapshot(
+      snapshot(
+        "epoch-benchmarks",
+        projectDirectory,
+        generations["epoch-benchmarks"],
+        parseEpochArchive(
+          new Uint8Array(readFileSync(fixtureFile("epoch-benchmark-data.excerpt.zip"))),
+        ),
+      ),
+    )
+    const cold = readModelComparison(counting, { limit: 1 })
+    expect(loaded.flat().length).toBeGreaterThan(0)
+    expect(cold.nextCursor).not.toBeNull()
+
+    // The same pinned snapshot set again, and its next page: stamps only, no records.
+    loaded.length = 0
+    const repeated = readModelComparison(counting, { limit: 1 })
+    const next = readModelComparison(counting, { limit: 1, cursor: cold.nextCursor! })
+    expect(loaded.flat()).toEqual([])
+    expect(repeated).toEqual(cold)
+    expect(next.sources).toEqual(cold.sources)
+
+    // A new filter needs a new candidate list but not the public join built for these snapshots.
+    loaded.length = 0
+    readModelComparison(counting, { limit: 1, filters: { providerID: "openai" } })
+    expect(loaded.flat()).not.toContain("models-dev")
+    expect(loaded.flat()).not.toContain("epoch-benchmarks")
+  } finally {
+    reader.close()
+    writer.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
