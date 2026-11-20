@@ -21,7 +21,7 @@ export function installPlanningSchema(repository: TaskRepository): void {
         status TEXT NOT NULL CHECK(status IN ('decided','none','unavailable')),
         reason TEXT, size TEXT, scores_json TEXT, selected_json TEXT, threshold REAL,
         constants_json TEXT, model_ms INTEGER, elapsed_ms INTEGER, calls INTEGER,
-        open_planning_ids_json TEXT, delivered_text TEXT, late_json TEXT, architect_json TEXT,
+        open_planning_ids_json TEXT, delivered_text TEXT, late_json TEXT, architect_json TEXT, observations_json TEXT,
         UNIQUE(session_id, message_id)
       );
       CREATE TABLE IF NOT EXISTS planning_decision_nodes (
@@ -86,6 +86,9 @@ export function installPlanningSchema(repository: TaskRepository): void {
       .map((column) => column.name)
     if (!columns.includes("architect_json"))
       db.exec("ALTER TABLE planning_decisions ADD COLUMN architect_json TEXT")
+    // Generation 3: the observations the decision model answered, with the piece of each maximum.
+    if (!columns.includes("observations_json"))
+      db.exec("ALTER TABLE planning_decisions ADD COLUMN observations_json TEXT")
   })
 }
 
@@ -159,6 +162,8 @@ export interface DecisionRow {
   lateJson?: string | null
   /** The Architect's own pick, `{source:"architect", size, agents}`, for comparison with D1 on the same ask. */
   architectJson?: string | null
+  /** `{observation: {score, nodeID}}`: the largest P(yes) of each observation over the pieces. */
+  observationsJson?: string | null
 }
 export interface DecisionNodeRow {
   decisionId: string

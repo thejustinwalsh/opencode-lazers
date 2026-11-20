@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { PlanningAgentId } from "../contract.ts"
 import { AGENT_ORDER } from "./tree.ts"
+import { OBSERVATIONS, observationQuestion } from "./observations.ts"
 import { stateLimit } from "./constants.ts"
 import { decide, type Answers, type Decider, type DecisionOutcome } from "./procedure.ts"
 
@@ -17,7 +18,13 @@ const fixture = [
   "Last paragraph one. Two. Three. Four. Five.",
 ].join("\n")
 
-type Script = { size?: [number, number, number]; agents?: number[]; followUp?: number }
+type Script = {
+  size?: [number, number, number]
+  agents?: number[]
+  followUp?: number
+  obs?: Record<string, number>
+  breadth?: [number, number, number]
+}
 const FLAT = [0.5, 0.5, 0.5, 0.5, 0.5]
 
 function harness(
@@ -45,6 +52,14 @@ function harness(
             probabilities: { "one task": p[0], "a few tasks": p[1], "a large effort": p[2] },
             confidence: Math.max(...p),
           }
+        } else if (name === "breadth") {
+          const p = s.breadth ?? [0.8, 0.15, 0.05]
+          answers.breadth = {
+            type: "score",
+            probabilities: { "0": p[0], "1": p[1], "2": p[2] },
+          }
+        } else if (OBSERVATIONS.some((o) => o.id === name)) {
+          answers[name] = { type: "noul", noul: s.obs?.[name] ?? 0.1 }
         } else if (name === "agents") {
           const p = s.agents ?? FLAT
           answers.agents = {
@@ -68,10 +83,22 @@ function harness(
     decide(ask, {
       decider,
       clock: () => now,
+      // The old per-agent forms, which these tests cover; the observation form has its own tests.
+      constants: { agentForm: "yesno", ...constants },
+      signal: new AbortController().signal,
+    })
+  /** The default form: observations. */
+  const runObservations = (
+    ask: string,
+    constants: Parameters<typeof decide>[1]["constants"] = {},
+  ) =>
+    decide(ask, {
+      decider,
+      clock: () => now,
       constants,
       signal: new AbortController().signal,
     })
-  return { run, seen }
+  return { run, runObservations, seen }
 }
 
 const decided = (outcome: DecisionOutcome) => {
@@ -241,4 +268,74 @@ test("a decider error fails soft; an engine refusal marks the piece oversize", a
 test("the procedure is deterministic", async () => {
   const run = () => harness(() => ({})).run(fixture, { strategy: "uncertainty" })
   expect(JSON.stringify(await run())).toBe(JSON.stringify(await run()))
+})
+
+test("observations: one yes/no per request, with criteria, under the input bound, then a breadth score", async () => {
+  const { runObservations, seen } = harness(() => ({}))
+  const result = decided(await runObservations("Fix the typo in README. It is wrong."))
+  expect(seen).toHaveLength(OBSERVATIONS.length + 1)
+  expect(seen.map((call) => call.questions)).toEqual([
+    ...OBSERVATIONS.map((o) => [o.id]),
+    ["breadth"],
+  ])
+  const limit = stateLimit().maxChars
+  for (const observation of OBSERVATIONS) {
+    const question = observationQuestion(observation)
+    expect(question).toMatchObject({
+      type: "noul",
+      criteria: { true: expect.any(String), false: expect.any(String) },
+    })
+    // State at the limit plus the question, at the assumed characters per token.
+    expect((limit + JSON.stringify(question).length) / 3).toBeLessThanOrEqual(400)
+  }
+  expect(result.sizeReliable).toBe(false)
+})
+
+test("the rule table maps observation scores to bands: max over pieces, then the rule, no guard", async () => {
+  const scripted = (state: string): Script => ({
+    obs: state.startsWith("A")
+      ? { names_code: 0.91, open_choice: 0.52, wording_only: 0.95, stored_data: 0.2 }
+      : { names_code: 0.4, stored_data: 0.1, adds_new: 0.75, may_exist: 0.25 },
+  })
+  const ask = "A one. B two. C three. D four. E five. F six. G seven."
+  const { runObservations } = harness(scripted)
+  const result = decided(await runObservations(ask, { budgetMs: 1e9 }))
+  expect(result.observations!.names_code).toEqual({ score: 0.91, nodeID: "0" })
+  expect(result.observations!.adds_new).toEqual({ score: 0.75, nodeID: "1" })
+  const bands = Object.fromEntries(AGENT_ORDER.map((id) => [id, result.scores[id].band]))
+  // wording_only is 0.95 and still does not zero anything.
+  expect(bands).toEqual({
+    comprehension: "no",
+    grounding: "yes",
+    readiness: "architect",
+    critic: "no",
+    "zoom-out": "yes",
+  })
+  expect(result.scores.grounding).toMatchObject({ score: 0.91, from: "names_code" })
+  expect(result.selected).toEqual([...AGENT_ORDER])
+})
+
+test("many pieces make comprehension a yes by themselves; size is recorded from changes and pieces", async () => {
+  const long = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} says a thing.`).join(" ")
+  const { runObservations } = harness(() => ({ breadth: [0.05, 0.2, 0.75] }))
+  const result = decided(await runObservations(long, { budgetMs: 1e9 }))
+  expect(result.nodes.filter((n) => n.depth === 0).length).toBeGreaterThanOrEqual(8)
+  expect(result.scores.comprehension).toMatchObject({ score: 1, band: "yes", from: "pieces" })
+  expect(result.size).toBe("a large effort")
+})
+
+test("the observation form fails soft like the others", async () => {
+  const { runObservations } = harness(() => ({}))
+  const gone = await decide("Anything.", {
+    decider: {
+      id: "local",
+      model: "x",
+      available: () => ({ ok: false, reason: "no-window" }),
+      ask: async () => ({ answers: {}, inputTokens: 0 }),
+    },
+    clock: () => 0,
+    signal: new AbortController().signal,
+  })
+  expect(gone).toMatchObject({ status: "unavailable", reason: "no-window" })
+  void runObservations
 })

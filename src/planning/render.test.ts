@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { PlanningBody, validateBody, type Validation } from "./draft.ts"
 import { planMarkdownLink } from "./links.ts"
 import { decisionNote, renderBreakdown, renderFullPlan } from "./render.ts"
+import { OBSERVATIONS } from "./decision/observations.ts"
 import { AGENT_ORDER, SIZE_CHOICES, useWhen } from "./decision/tree.ts"
 
 const planningID = "0b4e2c1a-0000-4000-8000-000000000001"
@@ -114,39 +115,47 @@ const row = (over: Record<string, unknown> = {}) =>
     messageId: "m1",
     status: "decided",
     size: "a few tasks",
+    observationsJson: JSON.stringify({
+      names_code: { score: 0.91, nodeID: "0" },
+      open_choice: { score: 0.52, nodeID: "1" },
+      stored_data: { score: 0.12, nodeID: "0" },
+    }),
     scoresJson: JSON.stringify({
-      comprehension: { score: 0.05 },
-      grounding: { score: 0.45 },
-      readiness: { score: 0.38 },
-      critic: { score: 0.06 },
-      "zoom-out": { score: 0.06 },
+      comprehension: { score: 0.1, band: "no" },
+      grounding: { score: 0.91, band: "yes" },
+      readiness: { score: 0.52, band: "architect" },
+      critic: { score: 0.12, band: "no" },
+      "zoom-out": { score: 0.2, band: "no" },
     }),
     threshold: 0,
     ...over,
   }) as never
 
-test("a decided note carries the size and scores and no self-classify instruction", () => {
+test("a decided note states the observations in plain words and what each agent's rule made of them", () => {
   const note = decisionNote(row(), [{ title: "Plan view", state: "in-review" }])
   expect(note).toBe(
     [
-      "[lz-planning decision m=m1] size: a few tasks · agent scores: comprehension 0.05, grounding 0.45, readiness 0.38, critic 0.06, zoom-out 0.06 · open plans: Plan view (in-review)",
-      "All five planning agents run on a stored plan; the scores are context (threshold 0, hand-picked; cuts none).",
+      "[lz-planning decision m=m1] The decision model read the ask piece by piece · open plans: Plan view (in-review)",
+      "It says: names existing code: yes 0.91 · leaves a behaviour choice open: unsure 0.52 · changes stored data: no 0.12",
+      "Planning agents: comprehension no, grounding yes, readiness Architect decides, critic no, zoom-out no",
+      "Size guess: a few tasks (unreliable, about 40% right; judge it yourself). All five planning agents run on a stored plan; this is context, not routing.",
     ].join("\n"),
   )
-  expect(note).not.toContain("answer these yourself")
+  expect(note).not.toContain("answer these")
 })
 
-test("a simple ask says no planning flow", () => {
-  expect(decisionNote(row({ size: "one task" }))).toBe(
-    "[lz-planning decision m=m1] size: one task — no planning flow; ask one question first if the ask is unclear.",
+test("a one-task guess is stated as a guess, never as a verdict", () => {
+  expect(decisionNote(row({ size: "one task" }))).toContain(
+    "Size guess: one task (unreliable, about 40% right; judge it yourself)",
   )
 })
 
-test("with the decision model not run the note gives the Architect the same questions", () => {
+test("with the decision model not run the note gives the Architect the same observations as questions", () => {
   const note = decisionNote(row({ status: "unavailable", reason: "no-window", size: null }))
   expect(note).toContain("decision model not run (no-window)")
-  expect(note).toContain("answer these yourself")
+  expect(note).toContain("answer these about the ask yourself")
   expect(note).toContain("`architectPick`")
+  for (const observation of OBSERVATIONS) expect(note).toContain(`- ${observation.phrase}?`)
   for (const choice of SIZE_CHOICES) expect(note).toContain(choice)
   for (const id of AGENT_ORDER) expect(note).toContain(`- ${id}: ${useWhen(id)}`)
 })

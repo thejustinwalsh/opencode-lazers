@@ -35,8 +35,14 @@ export type DecisionConstants = {
   windowOverlap: number
   /** One question per request, unless batching is measured faster per question. Replaced by measurement M1. */
   batch: boolean
-  /** Per-agent yes/no is the default form; the 5-way choice stays available for replay. */
-  agentForm: "yesno" | "choice"
+  /**
+   * `observations` (default): small yes/no judgments about the text, one request each, and a rule
+   * table in code. `yesno` (per-agent) and `choice` (5-way) are the old forms, kept for replay.
+   */
+  agentForm: "observations" | "yesno" | "choice"
+  /** A rule's score at or above this is yes; at or below `noAt` is no; between is the Architect's call. */
+  yesAt: number
+  noAt: number
   /** Score a follow-up floor raises an agent to. */
   followUpFloor: number
   strategy: SlicerStrategy
@@ -58,7 +64,9 @@ export const DEFAULT_CONSTANTS: DecisionConstants = {
   windowSentences: 4,
   windowOverlap: 1,
   batch: false,
-  agentForm: "yesno",
+  agentForm: "observations",
+  yesAt: 0.7,
+  noAt: 0.3,
   followUpFloor: 0.22,
   strategy: "windows",
 }

@@ -36,13 +36,8 @@ function fixture(options: { delayMs?: number; available?: boolean; runbook?: boo
       const answers: Answers = {}
       for (const name of Object.keys(questions))
         answers[name] =
-          name === "size"
-            ? {
-                type: "choice",
-                choice: "a few tasks",
-                probabilities: { "one task": 0.1, "a few tasks": 0.8, "a large effort": 0.1 },
-                confidence: 0.8,
-              }
+          name === "breadth"
+            ? { type: "score", probabilities: { "0": 0.1, "1": 0.8, "2": 0.1 } }
             : { type: "noul", noul: 0.4 }
       return { answers, inputTokens: 50 }
     },
@@ -145,7 +140,7 @@ test("a notice, a non-architect session and a repeat record at most one decision
   start(f)
   await new Promise((r) => setTimeout(r, 20))
   expect(f.store.sessionDecisions("s1").map((r) => r.messageId)).toEqual(["m1"])
-  expect(f.calls()).toBe(6)
+  expect(f.calls()).toBe(14)
   const worker = (await f.send([ask("w1", "Work on it.")], "lazers-implementor")) as ReturnType<
     typeof ask
   >[]

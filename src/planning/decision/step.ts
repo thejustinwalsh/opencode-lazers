@@ -38,6 +38,7 @@ const summary = (outcome: DecisionOutcome) =>
         status: outcome.status,
         size: outcome.size,
         scores: outcome.scores,
+        observations: outcome.observations,
         selected: outcome.selected,
         stopped: outcome.stopped,
         modelMs: outcome.modelMs,
@@ -175,6 +176,10 @@ export class PlanningDecisions {
       size: outcome.status === "decided" ? outcome.size : null,
       scoresJson: outcome.status === "decided" ? JSON.stringify(outcome.scores) : null,
       selectedJson: outcome.status === "decided" ? JSON.stringify(outcome.selected) : null,
+      observationsJson:
+        outcome.status === "decided" && outcome.observations
+          ? JSON.stringify(outcome.observations)
+          : null,
       threshold: c.agentThreshold,
       constantsJson: JSON.stringify(c),
       modelMs: outcome.modelMs,
@@ -223,7 +228,7 @@ export class PlanningDecisions {
         .some((other) => other.id !== row!.id && other.deliveredText?.includes(RUNBOOK_MARK))
       const delivery: DecisionDelivery = {}
       const runbook = this.deps.runbook?.(!earlier, { size: row.size ?? null, sessionID })
-      if (runbook && row.size !== "one task") delivery.runbook = `${RUNBOOK_MARK}\n${runbook}`
+      if (runbook) delivery.runbook = `${RUNBOOK_MARK}\n${runbook}`
       const text = decisionNote(
         row,
         store.plannings(sessionID, true).map((plan) => ({ title: plan.title, state: plan.state })),

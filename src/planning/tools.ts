@@ -171,7 +171,12 @@ export class PlanDrafts {
         return {
           status: "guide",
           topic: input.topic,
-          guidance: runbook(`planning-${input.topic}`),
+          guidance: {
+            draft: runbook("planning-draft"),
+            show: runbook("planning-show"),
+            resolve: runbook("planning-resolve"),
+            brainstorm: runbook("planning-brainstorm"),
+          }[input.topic],
         }
       case "evidence":
         return this.evidence(input.planningID, input.draftID)

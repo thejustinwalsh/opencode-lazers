@@ -2,6 +2,17 @@ import type { SystemOneQuestion } from "../../webgpu/system-one.ts"
 import type { PlanningAgentId } from "../contract.ts"
 import { DEFAULT_CONSTANTS, stateLimit, type DecisionConstants } from "./constants.ts"
 import {
+  AGENT_RULES,
+  CHANGES_PER_LEVEL,
+  OBSERVATIONS,
+  bandOf,
+  breadthQuestion,
+  observationQuestion,
+  ruleScore,
+  sizeFromChanges,
+  type Band,
+} from "./observations.ts"
+import {
   fixedSlices,
   groupChildren,
   packToLimit,
@@ -27,6 +38,7 @@ export type Answers = Record<
   string,
   | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
   | { type: "noul"; noul: number }
+  | { type: "score"; probabilities: Record<string, number> }
 >
 
 export interface Decider {
@@ -66,14 +78,29 @@ export type DecisionNode = {
   outcome: NodeOutcome
   /** Probability per agent at this piece, and the size it picked; absent when unscored. */
   scores?: Record<PlanningAgentId, number>
+  /** The observation form: P(yes) per observation at this piece, and its expected number of changes. */
+  observations?: Record<string, number>
+  changes?: number
   size?: SizePick
   sizeConfidence?: number
 }
-export type AgentScore = { score: number; nodeID: string; final: boolean }
+export type AgentScore = {
+  score: number
+  nodeID: string
+  final: boolean
+  /** yes, no, or the Architect decides: from the rule's score. */
+  band: Band
+  /** The observation the rule's score came from (observation form). */
+  from?: string
+}
 export type DecisionOutcome =
   | {
       status: "decided"
       size: SizePick
+      /** The size is from the number of changes and pieces: unreliable (about 40% exact); nothing routes on it. */
+      sizeReliable: false
+      /** Per observation, the largest P(yes) over the pieces and the piece it came from. */
+      observations?: Record<string, { score: number; nodeID: string }>
       scores: Record<PlanningAgentId, AgentScore>
       /** Agents at or above the threshold. The default threshold cuts none. */
       selected: PlanningAgentId[]
@@ -101,7 +128,7 @@ export type DecideDeps = {
 class Oversize extends Error {}
 const OVERSIZE = "D1 prompt exceeds"
 /** Where an agent's yes/no sits when the model cannot tell; a 5-way uniform is 0.2. */
-const UNSURE = { yesno: 0.5, choice: 0.22 } as const
+const UNSURE = { observations: 0.5, yesno: 0.5, choice: 0.22 } as const
 
 const argmax = (record: Record<string, number>) =>
   Object.entries(record).reduce((best, entry) => (entry[1] > best[1] ? entry : best))
@@ -219,6 +246,52 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
     }
   }
 
+  /** The observation form: one request per observation, then the breadth score. */
+  async function observe(node: DecisionNode): Promise<boolean> {
+    const observed: Record<string, number> = {}
+    try {
+      for (const observation of OBSERVATIONS) {
+        const result = await request(node.span, {
+          [observation.id]: observationQuestion(observation),
+        })
+        if (!result) {
+          node.outcome = "budget-stop"
+          if (Object.keys(observed).length) node.observations = observed
+          return false
+        }
+        node.calls.push(result.call)
+        const answer = result.answers[observation.id]
+        observed[observation.id] = answer?.type === "noul" ? answer.noul : 0
+      }
+      node.observations = observed
+      const breadth = await request(node.span, { breadth: breadthQuestion() })
+      if (!breadth) {
+        node.outcome = "budget-stop"
+        return false
+      }
+      node.calls.push(breadth.call)
+      const levels = breadth.answers.breadth
+      if (levels?.type === "score") {
+        const keys = Object.keys(levels.probabilities).sort((a, b) => Number(a) - Number(b))
+        node.changes = keys.reduce(
+          (sum, key, index) =>
+            sum + (levels.probabilities[key] ?? 0) * (CHANGES_PER_LEVEL[index] ?? 5),
+          0,
+        )
+      }
+      return true
+    } catch (error) {
+      if (error instanceof Oversize) {
+        node.outcome = "skipped-oversize"
+        return true
+      }
+      throw error
+    }
+  }
+  const observing = c.agentForm === "observations"
+  const scoreNode = (node: DecisionNode, followUps: boolean) =>
+    observing ? observe(node) : score(node, true, followUps)
+
   const make = (
     id: string,
     parent: string | null,
@@ -255,14 +328,14 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
       for (const [index, { slice, oversize }] of spans.entries()) {
         const node = make(String(index), null, 0, slice, "pre-sliced")
         if (oversize) node.outcome = "skipped-oversize"
-        else if (!(await score(node, true, false))) break
+        else if (!(await scoreNode(node, false))) break
       }
-    } else if (c.strategy === "whole") {
+    } else if (c.strategy === "whole" || (observing && c.strategy === "uncertainty")) {
       const packed = pack(whole)
       for (const [index, slice] of packed.slices.entries()) {
         const node = make(String(index), null, 0, slice, "confident")
         if (packed.oversize.includes(slice)) node.outcome = "skipped-oversize"
-        else if (!(await score(node, true, true))) break
+        else if (!(await scoreNode(node, true))) break
         else if (node.size === "one task") node.outcome = "simple"
       }
     } else {
@@ -272,7 +345,7 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
       for (const [index, slice] of packed.slices.entries()) {
         const node = make(String(index), null, 0, slice, "confident")
         if (packed.oversize.includes(slice)) node.outcome = "skipped-oversize"
-        else if (!(await score(node, true, true))) break
+        else if (!(await scoreNode(node, true))) break
         else if (node.size === "one task") node.outcome = "simple"
         else {
           rootConfidence = Math.min(rootConfidence, node.sizeConfidence ?? 1)
@@ -329,6 +402,53 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
     }
   }
 
+  if (observing) {
+    const seen = nodes.filter((node) => node.observations)
+    if (!seen.length)
+      return {
+        status: "unavailable",
+        reason: stopped === "budget" ? "budget" : "over-limit",
+        nodes,
+        modelMs,
+      }
+    // Per observation, the largest P(yes) over the pieces: "does any piece say this".
+    const observations: Record<string, { score: number; nodeID: string }> = {}
+    for (const observation of OBSERVATIONS) {
+      let best: { score: number; nodeID: string } | undefined
+      for (const node of seen) {
+        const value = node.observations![observation.id]
+        if (value !== undefined && (!best || value > best.score))
+          best = { score: value, nodeID: node.id }
+      }
+      if (best) observations[observation.id] = best
+    }
+    const flat = Object.fromEntries(Object.entries(observations).map(([id, o]) => [id, o.score]))
+    const pieces = nodes.filter((node) => node.depth === 0).length
+    const scores = {} as Record<PlanningAgentId, AgentScore>
+    for (const rule of AGENT_RULES) {
+      const result = ruleScore(rule, flat, pieces)
+      scores[rule.agent] = {
+        score: result.score,
+        nodeID: observations[result.from]?.nodeID ?? "0",
+        final: true,
+        band: bandOf(result.score, c.yesAt, c.noAt),
+        from: result.from,
+      }
+    }
+    const sumChanges = seen.reduce((sum, node) => sum + (node.changes ?? 1), 0)
+    return {
+      status: "decided",
+      size: SIZE_CHOICES[sizeFromChanges(sumChanges, pieces)]!,
+      sizeReliable: false,
+      observations,
+      scores,
+      // Selection cuts nothing by default: the threshold is 0.
+      selected: AGENT_ORDER.filter((id) => scores[id].score >= c.agentThreshold),
+      ...(stopped ? { stopped } : {}),
+      nodes,
+      modelMs,
+    }
+  }
   const scored = nodes.filter((node) => node.scores)
   if (!scored.length)
     return {
@@ -347,6 +467,7 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
       score: best.scores![id],
       nodeID: best.id,
       final: !["pruned", "depth-stop", "single-sentence", "budget-stop"].includes(best.outcome),
+      band: bandOf(best.scores![id], c.yesAt, c.noAt),
     }
   }
   const size = scored.reduce<SizePick>(
@@ -359,6 +480,7 @@ export async function decide(ask: string, deps: DecideDeps): Promise<DecisionOut
   return {
     status: "decided",
     size,
+    sizeReliable: false,
     scores,
     selected: AGENT_ORDER.filter((id) => scores[id].score >= c.agentThreshold),
     ...(stopped ? { stopped } : {}),
