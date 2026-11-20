@@ -3,4 +3,4 @@
  * the reader worker and the RPC server register the same set. A source is added by creating its
  * file and importing it below.
  */
-export {}
+import "./tasks.ts"
