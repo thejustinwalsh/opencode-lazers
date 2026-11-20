@@ -50,21 +50,24 @@ export default defineStory<TasksData>({
   chapters: [
     {
       name: "queue",
-      caption: "Tasks are listed in scheduled order. A waiting task links to what it waits on.",
+      caption:
+        "Tasks line up in dependency order. Every waiting task links directly to its prerequisite.",
     },
     {
       name: "inspect",
-      caption: "Select a task to open its details: state, attempt, and the model that ran it.",
+      caption:
+        "Click any task to inspect its live state, active attempt, file count, and assigned model.",
       setup: [{ do: "click", sel: row(201) }],
     },
     {
       name: "verify",
-      caption: "The runtime verifies the attempt. A worker's report alone does not accept it.",
+      caption:
+        "The runtime runs the verification suite before acceptance—a worker's claim alone never closes a task.",
       setup: [{ do: "click", sel: row(201) }],
     },
     {
       name: "next",
-      caption: "Once checks pass the task is accepted and its dependents start.",
+      caption: "Once checks pass, the task is accepted and the runtime dispatches its dependent.",
     },
   ],
   steps: [

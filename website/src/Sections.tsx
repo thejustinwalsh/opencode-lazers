@@ -262,30 +262,30 @@ const lp = stylex.create({
 const stations = [
   {
     name: "You",
-    verb: "Define the goal",
+    verb: "Set the goal",
     detail:
-      "Describe the feature or fix. Answer high-leverage questions when Architect surfaces a real tradeoff.",
+      "Describe the feature, fix, or refactor. Answer high-leverage product questions when Architect surfaces a real tradeoff, and decide when to publish.",
     you: true,
   },
   {
     name: "Architect",
     verb: "Scope and plan",
     detail:
-      "Maps the codebase, locks in acceptance criteria and file boundaries, and submits an executable task graph.",
+      "Indexes the repo, settles open questions before code is touched, locks in file write boundaries and executable checks, and submits a task graph.",
     you: false,
   },
   {
     name: "Scheduler",
     verb: "Isolate and dispatch",
     detail:
-      "Spins up OpenCode worktrees, routes each task to the right specialist persona and model, and tracks dependencies.",
+      "Resolves dependencies, spins up isolated OpenCode git worktrees (or serializes overlapping scopes), and routes each task to its assigned persona and model.",
     you: false,
   },
   {
     name: "Worker",
-    verb: "Build and verify",
+    verb: "Build and check",
     detail:
-      "Writes the code inside its permitted scope, runs formatters, linters, and tests, and submits mechanical proof.",
+      "Edits inside its permitted file scope as a native OpenCode session, commits the change, and hands the candidate to the runtime's verification suite.",
     you: false,
   },
 ] as const
@@ -307,16 +307,24 @@ export function Loop() {
       <BeamCanvas kit={kit} />
       <div {...stylex.props(s.inner)}>
         <div {...stylex.props(lp.top)}>
-          <Heading id="loop-title">From prompt to merged code</Heading>
+          <Heading id="loop-title">From prompt to verified code</Heading>
           <div {...stylex.props(lp.topCopy)}>
             <p {...stylex.props(s.lead)}>
-              Models handle engineering judgment. A deterministic state machine handles everything
-              else.
+              Judgment belongs to Architect. Scheduling and state transitions belong to a
+              deterministic runtime.
             </p>
             <p {...stylex.props(s.body)}>
-              Architect plans, reviews, and integrates. The runtime owns dependency queues, isolated
-              worktrees, verification gates, and retries&mdash;so orchestration never drifts or
-              stalls on a chat turn.
+              Long chat threads lose track of dependencies, skip tests, and declare victory early.
+              In{" "}
+              <a href={links.opencode} {...stylex.props(t.inkLink)}>
+                OpenCode
+              </a>
+              , Architect plans the work and reviews the final diff while an{" "}
+              <a href={links.xstate} {...stylex.props(t.inkLink)}>
+                XState
+              </a>{" "}
+              runtime drives worktrees, dependency queues, verification gates, and retries&mdash;no
+              model turns wasted on routine bookkeeping.
             </p>
           </div>
         </div>
@@ -345,10 +353,14 @@ export function Loop() {
           <span data-reveal="grow" {...stylex.props(lp.backShaft, fx.growX)} />
         </div>
         <p {...stylex.props(lp.backText)}>
-          <strong {...stylex.props(s.strong)}>Every candidate comes back with proof.</strong> The
-          runtime executes the verification suite and code-health checks before Architect reviews
-          the diff. When checks pass, Architect integrates the change directly into your
-          branch&mdash;or escalates with a concrete question if it hits a human decision.
+          <strong {...stylex.props(s.strong)}>Every candidate comes back with receipts.</strong> The
+          runtime runs your verification commands and{" "}
+          <a href={links.fallow} {...stylex.props(t.inkLink)}>
+            Fallow
+          </a>{" "}
+          static analysis before Architect ever reviews the diff. Once checks pass, Architect
+          integrates the verified commits into your branch&mdash;or pauses with a concrete question
+          when a decision belongs to you.
         </p>
 
         <div {...stylex.props(lp.observers)}>
@@ -358,7 +370,7 @@ export function Loop() {
               <span {...stylex.props(t.display, lp.obsName)}>Radar</span>
               <span {...stylex.props(lp.obsText)}>
                 {" "}
-                streams every active worker and state transition live.
+                streams every active worker session, tool call, and task tree live.
               </span>
             </span>
           </a>
@@ -368,7 +380,7 @@ export function Loop() {
               <span {...stylex.props(t.display, lp.obsName)}>Trajectory</span>
               <span {...stylex.props(lp.obsText)}>
                 {" "}
-                records every attempt, check receipt, and token count.
+                records every attempt, check receipt, audit finding, and token cost.
               </span>
             </span>
           </a>
@@ -561,13 +573,14 @@ export function Parts() {
                 Architect
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Clarifies before it codes.</p>
+            <p {...stylex.props(pt.deck)}>Clarifies before anyone codes.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleM)} />
             <p {...stylex.props(s.body)}>
-              Select <strong {...stylex.props(s.strong)}>Architect</strong> in OpenCode Desktop and
-              describe what you want to ship. Before a single file is touched, it indexes your
-              repository, spots ambiguities that change behavior or scope, and decomposes the work
-              into bounded tasks with explicit file write scopes and verification commands.
+              Pick <strong {...stylex.props(s.strong)}>Architect</strong> in OpenCode Desktop and
+              describe the change you want. Before a single file is edited, Architect snapshots your
+              repository, asks only the questions that materially affect behavior or scope, and
+              turns your request into bounded tasks&mdash;each with explicit file write/protected
+              scopes, acceptance assertions, and executable verification commands.
             </p>
             <blockquote {...stylex.props(pt.quote)}>
               &ldquo;Add a clear empty state to a list. Show &lsquo;No tasks yet.&rsquo; Keep the
@@ -588,16 +601,17 @@ export function Parts() {
                 Scheduler
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Isolated worktrees. Zero lost work.</p>
+            <p {...stylex.props(pt.deck)}>Isolated worktrees. Durable task state.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleC)} />
             <p {...stylex.props(s.body)}>
-              Tasks execute in OpenCode-managed git worktrees with enforced file boundaries. As
-              dependencies clear, the runtime dispatches specialist workers automatically and
-              preserves every attempt across retries and recovery checkpoints.
+              The runtime schedules your dependency graph in SQLite-backed state machines.
+              Non-overlapping tasks run concurrently in OpenCode-managed git worktrees; overlapping
+              write scopes serialize automatically, and every attempt persists across retries and
+              recovery handoffs.
             </p>
             <p {...stylex.props(s.body)}>
-              Track active runs, queued dependencies, and questions needing your input in{" "}
-              <strong {...stylex.props(s.strong)}>Tasks</strong> or via <Code>/lz-tasks</Code>.
+              Manage the queue, inspect dependencies, and unblock held tasks in the{" "}
+              <strong {...stylex.props(s.strong)}>Tasks</strong> panel (<Code>/lz-tasks</Code>).
             </p>
             <ul aria-label="Task state filters" {...stylex.props(pt.states)}>
               <li {...stylex.props(pt.state)}>Open</li>
@@ -624,26 +638,31 @@ export function Parts() {
                 Radar
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>Watch the whole swarm in real time.</p>
+            <p {...stylex.props(pt.deck)}>See every active session in flight.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleC)} />
             <p {...stylex.props(s.body)}>
-              Open Radar from the session panel menu or run <Code>/lz-radar</Code> to see every
-              active agent session at a glance&mdash;then click any worker, tool call, or event to
-              jump straight to its task or trajectory.
+              Open <strong {...stylex.props(s.strong)}>Radar</strong> (<Code>/lz-radar</Code>) to
+              watch Architect and every running worker without clicking between chat tabs. Spot held
+              workers waiting on a question, inspect live tool calls, and jump straight to any task
+              or attempt.
             </p>
             <dl {...stylex.props(pt.spec)}>
               <dt {...stylex.props(pt.specTerm)}>Monitor</dt>
               <dd {...stylex.props(pt.specDef)}>
-                Active worker roles, assigned models, in-flight tool calls, targets, and elapsed
-                durations
+                Live worker sessions, assigned models, in-flight tool calls, held questions, and
+                elapsed time
               </dd>
               <dt {...stylex.props(pt.specTerm)}>Map</dt>
               <dd {...stylex.props(pt.specDef)}>
-                Visual topology of how plans, tasks, and worker sessions connect across your project
+                Interactive dependency tree connecting plans, tasks, and active worker sessions
               </dd>
               <dt {...stylex.props(pt.specTerm)}>Flow</dt>
               <dd {...stylex.props(pt.specDef)}>
-                Live XState lifecycle view showing where every runner sits and what it is waiting on
+                Live{" "}
+                <a href={links.xstate} {...stylex.props(t.inkLink)}>
+                  XState
+                </a>{" "}
+                runner diagram showing exact lifecycle state and what each task waits on
               </dd>
             </dl>
             <Demo def={DEMOS.radar} label="Live demo of the Radar panel" />
@@ -661,32 +680,37 @@ export function Parts() {
                 Trajectory
               </h3>
             </div>
-            <p {...stylex.props(pt.deck)}>A complete audit trail for every task.</p>
+            <p {...stylex.props(pt.deck)}>The flight recorder for every task.</p>
             <span aria-hidden="true" {...stylex.props(pt.rule2, pt.ruleM)} />
             <p {...stylex.props(s.body)}>
-              Run <Code>/lz-trajectory</Code> or click any task badge to inspect the full flight
-              record of how a change was built, verified, and integrated&mdash;so a failed check or
-              retry is always one click from its root cause.
+              When a task retries or a test fails, you don&rsquo;t have to dig through a 500-message
+              chat scrollback. Open <strong {...stylex.props(s.strong)}>Trajectory</strong> (
+              <Code>/lz-trajectory</Code>) to inspect the timeline of every attempt, zoom into
+              individual tool calls seconds apart, and read the exact verification receipt.
             </p>
             <ul aria-label="What a trajectory holds" {...stylex.props(pt.tree)}>
               <li {...stylex.props(pt.treeRow)}>
                 <span {...stylex.props(pt.treeKey)}>Task</span>
-                <span>Objective, permitted write scope, acceptance rules, and plan lineage</span>
+                <span>Immutable spec: objective, permitted write scope, and acceptance rules</span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent1)}>
                 <span {...stylex.props(pt.treeKey)}>Attempt</span>
-                <span>Every worker run preserved across retries and recovery checkpoints</span>
+                <span>Every worker run preserved across retries, repairs, and handoffs</span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent2)}>
                 <span {...stylex.props(pt.treeKey)}>Check</span>
                 <span>
-                  Exact verification commands, pass/fail outputs, and Fallow code-health findings
+                  Verification commands, exit codes, stdout/stderr, and{" "}
+                  <a href={links.fallow} {...stylex.props(t.inkLink)}>
+                    Fallow
+                  </a>{" "}
+                  static-analysis audits
                 </span>
               </li>
               <li {...stylex.props(pt.treeRow, pt.indent2)}>
                 <span {...stylex.props(pt.treeKey)}>Usage</span>
                 <span>
-                  Measured token breakdown with exact model route and market-rate cost estimate
+                  Measured input/output/cached tokens, exact model route, and catalog cost estimate
                 </span>
               </li>
             </ul>
@@ -790,15 +814,20 @@ export function Checked() {
             <p {...stylex.props(ck.statement)}>A worker report is not acceptance.</p>
             <div {...stylex.props(ck.copy)}>
               <p {...stylex.props(s.lead)}>
-                An agent claiming &ldquo;all tests pass&rdquo; means nothing until the runtime runs
-                the suite and captures the receipt.
+                An agent claiming &ldquo;all tests pass&rdquo; is just chat text until the runtime
+                executes the suite and captures the receipt.
               </p>
               <p {...stylex.props(s.body)}>
-                LAZERS runs your executable verification commands and a Fallow static-analysis audit
-                (dead code, duplication, complexity) on every task. A failing command stops the task
-                before review. Fallow findings go back to the worker once for a repair, and what
-                remains is reported to the Architect, who reviews the diff and integrates it into
-                your branch&mdash;under your normal OpenCode permissions.
+                On every candidate, LAZERS runs your task&rsquo;s verification commands alongside an
+                embedded{" "}
+                <a href={links.fallow} {...stylex.props(ck.noteLink)}>
+                  Fallow
+                </a>{" "}
+                WebAssembly static-analysis audit for dead code, duplication, and complexity. A
+                failing command stops the attempt before review. Fallow findings return to the
+                worker for one repair pass; remaining findings go with the verification receipts to
+                Architect, which reviews the diff and integrates it into your branch&mdash;under
+                your normal OpenCode permissions, while you decide when to publish.
               </p>
             </div>
           </div>
@@ -807,35 +836,39 @@ export function Checked() {
               Models
             </h3>
             <p {...stylex.props(s.body, ck.sideBody)}>
-              Use <code {...stylex.props(s.code, ck.code)}>/lz-models</code> to route different
-              providers, models, and reasoning effort levels to each specialist persona&mdash;so
-              heavy reasoning models plan and audit while fast, focused models handle UI or surgical
-              refactors.
+              Put frontier reasoning where judgment lives and faster models on focused execution.{" "}
+              <code {...stylex.props(s.code, ck.code)}>/lz-models</code> routes specific providers,
+              models, and effort levels to each role and Implementor persona.
             </p>
             <ul aria-label="Specialist personas" {...stylex.props(ck.levels)}>
               <li {...stylex.props(ck.level)}>
                 <span {...stylex.props(ck.levelKey)}>Architect &amp; Auditor</span>
-                <span>planning, review, code health</span>
+                <span>planning, review, code-health refactors</span>
               </li>
               <li {...stylex.props(ck.level)}>
                 <span {...stylex.props(ck.levelKey)}>UI &amp; Systems</span>
-                <span>frontend and deep backend work</span>
+                <span>interface work and deep backend tasks</span>
               </li>
               <li {...stylex.props(ck.level)}>
                 <span {...stylex.props(ck.levelKey)}>Small Refactoring</span>
-                <span>fast, focused code edits</span>
+                <span>fast, surgical code edits</span>
               </li>
             </ul>
             <Demo def={DEMOS.models} label="Live demo of the Models panel" tone="ink" />
             <p {...stylex.props(s.body, ck.sideBody)}>
-              The Compare view benchmarks your actual task histories, retry counts, measured token
-              usage, and market-price cost estimates so you can tune your model stack with real
-              repository evidence.
+              In <strong {...stylex.props(s.strong)}>Compare</strong>, LAZERS prices your measured
+              token usage (including retries) against configured catalogs such as{" "}
+              <a href={links.openrouter} {...stylex.props(ck.noteLink)}>
+                OpenRouter
+              </a>{" "}
+              to plot your real cost per accepted task&mdash;and re-prices past runs whenever rates
+              change.
             </p>
             <p {...stylex.props(ck.note)}>
-              A small model can also run on your own GPU, optional and off by default.{" "}
+              LAZERS also embeds optional local WebGPU models for instant decisions, voice
+              dictation, and read-aloud.{" "}
               <a href="#local" {...stylex.props(ck.noteLink)}>
-                What it does
+                See how local inference works
               </a>
               .
             </p>
@@ -908,32 +941,59 @@ export function Local() {
     <section id="local" aria-labelledby="local-title" {...stylex.props(s.section, lc.section)}>
       <Seam />
       <div {...stylex.props(s.inner)}>
-        <Heading id="local-title">A small model on your own GPU</Heading>
+        <Heading id="local-title">Instant decisions and voice on your GPU</Heading>
         <div {...stylex.props(lc.top)}>
           <div>
-            <p {...stylex.props(lc.statement)}>Optional. Off until you turn it on.</p>
+            <p {...stylex.props(lc.statement)}>Optional. Off until you flip the switch.</p>
             <div {...stylex.props(lc.copy)}>
               <p {...stylex.props(s.lead)}>
-                LAZERS can run a small model on your own GPU. It runs inside the OpenCode Desktop
-                window, on WebGPU through ruNNtime. Architect, tasks and the panels work without it.
+                LAZERS embeds two compact{" "}
+                <a href={links.liquid} {...stylex.props(t.inkLink)}>
+                  Liquid AI
+                </a>{" "}
+                models that run directly inside the OpenCode Desktop window on WebGPU through{" "}
+                <a href={links.runntime} {...stylex.props(t.inkLink)}>
+                  ruNNtime
+                </a>{" "}
+                and{" "}
+                <a href={links.typegpu} {...stylex.props(t.inkLink)}>
+                  TypeGPU
+                </a>
+                . Architect, tasks, and every panel work without them&mdash;but when you turn them
+                on, zero-token reflexes and private voice I/O run right on your hardware.
               </p>
               <p {...stylex.props(s.body)}>
-                Nothing is installed or launched beside it: no separate process, no local server or
-                port, no native binary, no Python or llama runtime, no account or API key. The
-                weights download once into the plugin&rsquo;s cache and can be removed. It starts
-                and stops with the app, uses the GPU the machine already has, and turns off with one
-                switch.
+                <strong {...stylex.props(s.strong)}>System One decisions &amp; task review:</strong>{" "}
+                The 600M{" "}
+                <a href={links.d1} {...stylex.props(t.inkLink)}>
+                  D1 decision model
+                </a>{" "}
+                evaluates typed rubrics&mdash;yes/no probabilities, structured choices, and bounded
+                scores&mdash;in a single forward pass with zero output tokens. Before Architect
+                dispatches a task, D1 stress-tests the spec for missing verification, hidden
+                assumptions, or scope drift as a fast advisory review.
               </p>
               <p {...stylex.props(s.body)}>
-                Local models take the small jobs: answering a question, making a typed decision,
-                reviewing a task before it is submitted. Workers still run as native OpenCode
-                sessions on the models you route in Models.
+                <strong {...stylex.props(s.strong)}>
+                  On-device Speech-to-Text, Text-to-Speech &amp; quick Q&amp;A:
+                </strong>{" "}
+                The ~2B multimodal{" "}
+                <a href={links.omni} {...stylex.props(t.inkLink)}>
+                  LFM3-Omni-2B
+                </a>{" "}
+                model powers push-to-talk microphone dictation into the composer, spoken read-aloud
+                replies, and quick local questions. There is no Ollama daemon, no Python or llama
+                server, no local port, and no API key&mdash;and your coding workers still run as
+                full OpenCode sessions on the frontier models you route in <Code>/lz-models</Code>.
               </p>
               <p {...stylex.props(s.body)}>
-                The chat beside this text runs the same Omni model in your browser, on request: type
-                a message or use the microphone, and it answers aloud. Nothing downloads until you
-                do. In the app, the session header carries a status icon that shows Loading,
-                Available, Working or Error while local features are on.
+                <strong {...stylex.props(s.strong)}>Try it live right here:</strong> The chat beside
+                this text runs the real{" "}
+                <a href={links.omni} {...stylex.props(t.inkLink)}>
+                  LFM3-Omni-2B
+                </a>{" "}
+                model in your browser tab on WebGPU. Nothing downloads until you send a message or
+                click the microphone.
               </p>
             </div>
           </div>
@@ -943,57 +1003,64 @@ export function Local() {
           <div {...stylex.props(lc.fact)}>
             <dt {...stylex.props(lc.factKey)}>How it runs</dt>
             <dd {...stylex.props(lc.factDef)}>
-              OpenCode Desktop window &rarr; WebGPU (ruNNtime) &rarr; your GPU. No server, no extra
-              process. Inference runs on the device; only the one-time weight download uses the
-              network.
+              Inside the OpenCode Desktop window on WebGPU via{" "}
+              <a href={links.runntime} {...stylex.props(t.inkLink)}>
+                ruNNtime
+              </a>
+              . No daemon, no open port, no native binary. Only the one-time weight download from{" "}
+              <a href={links.huggingface} {...stylex.props(t.inkLink)}>
+                Hugging Face
+              </a>{" "}
+              touches the network.
             </dd>
           </div>
           <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Switch</dt>
+            <dt {...stylex.props(lc.factKey)}>D1 (~625 MB)</dt>
             <dd {...stylex.props(lc.factDef)}>
-              Settings, LAZERS:{" "}
-              <strong {...stylex.props(s.strong)}>Run local models on this device</strong>. It
-              starts off. Turning it off stops local work and releases GPU memory.
+              <a href={links.d1} {...stylex.props(t.inkLink)}>
+                Liquid D1-Omni-600M
+              </a>{" "}
+              powers typed System One decisions (yes/no, choice from a list, or score in a range)
+              and advisory pre-submit task review&mdash;never an execution blocker.
             </dd>
           </div>
           <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Features</dt>
+            <dt {...stylex.props(lc.factKey)}>Omni (~1.6 GB)</dt>
             <dd {...stylex.props(lc.factDef)}>
-              Local questions, System One decisions, task review, dictation and read aloud. Each is
-              its own switch; task review needs decisions.
+              <a href={links.omni} {...stylex.props(t.inkLink)}>
+                Liquid LFM3-Omni-2B
+              </a>{" "}
+              powers Speech-to-Text microphone dictation, Text-to-Speech read-aloud, and quick local
+              questions. Each model downloads on first use into its own cache.
             </dd>
           </div>
           <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Decisions</dt>
+            <dt {...stylex.props(lc.factKey)}>Five switches</dt>
             <dd {...stylex.props(lc.factDef)}>
-              A typed answer to a question: yes or no, one of a list of choices, or a score in a
-              range. Task review is an advisory check, not a gate.
+              Master switch{" "}
+              <strong {...stylex.props(s.strong)}>Run local models on this device</strong> in
+              Settings &rarr; LAZERS (off by default), plus individual switches for local questions,
+              System One decisions, task review (needs decisions), dictation, and read aloud.
             </dd>
           </div>
           <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Two models</dt>
+            <dt {...stylex.props(lc.factKey)}>GPU memory</dt>
             <dd {...stylex.props(lc.factDef)}>
-              D1, about 625 MB, makes the decisions. Omni, about 1.6 GB, handles questions,
-              dictation and read aloud. Each downloads on first use into its own cache.
+              <strong {...stylex.props(s.strong)}>Keep model loaded</strong> controls how long an
+              idle model stays in VRAM (always, 1, 5, or 15 minutes). Turning the master switch off
+              releases GPU memory immediately.
             </dd>
           </div>
           <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Memory</dt>
+            <dt {...stylex.props(lc.factKey)}>Status &amp; disk</dt>
             <dd {...stylex.props(lc.factDef)}>
-              <strong {...stylex.props(s.strong)}>Keep model loaded</strong> sets how long an idle
-              model stays in GPU memory: always, 1, 5 or 15 minutes.
-            </dd>
-          </div>
-          <div {...stylex.props(lc.fact)}>
-            <dt {...stylex.props(lc.factKey)}>Disk</dt>
-            <dd {...stylex.props(lc.factDef)}>
-              Downloaded models stay on disk until you remove them in Settings. The next local
-              request downloads them again.
+              The session-header indicator shows Loading, Available, Working, or Error while on.
+              Cached weights stay on disk until you remove them in Settings.
             </dd>
           </div>
         </dl>
         <p {...stylex.props(lc.note)}>
-          Details in the{" "}
+          Full settings and behavior in the{" "}
           <a href={links.controls} {...stylex.props(t.inkLink)}>
             user controls reference
           </a>

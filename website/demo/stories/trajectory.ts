@@ -239,22 +239,25 @@ export default defineStory<TrajectoryData>({
   chapters: [
     {
       name: "pick",
-      caption: "Trajectory opens on a task: the picker follows the session or the whole project.",
+      caption:
+        "Switch Trajectory from the current session to the whole project and pick any task to inspect.",
     },
     {
       name: "live",
       caption:
-        "A retry attempt fills in as the worker's calls are recorded; both checks pass and it is accepted.",
+        "Attempt 2 streams onto the timeline as tool calls land, then runs tests and typecheck to reach acceptance.",
       setup: pick,
     },
     {
       name: "inspect",
-      caption: "Every mark opens its recorded detail; zoom separates calls seconds apart.",
+      caption:
+        "Click any check or tool mark for exact stdout/stderr, and zoom the timeline to separate rapid edits.",
       setup: pick,
     },
     {
       name: "settle",
-      caption: "Select the accepted attempt to read its summary; its events stay filterable.",
+      caption:
+        "Select the accepted attempt to review its summary and filter its recorded event log.",
       setup: [...pick, ...inspect],
     },
   ],
