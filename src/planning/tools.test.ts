@@ -232,3 +232,11 @@ test("an architect pick is recorded on the decision the plan answers", () => {
   expect(repository).toBeDefined()
   expect(PlanningBody.safeParse(body()).success).toBe(true)
 })
+
+test("every guide topic returns its runbook", () => {
+  const { run } = fixture()
+  for (const topic of ["draft", "show", "resolve", "brainstorm"] as const)
+    expect(run({ action: "guide", topic })).toMatchObject({
+      guidance: runbook(`planning-${topic}` as never),
+    })
+})

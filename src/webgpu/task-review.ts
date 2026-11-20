@@ -87,7 +87,13 @@ export class TaskReviewer {
         status: "invalid",
         errors: parsed.error.issues.map((issue) => ({
           path: issue.path.join("."),
-          message: issue.message,
+          // Over a size limit the remedy is the plan's shape, not a longer review input.
+          message:
+            issue.code === "too_big"
+              ? `This item is too large for one task: split it into tasks in the plan (limit: ${issue.maximum} ${
+                  issue.origin === "string" ? "characters" : "entries"
+                }).`
+              : issue.message,
         })),
         next: {
           action: "revise",

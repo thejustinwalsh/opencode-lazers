@@ -131,7 +131,8 @@ export class PlanningReviews {
       if (!["drafted", "questions-open", "in-review"].includes(planning.state))
         throw new Error(`plan is ${planning.state}; it cannot be reviewed`)
       store.move(planning.id, "in-review", now())
-    } else if (planning.state !== "final-review")
+    } else if (planning.state === "questions-open") store.move(planning.id, "final-review", now())
+    else if (planning.state !== "final-review")
       throw new Error(`plan is ${planning.state}; the final pass follows the review`)
     const revision = store.revision(planning.id, planning.revision)!
     const body = PlanningBody.parse(JSON.parse(revision.body))

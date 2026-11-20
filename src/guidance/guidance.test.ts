@@ -153,3 +153,21 @@ test("no standing prompt, tool description or task instruction names this reposi
       expect(text, `${file} contains "${phrase}"`).not.toContain(phrase)
   }
 })
+
+test("the planning runbooks exist, are retrievable, and the Architect's prompt grew by one short paragraph", () => {
+  expect(runbook("planning-brainstorm").length).toBeGreaterThan(0)
+  expect(pointer("planning-draft")).toContain(
+    '`lz-plan-draft` with `action: "guide", topic: "draft"`',
+  )
+  const architect = readFileSync(join(here, "../architect.md"), "utf8")
+  expect(architect).toContain("lz-plan-draft")
+  // The file was 13,507 characters before the planning paragraph.
+  expect(architect.length).toBeLessThanOrEqual(13_507 + 600)
+  for (const topic of [
+    "planning-draft",
+    "planning-brainstorm",
+    "planning-resolve",
+    "planning-show",
+  ])
+    expect(runbook(topic as never)).not.toContain("not written yet")
+})

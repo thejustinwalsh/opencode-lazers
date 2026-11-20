@@ -16,7 +16,10 @@ export type PlanningServiceDeps = {
   /** Read at each ask, so a Settings change applies to the next one. */
   constants?: Partial<DecisionConstants> | (() => Partial<DecisionConstants>)
   /** The planning runbook for the first decided note of a session; its pointer afterwards. */
-  runbook?: (first: boolean) => string | undefined
+  runbook?: (
+    first: boolean,
+    context: { size: string | null; sessionID: string },
+  ) => string | undefined
   wait?: (ms: number) => Promise<void>
 }
 
@@ -219,8 +222,8 @@ export class PlanningDecisions {
         .sessionDecisions(sessionID)
         .some((other) => other.id !== row!.id && other.deliveredText?.includes(RUNBOOK_MARK))
       const delivery: DecisionDelivery = {}
-      const runbook = this.deps.runbook?.(!earlier)
-      if (runbook && row.status === "decided") delivery.runbook = `${RUNBOOK_MARK}\n${runbook}`
+      const runbook = this.deps.runbook?.(!earlier, { size: row.size ?? null, sessionID })
+      if (runbook && row.size !== "one task") delivery.runbook = `${RUNBOOK_MARK}\n${runbook}`
       const text = decisionNote(
         row,
         store.plannings(sessionID, true).map((plan) => ({ title: plan.title, state: plan.state })),

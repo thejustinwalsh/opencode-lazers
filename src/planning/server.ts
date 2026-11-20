@@ -1,6 +1,7 @@
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect } from "effect"
+import { Delivery, pointer, runbook } from "../guidance/index.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { timedHooks, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { InferenceBroker } from "../webgpu/broker.ts"
@@ -51,6 +52,15 @@ export function createPlanningDecisions(
     store: new PlanningStore(repository),
     projectKey: projectID,
     constants: () => ({ strategy: globalSettings(repository).decisionSlicer }),
+    // The drafting runbook rides the first note of a session that is not for a simple ask; a large
+    // effort also gets the brainstorm runbook, once. Later notes carry one-line pointers.
+    runbook: (first, { size, sessionID }) => {
+      const delivery = new Delivery(sessionID)
+      const parts = [first ? runbook("planning-draft") : pointer("planning-draft")]
+      if (size === "a large effort") parts.push(delivery.once("planning-brainstorm"))
+      delivery.commit()
+      return parts.join("\n\n")
+    },
     decider: async () => {
       const setting = globalSettings(repository).decisionModel
       const on = setting.kind === "local" ? await decisionsOn() : true
