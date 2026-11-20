@@ -4,12 +4,13 @@ import {
   newMessages,
   type HostMessageClient,
 } from "../core/host-messages.ts"
+import { joinNativeEvents } from "../core/event-hub.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import { z } from "zod"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { declareInput } from "../tool-input.ts"
@@ -278,21 +279,34 @@ type HubMember = {
   memberEvent(sessionID: string | undefined, type: string | undefined): void
   owns(sessionID: string): Promise<boolean>
   streamLost(reason: "failed" | "ended"): void
-  /** The native event loop of this copy's host connection. */
-  listen: Effect.Effect<void>
+  /**
+   * Only a bundle older than the shared subscription design sets this: its leader's own
+   * subscription loop, which a newer bundle's member interrupts when it takes over.
+   */
   fiber?: { interruptUnsafe(): void }
+  /** Leaves the shared event hub (this copy's own subscription). */
+  leaveEvents?: () => void
 }
 
-/** Identifies this loaded bundle; a newer bundle's member takes the subscription over. */
+/** Identifies this loaded bundle; a newer bundle's member takes the recording over. */
 const nativeGenerationID = crypto.randomUUID()
 
-type EventHub = { members: Map<symbol, HubMember>; leader?: symbol }
+type EventHub = {
+  members: Map<symbol, HubMember>
+  /** The one member that records and fans out; every member keeps its own subscription. */
+  leader?: symbol
+  /** Events are dispatched one at a time in arrival order, as one blocking stream did. */
+  tail?: Promise<void>
+}
 
 /**
- * One native event subscriber per project per process. Every plugin copy of a project joins
- * the same hub; one member (the newest to join) owns the subscription and each event is
- * recorded once, with cheap per-copy reactions fanned out to the other members. When the
- * leader leaves, another member starts its own loop.
+ * One recorder per project per process, fed by every copy's own subscription. Whether one
+ * plugin copy's event stream carries every location's events is not proven (see
+ * `core/event-hub.ts`), so a copy does not rely on a leader's stream: each member subscribes
+ * for itself through the shared process hub, which de-duplicates events by id so each is
+ * delivered once per process. One member (the newest generation to join) records each event
+ * and fans cheap per-copy reactions out to the others; when it leaves, the next member takes
+ * the role over without resubscribing, so nothing in between is missed.
  */
 const hubsKey = Symbol.for("opencode-lazers.progress-event-hubs.v1")
 const hubHost = globalThis as typeof globalThis & { [hubsKey]?: Map<string, EventHub> }
@@ -303,7 +317,6 @@ function lead(hub: EventHub, member: HubMember) {
   previous?.fiber?.interruptUnsafe()
   if (previous) previous.fiber = undefined
   hub.leader = member.id
-  member.fiber = Effect.runFork(Effect.sleep(0).pipe(Effect.andThen(member.listen)))
 }
 
 function joinHub(key: string, member: HubMember): () => void {
@@ -317,6 +330,7 @@ function joinHub(key: string, member: HubMember): () => void {
   const leader = joined.leader ? joined.members.get(joined.leader) : undefined
   if (!leader || leader.generationID !== member.generationID) lead(joined, member)
   return () => {
+    member.leaveEvents?.()
     member.fiber?.interruptUnsafe()
     member.fiber = undefined
     joined.members.delete(member.id)
@@ -554,43 +568,40 @@ export function registerProgress(
         )
       }
     }
-    const listen: Effect.Effect<void> = Effect.forever(
-      Effect.suspend(() => {
-        return Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-          Effect.tryPromise({
-            try: () =>
-              sectionAsync(`event:${event.type}`, () => {
-                const hub = hubs.get(hubKey)
-                const self = hub?.members.get(memberID)
-                return hub && self ? dispatchNativeEvent(hub, self, event) : Promise.resolve()
-              }),
-            catch: (error) => new Error(safeError(error, privacyStats())),
-          }).pipe(Effect.catch(() => Effect.void)),
-        ).pipe(
-          Effect.match({
-            onFailure: (error) => {
-              const hub = hubs.get(hubKey)
-              for (const member of hub?.members.values() ?? []) member.streamLost("failed")
-              trace("unknown", "stream-failed", { error })
-              gaps("disconnected")
-            },
-            onSuccess: () => {
-              const hub = hubs.get(hubKey)
-              for (const member of hub?.members.values() ?? []) member.streamLost("ended")
-              trace("unknown", "stream-ended")
-              gaps("ended")
-            },
-          }),
-          Effect.andThen(Effect.sleep(1_000)),
+    const onEvent = (event: unknown) => {
+      const hub = hubs.get(hubKey)
+      const self = hub?.members.get(memberID)
+      // Every copy hears each event once per process; the recording member alone acts on it.
+      if (!hub || !self || hub.leader !== memberID) return
+      const type = object(event)?.type
+      hub.tail = (hub.tail ?? Promise.resolve())
+        .then(() =>
+          sectionAsync(`event:${typeof type === "string" ? type : undefined}`, () =>
+            dispatchNativeEvent(hub, self, event),
+          ),
         )
-      }),
-    )
+        .catch(() => undefined)
+    }
+    const onGap = (reason: "failed" | "ended" | undefined) => {
+      const hub = hubs.get(hubKey)
+      // A lost stream is a gap for the whole project, handled once, by the recording member.
+      if (!hub || hub.leader !== memberID) return
+      const lost = reason ?? "failed"
+      for (const member of hub.members.values()) member.streamLost(lost)
+      trace("unknown", lost === "failed" ? "stream-failed" : "stream-ended")
+      gaps(lost === "failed" ? "disconnected" : "ended")
+    }
     const leave = joinHub(hubKey, {
       id: memberID,
       generationID: nativeGenerationID,
       recorder,
       reconstruction,
-      listen,
+      leaveEvents: joinNativeEvents(
+        ctx as never,
+        NATIVE_EVENT_TYPES,
+        { event: onEvent, gap: onGap },
+        ctx.location?.directory ?? projectDirectory,
+      ),
       owns: (sessionID) => toolScope.owns(sessionID),
       memberEvent: (sessionID, type) => {
         if (sessionID && observing) {

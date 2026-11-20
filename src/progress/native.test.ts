@@ -1795,7 +1795,10 @@ test("finished sessions with an unchanged native stamp are neither re-read nor r
         return Effect.succeed([])
       },
     })
-    const idle = (sessionID: string) => ctx.emitEvent(executionEvent("session.idle", sessionID, 1))
+    // Each idle is a distinct event: one id names one event, and the hub drops a repeated id.
+    let idleSequence = 0
+    const idle = (sessionID: string) =>
+      ctx.emitEvent(executionEvent("session.idle", sessionID, ++idleSequence))
 
     await Effect.runPromise(
       Effect.scoped(
@@ -1853,7 +1856,8 @@ test("reconstruction pages the host by cursor: unchanged stamps read nothing, a 
         })
       },
     })
-    const idle = () => ctx.emitEvent(executionEvent("session.idle", "ses-accepted", 1))
+    let idleSequence = 0
+    const idle = () => ctx.emitEvent(executionEvent("session.idle", "ses-accepted", ++idleSequence))
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -1896,7 +1900,7 @@ test("reconstruction pages the host by cursor: unchanged stamps read nothing, a 
   }
 })
 
-test("plugin copies of one project share one native event subscription and promote on leave", async () => {
+test("plugin copies of one project each keep a subscription, and leaving resubscribes nothing", async () => {
   const fixture = makeFixture()
   try {
     const recorder = new ProgressRecorder(fixture.store, "project")
@@ -1909,21 +1913,14 @@ test("plugin copies of one project share one native event subscription and promo
             Scope.provide(scopes[index]!),
           )
         yield* Effect.promise(() =>
-          waitForNativeState(
-            async () => copies.reduce((sum, c) => sum + c.subscriptions(), 0) >= 1,
-          ),
+          waitForNativeState(async () => copies.every((c) => c.subscriptions() >= 1)),
         )
         yield* Effect.sleep(50)
-        // Three copies, one subscriber: the first to join leads.
-        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 0, 0])
-
-        // The leader leaves: exactly one other copy takes the subscription over.
+        // A stream may be scoped to its location, so no copy relies on another's.
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 1])
         yield* Scope.close(scopes[0]!, Exit.void)
-        yield* Effect.promise(() =>
-          waitForNativeState(
-            async () => copies[1]!.subscriptions() + copies[2]!.subscriptions() === 1,
-          ),
-        )
+        yield* Effect.sleep(50)
+        expect(copies.map((copy) => copy.subscriptions())).toEqual([1, 1, 1])
         yield* Scope.close(scopes[1]!, Exit.void)
         yield* Scope.close(scopes[2]!, Exit.void)
       }),
@@ -1931,4 +1928,129 @@ test("plugin copies of one project share one native event subscription and promo
   } finally {
     fixture.close()
   }
+})
+
+/**
+ * Three copies of one project at three locations (the last a worker worktree) over one
+ * recorder. `scoped` models a stream that carries only its own location's events; otherwise
+ * every copy's stream carries every event.
+ */
+async function projectWorld(
+  scoped: boolean,
+  run: (world: {
+    emit: (location: number, id: string) => Promise<void>
+    recorded: () => string[]
+    copies: ReturnType<typeof makeContext>[]
+    leave: (index: number) => Promise<void>
+    gapMarks: () => number
+    assignments: () => number
+  }) => Promise<void>,
+) {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const recordedEvents: string[] = []
+    const record = recorder.recordNativeEvent.bind(recorder)
+    recorder.recordNativeEvent = (event, verified) => {
+      recordedEvents.push((event as { id: string }).id)
+      return record(event, verified)
+    }
+    let gapMarks = 0
+    const markGap = recorder.markRecoveryGap.bind(recorder)
+    recorder.markRecoveryGap = (...args: Parameters<typeof markGap>) => {
+      if (args[2] === "event-stream") gapMarks++
+      return markGap(...args)
+    }
+    const locations = [
+      fixture.directory,
+      `${fixture.directory}-main`,
+      `${fixture.directory}.worktrees/worker`,
+    ]
+    const copies = locations.map((directory) => {
+      const copy = makeContext(fixture, { liveEvents: true })
+      ;(copy.context as { location?: unknown }).location = { directory }
+      return copy
+    })
+    const scopes = await Promise.all(copies.map(() => Effect.runPromise(Scope.make())))
+    for (const [index, copy] of copies.entries())
+      await Effect.runPromise(
+        registerProgress(copy.context, recorder, "project").pipe(Scope.provide(scopes[index]!)),
+      )
+    await waitForNativeState(async () => copies.every((copy) => copy.subscriptions() >= 1))
+    await new Promise<void>((resolve) => setTimeout(resolve, 30))
+    const open = new Set(copies.keys())
+    try {
+      await run({
+        emit: async (location, id) => {
+          const event = {
+            id,
+            type: "session.status",
+            data: { sessionID: "unassigned" },
+            location: locations[location],
+          }
+          for (const [index, copy] of copies.entries())
+            if (open.has(index) && (!scoped || index === location)) await copy.emitEvent(event)
+        },
+        recorded: () => [...recordedEvents],
+        copies,
+        leave: async (index) => {
+          open.delete(index)
+          await Effect.runPromise(Scope.close(scopes[index]!, Exit.void))
+        },
+        gapMarks: () => gapMarks,
+        assignments: () => recorder.assignments().length,
+      })
+    } finally {
+      for (const index of open) await Effect.runPromise(Scope.close(scopes[index]!, Exit.void))
+    }
+  } finally {
+    fixture.close()
+  }
+}
+
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 80))
+
+test("server-wide streams: each event is recorded once for the project", async () => {
+  await projectWorld(false, async (world) => {
+    await world.emit(0, "evt_a")
+    await world.emit(2, "evt_w")
+    await settle()
+    expect(world.recorded().sort()).toEqual(["evt_a", "evt_w"])
+  })
+})
+
+test("location-scoped streams: every location's events are recorded, a worker worktree's included", async () => {
+  await projectWorld(true, async (world) => {
+    await world.emit(0, "evt_checkout")
+    await world.emit(1, "evt_main")
+    await world.emit(2, "evt_worker")
+    await settle()
+    expect(world.recorded().sort()).toEqual(["evt_checkout", "evt_main", "evt_worker"])
+  })
+})
+
+test("a copy leaving loses nothing the others still deliver, the recording copy included", async () => {
+  for (const scoped of [false, true])
+    await projectWorld(scoped, async (world) => {
+      await world.leave(0)
+      await world.emit(1, "evt_after_b")
+      await world.emit(2, "evt_after_w")
+      await settle()
+      expect(world.recorded().sort()).toEqual(["evt_after_b", "evt_after_w"])
+    })
+})
+
+test("a failed stream raises the project's gap handling once, then events flow again", async () => {
+  await projectWorld(false, async (world) => {
+    expect(world.assignments()).toBeGreaterThan(0)
+    await world.copies[1]!.failEvents()
+    await waitForNativeState(async () => world.gapMarks() > 0)
+    await settle()
+    // One failed stream, three copies: every assignment is marked once, not once per copy.
+    expect(world.gapMarks()).toBe(world.assignments())
+    await waitForNativeState(async () => world.copies[1]!.subscriptions() >= 2, 3_000)
+    await world.emit(1, "evt_after_gap")
+    await settle()
+    expect(world.recorded()).toContain("evt_after_gap")
+  })
 })
