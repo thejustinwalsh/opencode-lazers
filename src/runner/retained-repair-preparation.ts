@@ -128,7 +128,7 @@ export class RetainedRepairPreparation {
     )
       throw new Error("Retained repair recovery must name the exact current cancelled attempt")
 
-    const history = this.transitionHistory(plan.id)
+    const history = this.transitionHistory(plan.id, task.id)
     const repairTransition = history
       .filter(
         (transition) =>
@@ -442,7 +442,7 @@ export class RetainedRepairPreparation {
       .nodes(plan.id)
       .find((candidate) => candidate.task_id === attempt.task_id)
     const currentRepair = currentAttempt ? this.retainedRepairForAttempt(currentAttempt) : undefined
-    const history = this.transitionHistory(plan.id)
+    const history = this.transitionHistory(plan.id, attempt.task_id)
     const matching = (id: number, event: string, taskID: string | null) =>
       history.find(
         (transition) =>
