@@ -5,6 +5,7 @@ import {
   installHostMessageSchema,
   latestTurn,
   newMessages,
+  sessionToolCount,
   type HostMessageClient,
 } from "./host-messages.ts"
 
@@ -62,7 +63,7 @@ test("a consumer that stops early keeps its page for the next read", async () =>
     const host = fakeHost(Array.from({ length: 120 }, (_, index) => ({ id: `m${index}` })))
     const iterator = newMessages(repository, host.client, "ses", 50)
     await iterator.next()
-    await iterator.return(undefined)
+    await iterator.return({ tools: 0 })
     expect(hostMessageAnchor(repository, "ses")).toBeUndefined()
   } finally {
     fixture.close()
@@ -73,4 +74,53 @@ test("latestTurn is one descending page of one", async () => {
   const host = fakeHost([{ id: "a" }, { id: "b" }])
   expect((await latestTurn(host.client, "ses"))?.id).toBe("b")
   expect(host.calls).toEqual([{ cursor: undefined, order: "desc", limit: 1 }])
+})
+
+test("the tool tally counts each message once though the tail page is delivered again", async () => {
+  const fixture = makeFixture()
+  try {
+    const repository = fixture.store.repository
+    installHostMessageSchema(repository)
+    const tool = { type: "tool" }
+    const messages = Array.from({ length: 120 }, (_, index) => ({
+      id: `m${index}`,
+      type: "assistant",
+      content: index % 2 === 0 ? [tool, tool] : [],
+    }))
+    const host = fakeHost(messages)
+    expect(await sessionToolCount(repository, host.client, "ses")).toBe(120)
+    expect(await sessionToolCount(repository, host.client, "ses")).toBe(120)
+    host.messages.push({ id: "m120", type: "assistant", content: [tool] } as never)
+    expect(await sessionToolCount(repository, host.client, "ses")).toBe(121)
+    // The tally keeps its own cursor: the default reader still starts from the beginning.
+    expect(hostMessageAnchor(repository, "ses")).toBeUndefined()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("a generation 1 cursor table gains the tool tally column and keeps its rows", () => {
+  const fixture = makeFixture()
+  try {
+    const repository = fixture.store.repository
+    repository.atomic((db) => {
+      db.exec(`
+        DROP TABLE IF EXISTS host_message_cursors;
+        CREATE TABLE host_message_cursors (
+          project_directory TEXT NOT NULL, session_id TEXT NOT NULL, anchor TEXT,
+          updated_at INTEGER NOT NULL, PRIMARY KEY(project_directory, session_id)
+        ) WITHOUT ROWID;
+        INSERT INTO host_message_cursors VALUES('${repository.projectDirectory}','old','50',1);
+        UPDATE schema_modules SET generation=1 WHERE module='host-messages';
+      `)
+    })
+    installHostMessageSchema(repository)
+    expect(hostMessageAnchor(repository, "old")).toBe("50")
+    const columns = repository.read((db) =>
+      db.query<{ name: string }, []>("PRAGMA table_info(host_message_cursors)").all(),
+    )
+    expect(columns.map((column) => column.name)).toContain("tool_count")
+  } finally {
+    fixture.close()
+  }
 })

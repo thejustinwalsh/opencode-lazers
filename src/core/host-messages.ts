@@ -30,55 +30,98 @@ export function installHostMessageSchema(repository: TaskRepository) {
         session_id TEXT NOT NULL,
         anchor TEXT,
         updated_at INTEGER NOT NULL,
+        tool_count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(project_directory, session_id)
       ) WITHOUT ROWID;
     `)
+    // Generation 1 had no tally. The check runs on every generation bump, so a reload that
+    // loads a newer bundle upgrades an older table the same way a restart does.
+    const columns = db.query<{ name: string }, []>("PRAGMA table_info(host_message_cursors)").all()
+    if (!columns.some((column) => column.name === "tool_count"))
+      db.exec("ALTER TABLE host_message_cursors ADD COLUMN tool_count INTEGER NOT NULL DEFAULT 0")
   })
 }
 
-export function hostMessageAnchor(repository: TaskRepository, sessionID: string) {
-  return repository.read(
-    (db) =>
-      db
-        .query<{ anchor: string | null }, [string, string]>(
-          "SELECT anchor FROM host_message_cursors WHERE project_directory=? AND session_id=?",
-        )
-        .get(repository.projectDirectory, sessionID)?.anchor ?? undefined,
-  )
+/**
+ * A reader's row key. The default reader owns the bare session ID; another reader (for example
+ * the tool tally) keeps its own cursor so two consumers never move each other's anchor.
+ */
+function rowKey(sessionID: string, reader?: string) {
+  return reader ? `${reader}:${sessionID}` : sessionID
 }
 
-function setAnchor(repository: TaskRepository, sessionID: string, anchor: string | undefined) {
+type CursorRow = { anchor: string | undefined; tools: number }
+
+function readRow(repository: TaskRepository, key: string): CursorRow {
+  const row = repository.read((db) =>
+    db
+      .query<{ anchor: string | null; tool_count: number }, [string, string]>(
+        "SELECT anchor,tool_count FROM host_message_cursors WHERE project_directory=? AND session_id=?",
+      )
+      .get(repository.projectDirectory, key),
+  )
+  return { anchor: row?.anchor ?? undefined, tools: row?.tool_count ?? 0 }
+}
+
+export function hostMessageAnchor(repository: TaskRepository, sessionID: string, reader?: string) {
+  return readRow(repository, rowKey(sessionID, reader)).anchor
+}
+
+function setRow(
+  repository: TaskRepository,
+  key: string,
+  anchor: string | undefined,
+  tools: number,
+) {
   repository.atomic((db) => {
     db.query(
-      `INSERT INTO host_message_cursors(project_directory,session_id,anchor,updated_at)
-       VALUES(?,?,?,?)
+      `INSERT INTO host_message_cursors(project_directory,session_id,anchor,updated_at,tool_count)
+       VALUES(?,?,?,?,?)
        ON CONFLICT(project_directory,session_id)
-       DO UPDATE SET anchor=excluded.anchor,updated_at=excluded.updated_at`,
-    ).run(repository.projectDirectory, sessionID, anchor ?? null, Date.now())
+       DO UPDATE SET anchor=excluded.anchor,updated_at=excluded.updated_at,tool_count=excluded.tool_count`,
+    ).run(repository.projectDirectory, key, anchor ?? null, Date.now(), tools)
   })
 }
 
 /** Drop a session's cursor, for example when its conversation is deleted or rewritten. */
-export function forgetHostMessages(repository: TaskRepository, sessionID: string) {
+export function forgetHostMessages(repository: TaskRepository, sessionID: string, reader?: string) {
   repository.atomic((db) => {
     db.query("DELETE FROM host_message_cursors WHERE project_directory=? AND session_id=?").run(
       repository.projectDirectory,
-      sessionID,
+      rowKey(sessionID, reader),
     )
   })
+}
+
+/** Tool parts of the assistant messages in a page. */
+export function toolsIn(messages: readonly HostMessage[]): number {
+  let tools = 0
+  for (const message of messages) {
+    if (message.type !== "assistant") continue
+    for (const part of message.content ?? []) if (part.type === "tool") tools++
+  }
+  return tools
 }
 
 /**
  * Pages of messages at and after the stored anchor, oldest first. The anchor advances only
  * after the consumer asks for the following page, so a consumer that throws re-reads its page.
+ *
+ * The row also keeps `tool_count`: the tool parts of every message before the anchor page. It
+ * moves with the anchor, so the tail page that is delivered again is never counted twice, and
+ * the generator returns the session's cumulative total (`base + tail page`).
  */
 export async function* newMessages(
   repository: TaskRepository,
   client: HostMessageClient,
   sessionID: string,
   pageSize = HOST_MESSAGE_PAGE_SIZE,
-): AsyncGenerator<readonly HostMessage[], void, void> {
-  let cursor = hostMessageAnchor(repository, sessionID)
+  reader?: string,
+): AsyncGenerator<readonly HostMessage[], { tools: number }, void> {
+  const key = rowKey(sessionID, reader)
+  const stored = readRow(repository, key)
+  let cursor = stored.anchor
+  let base = stored.tools
   const seen = new Set<string>()
   for (;;) {
     const page = await client.message.list({
@@ -87,16 +130,34 @@ export async function* newMessages(
       ...(cursor ? { cursor } : { order: "asc" as const }),
     })
     if (page.data.length > 0) yield page.data
+    const here = toolsIn(page.data)
     const next = page.cursor.next
     if (!next || next === cursor || seen.has(next)) {
       // End of history: keep this page's anchor so the tail is re-read next time.
-      if (cursor !== hostMessageAnchor(repository, sessionID))
-        setAnchor(repository, sessionID, cursor)
-      return
+      const current = readRow(repository, key)
+      if (cursor !== current.anchor || base !== current.tools) setRow(repository, key, cursor, base)
+      return { tools: base + here }
     }
     seen.add(next)
+    base += here
     cursor = next
-    setAnchor(repository, sessionID, cursor)
+    setRow(repository, key, cursor, base)
+  }
+}
+
+/**
+ * Cumulative tool calls of a session: one cursor pass of the tool reader. It keeps its own
+ * cursor, so it costs the tail page when nothing is new and never moves another reader's anchor.
+ */
+export async function sessionToolCount(
+  repository: TaskRepository,
+  client: HostMessageClient,
+  sessionID: string,
+): Promise<number> {
+  const pages = newMessages(repository, client, sessionID, HOST_MESSAGE_PAGE_SIZE, "tools")
+  for (;;) {
+    const step = await pages.next()
+    if (step.done) return step.value.tools
   }
 }
 

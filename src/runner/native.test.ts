@@ -1405,7 +1405,7 @@ test("a detailed worker read pages the current turn and never reads session.cont
 
   const detailed = await fixture.host.session("ses_worker", { messages: true })
   // One descending page ends at the turn's input; the whole conversation is never read.
-  expect(fixture.messageListCalls).toEqual([
+  expect(turnReads(fixture)).toEqual([
     { type: undefined, order: "desc", limit: 50, cursor: undefined },
   ])
   expect(fixture.contextReads).toBe(0)
@@ -1896,6 +1896,11 @@ test("an Architect's context size is the newest request's prompt, not its cumula
   expect(latestContextTokens([{ type: "user" } as never])).toBeUndefined()
 })
 
+/** The turn reads: descending, untyped pages. The tool tally pages ascending on its own cursor. */
+function turnReads(fixture: ReturnType<typeof nativeLivenessFixture>) {
+  return fixture.messageListCalls.filter((call) => call.order === "desc" && !call.type)
+}
+
 function assistantMessage(id: string, text: string) {
   return {
     id,
@@ -1921,8 +1926,8 @@ test("a detailed read of a long conversation costs the current turn's pages, not
     ],
   })
   const session = await fixture.host.session("ses_worker", { messages: true })
-  // Before: two whole-conversation reads of 202 messages. Now: one page.
-  expect(fixture.messageListCalls).toHaveLength(1)
+  // Before: two whole-conversation reads of 202 messages. Now: one turn page.
+  expect(turnReads(fixture)).toHaveLength(1)
   expect(fixture.contextReads).toBe(0)
   expect(session?.messages.map((message) => message.id)).toEqual([
     "msg_current",
@@ -1943,7 +1948,7 @@ test("a turn longer than one page reads exactly the pages it spans", async () =>
   })
   const session = await fixture.host.session("ses_worker", { messages: true })
   // 120 replies plus the input: three descending pages, then it stops at the input.
-  expect(fixture.messageListCalls).toHaveLength(3)
+  expect(turnReads(fixture)).toHaveLength(3)
   expect(session?.messages).toHaveLength(121)
   expect(session?.turn?.inputID).toBe("msg_current")
 })
@@ -1977,3 +1982,50 @@ test("a single message is a point read, and an absent one is undefined", async (
   })
   expect(fixture.messageListCalls).toHaveLength(0)
 })
+
+function toolReply(id: string, tools: number) {
+  return {
+    id,
+    type: "assistant",
+    time: { completed: 1 },
+    finish: "stop",
+    content: [
+      ...Array.from({ length: tools }, () => ({ type: "tool", state: { status: "completed" } })),
+      { type: "text", text: "done" },
+    ],
+  }
+}
+
+test("tools stay cumulative across turns, across reads and across a restart", async () => {
+  const messages: unknown[] = [
+    { id: "msg_in_1", type: "user", text: "one" },
+    toolReply("msg_out_1", 2),
+    { id: "msg_in_2", type: "user", text: "two" },
+    toolReply("msg_out_2", 3),
+    { id: "msg_in_3", type: "user", text: "three" },
+    toolReply("msg_out_3", 1),
+  ]
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), messages })
+  // The current turn holds one tool call; the attempt has made six.
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  // Nothing new: the same total again, from the tail page.
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  // A restarted host resumes from the stored tally and never reports less.
+  const restarted = fixture.restart()
+  expect((await restarted.session("ses_worker", { messages: true }))?.tools).toBe(6)
+  messages.push({ id: "msg_in_4", type: "user", text: "four" }, toolReply("msg_out_4", 4))
+  expect((await restarted.session("ses_worker", { messages: true }))?.tools).toBe(10)
+  // A heartbeat without messages does not read the tally.
+  expect((await restarted.session("ses_worker"))?.tools).toBe(0)
+})
+
+test("the tally pages long histories and counts a tool-heavy turn once per call", async () => {
+  const messages = Array.from({ length: 130 }, (_, index) => toolReply(`msg_out_${index}`, 1))
+  const fixture = nativeLivenessFixture({ idle: DateTime.nowUnsafe(), messages })
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(130)
+  const before = fixture.messageListCalls.length
+  expect((await fixture.host.session("ses_worker", { messages: true }))?.tools).toBe(130)
+  // Second read: one desc turn read plus one tally page (the tail), not the 3 pages again.
+  expect(fixture.messageListCalls.length - before).toBe(turnReadsPerCall + 1)
+})
+const turnReadsPerCall = 3

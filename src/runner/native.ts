@@ -20,7 +20,9 @@ import type {
 import type { TaskRepository } from "../storage.ts"
 import {
   HOST_MESSAGE_PAGE_SIZE,
+  installHostMessageSchema,
   latestMessages,
+  sessionToolCount,
   type HostMessageClient,
 } from "../core/host-messages.ts"
 import { ensureArchitectMap } from "../context/architect-map.ts"
@@ -552,17 +554,6 @@ async function architectContextTokens(client: NativeInboxClient, sessionID: stri
   return latestContextTokens([...page.data].reverse())
 }
 
-function assistantToolCount(messages: readonly NativeMessage[]) {
-  return messages.reduce(
-    (sum, message) =>
-      sum +
-      (message.type === "assistant"
-        ? message.content.filter((part) => part.type === "tool").length
-        : 0),
-    0,
-  )
-}
-
 function hostSessionView(input: {
   latest: NativeSessionInfo
   active: boolean
@@ -580,6 +571,8 @@ function hostSessionView(input: {
   busyAt: number
   outcome: NativeSessionInfo["outcome"] | "interrupted"
   messages: readonly NativeMessage[]
+  /** Cumulative tool calls of the whole session, not just the current turn. */
+  tools: number
   contextTokens: number | undefined
 }) {
   const { latest, active, contradicted, observationUnstable, pendingInput } = input
@@ -608,7 +601,7 @@ function hostSessionView(input: {
     model: latest.model,
     ...sessionUsage(latest),
     ...(input.contextTokens === undefined ? {} : { contextTokens: input.contextTokens }),
-    tools: assistantToolCount(input.messages),
+    tools: input.tools,
     // Subscription billing is not a dated equivalent API estimate.
     cost: null,
     // A compacted window can omit the real input's review binding. Read that
@@ -815,6 +808,14 @@ export function nativeHost(
       // inventories around it already expose a change of input, execution or ownership.
       const messages = detailed ? await runNative(client, () => currentTurn(client, id)) : []
       const currentInputID = messages.find(isNativeInput)?.id
+      // Cumulative across turns: the tool tally keeps its own cursor, so a quiet session costs
+      // its tail page and a restart resumes from the stored count.
+      const tools = detailed
+        ? await runNative(client, async () => {
+            installHostMessageSchema(repository)
+            return sessionToolCount(repository, client, id)
+          })
+        : 0
       const latest = detailed ? await readSession() : session
       if (detailed) await runNative(client, () => assertNativeProcess(ctx, client, dependencies))
       if (!latest) {
@@ -915,6 +916,7 @@ export function nativeHost(
         busyAt,
         outcome,
         messages,
+        tools,
       })
     },
     async message(sessionID, messageID) {

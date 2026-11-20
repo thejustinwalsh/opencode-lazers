@@ -1,6 +1,9 @@
 import { DateTime, Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import type { TaskRepository } from "../../src/storage.ts"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { TaskRepository } from "../../src/storage.ts"
 import {
   nativeHost,
   type NativeInboxClient,
@@ -215,9 +218,17 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
         }),
     },
   } as unknown as Plugin.Context
-  const host = nativeHost(ctx, { projectDirectory: "/project" } as TaskRepository, dependencies)
+  // A real repository: detailed reads keep their tool tally in it. `restart` is a fresh host
+  // (a reloaded plugin) over the same database.
+  const repository = new TaskRepository(
+    join(mkdtempSync(join(tmpdir(), "lazers-liveness-")), "tasks.sqlite"),
+    "/project",
+  )
+  const host = nativeHost(ctx, repository, dependencies)
   return {
     host,
+    repository,
+    restart: () => nativeHost(ctx, repository, dependencies),
     session,
     get discoveries() {
       return discoveries
