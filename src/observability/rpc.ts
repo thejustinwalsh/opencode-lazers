@@ -1,3 +1,4 @@
+import { joinNativeEvents } from "../core/event-hub.ts"
 import { section, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
@@ -480,27 +481,17 @@ export function registerObservability(
       (close) => Effect.sync(close),
     )
 
-    const listen = Effect.forever(
-      Effect.sync(() => tracker.streamAttached())
-        .pipe(
-          Effect.andThen(
-            Stream.runForEach(ctx.event.subscribe({ types: NATIVE_EVENT_TYPES }), (event) =>
-              Effect.sync(() => section(`event:${event.type}`, () => tracker.native(event))),
-            ),
-          ),
-        )
-        .pipe(
-          Effect.match({
-            onFailure: () => {
-              tracker.streamGap()
-            },
-            onSuccess: () => {
-              tracker.streamGap()
-            },
-          }),
-          Effect.andThen(Effect.sleep(1_000)),
-        ),
+    // The host stream is server-wide: one subscription per process feeds every copy's tracker.
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        joinNativeEvents(ctx, NATIVE_EVENT_TYPES, {
+          attached: () => tracker.streamAttached(),
+          event: (event) =>
+            section(`event:${(event as { type?: string }).type}`, () => tracker.native(event)),
+          gap: () => tracker.streamGap(),
+        }),
+      ),
+      (leave) => Effect.sync(leave),
     )
-    yield* Effect.forkScoped(listen)
   })
 }
