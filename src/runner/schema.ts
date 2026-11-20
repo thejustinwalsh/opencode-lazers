@@ -181,6 +181,8 @@ export type PlanInput = z.infer<typeof StrictPlanInput>
 export const DispatchPause = z.strictObject({
   reason: z.string(),
   untilPlans: z.array(z.uuid()),
+  /** Present when the whole project or every project is paused; absent for a plan's own pause. */
+  level: z.enum(["project", "global"]).optional(),
 })
 export type DispatchPause = z.infer<typeof DispatchPause>
 

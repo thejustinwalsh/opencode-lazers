@@ -27,13 +27,14 @@ import { architectSourceTransition, type ArchitectSourceState } from "./architec
 import { canonical, fingerprint } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
 import type { TaskRepository } from "../storage.ts"
+import { outerPause, outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
 import { git, scopePatternsConflict } from "./artifacts.ts"
 import { reservationPatterns, type ScopeModel } from "./scope.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput, PlanSubmissionInput } from "./schema.ts"
-import type { Execution, Finding, TaskState } from "./schema.ts"
+import type { DispatchPause, Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
@@ -1168,6 +1169,16 @@ export class RunnerStore {
         ? { reason: row.reason, untilPlans: JSON.parse(row.until_plans) as string[] }
         : undefined
     })
+  }
+  /**
+   * The pause that holds a plan from new dispatch: a project or global pause when one applies
+   * (strictest first), else the plan's own. A project or global pause has no resume condition;
+   * it is lifted by hand. Running work is never affected; only callers that start work ask this.
+   */
+  effectiveDispatchPause(planID: string): DispatchPause | undefined {
+    const outer = outerPause(this.repository, this.repository.projectDirectory)
+    if (outer) return { reason: outerPauseReason(outer), untilPlans: [], level: outer.level }
+    return this.dispatchPause(planID)
   }
   setDispatchPause(
     planID: string,
@@ -2972,8 +2983,8 @@ export class RunnerStore {
         node.reason ??
         (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
-      ...(["queued", "ready"].includes(node.state) && this.dispatchPause(node.plan_id)
-        ? { dispatchPause: this.dispatchPause(node.plan_id) }
+      ...(["queued", "ready"].includes(node.state) && this.effectiveDispatchPause(node.plan_id)
+        ? { dispatchPause: this.effectiveDispatchPause(node.plan_id) }
         : {}),
     }
   }
@@ -3567,6 +3578,13 @@ export class RunnerStore {
            ORDER BY ${prioritySortSQL("priority")},p.rowid LIMIT ?`,
         )
         .all(directory, maxPlans)
+      // A project or global pause holds every plan, with no resume condition.
+      const outer = outerPauseIn(db, directory)
+      if (outer)
+        for (const plan of plans) {
+          plan.pause_reason = outerPauseReason(outer)
+          plan.pause_until_plans = "[]"
+        }
       const nodes = db
         .query<SchedulingNodeFact, [string, string, number]>(
           `WITH selected_plans AS MATERIALIZED (
