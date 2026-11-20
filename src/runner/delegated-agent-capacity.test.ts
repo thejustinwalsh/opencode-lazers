@@ -112,6 +112,22 @@ function insertAdmittedAttempt(
   })
 }
 
+test("a core released before the project key resolves never reopens its database", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lazers-agent-capacity-closed-"))
+  roots.push(root)
+  const repository = new TaskRepository(join(root, "tasks.sqlite"), root)
+  new RunnerStore(repository)
+  let resolveKey!: (key: string) => void
+  const capacity = new DelegatedAgentCapacity(
+    repository,
+    new Promise<string>((resolve) => (resolveKey = resolve)),
+  )
+  repository.close()
+  resolveKey("github.com/example/closed")
+  expect(await capacity.ready()).toBe("github.com/example/closed")
+  expect(repository.isClosed).toBe(true)
+})
+
 test("the limit is the Projects setting, shared by a project's checkouts and not by another project", async () => {
   const first = fixture()
   const secondDirectory = join(first.root, "worktree")
