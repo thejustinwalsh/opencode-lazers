@@ -162,7 +162,15 @@ type JsonObject = Record<string, unknown>
 
 type RecoveryFingerprintValue = null | boolean | number | string | RecoveryFingerprintValue[]
 
+/**
+ * Warm per-session reconcile bookkeeping: a fingerprint, a cursor and two flags, about 150
+ * bytes each, so 256 sessions stay under 40 KB. Eviction is free: the state reloads as defaults.
+ * Per-message stamps are not held here; they live in runner_progress_reconciled and each run
+ * reads only the rows for the messages it was given.
+ */
 const MAX_RECONCILE_STATES = 256
+/** Message ids bound per stamp query; SQLite's host-parameter limit is far above this. */
+const STAMP_QUERY_IDS = 500
 
 type AssignmentRow = {
   plan_id: string
@@ -199,8 +207,6 @@ type ReconciledStamp = { light: string; full?: string }
 
 type SessionReconcileState = {
   assignmentFingerprint: string
-  /** Durable per-message stamps (mirrors runner_progress_reconciled for this attempt). */
-  stamps: Map<string, ReconciledStamp>
   verifyCursor: number
   gapsRecorded: boolean
   boundRecorded: boolean
@@ -2359,28 +2365,34 @@ export class ProgressRecorder {
     return tracked
   }
 
-  private loadReconcileState(
+  private loadReconcileState(assignmentFingerprint: string): SessionReconcileState {
+    return { assignmentFingerprint, verifyCursor: 0, gapsRecorded: false, boundRecorded: false }
+  }
+
+  /** Stored stamps for exactly the given messages; transient, never retained across runs. */
+  private loadStamps(
     assignment: ProgressAssignment,
-    assignmentFingerprint: string,
-  ): SessionReconcileState {
-    const rows = this.store.repository.read((db) =>
-      db
-        .query<{ message_id: string; light: string; full: string | null }, [string, string]>(
-          `SELECT message_id,light,full FROM runner_progress_reconciled
-           WHERE project_directory=? AND attempt_id=?`,
-        )
-        .all(this.store.repository.projectDirectory, assignment.attemptID),
-    )
+    ids: readonly string[],
+  ): Map<string, ReconciledStamp> {
     const stamps = new Map<string, ReconciledStamp>()
-    for (const row of rows)
-      stamps.set(row.message_id, { light: row.light, ...(row.full ? { full: row.full } : {}) })
-    return {
-      assignmentFingerprint,
-      stamps,
-      verifyCursor: 0,
-      gapsRecorded: false,
-      boundRecorded: false,
+    for (let start = 0; start < ids.length; start += STAMP_QUERY_IDS) {
+      const batch = JSON.stringify(ids.slice(start, start + STAMP_QUERY_IDS))
+      const rows = this.store.repository.read((db) =>
+        db
+          .query<
+            { message_id: string; light: string; full: string | null },
+            [string, string, string]
+          >(
+            `SELECT message_id,light,full FROM runner_progress_reconciled
+             WHERE project_directory=? AND attempt_id=?
+             AND message_id IN (SELECT value FROM json_each(?))`,
+          )
+          .all(this.store.repository.projectDirectory, assignment.attemptID, batch),
+      )
+      for (const row of rows)
+        stamps.set(row.message_id, { light: row.light, ...(row.full ? { full: row.full } : {}) })
     }
+    return stamps
   }
 
   private *reconcileSteps(
@@ -2398,7 +2410,7 @@ export class ProgressRecorder {
     const assignmentFingerprint = recoveryAssignmentFingerprint(assignment)
     let state = this.reconcileStates.get(sessionID)
     if (!state || state.assignmentFingerprint !== assignmentFingerprint)
-      state = this.loadReconcileState(assignment, assignmentFingerprint)
+      state = this.loadReconcileState(assignmentFingerprint)
     // Bounded per-recorder LRU of warm sessions; evicted sessions reload from SQLite.
     this.reconcileStates.delete(sessionID)
     this.reconcileStates.set(sessionID, state)
@@ -2408,6 +2420,13 @@ export class ProgressRecorder {
       this.reconcileStates.delete(oldest)
     }
 
+    const stamps = this.loadStamps(
+      assignment,
+      messages.flatMap((raw) => {
+        const id = text(object(raw)?.id)
+        return id ? [id] : []
+      }),
+    )
     // 1. Cheap per-message change stamps decide what is new or changed.
     const dirty: DirtyMessage[] = []
     const dirtyIDs = new Set<string>()
@@ -2417,7 +2436,7 @@ export class ProgressRecorder {
       if (!id) continue
       this.reconcileStats.stamped++
       const light = messageLightSignature(raw)
-      const stamp = state.stamps.get(id)
+      const stamp = stamps.get(id)
       if (light === undefined || stamp?.light !== light) {
         dirty.push({ raw, id, light })
         dirtyIDs.add(id)
@@ -2435,7 +2454,7 @@ export class ProgressRecorder {
       const raw = messages[state.verifyCursor++ % messages.length]
       const id = text(object(raw)?.id)
       if (!id || dirtyIDs.has(id)) continue
-      const stamp = state.stamps.get(id)
+      const stamp = stamps.get(id)
       if (!stamp?.full) continue
       const full = messageFullFingerprint(raw)
       if (full !== undefined && full !== stamp.full) {
@@ -2487,7 +2506,7 @@ export class ProgressRecorder {
       }
       for (const item of done)
         if (item.light !== undefined && item.full !== undefined)
-          state.stamps.set(item.id, { light: item.light, full: item.full })
+          stamps.set(item.id, { light: item.light, full: item.full })
       if (index < dirty.length) yield
     }
 

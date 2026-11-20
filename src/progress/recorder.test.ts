@@ -1820,10 +1820,7 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
     otherRepository = new TaskRepository(fixture.repository.path, fixture.directory)
     const otherRecorder = new ProgressRecorder(new RunnerStore(otherRepository), "project")
     const cache = recorder as unknown as {
-      reconcileStates: Map<
-        string,
-        { assignmentFingerprint: string; stamps: Map<string, { light: string; full?: string }> }
-      >
+      reconcileStates: Map<string, { assignmentFingerprint: string }>
     }
     const retainedFor = (sessionID: string) => [
       retainedToolMessage(
@@ -1860,18 +1857,10 @@ test("bounded recovery memo preserves warm reuse across 122 terminal sessions an
     const retainedMetadata = [...cache.reconcileStates.entries()]
     expect(retainedMetadata.every(([sessionID]) => sessionIDs.includes(sessionID))).toBe(true)
     expect(
-      retainedMetadata.every(
-        ([, memo]) =>
-          /^[a-f0-9]{64}$/.test(memo.assignmentFingerprint) &&
-          [...memo.stamps.values()].every(
-            (stamp) =>
-              /^[a-f0-9]{64}$/.test(stamp.light) && /^[a-f0-9]{64}$/.test(stamp.full ?? ""),
-          ),
-      ),
+      retainedMetadata.every(([, memo]) => /^[a-f0-9]{64}$/.test(memo.assignmentFingerprint)),
     ).toBe(true)
-    expect(JSON.stringify([...retainedMetadata.map(([, memo]) => [...memo.stamps])])).not.toContain(
-      "private",
-    )
+    // Message stamps are durable rows, never warm memory.
+    expect(retainedMetadata.every(([, memo]) => !("stamps" in memo))).toBe(true)
     const cold = state()
 
     work.resetAppendAttempts()
