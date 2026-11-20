@@ -463,6 +463,14 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     await until(() => timelineRoot.getAttribute("data-expanded") === "true")
     expect(container.querySelector(".lazers-trajectory-timeline")).toBe(timelineRoot)
     expect(timelineRoot.getAttribute("role")).toBe("dialog")
+    // 8a10ed88-1: with a selection, the expanded timeline offers a way to its details.
+    button("Inspect selection and close").click()
+    await until(() => timelineRoot.getAttribute("data-expanded") === "false")
+    await until(
+      () => document.activeElement === container.querySelector(".lazers-trajectory-inspector"),
+    )
+    button("Expand timeline to window").click()
+    await until(() => timelineRoot.getAttribute("data-expanded") === "true")
     button("Close expanded timeline").click()
     await until(() => timelineRoot.getAttribute("data-expanded") === "false")
     expect(timelineRoot.getAttribute("role")).toBe("region")

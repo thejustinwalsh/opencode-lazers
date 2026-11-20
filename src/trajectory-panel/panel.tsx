@@ -1949,6 +1949,25 @@ function PanelView(
                     >
                       <PanelIcon name="fit" />
                     </button>
+                    <Show when={expanded() && selection()}>
+                      {/* The inspector sits outside the modal and is inert while it is open. */}
+                      <button
+                        type="button"
+                        class="lazers-trajectory-close"
+                        aria-label="Inspect selection and close"
+                        title="Close the expanded timeline and focus the details"
+                        onClick={() => {
+                          setExpanded(false)
+                          setTimeout(() => {
+                            if (!inspectorPane) return
+                            inspectorPane.tabIndex = -1
+                            inspectorPane.focus()
+                          })
+                        }}
+                      >
+                        Inspect
+                      </button>
+                    </Show>
                     <Show
                       when={expanded()}
                       fallback={
