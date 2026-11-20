@@ -61,6 +61,8 @@ const NeedsYouItem = z.strictObject({
 const NeedsYouPage = z.strictObject({
   project: ProjectRef.optional(),
   items: z.array(NeedsYouItem),
+  /** False when native questions of this checkout were not readable, so none are listed. */
+  questionsRead: z.boolean().optional(),
   nextCursor: z.string().nullable(),
 })
 

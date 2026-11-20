@@ -143,18 +143,27 @@ export async function needsYouPage(input: {
   cursor?: string
   ownDirectory: string
   sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
-}): Promise<{ project: ProjectRef; items: NeedsYouItem[]; nextCursor: string | null } | undefined> {
+}): Promise<
+  | {
+      project: ProjectRef
+      items: NeedsYouItem[]
+      /** False when this checkout's native questions could not be read, so none are listed. */
+      questionsRead: boolean
+      nextCursor: string | null
+    }
+  | undefined
+> {
   const picked = pickUnit(input.units, input.cursor)
   if (!picked) return undefined
   const { unit } = picked
+  const questionsRead =
+    input.sessionOf !== undefined &&
+    canonicalPath(unit.directory) === canonicalPath(input.ownDirectory)
   const { entries, owners } = input.repository.read((db) => {
     const bundle = openRecoveryBundle(db, unit.directory)
     return {
       entries: [...ownerHolds(db, unit.directory), ...(bundle ? [bundle] : [])],
-      owners:
-        input.sessionOf && canonicalPath(unit.directory) === canonicalPath(input.ownDirectory)
-          ? planOwners(db, unit.directory)
-          : [],
+      owners: questionsRead ? planOwners(db, unit.directory) : [],
     }
   })
   const sessions = (
@@ -162,6 +171,7 @@ export async function needsYouPage(input: {
   ).flatMap((session) => session ?? [])
   return {
     project: unit.project,
+    questionsRead,
     items: [...entries, ...architectQuestions(sessions)]
       .toSorted((a, b) => (a.since ?? 0) - (b.since ?? 0))
       .map((entry) => ({ ...entry, project: unit.project })),
