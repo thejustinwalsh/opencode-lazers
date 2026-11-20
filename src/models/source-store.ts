@@ -512,7 +512,11 @@ export class ModelEvidenceStore {
     return row ? ModelEvidenceSnapshotSchema.parse(JSON.parse(row.body)) : null
   }
 
-  read(input: unknown = {}): ModelEvidenceOutput {
+  /**
+   * Source statuses, optionally one snapshot page. Endpoint pricing carries every scenario's
+   * snapshot body (up to 4 MB each), so it is read only when the caller asks for it.
+   */
+  read(input: unknown = {}, options: { endpointPricing?: boolean } = {}): ModelEvidenceOutput {
     const request = ModelEvidenceReadInputSchema.parse(input)
     return this.db.transaction(() => {
       const sources = this.readStatuses()
@@ -522,7 +526,9 @@ export class ModelEvidenceStore {
       return ModelEvidenceOutputSchema.parse({
         sources,
         snapshot,
-        endpointPricing: this.readEndpointPricing(),
+        ...(options.endpointPricing === false
+          ? {}
+          : { endpointPricing: this.readEndpointPricing() }),
       })
     })()
   }

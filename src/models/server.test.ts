@@ -1293,6 +1293,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
         latestRecordCount: number | null
       }>
     }
+    // A refresh answers with statuses; endpoint pricing bodies come only from an explicit read.
+    expect(refreshed).not.toHaveProperty("endpointPricing")
     const nativeRefresh = refreshed.sources.find(({ source }) => source === "native-catalog")!
     expect(nativeRefresh).toMatchObject({ state: "succeeded", latestRecordCount: 1 })
     const nativeSnapshotID = nativeRefresh.latestSnapshotID!

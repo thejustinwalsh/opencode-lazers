@@ -648,7 +648,10 @@ export function registerModelsServer(
               }
             }
             return ModelEvidenceOutputSchema.parse(
-              await withEvidenceStoreAsync(async (store) => store.read()),
+              // Statuses only: endpoint pricing bodies are returned when the evidence is requested.
+              await withEvidenceStoreAsync(async (store) =>
+                store.read({}, { endpointPricing: false }),
+              ),
             )
           },
           catch: failure,
