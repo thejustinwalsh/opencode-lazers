@@ -1,8 +1,10 @@
 import type { TaskDetail } from "./contract.ts"
 import { TaskProposalSchema } from "../task.ts"
+import { workerVerificationSection } from "../projects/profile-guidance.ts"
+import type { ActiveProfile } from "../projects/profile-store.ts"
 
 /** Human-readable task instructions for the implementor's readable fetch path. */
-export function taskInstructions(detail: TaskDetail): string {
+export function taskInstructions(detail: TaskDetail, profile?: ActiveProfile): string {
   if (detail.status !== "found") return `Task ${detail.status}.`
   const { task } = detail,
     proposal = task.proposal
@@ -113,7 +115,9 @@ export function taskInstructions(detail: TaskDetail): string {
         return `${check.id}: ${check.command} (${values.join("; ")})`
       }),
     ) +
-    "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Run tests as `bun test --timeout 120000 <files>` (Bun's 5 s per-test default fails correct work under load). Report only failures that remain after automatic fixes." +
+    (profile
+      ? workerVerificationSection(profile)
+      : "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Run tests as `bun test --timeout 120000 <files>` (Bun's 5 s per-test default fails correct work under load). Report only failures that remain after automatic fixes.") +
     section(
       "Context references",
       proposal.context.map((ref) =>

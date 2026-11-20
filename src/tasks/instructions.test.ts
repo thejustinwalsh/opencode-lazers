@@ -3,6 +3,8 @@ import { validProposal } from "../../test/proposal.ts"
 import { GetOutput } from "./contract.ts"
 import { taskInstructions } from "./instructions.ts"
 import { TaskAdviceRecord } from "./advice.ts"
+import { parseProfile } from "../projects/profile.ts"
+import type { ActiveProfile } from "../projects/profile-store.ts"
 
 const detail = GetOutput.parse({
   status: "found",
@@ -301,4 +303,62 @@ test("task instructions show the scope model: edit, create with purpose, and pro
   )
   expect(instructions).toContain("## Protected (do not touch)\n- src/audit/**")
   expect(instructions).toContain("say why in one line in your final message")
+})
+
+function activeCargoProfile(unprovenFix = false): ActiveProfile {
+  const parsed = parseProfile({
+    toolchains: ["cargo"],
+    verify: [
+      { id: "fmt", command: "cargo fmt --check" },
+      { id: "tests", command: "cargo test --locked" },
+    ],
+    fix: [{ command: "cargo fmt --", files: ["**/*.rs"] }],
+    source: { include: ["src/**/*.rs"] },
+  })
+  if (!parsed.ok) throw new Error("fixture profile is invalid")
+  const proof = (key: string, outcome: "proven" | "failed", exitCode: number) =>
+    [
+      key,
+      {
+        key,
+        command: "x",
+        outcome,
+        exitCode,
+        timedOut: false,
+        durationMs: 1,
+        stdoutTail: "",
+        stderrTail: "",
+        ranAt: 1,
+      },
+    ] as const
+  return {
+    revisionID: 1,
+    revision: 1,
+    projectKey: "k",
+    profile: parsed.profile,
+    confirmedAt: 1,
+    proofs: new Map([
+      proof("verify:fmt", "proven", 0),
+      proof("verify:tests", unprovenFix ? "failed" : "proven", unprovenFix ? 101 : 0),
+      proof("fix:0", "proven", 0),
+    ]),
+  }
+}
+
+test("with no profile the instructions are unchanged, and with one they name the profile's commands", () => {
+  const without = taskInstructions(detail)
+  expect(taskInstructions(detail, undefined)).toBe(without)
+  expect(without).toContain("In LAZERS use `bun run verify`")
+  const withProfile = taskInstructions(detail, activeCargoProfile())
+  expect(withProfile).toContain("## Project verification (profile revision 1)")
+  expect(withProfile).toContain("- tests: cargo test --locked")
+  expect(withProfile).toContain("cargo fmt --")
+  expect(withProfile).not.toContain("bun run verify")
+  expect(withProfile.startsWith(without.split("\n\nRun project formatter")[0]!)).toBe(true)
+})
+
+test("an unproven verify command is marked with its exit code", () => {
+  expect(taskInstructions(detail, activeCargoProfile(true))).toContain(
+    "- tests: cargo test --locked (unproven: exit 101)",
+  )
 })
