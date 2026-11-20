@@ -1,0 +1,1050 @@
+{
+  "all": {
+    "count": 7,
+    "stateCounts": {
+      "open": 7,
+      "queued": 2,
+      "running": 2,
+      "blocked": 0,
+      "paused": 1,
+      "accepted": 0,
+      "integrated": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "all": 7
+    },
+    "tasks": [
+      {
+        "taskID": "calm",
+        "reference": "LZ-7",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "calm",
+        "objective": "calm",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "grind",
+        "reference": "LZ-6",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "concern": {
+          "line": "verification failed 1 time(s) in 3 round(s) after 90M tokens",
+          "reasons": ["verify-rounds-repeated"],
+          "totals": {
+            "attempts": 2,
+            "verifyRounds": 3,
+            "tokens": 90000000,
+            "toolCalls": 200,
+            "costUSD": null
+          }
+        },
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "grind",
+        "objective": "grind",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "held",
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "dispatchPausePlanID": "plan held",
+        "reference": "LZ-5",
+        "revision": 1,
+        "status": "queued",
+        "recordedState": "queued",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "held",
+        "objective": "held",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "waiting",
+        "reference": "LZ-4",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "waiting",
+        "objective": "waiting",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "first",
+        "reference": "LZ-3",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "reason": "Waiting for checkout or write scope: LZ-7, LZ-6",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "first",
+        "objective": "first",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "other-session",
+        "reference": "LZ-2",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "other-session",
+        "objective": "other-session",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-b",
+        "matches": []
+      },
+      {
+        "taskID": "loose",
+        "reference": "LZ-1",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "loose",
+        "objective": "loose",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      }
+    ]
+  },
+  "open": {
+    "count": 7,
+    "stateCounts": {
+      "open": 7,
+      "queued": 2,
+      "running": 2,
+      "blocked": 0,
+      "paused": 1,
+      "accepted": 0,
+      "integrated": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "all": 7
+    },
+    "tasks": [
+      {
+        "taskID": "calm",
+        "reference": "LZ-7",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "calm",
+        "objective": "calm",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "grind",
+        "reference": "LZ-6",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "concern": {
+          "line": "verification failed 1 time(s) in 3 round(s) after 90M tokens",
+          "reasons": ["verify-rounds-repeated"],
+          "totals": {
+            "attempts": 2,
+            "verifyRounds": 3,
+            "tokens": 90000000,
+            "toolCalls": 200,
+            "costUSD": null
+          }
+        },
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "grind",
+        "objective": "grind",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "held",
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "dispatchPausePlanID": "plan held",
+        "reference": "LZ-5",
+        "revision": 1,
+        "status": "queued",
+        "recordedState": "queued",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "held",
+        "objective": "held",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "waiting",
+        "reference": "LZ-4",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "waiting",
+        "objective": "waiting",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "first",
+        "reference": "LZ-3",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "reason": "Waiting for checkout or write scope: LZ-7, LZ-6",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "first",
+        "objective": "first",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "other-session",
+        "reference": "LZ-2",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "other-session",
+        "objective": "other-session",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-b",
+        "matches": []
+      },
+      {
+        "taskID": "loose",
+        "reference": "LZ-1",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "loose",
+        "objective": "loose",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      }
+    ]
+  },
+  "schedule": {
+    "count": 7,
+    "stateCounts": {
+      "open": 7,
+      "queued": 2,
+      "running": 2,
+      "blocked": 0,
+      "paused": 1,
+      "accepted": 0,
+      "integrated": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "all": 7
+    },
+    "tasks": [
+      {
+        "taskID": "grind",
+        "reference": "LZ-6",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "concern": {
+          "line": "verification failed 1 time(s) in 3 round(s) after 90M tokens",
+          "reasons": ["verify-rounds-repeated"],
+          "totals": {
+            "attempts": 2,
+            "verifyRounds": 3,
+            "tokens": 90000000,
+            "toolCalls": 200,
+            "costUSD": null
+          }
+        },
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "grind",
+        "objective": "grind",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "calm",
+        "reference": "LZ-7",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "calm",
+        "objective": "calm",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "first",
+        "reference": "LZ-3",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "reason": "Waiting for checkout or write scope: LZ-7, LZ-6",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "first",
+        "objective": "first",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "waiting",
+        "reference": "LZ-4",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "waiting",
+        "objective": "waiting",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "held",
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "dispatchPausePlanID": "plan held",
+        "reference": "LZ-5",
+        "revision": 1,
+        "status": "queued",
+        "recordedState": "queued",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "held",
+        "objective": "held",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "other-session",
+        "reference": "LZ-2",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "other-session",
+        "objective": "other-session",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-b",
+        "matches": []
+      },
+      {
+        "taskID": "loose",
+        "reference": "LZ-1",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "loose",
+        "objective": "loose",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      }
+    ]
+  },
+  "session": {
+    "tasks": [
+      {
+        "taskID": "calm",
+        "reference": "LZ-7",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "calm",
+        "objective": "calm",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "grind",
+        "reference": "LZ-6",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "concern": {
+          "line": "verification failed 1 time(s) in 3 round(s) after 90M tokens",
+          "reasons": ["verify-rounds-repeated"],
+          "totals": {
+            "attempts": 2,
+            "verifyRounds": 3,
+            "tokens": 90000000,
+            "toolCalls": 200,
+            "costUSD": null
+          }
+        },
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "grind",
+        "objective": "grind",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "held",
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "dispatchPausePlanID": "plan held",
+        "reference": "LZ-5",
+        "revision": 1,
+        "status": "queued",
+        "recordedState": "queued",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "held",
+        "objective": "held",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "waiting",
+        "reference": "LZ-4",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "waiting",
+        "objective": "waiting",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "first",
+        "reference": "LZ-3",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "reason": "Waiting for checkout or write scope: LZ-7, LZ-6",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "first",
+        "objective": "first",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "loose",
+        "reference": "LZ-1",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "loose",
+        "objective": "loose",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      }
+    ]
+  },
+  "default": {
+    "count": 7,
+    "stateCounts": {
+      "open": 7,
+      "queued": 2,
+      "running": 2,
+      "blocked": 0,
+      "paused": 1,
+      "accepted": 0,
+      "integrated": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "all": 7
+    },
+    "tasks": [
+      {
+        "taskID": "calm",
+        "reference": "LZ-7",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "calm",
+        "objective": "calm",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "grind",
+        "reference": "LZ-6",
+        "revision": 1,
+        "status": "running",
+        "recordedState": "running",
+        "concern": {
+          "line": "verification failed 1 time(s) in 3 round(s) after 90M tokens",
+          "reasons": ["verify-rounds-repeated"],
+          "totals": {
+            "attempts": 2,
+            "verifyRounds": 3,
+            "tokens": 90000000,
+            "toolCalls": 200,
+            "costUSD": null
+          }
+        },
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "grind",
+        "objective": "grind",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "held",
+        "dispatchPause": {
+          "reason": "hold",
+          "untilPlans": []
+        },
+        "dispatchPausePlanID": "plan held",
+        "reference": "LZ-5",
+        "revision": 1,
+        "status": "queued",
+        "recordedState": "queued",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "held",
+        "objective": "held",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "waiting",
+        "reference": "LZ-4",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "waitingOnPlans": [
+          {
+            "planID": "plan first",
+            "title": "first",
+            "state": "running",
+            "version": 1,
+            "reason": null
+          }
+        ],
+        "waitingOnPlansCount": 1,
+        "waitingOnPlansComplete": true,
+        "reason": "Waiting for prerequisite integration: first [plan first] is running. The prerequisite must complete and its source be integrated before dependent work can continue.",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "waiting",
+        "objective": "waiting",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "first",
+        "reference": "LZ-3",
+        "revision": 1,
+        "status": "blocked",
+        "recordedState": "queued",
+        "reason": "Waiting for checkout or write scope: LZ-7, LZ-6",
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "first",
+        "objective": "first",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      },
+      {
+        "taskID": "other-session",
+        "reference": "LZ-2",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-b",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "other-session",
+        "objective": "other-session",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-b",
+        "matches": []
+      },
+      {
+        "taskID": "loose",
+        "reference": "LZ-1",
+        "revision": 1,
+        "status": "submitted",
+        "reason": null,
+        "classification": {
+          "revision": 1,
+          "classification": {
+            "taxonomy": "task-kind/v1",
+            "primaryKind": "feature-implementation"
+          },
+          "provenance": {
+            "kind": "embedded",
+            "sessionID": "session-a",
+            "createdAt": "2026-10-31T00:00:00.000Z"
+          }
+        },
+        "title": "loose",
+        "objective": "loose",
+        "createdAt": "2026-10-31T00:00:00.000Z",
+        "sessionID": "session-a",
+        "matches": []
+      }
+    ]
+  }
+}

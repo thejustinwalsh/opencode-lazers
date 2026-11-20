@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { readFileSync, writeFileSync } from "node:fs"
 import { validProposal } from "../../test/proposal.ts"
 import { RecoveryDetector } from "../recovery/detector.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
@@ -82,38 +83,70 @@ async function project() {
   return { f, loose, other, first, waiting, held, grind, calm }
 }
 
-const fieldsOfOld = (task: Record<string, unknown>) => {
-  const { matches: _matches, ...rest } = task
-  return rest
+const RECORDED = new URL("./stream-query.recorded.json", import.meta.url)
+
+/** A page in the names the fixture chose, without the instants of the run. */
+function named(value: unknown, names: Map<string, string>) {
+  const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g
+  const json = JSON.stringify(value, (key, item) =>
+    key === "startedAt" || key === "serverTime" || key === "attemptMs" ? undefined : item,
+  )
+  return JSON.parse(json.replace(UUID, (id) => names.get(id) ?? "<id>"))
 }
 
-test("the agent tool page carries what the old read carried, from stored data", async () => {
+const QUERIES = {
+  all: { state: "all" as const },
+  open: { state: "open" as const },
+  schedule: { state: "all" as const, sort: "schedule" as const },
+  session: { state: "all" as const, sessionID: "session-a" },
+  default: {},
+}
+
+test("the agent tool page carries what the old read carried, recorded before it was removed", async () => {
   const { f, grind, waiting, held } = await project()
-  for (const query of [
-    { state: "all" as const },
-    { state: "open" as const },
-    { state: "all" as const, sort: "schedule" as const },
-    { state: "all" as const, sessionID: "session-a" },
-    {},
-  ]) {
-    const old = f.reads.query({ limit: 100, ...query })
+  const names = new Map<string, string>()
+  f.repository.read((db) => {
+    for (const row of db
+      .query<{ id: string; objective: string }, []>(
+        "SELECT id,json_extract(body,'$.proposal.objective') AS objective FROM tasks",
+      )
+      .all())
+      names.set(row.id, row.objective)
+    for (const row of db
+      .query<{ id: string; objective: string }, []>(
+        "SELECT id,json_extract(body,'$.objective') AS objective FROM runner_plans",
+      )
+      .all())
+      names.set(row.id, `plan ${row.objective}`)
+  })
+  const recorded: Record<string, unknown> = JSON.parse(readFileSync(RECORDED, "utf8"))
+  for (const [key, query] of Object.entries(QUERIES)) {
     const page = await queryTaskPage(f.repository, { limit: 100, ...query })
-    const byID = new Map(page.tasks.map((task) => [task.taskID, task]))
-    expect(new Set(byID.keys())).toEqual(new Set(old.tasks.map((task) => task.taskID)))
-    for (const task of old.tasks) expect(byID.get(task.taskID)).toEqual(task as never)
-    if ("sessionID" in query) {
-      // No stored counter is per creating session.
-      expect(page.count).toBeUndefined()
-      continue
+    const { nextCursor: _cursor, projectDirectory: _directory, ...shown } = page
+    if (process.env.RECORD_PROJECTION) {
+      const old = f.reads.query({ limit: 100, ...query })
+      // Counters a creating session has no stored counter for are left out.
+      const { snapshot: _snapshot, nextCursor: _next, projectDirectory: _dir, ...kept } = old
+      recorded[key] = named(
+        "sessionID" in query ? { ...kept, count: undefined, stateCounts: undefined } : kept,
+        names,
+      )
+      writeFileSync(RECORDED, `${JSON.stringify(recorded, null, 1)}\n`)
     }
-    expect(page.count).toBe(old.count)
     // A task held by a reservation or prerequisite plan counts under Blocked, not Queued
-    // (`INTENTIONAL_DIFFERENCES`); every other chip is the old count.
-    const { blocked, queued, ...rest } = page.stateCounts!
-    const { blocked: oldBlocked, queued: oldQueued, ...oldRest } = old.stateCounts!
-    expect(rest).toEqual(oldRest as never)
-    expect(blocked! + queued!).toBe(oldBlocked! + oldQueued!)
-    expect(page.projectDirectory).toBe(old.projectDirectory)
+    // (`INTENTIONAL_DIFFERENCES`); `blocked` and `queued` differ from the old counts by that.
+    const expected = structuredClone(recorded[key]) as { stateCounts?: Record<string, number> }
+    const actual = named(shown, names) as { stateCounts?: Record<string, number> }
+    if (expected.stateCounts && actual.stateCounts) {
+      expect(actual.stateCounts.blocked! + actual.stateCounts.queued!).toBe(
+        expected.stateCounts.blocked! + expected.stateCounts.queued!,
+      )
+      for (const side of [expected, actual]) {
+        delete side.stateCounts!.blocked
+        delete side.stateCounts!.queued
+      }
+    }
+    expect({ key, page: actual }).toEqual({ key, page: expected })
   }
   const page = await queryTaskPage(f.repository, { limit: 100, state: "all" })
   const find = (id: string) => page.tasks.find((task) => task.taskID === id)!

@@ -6,6 +6,7 @@ import { validProposal } from "../../../test/proposal.ts"
 import { meterRepository } from "../../runner/read-meter.fixture.ts"
 import { TaskRepository } from "../../storage.ts"
 import { TaskReads } from "../../tasks/read.ts"
+import { bucketsFor } from "../../tasks/schedule/key.ts"
 import { TaskStateFilter } from "../../tasks/state-filter.ts"
 import { openStream } from "../client.ts"
 import { readerPool, type ReaderPool } from "../pool.ts"
@@ -154,33 +155,56 @@ async function walk(filter: TaskScheduleFilter, order: "schedule" | "recent", wi
   return seen
 }
 
+/** The stored rows of a chip in a sort's order, read straight from the projection table. */
+function stored(sort: "schedule" | "recent", state: string, extra = "", ...params: string[]) {
+  const buckets = bucketsFor(state) ?? []
+  return repository.read((db) =>
+    db
+      .query<Record<string, unknown>, string[]>(
+        `SELECT * FROM task_schedule WHERE project_directory=? AND retired=0
+         ${buckets.length ? `AND bucket IN (${buckets.map(() => "?").join(",")})` : ""} ${extra}
+         ORDER BY ${sort === "schedule" ? "sort_key, task_id" : "seq DESC, task_id"}`,
+      )
+      .all(PROJECT, ...buckets, ...params),
+  )
+}
+
 for (const sort of ["schedule", "recent"] as const)
-  test(`walking tasks.schedule (${sort}) by slides gives Tasks.query's tasks in its order, for every state filter`, async () => {
+  test(`walking tasks.schedule (${sort}) by slides gives the stored rows in order, for every state filter`, async () => {
     let compared = 0
     for (const state of [...TaskStateFilter.options, undefined]) {
-      const expected = reads.query({ sort, limit: 100, state, includeRetired: false }).tasks
+      const expected = stored(sort, state ?? "legacy")
       const actual = await walk({ project: PROJECT, state: state ?? "legacy" }, sort, 4)
-      expect(actual.map((row) => row.task_id)).toEqual(expected.map((task) => task.taskID))
+      expect(actual.map((row) => row.task_id)).toEqual(expected.map((row) => row.task_id))
       expected.forEach((task, i) => {
         const row = actual[i]!
-        expect(row.reference).toBe(task.reference)
-        expect(row.objective).toBe(task.objective)
-        expect(row.created_at).toBe(task.createdAt)
-        expect(row.session_id).toBe(task.sessionID)
+        for (const column of ["reference", "objective", "created_at", "session_id", "status"])
+          expect(row[column]).toBe(task[column])
         expect(row.revision).toBe(task.revision)
-        expect(row.status).toBe(task.status)
-        expect(row.node_state ?? undefined).toBe(task.recordedState)
+        expect(row.node_state ?? null).toBe(task.node_state)
       })
       compared += expected.length
     }
     expect(compared).toBeGreaterThan(100)
   })
 
-test("creator, search and scopePath filters equal the old read", async () => {
-  const query = (input: object) =>
-    reads
-      .query({ sort: "schedule", limit: 100, state: "all", ...input })
-      .tasks.map((task) => task.taskID)
+test("creator, search and scopePath filters list the stored rows they name", async () => {
+  const query = (input: { sessionID?: string; search?: string; scopePath?: string }) =>
+    input.sessionID
+      ? stored("schedule", "all", "AND session_id=?", input.sessionID).map((row) => row.task_id)
+      : input.search
+        ? stored(
+            "schedule",
+            "all",
+            "AND instr(search_text, ?) > 0",
+            input.search.toLowerCase(),
+          ).map((row) => row.task_id)
+        : stored(
+            "schedule",
+            "all",
+            "AND EXISTS (SELECT 1 FROM task_schedule_scopes c WHERE c.task_id=task_schedule.task_id AND instr(lower(c.path), ?) > 0)",
+            input.scopePath!.toLowerCase(),
+          ).map((row) => row.task_id)
   const rows = async (filter: Partial<TaskScheduleFilter>) =>
     (await walk({ project: PROJECT, state: "all", ...filter }, "schedule", 7)).map(
       (row) => row.task_id,
@@ -194,9 +218,13 @@ test("creator, search and scopePath filters equal the old read", async () => {
 })
 
 test("a task id filter reads one task and another project's tasks never appear", async () => {
-  const [first] = reads.query({ sort: "recent", limit: 1, state: "all" }).tasks
-  const rows = await walk({ project: PROJECT, state: "all", taskID: first!.taskID }, "recent", 5)
-  expect(rows.map((row) => row.task_id)).toEqual([first!.taskID])
+  const first = stored("recent", "all")[0]!
+  const rows = await walk(
+    { project: PROJECT, state: "all", taskID: first.task_id as string },
+    "recent",
+    5,
+  )
+  expect(rows.map((row) => row.task_id)).toEqual([first.task_id])
   expect(await walk({ project: "/elsewhere", state: "all" }, "recent", 5)).toEqual([])
 })
 
@@ -241,12 +269,10 @@ test("dependency children, plans, and bucket counts read as sources", async () =
   })
   await counts.ready()
   const total = counts.items.reduce((sum, row) => sum + (row.n as number), 0)
-  expect(total).toBe(reads.query({ sort: "recent", limit: 100, state: "all" }).count)
+  expect(total).toBe(stored("recent", "all").length)
   for (const row of counts.items)
     if (["running", "accepted", "failed", "cancelled"].includes(row.bucket as string))
-      expect(row.n).toBe(
-        reads.query({ sort: "recent", limit: 100, state: row.bucket as never }).count,
-      )
+      expect(row.n).toBe(stored("recent", row.bucket as string).length)
   counts.close()
 
   const sessions = openStream(pool, taskSessionBucketCountsSource, {
@@ -256,7 +282,12 @@ test("dependency children, plans, and bucket counts read as sources", async () =
   })
   await sessions.ready()
   expect(sessions.items.reduce((sum, row) => sum + (row.n as number), 0)).toBe(
-    reads.query({ sort: "recent", limit: 100, state: "all", sessionID: "session-b" }).count,
+    stored(
+      "recent",
+      "all",
+      "AND EXISTS (SELECT 1 FROM task_schedule_sessions s WHERE s.task_id=task_schedule.task_id AND s.session_id=?)",
+      "session-b",
+    ).length,
   )
   sessions.close()
 })

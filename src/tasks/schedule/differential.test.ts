@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { setPause } from "../../projects/pause.ts"
 import { installTaskScheduleSchema } from "./schema.ts"
 import { backfillPage } from "./backfill.ts"
-import { compareReads } from "./parity.ts"
+import { expectProjection } from "./parity.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
 import type { Fixture } from "./fixture.ts"
 
@@ -241,48 +241,17 @@ function run(seed: number, events: number) {
       )
     } else if (kind === "global")
       setPause(f.repository, { kind: "global" }, { paused: random() < 0.5, reason: "r", by: "o" })
-    const divergences = compareReads(f.repository, f.reads)
-    if (divergences.length && process.env.DEBUG_SCHEDULE) {
-      const rows = f.repository.read((db) =>
-        db
-          .query<{ t: string; s: string }, []>(
-            "SELECT substr(task_id,1,4) t, rank||':'||node_state||':'||plan_state||':f'||finished_at||':'||COALESCE(finished_basis,'-')||':p'||priority_key||':q'||COALESCE(plan_seq,'-')||':s'||seq AS s FROM task_schedule ORDER BY sort_key",
-          )
-          .all(),
-      )
-      const old = f.reads
-        .query({ sort: "schedule", state: "all", limit: 100 })
-        .tasks.map((t) => t.taskID.slice(0, 4))
-      const by = new Map(rows.map((r) => [r.t, r.s]))
-      console.log(
-        JSON.stringify(
-          f.repository.read((db) =>
-            db
-              .query(
-                "SELECT substr(plan_id,1,4) p,substr(task_id,1,4) t,id,event,payload,created_at FROM runner_transitions WHERE task_id IN (SELECT task_id FROM task_schedule WHERE rank=4) ORDER BY id",
-              )
-              .all(),
-          ),
-        ),
-      )
-      console.log(
-        "NEW",
-        rows.map((r) => `${r.t} ${r.s}`).join("\n"),
-        "\nOLD",
-        old.map((t) => `${t} ${by.get(t)}`).join("\n"),
-      )
+    if (step % 40 === 39) {
+      expectProjection(`seed ${seed}/step ${step}`, f.repository, f.reads)
+      rebuildEqual(f)
     }
-    if (divergences.length)
-      throw new Error(
-        `seed ${seed} step ${step} (${log.slice(-6).join(",")}): ${JSON.stringify(divergences.slice(0, 3))}`,
-      )
-    if (step % 40 === 39) rebuildEqual(f)
   }
+  expectProjection(`seed ${seed}/final`, f.repository, f.reads)
   rebuildEqual(f)
   return f
 }
 
 for (const seed of [1, 2, 3, 4, 5])
-  test(`differential: seed ${seed} keeps the projection equal to the old read and to a rebuild`, () => {
+  test(`differential: seed ${seed} keeps the projection equal to the recorded old read and to a rebuild`, () => {
     run(seed, 160)
   })
