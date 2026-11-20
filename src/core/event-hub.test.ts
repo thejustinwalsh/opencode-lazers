@@ -143,3 +143,33 @@ test("the recent-id set is bounded by its byte budget and evicts oldest first", 
   expect(heard.length).toBe(11)
   leave()
 })
+
+test("a reattach asks the host for a fresh stream and the gap names its cause", async () => {
+  const queue = Effect.runSync(Queue.unbounded<unknown>())
+  let subscribes = 0
+  const gaps: (string | undefined)[] = []
+  const leave = joinNativeEvents(
+    {
+      event: {
+        subscribe: () => {
+          subscribes++
+          return Stream.fromQueue(queue).pipe(
+            Stream.mapEffect((event) =>
+              event === "boom" ? Effect.fail(new Error("lost")) : Effect.succeed(event),
+            ),
+          )
+        },
+      },
+    } as never,
+    ["reattach.test"],
+    { event: () => {}, gap: (reason) => gaps.push(reason) },
+    "/solo",
+  )
+  await tick()
+  expect(subscribes).toBe(1)
+  await Effect.runPromise(Queue.offer(queue, "boom"))
+  await tick(1_300)
+  expect(gaps).toEqual(["failed"])
+  expect(subscribes).toBe(2)
+  leave()
+})
