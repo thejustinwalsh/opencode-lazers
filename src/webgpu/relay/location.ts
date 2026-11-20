@@ -151,13 +151,10 @@ export class LocationInferenceRelay {
     return true
   }
 
-  recover(requestID: string) {
+  recover(requestID: string, claimToken: string) {
     const entry = this.entries.get(requestID)
-    if (!entry) return false
-    if (entry.state === "cancelled") {
-      this.remove(requestID, entry)
-      return true
-    }
+    if (!entry || entry.claimToken !== claimToken) return false
+    if (entry.state !== "claimed" && entry.state !== "delivered") return false
     const delivered = entry.state === "delivered"
     this.remove(requestID, entry)
     entry.finish({

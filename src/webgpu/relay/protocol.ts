@@ -62,7 +62,7 @@ export const InferenceRelay = Rpc.define({
       output: portable(Schema.Boolean),
     },
     recover: {
-      input: portable(Schema.Struct({ requestID })),
+      input: portable(Schema.Struct({ requestID, claimToken })),
       output: portable(Schema.Boolean),
     },
     acknowledge: {

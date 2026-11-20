@@ -27,6 +27,7 @@ type ActiveRequest = {
   working: boolean
   workerStarted: boolean
   client?: OpenCodeClient
+  finishing: boolean
   settled: boolean
 }
 
@@ -109,10 +110,6 @@ async function forward(
       return worker.systemOne(input as Parameters<typeof worker.systemOne>[0], options)
   }
 }
-
-// All relay instances in the Desktop main-process module coordinate ownership.
-// A separate instance must not mistake another live instance's claim for an orphan.
-const liveRequests = new Map<string, ActiveRequest>()
 
 /** Main-process bridge from location-owned public RPCs to the default renderer mailbox. */
 export class DesktopInferenceRelay {
@@ -397,7 +394,9 @@ export class DesktopInferenceRelay {
       if (state === "claimed" && active.phase === "claiming") void this.claimAndDeliver(active)
       return
     }
-    void this.recoverOrphan(directory, requestID)
+    // Claimed and delivered requests belong to the relay holding the source-
+    // stored claim token. A different module/process cannot prove that owner is
+    // orphaned, so it must not recover or replay the request.
   }
 
   private makeActive(directory: string, requestID: string) {
@@ -410,11 +409,11 @@ export class DesktopInferenceRelay {
       phase: "claiming",
       working: false,
       workerStarted: false,
+      finishing: false,
       settled: false,
     }
-    if (this.active.size >= MAX_IN_FLIGHT || liveRequests.has(entry.key)) return undefined
+    if (this.active.size >= MAX_IN_FLIGHT) return undefined
     this.active.set(entry.key, entry)
-    liveRequests.set(entry.key, entry)
     return entry
   }
 
@@ -582,14 +581,13 @@ export class DesktopInferenceRelay {
 
   private forget(entry: ActiveRequest) {
     this.releaseLocal(entry)
-    if (liveRequests.get(entry.key) === entry) liveRequests.delete(entry.key)
   }
 
   private async sourceRpc<T>(
     directory: string,
     invoke: (client: OpenCodeClient, options: RelayRpcOptions) => Promise<T>,
+    client = this.currentClient(),
   ) {
-    const client = this.currentClient()
     if (!client) return
     try {
       return await boundedRpc(
@@ -616,7 +614,9 @@ export class DesktopInferenceRelay {
 
   private recover(entry: ActiveRequest) {
     return this.finish(entry, (client, options) =>
-      client.rpc(InferenceRelay).recover({ requestID: entry.requestID }, options),
+      client
+        .rpc(InferenceRelay)
+        .recover({ requestID: entry.requestID, claimToken: entry.claimToken }, options),
     )
   }
 
@@ -624,23 +624,31 @@ export class DesktopInferenceRelay {
     entry: ActiveRequest,
     invoke: (client: OpenCodeClient, options: RelayRpcOptions) => Promise<unknown>,
   ) {
-    if (entry.settled) return
-    entry.settled = true
-    entry.controller.abort()
-    this.releaseLocal(entry)
-    try {
-      await this.sourceRpc(entry.directory, invoke)
-    } finally {
-      this.forget(entry)
+    if (entry.settled || entry.finishing) return
+    const client = this.currentClient()
+    if (!client) {
+      if (this.closed) {
+        entry.settled = true
+        entry.controller.abort()
+        this.forget(entry)
+      }
+      return
     }
-  }
-
-  private async recoverOrphan(directory: string, requestID: string) {
-    const key = requestKey(directory, requestID)
-    if (this.active.has(key) || liveRequests.has(key) || this.closed) return
-    await this.sourceRpc(directory, (client, options) =>
-      client.rpc(InferenceRelay).recover({ requestID }, options),
-    )
+    entry.finishing = true
+    entry.controller.abort()
+    let retryWithCurrentClient = false
+    try {
+      const response = await this.sourceRpc(entry.directory, invoke, client)
+      if (response === undefined && !this.closed && this.currentClient() !== client)
+        retryWithCurrentClient = true
+      else {
+        entry.settled = true
+        this.forget(entry)
+      }
+    } finally {
+      entry.finishing = false
+    }
+    if (retryWithCurrentClient) void this.finish(entry, invoke)
   }
 
   private async acknowledge(directory: string, requestID: string) {

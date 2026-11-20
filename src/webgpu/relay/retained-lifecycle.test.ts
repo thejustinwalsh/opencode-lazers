@@ -49,8 +49,8 @@ function makeClient(
             claimToken: string
             completion: Parameters<typeof relay.complete>[2]
           }) => relay.complete(requestID, claimToken, completion),
-          recover: ({ requestID }: { requestID: string }) =>
-            hooks.recover?.(requestID) ?? Promise.resolve(relay.recover(requestID)),
+          recover: ({ requestID, claimToken }: { requestID: string; claimToken: string }) =>
+            hooks.recover?.(requestID) ?? Promise.resolve(relay.recover(requestID, claimToken)),
           acknowledge: async ({ requestID }: { requestID: string }) => relay.acknowledge(requestID),
         }
       if (definition.id === RendererInference.id) return { ask: infer }
@@ -140,7 +140,11 @@ test("pre-delivery disconnects release claims and later requests retain capacity
       )
       pending.catch(() => {})
       main.refreshConnection()
-      await main.resync()
+      for (let attempt = 0; attempt < 200; attempt++) {
+        if (relay.discover().requests[0]?.state === "claimed") break
+        await main.resync()
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
       await waitUntil(() => relay.discover().requests[0]?.state === "claimed")
 
       current = ready

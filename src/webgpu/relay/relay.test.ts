@@ -69,11 +69,11 @@ function fakeClient(
             )
           },
           recover: (
-            input: { requestID: string },
+            input: { requestID: string; claimToken: string },
             options: { location?: { directory?: string } },
           ) => {
             targets.push(options.location?.directory)
-            return Promise.resolve(relay.recover(input.requestID))
+            return Promise.resolve(relay.recover(input.requestID, input.claimToken))
           },
           acknowledge: (
             input: { requestID: string },
