@@ -278,7 +278,8 @@ export type TaskRuntimeOptions = {
    * Total tokens of a task past which the recovery detector raises a takeover concern, with
    * stronger wording as the spend doubles. Off when undefined. It never stops the worker.
    */
-  workerSpendCeilingTokens?: number
+  /** A token ceiling, or a read of it taken at each evaluation. */
+  workerSpendCeilingTokens?: number | (() => number | undefined)
   /** Takeover timing; tests shorten it. Defaults in `takeover.ts`. */
   takeoverHandoffWindowMs?: number
   takeoverStopWaitMs?: number
