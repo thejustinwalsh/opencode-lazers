@@ -1,4 +1,6 @@
 import type { TaskRepository } from "../storage.ts"
+import type { SourceDefinition } from "../context/repo-map.ts"
+import { activeProfile } from "../projects/profile-store.ts"
 import { buildPackage, DEFAULT_MAX_CRAP, notChecked } from "./audit-findings.ts"
 import type { FallowPackage, FallowReviewOutput } from "./contract.ts"
 import { staleSuppressionsIntroduced, withExtraFindings } from "./suppression-flow.ts"
@@ -29,6 +31,8 @@ export type FallowReviewInput = {
   repository: TaskRepository
   analyzer?: FallowAnalyzer
   signal?: AbortSignal
+  /** Which changes matter; defaults to the active profile's `source`, else today's filter. */
+  source?: SourceDefinition
 }
 
 export async function withTimeout<T>(run: () => Promise<T>, ms: number): Promise<T> {
@@ -131,7 +135,10 @@ export async function fallowReview(input: FallowReviewInput): Promise<FallowRevi
       baseCommit: input.baseCommit,
       repository: input.repository,
     })
-    const changed = await changedAuditFiles(input.workspace, input.baseCommit)
+    const source =
+      input.source ??
+      activeProfile(input.repository, input.repository.projectDirectory)?.profile.source
+    const changed = await changedAuditFiles(input.workspace, input.baseCommit, source)
     if (changed.length === 0)
       return { status: "clean", package: untouchedPackage(resolved, input.baseCommit) }
     const [{ report, stale }, added] = await Promise.all([

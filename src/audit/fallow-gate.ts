@@ -1,5 +1,6 @@
 import { FALLOW_CONFIG_REQUIRED, type FallowConfigRequired } from "./fallow-refusal.ts"
 import type { TaskRepository } from "../storage.ts"
+import { activeProfile } from "../projects/profile-store.ts"
 import { getLatestFallowConfig, hasFallowConfig } from "./config.ts"
 
 export { FALLOW_CONFIG_REQUIRED, FallowConfigRequired } from "./fallow-refusal.ts"
@@ -39,8 +40,13 @@ export async function fallowConfigGate(input: {
   enabled: boolean
   directory: string
   repository: TaskRepository
+  /** The profile's audit setting; defaults to the active profile's, else Fallow. */
+  audit?: "fallow" | "off"
 }): Promise<FallowConfigRequired | undefined> {
   if (!input.enabled) return undefined
+  const audit =
+    input.audit ?? activeProfile(input.repository, input.repository.projectDirectory)?.profile.audit
+  if (audit === "off") return undefined
   const present = await hasFallowConfig({
     directory: input.directory,
     ref: "HEAD",

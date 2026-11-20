@@ -293,6 +293,12 @@ export const FallowConfigGuideOutput = z.strictObject({
   guidance: text,
 })
 
+/** `lz-fallow-config` suggest or dry-run while the project's profile turns the audit off. */
+export const FallowConfigAuditOffOutput = z.strictObject({
+  refused: z.literal("PROFILE_AUDIT_OFF"),
+  guidance: text,
+})
+
 export const FallowDryRunOutput = z.strictObject({
   project: text,
   /** Findings of the whole repository under the candidate, per class (not an audit of a change). */

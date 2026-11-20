@@ -79,3 +79,41 @@ test("the check run profile carries commands, the revision and tool versions, ne
     toolVersions: { cargo: "cargo 9.9.9" },
   })
 })
+
+test("the audit is off only when a confirmed profile says so", async () => {
+  const { mkdtempSync, realpathSync, rmSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { registerProject, resetProjectAliasCache } = await import("../project-key.ts")
+  const { TaskRepository } = await import("../storage.ts")
+  const { proposeRevision, confirmRevision } = await import("./profile-store.ts")
+  const { auditIsOff } = await import("./profile-runtime.ts")
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-audit-off-")))
+  Bun.spawnSync(["git", "-C", root, "init", "-q", "-b", "main"])
+  Bun.spawnSync(["git", "-C", root, "remote", "add", "origin", "git@h.com:a/off.git"])
+  const repository = new TaskRepository(join(root, "db.sqlite"), root)
+  try {
+    const { key } = await registerProject(repository, { directory: root, opencodeProjectID: "p" })
+    expect(auditIsOff(repository, root)).toBe(false)
+    const parsed = parseProfile({
+      verify: [{ id: "t", command: "true" }],
+      audit: "off",
+      source: { include: ["src/**"] },
+    })
+    if (!parsed.ok) throw new Error("bad fixture")
+    proposeRevision(repository, {
+      projectKey: key,
+      profile: parsed.profile,
+      author: { kind: "owner" },
+      reason: "t",
+      proofs: [],
+    })
+    expect(auditIsOff(repository, root)).toBe(false)
+    confirmRevision(repository, { projectKey: key, revision: 1, by: "owner" })
+    expect(auditIsOff(repository, root)).toBe(true)
+  } finally {
+    resetProjectAliasCache()
+    repository.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})

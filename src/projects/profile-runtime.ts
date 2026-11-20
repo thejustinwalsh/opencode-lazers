@@ -1,5 +1,8 @@
 import type { ProfileIdentity } from "../runner/artifacts.ts"
 import type { ActiveProfile } from "./profile-store.ts"
+import type { RetainedCheckProfile } from "../runner/retained-verification/isolation.ts"
+import type { TaskRepository } from "../storage.ts"
+import { activeProfile } from "./profile-store.ts"
 import { effectiveInstall, type EffectiveInstall } from "./toolchains.ts"
 
 /**
@@ -60,4 +63,33 @@ export function runnableInstall(active: ActiveProfile, workspace: string): Effec
       ? [entry]
       : [],
   )
+}
+
+/**
+ * The profile an isolated recheck is set up with: the active revision, read once, with only its
+ * proven installs. Spread into `createRetainedCheckContext`'s input; empty when no profile exists.
+ */
+export function retainedProfileInput(
+  repository: Pick<TaskRepository, "read">,
+  projectDirectory: string,
+  workspace: string,
+): { profile?: RetainedCheckProfile } {
+  const active = activeProfile(repository, projectDirectory)
+  if (!active) return {}
+  return {
+    profile: {
+      revisionID: active.revisionID,
+      revision: active.revision,
+      profile: active.profile,
+      installs: runnableInstall(active, workspace),
+    },
+  }
+}
+
+/** Whether the project's confirmed profile turns the Fallow audit off (no profile: it does not). */
+export function auditIsOff(
+  repository: Pick<TaskRepository, "read">,
+  projectDirectory: string,
+): boolean {
+  return activeProfile(repository, projectDirectory)?.profile.audit === "off"
 }

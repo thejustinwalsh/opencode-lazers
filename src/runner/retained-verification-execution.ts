@@ -60,6 +60,7 @@ import {
 import type { TaskRuntime } from "./runtime.ts"
 import { errorText } from "./runtime-helpers.ts"
 import { isRecord } from "./runtime-helpers.ts"
+import { retainedProfileInput } from "../projects/profile-runtime.ts"
 import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS } from "./runtime-helpers.ts"
 import { pathEntryExists } from "./runtime-helpers.ts"
@@ -1077,6 +1078,7 @@ export class RetainedVerificationExecution {
         procedurePlan: run.procedurePlan,
         signal: runSignal,
         dependencyInstaller: this.runtime.retainedDependencyInstaller,
+        ...retainedProfileInput(this.runtime.store.repository, this.runtime.directory, workspace),
         onSetupPathReserved: (path) => {
           setup.resource = { path, realPath: path, device: -1, inode: -1 }
           this.reserveRetainedSetupResource(run, "setup-root", path, -1, -1)

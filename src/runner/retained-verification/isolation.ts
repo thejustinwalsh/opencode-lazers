@@ -1,13 +1,20 @@
 import { checkEnvironment } from "../checks.ts"
+import type { ProfileIdentity } from "../artifacts.ts"
+import type { ProjectProfile } from "../../projects/profile.ts"
+import { toolchainFacts } from "../../projects/toolchains.ts"
+import type { EffectiveInstall } from "../../projects/toolchains.ts"
 import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -16,7 +23,7 @@ import {
 import { lstat, readdir, realpath, rm } from "node:fs/promises"
 import type { Dirent } from "node:fs"
 import { join, relative, sep } from "node:path"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { fingerprint } from "../../identity.ts"
 import {
   assertRetainedProcedureBinding,
@@ -41,6 +48,8 @@ export type RetainedCheckContext = {
   taskDatabase: string
   projectDirectory: string
   projectIdentity: string
+  /** The profile revision this recheck was set up with; observation never re-reads the latest. */
+  profileRevisionID?: number
   dependencyLink: { path: string; target: string } | null
   identity: string
   environmentIdentity: string
@@ -67,7 +76,19 @@ export type RetainedDependencyInstaller = (input: {
   candidateWorkspace: string
   environment: Record<string, string>
   signal: AbortSignal
+  /** Set by a project profile's install entry; absent for the Bun default. */
+  command?: string[]
 }) => Promise<void>
+
+/** What a confirmed project profile contributes to one isolated recheck. */
+export type RetainedCheckProfile = {
+  revisionID: number
+  /** The revision number shown to the owner; defaults to `revisionID` in identities. */
+  revision?: number
+  profile: ProjectProfile
+  /** Proven install entries only, in order. */
+  installs: EffectiveInstall[]
+}
 
 export class RetainedSetupProcessTreeUncertainError extends Error {
   constructor(message: string) {
@@ -87,7 +108,7 @@ type OwnerMarker = {
 const resourceNames = retainedProjectResourceNames
 const markerName = ".lazers-retained-verification-owner.json"
 
-export function retainedVerificationEnvironmentIdentity(): string {
+export function retainedVerificationEnvironmentIdentity(profile?: ProfileIdentity): string {
   return JSON.stringify({
     bunRevision: Bun.revision,
     bunVersion: Bun.version,
@@ -99,6 +120,7 @@ export function retainedVerificationEnvironmentIdentity(): string {
     LC_ALL: process.env.LC_ALL ?? null,
     TZ: process.env.TZ ?? null,
     CI: process.env.CI ?? null,
+    ...(profile ? { profile } : {}),
   })
 }
 
@@ -368,6 +390,8 @@ export async function runRetainedSetupProcess(input: {
   signal: AbortSignal
   timeoutMs: number
   failedMessage: string
+  /** Names the exit code in the failure when given. */
+  describeFailure?: (code: number) => string
 }): Promise<void> {
   if (input.signal.aborted) throw new Error("Candidate dependency setup was cancelled")
   if (process.platform === "win32")
@@ -408,7 +432,30 @@ export async function runRetainedSetupProcess(input: {
     await terminateAndObserveProcessGroup(child)
     throw new Error("Candidate dependency installer exited while descendants were still running")
   }
-  if (outcome.code !== 0) throw new Error(input.failedMessage)
+  if (outcome.code !== 0)
+    throw new Error(input.describeFailure?.(outcome.code) ?? input.failedMessage)
+}
+
+/** A profile install entry, run in the same owned process group as the Bun default. */
+async function runProfileInstall(input: {
+  candidateWorkspace: string
+  environment: Record<string, string>
+  signal: AbortSignal
+  command?: string[]
+}): Promise<void> {
+  const command = input.command
+  if (!command) return
+  const text = command[0] === "/bin/sh" && command[1] === "-c" ? command[2]! : command.join(" ")
+  return runRetainedSetupProcess({
+    command,
+    candidateWorkspace: input.candidateWorkspace,
+    environment: input.environment,
+    signal: input.signal,
+    timeoutMs: 120_000,
+    failedMessage: `Candidate dependency setup failed: ${text}`,
+    describeFailure: (code) =>
+      `Candidate dependency setup failed: ${text} exited with code ${code}`,
+  })
 }
 
 async function installCandidateDependencies(input: {
@@ -524,6 +571,8 @@ export async function createRetainedCheckContext(input: {
   candidateArtifact: string
   priorResourcePaths: string[]
   procedurePlan: RetainedProcedurePlan
+  /** The pinned project profile; absent means every line below runs as it always has. */
+  profile?: RetainedCheckProfile
   signal?: AbortSignal
   dependencyInstaller?: RetainedDependencyInstaller
   onSetupPathReserved?: (path: string) => void
@@ -559,11 +608,19 @@ export async function createRetainedCheckContext(input: {
     pathContains(candidateWorkspace, originalWorkspace)
   )
     throw new Error("Original and candidate workspaces must be distinct canonical checkouts")
-  const candidateManifest = candidatePackageManifest(candidateWorkspace)
+  // A profile without a node_modules toolchain (cargo) links and checks no dependency tree.
+  const usesNodeModules =
+    !input.profile ||
+    input.profile.profile.toolchains.some(
+      (name) => toolchainFacts(name).dependencies === "node_modules",
+    )
+  const candidateManifest = usesNodeModules
+    ? candidatePackageManifest(candidateWorkspace)
+    : undefined
   if (candidateManifest)
     assertCandidateDependencySetup(candidateWorkspace, input.candidateArtifact, candidateManifest)
   const candidateDependencies = join(candidateWorkspace, "node_modules")
-  const nativeDependencies = lstatIfPresent(candidateDependencies)
+  const nativeDependencies = usesNodeModules ? lstatIfPresent(candidateDependencies) : undefined
   if (nativeDependencies) {
     if (
       !candidateManifest ||
@@ -610,34 +667,39 @@ export async function createRetainedCheckContext(input: {
   assertNotCancelled()
 
   let dependencyLink: RetainedCheckContext["dependencyLink"] = null
-  if (candidateManifest) {
-    const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
-    const link = relative(candidateWorkspace, dependencyResource.realPath)
-    if (lstatIfPresent(candidateDependencies))
-      throw new Error("Candidate checkout dependency link path is already occupied")
-    const reservedLink: RetainedCheckSetupLink = {
-      path: candidateDependencies,
-      target: dependencyResource.realPath,
-      device: -1,
-      inode: -1,
+  const linkDependencies = () => {
+    if (!candidateManifest) return
+    {
+      const dependencyResource = resources.find((resource) => resource.name === "dependencies")!
+      const link = relative(candidateWorkspace, dependencyResource.realPath)
+      if (lstatIfPresent(candidateDependencies))
+        throw new Error("Candidate checkout dependency link path is already occupied")
+      const reservedLink: RetainedCheckSetupLink = {
+        path: candidateDependencies,
+        target: dependencyResource.realPath,
+        device: -1,
+        inode: -1,
+      }
+      input.onDependencyLinkReserved?.(reservedLink)
+      symlinkSync(link, candidateDependencies, "dir")
+      const info = lstatSync(candidateDependencies)
+      const createdLink: RetainedCheckSetupLink = {
+        path: candidateDependencies,
+        target: dependencyResource.realPath,
+        device: info.dev,
+        inode: info.ino,
+      }
+      if (
+        !info.isSymbolicLink() ||
+        realpathSync(candidateDependencies) !== dependencyResource.realPath
+      )
+        throw new Error("Candidate dependency link does not resolve to its owned resource")
+      input.onDependencyLink?.(createdLink)
+      dependencyLink = { path: candidateDependencies, target: dependencyResource.realPath }
     }
-    input.onDependencyLinkReserved?.(reservedLink)
-    symlinkSync(link, candidateDependencies, "dir")
-    const info = lstatSync(candidateDependencies)
-    const createdLink: RetainedCheckSetupLink = {
-      path: candidateDependencies,
-      target: dependencyResource.realPath,
-      device: info.dev,
-      inode: info.ino,
-    }
-    if (
-      !info.isSymbolicLink() ||
-      realpathSync(candidateDependencies) !== dependencyResource.realPath
-    )
-      throw new Error("Candidate dependency link does not resolve to its owned resource")
-    input.onDependencyLink?.(createdLink)
-    dependencyLink = { path: candidateDependencies, target: dependencyResource.realPath }
   }
+  // A profile installs first, then adopts what the installer wrote (npm ci replaces a link).
+  if (!input.profile) linkDependencies()
 
   const external = [
     originalWorkspace,
@@ -701,7 +763,55 @@ export async function createRetainedCheckContext(input: {
     ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
     GIT_TERMINAL_PROMPT: "0",
   }
-  if (candidateManifest && candidateDependencySpecs(candidateManifest).length > 0)
+  if (input.profile) {
+    const { profile } = input.profile
+    environment.PATH = checkEnvironment(undefined, profile.toolchains).PATH ?? environment.PATH!
+    // Build output of a toolchain whose dependencies live in its own home stays in an owned resource.
+    if (profile.toolchains.includes("cargo"))
+      environment.CARGO_TARGET_DIR = join(byName.cache!, "cargo-target")
+    // Kept variables: the service's value, else the toolchain's default under the real home.
+    for (const name of profile.env) {
+      const value =
+        process.env[name] ??
+        profile.toolchains
+          .map((toolchain) => toolchainFacts(toolchain).envDefaults[name]?.(homedir()))
+          .find((resolved) => resolved !== undefined)
+      if (value !== undefined) environment[name] = value
+    }
+    const install = input.dependencyInstaller ?? runProfileInstall
+    for (const entry of input.profile.installs) {
+      if (entry.source === "none") continue
+      await install({
+        candidateWorkspace,
+        environment,
+        signal,
+        command: entry.source === "profile" ? ["/bin/sh", "-c", entry.command] : entry.argv,
+      })
+    }
+    if (candidateManifest) {
+      // An installer such as `npm ci` replaces node_modules with a real directory in the
+      // candidate. Move what it wrote into the owned resource, then link as for any project.
+      const written = lstatIfPresent(candidateDependencies)
+      if (written) {
+        if (written.isSymbolicLink() || !written.isDirectory())
+          throw new Error("Candidate dependency install left an unexpected node_modules entry")
+        const target = resources.find((resource) => resource.name === "dependencies")!.realPath
+        for (const entry of readdirSync(candidateDependencies)) {
+          const from = join(candidateDependencies, entry)
+          const to = join(target, entry)
+          try {
+            renameSync(from, to)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error
+            cpSync(from, to, { recursive: true, verbatimSymlinks: true })
+            rmSync(from, { recursive: true, force: true })
+          }
+        }
+        rmSync(candidateDependencies, { recursive: true, force: true })
+      }
+      linkDependencies()
+    }
+  } else if (candidateManifest && candidateDependencySpecs(candidateManifest).length > 0)
     await (input.dependencyInstaller ?? installCandidateDependencies)({
       candidateWorkspace,
       environment,
@@ -756,6 +866,7 @@ export async function createRetainedCheckContext(input: {
     dependencyLink,
     temporaryDirectoryLink,
     dependencyEnvironmentIdentity,
+    ...(input.profile ? { profileRevisionID: input.profile.revisionID } : {}),
     resources: resources.map(({ name, realPath, device, inode }) => ({
       name,
       realPath,
@@ -796,7 +907,16 @@ export async function createRetainedCheckContext(input: {
   }
 
   const environmentIdentity = fingerprint({
-    base: retainedVerificationEnvironmentIdentity(),
+    base: retainedVerificationEnvironmentIdentity(
+      input.profile
+        ? {
+            revision: input.profile.revision ?? input.profile.revisionID,
+            toolchains: input.profile.profile.toolchains,
+            env: input.profile.profile.env,
+            toolVersions: {},
+          }
+        : undefined,
+    ),
     identity,
   })
   const resourceIdentities: RetainedProcedureResourceIdentity[] = resources.map(
@@ -835,6 +955,7 @@ export async function createRetainedCheckContext(input: {
     procedureBinding,
     resources,
     environment,
+    ...(input.profile ? { profileRevisionID: input.profile.revisionID } : {}),
   }
 }
 
@@ -998,6 +1119,9 @@ export function retainedCheckIsolationWitness(context: RetainedCheckContext) {
       identity: createHash("sha256").update(`${device}:${inode}:${realPath}`).digest("hex"),
     })),
     sqlitePath: context.environment.LAZERS_VERIFICATION_SQLITE,
+    ...(context.profileRevisionID === undefined
+      ? {}
+      : { profileRevisionID: context.profileRevisionID }),
   }
 }
 

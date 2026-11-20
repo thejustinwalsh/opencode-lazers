@@ -243,8 +243,11 @@ test("profile: no revisions reads as none, and list gains only the profile and d
 
 test("profile: a stored repository-map source filter shows as the legacy source", async () => {
   const f = await profileFixture()
-  const { setRepoMapSource } = await import("../context/repo-map-store.ts")
-  setRepoMapSource(f.repository, f.directory, { include: ["src/**/*.ts"], exclude: [] })
+  f.repository.atomic((db) =>
+    db
+      .query("INSERT INTO repo_map_sources VALUES(?,?,?,?)")
+      .run(f.directory, JSON.stringify(["src/**/*.ts"]), "[]", 1),
+  )
   expect(f.ops.profile(f.key).legacySource).toEqual({ include: ["src/**/*.ts"], exclude: [] })
 })
 
@@ -390,4 +393,35 @@ test("setupStatus reports a pending proposal", async () => {
   const withWorkspace = f.ops
   await withWorkspace.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
   expect(await ops.setupStatus("s")).toMatchObject({ state: "pending", pendingRevision: 1 })
+})
+
+test("confirming a profile drops the stored source filter of every checkout, in one transaction", async () => {
+  const f = await profileFixture()
+  // A second checkout of the same project, with its own stored filter.
+  const second = join(f.directory, "..", "second-checkout")
+  mkdirSync(second)
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", second, ...args], { stdout: "pipe", stderr: "pipe" })
+  git("init", "-q", "-b", "main")
+  git("remote", "add", "origin", "git@h.com:a/p.git")
+  const other = new TaskRepository(f.repository.path, second)
+  const registered = await registerProject(other, { directory: second, opencodeProjectID: "p" })
+  other.close()
+  expect(registered.key).toBe(f.key)
+  const seed = (directory: string) =>
+    f.repository.atomic((db) =>
+      db
+        .query("INSERT INTO repo_map_sources VALUES(?,?,?,?)")
+        .run(directory, JSON.stringify(["src/**/*.ts"]), "[]", 1),
+    )
+  seed(f.directory)
+  seed(second)
+  const rows = () =>
+    f.repository.read(
+      (db) => db.query("SELECT COUNT(*) AS n FROM repo_map_sources").get() as { n: number },
+    ).n
+  await f.ops.proposeProfile({ key: f.key, profile: goodProfile, reason: "x" })
+  expect(rows()).toBe(2)
+  expect(f.ops.confirmProfile(f.key, 1)).toEqual({ ok: true })
+  expect(rows()).toBe(0)
 })
