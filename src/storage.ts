@@ -1,6 +1,7 @@
 import { scheduledTaskPageSQL } from "./tasks/schedule-order.ts"
 import { taskReferenceFor } from "./task-reference.ts"
 import { Database, SQLiteError } from "bun:sqlite"
+import { timeStorage } from "./diagnostics/storage-timing.ts"
 import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
 import { installObservedRevisionsSchema } from "./tasks/observed-revisions.ts"
@@ -535,7 +536,7 @@ export class TaskRepository {
    */
   atomic<T>(run: (db: Database) => T): T {
     const db = this.db
-    return db.transaction(() => run(db)).immediate()
+    return timeStorage("atomic", () => db.transaction(() => run(db)).immediate())
   }
 
   /**
@@ -571,7 +572,7 @@ export class TaskRepository {
       try {
         db.exec("PRAGMA busy_timeout = 0")
         try {
-          return run()
+          return timeStorage("atomic", run)
         } finally {
           db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`)
         }
@@ -590,7 +591,7 @@ export class TaskRepository {
    */
   read<T>(run: (db: Database) => T): T {
     const db = this.db
-    return db.transaction(() => run(db)).deferred()
+    return timeStorage("read", () => db.transaction(() => run(db)).deferred())
   }
 
   /** Module upgrades are transactional; current generations need no write transaction. */
