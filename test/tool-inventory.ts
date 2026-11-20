@@ -15,6 +15,7 @@ import { TaskRepository } from "../src/storage.ts"
 import { TaskAdviceToolInput } from "../src/tasks/advice.ts"
 import { tolerantJsonSchema } from "../src/legacy-fields.ts"
 import { declareInput } from "../src/tool-input.ts"
+import { slimTool } from "../src/tool-signature.ts"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -36,11 +37,15 @@ function inert(): never {
  * Every `lz-*` tool as the plugin registers it, by name, with the editor's `add` captured. The
  * services behind each tool are inert: registration reads only names, descriptions and schemas.
  */
-export async function collectTools(): Promise<Map<string, RegisteredTool>> {
+export async function collectTools(
+  options: { raw?: boolean } = {},
+): Promise<Map<string, RegisteredTool>> {
   const tools = new Map<string, RegisteredTool>()
   const editor: ToolEditor = {
+    // `raw` keeps results as registered; otherwise the signature slimming the plugin applies after
+    // registration is applied here too, so callers see what a model sees.
     add: (tool) => {
-      tools.set(tool.name, tool)
+      tools.set(tool.name, options.raw ? tool : slimTool(tool))
     },
     list: () => [],
     get: () => undefined,

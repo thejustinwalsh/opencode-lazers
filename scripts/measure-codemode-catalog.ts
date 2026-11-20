@@ -1,7 +1,7 @@
 /**
  * What OpenCode's Code Mode shows a model for LAZERS' tools, measured with OpenCode's own rules.
  *
- *   bun scripts/measure-codemode-catalog.ts [--opencode <checkout>] [--budget <tokens>] [--top <n>]
+ *   bun scripts/measure-codemode-catalog.ts [--opencode <checkout>] [--budget <tokens>] [--top <n>] [--raw]
  *
  * It registers every `lz-*` tool the way the plugin does (test/tool-inventory.ts), renders each
  * tool's signature with OpenCode's catalogue renderer (`packages/codemode`), and runs OpenCode's
@@ -9,6 +9,8 @@
  * listings shortest first until the token budget is spent; pinned tools always shown). The OpenCode
  * source is read from a checkout, never installed or modified: its bare `effect` imports are
  * resolved to this repository's copy.
+ *
+ * `--raw` measures results as registered, before the plugin slims their types.
  *
  * Reports per-tool signature size, the total, and the inline catalogue the model actually gets.
  * Tokens are characters / 4, the same estimate OpenCode uses for the budget.
@@ -32,8 +34,13 @@ const top = Number(option("--top") ?? 12)
 // repository's dependencies; the checkout itself is only read.
 const scratch = mkdtempSync(join(tmpdir(), "lazers-catalog-"))
 process.on("exit", () => rmSync(scratch, { recursive: true, force: true }))
-cpSync(join(checkout, "packages/codemode/src"), join(scratch, "packages/codemode/src"), { recursive: true })
-cpSync(join(checkout, "packages/core/src/codemode/catalog.ts"), join(scratch, "packages/core/src/codemode/catalog.ts"))
+cpSync(join(checkout, "packages/codemode/src"), join(scratch, "packages/codemode/src"), {
+  recursive: true,
+})
+cpSync(
+  join(checkout, "packages/core/src/codemode/catalog.ts"),
+  join(scratch, "packages/core/src/codemode/catalog.ts"),
+)
 symlinkSync(join(process.cwd(), "node_modules"), join(scratch, "node_modules"))
 
 const load = (relative: string): Promise<any> => import(join(scratch, "packages", relative))
@@ -45,7 +52,7 @@ const { Schema } = await import("effect")
 
 const tokens = (text: string) => Math.round(text.length / 4)
 
-const inventory = await collectTools()
+const inventory = await collectTools({ raw: args.includes("--raw") })
 
 type Entry = {
   name: string
@@ -72,9 +79,9 @@ function areaOf(name: string): string {
 const entries: Entry[] = [...inventory.values()].map((tool) => {
   // The host's rule (`inputJsonSchema`/`outputJsonSchema`): a Standard JSON Schema renders itself.
   const toJson = (schema: unknown, io: "input" | "output") => {
-    const standard = (schema as { "~standard"?: { jsonSchema?: Record<string, (o: object) => unknown> } })?.[
-      "~standard"
-    ]
+    const standard = (
+      schema as { "~standard"?: { jsonSchema?: Record<string, (o: object) => unknown> } }
+    )?.["~standard"]
     if (standard?.jsonSchema) return standard.jsonSchema[io]!({ target: "draft-2020-12" })
     return schema
   }
@@ -84,7 +91,8 @@ const entries: Entry[] = [...inventory.values()].map((tool) => {
     pinned: tool.options?.pinned === true,
     description: tool.description,
     schemaCode: toJson(tool.input, "input"),
-    output: tool.output === undefined ? Schema.NullOr(Schema.String) : toJson(tool.output, "output"),
+    output:
+      tool.output === undefined ? Schema.NullOr(Schema.String) : toJson(tool.output, "output"),
   }
 })
 
@@ -112,21 +120,21 @@ function measure(mode: Mode) {
     tree[area] = namespaceModule.make({ description: `LAZERS ${area} tools`, tools: members })
   const prepared = runtime.prepare(tree)
   const pinned = new Set(entries.filter((entry) => entry.pinned).map((entry) => entry.name))
-  const tools = prepared.catalog.map((tool: { path: string; description: string; signature: string }) => ({
-    type: "tool" as const,
-    name: tool.path,
-    description: tool.description,
-    signature: tool.signature,
-    pinned: pinned.has(tool.path.split(".").at(-1) ?? tool.path),
-  }))
+  const tools = prepared.catalog.map(
+    (tool: { path: string; description: string; signature: string }) => ({
+      type: "tool" as const,
+      name: tool.path,
+      description: tool.description,
+      signature: tool.signature,
+      pinned: pinned.has(tool.path.split(".").at(-1) ?? tool.path),
+    }),
+  )
   const summary = catalogModule.summarize({ tools }, { budget })
   const inline = summary.namespaces
-    .flatMap(
-      (space: { entries: { line: string }[] } & Record<string, unknown>) => [
-        catalogModule.namespaceLine(space),
-        ...space.entries.map((item) => item.line),
-      ],
-    )
+    .flatMap((space: { entries: { line: string }[] } & Record<string, unknown>) => [
+      catalogModule.namespaceLine(space),
+      ...space.entries.map((item) => item.line),
+    ])
     .join("\n")
   return { tools, summary, inline }
 }
@@ -147,7 +155,9 @@ const rows = base.tools
     description: tool.description.length,
     pinned: tool.pinned,
   }))
-  .sort((left: { signature: number }, right: { signature: number }) => right.signature - left.signature)
+  .sort(
+    (left: { signature: number }, right: { signature: number }) => right.signature - left.signature,
+  )
 
 console.log(`LAZERS tools: ${entries.length}   inline budget: ${budget} tokens\n`)
 console.log(`Largest signatures (characters, rendered by OpenCode):`)
@@ -155,12 +165,23 @@ for (const row of rows.slice(0, top))
   console.log(
     `  ${row.name.padEnd(34)} signature ${String(row.signature).padStart(6)} (output ${String(row.output).padStart(6)})  description ${String(row.description).padStart(5)}${row.pinned ? "  pinned" : ""}`,
   )
-const totalSignature = rows.reduce((sum: number, row: { signature: number }) => sum + row.signature, 0)
-const totalDescription = rows.reduce((sum: number, row: { description: number }) => sum + row.description, 0)
+const totalSignature = rows.reduce(
+  (sum: number, row: { signature: number }) => sum + row.signature,
+  0,
+)
+const totalDescription = rows.reduce(
+  (sum: number, row: { description: number }) => sum + row.description,
+  0,
+)
 console.log(
   `\nAll signatures: ${totalSignature} chars (${tokens("x".repeat(totalSignature))} tokens); all descriptions: ${totalDescription} chars`,
 )
-console.log(`Pinned: ${entries.filter((entry) => entry.pinned).map((entry) => entry.name).join(", ")}`)
+console.log(
+  `Pinned: ${entries
+    .filter((entry) => entry.pinned)
+    .map((entry) => entry.name)
+    .join(", ")}`,
+)
 
 for (const result of results) {
   console.log(`\n== ${result.mode.label}`)

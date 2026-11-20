@@ -20,6 +20,7 @@ import { registerProgress } from "./progress/native.ts"
 import { registerRecoveryTools } from "./recovery/tools.ts"
 import { registerToolCallWrappers } from "./progress/tool-observation.ts"
 import { registerToolResults } from "./tool-results.ts"
+import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
 import { registerModelsServer } from "./models/server.ts"
@@ -169,6 +170,7 @@ export default Plugin.define({
         registerLocalInference(ctx, undefined, core.inferenceBroker).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:RecoveryTools", () => registerRecoveryTools(ctx, repository))
+      yield* sectionEffect("setup:ToolSignatures", () => registerToolSignatures(ctx))
       yield* sectionEffect("setup:ToolResults", () => registerToolResults(ctx))
       yield* sectionEffect("setup:ToolCallWrappers", () =>
         registerToolCallWrappers(ctx, progress, projectID),

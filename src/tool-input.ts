@@ -9,11 +9,51 @@ import { z } from "zod"
  */
 const declared = new WeakMap<object, z.ZodType>()
 
+/** Marks a signature-only wrapper with the Zod schema it stands for (see tool-signature.ts). */
+export const SOURCE = Symbol.for("opencode-lazers.tool-input.source")
+
 type JsonSchema = Record<string, unknown>
+
+const SAFE_INTEGER_BOUNDS = new Set([Number.MAX_SAFE_INTEGER, Number.MIN_SAFE_INTEGER])
+
+/**
+ * An input schema without what Zod adds on its own: the uuid regex that repeats beside
+ * `format: "uuid"` (the format already says it) and the safe-integer range on every integer.
+ * Every rule a tool author wrote, and every description, stays.
+ */
+export function leanInputSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(leanInputSchema)
+  if (typeof schema !== "object" || schema === null) return schema
+  const node = schema as Record<string, unknown>
+  const uuid = node.format === "uuid"
+  return Object.fromEntries(
+    Object.entries(node)
+      .filter(
+        ([key, value]) =>
+          !(uuid && key === "pattern") &&
+          !(
+            (key === "minimum" || key === "maximum") &&
+            typeof value === "number" &&
+            SAFE_INTEGER_BOUNDS.has(value)
+          ),
+      )
+      .map(([key, value]) => [
+        key,
+        key === "properties" || key === "$defs" || key === "definitions"
+          ? Object.fromEntries(
+              Object.entries(value as Record<string, unknown>).map(([name, child]) => [
+                name,
+                leanInputSchema(child),
+              ]),
+            )
+          : leanInputSchema(value),
+      ]),
+  )
+}
 
 /** JSON Schema for a tool input, tied to the Zod schema that validates it. */
 export function declareInput(schema: z.ZodType, options: { tolerant?: boolean } = {}): JsonSchema {
-  const json = z.toJSONSchema(schema, { io: "input" }) as JsonSchema
+  const json = leanInputSchema(z.toJSONSchema(schema, { io: "input" })) as JsonSchema
   // The top level stays open so a stray legacy field is not rejected host-side; the runtime parse
   // behind it stays strict.
   if (options.tolerant) delete json.additionalProperties
@@ -24,12 +64,15 @@ export function declareInput(schema: z.ZodType, options: { tolerant?: boolean } 
 /** The Zod schema behind a registered tool input, when there is one. */
 export function zodInput(input: unknown): z.ZodType | undefined {
   if (input instanceof z.ZodType) return input
-  if (typeof input === "object" && input !== null) return declared.get(input)
-  return undefined
+  if (typeof input !== "object" || input === null) return undefined
+  const source: unknown = Reflect.get(input, SOURCE)
+  if (source instanceof z.ZodType) return source
+  return declared.get(input)
 }
 
 function jsonInput(input: unknown, schema: z.ZodType): JsonSchema | undefined {
-  if (typeof input === "object" && input !== null && !(input instanceof z.ZodType))
+  // A registered JSON Schema is the document itself; a Zod schema or its wrapper is converted.
+  if (typeof input === "object" && input !== null && !("~standard" in input))
     return input as JsonSchema
   try {
     return z.toJSONSchema(schema, { io: "input" }) as JsonSchema
