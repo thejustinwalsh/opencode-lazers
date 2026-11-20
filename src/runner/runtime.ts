@@ -20,7 +20,7 @@ import {
   effectSuperseded,
   fallowAcceptance,
 } from "./runtime-helpers.ts"
-import type { StartupRecoveryAuthorization } from "./runtime-helpers.ts"
+import type { RetainedRepairRecord, StartupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -34,6 +34,7 @@ import { Cancellation } from "./cancellation.ts"
 import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
+import { VerificationReview } from "./verification-review.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -56,9 +57,8 @@ import {
   verificationTimeoutDefaults,
 } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
-import { type TaskProposal } from "../task.ts"
+
 import {
-  artifactExists,
   artifactUnchanged,
   commitIsAncestor,
   checkResourcesSettled,
@@ -69,39 +69,15 @@ import {
   reviewedScopeBase,
   scopePatternsConflict,
   verificationEnvironmentIdentity,
-  writeCheckReceipt,
 } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
-import {
-  buildScopeReport,
-  classifyChanges,
-  divergenceReason,
-  protectedPaths,
-  scopeReportEmpty,
-  scopeRepairText,
-  type ScopeReport,
-  type ScopeOwner,
-} from "./scope.ts"
-import { collectScopeChanges, sizeWarnings } from "./scope-git.ts"
-import {
-  FALLOW_CHECK_COMMAND,
-  FALLOW_CHECK_ID,
-  FALLOW_EFFECT_KIND,
-  FALLOW_PLAN_EFFECT_KIND,
-  defaultFallowPlanReview,
-  defaultFallowReview,
-  fallowCheckReceipt,
-  isFallowEffectKind,
-  fallowReasonText,
-  unavailableFallowResult,
-  type FallowReview,
-} from "./fallow-check.ts"
-import type { FallowReviewResult } from "../audit/review.ts"
+import { classifyChanges, protectedPaths } from "./scope.ts"
+
+import { defaultFallowPlanReview, defaultFallowReview, type FallowReview } from "./fallow-check.ts"
+
 import { fallowConfigGate } from "../audit/fallow-gate.ts"
 import { FallowConfigRequiredError } from "../audit/fallow-refusal.ts"
-import { needsRepair } from "../audit/audit-findings.ts"
 
-import { attributeFindingsToTasks, type PlanTaskDiff } from "../audit/task-attribution.ts"
 import { ensureNotesConfig } from "./change-identity.ts"
 import {
   architectCacheWindowMs,
@@ -117,7 +93,7 @@ import {
   type IntegrationProof,
 } from "./integration-proof.ts"
 import { knownTree } from "./identity-store.ts"
-import { checkSucceeded, checkFailureReason } from "./checks.ts"
+import { checkSucceeded } from "./checks.ts"
 
 import type { HostSession, RunnerHost, WorkerInstruction } from "./host.ts"
 import { CommandInput, ModelPolicy, PlanInput, WorkerPersona } from "./schema.ts"
@@ -303,25 +279,6 @@ type RetainedRepairSeed = {
   workerObservation: string
 }
 
-type RetainedRepairRecord = {
-  operationID: string
-  attemptID: string
-  previousMessageID: string
-  repairMessageID: string
-  messageID: string
-  nativeInputID: string
-  nativeAssignmentID: string
-  admissionInputID: string
-  admissionAssignmentID: string
-  continued: boolean
-  terminalOutcome?: "interrupted" | "succeeded" | "failed"
-  owner: string
-  sessionID: string
-  workspace: string
-  route: unknown
-  defect: string
-}
-
 type RetainedRepairRecoverySeed = {
   operationID: string
   attemptID: string
@@ -348,14 +305,6 @@ type RunnerTransitionRecord = {
 }
 
 type RetainedVerificationSeed = RetainedVerification
-
-type PlanFallowContext = {
-  workspace: string
-  artifact: string
-  baseCommit: string
-  sourceGeneration: string | undefined
-  verificationEpoch: number
-}
 
 /** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
 const SLOW_RECONCILE_MS = 30_000
@@ -478,6 +427,7 @@ export class TaskRuntime {
   private readonly checkActivities: CheckActivities
   private readonly verificationCandidate: VerificationCandidate
   private readonly effectReconciliation: EffectReconciliation
+  private readonly verificationReview: VerificationReview
   private running = false
   private stopped = false
   private tickRequested = false
@@ -493,13 +443,8 @@ export class TaskRuntime {
   private readonly architectRouting: ArchitectRoutingOptions
   private readonly autoResumeInterrupted: boolean
   private readonly fallowReviewEnabled: boolean
-  private readonly scopeReports = new Map<string, ScopeReport>()
   private reconcileTiming: Map<string, number> | undefined
   private readonly slowRecorded = new Set<string>()
-  private readonly fallowReviewRun: FallowReview
-  private readonly fallowPlanReviewRun: FallowReview
-  private readonly auditorReportRun: AuditorReport
-  private readonly startedAuditorReports = new Set<string>()
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
@@ -535,9 +480,6 @@ export class TaskRuntime {
     )
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
-    this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
-    this.fallowPlanReviewRun = options.fallowPlanReviewRun ?? defaultFallowPlanReview
-    this.auditorReportRun = options.auditorReportRun ?? defaultAuditorReport
     this.workerNoProgressWindowMs = options.workerNoProgressWindowMs ?? 30 * 60_000
     this.cancelIdleWaitMs = options.cancelIdleWaitMs ?? 30_000
     this.architectRouting = {
@@ -607,6 +549,32 @@ export class TaskRuntime {
       requestRetick: () => {
         this.tickRequested = true
       },
+    })
+    this.verificationReview = new VerificationReview(this.core, {
+      hold: (...args) => this.hold(...args),
+      effect: (...args) => this.effect(...args),
+      checkActivity: (...args) => this.checkActivity(...args),
+      startCheckActivity: (...args) => this.startCheckActivity(...args),
+      acceptVerifiedAttempt: (...args) => this.verificationCandidate.acceptVerifiedAttempt(...args),
+      captureAutomaticFixes: (...args) => this.verificationCandidate.captureAutomaticFixes(...args),
+      collectCheckReceipts: (...args) => this.verificationCandidate.collectCheckReceipts(...args),
+      commitVerificationCandidate: (...args) =>
+        this.verificationCandidate.commitVerificationCandidate(...args),
+      prepareVerificationCandidate: (...args) =>
+        this.verificationCandidate.prepareVerificationCandidate(...args),
+      recordAttemptArtifact: (...args) => this.verificationCandidate.recordAttemptArtifact(...args),
+      verificationAwaitsTaskContinuation: (...args) =>
+        this.verificationCandidate.verificationAwaitsTaskContinuation(...args),
+      verificationCurrentGuard: (...args) =>
+        this.verificationCandidate.verificationCurrentGuard(...args),
+      retainedRepairGeneration: (...args) => this.retainedRepairGeneration(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      stampIdentity: (...args) => this.stampIdentity(...args),
+      fallowReviewEnabled: this.fallowReviewEnabled,
+      delegatedAgentCapacity: this.delegatedAgentCapacity,
+      fallowReviewRun: options.fallowReviewRun ?? defaultFallowReview,
+      fallowPlanReviewRun: options.fallowPlanReviewRun ?? defaultFallowPlanReview,
+      auditorReportRun: options.auditorReportRun ?? defaultAuditorReport,
     })
     this.ownership = new ArchitectOwnership(this.core, {
       architectRouting: this.architectRouting,
@@ -7161,635 +7129,39 @@ export class TaskRuntime {
     return this.verificationCandidate.acceptVerifiedAttempt(...args)
   }
 
-  private async verify(plan: PlanRow, attempt: AttemptRow, proposal: TaskProposal, fence: number) {
-    const repairID = this.retainedRepairGeneration(plan.id, attempt.task_id)
-    const verificationCurrent = this.verificationCurrentGuard(plan, attempt, repairID)
-    if (!verificationCurrent()) return
-    if (this.verificationAwaitsTaskContinuation(plan, attempt, proposal)) return
-    const preparation = await this.prepareVerificationCandidate(plan, attempt, proposal, fence)
-    if (preparation === "pending" || preparation === "held") return
-    let artifact = await this.commitVerificationCandidate(
-      plan,
-      attempt,
-      proposal,
-      preparation,
-      repairID,
-      fence,
-      verificationCurrent,
-    )
-    if (!artifact) return
-    const scope = await this.reviewScope(plan, attempt, artifact)
-    this.recordAttemptArtifact(plan, attempt, artifact.commit, fence)
-    await this.stampIdentity(true)
-    try {
-      this.progress.recordArtifact(attempt.id, artifact.commit)
-    } catch {
-      // Artifact acceptance and its runner receipt remain independent of commentary.
-    }
-    const receipts = await this.collectCheckReceipts(
-      plan,
-      attempt,
-      proposal,
-      artifact,
-      repairID,
-      fence,
-    )
-    if (!receipts) return
-    const failures = receipts.filter((r) => !checkSucceeded(r))
-    const held = failures.find(
-      (r) => r.timedOut || r.exitCode === 126 || r.exitCode === 127 || !checkResourcesSettled(r),
-    )
-    if (held) {
-      this.hold(plan, checkFailureReason(held), ["reconcile", "resume", "audit", "cancel"])
-      return
-    }
-    const review = await this.fallowReviewResult(plan, attempt, artifact, repairID, fence)
-    if (review === "pending") return
-    if (this.decideVerification(plan, attempt, failures, review, scope)) return
-    // No repair is left to carry the divergence, so the Architect decides it before acceptance.
-    if (scope.divergences.length) return this.holdScopeDivergence(plan, attempt, scope, fence)
-    artifact = await this.captureAutomaticFixes(plan, attempt, artifact, fence, verificationCurrent)
-    if (!artifact) return
-    const missing = await this.missingEvidence(attempt.workspace, proposal.acceptance, receipts)
-    if (missing.length) {
-      this.hold(plan, `Required evidence missing: ${missing.join(", ")}`)
-      return
-    }
-    this.acceptVerifiedAttempt(
-      plan,
-      attempt,
-      artifact,
-      receipts,
-      review,
-      repairID,
-      fence,
-      verificationCurrent,
-      scope,
-    )
-  }
-  /**
-   * One decision for the authored checks and the Fallow review. Returns true when the attempt was
-   * settled (repair or fail). Findings alone repair while a repair attempt remains and are
-   * otherwise left to acceptance; they never fail an attempt or raise a hold.
-   */
-  private decideVerification(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    failures: CheckReceipt[],
-    review: FallowReviewResult | undefined,
-    scope: ScopeReport,
-  ): boolean {
-    if (review?.status === "unavailable")
-      this.store.recordOnce(plan.id, attempt.task_id, "FALLOW_UNAVAILABLE", {
-        attemptID: attempt.id,
-        reason: review.reason ?? "Fallow audit unavailable",
-      })
-    const reviewed = review?.package
-    const reasons = failures.map(checkFailureReason)
-    const repairs = failures.length > 0 || this.repairAvailable(attempt)
-    if (reviewed && needsRepair(reviewed) && repairs) reasons.push(fallowReasonText(reviewed))
-    // A divergence never spends the repair by itself: it rides only when checks or the audit already send the work back.
-    if (scope.divergences.length && reasons.length)
-      reasons.push(
-        `Scope divergence: ${scope.divergences.length} change(s) outside the task's scope`,
-      )
-    if (!reasons.length) return false
-    this.failAttempt(plan, attempt, reasons.join("; "))
-    return true
+  private verify(...args: Parameters<VerificationReview["verify"]>) {
+    return this.verificationReview.verify(...args)
   }
 
-  /**
-   * Classifies every changed path against the task's scope, records the report for the repair and
-   * the acceptance notice, and measures the size signal. Cached per candidate and scope.
-   */
-  private async reviewScope(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    artifact: { commit: string; scopeBase: string },
-  ): Promise<ScopeReport> {
-    const model = this.store.effectiveScope(attempt.task_id)
-    const key = `${attempt.id}:${artifact.commit}:${fingerprint(model)}`
-    const cached = this.scopeReports.get(key)
-    if (cached) return cached
-    const base = await this.taskScopeBase(attempt, artifact)
-    const changes = await collectScopeChanges(attempt.workspace, base, artifact.commit)
-    const report = buildScopeReport({
-      attemptID: attempt.id,
-      model,
-      classified: classifyChanges(changes, model),
-      owners: this.scopeOwners(plan, attempt.task_id),
-      amendmentReasons: this.store
-        .activity(plan.id, attempt.task_id)
-        .filter((event) => event.event === "SCOPE_AMENDED")
-        .map((event) => String(JSON.parse(event.payload).reason ?? "")),
-      warnings: await sizeWarnings(attempt.workspace, base, artifact.commit, changes),
-    })
-    if (this.scopeReports.size >= 64) this.scopeReports.clear()
-    this.scopeReports.set(key, report)
-    if (!scopeReportEmpty(report))
-      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_REPORTED", report)
-    return report
+  private fallowReviewResult(...args: Parameters<VerificationReview["fallowReviewResult"]>) {
+    return this.verificationReview.fallowReviewResult(...args)
   }
 
-  /**
-   * Where the task's own change is measured from. A repair starts from the previous attempt's
-   * artifact, so its candidate base already holds the first attempt's divergence; the review must
-   * see the whole task change, from the first attempt's base.
-   */
-  private async taskScopeBase(
-    attempt: AttemptRow,
-    artifact: { commit: string; scopeBase: string },
-  ): Promise<string> {
-    const chain = this.taskChainBase(attempt)
-    if (chain === attempt.base_commit) return artifact.scopeBase
-    try {
-      return await reviewedScopeBase(
-        attempt.workspace,
-        chain,
-        artifact.commit,
-        attempt.workspace !== this.directory
-          ? await gitAsync(this.directory, ["rev-parse", "HEAD"])
-          : undefined,
-      )
-    } catch {
-      return chain
-    }
+  private startAuditorReport(...args: Parameters<VerificationReview["startAuditorReport"]>) {
+    return this.verificationReview.startAuditorReport(...args)
   }
 
-  /** Other unfinished tasks and their reserved scopes, to show where a divergence could collide. */
-  private scopeOwners(plan: PlanRow, taskID: string): ScopeOwner[] {
-    const finished = new Set(["accepted", "incorporated", "cancelled", "failed", "exhausted"])
-    const ids = new Set<string>()
-    // Every unfinished plan of the project: a queued task has reserved its scope with no attempt yet.
-    for (const other of this.store.plans())
-      if (!["integrated", "cancelled"].includes(other.state))
-        for (const node of this.store.nodes(other.id))
-          if (node.task_id !== taskID && !finished.has(node.state)) ids.add(node.task_id)
-    for (const active of this.store.activeProjectAttempts())
-      if (active.task_id !== taskID) ids.add(active.task_id)
-    return [...ids].map((id) => ({
-      taskID: id,
-      patterns: this.store.effectiveReservationScope(id),
-    }))
+  private planFallowReview(...args: Parameters<VerificationReview["planFallowReview"]>) {
+    return this.verificationReview.planFallowReview(...args)
   }
 
-  /** The worker's own final message, quoted as its stated reason; undefined when it gave none. */
-  private async workerFinalMessage(attempt: AttemptRow): Promise<string | undefined> {
-    try {
-      const worker = await this.host.session(attempt.session_id, { messages: true })
-      const last = worker?.messages.findLast(
-        (message) =>
-          message.id !== attempt.message_id && message.type !== "synthetic" && message.text.trim(),
-      )
-      return last?.text
-    } catch {
-      return undefined
-    }
+  private taskChainBase(...args: Parameters<VerificationReview["taskChainBase"]>) {
+    return this.verificationReview.taskChainBase(...args)
   }
 
-  /** The Architect decides: amend-scope to accept it with a reason, retained-repair, or cancel. */
-  private async holdScopeDivergence(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    report: ScopeReport,
-    fence: number,
-  ) {
-    const reason = divergenceReason(report, await this.workerFinalMessage(attempt))
-    this.store.fenced(this.owner, fence, () => {
-      this.store.recordOnce(plan.id, attempt.task_id, "SCOPE_DECISION_REQUIRED", {
-        attemptID: attempt.id,
-        workspace: attempt.workspace,
-        baseCommit: attempt.base_commit,
-        kind: "divergence",
-        paths: report.divergences.map((item) => item.path),
-        divergences: report.divergences,
-        reason,
-      })
-      this.hold(plan, reason, ["amend-scope", "retained-repair", "reconcile", "cancel"])
-    })
+  private repairAvailable(...args: Parameters<VerificationReview["repairAvailable"]>) {
+    return this.verificationReview.repairAvailable(...args)
   }
 
-  /** The Fallow review's result for this candidate; "pending" while it is journaled or running. */
-  private async fallowReviewResult(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    artifact: { commit: string; identity: string },
-    repairID: string | undefined,
-    fence: number,
-  ): Promise<FallowReviewResult | "pending" | undefined> {
-    if (!this.fallowReviewEnabled) return undefined
-    const verificationEpoch =
-      this.store.latestTransition<{ verificationEpoch: number }>(
-        plan.id,
-        attempt.task_id,
-        "VERIFICATION_RESUMED",
-      )?.verificationEpoch ?? 0
-    const known = this.store
-      .effects(plan.id)
-      .toReversed()
-      .find((e) => {
-        if (
-          e.attempt_id !== attempt.id ||
-          !isFallowEffectKind(e.kind, FALLOW_EFFECT_KIND) ||
-          effectSuperseded(e)
-        )
-          return false
-        const payload = JSON.parse(e.payload) as Record<string, unknown>
-        return (
-          payload.artifact === artifact.commit &&
-          payload.identity === artifact.identity &&
-          payload.workspace === attempt.workspace &&
-          (payload.repairID ?? undefined) === repairID &&
-          (e.state === "completed" || (payload.verificationEpoch ?? 0) === verificationEpoch)
-        )
-      })
-    if (known?.state === "completed") return actualCheckResultFromEffect(known)?.fallow
-    if (known) {
-      const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
-      if (activity?.state === "running" || activity?.state === "completed") return "pending"
-      // The review never holds a task: a lost run is an unavailable review.
-      return unavailableFallowResult("Fallow audit did not complete")
-    }
-    const receiptPath = join(
-      this.dataDirectory,
-      "receipts",
-      attempt.id,
-      `${FALLOW_CHECK_ID}-${artifact.commit}${repairID ? `-${repairID}` : ""}${verificationEpoch ? `-resume-${verificationEpoch}` : ""}.json`,
-    )
-    const effect = this.effect(
-      plan.id,
-      attempt.task_id,
-      attempt.id,
-      FALLOW_EFFECT_KIND,
-      {
-        check: { id: FALLOW_CHECK_ID, command: FALLOW_CHECK_COMMAND },
-        workspace: attempt.workspace,
-        artifact: artifact.commit,
-        identity: artifact.identity,
-        receiptPath,
-        ...(verificationEpoch ? { verificationEpoch } : {}),
-        ...(repairID ? { repairID } : {}),
-      },
-      fence,
-    )
-    this.startCheckActivity({
-      id: effect.id,
-      identity: { effectID: effect.id, payload: effect.payload },
-      metadata: {
-        kind: "effect",
-        projectDirectory: this.directory,
-        planID: plan.id,
-        effectID: effect.id,
-        taskID: attempt.task_id,
-        attemptID: attempt.id,
-        receiptPath,
-      },
-      run: (signal) => this.runFallowReview(attempt, artifact, receiptPath, signal),
-    })
-    return "pending"
+  private missingEvidence(...args: Parameters<VerificationReview["missingEvidence"]>) {
+    return this.verificationReview.missingEvidence(...args)
   }
 
-  private async runFallowReview(
-    attempt: AttemptRow,
-    artifact: { commit: string; identity: string },
-    receiptPath: string,
-    signal: AbortSignal,
-  ): Promise<CheckReceipt> {
-    const startedAt = Date.now()
-    const result = await this.fallowReviewRun({
-      workspace: attempt.workspace,
-      baseCommit: this.taskChainBase(attempt),
-      artifact: artifact.commit,
-      repository: this.store.repository,
-      signal,
-    }).catch((error: unknown) => unavailableFallowResult(errorText(error)))
-    const receipt = fallowCheckReceipt({
-      id: FALLOW_CHECK_ID,
-      workspace: attempt.workspace,
-      artifact: artifact.commit,
-      inputIdentity: artifact.identity,
-      environmentIdentity: verificationEnvironmentIdentity(),
-      startedAt,
-      endedAt: Date.now(),
-      result,
-    })
-    await writeCheckReceipt(receiptPath, receipt)
-    return receipt
+  private repairFailureBrief(...args: Parameters<VerificationReview["repairFailureBrief"]>) {
+    return this.verificationReview.repairFailureBrief(...args)
   }
-
-  /**
-   * An Auditor attempt's durable Fallow report, started in the background: the baseline when the
-   * attempt is dispatched, the follow-up when its verification passes. Best effort: a failure is
-   * already recorded in the audit history and never touches the attempt. The request ID makes a
-   * restart replay the stored run instead of scanning again.
-   */
-  private startAuditorReport(attempt: AttemptRow, phase: "baseline" | "follow-up") {
-    if (workerAgent(JSON.parse(attempt.policy).agent) !== "auditor") return
-    const requestID = `runtime-${phase === "baseline" ? "baseline" : "follow-up"}:${attempt.id}`
-    if (this.startedAuditorReports.has(requestID)) return
-    this.startedAuditorReports.add(requestID)
-    void this.auditorReportRun({
-      requestID,
-      phase,
-      workspace: attempt.workspace,
-      sessionID: attempt.session_id,
-      repository: this.store.repository,
-    }).catch(() => undefined)
-  }
-
-  /**
-   * The Fallow review of the combined artifact: "pending" while journaled or running, undefined
-   * when review is off. It is advisory: a lost or failed run reads as unavailable, never a hold.
-   */
-  private async planFallowReview(
-    plan: PlanRow,
-    ctx: PlanFallowContext,
-    fence: number,
-  ): Promise<FallowReviewResult | "pending" | undefined> {
-    if (!this.fallowReviewEnabled) return undefined
-    const known = this.store
-      .effects(plan.id)
-      .toReversed()
-      .find((e) => {
-        if (!isFallowEffectKind(e.kind, FALLOW_PLAN_EFFECT_KIND) || effectSuperseded(e))
-          return false
-        const payload = JSON.parse(e.payload) as Record<string, unknown>
-        return (
-          payload.artifact === ctx.artifact &&
-          payload.workspace === ctx.workspace &&
-          (payload.sourceGeneration ?? undefined) === ctx.sourceGeneration &&
-          (e.state === "completed" || (payload.verificationEpoch ?? 0) === ctx.verificationEpoch)
-        )
-      })
-    if (known?.state === "completed")
-      return this.recordPlanFallowOutcome(plan, actualCheckResultFromEffect(known)?.fallow)
-    if (known) {
-      const activity = this.checkActivity(known.id, { effectID: known.id, payload: known.payload })
-      if (activity?.state === "running" || activity?.state === "completed") return "pending"
-      return this.recordPlanFallowOutcome(
-        plan,
-        unavailableFallowResult("Fallow plan audit did not complete"),
-      )
-    }
-    const receiptPath = join(
-      this.dataDirectory,
-      "receipts",
-      plan.id,
-      `${FALLOW_CHECK_ID}-${ctx.artifact}${ctx.sourceGeneration ? `-${ctx.sourceGeneration}` : ""}${ctx.verificationEpoch ? `-${ctx.verificationEpoch}` : ""}.json`,
-    )
-    const effect = this.effect(
-      plan.id,
-      null,
-      null,
-      FALLOW_PLAN_EFFECT_KIND,
-      {
-        check: { id: FALLOW_CHECK_ID, command: FALLOW_CHECK_COMMAND },
-        workspace: ctx.workspace,
-        artifact: ctx.artifact,
-        identity: ctx.artifact,
-        receiptPath,
-        ...(ctx.sourceGeneration ? { sourceGeneration: ctx.sourceGeneration } : {}),
-        ...(ctx.verificationEpoch ? { verificationEpoch: ctx.verificationEpoch } : {}),
-      },
-      fence,
-    )
-    this.startCheckActivity({
-      id: effect.id,
-      identity: { effectID: effect.id, payload: effect.payload },
-      metadata: {
-        kind: "effect",
-        projectDirectory: this.directory,
-        planID: plan.id,
-        effectID: effect.id,
-        receiptPath,
-      },
-      run: (signal) => this.runPlanFallowReview(plan, ctx, receiptPath, signal),
-    })
-    return "pending"
-  }
-
-  /** Records the plan-level `FALLOW_UNAVAILABLE` once and passes the result through. */
-  private recordPlanFallowOutcome(
-    plan: PlanRow,
-    review: FallowReviewResult | undefined,
-  ): FallowReviewResult | undefined {
-    if (review?.status === "unavailable")
-      this.store.recordOnce(plan.id, null, "FALLOW_UNAVAILABLE", {
-        reason: review.reason ?? "Fallow audit unavailable",
-      })
-    return review
-  }
-
-  private async runPlanFallowReview(
-    plan: PlanRow,
-    ctx: PlanFallowContext,
-    receiptPath: string,
-    signal: AbortSignal,
-  ): Promise<CheckReceipt> {
-    const startedAt = Date.now()
-    const result = await this.fallowPlanReviewRun({
-      workspace: ctx.workspace,
-      baseCommit: ctx.baseCommit,
-      artifact: ctx.artifact,
-      repository: this.store.repository,
-      signal,
-    })
-      .then((review) => attributeFindingsToTasks(ctx.workspace, this.planTaskDiffs(plan), review))
-      .catch((error: unknown) => unavailableFallowResult(errorText(error)))
-    const receipt = fallowCheckReceipt({
-      id: FALLOW_CHECK_ID,
-      workspace: ctx.workspace,
-      artifact: ctx.artifact,
-      inputIdentity: ctx.artifact,
-      environmentIdentity: verificationEnvironmentIdentity(),
-      startedAt,
-      endedAt: Date.now(),
-      result,
-      advisory: true,
-    })
-    await writeCheckReceipt(receiptPath, receipt)
-    return receipt
-  }
-
-  /** Each integrated task's own change: its accepted artifact measured from its chain base. */
-  private planTaskDiffs(plan: PlanRow): PlanTaskDiff[] {
-    const attempts = this.store.attempts(plan.id)
-    return this.store.nodes(plan.id).flatMap((node) => {
-      const attempt = attempts.findLast(
-        (candidate) => candidate.task_id === node.task_id && candidate.artifact === node.artifact,
-      )
-      return node.artifact && attempt
-        ? [{ taskID: node.task_id, base: this.taskChainBase(attempt), artifact: node.artifact }]
-        : []
-    })
-  }
-
-  /**
-   * The commit a task's own change is measured from: the `base_commit` of the first attempt in
-   * this attempt's continuation chain. A repair or resume starts from the previous attempt's
-   * artifact (`dispatch()` sets `base` to it), so its own `base_commit` already contains the
-   * task's earlier work. A retry from a new baseline (`base_commit` is not the previous artifact)
-   * starts a new chain, so integrated work from others is never attributed to the task.
-   */
-  private taskChainBase(attempt: AttemptRow): string {
-    const earlier = this.store
-      .attempts(attempt.plan_id)
-      .filter(
-        (candidate) => candidate.task_id === attempt.task_id && candidate.number < attempt.number,
-      )
-      .sort((left, right) => right.number - left.number)
-    let base = attempt.base_commit
-    for (const previous of earlier) {
-      if (previous.artifact !== base) break
-      base = previous.base_commit
-    }
-    return base
-  }
-
-  /** True while this attempt, if it fails, moves its task to REPAIR rather than FAIL. */
-  private repairAvailable(attempt: AttemptRow): boolean {
-    const task = this.store.repository.get(attempt.task_id)!
-    const node = this.store.nodes(attempt.plan_id).find((n) => n.task_id === task.id)!
-    return (
-      node.state === "verifying" &&
-      (task.proposal.limits?.maxRepairAttempts ?? 1) > 0 &&
-      !JSON.parse(attempt.policy).repairAttempt &&
-      !this.retainedRepairForAttempt(attempt)
-    )
-  }
-
-  private async missingEvidence(
-    workspace: string,
-    assertions: TaskProposal["acceptance"],
-    receipts: CheckReceipt[],
-  ) {
-    const missing: string[] = []
-    for (const assertion of assertions)
-      for (const evidence of assertion.evidence) {
-        if (
-          evidence.kind === "verification" &&
-          !receipts.some((r) => r.id === evidence.verificationID && checkSucceeded(r))
-        )
-          missing.push(assertion.id)
-        if (evidence.kind === "artifact" && !(await artifactExists(workspace, evidence.reference)))
-          missing.push(`${assertion.id}:${evidence.reference}`)
-      }
-    return missing
-  }
-
-  /** Failing check output from the previous attempt, so a repair attempt sees every defect. */
-  private repairFailureBrief(attempt: AttemptRow): string {
-    if (!JSON.parse(attempt.policy).repairAttempt) return ""
-    const previous = this.store
-      .attempts(attempt.plan_id)
-      .filter((a) => a.task_id === attempt.task_id && a.number < attempt.number)
-      .at(-1)
-    if (!previous) return ""
-    const fenced = (label: string, text: string) => {
-      if (!text.trim()) return ""
-      let fence = "```"
-      for (const match of text.matchAll(/`+/g))
-        if (match[0].length >= fence.length) fence = "`".repeat(match[0].length + 1)
-      return `\n${label}:\n${fence}\n${text}\n${fence}`
-    }
-    const sections = this.store
-      .read((db) =>
-        db
-          .query<{ body: string }, [string]>(
-            "SELECT body FROM runner_evidence WHERE attempt_id=? AND kind='verification' ORDER BY rowid",
-          )
-          .all(previous.id),
-      )
-      .map((row) => JSON.parse(row.body) as CheckReceipt)
-      .filter((receipt) => !checkSucceeded(receipt))
-      .map(
-        (receipt) =>
-          `- ${receipt.id}: \`${receipt.command}\` exit ${receipt.exitCode ?? "unknown"}${fenced("stdout", receipt.stdout)}${fenced("stderr", receipt.stderr)}`,
-      )
-    const reported = this.store.latestTransition<ScopeReport>(
-      attempt.plan_id,
-      attempt.task_id,
-      "SCOPE_REPORTED",
-    )
-    const sentBack = this.store.latestTransition<{ attemptID: string; reason: string }>(
-      attempt.plan_id,
-      attempt.task_id,
-      "SCOPE_SENT_BACK",
-    )
-    const scope =
-      reported?.attemptID === previous.id
-        ? [
-            scopeRepairText(reported),
-            sentBack?.attemptID === previous.id ? `Architect: ${sentBack.reason}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n\n")
-        : ""
-    const checks = sections.length
-      ? `\n\nThe previous attempt failed verification. Fix every failing check:\n${sections.join("\n")}`
-      : ""
-    return `${checks}${scope ? `\n\n${scope}` : ""}`
-  }
-  private failAttempt(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    reason: string,
-    workerObservation?: TerminalWorkerHold,
-  ) {
-    if (isTakeoverAttempt(attempt.policy))
-      return this.returnTakeoverToArchitect(plan, attempt, reason)
-    const task = this.store.repository.get(attempt.task_id)!
-    this.store.atomic((db) => {
-      db.query(
-        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'failed') WHERE id=?",
-      ).run(attempt.id)
-      if (this.repairAvailable(attempt)) this.store.move(plan.id, task.id, "REPAIR", reason)
-      else this.store.move(plan.id, task.id, "FAIL", reason)
-    })
-    try {
-      this.progress.recordAttemptOutcome(attempt.id, "failed", reason)
-    } catch {
-      // Runtime transitions remain authoritative if annotation storage is unavailable.
-    }
-    if (this.store.execution(task.id)?.state === "failed")
-      this.hold(plan, reason, ["audit", "reconcile", "cancel"], workerObservation)
-  }
-  /**
-   * The Architect's own result failed verification. It is not a worker to repair or retry: the
-   * same attempt goes back to the Architect (attempt and task back to running through their
-   * machines) and the plan holds with the failing checks and Fallow findings in its reason,
-   * advertising takeover-submit and cancel. The hold reaches the recovery bundle if unanswered.
-   */
-  private returnTakeoverToArchitect(plan: PlanRow, attempt: AttemptRow, reason: string) {
-    this.store.atomic((db) => {
-      const current = this.store.attempts(plan.id).find((item) => item.id === attempt.id)!
-      if (current.state === "verifying") {
-        db.query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing') WHERE id=?",
-        ).run(attempt.id)
-        db.query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),artifact=NULL WHERE id=?",
-        ).run(attempt.id)
-        // Back with the Architect, the task holds its slot again (released while verifying).
-        this.delegatedAgentCapacity.holdTaskSlotInTransaction(
-          db,
-          { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
-          attempt.id,
-        )
-      }
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)!
-      if (node.state === "verifying") this.store.move(plan.id, attempt.task_id, "RESUME", reason)
-      this.store.record(plan.id, attempt.task_id, "TAKEOVER_VERIFY_FAILED", {
-        attemptID: attempt.id,
-        reason,
-      })
-    })
-    try {
-      this.progress.recordAttemptOutcome(attempt.id, "failed", reason)
-    } catch {
-      // Runtime transitions remain authoritative if annotation storage is unavailable.
-    }
-    this.hold(plan, `Takeover verification failed: ${reason}`, ["takeover-submit", "cancel"])
+  private failAttempt(...args: Parameters<VerificationReview["failAttempt"]>) {
+    return this.verificationReview.failAttempt(...args)
   }
 
   private async finish(plan: PlanRow, fence: number) {

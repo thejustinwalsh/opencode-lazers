@@ -3,9 +3,10 @@ import { isTakeoverAttempt } from "../recovery/detector.ts"
 import type { HostSession } from "./host.ts"
 import type { PlanRow, AttemptRow } from "./store.ts"
 import type { TerminalWorkerHold } from "./interrupted-continuation.ts"
-import type { TaskProposal } from "../task.ts"
+
 import type { RuntimeCore } from "./runtime-core.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
+import type { VerificationReview } from "./verification-review.ts"
 import type { WorkerObservation } from "./worker-observation.ts"
 import type { Dispatch } from "./dispatch.ts"
 import type { ArchitectOwnership } from "./architect-ownership.ts"
@@ -17,18 +18,8 @@ export type AttemptAdvanceDeps = {
   workerNoProgressWindowMs: number
   command: TaskRuntime["command"]
   prepareWorker: (plan: PlanRow, attempt: AttemptRow, fence: number) => Promise<void>
-  verify: (
-    plan: PlanRow,
-    attempt: AttemptRow,
-    proposal: TaskProposal,
-    fence: number,
-  ) => Promise<unknown>
-  failAttempt: (
-    plan: PlanRow,
-    attempt: AttemptRow,
-    reason: string,
-    workerObservation?: TerminalWorkerHold,
-  ) => unknown
+  verify: VerificationReview["verify"]
+  failAttempt: VerificationReview["failAttempt"]
   validArchitect: ArchitectOwnership["validArchitect"]
   observeUsage: Dispatch["observeUsage"]
   journal: {
