@@ -1,3 +1,7 @@
 [fmt]
 printWidth = 100
 semi = false
+
+[test]
+# A hang guard, not a budget: see test/default-timeout.ts.
+preload = ["./test/default-timeout.ts"]
