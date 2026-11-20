@@ -352,6 +352,73 @@
 .lazers-trajectory-scroll:not([data-zoomed="true"]) {
   overflow-x: hidden;
 }
+.lazers-trajectory-scroll[data-zoomed="true"] {
+  cursor: grab;
+  user-select: none;
+}
+.lazers-trajectory-scroll[data-dragging="true"] {
+  cursor: grabbing;
+}
+.lazers-trajectory-scroll:focus-visible {
+  outline: 2px solid var(--border-focus, currentColor);
+  outline-offset: -2px;
+}
+/* The timeline is a <dialog> so it can expand; inline it must look like a plain block. */
+.lazers-trajectory-timeline {
+  position: static;
+  display: block;
+  inset: auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
+}
+.lazers-trajectory-timeline[data-expanded="true"] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 12px 0;
+  background: var(--background-base);
+  color: var(--text-base);
+}
+.lazers-trajectory-timeline[data-expanded="true"]::backdrop {
+  background: color-mix(in srgb, var(--background-base) 70%, transparent);
+}
+.lazers-trajectory-timeline[data-expanded="true"] .lazers-trajectory-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.lazers-trajectory-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-base);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lazers-trajectory-close:hover {
+  background: var(--surface-base-hover);
+  color: var(--text-strong);
+}
 .lazers-trajectory-scroll {
   overflow-x: auto;
   overflow-y: hidden;

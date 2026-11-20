@@ -20,7 +20,6 @@ import {
   loadedEventHorizon,
   nearestMark,
   neighborMark,
-  nextZoom,
   toolOutcome,
   trackTimes,
 } from "../../src/trajectory-panel/tracks.ts"
@@ -158,9 +157,6 @@ test("track helpers keep keyboard order and wide hit targets", () => {
   expect(nearestMark(marks, 12, 1)?.id).toBe("b")
   expect(nearestMark(marks, 16, 2)?.id).toBe("b")
   expect(nearestMark(marks, 30, 2)).toBeUndefined()
-  expect(nextZoom(1, 1)).toBe(2)
-  expect(nextZoom(1, -1)).toBe(1)
-  expect(nextZoom(32, 1)).toBe(32)
   expect(
     loadedEventHorizon([event({ id: "x", kind: "tool", at: 5 }), event({ id: "y", kind: "tool" })]),
   ).toBe(5)

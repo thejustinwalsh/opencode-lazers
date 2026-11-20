@@ -80,12 +80,22 @@ import {
   loadedEventHorizon,
   nearestMark,
   neighborMark,
-  nextZoom,
   outcomeText,
   trackTimes,
-  ZOOM_LEVELS,
 } from "./tracks.ts"
 import type { FileMark, GapMark, Outcome, ToolMark } from "./tracks.ts"
+import {
+  DRAG_SLOP_PX,
+  KEY_PAN_SHARE,
+  clampScroll,
+  maxZoom,
+  panBy,
+  shortestFeature,
+  stepZoom,
+  wheelZoomFactor,
+  zoomAbout,
+} from "./viewport.ts"
+import type { Viewport } from "./viewport.ts"
 import css from "./panel.css?inline"
 
 const SelectionKind = Schema.Literals(["", "attempt", "check", "event"])
@@ -256,11 +266,20 @@ function PanelView(
     asOf: null,
   })
   const [zoom, setZoom] = createSignal(1)
+  /** Left edge of the visible time, as a fraction of the zoomed track; survives resize and remount. */
+  const [pan, setPan] = createSignal(0)
+  /** Width in px of the time track at zoom 1, measured from the scroller. */
+  const [fitPx, setFitPx] = createSignal(0)
+  const [expanded, setExpanded] = createSignal(false)
+  const [dragging, setDragging] = createSignal(false)
   const [axisWidth, setAxisWidth] = createSignal(0)
   let axisObserver: ResizeObserver | undefined
   let topPane: HTMLDivElement | undefined
   let inspectorPane: HTMLDivElement | undefined
   let timelineScroll: HTMLDivElement | undefined
+  let timelineDialog: HTMLDialogElement | undefined
+  let expandButton: HTMLButtonElement | undefined
+  let scrollObserver: ResizeObserver | undefined
   const state = new TrajectoryPanelState(
     (next) => {
       const previous = data()
@@ -364,6 +383,7 @@ function PanelView(
   onCleanup(() => {
     state.close()
     axisObserver?.disconnect()
+    scrollObserver?.disconnect()
   })
 
   createKeyed(
@@ -386,6 +406,8 @@ function PanelView(
     ({ value, view, key }) => {
       // A timeline opens fitted to the panel; zoom is a deliberate, momentary choice.
       setZoom(1)
+      setPan(0)
+      setExpanded(false)
       const scope = { kind: view.scope, sessionID: value.session } as const
       const rpc = value.client.rpc(Observability)
       const transport = createTrajectoryTransport(
@@ -747,12 +769,15 @@ function PanelView(
       { defer: true },
     ),
   )
+  // A memo, so saving the zoom preference (which re-notifies `selectedAttempt`) cannot reset it.
+  const selectedAttemptID = createMemo(() => selectedAttempt()?.id)
   createEffect(
     on(
-      () => selectedAttempt()?.id,
+      selectedAttemptID,
       () => {
         if (zoom() === 1) return
         setZoom(1)
+        setPan(0)
         save({ zoom: 1 })
         queueMicrotask(() => {
           if (timelineScroll) timelineScroll.scrollLeft = 0
@@ -761,25 +786,159 @@ function PanelView(
       { defer: true },
     ),
   )
-  const changeZoom = (next: number) => {
+  /** Before the first measurement (and without layout) assume a typical narrow panel. */
+  const trackFit = () => fitPx() || 240
+  /** Zoom ceiling: the shortest event or gap becomes comfortably wide; the floor is fit. */
+  const zoomCeiling = createMemo(() => {
+    const marks = laneMarks()
+    const segments = (timeline()?.attempts ?? []).flatMap((lane) =>
+      lane.segments.filter((segment) => segment.visible && !segment.pointOnly),
+    )
+    const shortest = shortestFeature(
+      [...marks.map((mark) => mark.width), ...segments.map((segment) => segment.width)],
+      marks.map((mark) => mark.left),
+    )
+    return maxZoom(shortest, trackFit())
+  })
+  const labelPx = () =>
+    timelineScroll
+      ?.querySelector<HTMLElement>(".lazers-trajectory-label-cell")
+      ?.getBoundingClientRect().width ?? 0
+  const measureFit = () => {
     const scroller = timelineScroll
-    const previous = zoom()
-    if (next === previous) return
-    const label = scroller?.querySelector<HTMLElement>(".lazers-trajectory-label-cell")
-    const labelWidth = label?.getBoundingClientRect().width ?? 0
-    const plotWidth = scroller ? scroller.scrollWidth - labelWidth : 0
-    const center =
-      scroller && plotWidth > 0
-        ? (scroller.scrollLeft + (scroller.clientWidth - labelWidth) / 2) / plotWidth
-        : 0
-    setZoom(next)
-    save({ zoom: next })
-    queueMicrotask(() => {
-      if (!scroller) return
-      const width = scroller.scrollWidth - labelWidth
-      scroller.scrollLeft = Math.max(0, center * width - (scroller.clientWidth - labelWidth) / 2)
-    })
+    if (!scroller) return
+    const end = endPadding((timeline()?.ticks ?? []).map((tick) => tick.label))
+    setFitPx(Math.max(0, scroller.clientWidth - labelPx() - end))
   }
+  const currentView = (): Viewport => ({
+    zoom: zoom(),
+    scrollLeft: timelineScroll?.scrollLeft ?? 0,
+  })
+  /** Scroll the DOM to the remembered pan; the signal, not the element, is the source of truth. */
+  const applyPan = () => {
+    const scroller = timelineScroll
+    if (!scroller) return
+    scroller.scrollLeft = clampScroll(pan() * trackFit() * zoom(), zoom(), trackFit())
+  }
+  const commitView = (view: Viewport) => {
+    const changed = view.zoom !== zoom()
+    setPan(view.scrollLeft / (trackFit() * view.zoom))
+    if (changed) {
+      setZoom(view.zoom)
+      save({ zoom: view.zoom })
+    }
+    queueMicrotask(applyPan)
+  }
+  /** Zoom to `next`, keeping the time under `anchorPx` (from the track's left edge) in place. */
+  const zoomTo = (next: number, anchorPx = trackFit() / 2) =>
+    commitView(zoomAbout(currentView(), next, anchorPx, trackFit(), zoomCeiling()))
+  const zoomStep = (direction: 1 | -1) => zoomTo(stepZoom(zoom(), direction, zoomCeiling()))
+  const fitTimeline = () => zoomTo(1)
+  createEffect(on(fitPx, () => queueMicrotask(applyPan), { defer: true }))
+  createEffect(() => {
+    if (zoom() > zoomCeiling()) zoomTo(zoomCeiling())
+  })
+
+  const timelineWheel = (event: WheelEvent) => {
+    const scroller = timelineScroll
+    if (!scroller) return
+    if (event.ctrlKey || event.metaKey) {
+      // A trackpad pinch arrives as a wheel event with ctrlKey set.
+      event.preventDefault()
+      const anchor = event.clientX - scroller.getBoundingClientRect().left - labelPx()
+      zoomTo(zoom() * wheelZoomFactor(event.deltaY, event.deltaMode), anchor)
+      return
+    }
+    if (zoom() <= 1) return
+    const lines = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1
+    const delta =
+      (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) * lines
+    const next = panBy(currentView(), delta, trackFit())
+    // At either end the gesture is the page's again.
+    if (next.scrollLeft === scroller.scrollLeft) return
+    event.preventDefault()
+    commitView(next)
+  }
+  let drag: { id: number; x: number; scrollLeft: number; moved: boolean } | null = null
+  let swallowClick = false
+  const dragStart = (event: PointerEvent) => {
+    // Touch already pans natively; only a primary mouse or pen press starts a drag.
+    if (event.button !== 0 || event.pointerType === "touch" || zoom() <= 1) return
+    drag = {
+      id: event.pointerId,
+      x: event.clientX,
+      scrollLeft: currentView().scrollLeft,
+      moved: false,
+    }
+  }
+  const dragMove = (event: PointerEvent) => {
+    const scroller = timelineScroll
+    if (!drag || !scroller || event.pointerId !== drag.id) return
+    const delta = event.clientX - drag.x
+    if (!drag.moved) {
+      if (Math.abs(delta) < DRAG_SLOP_PX) return
+      drag.moved = true
+      scroller.setPointerCapture?.(event.pointerId)
+      setDragging(true)
+    }
+    commitView(panBy({ zoom: zoom(), scrollLeft: drag.scrollLeft }, -delta, trackFit()))
+  }
+  const dragEnd = (event: PointerEvent) => {
+    if (!drag || event.pointerId !== drag.id) return
+    if (drag.moved) {
+      // The click that ends a drag is not a selection.
+      swallowClick = true
+      setTimeout(() => (swallowClick = false), 0)
+      timelineScroll?.releasePointerCapture?.(event.pointerId)
+    }
+    drag = null
+    setDragging(false)
+  }
+  const swallowDragClick = (event: Event) => {
+    if (!swallowClick) return
+    swallowClick = false
+    event.stopPropagation()
+    event.preventDefault()
+  }
+  const timelineKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
+    const target = event.target as HTMLElement | null
+    if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
+    const pan = KEY_PAN_SHARE * trackFit()
+    if (event.key === "+" || event.key === "=") zoomStep(1)
+    else if (event.key === "-" || event.key === "_") zoomStep(-1)
+    else if (event.key === "0") fitTimeline()
+    else if (zoom() > 1 && event.key === "ArrowLeft")
+      commitView(panBy(currentView(), -pan, trackFit()))
+    else if (zoom() > 1 && event.key === "ArrowRight")
+      commitView(panBy(currentView(), pan, trackFit()))
+    else return
+    event.preventDefault()
+  }
+  /**
+   * The timeline is one `<dialog>`. Inline it is open non-modally and laid out in the panel;
+   * expanded it is promoted to the top layer with `showModal()`, so the same DOM, signals,
+   * zoom, pan and selection fill the window. Escape closes the modal and returns it inline.
+   */
+  createEffect(
+    on(
+      expanded,
+      (open) => {
+        const dialog = timelineDialog
+        if (!dialog) return
+        if (open) {
+          // showModal() throws while the dialog is already open non-modally.
+          dialog.removeAttribute("open")
+          dialog.showModal()
+        } else {
+          dialog.close()
+          dialog.show()
+          queueMicrotask(() => expandButton?.focus())
+        }
+      },
+      { defer: true },
+    ),
+  )
 
   /** A host icon where the host has a circled state mark, otherwise a Tasks ring glyph. */
   const StateGlyph = (glyph: { glyph: TaskGlyph }) => (
@@ -1728,10 +1887,21 @@ function PanelView(
             </Show>
 
             <Show when={status.showContent() && report()}>
-              <section
+              <dialog
                 class="lazers-trajectory-timeline"
+                open
+                role={expanded() ? "dialog" : "region"}
                 aria-label="Timeline"
+                data-expanded={expanded()}
                 data-panel-dimmed={status.dimmed()}
+                ref={(element) => {
+                  timelineDialog = element
+                }}
+                onKeyDown={timelineKeyDown}
+                onClose={() => {
+                  // Escape (or the platform) closed the modal: sync the signal, which re-opens it inline.
+                  if (expanded()) setExpanded(false)
+                }}
               >
                 <div class="lazers-trajectory-timeline-bar">
                   <span
@@ -1751,9 +1921,9 @@ function PanelView(
                       type="button"
                       class="lazers-trajectory-icon-button"
                       aria-label="Zoom out"
-                      title="Zoom out"
-                      disabled={zoom() <= ZOOM_LEVELS[0]}
-                      onClick={() => changeZoom(nextZoom(zoom(), -1))}
+                      title="Zoom out (-)"
+                      disabled={zoom() <= 1}
+                      onClick={() => zoomStep(-1)}
                     >
                       <PanelIcon name="zoom-out" />
                     </button>
@@ -1761,9 +1931,9 @@ function PanelView(
                       type="button"
                       class="lazers-trajectory-icon-button"
                       aria-label="Zoom in"
-                      title="Zoom in"
-                      disabled={zoom() >= ZOOM_LEVELS.at(-1)!}
-                      onClick={() => changeZoom(nextZoom(zoom(), 1))}
+                      title="Zoom in (+)"
+                      disabled={zoom() >= zoomCeiling()}
+                      onClick={() => zoomStep(1)}
                     >
                       <PanelIcon name="zoom-in" />
                     </button>
@@ -1773,12 +1943,40 @@ function PanelView(
                       aria-label={
                         zoom() === 1 ? "Timeline fits the panel" : "Fit timeline to panel"
                       }
-                      title="Fit to panel"
+                      title="Fit to panel (0)"
                       disabled={zoom() === 1}
-                      onClick={() => changeZoom(1)}
+                      onClick={fitTimeline}
                     >
                       <PanelIcon name="fit" />
                     </button>
+                    <Show
+                      when={expanded()}
+                      fallback={
+                        <button
+                          type="button"
+                          class="lazers-trajectory-icon-button"
+                          aria-label="Expand timeline to window"
+                          title="Expand to window"
+                          ref={(element) => {
+                            expandButton = element
+                          }}
+                          onClick={() => setExpanded(true)}
+                        >
+                          <PanelIcon name="expand" />
+                        </button>
+                      }
+                    >
+                      <button
+                        type="button"
+                        class="lazers-trajectory-close"
+                        aria-label="Close expanded timeline"
+                        title="Close (Esc)"
+                        onClick={() => setExpanded(false)}
+                      >
+                        <PanelIcon name="close" />
+                        Close
+                      </button>
+                    </Show>
                   </span>
                 </div>
                 <Show
@@ -1790,8 +1988,29 @@ function PanelView(
                   <div
                     class="lazers-trajectory-scroll"
                     data-zoomed={zoom() > 1}
+                    data-dragging={dragging()}
+                    data-zoom-max={zoomCeiling()}
+                    tabIndex={0}
+                    role="group"
+                    aria-label="Timeline plot. Plus and minus zoom, zero fits, arrow keys pan."
+                    onScroll={(event) => {
+                      setPan(event.currentTarget.scrollLeft / (trackFit() * zoom()))
+                    }}
+                    onPointerDown={dragStart}
+                    onPointerMove={dragMove}
+                    onPointerUp={dragEnd}
+                    onPointerCancel={dragEnd}
                     ref={(element) => {
                       timelineScroll = element
+                      element.addEventListener("wheel", timelineWheel, { passive: false })
+                      element.addEventListener("click", swallowDragClick, { capture: true })
+                      scrollObserver?.disconnect()
+                      scrollObserver = new ResizeObserver(measureFit)
+                      scrollObserver.observe(element)
+                      queueMicrotask(() => {
+                        measureFit()
+                        applyPan()
+                      })
                     }}
                   >
                     <div
@@ -2253,7 +2472,7 @@ function PanelView(
                     </div>
                   </Show>
                 </Show>
-              </section>
+              </dialog>
             </Show>
           </div>
         }

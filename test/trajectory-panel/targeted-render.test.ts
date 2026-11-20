@@ -406,6 +406,70 @@ test("a task target renders its scoped report timeline without a broad snapshot"
     expect(container.querySelector(".lazers-trajectory-scroll")?.getAttribute("data-zoomed")).toBe(
       "false",
     )
+    // Timeline navigation: buttons, pinch/ctrl-wheel, keyboard and expand share one view state.
+    const timelineRoot = container.querySelector<HTMLElement>(".lazers-trajectory-timeline")!
+    const plot = container.querySelector<HTMLElement>(".lazers-trajectory-scroll")!
+    const zoomOf = () =>
+      Number.parseFloat(
+        container
+          .querySelector<HTMLElement>(".lazers-trajectory")!
+          .style.getPropertyValue("--trajectory-zoom"),
+      )
+    const button = (label: string) =>
+      container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+    expect(button("Timeline fits the panel").disabled).toBe(true)
+    expect(
+      button("Timeline fits the panel").querySelector("[data-icon]")?.getAttribute("data-icon"),
+    ).toBe("fit")
+    expect(
+      button("Expand timeline to window").querySelector("[data-icon]")?.getAttribute("data-icon"),
+    ).toBe("expand")
+    const wheel = (init: WheelEventInit) => {
+      // happy-dom's WheelEvent drops modifier and delta fields, so set them on a plain event.
+      const event = new dom.window.Event("wheel", { bubbles: true, cancelable: true })
+      Object.assign(event, { ctrlKey: false, deltaX: 0, deltaY: 0, deltaMode: 0, clientX: 0 }, init)
+      plot.dispatchEvent(event as unknown as Event)
+      return event
+    }
+
+    const pinch = wheel({ ctrlKey: true, deltaY: -40, clientX: 100 })
+    expect(pinch.defaultPrevented).toBe(true)
+    await until(() => zoomOf() > 1)
+    expect(plot.getAttribute("data-zoomed")).toBe("true")
+    const zoomedAfterPinch = zoomOf()
+    plot.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "0",
+        bubbles: true,
+        cancelable: true,
+      }) as unknown as Event,
+    )
+    await until(() => zoomOf() === 1)
+    // Fitted, a plain wheel is the page's: not consumed.
+    expect(wheel({ deltaY: 30 }).defaultPrevented).toBe(false)
+    expect(zoomedAfterPinch).toBeGreaterThan(1)
+    plot.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: "+",
+        bubbles: true,
+        cancelable: true,
+      }) as unknown as Event,
+    )
+    await until(() => zoomOf() > 1)
+    button("Fit timeline to panel").click()
+    await until(() => zoomOf() === 1)
+    // Expand keeps the same timeline element and state; Close and Escape return it inline.
+    button("Expand timeline to window").click()
+    await until(() => timelineRoot.getAttribute("data-expanded") === "true")
+    expect(container.querySelector(".lazers-trajectory-timeline")).toBe(timelineRoot)
+    expect(timelineRoot.getAttribute("role")).toBe("dialog")
+    button("Close expanded timeline").click()
+    await until(() => timelineRoot.getAttribute("data-expanded") === "false")
+    expect(timelineRoot.getAttribute("role")).toBe("region")
+    button("Expand timeline to window").click()
+    await until(() => timelineRoot.getAttribute("data-expanded") === "true")
+    timelineRoot.dispatchEvent(new dom.window.Event("close") as unknown as Event)
+    await until(() => timelineRoot.getAttribute("data-expanded") === "false")
     expect(container.textContent).not.toContain("$0 subtotal")
     expect(container.textContent).not.toContain("Cost unavailable")
     expect(container.querySelector(".lazers-trajectory-axis")).not.toBeNull()

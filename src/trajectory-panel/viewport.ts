@@ -35,8 +35,7 @@ const WHEEL_SENSITIVITY = 0.01
 /** The multiplier a button or key press zooms by. */
 export const ZOOM_STEP = 2
 
-const clamp = (value: number, low: number, high: number) =>
-  Math.min(high, Math.max(low, value))
+const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value))
 
 /** Range of valid scroll offsets: the whole track minus what the viewport already shows. */
 export const scrollRange = (zoom: number, fitPx: number) => Math.max(0, fitPx * (zoom - 1))
@@ -101,7 +100,8 @@ export function zoomAbout(
   max: number,
 ): Viewport {
   const zoom = clampZoom(nextZoom, max)
-  if (fitPx <= 0 || zoom === view.zoom) return { zoom, scrollLeft: clampScroll(view.scrollLeft, zoom, fitPx) }
+  if (fitPx <= 0 || zoom === view.zoom)
+    return { zoom, scrollLeft: clampScroll(view.scrollLeft, zoom, fitPx) }
   const anchor = clamp(anchorPx, 0, fitPx)
   const fraction = (view.scrollLeft + anchor) / (fitPx * view.zoom)
   return { zoom, scrollLeft: clampScroll(fraction * fitPx * zoom - anchor, zoom, fitPx) }
