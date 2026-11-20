@@ -203,3 +203,30 @@ builder can act on. Answers (lead's, from the owner's stated direction unless ma
 - **Retention and projections** treat the `planning` machine and its two tables like other
   finished work: a tasked or abandoned draft is retirable.
 - **Acceptance per step** lives in the implementation plan, `.agents/plans/architect-planning.md`.
+
+## Owner decision, 2026-11-20: run all five, record the scores, tune later
+
+Evidence from the decision spike on D1 (44 labelled asks; `.agents/research/decision-spike.md`):
+read whole, size is right for 20 of 42 asks and simple-versus-complex for 29 of 42; sliced into
+small pieces, 17 of 41 and 26 of 41. Per-agent ranking quality is 0.57 to 0.77 (0.5 is chance), and
+yes-scores sit low even when an agent is needed. A threshold high enough to mean something would
+filter agents that help. Running all five is known to be fine (about 95,000 tokens and under 80
+seconds each).
+
+Decision:
+
+- **All five planning agents run on every stored plan.** No score cuts an agent in the first
+  version. Auto-dispatch stays the per-project switch.
+- **The decision step still runs and is recorded from day one:** pieces, per-piece scores, the
+  combined score per agent, the size pick, timings. It selects nothing yet. The records are the
+  data for a later threshold, set from evidence and written beside its measurement.
+- **The decision model's output is context for the Architect, not routing.** Whether an ask needs a
+  plan at all stays the Architect's call: the flow starts when the Architect stores a plan, so a
+  simple ask never enters it.
+- **Method: Recursive Decision Models** (recursivedecisionmodels.com): small typed questions on
+  small pieces of state, answers choosing the next question. An earlier reading in this document
+  of "RDM it" as "build and learn" was the lead's mistake.
+- **D1 prompts stay small:** no request above 400 input tokens (about 60 ms at 95 tokens measured;
+  1 s at 1,100; 18 s at 6,600). A long ask is always sliced; a slow prompt defeats a fast judgement.
+- **Device limits:** the D1 device requests its computed largest buffer, 16,384 x 9,216 x 4 bytes
+  = 604 MB, clamped to the adapter (`src/webgpu/device-limits.ts`).
