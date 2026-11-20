@@ -79,6 +79,8 @@ export type TaskListInput = {
   /** Rows that fit in view; the window follows it and never shrinks. */
   fit: Accessor<number>
   expanded: Accessor<ReadonlySet<string>>
+  /** The task the list opens around, when it is still in the filter; otherwise it opens at the head. */
+  startAt?: string
 }
 
 /** Call inside the owner that should close the streams. */
@@ -102,13 +104,17 @@ export function createTaskList(input: TaskListInput) {
       ...(search() ? { search: search() } : {}),
     }
     const now = JSON.stringify(filter)
-    const keep = now === shape ? firstKey : undefined
+    const keep =
+      now === shape ? firstKey : shape === "" && input.startAt ? [input.startAt] : undefined
+    const around = now !== shape
     shape = now
     return {
       filter,
       order: "schedule",
       window: windowSize(),
-      ...(keep ? { anchor: { key: [...keep], place: "start" as const } } : {}),
+      ...(keep
+        ? { anchor: { key: [...keep], place: around ? ("center" as const) : ("start" as const) } }
+        : {}),
     }
   })
   createEffect(() => {

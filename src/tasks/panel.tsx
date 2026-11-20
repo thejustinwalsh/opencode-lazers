@@ -102,7 +102,8 @@ const View = Schema.Struct({
   /** Details pane: closed by default; size is the body's fraction of the panel. */
   open: Schema.optionalKey(Schema.Boolean),
   size: Schema.optionalKey(Schema.Number),
-  listScroll: Schema.Number,
+  /** The task of the first row in view; the list reopens around it. */
+  anchorTaskID: Schema.optionalKey(Schema.String),
   detailScroll: Schema.Number,
   state: Schema.optionalKey(
     Schema.Literals([
@@ -132,7 +133,6 @@ const initial: typeof View.Type = {
   scope: "session",
   selectedID: null,
   search: "",
-  listScroll: 0,
   detailScroll: 0,
   history: false,
   revealTaskID: "",
@@ -421,6 +421,7 @@ function TaskPanel(
           state: stateFilter,
           fit,
           expanded: expandedKeys,
+          startAt: untrack(() => prefs().anchorTaskID),
         }),
       )
       setFacts(
@@ -619,6 +620,27 @@ function TaskPanel(
       prefs().detailScroll,
     )
   })
+  // A list reopened around the task that was first in view scrolls back to it, once.
+  let anchoredList = ""
+  createEffect(() => {
+    const key = listKey()
+    void items()
+    void virtualRows()
+    const id = untrack(() => prefs().anchorTaskID)
+    if (!key || anchoredList === key || !taskList()?.loaded() || !listRestore.restored(key)) return
+    anchoredList = key
+    const index = id ? taskIndex(items(), id) : -1
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: "start" })
+  })
+  /** Remember the task of the first row in view, for the next time this list opens. */
+  const rememberFirstRow = () => {
+    if (!list || anchoredList !== listKey()) return
+    const first = virtualizer.getVirtualItemForOffset(list.scrollTop)
+    const item = first ? items()[first.index] : undefined
+    if (!item || item.kind !== "task") return
+    const taskID = item.key.split(">")[0]!.replace(/^task:/, "")
+    if (taskID !== prefs().anchorTaskID) save({ anchorTaskID: taskID })
+  }
   createEffect(() => feedback.reset(selectionKey()))
   createEffect(() => {
     const value = current()
@@ -1724,11 +1746,13 @@ function TaskPanel(
               items={[
                 {
                   label: "This session",
-                  onSelect: () => save({ scope: "session", selectedID: null }),
+                  onSelect: () =>
+                    save({ scope: "session", selectedID: null, anchorTaskID: undefined }),
                 },
                 {
                   label: "Project tasks",
-                  onSelect: () => save({ scope: "project", selectedID: null }),
+                  onSelect: () =>
+                    save({ scope: "project", selectedID: null, anchorTaskID: undefined }),
                 },
               ]}
             />
@@ -1753,7 +1777,7 @@ function TaskPanel(
                     save({
                       state,
                       history: state !== "open",
-                      listScroll: 0,
+                      anchorTaskID: undefined,
                     }),
                 })),
               ])}
@@ -1766,7 +1790,7 @@ function TaskPanel(
               size="small"
               pressed={searchOpen()}
               onClick={() => {
-                if (searchOpen()) save({ search: "" })
+                if (searchOpen()) save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(!searchOpen())
               }}
             />
@@ -1777,7 +1801,7 @@ function TaskPanel(
             class="lazers-tasks-search"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
-                save({ search: "" })
+                save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(false)
               }
             }}
@@ -1788,7 +1812,7 @@ function TaskPanel(
               label="Find tasks"
               placeholder="Search tasks…"
               value={prefs().search}
-              onInput={(search) => save({ search })}
+              onInput={(search) => save({ search, anchorTaskID: undefined })}
               autofocus
             />
             <Ui.IconButton
@@ -1796,7 +1820,7 @@ function TaskPanel(
               size="small"
               label="Close search"
               onClick={() => {
-                save({ search: "" })
+                save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(false)
               }}
             />
@@ -1827,7 +1851,10 @@ function TaskPanel(
             ref={(element) => {
               list = element
             }}
-            onScroll={captureAnchor}
+            onScroll={() => {
+              captureAnchor()
+              rememberFirstRow()
+            }}
           >
             <PanelStatus
               ui={Ui}

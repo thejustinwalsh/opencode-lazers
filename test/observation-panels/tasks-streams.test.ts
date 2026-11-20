@@ -279,7 +279,7 @@ const globalNames = [
   "cancelAnimationFrame",
 ] as const
 
-type Options = { view?: Partial<ReturnType<typeof openedTaskView>> }
+type Options = { view?: Record<string, unknown> }
 
 /**
  * One Happy DOM window serves every test: the bundle registers its delegated event listeners on the
@@ -844,4 +844,36 @@ test("the state menu marks the current chip and shows the stored counts", async 
       ),
     )
   })
+})
+
+test("the list remembers the first row in view and reopens around it", async () => {
+  const open = "retired=0 AND bucket IN ('running','queued','paused','blocked','open')"
+  let remembered: string | undefined
+  await withPanel(async (h) => {
+    await until(() => h.topLevel().length > 0)
+    for (let step = 0; step < 100 && !remembered; step++) {
+      h.scrollTo(h.list().scrollTop + ROW * 6)
+      await settle(30)
+      const stored = (h.taskStore.value as { projects: Record<string, { anchorTaskID?: string }> })
+        .projects[PROJECT]!.anchorTaskID
+      if (stored && storedOrder(open).indexOf(stored) > 40) remembered = stored
+    }
+    expect(remembered).toBeDefined()
+  })
+  await withPanel(
+    async (h) => {
+      await until(() => Boolean(h.row(remembered!)))
+      expect(h.row(storedOrder(open)[0]!)).toBeNull()
+      expect(h.list().scrollTop).toBeGreaterThanOrEqual(0)
+    },
+    { view: { anchorTaskID: remembered } },
+  )
+  // A task the chip does not list cannot anchor: the list opens at its head.
+  await withPanel(
+    async (h) => {
+      await until(() => h.topLevel().length > 0)
+      expect(h.row(storedOrder(open)[0]!)).not.toBeNull()
+    },
+    { view: { anchorTaskID: ids["A1 only"] } },
+  )
 })
