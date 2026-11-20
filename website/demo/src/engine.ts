@@ -201,7 +201,7 @@ export class Engine<D> {
   }
 
   private async moveTo(el: HTMLElement, instant: boolean) {
-    el.scrollIntoView({ block: "nearest", inline: "nearest" })
+    revealWithinFrame(el)
     const rect = el.getBoundingClientRect()
     const x = rect.left + Math.min(rect.width / 2, 80)
     const y = rect.top + rect.height / 2
@@ -321,5 +321,24 @@ export class Engine<D> {
         return this.pause_(260, instant)
       }
     }
+  }
+}
+
+/**
+ * Scroll `el` into view inside this document only. `Element.scrollIntoView` also scrolls the
+ * embedding page, which made the visitor's own scrolling fight the replay.
+ */
+function revealWithinFrame(el: HTMLElement) {
+  const view = el.ownerDocument.defaultView
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const style = view?.getComputedStyle(node)
+    if (!style || !/(auto|scroll)/.test(style.overflowY + style.overflowX)) continue
+    if (node.scrollHeight <= node.clientHeight && node.scrollWidth <= node.clientWidth) continue
+    const box = node.getBoundingClientRect()
+    const rect = el.getBoundingClientRect()
+    if (rect.top < box.top) node.scrollTop -= box.top - rect.top
+    else if (rect.bottom > box.bottom) node.scrollTop += rect.bottom - box.bottom
+    if (rect.left < box.left) node.scrollLeft -= box.left - rect.left
+    else if (rect.right > box.right) node.scrollLeft += rect.right - box.right
   }
 }
