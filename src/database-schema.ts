@@ -193,6 +193,15 @@ export const schemaModules = {
       "model_endpoint_pricing_refreshes",
     ],
   },
+  "model-decision-projection": {
+    generation: 1,
+    source: "src/models/decision-projection.ts",
+    tables: [
+      "model_decision_progress",
+      "model_decision_progress_state",
+      "model_decision_progress_dirty",
+    ],
+  },
   "model-mappings": {
     generation: 1,
     source: "src/models/mapping-store.ts",

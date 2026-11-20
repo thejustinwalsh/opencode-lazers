@@ -1,4 +1,5 @@
 import { moduleGeneration } from "../core/generation.ts"
+import { DecisionProjectionOwner } from "./decision-projection.ts"
 import { createThreadedDecisionWorker } from "./decision-worker-client.ts"
 import type {
   ThreadedDecisionWorker,
@@ -23,6 +24,8 @@ type Entry = {
   worker: ThreadedDecisionWorker
   providers: Array<ThreadedDecisionWorkerOptions["readPriceInputs"]>
   refs: number
+  /** Folds the decision projections on the write connection; the worker only reads them. */
+  owner: DecisionProjectionOwner
   /** Projects whose default snapshot this process has already built in the background. */
   prewarmed: Set<string>
 }
@@ -54,6 +57,7 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       providers,
       refs: 0,
       prewarmed: new Set(),
+      owner: new DecisionProjectionOwner(options.path),
       worker: createThreadedDecisionWorker({
         ...options,
         async readPriceInputs(signal) {
@@ -96,8 +100,11 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
   }
   return {
     reader: (projectDirectory) => {
-      const target = () =>
-        released ? revive().reader(projectDirectory) : current.worker.reader(projectDirectory)
+      const target = () => {
+        if (released) return revive().reader(projectDirectory)
+        current.owner.touch(projectDirectory)
+        return current.worker.reader(projectDirectory)
+      }
       return {
         overview: (input, opts) => target().overview(input, opts),
         rows: (input, opts) => target().rows(input, opts),
@@ -118,6 +125,7 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       if (--current.refs > 0) return
       if (entries.get(current.key) === current) entries.delete(current.key)
       current.worker.close()
+      current.owner.close()
     },
   }
 }

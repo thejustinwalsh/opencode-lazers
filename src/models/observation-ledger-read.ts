@@ -12,6 +12,25 @@ import { PlanInput } from "../runner/schema.ts"
 import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import type { AccountingAttempt, AccountingRoute } from "../trajectory/accounting.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
+import {
+  decisionProgressFact,
+  list,
+  nonnegativeOrNull,
+  numberOrNull,
+  object,
+  parseArray,
+  parseObject,
+  projectDecisionProgressRow,
+  safeRoute,
+  stringList,
+} from "./decision-progress-fact.ts"
+import { DECISION_PROJECTION_TABLES, decisionProjectionStats } from "./decision-projection.ts"
+import {
+  FACT_MALFORMED_PAYLOAD,
+  FACT_UNREADABLE_EVENTS,
+  FACT_UNREADABLE_SOURCES,
+} from "./decision-progress-fact.ts"
+import type { DecisionProgressSource, JsonObject, Route } from "./decision-progress-fact.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import type { AdoptionRow, AttemptRow, PlanRow, ProgressRow } from "../runner/store.ts"
 import { classificationSnapshotFor } from "../tasks/classification.ts"
@@ -154,8 +173,6 @@ type CaptureResult =
 
 type TableStatus = SourceStatus["status"]
 type TableInfo = { name: string; status: TableStatus; missingColumns: string[] }
-type JsonObject = Record<string, unknown>
-type Route = { providerID: string; modelID: string; variant: string | null }
 type RouteOccurrence =
   ObservationLedgerOutput["tasks"][number]["attempts"][number]["observedRoutes"]["occurrences"][number]
 type UsageCategory = keyof ReturnType<
@@ -257,77 +274,6 @@ const CLASSIFICATION_COLUMNS = [
   "created_at",
 ]
 
-function object(value: unknown): JsonObject | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : null
-}
-
-function parseObject(value: string | null | undefined): JsonObject | null {
-  if (!value) return null
-  try {
-    return object(JSON.parse(value))
-  } catch {
-    return null
-  }
-}
-
-function parseArray(value: string | null | undefined): unknown[] | null {
-  if (!value) return null
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-function list(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
-
-function stringList(value: unknown): string[] {
-  return list(value).filter((item): item is string => typeof item === "string")
-}
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
-}
-
-function nonnegativeOrNull(value: unknown): number | null {
-  const parsed = numberOrNull(value)
-  return parsed !== null && parsed >= 0 ? parsed : null
-}
-
-function safeRoute(value: unknown, stats: ReturnType<typeof privacyStats>): Route | null {
-  const route = object(value)
-  const provider = typeof route?.providerID === "string" ? route.providerID : null
-  const model =
-    typeof route?.modelID === "string"
-      ? route.modelID
-      : typeof route?.id === "string"
-        ? route.id
-        : null
-  if (!provider || !model) return null
-  const rawVariant = typeof route?.variant === "string" ? route.variant : null
-  if (
-    [provider, model, ...(rawVariant === null ? [] : [rawVariant])].some(
-      (part) => part.includes("[REDACTED]") || part.endsWith("…[truncated]"),
-    )
-  )
-    return null
-  const providerID = safeText(provider, stats, 512)
-  const modelID = safeText(model, stats, 512)
-  const variant = rawVariant === null ? null : safeText(rawVariant, stats, 512)
-  if (
-    providerID !== provider ||
-    modelID !== model ||
-    (rawVariant !== null && variant !== rawVariant)
-  )
-    return null
-  return { providerID, modelID, variant }
-}
-
 function accountingRoute(route: Route | null): AccountingRoute | null {
   return route
     ? {
@@ -413,17 +359,64 @@ function fingerprintOf(value: Record<string, unknown>) {
 // dedupe index on every page. The payload is projected in JS, not in SQL: building the same
 // objects with json_object/json_each cost about a second on the live 111k-row table and was
 // parsed again here; a plain JSON.parse of the stored text takes a fraction of that.
-const DECISION_PROGRESS_SQL = `
-  SELECT r.seq,r.project_id,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
-         r.source,r.sources_json,r.kind,r.event_ids_json,r.call_id,r.message_id,r.dedupe_key,
-         r.payload
-  FROM runner_progress r NOT INDEXED
+const LIVE_PROGRESS_COLUMNS =
+  "r.seq,r.attempt_id,r.session_id,r.at,r.recorded_at,r.source,r.sources_json,r.kind," +
+  "r.event_ids_json,r.message_id,r.payload"
+const LIVE_PROGRESS_JOIN = `
   JOIN runner_plans p ON p.id=r.plan_id
-  JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
+  JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory`
+const LIVE_TAIL_SQL = `
+  SELECT ${LIVE_PROGRESS_COLUMNS}
+  FROM runner_progress r NOT INDEXED ${LIVE_PROGRESS_JOIN}
   WHERE r.project_directory=? AND p.project_directory=? AND r.seq>?
     AND r.kind IN ('step','usage-snapshot')
   ORDER BY r.seq LIMIT ?`
+const LIVE_ONE_SQL = `
+  SELECT ${LIVE_PROGRESS_COLUMNS}
+  FROM runner_progress r ${LIVE_PROGRESS_JOIN}
+  WHERE r.seq=? AND r.project_directory=? AND p.project_directory=?
+    AND r.kind IN ('step','usage-snapshot')`
+const STORED_PROGRESS_SQL = `
+  SELECT f.seq,f.flags,f.fact
+  FROM ${DECISION_PROJECTION_TABLES.facts} f
+  JOIN runner_plans p ON p.id=f.plan_id
+  JOIN tasks t ON t.id=f.task_id AND t.project_directory=p.project_directory
+  WHERE f.project_directory=? AND p.project_directory=? AND f.seq>? AND f.seq<=?
+  ORDER BY f.seq LIMIT ?`
 
+/** The stored projection of this project: its watermark and the rows queued for a re-read. */
+function readProjectionState(db: Database, projectDirectory: string) {
+  const present = db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN
+       ('${DECISION_PROJECTION_TABLES.facts}','${DECISION_PROJECTION_TABLES.state}','${DECISION_PROJECTION_TABLES.dirty}')`,
+    )
+    .get()
+  if (present?.n !== 3) return { foldedSeq: 0, dirty: new Set<number>() }
+  const state = db
+    .query<{ folded_seq: number }, [string]>(
+      `SELECT folded_seq FROM ${DECISION_PROJECTION_TABLES.state} WHERE project_directory=?`,
+    )
+    .get(projectDirectory)
+  if (!state) return { foldedSeq: 0, dirty: new Set<number>() }
+  const dirty = new Set(
+    db
+      .query<{ seq: number }, [string]>(
+        `SELECT seq FROM ${DECISION_PROJECTION_TABLES.dirty} WHERE project_directory=?`,
+      )
+      .all(projectDirectory)
+      .map((row) => row.seq),
+  )
+  return { foldedSeq: state.folded_seq, dirty }
+}
+
+/**
+ * The retained decision facts of a project, in sequence order, in one read transaction:
+ *   - stored facts up to the projection watermark, except rows queued as changed,
+ *   - the queued rows and every row above the watermark, projected from `runner_progress`.
+ * With the projection folded the live part is empty; without a projection (an older database, a
+ * read before the first fold) the whole table is the live part, as it was before the projection.
+ */
 function readDecisionProgress(
   db: Database,
   projectDirectory: string,
@@ -436,46 +429,85 @@ function readDecisionProgress(
 } {
   let invalidCount = 0
   const facts: Record<string, unknown>[] = []
-  const digest = createHash("sha256")
   const notes: string[] = []
   const stats = privacyStats()
   let unreadableSourceLineage = 0
   let unreadableEventLineage = 0
-  let afterSequence = 0
+  const { foldedSeq, dirty } = readProjectionState(db, projectDirectory)
+
+  const take = (flags: number, fact: Record<string, unknown> | null) => {
+    if (flags & FACT_MALFORMED_PAYLOAD) {
+      invalidCount++
+      return
+    }
+    if (flags & FACT_UNREADABLE_SOURCES) unreadableSourceLineage++
+    if (flags & FACT_UNREADABLE_EVENTS) unreadableEventLineage++
+    if (fact) facts.push(fact)
+  }
+  const takeLive = (row: DecisionProgressSource) => {
+    decisionProjectionStats.readSourceRows++
+    const projected = projectDecisionProgressRow(row, stats)
+    take(projected.flags, projected.fact)
+  }
+
+  let after = 0
+  while (foldedSeq > 0) {
+    signal?.throwIfAborted()
+    const page = db
+      .query<
+        { seq: number; flags: number; fact: string | null },
+        [string, string, number, number, number]
+      >(STORED_PROGRESS_SQL)
+      .all(projectDirectory, projectDirectory, after, foldedSeq, DECISION_PROGRESS_BATCH_SIZE)
+    for (const row of page) {
+      after = row.seq
+      decisionProjectionStats.readProjectionRows++
+      if (dirty.has(row.seq)) continue
+      take(row.flags, row.fact === null ? null : (JSON.parse(row.fact) as Record<string, unknown>))
+    }
+    if (page.length < DECISION_PROGRESS_BATCH_SIZE) break
+  }
+  if (dirty.size) {
+    for (const seq of [...dirty].sort((left, right) => left - right)) {
+      const row = db
+        .query<DecisionProgressSource, [number, string, string]>(LIVE_ONE_SQL)
+        .get(seq, projectDirectory, projectDirectory)
+      if (row) takeLive(row)
+    }
+    facts.sort((left, right) => (left.sequence as number) - (right.sequence as number))
+  }
+
+  let afterSequence = foldedSeq
   while (true) {
     signal?.throwIfAborted()
-    const limit = DECISION_PROGRESS_BATCH_SIZE
     const batch = db
-      .query<RawProgress, [string, string, number, number]>(DECISION_PROGRESS_SQL)
-      .all(projectDirectory, projectDirectory, afterSequence, limit)
+      .query<DecisionProgressSource, [string, string, number, number]>(LIVE_TAIL_SQL)
+      .all(projectDirectory, projectDirectory, afterSequence, DECISION_PROGRESS_BATCH_SIZE)
     for (const row of batch) {
       afterSequence = row.seq
-      let payload: JsonObject
-      try {
-        // Valid JSON that is not an object projects as an object with nothing in it.
-        payload = object(JSON.parse(row.payload)) ?? {}
-      } catch {
-        invalidCount++
-        continue
-      }
-      if (!parseArray(row.sources_json)) unreadableSourceLineage++
-      if (!parseArray(row.event_ids_json)) unreadableEventLineage++
-      const fact = decisionProgressFact(row, payload, stats)
-      if (!fact) continue
-      facts.push(fact)
-      // Length-prefix each projected row so the digest is independent of page
-      // boundaries without serializing the complete retained history.
-      const serialized = JSON.stringify(fact)
-      digest.update(`${Buffer.byteLength(serialized, "utf8")}:`)
-      digest.update(serialized)
+      takeLive(row)
     }
-    if (batch.length < limit) break
+    if (batch.length < DECISION_PROGRESS_BATCH_SIZE) break
   }
   if (unreadableSourceLineage)
     notes.push(`${unreadableSourceLineage} retained decision facts have unreadable source lineage.`)
   if (unreadableEventLineage)
     notes.push(`${unreadableEventLineage} retained decision facts have unreadable event lineage.`)
-  return { facts, fingerprint: digest.digest("hex"), invalidCount, notes }
+  // The identity of the retained facts. The pinned observation revision already changes with any
+  // write, so this need not hash every fact (that is the cost the projection removes).
+  const last = facts.at(-1)
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify([
+        facts.length,
+        last?.sequence ?? null,
+        invalidCount,
+        unreadableSourceLineage,
+        unreadableEventLineage,
+      ]),
+    )
+    .digest("hex")
+  return { facts, fingerprint, invalidCount, notes }
 }
 
 /** Distinct notes in first-seen order; nothing is dropped. */
@@ -877,7 +909,10 @@ function readCaptureRows(
   }
 }
 
-function planInput(plan: PlanRow) {
+/** A plan body is parsed once per read, however many of its attempts and nodes ask. */
+const parsedPlanInputs = new WeakMap<PlanRow, ReturnType<typeof parsePlanInput>>()
+
+function parsePlanInput(plan: PlanRow) {
   try {
     const value: unknown = JSON.parse(plan.body)
     // Parse only to reuse the existing exact plan contract. Its objective and
@@ -887,6 +922,13 @@ function planInput(plan: PlanRow) {
   } catch {
     return null
   }
+}
+
+function planInput(plan: PlanRow) {
+  if (parsedPlanInputs.has(plan)) return parsedPlanInputs.get(plan)!
+  const parsed = parsePlanInput(plan)
+  parsedPlanInputs.set(plan, parsed)
+  return parsed
 }
 
 function routeSelection(
@@ -1798,117 +1840,6 @@ function taskAccountingAttempt(
     sessionUsage: null,
     sessionUsageObservedAt: null,
     stepRoutes: [],
-  }
-}
-
-function decisionProgressFact(
-  row: RawProgress,
-  payload: JsonObject,
-  stats: ReturnType<typeof privacyStats>,
-) {
-  const usageValue = object(payload.usage)
-  const usage = usageValue
-    ? {
-        input: nonnegativeOrNull(usageValue.input),
-        output: nonnegativeOrNull(usageValue.output),
-        reasoning: nonnegativeOrNull(usageValue.reasoning),
-        cacheRead: nonnegativeOrNull(usageValue.cacheRead),
-        cacheWrite: nonnegativeOrNull(usageValue.cacheWrite),
-        costUSD: nonnegativeOrNull(usageValue.costUSD),
-      }
-    : null
-  const routeEvidence = object(payload.routeEvidence)
-  const projectedRouteEvidence = routeEvidence
-    ? {
-        status:
-          typeof routeEvidence.status === "string"
-            ? safeText(routeEvidence.status, stats, 80)
-            : "identity-unavailable",
-        ...(routeEvidence.status === "observed"
-          ? { route: safeRoute(routeEvidence.route, stats) }
-          : {}),
-      }
-    : null
-  const rawRoute = routeEvidence
-    ? routeEvidence.status === "observed"
-      ? routeEvidence.route
-      : null
-    : payload.route
-  const route = safeRoute(rawRoute, stats)
-  const rawObservations = list(payload.observations)
-  const observations = rawObservations.flatMap((raw) => {
-    const observation = object(raw)
-    if (
-      !observation ||
-      (observation.source !== "native-event" && observation.source !== "recovery") ||
-      typeof observation.eventType !== "string"
-    )
-      return []
-    const evidence = object(observation.routeEvidence)
-    const rawObservationRoute = evidence
-      ? evidence.status === "observed"
-        ? evidence.route
-        : null
-      : observation.route
-    const projectedEvidence = evidence
-      ? {
-          status:
-            typeof evidence.status === "string"
-              ? safeText(evidence.status, stats, 80)
-              : "identity-unavailable",
-          ...(evidence.status === "observed" ? { route: safeRoute(evidence.route, stats) } : {}),
-        }
-      : null
-    return [
-      {
-        source: observation.source,
-        eventType: safeText(observation.eventType, stats, 160),
-        at: numberOrNull(observation.at),
-        messageID: typeof observation.messageID === "string" ? observation.messageID : null,
-        eventID: typeof observation.eventID === "string" ? observation.eventID : null,
-        route: safeRoute(rawObservationRoute, stats),
-        ...(projectedEvidence ? { routeEvidence: projectedEvidence } : {}),
-      },
-    ]
-  })
-  const timing = object(payload.timing)
-  const endpoints = object(timing?.endpoints)
-  const completedAt = object(endpoints?.completedAt)
-  const sourceTypes = parseArray(row.sources_json)
-  const eventIDs = parseArray(row.event_ids_json)
-  return {
-    id: `progress:${row.seq}`,
-    sequence: row.seq,
-    attemptID: row.attempt_id,
-    sessionID: row.session_id,
-    messageID: row.message_id,
-    source: safeText(row.source, stats, 80),
-    sources: sourceTypes
-      ? stringList(sourceTypes).map((source) => safeText(source, stats, 80))
-      : [safeText(row.source, stats, 80)],
-    eventIDs: eventIDs ? stringList(eventIDs) : [],
-    kind: row.kind === "step" ? "worker-step" : "worker-usage-snapshot",
-    at: row.at,
-    recordedAt: numberOrNull(row.recorded_at),
-    measurementBasis:
-      typeof payload.measurementBasis === "string"
-        ? safeText(payload.measurementBasis, stats, 160)
-        : null,
-    usage,
-    route,
-    ...(projectedRouteEvidence ? { routeEvidence: projectedRouteEvidence } : {}),
-    observations,
-    timing: {
-      endpoints: {
-        completedAt: {
-          at: numberOrNull(completedAt?.at),
-          sourceType:
-            typeof completedAt?.sourceType === "string"
-              ? safeText(completedAt.sourceType, stats, 160)
-              : null,
-        },
-      },
-    },
   }
 }
 
