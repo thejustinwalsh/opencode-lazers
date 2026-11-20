@@ -94,9 +94,13 @@ export class ArchitectSources {
       return
     }
     this.sourceResyncPending = true
-    for (const id of this.store.architectSourceSessionIDs())
-      if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
-    for (const id of [...this.sourceEpochs.keys()]) this.scheduleSourceInvalidation(id)
+    // The durable source rows are the set of live sources: an epoch for a session that has no row
+    // any more is released instead of kept (and re-invalidated) for the life of the process.
+    const current = new Set(this.store.architectSourceSessionIDs())
+    for (const id of [...this.sourceEpochs.keys()])
+      if (!current.has(id)) this.sourceEpochs.delete(id)
+    for (const id of current) if (!this.sourceEpochs.has(id)) this.sourceEpochs.set(id, 0)
+    for (const id of current) this.scheduleSourceInvalidation(id)
     this.sourceResyncPending = false
   }
   /** Leading edge writes at once; further events in the 250ms window coalesce into one trailing write. */

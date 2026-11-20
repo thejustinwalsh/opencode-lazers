@@ -2197,10 +2197,10 @@ test.each(["cancel"] as const)(
       expect(activity).toBeDefined()
       await activity!.settled
       expect(activity!.state).toBe("completed")
-      expect(activity!.result).toMatchObject({
-        exitCode: 0,
-        timedOut: false,
-        processCleanup: { state: "uncertain" },
+      expect(activity!.summary).toEqual({
+        settlementProblem: expect.stringContaining(
+          "Command exited 0 with timedOut=false; subprocess cleanup remains uncertain",
+        ),
       })
       const command = {
         requestID: "cancel-unknown-settlement",

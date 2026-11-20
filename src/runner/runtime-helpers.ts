@@ -55,11 +55,22 @@ export function checkSettlementProblem(activity: VerificationActivity): string |
   if (activity.state === "failed") return errorText(activity.error)
   if (activity.state !== "completed") return "Verification is still running"
   if (activity.metadata.kind === "retained-advance") return undefined
-  const receipt = activity.result as CheckReceipt | undefined
-  if (!receipt) return "Verification has no final receipt"
-  if (!checkResourcesSettled(receipt))
-    return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain: ${receipt.processCleanup?.detail ?? "process-tree settlement was not confirmed"}`
-  return undefined
+  const summary = activity.summary as CheckActivitySummary | undefined
+  if (!summary) return "Verification has no final receipt"
+  return summary.settlementProblem
+}
+
+/** What a completed check activity keeps: whether its resources settled, not the receipt. */
+export type CheckActivitySummary = { settlementProblem: string | undefined }
+export function summarizeCheckReceipt(
+  receipt: CheckReceipt | undefined,
+): CheckActivitySummary | undefined {
+  if (!receipt) return undefined
+  return {
+    settlementProblem: checkResourcesSettled(receipt)
+      ? undefined
+      : `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain: ${receipt.processCleanup?.detail ?? "process-tree settlement was not confirmed"}`,
+  }
 }
 
 export const errorText = (error: unknown) =>

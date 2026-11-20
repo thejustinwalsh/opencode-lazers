@@ -1,4 +1,4 @@
-import { errorText } from "./runtime-helpers.ts"
+import { errorText, summarizeCheckReceipt } from "./runtime-helpers.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { fingerprint } from "../identity.ts"
 import {
@@ -132,6 +132,7 @@ export class CheckActivities {
       metadata: input.metadata,
       ...(input.signal ? { signal: input.signal } : {}),
       run: input.run,
+      summarize: summarizeCheckReceipt,
       onSettled: () => {
         void this.requestTick().catch(() => undefined)
       },
