@@ -593,7 +593,7 @@ export class ModelEvidenceStore {
       .query<EndpointPricingRefreshRow, [string]>(
         `SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id,
                 latest_retrieved_at, latest_record_count, error_code, http_status
-         FROM model_endpoint_pricing_refreshes WHERE project_directory=?`,
+         FROM model_endpoint_pricing_refreshes WHERE project_directory=? LIMIT ${ENDPOINT_PRICING_PRODUCTS.length}`,
       )
       .all(this.projectDirectory)
     const byProduct = new Map(rows.map((row) => [row.product_id, row]))
@@ -689,7 +689,7 @@ export class ModelEvidenceStore {
         `SELECT r.source, r.state, r.generation, r.started_at, r.completed_at,
                 r.latest_snapshot_id, r.latest_retrieved_at, r.latest_record_count,
                 r.error_code, r.http_status
-         FROM model_evidence_refreshes r WHERE r.project_directory=?`,
+         FROM model_evidence_refreshes r WHERE r.project_directory=? LIMIT ${MODEL_EVIDENCE_SOURCES.length}`,
       )
       .all(this.projectDirectory)
     const bySource = new Map(rows.map((row) => [row.source, row]))
@@ -804,7 +804,7 @@ export class ModelEvidenceReadStore {
               `SELECT r.source, r.state, r.generation, r.started_at, r.completed_at,
                       r.latest_snapshot_id, r.latest_retrieved_at, r.latest_record_count,
                       r.error_code, r.http_status
-               FROM model_evidence_refreshes r WHERE r.project_directory=?`,
+               FROM model_evidence_refreshes r WHERE r.project_directory=? LIMIT ${MODEL_EVIDENCE_SOURCES.length}`,
             )
             .all(this.projectDirectory)
         : []

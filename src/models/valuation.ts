@@ -1061,6 +1061,11 @@ export type ProjectTaskValuationInput = {
   progressTruncated: boolean
   truncatedContextSessionIDs: readonly string[]
   currentIndex: CurrentPriceIndex
+  /**
+   * The effort basis of exactly these attempts and facts, when the caller already computed it.
+   * It is the costliest step (about 55 ms for 20 000 facts), so one snapshot computes it once.
+   */
+  effort?: ReturnType<typeof projectTaskEffortBasis>
 }
 
 export type ProjectTaskValuationRequest = Omit<ProjectTaskValuationInput, "currentIndex">
@@ -1077,7 +1082,7 @@ export function taskValuationPerCallUsage(
   input: ProjectTaskValuationRequest,
   route: MarketRangeRoute,
 ): { calls: KnownUsagePerCall[]; complete: boolean } {
-  const effort = projectTaskEffortBasis(input)
+  const effort = input.effort ?? projectTaskEffortBasis(input)
   const usage = projectUsage(effort)
   const sessions = new Map(usage.sessions.map((session) => [session.sessionID, session]))
   const attemptsBySession = new Map<string, AccountingAttempt[]>()
@@ -1265,12 +1270,7 @@ export function taskValuationApplicabilities(
 /** Revalue one deduplicated effort projection from explicitly supplied current product/price pins. */
 export function projectTaskValuation(input: ProjectTaskValuationInput): TaskValuation {
   const currentIndex = CurrentPriceIndexSchema.parse(input.currentIndex)
-  const effort = projectTaskEffortBasis({
-    attempts: input.attempts,
-    progressFacts: input.progressFacts,
-    progressTruncated: input.progressTruncated,
-    truncatedContextSessionIDs: input.truncatedContextSessionIDs,
-  })
+  const effort = input.effort ?? projectTaskEffortBasis(input)
   const usage = projectUsage(effort)
   const costFacts = costContributions({
     attempts: input.attempts,

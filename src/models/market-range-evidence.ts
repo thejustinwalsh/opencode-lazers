@@ -188,7 +188,8 @@ export function readEndpointPricingEvidence(
           .query<RefreshRow, [string]>(
             `SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id,
                     latest_retrieved_at, latest_record_count, error_code, http_status
-             FROM model_endpoint_pricing_refreshes WHERE project_directory=?`,
+             FROM model_endpoint_pricing_refreshes WHERE project_directory=?
+             LIMIT ${ENDPOINT_PRICING_PRODUCTS.length}`,
           )
           .all(projectDirectory)
         const byProduct = new Map(rows.map((row) => [row.product_id, row]))
@@ -258,7 +259,7 @@ export function readEndpointPricingStamp(path: string, projectDirectory: string)
       .query<RefreshRow, [string]>(
         `SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id,
                 latest_retrieved_at, latest_record_count, error_code, http_status
-         FROM model_endpoint_pricing_refreshes WHERE project_directory=? ORDER BY product_id`,
+         FROM model_endpoint_pricing_refreshes WHERE project_directory=? ORDER BY product_id LIMIT ${ENDPOINT_PRICING_PRODUCTS.length}`,
       )
       .all(projectDirectory)
   } finally {

@@ -5,7 +5,13 @@ import { acquireSharedConnection } from "../storage.ts"
 import type { SharedConnection } from "../storage.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
 import { projectDecisionProgressRow } from "./decision-progress-fact.ts"
+import {
+  DECISION_PROGRESS_KINDS,
+  DECISION_PROJECTION_TABLES,
+  decisionProjectionStats,
+} from "./decision-projection-tables.ts"
 import type { DecisionProgressSource } from "./decision-progress-fact.ts"
+import { computeDecisionTasks, inspectDecisionSources } from "./observation-ledger-read.ts"
 
 /**
  * The stored projection behind the Models decision ledger (docs: design/data-handling.md,
@@ -33,10 +39,6 @@ import type { DecisionProgressSource } from "./decision-progress-fact.ts"
  * message_id, payload.
  */
 
-/** Progress kinds a decision fact is built from. */
-export const DECISION_PROGRESS_KINDS = ["step", "usage-snapshot"] as const
-const KINDS_SQL = DECISION_PROGRESS_KINDS.map((kind) => `'${kind}'`).join(",")
-
 /**
  * Rows folded per write transaction and per read page. A unit of work, not a ceiling: the fold
  * keeps paging until the project is caught up. Not measured; it changes only how many
@@ -44,12 +46,9 @@ const KINDS_SQL = DECISION_PROGRESS_KINDS.map((kind) => `'${kind}'`).join(",")
  */
 export const FOLD_BATCH_SIZE = 512
 
+const KINDS_SQL = DECISION_PROGRESS_KINDS.map((kind) => `'${kind}'`).join(",")
 const MODULE = schemaModules["model-decision-projection"]
-const TABLES = {
-  facts: "model_decision_progress",
-  state: "model_decision_progress_state",
-  dirty: "model_decision_progress_dirty",
-} as const
+const TABLES = DECISION_PROJECTION_TABLES
 
 /** Columns the fold reads from a progress row. */
 const SOURCE_COLUMNS =
@@ -62,44 +61,105 @@ type SourceRow = DecisionProgressSource & {
   task_id: string
 }
 
-/** Counters for diagnostics and tests: what the fold and the reads touched. */
-export const decisionProjectionStats = {
-  /** Rows read from runner_progress by folds. */
-  foldSourceRows: 0,
-  /** Rows written to the projection by folds. */
-  foldWrites: 0,
-  /** Projected rows removed because their source row left the projection's kinds or the table. */
-  foldRemovals: 0,
-  /** Fold transactions committed. */
-  foldPages: 0,
-  /** Projected rows read by decision reads. */
-  readProjectionRows: 0,
-  /** runner_progress rows read (and parsed) by decision reads: the tail and the dirty rows. */
-  readSourceRows: 0,
-  reset() {
-    this.foldSourceRows = 0
-    this.foldWrites = 0
-    this.foldRemovals = 0
-    this.foldPages = 0
-    this.readProjectionRows = 0
-    this.readSourceRows = 0
-  },
+/** The source tables the projection reads; it installs only when every one exists. */
+const SOURCE_TABLES = [
+  "tasks",
+  "task_references",
+  "task_classifications",
+  "task_dispositions",
+  "runner_plans",
+  "runner_nodes",
+  "runner_attempts",
+  "runner_transitions",
+  "runner_adoptions",
+  "runner_progress",
+] as const
+
+const hasTable = (db: Database, name: string) =>
+  Boolean(
+    db
+      .query<{ name: string }, [string]>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      )
+      .get(name),
+  )
+
+/**
+ * A task is queued for a re-derive when a row it is derived from changes. `project` and `task`
+ * are SQL expressions over OLD or NEW. Only projects with a state row are queued: without one
+ * every task is derived live, so there is nothing stored to go stale.
+ */
+const queueTask = (project: string, task: string) => `
+        INSERT OR IGNORE INTO ${TABLES.taskDirty}(project_directory,task_id)
+        SELECT ${project}, ${task}
+        WHERE ${task} IS NOT NULL AND EXISTS (
+          SELECT 1 FROM ${TABLES.state} WHERE project_directory=${project} AND dropping=0);`
+
+const viaPlan = (row: "OLD" | "NEW") =>
+  `(SELECT project_directory FROM runner_plans WHERE id=${row}.plan_id)`
+
+/** Triggers that queue the tasks whose source rows change: table, project expression per row. */
+const TASK_TRIGGERS: Array<{
+  table: string
+  project: (row: "OLD" | "NEW") => string
+  task: string
+}> = [
+  { table: "task_references", project: (row) => `${row}.project_directory`, task: "task_id" },
+  { table: "task_classifications", project: (row) => `${row}.project_directory`, task: "task_id" },
+  { table: "task_dispositions", project: (row) => `${row}.project_directory`, task: "task_id" },
+  { table: "runner_nodes", project: viaPlan, task: "task_id" },
+  { table: "runner_attempts", project: viaPlan, task: "task_id" },
+  { table: "runner_transitions", project: viaPlan, task: "task_id" },
+  { table: "runner_adoptions", project: viaPlan, task: "task_id" },
+]
+
+function taskTriggerSQL() {
+  const sql: string[] = []
+  for (const { table, project, task } of TASK_TRIGGERS)
+    for (const event of ["INSERT", "UPDATE", "DELETE"] as const) {
+      const rows = event === "INSERT" ? ["NEW"] : event === "DELETE" ? ["OLD"] : ["NEW", "OLD"]
+      const name = `model_decision_task_${table}_${event.toLowerCase()}`
+      sql.push(
+        `DROP TRIGGER IF EXISTS ${name};
+      CREATE TRIGGER ${name} AFTER ${event} ON ${table} BEGIN${rows
+        .map((row) => queueTask(project(row as "OLD" | "NEW"), `${row}.${task}`))
+        .join("")}
+      END;`,
+      )
+    }
+  // A task body is immutable, so only an update or a delete can change what a stored task says.
+  for (const event of ["UPDATE", "DELETE"] as const) {
+    const name = `model_decision_task_tasks_${event.toLowerCase()}`
+    sql.push(
+      `DROP TRIGGER IF EXISTS ${name};
+      CREATE TRIGGER ${name} AFTER ${event} ON tasks BEGIN${queueTask("OLD.project_directory", "OLD.id")}
+      END;`,
+    )
+  }
+  // A plan's route and body feed the accounting of every attempt and node that names it.
+  sql.push(
+    `DROP TRIGGER IF EXISTS model_decision_task_runner_plans_update;
+      CREATE TRIGGER model_decision_task_runner_plans_update
+      AFTER UPDATE OF body,model,project_directory ON runner_plans BEGIN
+        INSERT OR IGNORE INTO ${TABLES.taskDirty}(project_directory,task_id)
+        SELECT NEW.project_directory, linked.task_id FROM (
+          SELECT task_id FROM runner_nodes WHERE plan_id=NEW.id
+          UNION SELECT task_id FROM runner_attempts WHERE plan_id=NEW.id
+        ) linked WHERE EXISTS (
+          SELECT 1 FROM ${TABLES.state} WHERE project_directory=NEW.project_directory AND dropping=0);
+      END;`,
+  )
+  return sql.join("\n")
 }
 
 /**
- * Tables, indexes and the update/delete triggers. Idempotent; runs on a generation change on the
- * write connection and recreates the triggers so a changed definition takes effect after a reload.
+ * Tables, indexes and the triggers that feed the dirty queues. Idempotent; runs on a generation
+ * change on the write connection and recreates the triggers so a changed definition takes effect
+ * after a reload. Installs only when every source table exists, so a trigger is never missing for
+ * a table that is created later.
  */
 export function installDecisionProjectionSchema(db: Database) {
-  const hasTable = (name: string) =>
-    Boolean(
-      db
-        .query<{ name: string }, [string]>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        )
-        .get(name),
-    )
-  if (!hasTable("runner_progress")) return false
+  if (!SOURCE_TABLES.every((name) => hasTable(db, name))) return false
   db.transaction(() => {
     db.exec(`
       CREATE TABLE IF NOT EXISTS ${TABLES.facts} (
@@ -114,13 +174,46 @@ export function installDecisionProjectionSchema(db: Database) {
       CREATE TABLE IF NOT EXISTS ${TABLES.state} (
         project_directory TEXT PRIMARY KEY,
         folded_seq INTEGER NOT NULL CHECK(folded_seq >= 0),
-        folded_at INTEGER NOT NULL
+        folded_at INTEGER NOT NULL,
+        tasks_folded_rowid INTEGER NOT NULL DEFAULT 0,
+        last_read_at INTEGER NOT NULL DEFAULT 0,
+        dropping INTEGER NOT NULL DEFAULT 0
       ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS ${TABLES.dirty} (
         project_directory TEXT NOT NULL,
         seq INTEGER NOT NULL,
         PRIMARY KEY(project_directory, seq)
       ) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS ${TABLES.tasks} (
+        project_directory TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        task TEXT NOT NULL,
+        notes TEXT NOT NULL,
+        PRIMARY KEY(project_directory, created_at, task_id)
+      ) WITHOUT ROWID;
+      CREATE UNIQUE INDEX IF NOT EXISTS model_decision_task_id
+        ON ${TABLES.tasks}(project_directory, task_id);
+      CREATE TABLE IF NOT EXISTS ${TABLES.taskDirty} (
+        project_directory TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        PRIMARY KEY(project_directory, task_id)
+      ) WITHOUT ROWID;`)
+    // Generation 1 had no task watermark, last-read time or drop mark.
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('${TABLES.state}')`)
+        .all()
+        .map((column) => column.name),
+    )
+    for (const [name, definition] of [
+      ["tasks_folded_rowid", "INTEGER NOT NULL DEFAULT 0"],
+      ["last_read_at", "INTEGER NOT NULL DEFAULT 0"],
+      ["dropping", "INTEGER NOT NULL DEFAULT 0"],
+    ] as const)
+      if (!columns.has(name))
+        db.exec(`ALTER TABLE ${TABLES.state} ADD COLUMN ${name} ${definition}`)
+    db.exec(`
       DROP TRIGGER IF EXISTS model_decision_progress_updated;
       DROP TRIGGER IF EXISTS model_decision_progress_deleted;
       -- A row above the watermark is read live, so only rows already folded are queued. The
@@ -132,7 +225,7 @@ export function installDecisionProjectionSchema(db: Database) {
       BEGIN
         INSERT OR IGNORE INTO ${TABLES.dirty}(project_directory,seq)
         SELECT NEW.project_directory, NEW.seq FROM ${TABLES.state}
-        WHERE project_directory=NEW.project_directory AND folded_seq>=NEW.seq;
+        WHERE project_directory=NEW.project_directory AND folded_seq>=NEW.seq AND dropping=0;
       END;
       CREATE TRIGGER model_decision_progress_deleted
       AFTER DELETE ON runner_progress
@@ -140,10 +233,11 @@ export function installDecisionProjectionSchema(db: Database) {
       BEGIN
         INSERT OR IGNORE INTO ${TABLES.dirty}(project_directory,seq)
         SELECT OLD.project_directory, OLD.seq FROM ${TABLES.state}
-        WHERE project_directory=OLD.project_directory AND folded_seq>=OLD.seq;
+        WHERE project_directory=OLD.project_directory AND folded_seq>=OLD.seq AND dropping=0;
       END;
+      ${taskTriggerSQL()}
     `)
-    if (hasTable("schema_modules"))
+    if (hasTable(db, "schema_modules"))
       db.query(
         `INSERT INTO schema_modules VALUES(?,?,?,?) ON CONFLICT(module)
          DO UPDATE SET generation=excluded.generation,tables_json=excluded.tables_json,installed_at=excluded.installed_at`,
@@ -159,12 +253,7 @@ export function installDecisionProjectionSchema(db: Database) {
 
 /** Install once per connection and declared generation; a reload with a newer generation reruns. */
 export function ensureDecisionProjectionSchema(shared: SharedConnection) {
-  const hasProgress = shared.db
-    .query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='runner_progress'",
-    )
-    .get()
-  if (!hasProgress) return false
+  if (!SOURCE_TABLES.every((name) => hasTable(shared.db, name))) return false
   shared.once(`model-decision-projection@${MODULE.generation}`, (db) => {
     installDecisionProjectionSchema(db)
   })
@@ -178,6 +267,8 @@ export type FoldStats = {
   removed: number
   /** The watermark after the fold; every project row at or below it is projected. */
   foldedSeq: number
+  /** Tasks derived from their source rows and stored. */
+  tasks: number
 }
 
 const upsertFact = (db: Database, project: string, row: SourceRow, stats: FoldStats) => {
@@ -198,8 +289,9 @@ const upsertFact = (db: Database, project: string, row: SourceRow, stats: FoldSt
  */
 function foldPage(db: Database, project: string, batch: number, stats: FoldStats): boolean {
   db.query(
-    `INSERT OR IGNORE INTO ${TABLES.state}(project_directory,folded_seq,folded_at) VALUES(?,0,?)`,
-  ).run(project, Date.now())
+    `INSERT OR IGNORE INTO ${TABLES.state}(project_directory,folded_seq,folded_at,last_read_at)
+     VALUES(?,0,?,?)`,
+  ).run(project, Date.now(), Date.now())
   const watermark = db
     .query<{ folded_seq: number }, [string]>(
       `SELECT folded_seq FROM ${TABLES.state} WHERE project_directory=?`,
@@ -268,6 +360,65 @@ function foldPage(db: Database, project: string, batch: number, stats: FoldStats
 }
 
 /**
+ * One transaction's share of the task projection: the queued tasks and the tasks above the rowid
+ * watermark are derived from their source rows (a few statements per batch, not per task) and
+ * stored; a queued task that no longer exists is removed. Returns whether more work remains.
+ */
+function foldTaskPage(db: Database, project: string, foldBatch: number, stats: FoldStats): boolean {
+  // A task costs far more to derive than a progress row (plan bodies are parsed), so a page holds
+  // fewer of them. 64 is not measured; it only sets how long one write transaction holds the lock.
+  const batch = Math.min(foldBatch, 64)
+  const sources = inspectDecisionSources(db)
+  // A source table that lacks columns means reads derive every task live; nothing to store.
+  if (!sources.statuses.every((source) => source.status === "available")) return false
+  const watermark = db
+    .query<{ tasks_folded_rowid: number }, [string]>(
+      `SELECT tasks_folded_rowid FROM ${TABLES.state} WHERE project_directory=?`,
+    )
+    .get(project)!.tasks_folded_rowid
+  const queued = db
+    .query<{ task_id: string }, [string, number]>(
+      `SELECT task_id FROM ${TABLES.taskDirty} WHERE project_directory=? ORDER BY task_id LIMIT ?`,
+    )
+    .all(project, batch)
+    .map((row) => row.task_id)
+  const tail = db
+    .query<{ rowid: number; id: string }, [string, number, number]>(
+      "SELECT rowid,id FROM tasks WHERE project_directory=? AND rowid>? ORDER BY rowid LIMIT ?",
+    )
+    .all(project, watermark, batch)
+  const ids = [...new Set([...queued, ...tail.map((row) => row.id)])]
+  const computed = new Map(
+    computeDecisionTasks(db, project, ids, sources).map((entry) => [entry.taskID, entry]),
+  )
+  for (const id of ids) {
+    db.query(`DELETE FROM ${TABLES.tasks} WHERE project_directory=? AND task_id=?`).run(project, id)
+    const entry = computed.get(id)
+    if (!entry) continue
+    db.query(
+      `INSERT INTO ${TABLES.tasks}(project_directory,created_at,task_id,task,notes) VALUES(?,?,?,?,?)`,
+    ).run(project, entry.createdAt, id, JSON.stringify(entry.task), JSON.stringify(entry.notes))
+  }
+  for (const id of queued)
+    db.query(`DELETE FROM ${TABLES.taskDirty} WHERE project_directory=? AND task_id=?`).run(
+      project,
+      id,
+    )
+  const next =
+    tail.length >= batch
+      ? tail[tail.length - 1]!.rowid
+      : (db.query<{ rowid: number | null }, []>("SELECT MAX(rowid) AS rowid FROM tasks").get()
+          ?.rowid ?? 0)
+  db.query(`UPDATE ${TABLES.state} SET tasks_folded_rowid=? WHERE project_directory=?`).run(
+    Math.max(watermark, next),
+    project,
+  )
+  stats.tasks += ids.length
+  decisionProjectionStats.foldTasks += ids.length
+  return tail.length >= batch || queued.length >= batch
+}
+
+/**
  * Bring one project's projection current, a page per transaction, yielding between pages. Safe to
  * repeat: with nothing new it reads one empty page and writes the unchanged state row.
  */
@@ -277,13 +428,82 @@ export async function foldDecisionProgress(
   options: { batch?: number; signal?: AbortSignal } = {},
 ): Promise<FoldStats> {
   const batch = options.batch ?? FOLD_BATCH_SIZE
-  const stats: FoldStats = { pages: 0, sourceRows: 0, written: 0, removed: 0, foldedSeq: 0 }
+  const stats: FoldStats = {
+    pages: 0,
+    sourceRows: 0,
+    written: 0,
+    removed: 0,
+    foldedSeq: 0,
+    tasks: 0,
+  }
   for (;;) {
     options.signal?.throwIfAborted()
-    const more = db.transaction(() => foldPage(db, projectDirectory, batch, stats)).immediate()
+    const more = db
+      .transaction(() => {
+        const facts = foldPage(db, projectDirectory, batch, stats)
+        const tasks = foldTaskPage(db, projectDirectory, batch, stats)
+        return facts || tasks
+      })
+      .immediate()
     if (!more) return stats
     await new Promise<void>((resolve) => setImmediate(resolve))
   }
+}
+
+/**
+ * A project's projection is dropped once nobody has read its decision data for this long. The
+ * triggers queue changes only for projects that have a state row, so a project that was folded
+ * once and never read again would otherwise queue every update and delete for as long as it lives;
+ * dropping bounds that, and the next read of the project rebuilds it by the paged first fold. The
+ * fold costs a few milliseconds per 512 rows, paid once by the read that comes back after a week.
+ */
+export const PROJECTION_IDLE_DROP_MS = 7 * 24 * 60 * 60_000
+/** How often an owner looks for idle projections: they only age by days. */
+const SWEEP_INTERVAL_MS = 60 * 60_000
+
+/** Rows deleted per transaction while a projection is dropped; a unit of work, not a ceiling. */
+const DROP_BATCH_SIZE = 5_000
+
+/**
+ * Drop the projections idle past `idleMs`, except those in `keep`. The projection is marked
+ * dropping first, which readers and triggers treat as absent, then its rows go a page per
+ * transaction, then its state row.
+ */
+export async function dropIdleProjections(
+  db: Database,
+  options: { now: number; idleMs: number; keep?: ReadonlySet<string>; signal?: AbortSignal },
+) {
+  const cutoff = options.now - options.idleMs
+  const idle = db
+    .query<{ project_directory: string }, [number]>(
+      `SELECT project_directory FROM ${TABLES.state}
+       WHERE (CASE WHEN last_read_at>0 THEN last_read_at ELSE folded_at END)<?`,
+    )
+    .all(cutoff)
+    .map((row) => row.project_directory)
+    .filter((project) => !options.keep?.has(project))
+  for (const project of idle) {
+    db.query(`UPDATE ${TABLES.state} SET dropping=1 WHERE project_directory=?`).run(project)
+    for (const table of [TABLES.facts, TABLES.tasks])
+      for (;;) {
+        options.signal?.throwIfAborted()
+        const key = table === TABLES.facts ? "seq" : "task_id"
+        const removed = db
+          .query(
+            `DELETE FROM ${table} WHERE project_directory=? AND ${key} IN
+             (SELECT ${key} FROM ${table} WHERE project_directory=? LIMIT ?)`,
+          )
+          .run(project, project, DROP_BATCH_SIZE).changes
+        if (removed < DROP_BATCH_SIZE) break
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+    db.transaction(() => {
+      db.query(`DELETE FROM ${TABLES.dirty} WHERE project_directory=?`).run(project)
+      db.query(`DELETE FROM ${TABLES.taskDirty} WHERE project_directory=?`).run(project)
+      db.query(`DELETE FROM ${TABLES.state} WHERE project_directory=?`).run(project)
+    }).immediate()
+  }
+  return idle
 }
 
 const observationRevision = (db: Database, project: string) =>
@@ -317,6 +537,10 @@ export class DecisionProjectionOwner {
   >()
   private timer: ReturnType<typeof setTimeout> | undefined
   private closed = false
+  private sweeping: Promise<unknown> | undefined
+  private lastSweep = 0
+  /** Per project, when `last_read_at` was last written; it is refreshed about once a minute. */
+  private readonly readRecorded = new Map<string, number>()
   lastError: Error | undefined
 
   constructor(private readonly path: string) {}
@@ -361,6 +585,22 @@ export class DecisionProjectionOwner {
 
   private async pass() {
     const now = Date.now()
+    if (now - this.lastSweep > SWEEP_INTERVAL_MS) {
+      this.lastSweep = now
+      const shared = this.connection()
+      if (ensureDecisionProjectionSchema(shared))
+        this.sweeping = dropIdleProjections(shared.db, {
+          now,
+          idleMs: PROJECTION_IDLE_DROP_MS,
+          keep: new Set(this.active.keys()),
+        })
+          .catch((error: unknown) => {
+            this.lastError = error instanceof Error ? error : new Error(String(error))
+          })
+          .finally(() => {
+            this.sweeping = undefined
+          })
+    }
     for (const [project, entry] of this.active) {
       if (now - entry.lastRead > ACTIVE_IDLE_MS) this.active.delete(project)
       else await this.foldIfMoved(project, entry).catch(() => undefined)
@@ -395,6 +635,7 @@ export class DecisionProjectionOwner {
       return entry.running
     }
     const run = (async () => {
+      await this.sweeping
       do {
         entry.dirty = false
         const shared = this.connection()
@@ -410,6 +651,7 @@ export class DecisionProjectionOwner {
           : null
         if (revision !== null && revision === entry.foldedRevision) return
         try {
+          this.recordRead(shared.db, project)
           await foldDecisionProgress(shared.db, project)
           entry.foldedRevision = revision
           this.lastError = undefined
@@ -425,6 +667,17 @@ export class DecisionProjectionOwner {
     return run
   }
 
+  /** Persist that the project was read (at most once a minute); it is what the idle drop ages. */
+  private recordRead(db: Database, project: string) {
+    const now = Date.now()
+    if (now - (this.readRecorded.get(project) ?? 0) < 60_000) return
+    this.readRecorded.set(project, now)
+    db.query(`UPDATE ${TABLES.state} SET last_read_at=? WHERE project_directory=?`).run(
+      now,
+      project,
+    )
+  }
+
   close() {
     this.closed = true
     clearTimeout(this.timer)
@@ -436,5 +689,3 @@ export class DecisionProjectionOwner {
     this.shared = undefined
   }
 }
-
-export const DECISION_PROJECTION_TABLES = TABLES
