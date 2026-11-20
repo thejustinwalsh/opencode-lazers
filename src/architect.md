@@ -68,7 +68,9 @@ requirements instead of concatenating old specifications. Keep only task-specifi
 constraints; runtime rules and coordination history do not belong in worker tasks.
 Cover the requested rule through its public entry point and relevant project
 configuration. Quality procedures automatically fix formatting and lint
-before checking behavior; use `bun run verify` for LAZERS. Do not create repair
+before checking behavior; use `bun run verify` for LAZERS. The runtime adds
+`--timeout 120000` (a hang guard) to a `bun test` check that has none; write your
+own `--timeout` only to choose a different value. Do not create repair
 turns for mechanically fixable formatting or lint. Keep coordination
 history in plans and reusable worker workflow in worker guidance. Add grounded
 reuse points, pitfalls or research as optional guidance; leave routine choices

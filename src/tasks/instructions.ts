@@ -113,7 +113,7 @@ export function taskInstructions(detail: TaskDetail): string {
         return `${check.id}: ${check.command} (${values.join("; ")})`
       }),
     ) +
-    "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Report only failures that remain after automatic fixes." +
+    "\n\nRun project formatter and linter automatic fixes before these checks, then commit the fixes. In LAZERS use `bun run verify`. Run tests as `bun test --timeout 120000 <files>` (Bun's 5 s per-test default fails correct work under load). Report only failures that remain after automatic fixes." +
     section(
       "Context references",
       proposal.context.map((ref) =>

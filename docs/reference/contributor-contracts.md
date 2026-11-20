@@ -121,7 +121,7 @@ Compare matched work from the same starting revision with the same acceptance cr
 
 ## Development checks
 
-Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Run `bun run verify` for formatting, automatic lint fixes, and type checking. Run `bun test` when you add behavior tests.
+Use strict TypeScript and Bun's native formatter, linter, and typechecker. Keep their command names unshadowed by package scripts. Run `bun run verify` for formatting, automatic lint fixes, and type checking. Run `bun test --timeout 120000 <files>` (or `bun run test <files>`) when you add behavior tests; Bun's 5 s per-test default is not a budget here.
 
 Before you start a project development, preview, documentation, Storybook, application, or networked verification server, follow `$portless-dev-servers`. Route project servers through Portless. One-shot tests without a listening socket are exempt. Use OpenCode Desktop and its service through their supported developer-tool lifecycle.
 
