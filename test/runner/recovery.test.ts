@@ -269,14 +269,17 @@ test("durable outbox survives process death before/after host delivery without d
     const latest = f.store.atomic((db) =>
       db
         .query<{ state: string; payload: string; receipt: string | null }, [string]>(
-          "SELECT state,payload,receipt FROM runner_outbox WHERE plan_id=? ORDER BY rowid DESC LIMIT 1",
+          // Receipts are child rows; the newest one is the last entry of the old history.
+          `SELECT o.state,o.payload,
+             (SELECT r.body FROM runner_outbox_receipts r WHERE r.outbox_id=o.id ORDER BY r.seq DESC LIMIT 1) AS receipt
+           FROM runner_outbox o WHERE o.plan_id=? ORDER BY o.rowid DESC LIMIT 1`,
         )
         .get(f.plan.planID),
     )
     expect(JSON.parse(latest!.payload).status).toBe("accepted")
     // Delivery ends at the host's inbox; consumption is never polled.
     expect(latest?.state).toBe("delivered")
-    expect(JSON.parse(latest!.receipt!).history.at(-1)).toMatchObject({ kind: "host-admitted" })
+    expect(JSON.parse(latest!.receipt!)).toMatchObject({ kind: "host-admitted" })
     expect(state.calls.filter((c) => c.kind === "prompt")).toHaveLength(1)
   }
 }, 20000)
@@ -299,12 +302,14 @@ test("a crash after native admission neither repeats the notice nor loses its de
   const latest = f.store.atomic((db) =>
     db
       .query<{ state: string; receipt: string; message_id: string }, []>(
-        "SELECT state,receipt,message_id FROM runner_outbox ORDER BY rowid DESC LIMIT 1",
+        `SELECT o.state,o.message_id,
+           (SELECT r.body FROM runner_outbox_receipts r WHERE r.outbox_id=o.id ORDER BY r.seq DESC LIMIT 1) AS receipt
+         FROM runner_outbox o ORDER BY o.rowid DESC LIMIT 1`,
       )
       .get()!,
   )
   expect(latest.state).toBe("delivered")
-  expect(JSON.parse(latest.receipt).history.at(-1)).toMatchObject({ kind: "host-admitted" })
+  expect(JSON.parse(latest.receipt)).toMatchObject({ kind: "host-admitted" })
   const state = JSON.parse(readFileSync(join(f.root, "host.json"), "utf8")) as {
     calls: { kind: string; id: string }[]
   }

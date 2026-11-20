@@ -1,6 +1,7 @@
 import { dirname } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { RETENTION_PRESET_DAYS } from "./contract.ts"
+import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
 import {
   classifyPlans,
   previewRetention,
@@ -46,6 +47,10 @@ export type RetentionStatus = {
   fileBytes: number
   /** Space inside the file that deleted rows left behind; reused before the file grows. */
   freeBytes: number
+  /** `incremental` returns free pages as the retention pass runs; `none` needs the one-time compaction. */
+  autoVacuum: AutoVacuum
+  /** Free disk the one-time compaction needs next to the database file. */
+  compactionDiskBytes: number
   presets: Array<{ days: number; rows: number; bytes: number }>
   /** Superseded counters and receipts that age does not apply to. */
   superseded: { rows: number; bytes: number }
@@ -65,6 +70,8 @@ export type RetentionSlice = {
   skipped: WorktreeSkip[]
   fileBytes: number
   freeBytes: number
+  /** Bytes this slice handed back to the filesystem (0 unless the database is incremental). */
+  reclaimedBytes: number
 }
 
 type Dependencies = {
@@ -97,10 +104,13 @@ export class RetentionService {
 
   private sizes() {
     return this.deps.repository.read((db) => {
-      const pragma = (name: string) =>
-        (db.query<Record<string, number>, []>(`PRAGMA ${name}`).get() ?? {})[name] ?? 0
-      const size = pragma("page_size")
-      return { fileBytes: pragma("page_count") * size, freeBytes: pragma("freelist_count") * size }
+      const state = spaceState(db)
+      return {
+        fileBytes: state.pageCount * state.pageSize,
+        freeBytes: state.freelistPages * state.pageSize,
+        autoVacuum: state.autoVacuum,
+        compactionDiskBytes: compactionDiskBytes(state),
+      }
     })
   }
 
@@ -197,6 +207,7 @@ export class RetentionService {
       (run) => repository.read(run),
       { now: asOf, days: input.days, budgetMs: SLICE_MS, batch: BATCH_ROWS },
     )
+    const reclaimedBytes = await this.reclaim(started)
     const worktrees: WorktreeRemoval[] = []
     const skipped: WorktreeSkip[] = []
     let done = slice.done
@@ -214,8 +225,26 @@ export class RetentionService {
       bytes: Object.values(removed).reduce((sum, kind) => sum + kind.bytes, 0),
       worktrees,
       skipped,
+      reclaimedBytes,
       ...this.sizes(),
     }
+  }
+
+  /**
+   * Return free pages to the filesystem in steps of INCREMENTAL_VACUUM_PAGES, each in its own
+   * transaction with a turn of the event loop between, until the slice has used its time. A no-op
+   * on a database that was never compacted once (see vacuum.ts).
+   */
+  private async reclaim(started: number) {
+    const { repository } = this.deps
+    let bytes = 0
+    while (Date.now() - started < SLICE_MS * 2) {
+      const step = repository.atomic((db) => incrementalVacuum(db))
+      if (step === 0) break
+      bytes += step
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    return bytes
   }
 
   /**

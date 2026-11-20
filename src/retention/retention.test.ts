@@ -148,12 +148,6 @@ function setup() {
     )
     outbox.run("o1", receipt.planID, "ses-owner", "m1", "{}", "delivered")
     outbox.run("o2", receipt.planID, "ses-owner", "m2", "{}", "superseded")
-    db.query(
-      "INSERT INTO runner_conflict_scans(id,project_directory,watermark,body,created_at) VALUES(?,?,?,?,?)",
-    ).run("old", directory, 1, "{}", 1000)
-    db.query(
-      "INSERT INTO runner_conflict_scans(id,project_directory,watermark,body,created_at) VALUES(?,?,?,?,?)",
-    ).run("new", directory, 2, "{}", NOW)
   })
   return fixture
 }
@@ -259,7 +253,6 @@ test("the dry run equals the real run; the plan's proofs, latest transition and 
   expect(rows["tool-calls"]?.rows).toBe(5)
   expect(rows.transitions?.rows).toBe(6) // the six old noise events; the newest event stays
   expect(rows.notices?.rows).toBe(2)
-  expect(rows["scan-history"]?.rows).toBe(1)
   expect(rows["recovery-facts"]?.rows).toBeGreaterThan(0)
   expect(preview.plans.retired).toBe(1)
 
@@ -376,6 +369,29 @@ test("work that is not finished, or still waited on, is never retired", () => {
   expect(reasons).toContain("effect is held")
   expect(reasons).toContain("takeover is open")
   expect(reasons).toContain("not finished")
+})
+
+test("notice sizing counts the receipt child rows that go with a delivered notice", async () => {
+  const fixture = setup()
+  const db = handle(fixture)
+  const notices = async () =>
+    (await previewRetention(db, { now: NOW, days: 30 })).kinds.find(
+      (kind) => kind.id === "notices",
+    )!
+  const before = await notices()
+  const body = JSON.stringify({ kind: "delivered", text: "x".repeat(4000) })
+  fixture.store.atomic((write) => {
+    for (let seq = 0; seq < 3; seq++)
+      write
+        .query("INSERT INTO runner_outbox_receipts(outbox_id,seq,kind,body) VALUES('o1',?,?,?)")
+        .run(seq, "delivered", body)
+  })
+  const after = await notices()
+  expect(after.rows).toBe(before.rows)
+  expect(after.bytes - before.bytes).toBe(3 * (body.length + 56))
+  const removed = await purge(fixture, 30)
+  expect(removed.notices?.bytes).toBe(after.bytes)
+  expect(count(db, "SELECT COUNT(*) AS n FROM runner_outbox_receipts WHERE outbox_id='o1'")).toBe(0)
 })
 
 test("progress facts are removed only up to the slowest consumer's cursor", async () => {

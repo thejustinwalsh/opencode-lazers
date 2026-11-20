@@ -68,7 +68,6 @@ export type RetentionKindID =
   | "tool-calls"
   | "transitions"
   | "notices"
-  | "scan-history"
   | "audit-receipts"
   | "change-log"
   | "model-snapshots"
@@ -279,23 +278,10 @@ export const KINDS: Kind[] = [
         table: "runner_outbox",
         where: `plan_id IN ${inPlans} AND state IN ('delivered','superseded')`,
         bind: [ctx.retiredJSON],
+        // Receipt histories are child rows (deleted with the notice by ON DELETE CASCADE); the
+        // legacy `receipt` column is NULL once migrated. 56 bytes is a child row's key and header.
         bytes:
-          "length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,''))+length(session_id)+length(message_id)+length(id)+96",
-      },
-    ],
-  },
-  {
-    id: "scan-history",
-    label: "Conflict scan history",
-    detail: "recorded scans older than the age; nothing reads them",
-    ageIndependent: false,
-    specs: (ctx) => [
-      {
-        table: "runner_conflict_scans",
-        where: "created_at < ?",
-        bind: [ctx.cutoff],
-        bytes: "length(body)+length(id)+length(project_directory)+64",
-        optional: true,
+          "length(payload)+length(COALESCE(metadata,''))+length(COALESCE(receipt,''))+length(session_id)+length(message_id)+length(id)+96+COALESCE((SELECT SUM(length(r.body)+56) FROM runner_outbox_receipts r WHERE r.outbox_id=runner_outbox.id),0)",
       },
     ],
   },

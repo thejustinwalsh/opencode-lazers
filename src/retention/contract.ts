@@ -33,6 +33,8 @@ const Run = z.strictObject({
 const StatusOutput = z.strictObject({
   fileBytes: z.number(),
   freeBytes: z.number(),
+  autoVacuum: z.enum(["none", "full", "incremental"]),
+  compactionDiskBytes: z.number(),
   presets: z.array(z.strictObject({ days: z.number(), rows: z.number(), bytes: z.number() })),
   superseded: z.strictObject({ rows: z.number(), bytes: z.number() }),
   autoDays: Days.nullable(),
@@ -61,6 +63,7 @@ const SliceOutput = z.strictObject({
   skipped: z.array(Skipped),
   fileBytes: z.number(),
   freeBytes: z.number(),
+  reclaimedBytes: z.number(),
 })
 export type RetentionStatusView = z.infer<typeof StatusOutput>
 export type RetentionPreviewView = z.infer<typeof PreviewOutput>
