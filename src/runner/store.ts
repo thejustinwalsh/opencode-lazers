@@ -3076,7 +3076,7 @@ export class RunnerStore {
         .query<ActivityRow, (string | number)[]>(
           `SELECT id,task_id,event,payload,created_at FROM runner_transitions
            WHERE plan_id=? AND task_id=? ${where}
-           ORDER BY id ${filter.newest ? "DESC" : ""} ${filter.limit ? "LIMIT ?" : ""}`,
+           ORDER BY id ${filter.newest ? "desc" : ""} ${filter.limit ? "LIMIT ?" : ""}`,
         )
         .all(planID, taskID, ...binds, ...(filter.limit ? [filter.limit] : [])),
     )
