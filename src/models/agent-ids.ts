@@ -6,9 +6,10 @@ export const LAZERS_AGENTS = [
   { agentID: "architect", label: "Architect" },
   { agentID: "lazers-implementor", label: "Implementor" },
   { agentID: "auditor", label: "Auditor" },
+  { agentID: "lazers-planning", label: "Planning agents" },
 ] as const
 
-const AgentRouteID = z.enum(["architect", "lazers-implementor", "auditor"])
+const AgentRouteID = z.enum(["architect", "lazers-implementor", "auditor", "lazers-planning"])
 type AgentRouteID = z.infer<typeof AgentRouteID>
 
 /**
@@ -26,4 +27,5 @@ export const agentLabels: Record<AgentRouteID, string> = {
   architect: "Architect",
   "lazers-implementor": "Implementor",
   auditor: "Auditor",
+  "lazers-planning": "Planning agents",
 }
