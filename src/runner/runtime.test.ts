@@ -819,6 +819,37 @@ test("active scope amendments durably update the same worker after it fetched ol
   }
 })
 
+// Live LZ-252: a scope instruction journaled after a retained repair was settled by one tick,
+// which then returned; the repair prompt waited 5 minutes for the periodic tick.
+test("a plan step that settles an effect continues the plan in the same scheduler pass", async () => {
+  const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  const planID = f.receipt.planID
+  await f.runtime.command({ requestID: "run", planID, action: "run" }, "owner")
+  await drive(f.runtime, 2)
+  const attempt = f.store.attempts(planID)[0]!
+  await f.runtime.command(
+    {
+      requestID: "allow-test",
+      planID,
+      action: "amend-scope",
+      taskID: attempt.task_id,
+      scopeAdditions: ["escape.txt"],
+      reason: "Keep the reviewed legitimate dependency test.",
+    },
+    "owner",
+  )
+  expect(f.store.effects(planID).find((e) => e.kind === "scope-instruction")?.state).toBe(
+    "intended",
+  )
+  f.completeWorker(attempt.session_id)
+  await f.runtime.tick()
+  expect(f.store.effects(planID).find((e) => e.kind === "scope-instruction")?.state).toBe(
+    "completed",
+  )
+  // The same pass observed the finished worker instead of leaving it for the next one.
+  expect(["verifying", "accepted"]).toContain(f.store.attempts(planID)[0]!.state)
+})
+
 test("failed and lost scope-update replies recover keyed delivery without workers, repairs or wait churn", async () => {
   for (const lostResponse of [false, true]) {
     const f = fixture({ delayed: true, repair: true, taskFiles: [{ name: "a", path: "a.txt" }] })
@@ -5206,7 +5237,8 @@ test("lost worktree creation response resumes its own blocked startup after reco
         "completed",
       )
       expect(f.store.plan(f.receipt.planID)!.state).toBe("running")
-      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "preparing")).toBe(
+      // The settled worktree effect lets the same pass prompt both workers.
+      expect(f.store.attempts(f.receipt.planID).every((item) => item.state === "running")).toBe(
         true,
       )
 
@@ -11861,6 +11893,84 @@ test("a cold Architect with a large context is renewed exactly once", async () =
   expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
 })
 
+// Live LZ-200 (renewal b298778b): the predecessor ran gpt-6.1-sol/high, the shared Architect
+// route was gpt-6.1-sol with no effort. The successor was created on the route, the renewal
+// recorded the predecessor's model, and every tick refused the successor it had created.
+test("a renewal records and creates its successor on the configured Architect route", async () => {
+  const now = 2_000_000_310_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  const configured = { providerID: "openai", id: "subscription" }
+  expect(
+    new ModelMappingStore(f.repository).update({
+      target: { scope: "shared" },
+      persona: "architect",
+      expectedRevision: 0,
+      route: configured,
+    }).status,
+  ).toBe("updated")
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  expect(owner.model).toEqual({ ...configured, variant: "high" })
+  owner.contextTokens = 180_000
+  await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(JSON.parse(renewal.model)).toEqual(configured)
+  expect(f.sessions.get(renewal.successor_session_id)?.model).toEqual(configured)
+  expect(renewal.state).toBe("committed")
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+})
+
+// The recorded live state: a renewal still `creating` whose successor exists on another route.
+// Its identity cannot change, so the renewal defers once and the plan's own step runs again.
+test("a renewal whose existing successor has another identity defers once instead of retrying every tick", async () => {
+  const now = 2_000_000_320_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 180_000
+  const create = f.host.createArchitect
+  f.host.createArchitect = async (input) => {
+    await create(input)
+    f.sessions.get(input.id)!.model = { providerID: "openai", id: "subscription" }
+  }
+  const events = (...names: string[]) =>
+    f.store.atomic((db) =>
+      db
+        .query<{ event: string }, [string]>(
+          "SELECT event FROM runner_transitions WHERE plan_id=? ORDER BY id",
+        )
+        .all(f.receipt.planID)
+        .filter((row) => !names.length || names.includes(row.event)),
+    )
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("deferred")
+  expect(renewal.error).toBe("Native Architect renewal ID belongs to another session or route")
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  expect(events("ARCHITECT_RENEWAL_RECOVERY_FAILED", "PLAN_STEP_FAILED")).toHaveLength(0)
+  expect(events("ARCHITECT_RENEWAL_DEFERRED")).toHaveLength(1)
+  // The predecessor keeps the plan; nothing was archived or transferred.
+  expect(owner.archived).toBe(false)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  // The deferred renewal is not retried onto the foreign successor, and says so once.
+  const after = events().length
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.store.architectRenewal(renewal.id)?.state).toBe("deferred")
+  expect(events("ARCHITECT_RENEWAL_RETRY_BLOCKED")).toHaveLength(1)
+  expect(events().slice(after)).toEqual([])
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+})
+
 test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
   const now = 2_000_000_100_000
   expect(architectIdleWindowMs(5_000)).toBe(5_000)
@@ -15670,6 +15780,52 @@ test("takeover: the worker writes its handoff in time, stops, and the Architect'
     git(worker.workspace, ["merge-base", "--is-ancestor", result.head!, accepted.artifact!]),
   ).toBe("")
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+})
+
+// Live LZ-200: the Architect's takeover result was accepted, then combined verification failed
+// on it. No command reopened the accepted takeover: takeover-submit wanted a running attempt,
+// retained repair a native worker. The Architect now corrects its own work and resubmits.
+test("takeover: an accepted takeover held on combined verification is corrected and resubmitted by the Architect", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.completeWorker(worker.session_id, "interrupted")
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Dead worker" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-1")
+  await drive(f.runtime, 10)
+  const planID = f.receipt.planID
+  const accepted = f.store.attempts(planID).find((a) => a.id === taken.attemptID)!
+  expect(accepted.state).toBe("accepted")
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Combined artifact verification failed',artifact=NULL,version=version+1 WHERE id=?",
+      )
+      .run(planID),
+  )
+
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "Correct the combined failure",
+  ])
+  const corrected = git(worker.workspace, ["rev-parse", "HEAD"])
+  const resubmitted = (await submitTakeover(f, worker.task_id, "submit-2")) as { status: string }
+  expect(resubmitted.status).toBe("takeover-submitted")
+  expect(f.store.plan(planID)!.state).toBe("running")
+  expect(f.store.nodes(planID)[0]!.state).toBe("verifying")
+  await drive(f.runtime, 10)
+  const again = f.store.attempts(planID).find((a) => a.id === taken.attemptID)!
+  expect(again.state).toBe("accepted")
+  expect(again.artifact).toBe(corrected)
+  expect(f.store.nodes(planID)[0]!.artifact).toBe(corrected)
+  expect(f.store.attempts(planID)).toHaveLength(accepted.number)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
 })
 
 test("takeover: a worker that writes nothing is stopped when the window passes; uncommitted work is kept", async () => {

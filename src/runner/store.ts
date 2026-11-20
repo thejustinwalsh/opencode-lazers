@@ -52,6 +52,10 @@ import type {
   TaskPrerequisiteIntegrationRow,
 } from "./prerequisite-proof.ts"
 
+/** Why a renewal deferred: a session under its successor ID is not the one it created. */
+export const RENEWAL_SUCCESSOR_FOREIGN =
+  "Native Architect renewal ID belongs to another session or route"
+
 export type PlanRow = {
   id: string
   owner: string
@@ -2093,10 +2097,17 @@ export class RunnerStore {
         return latest
 
       if (latest && ["deferred", "archive-failed"].includes(latest.state)) {
-        if (latest.model !== input.model || latest.directory !== input.directory) {
-          this.record(latest.anchor_plan_id, null, "ARCHITECT_RENEWAL_RETRY_BLOCKED", {
+        const blocked =
+          latest.error === RENEWAL_SUCCESSOR_FOREIGN
+            ? RENEWAL_SUCCESSOR_FOREIGN
+            : latest.model !== input.model || latest.directory !== input.directory
+              ? "Selected route or directory changed after the prior successor was created"
+              : undefined
+        if (blocked) {
+          // Judged on every plan step: an unchanged refusal is one observation, not one per tick.
+          this.recordOnce(latest.anchor_plan_id, null, "ARCHITECT_RENEWAL_RETRY_BLOCKED", {
             renewalID: latest.id,
-            reason: "Selected route or directory changed after the prior successor was created",
+            reason: blocked,
           })
           return null
         }

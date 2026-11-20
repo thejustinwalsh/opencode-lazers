@@ -9,7 +9,9 @@ Then edit and commit in that workspace and send it with `lz-plan-command
 like any worker result. A failure comes back to you with its checks and
 Fallow findings: fix and `takeover-submit` again, or cancel. Any hold on a
 taken-over task clears the same way: each `takeover-submit` is a fresh
-candidate. If the Architect that took it over is gone, any live Architect
+candidate. That includes your accepted result when the plan later holds on
+it (combined verification): commit the correction in the same workspace and
+`takeover-submit` again. If the Architect that took it over is gone, any live Architect
 continues with `takeover-submit`. A failed takeover attempt is taken over
 again with `lz-request-handoff` on that attempt; the work in its workspace
 carries over.

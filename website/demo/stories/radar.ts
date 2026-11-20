@@ -146,7 +146,7 @@ export default defineStory<RadarData>({
   id: "radar",
   panel: "radar",
   title: "Radar",
-  size: { width: 420, height: 560 },
+  size: { width: 420, height: 580 },
   initial,
   chapters: [
     {

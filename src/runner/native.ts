@@ -25,7 +25,6 @@ import { retainedNativeInputID, resolveNativeInputID } from "./native-input.ts"
 import { NativeWorktreeCreationFailure, nativeWorktreeFailureEvidence } from "./startup-recovery.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { sameProject } from "../project-key.ts"
-import { agentRouteReader, architectSessionModel } from "../models/agent-route-apply.ts"
 
 export type NativeInboxEndpoint = NonNullable<Awaited<ReturnType<typeof Service.discover>>>
 export type NativeInboxClient = {
@@ -1086,11 +1085,9 @@ export function nativeHost(
       )
     },
     async createArchitect(input) {
-      // A LAZERS Architect route (this project's, else the shared one) is the model of every
-      // Architect session LAZERS creates; the model carried from the previous session applies
-      // only when none is set.
-      const configured = agentRouteReader(repository)("architect")
-      const chosen = architectSessionModel(configured, input.model)
+      // The runtime chose this model (the configured Architect route, else the carried one) and
+      // checks the created session against it, so it is created exactly as given.
+      const chosen = input.model
       const model = chosen
         ? {
             id: Model.ID.make(chosen.id),
