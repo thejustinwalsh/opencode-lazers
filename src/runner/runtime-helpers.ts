@@ -154,3 +154,10 @@ export type PlanFallowContext = {
   sourceGeneration: string | undefined
   verificationEpoch: number
 }
+
+export type RunnerTransitionRecord = {
+  id: number
+  task_id: string | null
+  event: string
+  payload: string
+}
