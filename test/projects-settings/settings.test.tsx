@@ -13,7 +13,8 @@ const project = (
   loaded: true,
   pause: null,
   architectContact: null,
-  settings: { limit: null, weight: 1, spendCeilingTokens: null },
+  settings: { limit: null, weight: 1, spendCeilingTokens: null, setupDismissedAt: null },
+  profile: { state: "none" },
   ...over,
 })
 const seed = [
