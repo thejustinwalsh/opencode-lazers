@@ -4,3 +4,4 @@
  * file and importing it below.
  */
 import "./tasks.ts"
+import "./live-history.ts"
