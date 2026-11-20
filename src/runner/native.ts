@@ -898,16 +898,16 @@ export function nativeHost(
         const read = () => client.session.get({ sessionID: Session.ID.make(input.sessionID) })
         const observe = async () => {
           const session = await read()
-          const [active, inventory] = await Promise.all([
-            activeSessionLineage(client, input.sessionID, input.workspace),
-            workerObservation(client, input.sessionID, input.workspace),
-          ])
           const projectMatches = await nativeProjectMatches(
             client,
             repository.projectDirectory,
             input.projectID,
             session.projectID,
           )
+          const [active, inventory] = await Promise.all([
+            activeSessionLineage(client, input.sessionID, input.workspace),
+            workerObservation(client, input.sessionID, input.workspace),
+          ])
           const after = await read()
           if (
             !nativeWorkerIdentityMatches(session, input, after, projectMatches) ||
