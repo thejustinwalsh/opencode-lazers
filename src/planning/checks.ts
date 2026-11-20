@@ -81,3 +81,19 @@ export function rulesAdd(body: PlanningBody): { agent: PlanningAgentId; ruleID: 
   }
   return out
 }
+
+/** The paths a repository map lists: the lines under its "Source files:" heading, `path: names`. */
+export function mapPathsOf(mapText: string): Set<string> {
+  const paths = new Set<string>()
+  let inFiles = false
+  for (const line of mapText.split("\n")) {
+    if (line.startsWith("Source files:")) {
+      inFiles = true
+      continue
+    }
+    if (!inFiles) continue
+    const colon = line.indexOf(": ")
+    if (colon > 0 && !line.startsWith(" ")) paths.add(line.slice(0, colon))
+  }
+  return paths
+}

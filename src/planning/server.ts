@@ -1,3 +1,5 @@
+import { Session } from "@opencode/schema/session"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { timedHooks, timedRpc } from "../diagnostics/stall-probe.ts"
@@ -9,7 +11,13 @@ import { SystemOneRequest, type SystemOneInput } from "../webgpu/system-one.ts"
 import type { TaskRepository } from "../storage.ts"
 import { deciderFor, localDecider, type ExternalGenerate } from "./decision/deciders.ts"
 import { PlanningDecisions } from "./decision/step.ts"
+import { currentRepoMap } from "../context/repo-map-store.ts"
+import type { AgentRouteReader } from "../models/agent-route-apply.ts"
+import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
+import { mapPathsOf } from "./checks.ts"
+import { planningHost, planningModel } from "./host.ts"
 import { planningView } from "./read.ts"
+import { PlanningReviews } from "./reviews.ts"
 import { PlanningRpc } from "./rpc-contract.ts"
 import { PlanningStore } from "./store.ts"
 
@@ -139,4 +147,52 @@ export function registerPlanningRpc(
         })),
       ),
   })
+}
+
+/** The review executor of one project, over the native session API and the repository map. */
+export function createPlanningReviews(
+  ctx: Pick<Plugin.Context, "session">,
+  repository: TaskRepository,
+  routes?: AgentRouteReader,
+): PlanningReviews {
+  return new PlanningReviews({
+    store: new PlanningStore(repository),
+    host: planningHost(ctx),
+    now: Date.now,
+    mapFor: async (directory) => {
+      const map = await currentRepoMap(repository, directory, repository.projectDirectory)
+      return { text: map.text, hash: map.hash, tokens: map.tokens, paths: mapPathsOf(map.text) }
+    },
+    notify: async (sessionID, id, text) => {
+      await Effect.runPromise(
+        ctx.session.synthetic({
+          sessionID: Session.ID.make(sessionID),
+          id: SessionMessage.ID.make(id),
+          text,
+          resume: true,
+          delivery: "queue",
+          description: "LAZERS planning review",
+        }),
+      )
+    },
+    title: (agent, revision) => `Planning ${agent} r${revision}`,
+    model: () => planningModel(routes),
+  })
+}
+
+/**
+ * One participant per project that advances open reviews no caller is waiting on, so a review
+ * cut short by a restart settles and is reported without the Architect doing anything.
+ */
+export function registerPlanningReviewTicks(reviews: PlanningReviews, projectDirectory: string) {
+  return Effect.acquireRelease(
+    Effect.sync(() =>
+      sharedScheduler.register(JSON.stringify(["planning", projectDirectory]), {
+        intervalMs: 1_000,
+        run: () => reviews.tick(),
+        onError: () => undefined,
+      }),
+    ),
+    (registration) => Effect.promise(() => registration.dispose()),
+  )
 }

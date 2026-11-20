@@ -521,6 +521,66 @@ export class PlanningStore {
     )
   }
 
+  /** The open review of this plan, stage and revision, if any. */
+  openReview(planningID: string, stage: ReviewStage, revision: number): ReviewRow | undefined {
+    return this.reviews(planningID).find(
+      (review) => review.stage === stage && review.revision === revision && !review.settledAt,
+    )
+  }
+
+  /** Settled reviews no live caller returned and no notice reported yet. */
+  reviewsToNotify(): ReviewRow[] {
+    return this.repository.read((db) =>
+      select<ReviewRow>(
+        db,
+        "SELECT * FROM planning_reviews WHERE settled_at IS NOT NULL AND returned_at IS NULL AND notified_at IS NULL ORDER BY settled_at, id",
+        [],
+      ),
+    )
+  }
+
+  /** Claims the one notice; a second claimant, in this process or another, gets `false`. */
+  claimNotice(reviewID: string, now: number): boolean {
+    return this.repository.atomic(
+      (db) =>
+        db
+          .query("UPDATE planning_reviews SET notified_at=? WHERE id=? AND notified_at IS NULL")
+          .run(now, reviewID).changes === 1,
+    )
+  }
+
+  /**
+   * Settles a review once: sets `settled_at` only if unset, and then, in the same transaction,
+   * stores the findings and questions and moves the plan out of `in-review`. A second caller
+   * changes nothing and gets `false`.
+   */
+  settleReview(input: {
+    reviewID: string
+    planningID: string
+    now: number
+    findings: FindingRow[]
+    questions: QuestionRow[]
+    /** Where a plan in state `from` goes; a plan in any other state is left as it is. */
+    from?: PlanningState
+    to?: PlanningState
+  }): boolean {
+    return this.repository.atomic((db) => {
+      registerLifecycleTransitions(db)
+      const changed = db
+        .query("UPDATE planning_reviews SET settled_at=? WHERE id=? AND settled_at IS NULL")
+        .run(input.now, input.reviewID).changes
+      if (changed !== 1) return false
+      for (const finding of input.findings) insert(db, "planning_findings", finding, "OR IGNORE")
+      for (const question of input.questions)
+        insert(db, "planning_questions", question, "OR IGNORE")
+      if (input.from && input.to)
+        db.query(
+          "UPDATE planning_plannings SET state=lz_runner_transition('planning',state,?),updated_at=? WHERE id=? AND state=?",
+        ).run(input.to, input.now, input.planningID, input.from)
+      return true
+    })
+  }
+
   updateReview(
     id: string,
     patch: Partial<Pick<ReviewRow, "settledAt" | "returnedAt" | "notifiedAt">>,
