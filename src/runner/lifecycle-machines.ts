@@ -276,8 +276,10 @@ export function registerLifecycleTransitions(db: Database) {
   registered.add(db)
 }
 
-export type PlanningState = keyof typeof planningMachine.config.states
-export type PlanningRunState = keyof typeof planningRunMachine.config.states
+export type PlanningState =
+  "drafted" | "in-review" | "questions-open" | "final-review" | "ready" | "tasked" | "abandoned"
+export type PlanningRunState =
+  "starting" | "running" | "reviewed" | "failed" | "stuck" | "cancelled"
 export type PlanLifecycleState = keyof typeof planStates
 export type AttemptLifecycleState = keyof typeof attemptStates
 export type EffectLifecycleState = keyof typeof effectStates

@@ -95,6 +95,21 @@ export const schemaModules = {
     source: "src/context/repo-map-store.ts",
     tables: ["repo_map_sources", "repo_maps", "repo_map_deliveries"],
   },
+  planning: {
+    generation: 1,
+    source: "src/planning/store.ts",
+    tables: [
+      "planning_decisions",
+      "planning_decision_nodes",
+      "planning_plannings",
+      "planning_revisions",
+      "planning_reviews",
+      "planning_runs",
+      "planning_findings",
+      "planning_questions",
+      "planning_tasked",
+    ],
+  },
   "recovery-handoff": {
     generation: 1,
     source: "src/recovery/handoff/store.ts",
