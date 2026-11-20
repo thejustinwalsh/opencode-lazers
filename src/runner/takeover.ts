@@ -452,7 +452,17 @@ export class TakeoverExecution {
           .run(JSON.stringify({ ...payload, noticeSent: true }), this.deps.now(), row.id)
           .changes === 1,
     )
-    if (!claimed) return
+    if (!claimed) {
+      // Claimed by a call that did not finish (a reload between the claim and the move): whether
+      // the notice went out is unknown and it is never resent. Wait on the handoff window.
+      this.move(
+        this.row(row.id)!,
+        "awaiting-handoff",
+        { noticeError: "notice delivery unknown: an earlier call claimed it and did not finish" },
+        "TAKEOVER_NOTICE_DELIVERED",
+      )
+      return
+    }
     let noticeError: string | undefined
     try {
       await this.deps.host.steerWorker({
