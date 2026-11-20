@@ -1,4 +1,3 @@
-import { isWorkerAgent } from "./worker-agent.ts"
 import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
@@ -16,6 +15,10 @@ import { isRecord } from "./runtime-helpers.ts"
 import { WORKTREE_CLEANUP_FALLBACK_MS, WORKTREE_CLEANUP_LIVE_RETRY_MS } from "./runtime-helpers.ts"
 import type { AdoptionExecution } from "./adoption-execution.ts"
 import { sameVerificationCheckIdentity } from "./runtime-helpers.ts"
+import {
+  cleanupAttemptWorkerOwnership,
+  cleanupWorkerActivityBlockers,
+} from "./cleanup/worker-ownership.ts"
 
 /** A cleanup blocker that the host can observe directly, so a short poll re-checks it. */
 const WORKTREE_CREATION_KINDS = [
@@ -202,46 +205,61 @@ export class WorktreeCleanup {
     if (!attempts.length)
       throw new Error("Owned worktree has no matching attempt; preserve it for reconciliation")
     for (const attempt of attempts) {
-      const session = await this.runtime.host.session(attempt.session_id, { messages: true })
+      const observed = await this.runtime.host.session(attempt.session_id, { messages: true })
       // RunnerHost null is authoritative native not-found: a missing worker has
       // nothing running, so it cannot keep its checkout forever.
+      if (!observed) continue
+      const ownership = await cleanupAttemptWorkerOwnership({
+        runtime: this.runtime,
+        plan,
+        effect,
+        attempt,
+        session: observed,
+        workspace,
+      })
+      const { blockers: ownershipBlockers, session } = ownership
       if (!session) continue
       // Live idle check, read from the host now: the worker is idle when its
       // session is not busy, has no pending input, permission or form, runs no
       // shell inside the worktree and has no active child session.
-      const blockers: string[] = []
-      if (session.id !== attempt.session_id) blockers.push("session identity changed")
-      if (session.projectID !== this.runtime.projectID) blockers.push("project identity changed")
-      if (session.directory !== workspace) blockers.push("worker location changed")
-      if (!isWorkerAgent(session.agent)) blockers.push("session is no longer an implementor")
-      if (session.metadata?.lazersAttemptID !== attempt.id)
-        blockers.push("attempt ownership changed")
-      if (session.busy !== false) blockers.push("worker session is busy")
-      if (session.pendingInput === true) blockers.push("worker has pending input")
-      if (session.observationUnstable) blockers.push("native worker observation is unstable")
-      if ((session.pendingPermissions ?? 0) !== 0)
-        blockers.push("worker has pending permission requests")
-      if ((session.pendingForms ?? 0) !== 0) blockers.push("worker has pending forms")
-      const background = this.runtime.backgroundBlockReason(session)
-      if (background) blockers.push(background)
-      if (
-        !blockers.length &&
-        mergedCheckout &&
-        !allowCancelled &&
-        attempt.state === "accepted" &&
-        this.runtime.host.retireIntegratedWorker
-      )
-        await this.runtime.host.retireIntegratedWorker({
-          projectID: this.runtime.projectID,
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace,
-        })
+      const blockers = await cleanupWorkerActivityBlockers({
+        runtime: this.runtime,
+        attempt,
+        session,
+        workspace,
+        ownershipBlockers,
+        mergedCheckout,
+        allowCancelled,
+      })
       if (blockers.length)
         throw new LiveActivityBlockedError(
           `Owned worktree worker is not idle; preserve it: ${blockers.join("; ")}`,
         )
     }
+  }
+
+  private assertWorktreeQuiescentForRun(
+    run: WorktreeCleanupRun,
+    effect: EffectRow,
+    mergedCheckout = true,
+  ) {
+    return this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
+      this.assertWorktreeQuiescent(
+        run.plan,
+        effect,
+        run.workspace,
+        run.mode === "cancellation",
+        mergedCheckout,
+      ),
+    )
+  }
+
+  private async revalidateWorktreeBeforeRemoval(
+    run: WorktreeCleanupRun,
+    effect: EffectRow,
+  ): Promise<"stop" | "ready"> {
+    await this.assertWorktreeQuiescentForRun(run, effect, false)
+    return this.abandonIfStale(run) ? "stop" : "ready"
   }
 
   /**
@@ -706,10 +724,7 @@ export class WorktreeCleanup {
     const { plan, mode, workspace } = run
     const status = () =>
       this.runtime.timed("cleanup:git.status", () => gitAsync(workspace, ["status", "--porcelain"]))
-    const quiescent = () =>
-      this.runtime.timed("cleanup:assertWorktreeQuiescent", () =>
-        this.assertWorktreeQuiescent(plan, sourceEffect, workspace, mode === "cancellation", true),
-      )
+    const quiescent = () => this.assertWorktreeQuiescentForRun(run, sourceEffect)
     if (await status()) throw new Error(`Owned worktree is dirty; preserve ${workspace}`)
     if (this.abandonIfStale(run)) return "stop"
     const head = await gitAsync(workspace, ["rev-parse", "HEAD"])
@@ -743,7 +758,9 @@ export class WorktreeCleanup {
       !finalGitWorktrees.includes(target)
     )
       throw new Error("Exact owned worktree registration changed before removal; preserve it")
-    return "ready"
+    // Make the exact worker and live-idle observation the last awaited proof
+    // before the non-forced native removal call.
+    return this.revalidateWorktreeBeforeRemoval(run, sourceEffect)
   }
 
   /** Native and Git both report the worktree gone: retire its location and complete the effect. */
