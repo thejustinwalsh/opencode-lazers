@@ -15,6 +15,7 @@ import {
   appendRunnerEffectReceipt,
   CLEANUP_OBSERVATION_SCHEMA,
   RunnerStore,
+  type AttemptRow,
 } from "./store.ts"
 
 const directories: string[] = []
@@ -494,7 +495,8 @@ test("F-S4-1 selected duplicate checks match the audit without execution/scope s
     watermark: version,
     findings: expected,
   })
-  expect(reads).toBe(35)
+  // Before: one parsed body per live task (35). Now the stored fingerprints answer.
+  expect(reads).toBe(0)
   expect(
     f.store.exactContentConflicts([duplicate.id, original.id, original.id]).findings,
   ).toHaveLength(2)
@@ -939,13 +941,18 @@ test("active project reservations preserve priority and attempt order and refres
   insert(high, "high", 1, 300, "verifying")
   insert(foreign, "foreign", 1, 0, "running")
   const expected = () =>
-    f.store
-      .plans()
-      .flatMap((plan) =>
-        f.store
-          .attempts(plan.id)
-          .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state)),
-      )
+    f.store.plans().flatMap((plan) =>
+      f.store
+        .attempts(plan.id)
+        .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+        // The stored column the typed row never exposed; the read no longer selects it.
+        .map(
+          ({
+            project_directory: _project,
+            ...attempt
+          }: AttemptRow & { project_directory?: string }) => attempt,
+        ),
+    )
   expect(f.store.activeProjectAttempts()).toEqual(expected())
   expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual([
     "high",
