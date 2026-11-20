@@ -8,7 +8,7 @@ import { freeEntries, projectedRankRows, shortModelLabel } from "./chart-data.ts
 import { sourceState } from "./comparison-presentation.ts"
 import { parseCSV } from "./csv.ts"
 import { EPOCH_CODING_BENCHMARKS, parseEpochArchive } from "./epoch-parse.ts"
-import { parseModelsDev } from "./models-dev-parse.ts"
+import { parseModelsDev, parseModelsDevStream } from "./models-dev-parse.ts"
 import { createPublicJoin } from "./public-join.ts"
 import { chooseScoreBasis, epochScore } from "./public-score.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
@@ -842,4 +842,66 @@ test("ranking labels drop the vendor prefix and routing suffix; the tooltip keep
   const [row] = projectedRankRows([entry])
   expect(row!.label).toBe("Dots3-Note Preview")
   expect(row!.tooltip[0]).toBe("Dots Studio: Dots3-Note Preview (free)")
+})
+
+async function* chunked(text: string, size: number) {
+  for (let at = 0; at < text.length; at += size) {
+    yield text.slice(at, at + size)
+    await Promise.resolve()
+  }
+}
+
+test("streaming a models.dev body yields exactly the records of parsing it whole, at any chunking", async () => {
+  const payload = modelsDevPayload()
+  // Strings with structural characters and escapes must not confuse the splitter.
+  payload.helicone.models["tricky"] = {
+    id: 'tri"cky,{x}[y]\\',
+    name: 'A "quoted", {braced} [bracketed] name \\ é',
+    modalities: { input: ["text"], output: ["text"] },
+    cost: { input: 1, output: 2 },
+  }
+  const routed = new Set(["opencode-go"])
+  const expected = parseModelsDev(payload, routed)
+  const body = JSON.stringify(payload, null, 1)
+  for (const size of [1, 2, 7, 64, 4096, body.length])
+    expect(await parseModelsDevStream(chunked(body, size), routed)).toEqual(expected)
+  expect(expected.some((r) => r.id === 'tri"cky,{x}[y]\\')).toBe(true)
+})
+
+test("streaming a models.dev body holds only the cap, newest releases first, and matches whole parsing", async () => {
+  const providers = 120
+  const models = 60
+  const payload: Record<string, unknown> = {}
+  for (let p = 0; p < providers; p++)
+    payload[`gateway-${p}`] = {
+      id: `gateway-${p}`,
+      models: Object.fromEntries(
+        Array.from({ length: models }, (_, m) => [
+          `m${m}`,
+          {
+            id: `m${m}`,
+            name: `Model ${m}`,
+            release_date: `20${10 + ((p * 7 + m * 3) % 15)}-0${1 + (m % 9)}-1${m % 10}`,
+            modalities: { input: ["text"], output: ["text"] },
+            cost: { input: 1, output: 2 },
+          },
+        ]),
+      ),
+    }
+  payload["opencode-go"] = { id: "opencode-go", models: { a: { id: "a", name: "A" } } }
+  const routed = new Set(["opencode-go"])
+  const expected = parseModelsDev(payload, routed)
+  // 7 200 gateway records compete for the 2 000 places left.
+  expect(expected).toHaveLength(2_000)
+  expect(expected[0]!.providerID).toBe("opencode-go")
+  const body = JSON.stringify(payload)
+  expect(await parseModelsDevStream(chunked(body, 65_536), routed)).toEqual(expected)
+})
+
+test("a streamed models.dev body that is not a complete object is rejected", async () => {
+  await expect(parseModelsDevStream(chunked("[]", 1))).rejects.toThrow()
+  await expect(parseModelsDevStream(chunked('{"a":{"models":{}', 3))).rejects.toThrow()
+  await expect(parseModelsDevStream(chunked('{"a":{"models":{}}} x', 3))).rejects.toThrow()
+  await expect(parseModelsDevStream(chunked('{"a":{"models":{"b":}}}', 5))).rejects.toThrow()
+  expect(await parseModelsDevStream(chunked(" {} ", 1))).toEqual([])
 })

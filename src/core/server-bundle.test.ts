@@ -92,15 +92,7 @@ test("bundled workers start from the built output", async () => {
     path: fixture.path,
     projectDirectory: fixture.projectDirectory,
     workerURL: pathToFileURL(`${dist}decision-worker.js`),
-    readPriceState: async (routes) => ({
-      settings,
-      index: buildCurrentPriceIndex({
-        sourceStore: { readComparisonSources: () => [] },
-        priceSources: settings,
-        observedRoutes: routes,
-      }),
-      freshness: "current",
-    }),
+    readPriceInputs: async () => ({ policy: settings.policy, openrouter: "configured" }),
   })
   try {
     const overview = await reader.overview(

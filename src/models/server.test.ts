@@ -1293,6 +1293,8 @@ test("registered price reads use the recorded native catalog outcome and preserv
         latestRecordCount: number | null
       }>
     }
+    // A refresh answers with statuses; endpoint pricing bodies come only from an explicit read.
+    expect(refreshed).not.toHaveProperty("endpointPricing")
     const nativeRefresh = refreshed.sources.find(({ source }) => source === "native-catalog")!
     expect(nativeRefresh).toMatchObject({ state: "succeeded", latestRecordCount: 1 })
     const nativeSnapshotID = nativeRefresh.latestSnapshotID!
@@ -3411,45 +3413,37 @@ test("ModelsDecision foreign scope, denial and pre-abort do not read price sourc
   }
 })
 
-test("cancelled ModelsDecision price/evidence read closes its source store and cannot publish", async () => {
+test("a decision read never opens evidence on the main thread and a cancelled one cannot publish", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
   const controller = new AbortController()
   let evidenceOpens = 0
-  let evidenceCloses = 0
   const harness = await register(repository, {
     evidenceReadStoreFactory: (databasePath, directory) => {
       evidenceOpens++
-      const reader = new ModelEvidenceReadStore(databasePath, directory)
-      return {
-        projectDirectory: directory,
-        readComparisonSources(selection) {
-          const sources = reader.readComparisonSources(selection)
-          controller.abort()
-          return sources
-        },
-        close() {
-          evidenceCloses++
-          reader.close()
-        },
-      }
+      return new ModelEvidenceReadStore(databasePath, directory)
     },
   })
   repository.close()
   try {
-    const exit = await Effect.runPromiseExit(
-      harness.methods().overview({
-        sessionID: "ses-native",
-        scope: { projectDirectory },
-        filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-      }),
-      { signal: controller.signal },
-    )
+    const input = {
+      sessionID: "ses-native",
+      scope: { projectDirectory },
+      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
+    }
+    const live = await Effect.runPromiseExit(harness.methods().overview(input))
+    expect(live._tag).toBe("Success")
+    // The worker reads catalogs and endpoint pricing from SQLite itself; only price inputs are
+    // read here, so the main thread opened no evidence store for the decision read.
+    expect(evidenceOpens).toBe(0)
+
+    setTimeout(() => controller.abort(), 0)
+    const exit = await Effect.runPromiseExit(harness.methods().overview(input), {
+      signal: controller.signal,
+    })
     expect(exit._tag).toBe("Failure")
-    expect(evidenceOpens).toBe(1)
-    expect(evidenceCloses).toBe(1)
-    expect(harness.permissionCalls).toHaveLength(1)
+    expect(evidenceOpens).toBe(0)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

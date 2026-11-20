@@ -774,3 +774,40 @@ test("repricing refreshed cached pins changes market value without changing usag
     harness.close()
   }
 })
+
+test("index identity hashes snapshot ids, not catalog bodies, and builds repeat without re-reading them", () => {
+  const padding = (snapshots: FixtureSnapshots) => {
+    for (let index = 0; index < 1900; index++)
+      snapshots.native.records.push({
+        ...snapshots.native.records[0]!,
+        id: `padding-${index}`,
+        name: `Padding ${index}`,
+      })
+  }
+  const harness = makeHarness(padding)
+  try {
+    const route = observation("fixture-model", {}, "high")
+    const first = build(harness, [route])
+    const stringify = JSON.stringify
+    let stringified = 0
+    JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+      const text = stringify(...args)
+      stringified += text?.length ?? 0
+      return text
+    }) as typeof JSON.stringify
+    try {
+      const again = build(harness, [route])
+      expect(again.indexID).toBe(first.indexID)
+    } finally {
+      JSON.stringify = stringify
+    }
+    const padded = fixtureSnapshots()
+    padding(padded)
+    const bodyBytes = stringify(padded).length
+    // Before: every build serialized both whole catalogs (bodyBytes) into the identity hash.
+    expect(bodyBytes).toBeGreaterThan(50_000)
+    expect(stringified).toBeLessThan(bodyBytes / 20)
+  } finally {
+    harness.close()
+  }
+})

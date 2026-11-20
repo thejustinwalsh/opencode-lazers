@@ -20,7 +20,7 @@ import type {
 } from "./source-schema.ts"
 import { ModelEvidenceStore } from "./source-store.ts"
 import { parseEpochArchive } from "./epoch-parse.ts"
-import { parseModelsDev } from "./models-dev-parse.ts"
+import { parseModelsDevStream } from "./models-dev-parse.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -358,6 +358,42 @@ function benchmarkRecords(payload: unknown): {
     citation: safeCitation(meta.citation),
     upstreamSourceURL: safeBenchmarkSourceURL(meta.source_url),
     records,
+  }
+}
+
+/**
+ * The response text in decoded chunks, never more than `limit` bytes. Nothing accumulates here:
+ * the consumer decides what to keep, and each await between chunks yields the event loop.
+ */
+async function* boundedText(
+  response: Response,
+  signal: AbortSignal,
+  limit: number,
+): AsyncGenerator<string> {
+  const length = response.headers.get("content-length")
+  if (length && /^\d+$/.test(length) && Number(length) > limit)
+    throw new SourceFailure("response-too-large")
+  if (!response.body) throw new SourceFailure("malformed-response")
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let bytes = 0
+  try {
+    for (;;) {
+      signal.throwIfAborted()
+      const chunk = await reader.read()
+      if (chunk.done) break
+      bytes += chunk.value.byteLength
+      if (bytes > limit) {
+        await reader.cancel().catch(() => undefined)
+        throw new SourceFailure("response-too-large")
+      }
+      const text = decoder.decode(chunk.value, { stream: true })
+      if (text) yield text
+    }
+    const rest = decoder.decode()
+    if (rest) yield rest
+  } finally {
+    reader.releaseLock()
   }
 }
 
@@ -860,17 +896,20 @@ export class ModelEvidenceRefresher {
       })
       signal.throwIfAborted()
       if (!response.ok) throw httpFailure(response.status)
-      const payload = await boundedJSON(response, requestSignal, MAX_MODELS_DEV_BYTES)
-      signal.throwIfAborted()
-      if (timeout.aborted) throw new SourceFailure("timeout")
-      await yieldTurn()
       let records
       try {
-        records = parseModelsDev(payload, this.routedProviders(native))
+        records = await parseModelsDevStream(
+          boundedText(response, requestSignal, MAX_MODELS_DEV_BYTES),
+          this.routedProviders(native),
+        )
         if (!records.length) throw new Error("no models")
-      } catch {
+      } catch (error) {
+        if (error instanceof SourceFailure) throw error
+        if (requestSignal.aborted) throw error
         throw new SourceFailure("malformed-response")
       }
+      signal.throwIfAborted()
+      if (timeout.aborted) throw new SourceFailure("timeout")
       await yieldTurn()
       return {
         state: "success",

@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import { createModelDecisionReader } from "./decision-read.ts"
-import type { ModelDecisionPriceState } from "./decision-read.ts"
+import { readDecisionPriceState, readPriceIdentity } from "./price-state.ts"
+import type { PriceInputs } from "./price-state.ts"
 import { createThreadedDecisionReader } from "./decision-worker-client.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import {
@@ -92,16 +92,18 @@ function settings() {
   })
 }
 
-const readPriceState: Parameters<typeof createModelDecisionReader>[0]["readPriceState"] = async (
-  routes,
-): Promise<ModelDecisionPriceState> => ({
-  settings: settings(),
-  index: buildCurrentPriceIndex({
-    sourceStore: { readComparisonSources: () => [] },
-    priceSources: settings(),
-    observedRoutes: routes,
-  }),
-  freshness: "current",
+const priceInputs = (): PriceInputs => ({
+  policy: defaultModelPriceSourcePolicy(),
+  openrouter: "configured",
+})
+const readPriceInputs = async () => priceInputs()
+
+/** The in-process equivalent of what the worker does: read price state from the same database. */
+const priceReadersFor = (path: string, projectDirectory: string) => ({
+  readPriceState: async (routes: Parameters<typeof readDecisionPriceState>[0]["routes"]) =>
+    readDecisionPriceState({ path, projectDirectory, inputs: priceInputs(), routes }),
+  readPriceIdentity: async () =>
+    readPriceIdentity({ path, projectDirectory, inputs: priceInputs() }),
 })
 
 function inputFor(projectDirectory: string) {
@@ -148,12 +150,12 @@ test("worker reader returns the same decision data as the synchronous reader", a
   const sync = createModelDecisionReader({
     projectDirectory: fixture.projectDirectory,
     openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
-    readPriceState,
+    ...priceReadersFor(fixture.path, fixture.projectDirectory),
   })
   const threaded = createThreadedDecisionReader({
     path: fixture.path,
     projectDirectory: fixture.projectDirectory,
-    readPriceState,
+    readPriceInputs,
   })
   try {
     const expected = await everything(sync, fixture.projectDirectory)
@@ -179,7 +181,7 @@ test("large-ledger overview keeps the main event loop ticking", async () => {
   const threaded = createThreadedDecisionReader({
     path: fixture.path,
     projectDirectory: fixture.projectDirectory,
-    readPriceState,
+    readPriceInputs,
   })
   const input = inputFor(fixture.projectDirectory)
   let last = performance.now()
@@ -205,7 +207,7 @@ test("large-ledger overview keeps the main event loop ticking", async () => {
     const sync = createModelDecisionReader({
       projectDirectory: fixture.projectDirectory,
       openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
-      readPriceState,
+      ...priceReadersFor(fixture.path, fixture.projectDirectory),
     })
     last = performance.now()
     maxGap = 0
@@ -225,7 +227,7 @@ test("aborting a worker read rejects promptly and leaves the reader usable", asy
   const threaded = createThreadedDecisionReader({
     path: fixture.path,
     projectDirectory: fixture.projectDirectory,
-    readPriceState,
+    readPriceInputs,
   })
   try {
     const controller = new AbortController()
@@ -258,9 +260,9 @@ test("a recently read snapshot is rebuilt in the background when the revision mo
     path: fixture.path,
     projectDirectory: fixture.projectDirectory,
     warmIntervalMs: 50,
-    readPriceState: (routes, signal) => {
+    readPriceInputs: async () => {
       priceReads++
-      return readPriceState(routes, signal)
+      return priceInputs()
     },
   })
   try {
@@ -299,7 +301,7 @@ test("the reader warms only when the revision moved past the cached snapshot", a
     openLedger: () => openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory),
     readPriceState: (routes, signal) => {
       priceReads++
-      return readPriceState(routes, signal)
+      return priceReadersFor(fixture.path, fixture.projectDirectory).readPriceState(routes)
     },
   })
   try {

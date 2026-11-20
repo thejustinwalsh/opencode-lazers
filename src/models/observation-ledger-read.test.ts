@@ -425,3 +425,40 @@ test("missing and legacy databases are reported read-only without creating or mi
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test("a decision capture runs a fixed number of statements however many tasks exist", () => {
+  const countStatements = () => {
+    const fixture = makeLedgerFixture()
+    const statements: string[] = []
+    const prototype = Database.prototype as unknown as {
+      query: (sql: string, ...rest: unknown[]) => unknown
+    }
+    const original = prototype.query
+    prototype.query = function (this: Database, sql: string, ...rest: unknown[]) {
+      statements.push(sql)
+      return original.call(this, sql, ...rest)
+    }
+    const reader = openReadOnlyObservationLedger(fixture.path, fixture.projectDirectory, {
+      cursorSecret: fixture.cursorSecret,
+    })
+    try {
+      const result = reader.readDecision()
+      expect(result.status).toBe("captured")
+      return statements
+    } finally {
+      prototype.query = original
+      reader.close()
+      fixture.close()
+    }
+  }
+  const statements = countStatements()
+  // Before: each task re-selected its body and annotations (SELECT body FROM tasks WHERE ... id=?)
+  // and probed sqlite_master for the annotation table once per task.
+  const perTask = statements.filter(
+    (sql) =>
+      /FROM tasks WHERE project_directory=\? AND id=\?/.test(sql) ||
+      /FROM task_classifications WHERE project_directory=\? AND task_id=\?/.test(sql),
+  )
+  console.log(`decision capture: ${statements.length} statements, ${perTask.length} per-task`)
+  expect(perTask).toEqual([])
+})

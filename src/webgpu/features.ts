@@ -1,7 +1,13 @@
 import { z } from "zod"
 
-/** Negative means never unload when idle. */
-export const DEFAULT_MODEL_KEEP_ALIVE_MS = -1
+/**
+ * How long resident weights stay loaded with no inference when no setting says otherwise.
+ * Negative means never unload when idle. The chat weights are 1.6 GB (manifest MODEL_BYTES) and
+ * the decision weights 0.6 GB, held in GPU and host memory while resident; a reload reads them
+ * from the verified cache, not the network. Fifteen minutes spans a work session's gaps between
+ * questions and is one of the choices the settings list already offers. A saved setting wins.
+ */
+export const DEFAULT_MODEL_KEEP_ALIVE_MS = 15 * 60_000
 
 export const FeatureSettings = z.strictObject({
   enabled: z.boolean(),

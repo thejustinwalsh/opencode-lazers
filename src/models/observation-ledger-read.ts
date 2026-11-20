@@ -14,7 +14,8 @@ import type { AccountingAttempt, AccountingRoute } from "../trajectory/accountin
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import type { AdoptionRow, AttemptRow, PlanRow, ProgressRow } from "../runner/store.ts"
-import { readTaskClassification } from "../tasks/classification.ts"
+import { classificationSnapshotFor } from "../tasks/classification.ts"
+import type { ClassificationAnnotationRow } from "../tasks/classification.ts"
 import {
   OBSERVATION_LEDGER_CATALOG,
   OBSERVATION_LEDGER_TASK_KINDS,
@@ -687,13 +688,25 @@ function readRunnerRows(
   }
 }
 
-/** The effective classification of every task whose immutable body is readable. */
+/**
+ * The effective classification of every task whose immutable body is readable. The bodies and
+ * the annotation rows are already in memory from the capture, so each body is parsed once and
+ * no per-task query runs.
+ */
 function readClassificationSnapshots(
-  db: Database,
   projectDirectory: string,
   tasks: RawTask[],
+  classifications: readonly Record<string, unknown>[],
+  classificationTable: boolean,
   notes: string[],
 ) {
+  const annotationsByTask = new Map<string, ClassificationAnnotationRow[]>()
+  for (const row of classifications) {
+    const annotation = row as unknown as ClassificationAnnotationRow
+    const rows = annotationsByTask.get(annotation.task_id)
+    if (rows) rows.push(annotation)
+    else annotationsByTask.set(annotation.task_id, [annotation])
+  }
   const snapshots = new Map<string, TaskClassificationSnapshot | null>()
   for (const row of tasks) {
     let parsed: TaskSpec | null = null
@@ -715,9 +728,13 @@ function readClassificationSnapshots(
       continue
     }
     try {
-      const result = readTaskClassification(db, projectDirectory, parsed.id)
-      snapshots.set(row.id, result?.classification ?? null)
-      if (!result) notes.push(`Task ${row.id} classification metadata is unavailable.`)
+      snapshots.set(
+        row.id,
+        classificationSnapshotFor(
+          parsed,
+          classificationTable ? (annotationsByTask.get(row.id) ?? []) : [],
+        ),
+      )
     } catch {
       snapshots.set(row.id, null)
       notes.push(`Task ${row.id} classification history is invalid or unavailable.`)
@@ -829,7 +846,13 @@ function readCaptureRows(
       : {}),
   }
 
-  const snapshots = readClassificationSnapshots(db, projectDirectory, tasks, notes)
+  const snapshots = readClassificationSnapshots(
+    projectDirectory,
+    tasks,
+    classifications,
+    tableInfo.task_classifications!.status === "available",
+    notes,
+  )
 
   options.signal?.throwIfAborted()
   const fingerprint = fingerprintOf({

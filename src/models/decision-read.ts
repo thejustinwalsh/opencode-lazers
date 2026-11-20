@@ -79,6 +79,11 @@ export type ModelDecisionReaderDependencies = {
     routes: readonly CurrentPriceApplicability[],
     signal?: AbortSignal,
   ): Promise<ModelDecisionPriceState>
+  /**
+   * Fingerprint of everything a price state derives from, read without evidence bodies. A
+   * snapshot keeps it instead of the evidence; absent, it is derived from a full price state.
+   */
+  readPriceIdentity?(signal?: AbortSignal): Promise<string>
 }
 
 function readCurrentDecisionRevision(dependencies: ModelDecisionReaderDependencies) {
@@ -138,7 +143,8 @@ type DecisionSnapshot = {
   context: ModelDecisionContext
   sourceRevision: number | null
   routes: CurrentPriceApplicability[]
-  priceState: ModelDecisionPriceState
+  /** Identity of the price state this was built from; the evidence itself is not retained. */
+  priceIdentity: string
   inputFingerprint: string
   rows: ModelDecisionRow[]
   configurations: ModelDecisionConfiguration[]
@@ -187,6 +193,18 @@ function endpointPricingIdentity(endpointPricing: EndpointPricingRead | undefine
       snapshotGeneration: scenario.snapshot?.generation ?? null,
     })),
   }
+}
+
+/** The fingerprint of a full price state, for readers that cannot read one without bodies. */
+function priceStateIdentity(state: ModelDecisionPriceState) {
+  return fingerprint({
+    indexID: state.index.indexID,
+    freshness: state.freshness,
+    settings: state.settings,
+    catalog: modelIdentitySourceIdentity(state.identityCatalogSource),
+    native: modelIdentitySourceIdentity(state.identityNativeSource),
+    endpoint: endpointPricingIdentity(state.endpointPricing),
+  })
 }
 
 function modelIdentitySourceIdentity(source: ModelEvidenceComparisonSourceRead | undefined) {
@@ -1311,6 +1329,7 @@ function buildSnapshotData(
   input: ModelDecisionReadInput,
   capture: ObservationLedgerDecisionCapture,
   priceState: ModelDecisionPriceState,
+  priceIdentity: string,
   routes: CurrentPriceApplicability[],
   signal?: AbortSignal,
 ): DecisionSnapshot {
@@ -1413,7 +1432,7 @@ function buildSnapshotData(
     context,
     sourceRevision: capture.sourceRevision,
     routes,
-    priceState,
+    priceIdentity,
     inputFingerprint,
     rows,
     configurations: rows.map((row) => row.configuration),
@@ -1477,6 +1496,7 @@ function unavailableSnapshot(
   input: ModelDecisionReadInput,
   result: Exclude<ObservationLedgerDecisionRead, ObservationLedgerDecisionCapture>,
   priceState: ModelDecisionPriceState,
+  priceIdentity: string,
 ): DecisionSnapshot {
   const reason = result.reason
   const context = contextFor({
@@ -1501,7 +1521,7 @@ function unavailableSnapshot(
     context,
     sourceRevision: result.sourceRevision,
     routes: [],
-    priceState,
+    priceIdentity,
     inputFingerprint: fingerprint({ scope: input.scope, filters: input.filters }),
     rows: [],
     configurations: [],
@@ -1747,19 +1767,18 @@ export function createModelDecisionReader(
     signal?.throwIfAborted()
     if (snapshot.sourceRevision === null) return false
     if (readCurrentDecisionRevision(dependencies) !== snapshot.sourceRevision) return false
-    const current = await dependencies.readPriceState(snapshot.routes, signal)
+    const current = dependencies.readPriceIdentity
+      ? await dependencies.readPriceIdentity(signal)
+      : priceStateIdentity(await dependencies.readPriceState(snapshot.routes, signal))
     signal?.throwIfAborted()
-    return (
-      current.index.indexID === snapshot.priceState.index.indexID &&
-      current.freshness === snapshot.priceState.freshness &&
-      stable(current.settings) === stable(snapshot.priceState.settings) &&
-      stable(modelIdentitySourceIdentity(current.identityCatalogSource)) ===
-        stable(modelIdentitySourceIdentity(snapshot.priceState.identityCatalogSource)) &&
-      stable(modelIdentitySourceIdentity(current.identityNativeSource)) ===
-        stable(modelIdentitySourceIdentity(snapshot.priceState.identityNativeSource)) &&
-      stable(endpointPricingIdentity(current.endpointPricing)) ===
-        stable(endpointPricingIdentity(snapshot.priceState.endpointPricing))
-    )
+    return current === snapshot.priceIdentity
+  }
+
+  /** Identity first, then state: evidence that moves in between reads as stale, never as current. */
+  const readPrice = async (routes: CurrentPriceApplicability[], signal?: AbortSignal) => {
+    const earlier = await dependencies.readPriceIdentity?.(signal)
+    const priceState = await dependencies.readPriceState(routes, signal)
+    return { priceState, priceIdentity: earlier ?? priceStateIdentity(priceState) }
   }
 
   const createSnapshot = async (
@@ -1776,9 +1795,9 @@ export function createModelDecisionReader(
     }
     signal?.throwIfAborted()
     if (result.status !== "captured") {
-      const priceState = await dependencies.readPriceState([], signal)
+      const { priceState, priceIdentity } = await readPrice([], signal)
       signal?.throwIfAborted()
-      return unavailableSnapshot(input, result, priceState)
+      return unavailableSnapshot(input, result, priceState, priceIdentity)
     }
     const { selectedTasks } = filteredTasks(result, input)
     const effort = projectTaskEffortBasis({
@@ -1790,9 +1809,9 @@ export function createModelDecisionReader(
     const routes = collectRoutes(result, selectedTasks, effort.usage.sessions)
     if (routes.length > 4_000)
       throw new Error("Decision route coverage exceeds the 4000 exact-route pricing bound")
-    const priceState = await dependencies.readPriceState(routes, signal)
+    const { priceState, priceIdentity } = await readPrice(routes, signal)
     signal?.throwIfAborted()
-    const snapshot = buildSnapshotData(input, result, priceState, routes, signal)
+    const snapshot = buildSnapshotData(input, result, priceState, priceIdentity, routes, signal)
     signal?.throwIfAborted()
     return snapshot
   }

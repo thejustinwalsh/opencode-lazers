@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { acquireSharedConnection } from "../storage.ts"
+import { budgetFromEnv, sharedByteLru } from "./byte-lru.ts"
 
 import {
   ENDPOINT_PRICING_PRODUCTS,
@@ -15,6 +16,18 @@ import type {
 } from "./endpoint-pricing.ts"
 
 const MAX_ENDPOINT_SNAPSHOT_BYTES = 4 * 1024 * 1024
+
+/**
+ * Parsed endpoint pricing snapshots by project and immutable id, shared by every plugin copy.
+ * Each is at most MAX_ENDPOINT_SNAPSHOT_BYTES of text and there is one per product scenario
+ * (a handful), so 16 MiB holds the current set with room for a refresh in flight.
+ * Tune with LAZERS_ENDPOINT_CACHE_MIB.
+ */
+const parsedEndpointSnapshots = sharedByteLru<EndpointPricingSnapshot>(
+  "model-endpoint-pricing-snapshots",
+  budgetFromEnv("LAZERS_ENDPOINT_CACHE_MIB", 16),
+)
+export const clearParsedEndpointSnapshotCache = () => parsedEndpointSnapshots.clear()
 
 type RefreshRow = {
   product_id: EndpointPricingProductID
@@ -102,14 +115,20 @@ function readSnapshot(
     .get(projectDirectory, snapshotID)
   if (!row) return null
   if (row.body_bytes > MAX_ENDPOINT_SNAPSHOT_BYTES) return null
-  const body = db
-    .query<{ body: string }, [string, string, number]>(
-      `SELECT body FROM model_endpoint_pricing_snapshots
-       WHERE project_directory=? AND snapshot_id=? AND length(CAST(body AS BLOB))<=?`,
-    )
-    .get(projectDirectory, snapshotID, MAX_ENDPOINT_SNAPSHOT_BYTES)?.body
-  if (body === undefined) return null
-  const snapshot = EndpointPricingSnapshotSchema.parse(JSON.parse(body))
+  // Snapshots are immutable by id: parse once, then validate only the row's metadata.
+  const cacheKey = `${projectDirectory}\u0000${snapshotID}\u0000${row.generation}:${row.record_count}:${row.body_bytes}`
+  let snapshot = parsedEndpointSnapshots.get(cacheKey)
+  if (!snapshot) {
+    const body = db
+      .query<{ body: string }, [string, string, number]>(
+        `SELECT body FROM model_endpoint_pricing_snapshots
+         WHERE project_directory=? AND snapshot_id=? AND length(CAST(body AS BLOB))<=?`,
+      )
+      .get(projectDirectory, snapshotID, MAX_ENDPOINT_SNAPSHOT_BYTES)?.body
+    if (body === undefined) return null
+    snapshot = EndpointPricingSnapshotSchema.parse(JSON.parse(body))
+    parsedEndpointSnapshots.set(cacheKey, snapshot, row.body_bytes)
+  }
   if (
     snapshot.snapshotID !== row.snapshot_id ||
     snapshot.projectDirectory !== row.project_directory ||
@@ -220,6 +239,28 @@ export function readEndpointPricingEvidence(
       .deferred()
     signal?.throwIfAborted()
     return aggregate(scenarios)
+  } finally {
+    shared.release()
+  }
+}
+
+/**
+ * What identifies the retained endpoint pricing without reading any snapshot body: the refresh
+ * rows (state, generation, latest snapshot id). Snapshots are immutable by id, so equal rows
+ * mean equal evidence.
+ */
+export function readEndpointPricingStamp(path: string, projectDirectory: string): RefreshRow[] {
+  const shared = acquireSharedConnection(path, "readonly")
+  try {
+    const db = shared.db
+    if (!tableExists(db, "model_endpoint_pricing_refreshes")) return []
+    return db
+      .query<RefreshRow, [string]>(
+        `SELECT product_id, state, generation, started_at, completed_at, latest_snapshot_id,
+                latest_retrieved_at, latest_record_count, error_code, http_status
+         FROM model_endpoint_pricing_refreshes WHERE project_directory=? ORDER BY product_id`,
+      )
+      .all(projectDirectory)
   } finally {
     shared.release()
   }

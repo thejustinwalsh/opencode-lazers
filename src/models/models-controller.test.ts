@@ -12,10 +12,15 @@ const vite = await createServer({
   appType: "custom",
 })
 afterAll(() => vite.close())
-const { modelsSnapshotKey, recallModelsSnapshot, rememberModelsSnapshot, resetModelsSnapshots } =
-  (await vite.ssrLoadModule(
-    "/src/models/models-controller.ts",
-  )) as typeof import("./models-controller.ts")
+const {
+  modelsSnapshotBudget,
+  modelsSnapshotKey,
+  recallModelsSnapshot,
+  rememberModelsSnapshot,
+  resetModelsSnapshots,
+} = (await vite.ssrLoadModule(
+  "/src/models/models-controller.ts",
+)) as typeof import("./models-controller.ts")
 
 const filters = (persona: ModelDecisionFilters["persona"] = null): ModelDecisionFilters => ({
   persona,
@@ -74,4 +79,24 @@ test("the cache is bounded and drops the least recently updated project first", 
   expect(recallModelsSnapshot("project-1", filters())).toBeUndefined()
   expect(recallModelsSnapshot("project-2", filters())).toBeDefined()
   expect(recallModelsSnapshot("project-13", filters())).toBeDefined()
+})
+
+test("retained snapshots are bounded by bytes, keeping the newest and dropping the oldest first", () => {
+  const size = JSON.stringify(snapshot("project-size")).length * 2
+  const original = modelsSnapshotBudget.bytes
+  // Room for two snapshots of this size: the third evicts the first, however few there are.
+  modelsSnapshotBudget.bytes = size * 2 + 16
+  try {
+    for (const key of ["a", "b", "c"]) rememberModelsSnapshot(snapshot(`project-${key}`))
+    expect(recallModelsSnapshot("project-a", filters())).toBeUndefined()
+    expect(recallModelsSnapshot("project-b", filters())).toBeDefined()
+    expect(recallModelsSnapshot("project-c", filters())).toBeDefined()
+    // A snapshot larger than the whole budget is still served: the newest never evicts itself.
+    modelsSnapshotBudget.bytes = 1
+    rememberModelsSnapshot(snapshot("project-d"))
+    expect(recallModelsSnapshot("project-d", filters())).toBeDefined()
+    expect(recallModelsSnapshot("project-c", filters())).toBeUndefined()
+  } finally {
+    modelsSnapshotBudget.bytes = original
+  }
 })

@@ -38,7 +38,9 @@ import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
 import type { TaskValuationIndexReader, TaskValuationProvider } from "./task-valuation.ts"
-import { createThreadedDecisionReader } from "./decision-worker-client.ts"
+import { acquireDecisionWorker } from "./decision-worker-registry.ts"
+import { nativeCatalogAccess, priceIndexFromSources } from "./price-state.ts"
+import type { PriceInputs } from "./price-state.ts"
 import {
   MODELS_DECISION_CONTRACT_VERSION,
   ModelDecisionReadInputSchema,
@@ -168,33 +170,6 @@ async function configuredAccess(ctx: ModelsContext, source: ModelPriceSource, si
   }
 }
 
-/** OpenCode quotes use an authorized, recorded native catalog read, not its execution login. */
-function nativeCatalogAccess(
-  source: ModelEvidenceComparisonSourceRead | undefined,
-): "configured" | "unknown" {
-  const snapshot = source?.snapshot
-  const refresh = source?.refresh
-  if (
-    source?.storage !== "ready" ||
-    source.snapshotState !== "available" ||
-    snapshot?.source !== "native-catalog" ||
-    snapshot.records.length === 0 ||
-    !refresh ||
-    refresh.state === "never" ||
-    refresh.generation === 0 ||
-    refresh.latestSnapshotID !== snapshot.snapshotID ||
-    refresh.latestRetrievedAt !== snapshot.retrievedAt ||
-    refresh.latestRecordCount !== snapshot.records.length
-  )
-    return "unknown"
-
-  const matchingOutcome =
-    refresh.state === "succeeded"
-      ? refresh.generation === snapshot.generation
-      : refresh.generation > snapshot.generation
-  return matchingOutcome ? "configured" : "unknown"
-}
-
 function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: string) {
   return new ModelPriceSourceSettingsStore(
     {
@@ -205,27 +180,6 @@ function createPriceSourceSettingsStore(ctx: ModelsContext, projectDirectory: st
     },
     projectDirectory,
   )
-}
-
-function priceIndexFromSources(input: {
-  sources: readonly ModelEvidenceComparisonSourceRead[]
-  policy: ModelPriceSourcePolicy
-  openrouter: ModelPriceSourceSettings["access"]["openrouter"]
-  routes: readonly CurrentPriceApplicability[]
-}) {
-  const opencode = nativeCatalogAccess(
-    input.sources.find((source) => source.source === "native-catalog"),
-  )
-  const settings = ModelPriceSourceSettingsSchema.parse({
-    policy: input.policy,
-    access: { openrouter: input.openrouter, opencode, "models-dev": "configured" as const },
-  })
-  const index = buildCurrentPriceIndex({
-    sourceStore: { readComparisonSources: () => [...input.sources] },
-    priceSources: settings,
-    observedRoutes: input.routes,
-  })
-  return { settings, opencode, index }
 }
 
 function createModelsPriceIndexReader(
@@ -360,71 +314,30 @@ export function registerModelsServer(
   }
   const failure = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 
-  /** Price sources are global, so every project's decision read prices with this location's. */
-  const readPriceState = async (
-    routes: readonly CurrentPriceApplicability[],
-    signal?: AbortSignal,
-  ) => {
+  /**
+   * Price sources are global, so every project's decision read prices with whichever location
+   * answers. Only the OpenCode-owned inputs are read here; the decision worker reads all
+   * evidence from SQLite itself, so no catalog or snapshot body is rebuilt or cloned per request.
+   */
+  const readPriceInputs = async (signal?: AbortSignal): Promise<PriceInputs> => {
     signal?.throwIfAborted()
     const [policy, openrouter] = await Promise.all([
       priceSourceSettings.read(signal),
       configuredAccess(ctx, "openrouter", signal ?? new AbortController().signal),
     ])
     signal?.throwIfAborted()
-    const state = withEvidenceReadStore((store) => {
-      const sources = store.readComparisonSources()
-      const { settings, opencode, index } = priceIndexFromSources({
-        sources,
-        policy,
-        openrouter,
-        routes,
-      })
-      return {
-        settings,
-        opencode,
-        index,
-        sources,
-        freshness: currentPriceIndexFreshness(index, sources),
-      }
-    })
-    const endpointPricing = readEndpointPricingEvidence(path, projectDirectory, signal)
-    signal?.throwIfAborted()
-    return {
-      settings: state.settings,
-      index: state.index,
-      endpointPricing,
-      identityCatalogSource: state.sources.find((source) => source.source === "openrouter-models"),
-      identityNativeSource: state.sources.find((source) => source.source === "native-catalog"),
-      sources: state.sources,
-      freshness: state.freshness,
-      note: `Ordered source access: OpenRouter ${openrouter}; OpenCode ${state.opencode}. ${state.index.pins.length ? "Quotes are pinned to the selected cached whole-model sources." : "No applicable configured cached quote is available."}`,
-    }
+    return { policy, openrouter }
   }
 
   return Effect.gen(function* () {
-    const decisionReader = createThreadedDecisionReader({ path, projectDirectory, readPriceState })
-    // Readers for the other projects' checkouts, started on first use and closed with this scope.
-    const otherReaders = new Map<string, ReturnType<typeof createThreadedDecisionReader>>()
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        for (const reader of otherReaders.values()) reader.close()
-        otherReaders.clear()
-      }),
-    )
+    // One decision worker per database per process, shared by every location's registration.
+    const lease = acquireDecisionWorker({ path, readPriceInputs })
+    yield* Effect.addFinalizer(() => Effect.sync(() => lease.release()))
+    const decisionReader = lease.reader(projectDirectory)
     const readerFor = (unit: ProjectUnit) => {
       if (canonicalPath(unit.directory) === canonicalPath(projectDirectory))
         return { reader: decisionReader, directory: projectDirectory }
-      let reader = otherReaders.get(unit.directory)
-      if (!reader)
-        otherReaders.set(
-          unit.directory,
-          (reader = createThreadedDecisionReader({
-            path,
-            projectDirectory: unit.directory,
-            readPriceState,
-          })),
-        )
-      return { reader, directory: unit.directory }
+      return { reader: lease.reader(unit.directory), directory: unit.directory }
     }
     /**
      * The all-projects Models reads: the caller's session is checked, and no permission is
@@ -439,7 +352,7 @@ export function registerModelsServer(
         registry.close()
       }
     }
-    if (options.prewarmDecision) {
+    if (options.prewarmDecision && lease.claimPrewarm(projectDirectory)) {
       // Build the default snapshot once the service has settled, so the first open after a
       // start or reload reads a cached one. The worker keeps it current from then on.
       const prewarm = setTimeout(() => {
@@ -735,7 +648,10 @@ export function registerModelsServer(
               }
             }
             return ModelEvidenceOutputSchema.parse(
-              await withEvidenceStoreAsync(async (store) => store.read()),
+              // Statuses only: endpoint pricing bodies are returned when the evidence is requested.
+              await withEvidenceStoreAsync(async (store) =>
+                store.read({}, { endpointPricing: false }),
+              ),
             )
           },
           catch: failure,
