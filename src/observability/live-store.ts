@@ -804,12 +804,26 @@ export class LiveReadStore {
         const concern = row.node_state
           ? openConcerns(db, this.projectDirectory, { taskID: row.task_id })
           : []
+        // One point read: the backfill's watermark above the attempt's oldest row.
+        let indexing = false
+        try {
+          indexing =
+            db
+              .query<{ one: number }, [string, string]>(
+                `SELECT 1 AS one FROM runner_progress_display_backfill b
+                  WHERE b.below_seq > (SELECT MIN(seq) FROM runner_progress WHERE project_directory=? AND attempt_id=?)`,
+              )
+              .get(this.projectDirectory, row.id) !== null
+        } catch {
+          // A database older than the display table has nothing to index.
+        }
         return {
           id: row.id,
           number: row.number,
           state: row.state,
           startedAt: row.started_at,
           toolCount: row.tool_count,
+          ...(indexing ? { historyIndexing: true as const } : {}),
           ...(model.success ? { model: model.data } : {}),
           summary: readAttemptSummary(db, this.projectDirectory, row.id),
           ...(concern.length

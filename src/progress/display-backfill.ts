@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { workIsActive } from "../retention/store.ts"
 import type { TaskRepository } from "../storage.ts"
+import { DISPLAY_VERSION } from "./display.ts"
 import { writeProgressDisplay, type StoredProgress } from "./display-store.ts"
 
 /**
@@ -11,8 +12,9 @@ import { writeProgressDisplay, type StoredProgress } from "./display-store.ts"
  *        [ no display yet, filled newest first ] [ every row has its display ]
  * ```
  *
- * One watermark row records `below_seq`: every progress row at or above it has its display (the
- * writer stores it with the row), so only the rows under it need work. The install sets it to
+ * One watermark row records `below_seq`: every progress row at or above it has its display at the
+ * current `DISPLAY_VERSION` (the writer stores it with the row), so only the rows under it need work.
+ * A new version resets the watermark at install and the backfill rewrites the older rows. The install sets it to
  * the highest `seq` plus one; each page of the backfill reads the next rows downward, writes
  * their display and lowers the watermark in the same small transaction; a restart resumes from
  * the stored value. A reader needs no coordination: it sees the display rows that exist, newest
@@ -21,14 +23,28 @@ import { writeProgressDisplay, type StoredProgress } from "./display-store.ts"
 const PAGE_ROWS = 100
 
 export function installProgressDisplayBackfill(db: Database) {
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(runner_progress_display_backfill)")
+    .all()
+    .map((column) => column.name)
+  if (columns.length > 0 && !columns.includes("version"))
+    db.exec("DROP TABLE runner_progress_display_backfill")
   db.exec(`
     CREATE TABLE IF NOT EXISTS runner_progress_display_backfill (
       only_row INTEGER PRIMARY KEY CHECK(only_row=1),
-      below_seq INTEGER NOT NULL
+      below_seq INTEGER NOT NULL,
+      version INTEGER NOT NULL
     );
-    INSERT OR IGNORE INTO runner_progress_display_backfill(only_row,below_seq)
-      SELECT 1,COALESCE(MAX(seq),0)+1 FROM runner_progress;
   `)
+  // Rows written under an older version of the display are walked again: the watermark goes back
+  // to the top, and the backfill rewrites every row whose stored version is not the current one.
+  db.query(
+    `INSERT INTO runner_progress_display_backfill(only_row,below_seq,version)
+       SELECT 1,COALESCE(MAX(seq),0)+1,? FROM runner_progress
+     WHERE true
+     ON CONFLICT(only_row) DO UPDATE SET below_seq=excluded.below_seq,version=excluded.version
+       WHERE version<>excluded.version`,
+  ).run(DISPLAY_VERSION)
 }
 
 const COLUMNS =
@@ -49,12 +65,13 @@ export function backfillProgressDisplayPage(
     .get()
   if (!mark || mark.below_seq <= 0) return { written: 0, done: true }
   const rows = db
-    .query<StoredProgress, [number, number]>(
+    .query<StoredProgress, [number, number, number]>(
       `SELECT ${COLUMNS} FROM runner_progress r
-        WHERE seq<? AND NOT EXISTS (SELECT 1 FROM runner_progress_display d WHERE d.seq=r.seq)
+        WHERE seq<? AND NOT EXISTS
+          (SELECT 1 FROM runner_progress_display d WHERE d.seq=r.seq AND d.version=?)
         ORDER BY seq DESC LIMIT ?`,
     )
-    .all(mark.below_seq, pageRows)
+    .all(mark.below_seq, DISPLAY_VERSION, pageRows)
   for (const row of rows) writeProgressDisplay(db, row)
   const done = rows.length < pageRows
   const next = done ? 0 : rows.at(-1)!.seq
@@ -95,9 +112,9 @@ export class ProgressDisplayBackfill {
 /** Treat every progress row now in the table as one the backfill must cover (a rebuild, or a test). */
 export function resetProgressDisplayBackfill(db: Database) {
   db.query(
-    `INSERT OR REPLACE INTO runner_progress_display_backfill(only_row,below_seq)
-       SELECT 1,COALESCE(MAX(seq),0)+1 FROM runner_progress`,
-  ).run()
+    `INSERT OR REPLACE INTO runner_progress_display_backfill(only_row,below_seq,version)
+       SELECT 1,COALESCE(MAX(seq),0)+1,? FROM runner_progress`,
+  ).run(DISPLAY_VERSION)
 }
 
 export type BackfillPacing = {

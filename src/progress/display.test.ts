@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test"
 import { firstAttemptID, makeFixture } from "../../test/trajectory/fixture.ts"
-import { corpus, secret, seedDisplayCorpus, storedDisplayItem } from "./display.fixture.ts"
+import {
+  corpus,
+  secret,
+  seedDisplayCorpus,
+  storedDisplayItem,
+  v1Display,
+} from "./display.fixture.ts"
 import type { StoredDisplay } from "./display.fixture.ts"
 import { progressDisplay } from "./display.ts"
 import { ProgressRecorder } from "./recorder.ts"
@@ -91,17 +97,20 @@ test("the display stored with each progress row equals the read-time history, fo
     expect(old.some((item) => item.fileTargets?.coverage === "partial")).toBe(true)
     expect(old.some((item) => item.route !== null)).toBe(true)
     expect(old.some((item) => item.observations.length === 8)).toBe(true)
-    expect(old.some((item) => !item.payloadAvailable)).toBe(true)
+    expect(old.every((item) => item.payloadAvailable)).toBe(true)
     expect(old.some((item) => item.error?.endsWith("…[truncated]"))).toBe(true)
     expect(JSON.stringify(old)).not.toContain(secret)
     expect(old.find((item) => item.callID === "rec-edit")?.error).toBe("native edit failed")
-    // What the contract leaves out of a row stays out: a payload past 4096 bytes is not read, an
-    // id past 200 bytes is dropped, and the row shows the columns it has.
+    // Rows the first read cut (see `v1Display`) now carry their fields.
     const big = old.find(
       (item) => item.messageID === `msg-${corpus.findIndex((e) => e.callID === "call-big")}`,
     )
-    expect(big).toMatchObject({ payloadAvailable: false, tool: null, status: null })
-    expect(old.some((item) => item.callID === null && item.kind === "worker-tool")).toBe(true)
+    expect(big).toMatchObject({ payloadAvailable: true, tool: "write", status: "succeeded" })
+    expect(old.find((item) => item.callID?.startsWith("ccc"))?.callID).toEndWith("…[truncated]")
+    const changed = progress.filter(
+      (row) => JSON.stringify(v1Display(row)) !== JSON.stringify(progressDisplay(row)),
+    )
+    expect(changed.map((row) => row.call_id)).toEqual(["call-big", "c".repeat(300)])
   } finally {
     fixture.close()
   }

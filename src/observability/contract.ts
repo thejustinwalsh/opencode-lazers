@@ -716,6 +716,8 @@ export const LiveAttemptOutput = z.strictObject({
       state: z.string().min(1).max(40),
       startedAt: z.number().finite(),
       toolCount: z.int().nonnegative(),
+      /** The attempt's older rows are not all in the history list yet (the display backfill is under them). */
+      historyIndexing: z.literal(true).optional(),
       model: AttemptModel.optional(),
       summary: AttemptSummary,
       /** The task node and plan the attempt belongs to, so the pane names the task's own state. */

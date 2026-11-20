@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite"
-import { progressDisplay, type DisplayRow } from "./display.ts"
+import { DISPLAY_VERSION, progressDisplay, type DisplayRow } from "./display.ts"
 
 /**
  * `runner_progress_display`: what the live history list shows of each progress row, stored beside
@@ -17,6 +17,14 @@ import { progressDisplay, type DisplayRow } from "./display.ts"
 export const PROGRESS_DISPLAY_TABLE = "runner_progress_display"
 
 export function installProgressDisplaySchema(db: Database) {
+  // Derived data: a table from before the project id and version columns is dropped and rebuilt
+  // (the backfill refills it).
+  const columns = db
+    .query<{ name: string }, []>("PRAGMA table_info(runner_progress_display)")
+    .all()
+    .map((column) => column.name)
+  if (columns.length > 0 && !(columns.includes("version") && columns.includes("project_id")))
+    db.exec("DROP TABLE runner_progress_display")
   db.exec(`
     CREATE TABLE IF NOT EXISTS runner_progress_display (
       seq INTEGER PRIMARY KEY,
@@ -27,7 +35,7 @@ export function installProgressDisplaySchema(db: Database) {
       tool TEXT, status TEXT, agent TEXT, result TEXT, error TEXT,
       route_provider TEXT, route_model TEXT, route_variant TEXT,
       file_targets_json TEXT, observations_json TEXT NOT NULL,
-      payload_available INTEGER NOT NULL
+      payload_available INTEGER NOT NULL, version INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS runner_progress_display_attempt
       ON runner_progress_display(project_directory,attempt_id,session_id,seq,at,tool,project_id);
@@ -52,8 +60,8 @@ export function writeProgressDisplay(db: Database, row: StoredProgress) {
     `INSERT OR REPLACE INTO runner_progress_display
      (seq,project_directory,project_id,attempt_id,session_id,at,recorded_at,kind,source,message_id,call_id,
       tool,status,agent,result,error,route_provider,route_model,route_variant,
-      file_targets_json,observations_json,payload_available)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      file_targets_json,observations_json,payload_available,version)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     row.seq,
     row.project_directory,
@@ -77,6 +85,7 @@ export function writeProgressDisplay(db: Database, row: StoredProgress) {
     display.fileTargets ? JSON.stringify(display.fileTargets) : null,
     JSON.stringify(display.observations),
     display.payloadAvailable ? 1 : 0,
+    DISPLAY_VERSION,
   )
 }
 

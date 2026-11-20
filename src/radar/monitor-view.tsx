@@ -1269,6 +1269,7 @@ export function RadarMonitorView(props: Props) {
                     renderEarlier={renderCallRow}
                     source={props.history}
                     target={olderTarget()}
+                    indexing={paneAttempt()?.historyIndexing === true}
                     monoFont={props.monoFont}
                   />
                   <Disclosure label="Files" count={sessionFiles().length}>

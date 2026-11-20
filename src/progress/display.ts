@@ -11,10 +11,15 @@ import type { ProgressRow } from "../runner/store.ts"
 export type JsonObject = Record<string, unknown>
 export const TRUNCATION_SUFFIX = "…[truncated]"
 
-/** The contract's byte bounds on what a history row may carry from the stored columns. */
-export const DISPLAY_PAYLOAD_BYTES = 4096
-export const DISPLAY_EVENT_IDS_BYTES = 2048
-export const DISPLAY_SMALL_ID_BYTES = 200
+/**
+ * The version of {@link progressDisplay}. Stored rows carry the version that wrote them, and the
+ * backfill rewrites rows written under an older one.
+ *   1: the read-time guards of the first history read applied (payload 4096 B, event ids 2048 B,
+ *      ids 200 B): a row past one of them showed only its columns.
+ *   2: the display is computed once at write time, from the whole row; only the per-field display
+ *      truncation (80 to 600 characters) remains.
+ */
+export const DISPLAY_VERSION = 2
 
 export function contractText(
   value: string,
@@ -152,11 +157,6 @@ export type DisplayRow = {
   payload: string | null
 }
 
-const encoder = new TextEncoder()
-const bytes = (value: string) => encoder.encode(value).byteLength
-const withinBytes = <T extends string | null>(value: T, maximum: number): T | null =>
-  value !== null && bytes(value) > maximum ? null : value
-
 /** The parsed fact of a row, through the same projection the trajectory and reports use. */
 export function factFor(row: DisplayRow) {
   const progress: ProgressRow = {
@@ -203,21 +203,12 @@ export type ProgressDisplay = {
   fileTargets?: NonNullable<ReturnType<typeof fileTargets>>
 }
 
-/**
- * The display of a stored row. The history read bounds what it takes from the row (a payload
- * past {@link DISPLAY_PAYLOAD_BYTES}, event ids and call ids past theirs are left out, and the row
- * shows what its columns alone give), and this function applies the same bounds, so a bounded SQL
- * read and an unbounded stored row give the same answer.
- */
+/** The display of a stored row: sanitized and truncated per field, from the whole row. */
 export function progressDisplay(stored: DisplayRow): ProgressDisplay {
   const row: DisplayRow = {
     ...stored,
     source: stored.source.slice(0, 80),
     kind: stored.kind.slice(0, 80),
-    event_ids_json: withinBytes(stored.event_ids_json, DISPLAY_EVENT_IDS_BYTES),
-    call_id: withinBytes(stored.call_id, DISPLAY_SMALL_ID_BYTES),
-    message_id: withinBytes(stored.message_id, DISPLAY_SMALL_ID_BYTES),
-    payload: withinBytes(stored.payload, DISPLAY_PAYLOAD_BYTES),
   }
   const stats = privacyStats()
   const fact = row.payload === null ? {} : factFor(row)

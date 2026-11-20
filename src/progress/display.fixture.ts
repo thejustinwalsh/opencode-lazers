@@ -1,4 +1,5 @@
 import { firstAttemptID, type makeFixture } from "../../test/trajectory/fixture.ts"
+import { progressDisplay, type DisplayRow } from "./display.ts"
 import { refreshProgressDisplay } from "./display-store.ts"
 import type { LiveHistoryItem } from "../streams/sources/live-history-ref.ts"
 
@@ -187,4 +188,23 @@ export function storedDisplayItem(row: StoredDisplay): LiveHistoryItem {
     payloadAvailable: row.payload_available === 1,
     ...(row.file_targets_json ? { fileTargets: JSON.parse(row.file_targets_json) } : {}),
   }
+}
+
+/**
+ * The one deliberate difference from the first history read, in one place. That read parsed rows
+ * with guards (a payload past 4096 B, event ids past 2048 B and call or message ids past 200 B
+ * were left out, and the row showed its columns only). The display is now computed once, when the
+ * row is written, so those guards are gone. `v1Display` is the display under them.
+ */
+export function v1Display(row: DisplayRow) {
+  const bytes = (value: string) => new TextEncoder().encode(value).byteLength
+  const within = (value: string | null, maximum: number) =>
+    value !== null && bytes(value) > maximum ? null : value
+  return progressDisplay({
+    ...row,
+    event_ids_json: within(row.event_ids_json, 2048),
+    call_id: within(row.call_id, 200),
+    message_id: within(row.message_id, 200),
+    payload: within(row.payload, 4096),
+  })
 }

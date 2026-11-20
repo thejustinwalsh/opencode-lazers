@@ -7,7 +7,10 @@ import {
   startProgressDisplayBackfill,
   resetProgressDisplayBackfill,
 } from "./display-backfill.ts"
+import { LiveReadStore } from "../observability/live-store.ts"
+import { DISPLAY_VERSION } from "./display.ts"
 import { refreshProgressDisplay } from "./display-store.ts"
+import { installProgressDisplayBackfill } from "./display-backfill.ts"
 
 const ROWS = 450
 
@@ -174,6 +177,78 @@ test("the driver fills every legacy row on its own timer, and stops when told", 
     })
     idle.stop()
     expect(idle.done).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("rows written under an older display version are walked again, with no manual step", () => {
+  const fixture = makeFixture()
+  try {
+    seedLegacy(fixture, 250)
+    const backfill = new ProgressDisplayBackfill(fixture.store.repository)
+    while (!backfill.done) backfill.slice(0)
+    // Stand in for rows an older build wrote: stale values, the previous version, a finished watermark.
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_progress_display SET tool='stale', version=?").run(
+        DISPLAY_VERSION - 1,
+      )
+      db.query("UPDATE runner_progress_display_backfill SET version=?, below_seq=0").run(
+        DISPLAY_VERSION - 1,
+      )
+    })
+    // The next install (a restart on the new code) sees the version differ and starts over.
+    fixture.store.atomic((db) => installProgressDisplayBackfill(db))
+    const marks = () =>
+      fixture.store.read((db) =>
+        db
+          .query<{ below_seq: number; version: number }, []>(
+            "SELECT below_seq,version FROM runner_progress_display_backfill",
+          )
+          .get(),
+      )
+    expect(marks()).toEqual({ below_seq: 251, version: DISPLAY_VERSION })
+    const again = new ProgressDisplayBackfill(fixture.store.repository)
+    while (!again.done) again.slice(0)
+    const rows = fixture.store.read((db) =>
+      db
+        .query<{ tool: string; version: number }, []>(
+          "SELECT DISTINCT tool,version FROM runner_progress_display ORDER BY tool",
+        )
+        .all(),
+    )
+    expect(rows).toEqual([
+      { tool: "edit", version: DISPLAY_VERSION },
+      { tool: "read", version: DISPLAY_VERSION },
+    ])
+    // The same version again changes nothing.
+    fixture.store.atomic((db) => installProgressDisplayBackfill(db))
+    expect(marks()).toEqual({ below_seq: 0, version: DISPLAY_VERSION })
+  } finally {
+    fixture.close()
+  }
+})
+
+test("the attempt read says older calls are still being indexed until the backfill reaches the attempt's oldest row", () => {
+  const fixture = makeFixture()
+  try {
+    seedLegacy(fixture, 250)
+    const store = new LiveReadStore(
+      fixture.store.repository.path,
+      fixture.store.repository.projectDirectory,
+      "project",
+    )
+    const read = () =>
+      store.readAttempt(
+        { scope: { kind: "project", sessionID: "ses-owner" }, sessionID: "ses-failed" },
+        new AbortController().signal,
+      )?.historyIndexing
+    expect(read()).toBe(true)
+    const backfill = new ProgressDisplayBackfill(fixture.store.repository)
+    backfill.slice(0)
+    expect(read()).toBe(true)
+    while (!backfill.done) backfill.slice(0)
+    expect(read()).toBeUndefined()
   } finally {
     fixture.close()
   }

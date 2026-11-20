@@ -183,6 +183,8 @@ type CallsProps<L> = {
   source?: HistorySource
   /** The attempt whose older calls are listed; absent for a session without one. */
   target?: HistoryTarget
+  /** Older calls exist that the list does not have yet. */
+  indexing?: boolean
   monoFont: string
 }
 
@@ -190,7 +192,7 @@ function CallsBody<L>(props: CallsProps<L> & { older?: OlderCalls }) {
   const olderTotal = () => props.older?.total() ?? 0
   const count = () => props.earlier.length + olderTotal()
   return (
-    <Disclosure label="Calls" count={count()} when={count() > 0}>
+    <Disclosure label="Calls" count={count()} when={count() > 0 || props.indexing === true}>
       <Rows
         columns="64px minmax(0, 1fr) 56px 64px"
         header={["Tool", "Target", "Duration", "Time"]}
@@ -199,6 +201,9 @@ function CallsBody<L>(props: CallsProps<L> & { older?: OlderCalls }) {
       >
         {(line) => props.renderEarlier(line)}
       </Rows>
+      <Show when={props.indexing}>
+        <p class="lazers-radar-note">Older calls are still being indexed.</p>
+      </Show>
       <Show when={props.older?.stream.error()}>
         <p class="lazers-radar-note" data-error="true">
           Couldn't load history.
