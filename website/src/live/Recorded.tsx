@@ -237,7 +237,6 @@ export default function Recorded(props: { reason?: string; onLive?: () => void }
       autoRead: !muted,
       speech: view.speaking ? { name: "playing", mode: "auto", id: 0 } : { name: "idle" },
       mic: view.recording ? "recording" : view.transcribing ? "transcribing" : "idle",
-      notice: "Recorded session · nothing here is running",
     }
   })()
 
@@ -259,9 +258,9 @@ export default function Recorded(props: { reason?: string; onLive?: () => void }
         state={state}
         meter={meter}
         readOnly
-        title="Local model · recorded session"
+        hideStatus
         dim={poster}
-        placeholder="Recorded session"
+        placeholder="Message the local model"
         barExtra={
           phase === "playing" || phase === "paused" ? (
             <button type="button" class="lc-link" onClick={toggle}>
@@ -290,7 +289,7 @@ export default function Recorded(props: { reason?: string; onLive?: () => void }
               <button
                 type="button"
                 class="lc-play"
-                aria-label="Play the recorded session"
+                aria-label="Play the demo"
                 onClick={() => void play()}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true">

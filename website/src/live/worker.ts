@@ -6,13 +6,19 @@
  * this worker and the page.
  */
 import tgpu from "typegpu"
-import { createLfm3Omni, createOpfsCache, initRunntime, isRunntimeError } from "runntime/zoo"
-import type { Lfm3Omni, WeightCache } from "runntime/zoo"
-import { LFM3_TOKENIZER_REVISION, LFM3_TOKENIZER_URL } from "../../../src/webgpu/manifest"
+import { createLfm3Omni, initRunntime, isRunntimeError } from "runntime/zoo"
+import type { Lfm3Omni } from "runntime/zoo"
 import type { FromWorker, ToWorker } from "./protocol"
 import { SYSTEM_PROMPT, MAX_NEW_TOKENS } from "./prompt"
 import { speechSegments } from "./segments"
-import { DownloadError, ensureWeights, isAbort, opfsRangeSource, weightsCached } from "./weights"
+import {
+  DownloadError,
+  ensureWeights,
+  isAbort,
+  opfsRangeSource,
+  tokenizerURL,
+  weightsCached,
+} from "./weights"
 
 const post = (message: FromWorker, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer)
@@ -28,38 +34,6 @@ const enqueue = <T>(run: () => Promise<T>) => {
   const next = chain.then(run, run)
   chain = next.catch(() => undefined)
   return next
-}
-
-const TOKENIZER_KEY = `json/lazers/lfm3-tokenizer/${LFM3_TOKENIZER_REVISION}`
-
-/** Persists only the tokenizer JSON; the GGUF weights stream from OPFS ranges and are never cached
- *  a second time (same rule as the product's `PinnedTokenizerCache`). */
-class TokenizerOnlyCache implements WeightCache {
-  constructor(private readonly inner: WeightCache | undefined) {}
-  #memory = new Map<string, ArrayBuffer>()
-  private mine = (key: string) => key.startsWith(TOKENIZER_KEY)
-  async get(key: string) {
-    if (!this.mine(key)) return undefined
-    return this.inner ? this.inner.get(key) : this.#memory.get(key)?.slice(0)
-  }
-  async getOrCompute(key: string, compute: () => Promise<ArrayBufferView>) {
-    if (this.mine(key) && this.inner) return this.inner.getOrCompute(key, compute)
-    const view = await compute()
-    const bytes = view.buffer.slice(
-      view.byteOffset,
-      view.byteOffset + view.byteLength,
-    ) as ArrayBuffer
-    if (this.mine(key)) this.#memory.set(key, bytes)
-    return bytes.slice(0)
-  }
-  async deletePrefix(prefix: string) {
-    await this.inner?.deletePrefix(prefix)
-    for (const key of this.#memory.keys()) if (key.startsWith(prefix)) this.#memory.delete(key)
-  }
-  async clear() {
-    await this.inner?.clear()
-    this.#memory.clear()
-  }
 }
 
 const gpuMessage = (error: unknown) => {
@@ -102,21 +76,21 @@ async function load() {
     }
     const cached = await weightsCached()
     if (!cached) await ensureWeights(signal, (files) => post({ t: "download", files }))
+    const tokenizer = await tokenizerURL(signal)
     signal.throwIfAborted()
     post({ t: "loading", fromCache: cached })
     const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"] } })
     try {
       initRunntime(root)
-      const inner = await createOpfsCache("lazers-live-tokenizer").catch(() => undefined)
       const engine = await createLfm3Omni(
         {
           modelPath: opfsRangeSource("LFM3-Omni-2B-Q4_K_M.gguf"),
           projectorPath: opfsRangeSource("mmproj-LFM3-Omni-2B-Q8_0.gguf"),
-          tokenizerPath: LFM3_TOKENIZER_URL,
+          tokenizerPath: tokenizer,
           format: "gguf",
         },
-        { signal, cache: new TokenizerOnlyCache(inner), cacheId: "lazers/lfm3-tokenizer" },
-      )
+        { signal },
+      ).finally(() => URL.revokeObjectURL(tokenizer))
       loaded = { engine, root }
       void root.device.lost.then((info) => {
         if (loaded?.root !== root) return

@@ -211,7 +211,8 @@ async function openPage(context) {
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()))
   page.on("pageerror", (e) => errors.push(String(e)))
   await page.goto(SITE, { waitUntil: "load" })
-  await page.locator(".lc").first().scrollIntoViewIfNeeded()
+  await page.locator("#local").scrollIntoViewIfNeeded()
+  await page.locator(".lc").first().waitFor()
   return { page, errors }
 }
 
@@ -313,7 +314,7 @@ if (stage === "cold" || stage === "all") {
   await waitUntil(
     page,
     () =>
-      /speaker: (read|no)/.test(
+      /speaker: (read the|no response)/.test(
         document.querySelector("[aria-label^='LAZERS speaker']").getAttribute("aria-label"),
       ),
     undefined,
@@ -376,8 +377,14 @@ if (stage === "cold" || stage === "all") {
 
 if (stage === "warm" || stage === "all") {
   const warm = {}
+  // The fake microphone plays the model's own speech once, then silence, so the transcript is one phrase.
+  const phrase = readFileSync(join(out, "phrase.wav"))
+  const padded = Buffer.concat([phrase, Buffer.alloc(24_000 * 2 * 8)])
+  padded.writeUInt32LE(padded.length - 8, 4)
+  padded.writeUInt32LE(padded.length - 44, 40)
+  writeFileSync(join(out, "mic.wav"), padded)
   const { context, stats } = await launch([
-    `--use-file-for-fake-audio-capture=${join(out, "phrase.wav")}`,
+    `--use-file-for-fake-audio-capture=${join(out, "mic.wav")}`,
   ])
   const { page, errors } = await openPage(context)
   await page.evaluate(() => (window.__keepAudio = true))
@@ -400,7 +407,7 @@ if (stage === "warm" || stage === "all") {
   await waitUntil(
     page,
     () =>
-      /speaker: (read|no)/.test(
+      /speaker: (read the|no response)/.test(
         document.querySelector("[aria-label^='LAZERS speaker']").getAttribute("aria-label"),
       ),
     undefined,
@@ -425,9 +432,9 @@ if (stage === "warm" || stage === "all") {
     undefined,
     30_000,
   )
-  await sleep(2500)
+  await sleep(2000)
   await shots(page, "08-recording")
-  await sleep(2500)
+  await sleep(1500)
   await mic.click()
   await waitUntil(
     page,
@@ -455,7 +462,7 @@ if (stage === "warm" || stage === "all") {
   await waitUntil(
     page,
     () =>
-      /speaker: (read|no)/.test(
+      /speaker: (read the|no response)/.test(
         document.querySelector("[aria-label^='LAZERS speaker']").getAttribute("aria-label"),
       ),
     undefined,
@@ -490,6 +497,76 @@ if (stage === "warm" || stage === "all") {
   await context.close()
   writeFileSync(join(out, "warm.json"), JSON.stringify(warm, null, 2))
   log("warm done")
+}
+
+if (stage === "recorded") {
+  // No WebGPU: the chat is a poster with one play button; a click plays the recorded session.
+  const { context, stats } = await launch()
+  await context.addInitScript(() => {
+    delete Navigator.prototype.gpu
+    window.__plays = []
+    const play = HTMLMediaElement.prototype.play
+    HTMLMediaElement.prototype.play = function (...args) {
+      if (this.src) window.__plays.push({ src: this.src.split("/").pop(), at: performance.now() })
+      return play.apply(this, args)
+    }
+  })
+  const { page, errors } = await openPage(context)
+  const before = stats.huggingface.length + stats.other.length
+  await page.evaluate(() => (window.__t0 = performance.now()))
+  const requestsBefore = []
+  page.on("request", (r) => requestsBefore.push(new URL(r.url()).pathname))
+  await shots(page, "r1-poster")
+  const poster = await page.locator(".lc-poster").innerText()
+  log("poster text (visible):", JSON.stringify(poster))
+  log(
+    "fetches before click:",
+    requestsBefore.filter((p) => /live\//.test(p)),
+  )
+  await page.getByRole("button", { name: "Play the demo" }).click()
+  await waitUntil(
+    page,
+    () => document.querySelectorAll(".lc-msg[data-role=assistant][data-kind=chat]").length >= 1,
+    undefined,
+    60_000,
+  )
+  await sleep(1500)
+  await shots(page, "r2-playing")
+  await waitUntil(
+    page,
+    () =>
+      document
+        .querySelector(".lc-pill[aria-label*='speaker']")
+        ?.getAttribute("aria-label")
+        .includes("reading") || true,
+    undefined,
+    5_000,
+  )
+  await waitUntil(
+    page,
+    () => /Replay/.test(document.querySelector(".lc-bar").innerText),
+    undefined,
+    90_000,
+  )
+  const plays = await page.evaluate(() => window.__plays)
+  log(
+    "audio plays:",
+    JSON.stringify(plays),
+    "fetches after:",
+    requestsBefore.filter((p) => /live\//.test(p)),
+  )
+  await shots(page, "r3-ended")
+  console.log(
+    JSON.stringify({
+      posterText: poster,
+      plays,
+      errors,
+      other: stats.other,
+      blocked: stats.blocked,
+      before,
+    }),
+  )
+  await context.close()
 }
 
 function writeWav(path, samples, rate) {

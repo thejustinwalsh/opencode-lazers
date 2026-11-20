@@ -46,7 +46,7 @@ const session = {
   steps: [
     { type: "user", text: capture.question1 },
     { type: "answer", text: capture.answer1, audio: "speech-1", seconds: one.seconds },
-    { type: "dictate", text: capture.transcript, seconds: 5 },
+    { type: "dictate", text: capture.transcript, seconds: 3 },
     { type: "answer", text: capture.answer2, audio: "speech-2", seconds: two.seconds },
   ],
   audio: {

@@ -428,6 +428,9 @@
   background: transparent;
   color: var(--text-strong);
 }
+.lc .lc-input:focus-visible {
+  outline: 0;
+}
 .lc-input::placeholder {
   color: var(--text-weaker);
 }

@@ -6,7 +6,13 @@
  * the product's manifest. An interrupted download resumes from its last whole segment. Reads for
  * ruNNtime are `File.slice` ranges. Runs in the worker.
  */
-import { MODEL_FILES, MODEL_REVISION, modelURL } from "../../../src/webgpu/manifest"
+import {
+  LFM3_TOKENIZER_REVISION,
+  LFM3_TOKENIZER_URL,
+  MODEL_FILES,
+  MODEL_REVISION,
+  modelURL,
+} from "../../../src/webgpu/manifest"
 import type { FileProgress } from "./machine"
 import { Sha256 } from "./sha256"
 
@@ -37,7 +43,7 @@ async function directory() {
   return base.getDirectoryHandle(MODEL_REVISION, { create: true })
 }
 
-type Marker = { bytes: number; sha256: string }
+type Marker = { bytes: number; sha256?: string }
 
 async function readMarker(
   dir: FileSystemDirectoryHandle,
@@ -61,10 +67,63 @@ async function isCached(dir: FileSystemDirectoryHandle, file: (typeof MODEL_FILE
   }
 }
 
+const TOKENIZER_FILE = `tokenizer-${LFM3_TOKENIZER_REVISION}.json`
+
+async function tokenizerCached(dir: FileSystemDirectoryHandle) {
+  const marker = await readMarker(dir, TOKENIZER_FILE)
+  try {
+    const file = await (await dir.getFileHandle(TOKENIZER_FILE)).getFile()
+    return marker !== undefined && marker.bytes === file.size && file.size > 0
+  } catch {
+    return false
+  }
+}
+
 export async function weightsCached(): Promise<boolean> {
   const dir = await directory()
   for (const file of MODEL_FILES) if (!(await isCached(dir, file))) return false
-  return true
+  return tokenizerCached(dir)
+}
+
+/** The pinned tokenizer JSON, kept in OPFS beside the weights so a cached start needs no network.
+ *  Returned as a blob URL because ruNNtime takes a URL for it. */
+export async function tokenizerURL(signal: AbortSignal): Promise<string> {
+  const dir = await directory()
+  if (!(await tokenizerCached(dir))) {
+    const response = await fetch(LFM3_TOKENIZER_URL, { signal }).catch((error: unknown) => {
+      if (isAbort(error)) throw error
+      throw new DownloadError(
+        "offline",
+        `The tokenizer could not be downloaded (${String(error)}).`,
+      )
+    })
+    if (!response.ok)
+      throw new DownloadError(
+        "error",
+        `Hugging Face answered ${response.status} for the tokenizer.`,
+      )
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    const access = await (
+      await dir.getFileHandle(TOKENIZER_FILE, { create: true })
+    ).createSyncAccessHandle()
+    try {
+      access.truncate(0)
+      access.write(bytes, { at: 0 })
+      access.flush()
+    } catch (error) {
+      throw storageError(error)
+    } finally {
+      access.close()
+    }
+    const marker = await (
+      await dir.getFileHandle(`${TOKENIZER_FILE}.ok`, { create: true })
+    ).createSyncAccessHandle()
+    marker.truncate(0)
+    marker.write(new TextEncoder().encode(JSON.stringify({ bytes: bytes.length })))
+    marker.close()
+  }
+  const file = await (await dir.getFileHandle(TOKENIZER_FILE)).getFile()
+  return URL.createObjectURL(new Blob([await file.arrayBuffer()], { type: "application/json" }))
 }
 
 /** Removes every downloaded byte (used when a file fails verification). */

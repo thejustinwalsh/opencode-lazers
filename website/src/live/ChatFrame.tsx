@@ -20,6 +20,8 @@ export type FrameProps = {
   overlay?: ComponentChildren
   barExtra?: ComponentChildren
   recordedOffer?: boolean
+  /** The recording has no model state to report. */
+  hideStatus?: boolean
   speakerTitle?: string
   onDraft?: (text: string) => void
   onSend?: () => void
@@ -174,15 +176,16 @@ export function ChatFrame(props: FrameProps) {
       ? `${meter.bars} 0:${String(meter.seconds).padStart(2, "0")}`
       : ""
 
-  const statusText =
-    state.notice ||
-    (phase.name === "ready"
-      ? phase.fromCache
-        ? "Loaded from this browser's cache"
-        : "Loaded · running on this device's GPU"
-      : phase.name === "idle" && state.messages.length > 1
-        ? "Model unloaded · weights stay in browser storage"
-        : "")
+  const statusText = props.hideStatus
+    ? ""
+    : state.notice ||
+      (phase.name === "ready"
+        ? phase.fromCache
+          ? "Loaded from this browser's cache"
+          : "Loaded · running on this device's GPU"
+        : phase.name === "idle" && state.messages.length > 1
+          ? "Model unloaded · weights stay in browser storage"
+          : "")
 
   const onKey = (event: KeyboardEvent) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -196,7 +199,11 @@ export function ChatFrame(props: FrameProps) {
   return (
     <div class={`lc${props.dim ? " lc-dim" : ""}`} data-phase={phase.name}>
       <div class="lc-bar">
-        <span class="lc-dot" data-on={String(phase.name === "ready")} aria-hidden="true" />
+        <span
+          class="lc-dot"
+          data-on={String(phase.name === "ready" && !props.readOnly)}
+          aria-hidden="true"
+        />
         <span class="lc-title">{props.title ?? "Local model · LAZERS demo"}</span>
         {props.tag ? <span class="lc-tag">{props.tag}</span> : null}
         {props.barExtra}

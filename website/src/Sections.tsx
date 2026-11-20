@@ -7,7 +7,7 @@ import sparkle from "./assets/mark-sparkle.png"
 import stripesMark from "./assets/mark-stripes.png"
 import { Demo } from "./Demo"
 import { DEMOS } from "./demos"
-import { LiveChat } from "./live/Chat"
+import { LiveChat } from "./live/Loader"
 import { bp, color, type } from "./tokens.stylex"
 import { BeamCanvas, Cat, Field, Stripes, links, srOnly, t, useBeamKit } from "./ui"
 
