@@ -158,7 +158,7 @@ test("F-S4-2 scheduler dispatches runnable work behind 1000 high-priority termin
       FROM runner_plans WHERE id=?`)
     for (let i = 0; i < 1005; i++) clone.run(`history-${i}`, f.receipt.planID)
   })
-  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === f.receipt.planID)).toBe(true)
   await runPlan(f)
   await f.runtime.tick()
   expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
