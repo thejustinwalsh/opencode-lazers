@@ -16,11 +16,14 @@ import {
   registerPlanningReviewTicks,
   registerPlanningDecisionHooks,
   registerPlanningRpc,
+  sessionMessageText,
 } from "./planning/server.ts"
 import { startDecision } from "./planning/decision/step.ts"
 import {
   PlanDrafts,
+  PlanResolver,
   PlanReviewer,
+  registerPlanResolveTool,
   registerPlanReviewTool,
   registerPlanningTools,
 } from "./planning/tools.ts"
@@ -202,6 +205,10 @@ export default Plugin.define({
               Date.now,
               (planningID, reason) => void planningReviews.cancelForPlanning(planningID, reason),
             ),
+          )
+          yield* registerPlanResolveTool(
+            ctx,
+            new PlanResolver(store, projectID, sessionMessageText(ctx)),
           )
           yield* registerPlanReviewTool(
             ctx,

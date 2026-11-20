@@ -10,17 +10,19 @@ import { PlanningAgentId, type PlanningAgentId as AgentID } from "./contract.ts"
 import { AGENT_ORDER } from "./decision/tree.ts"
 import { rulesAdd } from "./checks.ts"
 import type { AgentSelection, PlanningReviews, ReviewResult } from "./reviews.ts"
+import type { TargetField } from "./contract.ts"
 import {
   DEFERRED_TO_TASKING,
   DraftID,
   PlanningBody,
   fieldHashes,
+  isStale,
   validateBody,
   type Validation,
 } from "./draft.ts"
 import { planMarkdownLink } from "./links.ts"
 import { renderBreakdown } from "./render.ts"
-import { PlanningStore } from "./store.ts"
+import { PlanningStore, type QuestionRow } from "./store.ts"
 
 export const PlanDraftInput = z.discriminatedUnion("action", [
   z.strictObject({
@@ -465,6 +467,321 @@ export function registerPlanReviewTool(
                     delivery,
                   )
                   delivery.commit()
+                  return { content: JSON.stringify(output), output: output as never }
+                },
+                catch: (error) => new Tool.Error({ message: String(error) }),
+              }),
+            ),
+          ),
+    })
+  })
+}
+
+export const ResolveInput = z.strictObject({
+  planningID: z.uuid(),
+  findings: z
+    .array(
+      z.discriminatedUnion("outcome", [
+        z.strictObject({
+          findingID: z.string(),
+          outcome: z.literal("revised"),
+          revision: z.int().positive(),
+        }),
+        z.strictObject({
+          findingID: z.string(),
+          outcome: z.literal("contested"),
+          evidence: z.array(z.string().min(1)).min(1).max(10),
+        }),
+        z.strictObject({ findingID: z.string(), outcome: z.literal("to-owner") }),
+      ]),
+    )
+    .max(500)
+    .default([]),
+  questions: z
+    .array(
+      z.discriminatedUnion("route", [
+        z.strictObject({
+          questionID: z.string(),
+          route: z.literal("conversation"),
+          answer: z.string().min(1),
+          citation: z.strictObject({ messageID: z.string(), quote: z.string().min(8).max(2000) }),
+        }),
+        z.strictObject({ questionID: z.string(), route: z.literal("owner") }),
+        z.strictObject({ questionID: z.string(), route: z.literal("merged"), into: z.string() }),
+        z.strictObject({
+          questionID: z.string(),
+          route: z.literal("owner-answered"),
+          answer: z.string().min(1),
+          messageID: z.string(),
+        }),
+      ]),
+    )
+    .max(500)
+    .default([]),
+})
+export type ResolveInput = z.infer<typeof ResolveInput>
+
+export type ResolveResult = {
+  applied: number
+  refused: { id: string; reason: string }[]
+  /** The questions for the owner as one numbered list, to ask in one native question form. */
+  ownerBatch: string
+  openCount: number
+  suggestedMerges: string[][]
+}
+
+const WEIGHT_ORDER = ["changes-design", "changes-scope", "changes-detail"]
+const SEVERITY_ORDER = ["blocker", "major", "minor", "nit"]
+const normalized = (text: string) => text.toLowerCase().replace(/\s+/g, " ").trim()
+
+const questionText = (question: QuestionRow) => {
+  try {
+    const value = (JSON.parse(question.body) as { question?: unknown }).question
+    return typeof value === "string" ? value : question.body
+  } catch {
+    return question.body
+  }
+}
+const questionOptions = (question: QuestionRow): string[] => {
+  try {
+    const options = (JSON.parse(question.body) as { options?: unknown }).options
+    return Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * `lz-plan-resolve`: the Architect records what it did with each finding and question. A question
+ * is answered by the Architect only on a verbatim citation of this conversation; every other
+ * question goes to the owner in one batch.
+ */
+export class PlanResolver {
+  constructor(
+    private readonly store: PlanningStore,
+    private readonly projectID: string,
+    /** The text of one message of the Architect's own session; undefined when there is none. */
+    private readonly messageText: (
+      sessionID: string,
+      messageID: string,
+    ) => Promise<string | undefined>,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async call(input: ResolveInput, caller: { sessionID: string }): Promise<ResolveResult> {
+    const planning = this.store.planning(input.planningID)
+    const refused: ResolveResult["refused"] = []
+    if (!planning || planning.projectKey !== this.projectID)
+      return {
+        applied: 0,
+        refused: [{ id: input.planningID, reason: "no such plan in this project" }],
+        ownerBatch: "",
+        openCount: 0,
+        suggestedMerges: [],
+      }
+    if (planning.state === "tasked" || planning.state === "abandoned")
+      return {
+        applied: 0,
+        refused: [{ id: input.planningID, reason: `plan is ${planning.state}` }],
+        ownerBatch: "",
+        openCount: 0,
+        suggestedMerges: [],
+      }
+    let applied = 0
+    const hashes = new Map<number, ReturnType<typeof JSON.parse>>()
+    const hashesAt = (n: number) => {
+      if (!hashes.has(n)) {
+        const at = this.store.revision(planning.id, n)
+        hashes.set(n, at ? JSON.parse(at.fieldHashes) : {})
+      }
+      return hashes.get(n)!
+    }
+    const findings = () => this.store.findings(planning.id)
+    const questions = () => this.store.questions(planning.id)
+
+    for (const item of input.findings) {
+      const finding = findings().find((f) => f.id === item.findingID)
+      if (!finding) {
+        refused.push({ id: item.findingID, reason: "unknown finding" })
+        continue
+      }
+      if (item.outcome === "revised") {
+        if (item.revision <= finding.revision || item.revision > planning.revision) {
+          refused.push({
+            id: finding.id,
+            reason: `revision must be between r${finding.revision + 1} and r${planning.revision}`,
+          })
+          continue
+        }
+        const changed = isStale(
+          {
+            draftID: finding.draftId ?? null,
+            field: (finding.field ?? "other") as TargetField,
+            revision: finding.revision,
+          },
+          hashesAt,
+          item.revision,
+        )
+        if (!changed) {
+          refused.push({ id: finding.id, reason: `field unchanged since r${finding.revision}` })
+          continue
+        }
+        this.store.updateFinding(finding.id, {
+          resolution: "revised",
+          resolutionJson: JSON.stringify({ revision: item.revision }),
+          resolvedRevision: item.revision,
+        })
+      } else if (item.outcome === "contested")
+        this.store.updateFinding(finding.id, {
+          resolution: "contested",
+          resolutionJson: JSON.stringify({ evidence: item.evidence }),
+        })
+      else this.store.updateFinding(finding.id, { resolution: "to-owner" })
+      applied++
+    }
+
+    for (const item of input.questions) {
+      const question = questions().find((q) => q.id === item.questionID)
+      if (!question) {
+        refused.push({ id: item.questionID, reason: "unknown question" })
+        continue
+      }
+      const answered = (answer: string, citation: object) => {
+        this.store.updateQuestion(question.id, {
+          route: item.route as "conversation" | "owner-answered",
+          answer,
+          citationJson: JSON.stringify(citation),
+          answeredAt: this.now(),
+        })
+        const finding = findings().find((f) => f.id === question.findingId)
+        if (finding && (finding.resolution === "open" || finding.resolution === "to-owner"))
+          this.store.updateFinding(finding.id, { resolution: "answered" })
+      }
+      if (item.route === "conversation") {
+        const message = await this.messageText(caller.sessionID, item.citation.messageID)
+        if (!message?.includes(item.citation.quote)) {
+          refused.push({
+            id: question.id,
+            reason: `citation not found in ${item.citation.messageID}`,
+          })
+          continue
+        }
+        answered(item.answer, item.citation)
+      } else if (item.route === "owner-answered")
+        answered(item.answer, { messageID: item.messageID })
+      else if (item.route === "owner") this.store.updateQuestion(question.id, { route: "owner" })
+      else {
+        const target = questions().find((q) => q.id === item.into)
+        if (!target || target.id === question.id) {
+          refused.push({ id: question.id, reason: "unknown merge target" })
+          continue
+        }
+        if (!this.mergeable(question, target)) {
+          refused.push({ id: question.id, reason: "the questions are about different fields" })
+          continue
+        }
+        this.store.updateQuestion(question.id, { route: "merged", mergedInto: target.id })
+      }
+      applied++
+    }
+
+    const open = questions().filter((q) => q.route === "open" || q.route === "owner")
+    return {
+      applied,
+      refused,
+      ownerBatch: this.ownerBatch(planning.id),
+      openCount: open.length + findings().filter((f) => f.resolution === "open").length,
+      suggestedMerges: this.suggestedMerges(planning.id),
+    }
+  }
+
+  private unit(question: QuestionRow) {
+    const finding = this.store
+      .findings(question.planningId)
+      .find((f) => f.id === question.findingId)
+    return { draftID: finding?.draftId ?? null, field: finding?.field ?? null, finding }
+  }
+
+  private mergeable(a: QuestionRow, b: QuestionRow): boolean {
+    const x = this.unit(a)
+    const y = this.unit(b)
+    if (x.field && x.field === y.field && x.draftID === y.draftID) return true
+    return normalized(questionText(a)) === normalized(questionText(b))
+  }
+
+  private suggestedMerges(planningID: string): string[][] {
+    const open = this.store
+      .questions(planningID)
+      .filter((q) => q.route === "open" || q.route === "owner")
+    const groups = new Map<string, string[]>()
+    for (const question of open) {
+      const { draftID, field } = this.unit(question)
+      for (const key of [
+        ...(field ? [`unit:${draftID}.${field}`] : []),
+        `text:${normalized(questionText(question))}`,
+      ])
+        groups.set(key, [...(groups.get(key) ?? []), question.id])
+    }
+    const seen = new Set<string>()
+    return [...groups.values()].filter((ids) => {
+      if (ids.length < 2) return false
+      const key = [...ids].sort().join("|")
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+
+  private ownerBatch(planningID: string): string {
+    const owner = this.store.questions(planningID).filter((q) => q.route === "owner")
+    const rank = (list: string[], value: string | null | undefined) => {
+      const index = list.indexOf(value ?? "")
+      return index === -1 ? list.length : index
+    }
+    return owner
+      .map((question) => ({ question, ...this.unit(question) }))
+      .sort(
+        (a, b) =>
+          rank(WEIGHT_ORDER, a.question.weight) - rank(WEIGHT_ORDER, b.question.weight) ||
+          rank(SEVERITY_ORDER, a.finding?.severity) - rank(SEVERITY_ORDER, b.finding?.severity) ||
+          AGENT_ORDER.indexOf(a.question.source as AgentID) -
+            AGENT_ORDER.indexOf(b.question.source as AgentID),
+      )
+      .map(({ question, draftID, field }, index) => {
+        const options = questionOptions(question)
+        return `${index + 1}. ${questionText(question)}${options.length ? ` (${options.join(" / ")})` : ""} — ${question.source}, ${
+          field ? `${draftID ?? "plan"}.${field}` : (draftID ?? "plan")
+        }`
+      })
+      .join("\n")
+  }
+}
+
+export function registerPlanResolveTool(
+  ctx: Pick<Plugin.Context, "tool" | "permission" | "location">,
+  resolver: PlanResolver,
+) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: "lz-plan-resolve",
+      description:
+        "Record what you did with a plan review's findings and questions. A finding is revised (give the revision that fixes it; refused if its field did not change), contested (give evidence a reviewer could read) or passed to the owner. A question is answered by you only with a verbatim quote of this conversation and its message id; merged into one about the same field; or sent to the owner. The result lists refusals, the owner's questions as one numbered batch to ask in a single question form, and how many items stay open.",
+      input: ResolveInput,
+      output: z.record(z.string(), z.unknown()),
+      options: { codemode: true, permission: "lz-plan-resolve" },
+      execute: (input, call) =>
+        ctx.permission
+          .assert({
+            sessionID: call.sessionID,
+            agent: call.agent,
+            action: "lz-plan-resolve",
+            resources: [ctx.location.directory],
+          })
+          .pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: async () => {
+                  const output = await resolver.call(input, { sessionID: call.sessionID })
                   return { content: JSON.stringify(output), output: output as never }
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),

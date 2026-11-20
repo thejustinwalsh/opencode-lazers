@@ -170,6 +170,7 @@ export function registerWorker(
             // A plan is stored and revised by the Architect alone.
             { action: "lz-plan-draft", resource: "*", effect: "deny" },
             { action: "lz-plan-review", resource: "*", effect: "deny" },
+            { action: "lz-plan-resolve", resource: "*", effect: "deny" },
           ]
           agent.permissions = permissions.filter(
             (rule, index) =>
