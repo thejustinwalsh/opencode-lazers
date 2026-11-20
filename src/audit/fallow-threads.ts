@@ -19,9 +19,26 @@ export type Executed<T> = {
 }
 
 /**
- * Chooses the module for each call. "off" never loads the threaded module. "on" tries it, and if
- * it cannot be loaded or a threaded call traps, runs the call on the single-threaded module and
- * stays on that module for every later call, so analysis never fails because threads did.
+ * What shows that threads cannot be used here, as opposed to one analysis failing: the threaded
+ * module could not be loaded or compiled, this runtime has no shared memory, or the module
+ * does not instantiate against it. Any other error belongs to the analysis that raised it.
+ */
+export class ThreadsUnsupported extends Error {}
+
+function showsThreadsUnsupported(error: unknown): boolean {
+  return (
+    error instanceof ThreadsUnsupported ||
+    error instanceof WebAssembly.CompileError ||
+    error instanceof WebAssembly.LinkError
+  )
+}
+
+/**
+ * Chooses the module for each call. "off" never loads the threaded module. "on" tries it. If the
+ * threaded module cannot be loaded, or the runtime shows it cannot run it (`ThreadsUnsupported`,
+ * a compile or link error), the call runs on the single-threaded module and every later call stays
+ * there. Any other error, a trap or a failed allocation included, fails that call alone: threads
+ * stay on for the next one, and the error reaches the caller.
  */
 export class FallowModules {
   private disabled: string | undefined
@@ -38,18 +55,31 @@ export class FallowModules {
     return this.disabled
   }
 
+  private disable(error: unknown): string {
+    this.disabled = error instanceof Error ? error.message : String(error)
+    return this.disabled
+  }
+
   async execute<T>(
     mode: FallowThreads,
     run: (module: WebAssembly.Module, threads: number) => T,
   ): Promise<Executed<T>> {
     let fallback: string | undefined
     if (mode === "on" && this.disabled === undefined) {
+      let module: WebAssembly.Module | undefined
       try {
         this.threaded ??= this.loadThreaded()
-        return { result: run(await this.threaded, MAX_FALLOW_THREADS) }
+        module = await this.threaded
       } catch (error) {
-        fallback = error instanceof Error ? error.message : String(error)
-        this.disabled = fallback
+        fallback = this.disable(error)
+      }
+      if (module) {
+        try {
+          return { result: run(module, MAX_FALLOW_THREADS) }
+        } catch (error) {
+          if (!showsThreadsUnsupported(error)) throw error
+          fallback = this.disable(error)
+        }
       }
     }
     // Compiled once: the single-threaded module is 24 MB of wasm, and a rejected load is retried.

@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { FallowModules, parseFallowThreads, sharedMemoryAvailable } from "./fallow-threads.ts"
+import {
+  FallowModules,
+  parseFallowThreads,
+  sharedMemoryAvailable,
+  ThreadsUnsupported,
+} from "./fallow-threads.ts"
 import { MAX_FALLOW_THREADS, memoryExhausted, runFallowModule, WasiTrap } from "./fallow-wasi.ts"
 
 /** A command module that returns at once, and one that traps: stand-ins for the real modules. */
@@ -126,15 +131,46 @@ describe("module choice and fallback", () => {
     expect(loads).toEqual({ single: 1, threaded: 1 })
   })
 
-  test("a threaded call that traps is answered by the single-threaded module, then threads stay off", async () => {
+  test("a threaded call that traps fails that call alone: threads stay on for the next", async () => {
     // The injected threaded module traps; the single-threaded stand-in returns.
-    const { modules } = counting(async () => traps)
-    const outcome = await modules.execute("on", (module, threads) => run(module, threads))
-    expect(outcome.fallback).toMatch(/unreachable/i)
-    expect(outcome.result.exitCode).toBeUndefined()
-    const later = await modules.execute("on", (module, threads) => run(module, threads))
-    expect(later.fallback).toBeUndefined()
-    expect(modules.disabledReason).toMatch(/unreachable/i)
+    const { modules, loads } = counting(async () => traps)
+    await expect(
+      modules.execute("on", (module, threads) => run(module, threads)),
+    ).rejects.toBeInstanceOf(WasiTrap)
+    expect(modules.disabledReason).toBeUndefined()
+    await expect(
+      modules.execute("on", (module, threads) => run(module, threads)),
+    ).rejects.toBeInstanceOf(WasiTrap)
+    expect(loads).toEqual({ single: 0, threaded: 1 })
+  })
+
+  test("any error of the analysis, memory failures included, is the caller's and keeps threads on", async () => {
+    const { modules } = counting(async () => returns)
+    for (const error of [new RangeError("Out of memory"), new Error("analysis failed")])
+      await expect(
+        modules.execute("on", () => {
+          throw error
+        }),
+      ).rejects.toBe(error)
+    expect(modules.disabledReason).toBeUndefined()
+    expect((await modules.execute("on", (_m, threads) => threads)).result).toBe(MAX_FALLOW_THREADS)
+  })
+
+  test("a module the runtime cannot link, or reports as unsupported, falls back and stays off", async () => {
+    for (const error of [
+      new WebAssembly.LinkError("shared memory is not supported"),
+      new WebAssembly.CompileError("bad opcode"),
+      new ThreadsUnsupported("no shared memory"),
+    ]) {
+      const { modules, loads } = counting(async () => returns)
+      const first = await modules.execute("on", (_module, threads) => {
+        if (threads > 1) throw error
+        return threads
+      })
+      expect(first).toEqual({ result: 1, fallback: error.message })
+      expect(await modules.execute("on", (_module, threads) => threads)).toEqual({ result: 1 })
+      expect(loads).toEqual({ single: 1, threaded: 1 })
+    }
   })
 
   test("a trap on the single-threaded module is still an error", async () => {

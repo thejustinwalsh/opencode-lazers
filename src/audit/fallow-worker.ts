@@ -3,7 +3,12 @@ import { dirname, join, sep } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { wasmURL } from "../worker-url.ts"
 import { CACHE_MAX_FILES, publishCache, seedCache } from "./fallow-cache.ts"
-import { FallowModules, sharedMemoryAvailable, type FallowThreads } from "./fallow-threads.ts"
+import {
+  FallowModules,
+  sharedMemoryAvailable,
+  ThreadsUnsupported,
+  type FallowThreads,
+} from "./fallow-threads.ts"
 import { memoryExhausted, runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
 
 /**
@@ -148,7 +153,8 @@ const threadPool = new ThreadPool()
 const modules = new FallowModules(
   () => load("fallow.wasm"),
   async () => {
-    if (!sharedMemoryAvailable()) throw new Error("shared memory is unavailable in this runtime")
+    if (!sharedMemoryAvailable())
+      throw new ThreadsUnsupported("shared memory is unavailable in this runtime")
     return load("fallow-threads.wasm")
   },
 )

@@ -68,6 +68,8 @@ async function auditReport(
           baseRoot: base.directory,
           signal: input.signal,
           timeoutMs: AUDIT_TIMEOUT_MS,
+          // The runner's review gates a task: it waits behind tool calls only.
+          priority: "verification",
           // The candidate starts from the project's cache and leaves its own there; the base tree
           // starts from the candidate's, because nearly every file is the same.
           cacheSeed: input.repository.projectDirectory,
@@ -89,6 +91,7 @@ async function auditReport(
               cacheSeed: input.repository.projectDirectory,
               signal: input.signal,
               timeoutMs: AUDIT_TIMEOUT_MS,
+              priority: "verification",
             }),
           AUDIT_TIMEOUT_MS + 5_000,
         )

@@ -55,7 +55,12 @@ const realRunners: ReportRunners = {
   section: fallowSection,
 }
 
-type Scope = { root: string; signal?: AbortSignal; timeoutMs: number }
+type Scope = {
+  root: string
+  signal?: AbortSignal
+  timeoutMs: number
+  priority: "background"
+}
 
 /**
  * Dead code, duplication and health in one engine run (the duplication report is computed once and
@@ -127,6 +132,8 @@ export async function fallowReport(
       ...(resolved.configPath ? { configPath: resolved.configPath } : {}),
       signal,
       timeoutMs: SECTION_TIMEOUT_MS,
+      // Whole-project reports run the longest: they yield to every other caller.
+      priority: "background" as const,
     }
     const wanted = input.sections ?? SECTIONS
     const shared = await sharedSections(wanted, scope, run).catch((error: unknown) => {

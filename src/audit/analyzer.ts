@@ -1,3 +1,4 @@
+import type { AnalysisPriority } from "./analysis-scheduler.ts"
 import type { DeadCodeReport, DuplicationReport, HealthReport } from "./fallow-types.ts"
 
 /** Scope shared by every analyzer call: the root to analyse and an optional file restriction. */
@@ -12,8 +13,12 @@ export type AnalyzerScope = {
   cacheSeed?: string
   /** The canonical checkout that receives this root's cache after a run, for later worktrees. */
   cachePublish?: string
-  /** Overrides the default per-call time limit. */
+  /**
+   * The time limit of the call, from the moment it is queued to its answer. Overrides the default.
+   */
   timeoutMs?: number
+  /** Who is waiting: tool calls by default, then verification, then background reports. */
+  priority?: AnalysisPriority
   /** Workspace-relative or absolute paths. Omitted means the whole root. */
   files?: readonly string[]
 }

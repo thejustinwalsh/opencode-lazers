@@ -1,3 +1,4 @@
+import type { AnalysisPriority } from "./analysis-scheduler.ts"
 import type { FallowAnalyzer } from "./analyzer.ts"
 import type { FallowFinding, FallowPackage } from "./contract.ts"
 import { runGit } from "./config.ts"
@@ -132,6 +133,7 @@ export async function staleSuppressionsIntroduced(input: {
   cacheSeed?: string
   signal?: AbortSignal
   timeoutMs?: number
+  priority?: AnalysisPriority
 }): Promise<FallowFinding[]> {
   const candidates = await possiblyConsumed(input.workspace, input.base)
   if (candidates.length === 0) return []
@@ -140,6 +142,7 @@ export async function staleSuppressionsIntroduced(input: {
     configPath: input.configPath,
     signal: input.signal,
     timeoutMs: input.timeoutMs,
+    ...(input.priority ? { priority: input.priority } : {}),
     cacheSeed: input.cacheSeed,
     cachePublish: input.cacheSeed,
   })
