@@ -18,6 +18,7 @@ import type {
   WorktreeLocationRetirement,
 } from "./host.ts"
 import type { TaskRepository } from "../storage.ts"
+import type { HostMessageClient } from "../core/host-messages.ts"
 import { ensureArchitectMap } from "../context/architect-map.ts"
 import { ensureArchitectProfileGuidance } from "../projects/profile-guidance.ts"
 import { basename, dirname, resolve } from "node:path"
@@ -584,6 +585,7 @@ export function nativeHost(
 ): RunnerHost & {
   retainedInputID(sessionID: string): Promise<string | undefined>
   nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
+  messages: HostMessageClient
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -653,10 +655,21 @@ export function nativeHost(
       ...(input.metadata ? { metadata: input.metadata } : {}),
     }
   }
+  /** The host's message list over the shared native connection, for cursor reads. */
+  const messages: HostMessageClient = {
+    message: {
+      list: async (input) => {
+        const client = await connectedClient()
+        return runNative(client, () => client.message.list(input))
+      },
+    },
+  }
   const host: RunnerHost & {
     retainedInputID(sessionID: string): Promise<string | undefined>
     nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
+    messages: HostMessageClient
   } = {
+    messages,
     retainedInputID,
     nativeProjectCanonicalDirectory,
     async workerModel(agentID = "lazers-implementor") {

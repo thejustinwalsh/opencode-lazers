@@ -14,7 +14,9 @@ import type { TaskRepository } from "../storage.ts"
  *
  * `session.context` stays reserved for building model prompts.
  */
-export type HostMessageClient = Pick<ReturnType<typeof OpenCode.make>, "message">
+export type HostMessageClient = {
+  message: Pick<ReturnType<typeof OpenCode.make>["message"], "list">
+}
 export type HostMessage = Awaited<ReturnType<HostMessageClient["message"]["list"]>>["data"][number]
 
 export const HOST_MESSAGE_PAGE_SIZE = 50
@@ -109,4 +111,18 @@ export async function latestTurn(
     limit: 1,
   })
   return page.data[0]
+}
+
+/** The newest `limit` messages of a session, oldest first: one descending page. */
+export async function latestMessages(
+  client: HostMessageClient,
+  sessionID: string,
+  limit = HOST_MESSAGE_PAGE_SIZE,
+): Promise<readonly HostMessage[]> {
+  const page = await client.message.list({
+    sessionID: sessionID as never,
+    order: "desc",
+    limit,
+  })
+  return [...page.data].reverse()
 }

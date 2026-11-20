@@ -342,6 +342,7 @@ export default Plugin.define({
           projectID,
           (sessionID) => runtime.observeArchitectSourceEvent(sessionID),
           () => core.wake(),
+          core.host.messages,
         ),
       )
       yield* sectionEffect("setup:TrajectoryTools", () =>

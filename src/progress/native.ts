@@ -1,3 +1,9 @@
+import {
+  forgetHostMessages,
+  latestMessages,
+  newMessages,
+  type HostMessageClient,
+} from "../core/host-messages.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
@@ -66,35 +72,35 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
-function hasVisibleHandoff(messages: readonly unknown[]): boolean {
-  let lastPrompt = -1
-  for (const [index, raw] of messages.entries()) {
+/**
+ * Fold messages, oldest first, into whether the newest reply is a visible handoff: an assistant
+ * stop with text that no prompt, shell or tool work follows. The verdict depends only on the
+ * last deciding message, so folding a re-delivered tail again gives the same answer and a
+ * caller can carry `visible` from the previous read instead of rereading the conversation.
+ */
+export function foldVisibleHandoff(visible: boolean, messages: readonly unknown[]): boolean {
+  for (const raw of messages) {
     const message = object(raw)
-    if (message?.type === "user" || message?.type === "synthetic") lastPrompt = index
-  }
-  let lastAssistant = -1
-  let lastToolWork = lastPrompt
-  for (const [index, raw] of messages.entries()) {
-    if (index <= lastPrompt) continue
-    const message = object(raw)
-    if (message?.type === "tool" || message?.type === "shell") lastToolWork = index
-    if (message?.type !== "assistant" || !Array.isArray(message.content)) continue
-    lastAssistant = index
     if (
-      message.content.some((part) => {
-        const item = object(part)
-        return item?.type === "tool"
-      })
+      message?.type === "user" ||
+      message?.type === "synthetic" ||
+      message?.type === "tool" ||
+      message?.type === "shell"
     )
-      lastToolWork = index
+      visible = false
+    else if (message?.type === "assistant" && Array.isArray(message.content)) {
+      visible =
+        !message.content.some((part) => object(part)?.type === "tool") &&
+        message.finish === "stop" &&
+        message.content.some((part) => {
+          const item = object(part)
+          return (
+            item?.type === "text" && typeof item.text === "string" && item.text.trim().length > 0
+          )
+        })
+    }
   }
-  if (lastAssistant < 0 || lastAssistant <= lastToolWork) return false
-  const finalAssistant = object(messages[lastAssistant])
-  if (finalAssistant?.finish !== "stop" || !Array.isArray(finalAssistant.content)) return false
-  return finalAssistant.content.some((part) => {
-    const item = object(part)
-    return item?.type === "text" && typeof item.text === "string" && item.text.trim().length > 0
-  })
+  return visible
 }
 
 function confirmedSyntheticRejection(error: unknown): boolean {
@@ -109,6 +115,7 @@ function confirmedSyntheticRejection(error: unknown): boolean {
 
 function reminderEffect(
   ctx: ProgressContext,
+  messages: HostMessageClient,
   recorder: ProgressRecorder,
   sessionID: string,
   backgroundCount: number,
@@ -128,16 +135,15 @@ function reminderEffect(
         session.location.directory !== assignment.workspace
       )
         return
-      // An unchanged native stamp means the retained context is the one already reconciled:
-      // reuse its recorded handoff verdict instead of reading the conversation again.
+      // An unchanged native stamp means the conversation is the one already reconciled: reuse
+      // its recorded handoff verdict. Otherwise fold the newest page onto the recorded verdict;
+      // the verdict depends on the last deciding message, so one page is enough.
       const updated = dateMillis(session.time?.updated)
       const stamp = updated === undefined ? undefined : recorder.sessionStamp(assignment.attemptID)
       const handoff =
         stamp && updated !== undefined && updated <= stamp.updated
           ? stamp.handoff
-          : hasVisibleHandoff(
-              await Effect.runPromise(ctx.session.context({ sessionID: session.id })),
-            )
+          : foldVisibleHandoff(stamp?.handoff ?? false, await latestMessages(messages, session.id))
       if (handoff) return
       const proposedMessageID = SessionMessage.ID.create()
       const claim = recorder.claimReminder(sessionID, HANDOFF_REMINDER, proposedMessageID)
@@ -169,6 +175,7 @@ function reminderEffect(
 
 async function reconstructSession(
   ctx: ProgressContext,
+  messages: HostMessageClient,
   recorder: ProgressRecorder,
   assignment: ProgressAssignment,
   isCurrent: () => boolean,
@@ -215,22 +222,38 @@ async function reconstructSession(
 
   recorder.recordSessionSnapshot(assignment.sessionID, session)
   recorder.recordSessionOutcome(assignment.sessionID, session)
+  // The read kind is named "context" for the diagnostics counters; it is one cursor pass.
   const finishContext = readStarted("context")
   try {
-    const messages = await Effect.runPromise(ctx.session.context({ sessionID: session.id }))
+    // The cursor mirror resumes from the last page it delivered. A session whose stamp moved
+    // reads only the new tail; the verdict folds onto the one recorded at the last stamp. With
+    // no stamp the cursor may be ahead of what was recorded, so start the pass over.
+    const repository = recorder.store.repository
+    if (!stamp) forgetHostMessages(repository, assignment.sessionID)
+    let handoff = stamp?.handoff ?? false
+    let held: readonly unknown[] | undefined
+    for await (const page of newMessages(repository, messages, assignment.sessionID)) {
+      if (!assignmentIsCurrent()) {
+        finishContext("succeeded")
+        return "stale" as const
+      }
+      // One page is held back so the last one is reconciled as the end of history.
+      if (held) await recorder.reconcileMessagesAsync(assignment.sessionID, held, { final: false })
+      handoff = foldVisibleHandoff(handoff, page)
+      held = page
+    }
     finishContext("succeeded")
     if (!assignmentIsCurrent()) return "stale" as const
-    await recorder.reconcileMessagesAsync(assignment.sessionID, messages)
+    await recorder.reconcileMessagesAsync(assignment.sessionID, held ?? [], { final: true })
     if (!assignmentIsCurrent()) return "stale" as const
-    if (updated !== undefined)
-      recorder.recordSessionStamp(assignment, { updated, handoff: hasVisibleHandoff(messages) })
+    if (updated !== undefined) recorder.recordSessionStamp(assignment, { updated, handoff })
     return "complete" as const
   } catch (error) {
     finishContext("failed")
     if (!assignmentIsCurrent()) return "stale" as const
     recorder.markRecoveryGap(
       assignment.sessionID,
-      `Retained public session context is unavailable: ${safeError(error, privacyStats())}`,
+      `Retained public session messages are unavailable: ${safeError(error, privacyStats())}`,
     )
     return "retry" as const
   }
@@ -343,8 +366,9 @@ export function registerProgress(
   ctx: ProgressContext,
   recorder: ProgressRecorder,
   projectID: string,
-  sourceChanged?: (sessionID?: string) => void,
-  workerIdle?: () => void,
+  sourceChanged: ((sessionID?: string) => void) | undefined,
+  workerIdle: (() => void) | undefined,
+  messages: HostMessageClient,
 ) {
   return Effect.gen(function* () {
     const listenerID = crypto.randomUUID()
@@ -491,7 +515,7 @@ export function registerProgress(
           trace(idle.sessionID, "idle-hook", { backgroundCount: idle.background.length })
           try {
             if (idle.background.length === 0)
-              await Effect.runPromise(reminderEffect(ctx, recorder, idle.sessionID, 0))
+              await Effect.runPromise(reminderEffect(ctx, messages, recorder, idle.sessionID, 0))
           } finally {
             workerIdle?.()
           }
@@ -515,7 +539,7 @@ export function registerProgress(
         assignmentForSession: (sessionID) => recorder.assignmentForSession(sessionID),
         mayOwn: (sessionID) => recorder.mayBeAssigned(sessionID),
         reconstruct: (assignment, isCurrent, readStarted) =>
-          reconstructSession(ctx, recorder, assignment, isCurrent, readStarted),
+          reconstructSession(ctx, messages, recorder, assignment, isCurrent, readStarted),
       },
     })
     yield* Effect.addFinalizer(() => Effect.sync(() => reconstruction.dispose()))

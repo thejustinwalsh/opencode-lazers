@@ -11,7 +11,28 @@ import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
 import { ProgressRecorder } from "./recorder.ts"
 import { progressReconstructionDiagnostics } from "./reconstruction.ts"
-import { registerProgress } from "./native.ts"
+import { registerProgress as registerNativeProgress } from "./native.ts"
+import type { HostMessageClient } from "../core/host-messages.ts"
+
+/** Each fixture context's host message client, paging the same messages its context serves. */
+const fixtureMessages = new WeakMap<object, HostMessageClient>()
+
+function registerProgress(
+  ctx: Plugin.Context,
+  recorder: ProgressRecorder,
+  projectID: string,
+  sourceChanged?: (sessionID?: string) => void,
+  workerIdle?: () => void,
+) {
+  return registerNativeProgress(
+    ctx,
+    recorder,
+    projectID,
+    sourceChanged,
+    workerIdle,
+    fixtureMessages.get(ctx)!,
+  )
+}
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 
@@ -95,6 +116,8 @@ function makeContext(
     ],
   ] as const)
   const messages: unknown[] = options.messages ?? [{ id: "msg-second", type: "user" }]
+  let wholeConversationReads = 0
+  const listCalls: { cursor?: string; order?: string; limit?: number }[] = []
   const context = {
     permission: {
       assert: () => (options.denied ? Effect.fail(new Error("permission denied")) : Effect.void),
@@ -132,8 +155,11 @@ function makeContext(
           })
         )
       },
-      context: ({ sessionID }: { sessionID: string }) =>
-        options.readContext?.(sessionID) ?? Effect.succeed(messages),
+      // Progress never reads the whole conversation: any call here is a regression.
+      context: ({ sessionID }: { sessionID: string }) => {
+        wholeConversationReads++
+        return options.readContext?.(sessionID) ?? Effect.succeed(messages)
+      },
       synthetic: (input: unknown) => {
         syntheticCalls++
         syntheticInputs.push(input)
@@ -160,6 +186,30 @@ function makeContext(
       },
     },
   } as unknown as Plugin.Context
+  // The host message list over the same source `session.context` serves: one read per page,
+  // an opaque numeric cursor, ascending by default and newest first for `order: "desc"`.
+  fixtureMessages.set(context, {
+    message: {
+      list: async (input: {
+        sessionID: string
+        cursor?: string
+        order?: string
+        limit?: number
+      }) => {
+        listCalls.push({ cursor: input.cursor, order: input.order, limit: input.limit })
+        const all = (await Effect.runPromise(
+          options.readContext?.(input.sessionID) ?? Effect.succeed(messages),
+        )) as { id: string }[]
+        const limit = input.limit ?? 50
+        if (input.order === "desc")
+          return { data: all.slice(-limit).reverse(), cursor: {} } as never
+        const start = input.cursor ? Number(input.cursor) : 0
+        const data = all.slice(start, start + limit)
+        const next = start + limit < all.length ? String(start + limit) : undefined
+        return { data, cursor: { ...(next ? { next } : {}) } } as never
+      },
+    },
+  })
   return {
     context,
     tools,
@@ -169,6 +219,9 @@ function makeContext(
     syntheticCalls: () => syntheticCalls,
     subscriptions: () => subscriptionCount,
     syntheticInputs: () => syntheticInputs,
+    wholeConversationReads: () => wholeConversationReads,
+    listCalls,
+    messages,
     emitEvent: (event: unknown) => {
       const value = testObject(event)
       if (value?.type === "session.execution.succeeded" && typeof value.id === "string") {
@@ -1767,6 +1820,74 @@ test("finished sessions with an unchanged native stamp are neither re-read nor r
             await waitForNativeState(async () => contexts.length === 3, 6_000)
           })
           expect(contexts.filter((id) => id === "ses-accepted").length).toBe(2)
+        }),
+      ),
+    )
+  } finally {
+    fixture.close()
+  }
+})
+
+test("reconstruction pages the host by cursor: unchanged stamps read nothing, a changed one reads only the new page", async () => {
+  const fixture = makeFixture()
+  try {
+    const recorder = new ProgressRecorder(fixture.store, "project")
+    const history = Array.from({ length: 120 }, (_, index) => ({
+      id: `msg-${String(index).padStart(3, "0")}`,
+      type: "user",
+      text: `step ${index}`,
+    }))
+    const updated = new Map([["ses-accepted", 100]])
+    let gets = 0
+    const ctx = makeContext(fixture, {
+      liveEvents: true,
+      messages: history,
+      readSession: (sessionID) => {
+        gets++
+        return Effect.succeed({
+          id: sessionID,
+          projectID: "project",
+          agent: "lazers-implementor",
+          location: { directory: fixture.directory },
+          time: { updated: updated.get(sessionID) ?? 100 },
+        })
+      },
+    })
+    const idle = () => ctx.emitEvent(executionEvent("session.idle", "ses-accepted", 1))
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* registerProgress(ctx.context, recorder, "project")
+          // Boot: the 120-message history is read once, as three pages of at most 50.
+          yield* Effect.promise(() =>
+            waitForNativeState(async () => recorder.sessionStamp(secondAttemptID) !== undefined),
+          )
+          const afterBoot = ctx.listCalls.length
+          expect(ctx.listCalls.every((call) => (call.limit ?? 0) <= 50)).toBe(true)
+          expect(afterBoot).toBeGreaterThanOrEqual(3)
+
+          // Idle events with an unchanged stamp: no message read of any kind.
+          const readsBefore = gets
+          yield* Effect.promise(async () => {
+            await idle()
+            await idle()
+            await waitForNativeState(async () => gets >= readsBefore + 1, 6_000)
+          })
+          expect(ctx.listCalls.length).toBe(afterBoot)
+
+          // A moved stamp reads the tail page only, not the first 100 messages.
+          ctx.messages.push({ id: "msg-120", type: "user", text: "step 120" })
+          updated.set("ses-accepted", 200)
+          yield* Effect.promise(async () => {
+            await idle()
+            await waitForNativeState(
+              async () => recorder.sessionStamp(secondAttemptID)?.updated === 200,
+              6_000,
+            )
+          })
+          expect(ctx.listCalls.length - afterBoot).toBe(1)
+          expect(ctx.listCalls.at(-1)?.cursor).toBe("100")
+          expect(ctx.wholeConversationReads()).toBe(0)
         }),
       ),
     )

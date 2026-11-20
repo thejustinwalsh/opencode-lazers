@@ -1,3 +1,4 @@
+import { installHostMessageSchema } from "../core/host-messages.ts"
 import { isWorkerAgent } from "../runner/worker-agent.ts"
 import { isNativeInput } from "../runner/native-input.ts"
 import { DateTime } from "effect"
@@ -1460,6 +1461,7 @@ export class ProgressRecorder {
     readonly projectID: string,
   ) {
     installSessionStampSchema(store.repository)
+    installHostMessageSchema(store.repository)
   }
 
   /** Native `time.updated` (and derived handoff) at this attempt's last complete reconstruction. */
@@ -2363,11 +2365,15 @@ export class ProgressRecorder {
    * Incremental, chunked reconcile: each slice is its own short transaction and the
    * event loop runs between slices. Overlapping runs for a session are serialized.
    */
-  reconcileMessagesAsync(sessionID: string, rawMessages: readonly unknown[]): Promise<void> {
+  reconcileMessagesAsync(
+    sessionID: string,
+    rawMessages: readonly unknown[],
+    options: { final?: boolean } = {},
+  ): Promise<void> {
     const prior = this.reconcileInflight.get(sessionID)
     const run = (async () => {
       if (prior) await prior.catch(() => undefined)
-      const steps = this.reconcileSteps(sessionID, rawMessages)
+      const steps = this.reconcileSteps(sessionID, rawMessages, options.final ?? true)
       while (!steps.next().done) await new Promise<void>((resolve) => setImmediate(resolve))
     })()
     const tracked: Promise<void> = run.finally(() => {
@@ -2408,13 +2414,18 @@ export class ProgressRecorder {
     return stamps
   }
 
+  /**
+   * `final` is false for a page that is not the last of a paged read: a reminder missing from
+   * it may still be on a later page, so only the last page may conclude it was never admitted.
+   */
   private *reconcileSteps(
     sessionID: string,
     rawMessages: readonly unknown[],
+    final = true,
   ): Generator<void, void, void> {
     const messages = rawMessages.slice(0, 10_000)
     const hasMoreThanBound = rawMessages.length > messages.length
-    this.reconcileReminder(sessionID, rawMessages)
+    this.reconcileReminder(sessionID, rawMessages, final)
     const assignment = this.assignmentForSession(sessionID)
     if (!assignment) {
       this.reconcileStates.delete(sessionID)
@@ -3415,7 +3426,7 @@ export class ProgressRecorder {
     )
   }
 
-  reconcileReminder(sessionID: string, messages: readonly unknown[]): void {
+  reconcileReminder(sessionID: string, messages: readonly unknown[], final = true): void {
     this.store.atomic((db) => {
       const assignment = this.assignmentQuery(db, "session", sessionID)
       if (!assignment) return
@@ -3464,7 +3475,7 @@ export class ProgressRecorder {
           "admitted",
           Date.now(),
         )
-      } else if (reminder.status === "dispatching") {
+      } else if (final && reminder.status === "dispatching") {
         this.completeReminderIn(
           db,
           assignment.attemptID,
