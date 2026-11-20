@@ -14,6 +14,9 @@ import {
 } from "../models/price-source-settings.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { workerURL } from "../worker-url.ts"
+import { readerPool } from "../streams/pool.ts"
+import { itemSource } from "../streams/test-source.ts"
+import { openHarness, seedItems, testSourceModule } from "../streams/test-harness.ts"
 import { computeGeneration } from "./generation.ts"
 import sourcePlugin from "../index.ts"
 import { readFileSync } from "node:fs"
@@ -35,6 +38,7 @@ test("build emits one server file plus its workers, and the bundle exports the s
       "decision-worker.js",
       "fallow-worker.js",
       "fallow-thread.js",
+      "reader-worker.js",
     ]),
   )
   const built = (await import(`${dist}server.js`)) as { default: typeof sourcePlugin }
@@ -106,6 +110,26 @@ test("bundled workers start from the built output", async () => {
   } finally {
     reader.close()
     fixture.close()
+  }
+}, 60_000)
+
+test("the bundled stream reader worker serves an open over a seeded database", async () => {
+  const seeded = seedItems(500)
+  const pool = readerPool(seeded.path, {
+    workers: 1,
+    workerURL: pathToFileURL(`${dist}reader-worker.js`),
+    sourceModules: [testSourceModule],
+  })
+  try {
+    const h = openHarness(pool, itemSource, { filter: {}, order: "id", anchor: "head", window: 25 })
+    const frame = await h.next()
+    expect(frame.ids).toEqual(Array.from({ length: 25 }, (_, i) => i + 1))
+    expect(frame.header.after).toBe(475)
+    expect((await h.slide(5)).ids[0]).toBe(6)
+    h.stream.close()
+  } finally {
+    await pool.close()
+    seeded.close()
   }
 }, 60_000)
 
