@@ -40,3 +40,18 @@ export const itemsMoreSource = defineSource({
   name: "test.items.more",
   count: "more",
 })
+
+/** No `count`: the default, an existence probe per side. */
+export const itemsDefaultCountSource = defineSource({ ...definition, name: "test.items.default" })
+
+/** A stored counter: the builders return numbers a real source would read from a counter table. */
+export const itemsStoredCountSource = defineSource({
+  ...definition,
+  name: "test.items.stored",
+  count: {
+    exact: {
+      before: ({ edge }) => ({ sql: "SELECT ? + 1000", params: [Number(edge[0])] }),
+      after: ({ edge }) => ({ sql: "SELECT 2000 - ?", params: [Number(edge[0])] }),
+    },
+  },
+})

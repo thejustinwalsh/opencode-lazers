@@ -98,7 +98,7 @@ const countBeyond = (stream: Stream, side: "before" | "after", edge: readonly un
   })
   const [row] = run(side === "before" ? query.before(edge) : query.after(edge))
   const value = Number(row?.[0] ?? 0)
-  return stream.source.count === "exact" ? value : value > 0 ? "more" : 0
+  return stream.source.countMode === "more" ? (value > 0 ? "more" : 0) : value
 }
 
 type Loaded = { rows: Uint8Array[]; before: Count; after: Count }
@@ -179,7 +179,7 @@ const slide = (stream: Stream, delta: number) => {
   const size = Math.abs(delta)
   const limit = Math.min(size, stream.window)
   const offset = Math.max(0, size - stream.window)
-  const probe = stream.source.count === "more" ? 1 : 0
+  const probe = stream.source.countMode === "more" ? 1 : 0
   const edge = edgeOf(stream, stream.rows[forward ? stream.rows.length - 1 : 0]!)
   const { query, reversed } = slideQuery(stream.source, {
     filter: stream.filter,
@@ -208,7 +208,7 @@ const slide = (stream: Stream, delta: number) => {
   const passed = offset + leaving
   const trailing = forward ? stream.before : stream.after
   const leadingNow = (value: Count): Count =>
-    stream.source.count === "exact"
+    stream.source.countMode !== "more"
       ? (typeof value === "number" ? value : 0) + passed
       : value === "more" || passed > 0
         ? "more"
@@ -216,7 +216,7 @@ const slide = (stream: Stream, delta: number) => {
   const ahead = (value: Count): Count =>
     exhausted
       ? 0
-      : stream.source.count === "exact"
+      : stream.source.countMode !== "more"
         ? Math.max(0, (typeof value === "number" ? value : 0) - entering.length - offset)
         : more
           ? "more"
