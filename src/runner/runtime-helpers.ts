@@ -127,3 +127,30 @@ export function fallowAcceptance(
   const fallow = fallowOutcome(review, dispositions)
   return fallow ? { fallow } : {}
 }
+
+export type RetainedRepairRecord = {
+  operationID: string
+  attemptID: string
+  previousMessageID: string
+  repairMessageID: string
+  messageID: string
+  nativeInputID: string
+  nativeAssignmentID: string
+  admissionInputID: string
+  admissionAssignmentID: string
+  continued: boolean
+  terminalOutcome?: "interrupted" | "succeeded" | "failed"
+  owner: string
+  sessionID: string
+  workspace: string
+  route: unknown
+  defect: string
+}
+
+export type PlanFallowContext = {
+  workspace: string
+  artifact: string
+  baseCommit: string
+  sourceGeneration: string | undefined
+  verificationEpoch: number
+}

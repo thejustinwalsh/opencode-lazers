@@ -36,14 +36,13 @@ import { dispositionsAfterRepair } from "../audit/fallow-dispositions.ts"
 import { checkSucceeded } from "./checks.ts"
 import { needsMechanicalQualityPreparation } from "./quality-failure.ts"
 import type { EffectRow } from "./store.ts"
-import type { AuditorReport } from "./auditor-report.ts"
+
 import type { CheckActivities } from "./check-activities.ts"
 import type { RuntimeJournal } from "./runtime-journal.ts"
+import type { VerificationReview } from "./verification-review.ts"
 import type { AttemptRow, PlanRow } from "./store.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
-
-type AuditorPhase = Parameters<AuditorReport>[0] extends { phase: infer P } ? P : never
 
 /** What `VerificationCandidate` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type VerificationCandidateDeps = {
@@ -59,8 +58,8 @@ export type VerificationCandidateDeps = {
   runVerificationCheck: CheckActivities["runVerificationCheck"]
   preparationAllowed: (attempt: AttemptRow) => boolean
   retainedRepairGeneration: (planID: string, taskID?: string) => string | undefined
-  failAttempt: (plan: PlanRow, attempt: AttemptRow, reason: string) => unknown
-  startAuditorReport: (attempt: AttemptRow, phase: AuditorPhase) => void
+  failAttempt: VerificationReview["failAttempt"]
+  startAuditorReport: VerificationReview["startAuditorReport"]
   verificationTimeoutDefaults: VerificationTimeoutDefaults
 }
 
