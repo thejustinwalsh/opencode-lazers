@@ -16,6 +16,7 @@ import { promisify } from "node:util"
 import { canonical } from "../identity.ts"
 import { checkEnvironment, checkSucceeded } from "./checks.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
+import { withTestHangGuard } from "./test-hang-guard.ts"
 import {
   DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
   DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS,
@@ -569,7 +570,10 @@ async function hasReadableRegularFile(directory: string): Promise<boolean> {
 
 export type CheckReceipt = {
   id: string
+  /** The author's command, as declared. */
   command: string
+  /** What actually ran, present only when the runtime added a flag (the test hang guard). */
+  effectiveCommand?: string
   cwd: string
   artifact: string
   inputIdentity: string
@@ -610,6 +614,7 @@ export type CheckReceipt = {
 
 export type CheckPhaseReceipt = {
   command: string
+  effectiveCommand?: string
   exitCode: number | null
   timedOut: boolean
   stopCause?: "inactivity" | "hard-backstop" | "cancelled" | null
@@ -844,7 +849,8 @@ export async function runCheck(
   if (inactivityTimeoutMs > hardTimeoutMs)
     throw new Error("Verification inactivity allowance cannot exceed its hard backstop")
   let stopCause: CheckReceipt["stopCause"] = null
-  const child = Bun.spawn(["/bin/sh", "-c", check.command], {
+  const effectiveCommand = withTestHangGuard(check.command)
+  const child = Bun.spawn(["/bin/sh", "-c", effectiveCommand], {
     cwd: directory,
     stdout: "pipe",
     stderr: "pipe",
@@ -987,6 +993,7 @@ export async function runCheck(
     const receipt = {
       id: check.id,
       command: check.command,
+      ...(effectiveCommand === check.command ? {} : { effectiveCommand }),
       cwd: directory,
       artifact,
       inputIdentity,
@@ -1116,6 +1123,9 @@ export async function runDeclaredCheck(
     )
     phases.push({
       command,
+      ...(latest.effectiveCommand === undefined
+        ? {}
+        : { effectiveCommand: latest.effectiveCommand }),
       exitCode: latest.exitCode,
       timedOut: latest.timedOut,
       stopCause: latest.stopCause,
@@ -1128,10 +1138,13 @@ export async function runDeclaredCheck(
     if (!checkSucceeded(latest) || !checkResourcesSettled(latest)) break
   }
   if (!latest) throw new Error("Recognized verification command has no executable phases")
+  const { effectiveCommand: _lastPhaseCommand, ...lastPhase } = latest
+  const effectiveCommand = withTestHangGuard(check.command)
   const result: CheckReceipt = {
-    ...latest,
+    ...lastPhase,
     id: check.id,
     command: check.command,
+    ...(effectiveCommand === check.command ? {} : { effectiveCommand }),
     cwd: directory,
     artifact,
     inputIdentity: options.inputIdentity ?? artifact,
