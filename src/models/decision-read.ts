@@ -1328,6 +1328,7 @@ function decisionGraph(rows: ModelDecisionRow[]): DecisionSnapshot["graph"] {
 function buildSnapshotData(
   input: ModelDecisionReadInput,
   capture: ObservationLedgerDecisionCapture,
+  effort: ReturnType<typeof projectTaskEffortBasis>,
   priceState: ModelDecisionPriceState,
   priceIdentity: string,
   routes: CurrentPriceApplicability[],
@@ -1348,6 +1349,7 @@ function buildSnapshotData(
     progressFacts: capture.progressFacts,
     progressTruncated: false,
     truncatedContextSessionIDs: [],
+    effort,
   }
   const valuation = projectTaskValuation({ ...valuationRequest, currentIndex: priceState.index })
   const bySession = buildSessionData(capture, valuation, selectedTasks)
@@ -1811,7 +1813,15 @@ export function createModelDecisionReader(
       throw new Error("Decision route coverage exceeds the 4000 exact-route pricing bound")
     const { priceState, priceIdentity } = await readPrice(routes, signal)
     signal?.throwIfAborted()
-    const snapshot = buildSnapshotData(input, result, priceState, priceIdentity, routes, signal)
+    const snapshot = buildSnapshotData(
+      input,
+      result,
+      effort,
+      priceState,
+      priceIdentity,
+      routes,
+      signal,
+    )
     signal?.throwIfAborted()
     return snapshot
   }

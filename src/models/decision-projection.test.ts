@@ -14,6 +14,8 @@ import {
   installDecisionProjectionSchema,
 } from "./decision-projection.ts"
 import { createModelDecisionReader } from "./decision-read.ts"
+import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
+import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
 import { modelConfigurationID } from "./model-identity.ts"
 import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import {
@@ -552,4 +554,26 @@ test("a folded decision read parses fewer bytes than the full read", async () =>
   expect(legacyRows).toBe(before.rows)
   expect(decisionProjectionStats.readSourceRows).toBe(0)
   expect(after.bytes).toBeLessThan(before.bytes)
+})
+
+test("a valuation and a per-call read given the snapshot's effort basis equal the ones that compute it", () => {
+  const fixture = fixtureWithHistory(300)
+  routeAttempt(fixture, fixture.attempts.failed.id, ROUTES[0]!, [40, 60])
+  routeAttempt(fixture, fixture.attempts.accepted.id, ROUTES[1]!, [20, 30])
+  const captured = capture(fixture.path, fixture.projectDirectory)
+  const request = {
+    attempts: captured.tasks.flatMap((task) => task.attempts.map((attempt) => attempt.accounting)),
+    progressFacts: captured.progressFacts,
+    progressTruncated: false,
+    truncatedContextSessionIDs: [],
+  }
+  const effort = projectTaskEffortBasis(request)
+  const index = pricedIndex(ROUTES.map((route) => ({ route })))
+  expect(projectTaskValuation({ ...request, currentIndex: index, effort })).toEqual(
+    projectTaskValuation({ ...request, currentIndex: index }),
+  )
+  for (const route of ROUTES)
+    expect(taskValuationPerCallUsage({ ...request, effort }, route)).toEqual(
+      taskValuationPerCallUsage(request, route),
+    )
 })
