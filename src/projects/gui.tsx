@@ -6,6 +6,7 @@ import { Label } from "../details/components.tsx"
 import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
 import { Projects } from "./contract.ts"
 import type { ProjectScope, ProjectsListing, ProjectsOutcome, ProjectView } from "./contract.ts"
+import { VerificationGroup, verificationStyles } from "./profile-gui.tsx"
 
 type Ctx = Parameters<Plugin.Setup>[0]
 const REFRESH_MS = 3_000
@@ -29,7 +30,7 @@ function parseField(text: string, whole: boolean): { value: number | null } | { 
  */
 export function setupProjects(ctx: Ctx) {
   const Ui = ctx.ui
-  ctx.add(Style, `${settingLabelStyles}\n${projectsStyles}`)
+  ctx.add(Style, `${settingLabelStyles}\n${projectsStyles}\n${verificationStyles}`)
 
   const Section = bindPlugin(() => {
     const [listing, setListing] = createStore<{ value?: ProjectsListing }>({})
@@ -301,7 +302,14 @@ export function setupProjects(ctx: Ctx) {
             onResume={() => void setPause({ kind: "global" }, false)}
           />
         </Ui.SettingsRow>
-        <For each={listing.value?.projects ?? []}>{(project) => <Row project={project} />}</For>
+        <For each={listing.value?.projects ?? []}>
+          {(project) => (
+            <>
+              <Row project={project} />
+              <VerificationGroup ctx={ctx} project={project} refresh={() => void refresh()} />
+            </>
+          )}
+        </For>
       </Ui.SettingsSection>
     )
   })

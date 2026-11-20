@@ -4,6 +4,8 @@ import { render } from "solid-js/web"
 import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import { setupProjects } from "../../src/projects/gui.tsx"
 import type {
+  ProfileOutcomeView,
+  ProfileView,
   ProjectScope,
   ProjectsListing,
   ProjectsOutcome,
@@ -17,8 +19,18 @@ const CODE = /^[A-Z]{2,4}\d*$/
 export function harness(
   root: HTMLElement,
   seed: ProjectView[],
-  options: { reachable?: boolean } = {},
+  options: {
+    reachable?: boolean
+    /** Profile views by project key; anything else reads as no profile. */
+    profiles?: Record<string, ProfileView>
+    /** The answer of the confirmation dialog. */
+    confirm?: boolean
+    /** What `proposeProfile` answers. */
+    propose?: ProfileOutcomeView
+  } = {},
 ) {
+  const confirms: { title: string; description?: string }[] = []
+  const toasts: { title: string; open: boolean }[] = []
   const projects = structuredClone(seed)
   let globalPause: ProjectsListing["globalPause"] = null
   let reachable = options.reachable ?? true
@@ -28,6 +40,16 @@ export function harness(
   const find = (scope: ProjectScope) =>
     scope.kind === "project" ? projects.find((p) => p.key === scope.key) : undefined
   const methods = {
+    profile: (input: { key: string }): ProfileView =>
+      structuredClone(options.profiles?.[input.key] ?? { key: input.key, setupDismissedAt: null }),
+    proposeProfile: (_input: Record<string, unknown>): ProfileOutcomeView =>
+      options.propose ?? {
+        ok: false,
+        refusal: "PROFILE_INVALID",
+        message: "verify: A profile needs at least one verify command",
+      },
+    confirmProfile: (): ProjectsOutcome => ok,
+    discardProfile: (): ProjectsOutcome => ok,
     list: (): ProjectsListing => ({
       projects: structuredClone(projects),
       globalPause,
@@ -140,6 +162,23 @@ export function harness(
         </button>
       ),
     },
+    dialogs: {
+      confirm: async (dialog: { title: string; description?: string }) => {
+        confirms.push(dialog)
+        return options.confirm ?? true
+      },
+    },
+    toast: {
+      show: (toast: { title: string }) => {
+        const record = { title: toast.title, open: true }
+        toasts.push(record)
+        return {
+          dismiss: () => {
+            record.open = false
+          },
+        }
+      },
+    },
     add: () => {},
   }
   let Section!: () => JSX.Element
@@ -165,6 +204,8 @@ export function harness(
   )
   return {
     calls,
+    confirms,
+    toasts,
     setReachable: (value: boolean) => {
       reachable = value
     },
