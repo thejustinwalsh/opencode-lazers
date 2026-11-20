@@ -29,7 +29,6 @@ export type ReconstructionOptions = {
   location?: string
   participant: ReconstructionParticipant
   pollIntervalMs?: number
-  terminalRefreshMs?: number
   /** Trailing coalescing window per session for native-event nudges. */
   changedDebounceMs?: number
 }
@@ -46,7 +45,6 @@ type Participant = ReconstructionParticipant & {
   location: string
   active: boolean
   pollIntervalMs: number
-  terminalRefreshMs: number
 }
 type InFlight = {
   sessionID: string
@@ -72,12 +70,9 @@ type Coordinator = {
   participants: Map<symbol, Participant>
   jobs: Map<string, Work>
   dirty: Set<string>
-  lastCompletedAt: Map<string, number>
   baselineCaptured: boolean
   scanAt: number
   pollIntervalMs: number
-  terminalRefreshMs: number
-  terminalCursor?: string
   inFlight?: InFlight
   drainOwner?: symbol
   timer?: ReturnType<typeof setTimeout>
@@ -101,7 +96,6 @@ const coordinatorHost = globalThis as typeof globalThis & {
 const coordinators: CoordinatorRegistry = (coordinatorHost[coordinatorRegistryKey] ??= new Map())
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000
-const DEFAULT_TERMINAL_REFRESH_MS = 30_000
 const DEFAULT_CHANGED_DEBOUNCE_MS = 1_500
 const MAX_RETRY_DELAY_MS = 60_000
 const ACTIVE_ATTEMPT_STATES = new Set(["preparing", "queued", "ready", "running", "verifying"])
@@ -155,7 +149,6 @@ function updateIntervals(coordinator: Coordinator) {
   const participants = [...coordinator.participants.values()].filter((value) => value.active)
   if (participants.length === 0) return
   coordinator.pollIntervalMs = Math.min(...participants.map((value) => value.pollIntervalMs))
-  coordinator.terminalRefreshMs = Math.min(...participants.map((value) => value.terminalRefreshMs))
 }
 
 function enqueue(coordinator: Coordinator, sessionID: string, dueAt = Date.now(), failures = 0) {
@@ -187,7 +180,6 @@ function scanAssignments(coordinator: Coordinator, participant: Participant) {
   for (const [sessionID, assignment] of current) {
     const previous = coordinator.assignments.get(sessionID)
     if (!coordinator.baselineCaptured || !sameProgressAssignment(previous, assignment)) {
-      coordinator.lastCompletedAt.delete(sessionID)
       enqueue(coordinator, sessionID)
     }
   }
@@ -195,44 +187,11 @@ function scanAssignments(coordinator: Coordinator, participant: Participant) {
     if (current.has(sessionID)) continue
     coordinator.jobs.delete(sessionID)
     coordinator.dirty.delete(sessionID)
-    coordinator.lastCompletedAt.delete(sessionID)
   }
   coordinator.assignments = current
   coordinator.baselineCaptured = true
   coordinator.assignmentsObservedAt = Date.now()
-  scheduleTerminalRefresh(coordinator)
   coordinator.scanAt = Date.now() + coordinator.pollIntervalMs
-}
-
-function scheduleTerminalRefresh(coordinator: Coordinator) {
-  const now = Date.now()
-  const terminal = [...coordinator.assignments.values()]
-    .filter((assignment) => assignmentIsTerminal(assignment))
-    .sort((left, right) =>
-      left.sessionID < right.sessionID ? -1 : left.sessionID > right.sessionID ? 1 : 0,
-    )
-  if (terminal.length === 0) return
-
-  const start = coordinator.terminalCursor
-    ? Math.max(
-        0,
-        terminal.findIndex((assignment) => assignment.sessionID > coordinator.terminalCursor!),
-      )
-    : 0
-  for (let offset = 0; offset < terminal.length; offset++) {
-    const assignment = terminal[(start + offset) % terminal.length]!
-    if (
-      coordinator.jobs.has(assignment.sessionID) ||
-      coordinator.inFlight?.sessionID === assignment.sessionID
-    )
-      continue
-    const lastCompletedAt = coordinator.lastCompletedAt.get(assignment.sessionID)
-    if (lastCompletedAt !== undefined && now - lastCompletedAt < coordinator.terminalRefreshMs)
-      continue
-    coordinator.terminalCursor = assignment.sessionID
-    enqueue(coordinator, assignment.sessionID, now)
-    break
-  }
 }
 
 function retryDelay(failures: number) {
@@ -547,8 +506,6 @@ function drive(coordinator: Coordinator) {
         } else if (result === "retry") {
           const failures = work.failures + 1
           enqueue(coordinator, sessionID, Date.now() + retryDelay(failures), failures)
-        } else {
-          coordinator.lastCompletedAt.set(sessionID, Date.now())
         }
       }
     } finally {
@@ -568,11 +525,9 @@ function coordinatorFor(key: string, options: ReconstructionOptions): Coordinato
       participants: new Map(),
       jobs: new Map(),
       dirty: new Set(),
-      lastCompletedAt: new Map(),
       baselineCaptured: false,
       scanAt: 0,
       pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-      terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
     }
     coordinators.set(key, coordinator)
     initializeDiagnostics(coordinator)
@@ -599,7 +554,6 @@ export function registerProgressReconstruction(
     location: canonicalPath(options.location ?? options.projectDirectory),
     active: true,
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-    terminalRefreshMs: options.terminalRefreshMs ?? DEFAULT_TERMINAL_REFRESH_MS,
   }
   const debounceMs = Math.max(0, options.changedDebounceMs ?? DEFAULT_CHANGED_DEBOUNCE_MS)
   coordinator.participants.set(participant.id, participant)

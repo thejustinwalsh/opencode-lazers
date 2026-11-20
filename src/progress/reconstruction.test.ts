@@ -112,7 +112,6 @@ test("54 registrations across pinned loader generations share one 97-session bas
         projectID: "project",
         participant: makeParticipant(),
         pollIntervalMs: 60_000,
-        terminalRefreshMs: 60_000,
       })
       registrations.push(first.registerProgressReconstruction(options()))
       await firstGate.promise
@@ -457,7 +456,6 @@ test("suspended changes coalesce, assignment changes are polled, and stale reads
     projectDirectory: fixture.directory,
     projectID: "project",
     pollIntervalMs: 10,
-    terminalRefreshMs: 60_000,
     participant: participantFor(
       () => [{ ...latest }],
       async (value, isCurrent) => {
@@ -602,71 +600,6 @@ test("unavailable reconstruction remains queued and retries until it recovers", 
   try {
     await waitFor(() => calls === 2, 5_000)
     expect(calls).toBe(2)
-  } finally {
-    registration.dispose()
-    fixture.close()
-  }
-})
-
-test("terminal historical context is fairly rechecked without a native event", async () => {
-  const fixture = makeFixture()
-  const reads: number[] = []
-  let contextRevision = 1
-  const registration = registerProgressReconstruction({
-    databasePath: fixture.store.repository.path,
-    projectDirectory: fixture.directory,
-    projectID: "project",
-    pollIntervalMs: 5,
-    terminalRefreshMs: 10,
-    participant: participantFor(
-      () => [assignment(1, "project", "accepted")],
-      async (_value, isCurrent) => {
-        if (!isCurrent()) return "stale"
-        reads.push(contextRevision)
-        return "complete"
-      },
-    ),
-  })
-
-  try {
-    await waitFor(() => reads.length > 0)
-    contextRevision = 2
-    await waitFor(() => reads.includes(2))
-    expect(reads).toContain(2)
-  } finally {
-    registration.dispose()
-    fixture.close()
-  }
-})
-
-test("mixed-case terminal sessions advance fairly across complete refresh cycles", async () => {
-  const fixture = makeFixture()
-  const sessionIDs = ["ses-a", "ses-A", "ses-b", "ses-B"]
-  const reads = new Map(sessionIDs.map((sessionID) => [sessionID, 0]))
-  const assignments = sessionIDs.map((sessionID, index) => ({
-    ...assignment(index + 1, "project", "accepted"),
-    sessionID,
-  }))
-  const registration = registerProgressReconstruction({
-    databasePath: fixture.store.repository.path,
-    projectDirectory: fixture.directory,
-    projectID: "project",
-    pollIntervalMs: 1,
-    terminalRefreshMs: 1,
-    participant: participantFor(
-      () => assignments.map((value) => ({ ...value })),
-      async (value, isCurrent) => {
-        if (!isCurrent()) return "stale"
-        reads.set(value.sessionID, reads.get(value.sessionID)! + 1)
-        return "complete"
-      },
-    ),
-  })
-
-  try {
-    await waitFor(() => [...reads.values()].every((count) => count >= 3))
-    expect([...reads.keys()]).toEqual(sessionIDs)
-    expect([...reads.values()].every((count) => count >= 3)).toBe(true)
   } finally {
     registration.dispose()
     fixture.close()
