@@ -664,6 +664,11 @@ export class TaskRepository {
     return TaskReferenceSchema.parse(row.reference)
   }
 
+  /** The code of the project this checkout belongs to; absent before the project registers. */
+  projectCode(): string | undefined {
+    return projectCodeForDirectoryIn(this.db, this.projectDirectory)?.code
+  }
+
   referenceFor(taskID: string): string | undefined {
     return taskReferenceFor(this.db, this.projectDirectory, taskID)
   }
