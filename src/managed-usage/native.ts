@@ -13,16 +13,14 @@ import {
 import {
   managedUsageEventLocation,
   managedUsageLocation,
-  managedUsageLocationKey,
   sameManagedUsageLocation,
 } from "./native-location.ts"
 import type { ManagedUsageLocation } from "./native-location.ts"
 import { ManagedUsageStore } from "./store.ts"
 
-export type ManagedUsageNativeContext = Pick<Plugin.Context, "event" | "session" | "location">
+export type ManagedUsageNativeContext = Pick<Plugin.Context, "session" | "location">
 
 const MAX_BUFFERED_ENROLLMENT_FACTS = 1_000
-const MAX_IN_FLIGHT_OBSERVATIONS = 1_000
 
 export const managedUsageEventFact = managedUsageFactFromEvent
 
@@ -149,24 +147,9 @@ type ObservationInput = {
   nativeLocation: ManagedUsageLocation | null
 }
 
-export type ManagedUsageObserverLease = {
-  id: string
-  nativeLocation: ManagedUsageLocation
-}
-
-type ActiveObserver = ManagedUsageObserverLease & {
-  closed: boolean
-  controllers: Set<AbortController>
-  pending: Set<Promise<void>>
-  stopping?: Promise<void>
-}
-
 export class ManagedUsageCapture {
   private readonly pending = new Map<string, PendingEnrollment>()
   private readonly latestSequences = new Map<string, number>()
-  private readonly observers = new Map<string, ActiveObserver>()
-  private readonly observersByLocation = new Map<string, Set<string>>()
-  private inFlightObservations = 0
 
   constructor(readonly store: ManagedUsageStore) {}
 
@@ -180,68 +163,6 @@ export class ManagedUsageCapture {
     this.latestSequences.set(
       sessionID,
       Math.max(this.latestSequences.get(sessionID) ?? -1, rawSequence),
-    )
-  }
-
-  startObserver(
-    observerID: string,
-    nativeLocation: ManagedUsageLocation,
-  ): ManagedUsageObserverLease {
-    const locationKey = managedUsageLocationKey(nativeLocation)
-    const observerIDs = this.observersByLocation.get(locationKey) ?? new Set<string>()
-    const wasUncovered = observerIDs.size === 0
-    const observer: ActiveObserver = {
-      id: observerID,
-      nativeLocation,
-      closed: false,
-      controllers: new Set(),
-      pending: new Set(),
-    }
-    observerIDs.add(observerID)
-    this.observersByLocation.set(locationKey, observerIDs)
-    this.observers.set(observerID, observer)
-    if (wasUncovered)
-      this.store.recordGapForLocation({
-        listenerID: observerID,
-        nativeLocation,
-        kind: "listener-started",
-      })
-    return { id: observerID, nativeLocation }
-  }
-
-  stopObserver(
-    observerID: string,
-    reason: "stream-failed" | "stream-ended" | "listener-stopped",
-  ): Promise<void> {
-    const observer = this.observers.get(observerID)
-    if (!observer) return Promise.resolve()
-    if (observer.stopping) return observer.stopping
-    observer.closed = true
-    const stopping = (async () => {
-      await Promise.allSettled(observer.pending)
-      this.observers.delete(observerID)
-      const locationKey = managedUsageLocationKey(observer.nativeLocation)
-      const observerIDs = this.observersByLocation.get(locationKey)
-      observerIDs?.delete(observerID)
-      if (observerIDs?.size) return
-      this.observersByLocation.delete(locationKey)
-      this.store.recordGapForLocation({
-        listenerID: observerID,
-        nativeLocation: observer.nativeLocation,
-        kind: reason,
-      })
-    })()
-    observer.stopping = stopping
-    if (reason === "listener-stopped")
-      for (const controller of observer.controllers) controller.abort()
-    return observer.stopping
-  }
-
-  async stopAllObservers() {
-    await Promise.all(
-      [...this.observers.keys()].map((observerID) =>
-        this.stopObserver(observerID, "listener-stopped"),
-      ),
     )
   }
 
@@ -418,53 +339,4 @@ export class ManagedUsageCapture {
     })
     if (process) await process(new AbortController().signal)
   }
-
-  observeForObserver(
-    observerLease: ManagedUsageObserverLease,
-    event: unknown,
-    ctx: ManagedUsageNativeContext,
-    projectID: string,
-  ): void {
-    const observer = this.observers.get(observerLease.id)
-    if (!observer || observer.closed) return
-    const process = this.prepareObservation({
-      event,
-      ctx,
-      projectID,
-      listenerID: observer.id,
-      nativeLocation: observer.nativeLocation,
-    })
-    if (!process) return
-    const sessionID = managedUsageEventSessionID(event)
-    if (this.inFlightObservations >= MAX_IN_FLIGHT_OBSERVATIONS) {
-      if (sessionID)
-        this.store.recordGap({
-          listenerID: observer.id,
-          sessionID,
-          kind: "buffer-overflow",
-          nativeLocation: observer.nativeLocation,
-        })
-      return
-    }
-    this.inFlightObservations++
-    const controller = new AbortController()
-    observer.controllers.add(controller)
-    const pending = process(controller.signal)
-      .catch(() => {
-        if (sessionID && !controller.signal.aborted)
-          this.store.recordGap({
-            listenerID: observer.id,
-            sessionID,
-            kind: "observation-failed",
-            nativeLocation: observer.nativeLocation,
-          })
-      })
-      .finally(() => {
-        this.inFlightObservations--
-        observer.controllers.delete(controller)
-        observer.pending.delete(pending)
-      })
-    observer.pending.add(pending)
-  }
 }
-export { registerManagedUsageNative } from "./native-registration.ts"

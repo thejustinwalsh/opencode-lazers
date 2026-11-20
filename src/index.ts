@@ -31,7 +31,6 @@ import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
 import { createModelsManagedUsagePriceProvider, registerModelsServer } from "./models/server.ts"
-import { registerManagedUsageNative } from "./managed-usage/native.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
 import { acquireLazersCore } from "./core/core.ts"
@@ -106,14 +105,10 @@ export default Plugin.define({
         ),
       )
       const managedUsagePriceProvider = createModelsManagedUsagePriceProvider(ctx, repository)
-      yield* sectionEffect("setup:ManagedUsageCapture", () =>
-        registerManagedUsageNative(ctx, core.managedUsageCapture, projectID).pipe(Effect.orDie),
-      )
       yield* sectionEffect("setup:ManagedUsageTools", () =>
         registerManagedUsageTools({
           ctx,
           store: core.managedUsageStore,
-          capture: core.managedUsageCapture,
           projectID,
           projectDirectory: repository.projectDirectory,
           priceProvider: managedUsagePriceProvider,

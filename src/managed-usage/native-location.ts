@@ -29,7 +29,3 @@ export function managedUsageEventLocation(event: unknown): ManagedUsageLocation 
 export function sameManagedUsageLocation(left: ManagedUsageLocation, right: ManagedUsageLocation) {
   return left.directory === right.directory && left.workspaceID === right.workspaceID
 }
-
-export function managedUsageLocationKey(location: ManagedUsageLocation) {
-  return JSON.stringify([location.directory, location.workspaceID])
-}

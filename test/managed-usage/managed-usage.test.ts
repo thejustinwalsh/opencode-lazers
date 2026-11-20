@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Session } from "@opencode/schema/session"
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,11 +10,7 @@ import { TaskRepository } from "../../src/storage.ts"
 import { RunnerStore } from "../../src/runner/store.ts"
 import { ManagedUsageEnrollmentInputSchema } from "../../src/managed-usage/contract.ts"
 import type { ManagedUsageAssociation } from "../../src/managed-usage/contract.ts"
-import {
-  ManagedUsageCapture,
-  managedUsageEventFact,
-  registerManagedUsageNative,
-} from "../../src/managed-usage/native.ts"
+import { ManagedUsageCapture, managedUsageEventFact } from "../../src/managed-usage/native.ts"
 import type { ManagedUsageNativeFact } from "../../src/managed-usage/contract.ts"
 import { managedUsageGenerations } from "../../src/managed-usage/projection.ts"
 import { readManagedUsageReport } from "../../src/managed-usage/report.ts"
@@ -713,108 +709,6 @@ test("a native event whose durable sequence belongs to another session remains u
   })
 })
 
-test("native subscription captures failed generations and gives uncovered starts explicit partial coverage", async () => {
-  const { store } = fixture()
-  enrollStore(store)
-  const capture = new ManagedUsageCapture(store)
-  const session = {
-    id: "ses-managed",
-    projectID,
-    agent: "explore",
-    location: { directory: projectDirectory },
-    time: {},
-  }
-  const events = [
-    nativeEvent({
-      type: "session.step.failed",
-      sessionID: session.id,
-      messageID: "msg-failed",
-      sequence: 6,
-    }),
-    nativeEvent({
-      type: "session.step.started",
-      sessionID: session.id,
-      messageID: "msg-pending",
-      sequence: 7,
-    }),
-  ]
-  const ctx = {
-    location: { directory: projectDirectory },
-    session: {
-      get: () => Effect.succeed(session),
-    },
-    event: {
-      subscribe: () => Stream.fromIterable(events),
-    },
-  }
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* registerManagedUsageNative(ctx as never, capture, projectID)
-        yield* Effect.sleep(25)
-      }),
-    ),
-  )
-  const snapshot = store.snapshot()
-  const generations = managedUsageGenerations(snapshot)
-  expect(
-    generations.map((generation) => [generation.assistantMessageID, generation.outcome]),
-  ).toEqual([
-    ["msg-failed", "failed"],
-    ["msg-pending", "pending"],
-  ])
-  expect(
-    generations.find((generation) => generation.assistantMessageID === "msg-pending")?.status,
-  ).toBe("partial")
-  expect(snapshot.listenerGapCount).toBeGreaterThan(0)
-  expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_ERROR")
-  expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_ERROR_BODY")
-
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* registerManagedUsageNative(ctx as never, capture, projectID)
-        yield* Effect.sleep(25)
-      }),
-    ),
-  )
-  const replaced = store.snapshot()
-  expect(replaced.factCount).toBe(snapshot.factCount)
-  expect(replaced.listenerGapCount).toBeGreaterThan(snapshot.listenerGapCount)
-  expect(
-    managedUsageGenerations(replaced).map((generation) => generation.assistantMessageID),
-  ).toEqual(["msg-failed", "msg-pending"])
-})
-
-test("native observation failures are reported separately from authority changes", async () => {
-  const { store } = fixture()
-  enrollStore(store)
-  const capture = new ManagedUsageCapture(store)
-  const event = nativeEvent({
-    type: "session.step.started",
-    sessionID: "ses-managed",
-    messageID: "msg-session-read-fails",
-    sequence: 6,
-  })
-  const ctx = {
-    location: { directory: projectDirectory },
-    session: { get: () => Effect.fail(new Error("private session backend detail")) },
-    event: { subscribe: () => Stream.fromIterable([event]) },
-  }
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* registerManagedUsageNative(ctx as never, capture, projectID)
-        yield* Effect.sleep(25)
-      }),
-    ),
-  )
-  expect(store.snapshot().listenerGaps).toContainEqual(
-    expect.objectContaining({ sessionID: "ses-managed", kind: "observation-failed" }),
-  )
-  expect(JSON.stringify(store.snapshot())).not.toContain("private session backend detail")
-})
-
 function callContext() {
   return {
     sessionID: Session.ID.make("ses-architect"),
@@ -840,7 +734,6 @@ function registeredTools() {
 
 test("registered enrollment authorizes caller and target before failing closed without writes", async () => {
   const { store } = fixture()
-  const capture = new ManagedUsageCapture(store)
   const sessions = new Map<string, Record<string, unknown>>([
     [
       "ses-architect",
@@ -954,7 +847,6 @@ test("registered enrollment authorizes caller and target before failing closed w
       registerManagedUsageTools({
         ctx: context as never,
         store,
-        capture,
         projectID,
         projectDirectory,
         priceProvider,
@@ -1092,7 +984,6 @@ test("concurrent public enrollment attempts fail closed without writing attribut
       registerManagedUsageTools({
         ctx: context as never,
         store,
-        capture: new ManagedUsageCapture(store),
         projectID,
         projectDirectory,
         priceProvider: async (calls) =>
@@ -1172,7 +1063,6 @@ test("registered managed usage read returns a task-attributed current-market quo
       registerManagedUsageTools({
         ctx: context as never,
         store,
-        capture: new ManagedUsageCapture(store),
         projectID,
         projectDirectory,
         priceProvider,
@@ -1188,7 +1078,7 @@ test("registered managed usage read returns a task-attributed current-market quo
       ),
   )
   expect(read.output).toMatchObject({
-    coverage: { generationCount: 1, status: "observed" },
+    coverage: { generationCount: 1, status: "unavailable" },
     totals: { generationCount: 1, valueUSD: 0.000019, subtotalUSD: 0.000019, status: "observed" },
     calls: [
       {

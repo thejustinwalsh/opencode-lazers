@@ -28,7 +28,6 @@ import { RunnerStore } from "../runner/store.ts"
 import { RetentionService } from "../retention/service.ts"
 import { verificationTimeoutDefaults } from "../runner/verification-timeout.ts"
 import { TaskRepository, taskDatabasePath } from "../storage.ts"
-import { ManagedUsageCapture } from "../managed-usage/native.ts"
 import { ManagedUsageStore } from "../managed-usage/store.ts"
 import { nativeTrajectoryHost } from "../trajectory/native.ts"
 import { ownsRecordedWorkspace } from "../runner/workspace-location.ts"
@@ -59,7 +58,6 @@ export type LazersCore = {
   readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
   readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
   readonly managedUsageStore: ManagedUsageStore
-  readonly managedUsageCapture: ManagedUsageCapture
   readonly usageCache: UsageCache
   readonly retention: RetentionService
   readonly inferenceBroker: InferenceBroker
@@ -157,7 +155,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const runnerStore = new RunnerStore(repository)
   built("runnerStore")
   const managedUsageStore = new ManagedUsageStore(repository)
-  const managedUsageCapture = new ManagedUsageCapture(managedUsageStore)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
     registerProject(repository, {
@@ -262,7 +259,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     trajectoryHost,
     taskValuationProvider,
     managedUsageStore,
-    managedUsageCapture,
     usageCache,
     retention,
     inferenceBroker,
@@ -273,7 +269,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const disposeCore = async () => {
     scheduler = undefined
     await registration.dispose()
-    await managedUsageCapture.stopAllObservers()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.
     try {

@@ -8,7 +8,6 @@ import type { ManagedUsagePriceProvider } from "../models/managed-usage-valuatio
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { ManagedUsageEnrollmentInputSchema, ManagedUsageReadInputSchema } from "./contract.ts"
 import { ManagedUsageReportSchema, readManagedUsageReport } from "./report.ts"
-import { ManagedUsageCapture } from "./native.ts"
 import type { ManagedUsageStore } from "./store.ts"
 
 type ManagedUsageToolContext = Pick<Plugin.Context, "location" | "permission" | "session" | "tool">
@@ -172,7 +171,6 @@ function assertProject(
 export function registerManagedUsageTools(input: {
   ctx: ManagedUsageToolContext
   store: ManagedUsageStore
-  capture: ManagedUsageCapture
   projectID: string
   projectDirectory: string
   priceProvider: ManagedUsagePriceProvider
@@ -223,7 +221,7 @@ export function registerManagedUsageTools(input: {
     editor.add({
       name: "lz-read-managed-usage",
       description:
-        "Read a deduplicated, privacy-safe managed-session generation report with immutable task/plan attribution, current cached market quotes, explicit unallocated usage and partial capture coverage. Continue pages only with the returned cursor and unchanged scope and limit.",
+        "Read stored privacy-safe managed-session generations with immutable task/plan attribution and current cached market quotes. Current native capture coverage is unavailable; historical usage and explicit gaps remain readable. Continue pages only with the returned cursor and unchanged scope and limit.",
       input: z.toJSONSchema(ManagedUsageReadInputSchema, { io: "input" }),
       output: z.toJSONSchema(ManagedUsageReportSchema, { io: "output" }),
       options: {

@@ -171,18 +171,6 @@ function allocationKey(association: ManagedUsageAssociation) {
   return canonical(association)
 }
 
-function statusForCoverage(input: {
-  generationCount: number
-  observed: number
-  gaps: number
-  truncated: boolean
-}): ManagedUsageReport["coverage"]["status"] {
-  if (input.truncated) return "unavailable"
-  if (input.generationCount === 0) return input.gaps > 0 ? "partial" : "missing"
-  if (input.gaps === 0 && input.observed === input.generationCount) return "observed"
-  return "partial"
-}
-
 function allocationSummaries(calls: readonly ManagedUsageCallValuation[]) {
   const groups = new Map<
     string,
@@ -284,12 +272,7 @@ export async function readManagedUsageReport(input: {
       truncated: snapshotTruncated,
     },
     coverage: {
-      status: statusForCoverage({
-        generationCount: valuation.calls.length,
-        observed: counts.observed,
-        gaps: scoped.gapCount,
-        truncated: snapshotTruncated,
-      }),
+      status: "unavailable",
       generationCount: valuation.calls.length,
       observedGenerationCount: counts.observed,
       partialGenerationCount: counts.partial,
