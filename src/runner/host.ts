@@ -100,6 +100,8 @@ export type HostSession = {
    * one older message.
    */
   messages: HostMessage[]
+  /** Assistant messages in `messages` (detailed reads only). */
+  turnAssistants?: number
 }
 export type WorkerInstruction = {
   sessionID: string
@@ -133,6 +135,11 @@ export interface RunnerHost {
    * can still be asked through the current turn that `session(..., { messages: true })` returns.
    */
   message?(sessionID: string, messageID: string): Promise<HostMessage | undefined>
+  /**
+   * Text of the newest assistant message that precedes the current turn: one assistant-only
+   * descending page, skipping the `skip` assistant messages the current turn already holds.
+   */
+  earlierAssistantText?(sessionID: string, skip: number): Promise<string | undefined>
   /** Public native inbox snapshot; the adapter verifies it belongs to this process. */
   outcomeInbox?(sessionID: string): Promise<OutcomeInboxEntry[]>
   /** One ordered page of original Architect inputs plus the current native inbox. */

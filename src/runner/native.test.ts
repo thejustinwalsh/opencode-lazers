@@ -2052,3 +2052,30 @@ test("a native input that lands between the bracketing reads is unstable, not pa
   expect(observed?.outcome).toBeUndefined()
   expect(observed?.turn).toMatchObject({ inputID: "msg_in_2" })
 })
+
+test("the assistant text before the current turn is one assistant-only page that skips the turn's replies", async () => {
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    messages: [
+      { id: "msg_in_1", type: "user", text: "one" },
+      assistantMessage("msg_out_1", "earlier words"),
+      { id: "msg_in_2", type: "user", text: "two" },
+      {
+        id: "msg_out_2",
+        type: "assistant",
+        time: { completed: 1 },
+        finish: "stop",
+        content: [{ type: "tool", state: { status: "completed" } }],
+      },
+    ],
+  })
+  const session = await fixture.host.session("ses_worker", { messages: true })
+  expect(session?.turnAssistants).toBe(1)
+  fixture.messageListCalls.length = 0
+  expect(await fixture.host.earlierAssistantText?.("ses_worker", 1)).toBe("earlier words")
+  expect(fixture.messageListCalls).toEqual([
+    { type: "assistant", order: "desc", limit: 2, cursor: undefined },
+  ])
+  // Nothing precedes the first turn.
+  expect(await fixture.host.earlierAssistantText?.("ses_worker", 2)).toBeUndefined()
+})

@@ -577,6 +577,7 @@ function hostSessionView(input: {
   messages: readonly NativeMessage[]
   /** Cumulative tool calls of the whole session, not just the current turn. */
   tools: number
+  detailed: boolean
   contextTokens: number | undefined
 }) {
   const { latest, active, contradicted, observationUnstable, pendingInput } = input
@@ -611,6 +612,9 @@ function hostSessionView(input: {
     // A compacted window can omit the real input's review binding. Read that
     // exact retained input without replaying history or changing turn evidence.
     messages: hostMessages(input.messages),
+    ...(input.detailed
+      ? { turnAssistants: input.messages.filter((message) => message.type === "assistant").length }
+      : {}),
   }
 }
 
@@ -921,7 +925,16 @@ export function nativeHost(
         outcome,
         messages,
         tools,
+        detailed,
       })
+    },
+    async earlierAssistantText(sessionID, skip) {
+      const client = await connectedClient()
+      const page = await runNative(client, () =>
+        client.message.list({ sessionID, type: "assistant", order: "desc", limit: skip + 1 }),
+      )
+      const earlier = page.data.length === skip + 1 ? page.data[skip] : undefined
+      return earlier ? hostMessage(earlier).text || undefined : undefined
     },
     async message(sessionID, messageID) {
       const client = await connectedClient()
