@@ -82,7 +82,7 @@ function fixture(
       {
         id: "task-check",
         command: taskCommand,
-        timeoutMs: 1000,
+        timeoutMs: 60_000,
         ...options.taskTiming,
       },
     ]
@@ -390,7 +390,9 @@ async function waitForAdoptionCondition(
   complete: () => boolean,
   awaitOwnedCheck = false,
 ) {
-  const deadline = Date.now() + 1_200
+  // A diagnostic bound, not a budget: the loop returns as soon as `complete()` holds. A 1.2 s bound
+  // and a 1 s task-check timeout failed the plan (check exit 1) when the machine was loaded.
+  const deadline = Date.now() + 60_000
   let ticks = 0
   let maxTickMs = 0
   let activityWaits = 0
