@@ -69,6 +69,20 @@ export class Engine<D> {
     const clock = this.clock
     // Whole milliseconds: contracts take integers and the clock advances by fractions.
     Date.now = () => Math.floor(T0 + clock.t)
+    // The story owns every pointer, wheel, touch and key input: a visitor's own (trusted) events
+    // are dropped before the panel sees them, so they can never move its scroll positions or focus.
+    // The page also sets pointer-events: none on the iframe; this covers standalone use.
+    for (const type of ["wheel", "touchmove", "keydown", "mousedown", "click"])
+      opts.root.ownerDocument.addEventListener(
+        type,
+        (event) => {
+          if (event.isTrusted) {
+            event.stopImmediatePropagation()
+            event.preventDefault()
+          }
+        },
+        { capture: true, passive: false },
+      )
   }
 
   private setData(data: D) {

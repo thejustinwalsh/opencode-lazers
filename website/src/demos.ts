@@ -93,27 +93,28 @@ export const DEMOS = {
   models: {
     story: "models",
     panel: "models",
-    size: { width: 440, height: 700 },
+    size: { width: 440, height: 740 },
     summary:
-      "The Models panel: a comparison of models by measured cost per accepted task, then the Assignments view where an agent is given a different model.",
+      "The Models panel: five real models plotted by cost per accepted task at OpenRouter's published prices as of 2026-11-19, a price refresh that re-prices the same usage, then the Assignments view where Implementor is given a different model.",
     steps: [
       {
         name: "compare",
         caption:
-          "Compare plots each model by what its accepted tasks cost, measured from your own runs.",
+          "Compare plots each model by what its accepted tasks cost at the price source's rates, measured from your own runs.",
       },
       {
         name: "inspect",
-        caption:
-          "Selecting a model opens its measured cost, accepted share and the runs behind it.",
+        caption: "Selecting a model opens its cost per accepted task and the runs behind it.",
       },
       {
         name: "refresh",
-        caption: "A newly accepted task changes a model's cost; Refresh re-reads and re-plots it.",
+        caption:
+          "A fresh price snapshot re-prices the same recorded usage: DeepSeek V4 Pro's tokens stay and its cost changes.",
       },
       {
         name: "assign",
-        caption: "Assignments sets which model each agent and persona runs on, saved per project.",
+        caption:
+          "Assignments routes each agent to a model. Moving Implementor off Claude Opus 5.5 changes what its accepted tasks cost.",
       },
     ],
   },

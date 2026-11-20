@@ -29,13 +29,18 @@ import type { DemoTask } from "./tasks-answers.ts"
  * Pure answers for the Models panel: a compact description of the project's models at one moment,
  * expanded into the exact contract shapes (`lazers.models`, `lazers.models.decision.v2`, plus the
  * tasks and trajectory reads the panel makes for its task filter). No browser or Solid code, so
- * the build script can validate it. Every provider, model and price here is an invented fixture.
+ * the build script can validate it. Model names, context sizes and per-token prices are the
+ * OpenRouter model catalog's published figures as this product recorded them (provenance in
+ * stories/models.ts); every run, count and token figure is an invented fixture about a fictional
+ * project. Dollars per accepted task are computed from those tokens and those prices.
  */
 export interface DemoModel {
   providerID: string
   id: string
   name: string
-  /** USD per million tokens (invented). */
+  /** The model's id in the OpenRouter catalog, where the prices come from. */
+  openrouterID: string
+  /** USD per million tokens, as the catalog published them. */
   priceIn: number
   priceOut: number
   priceCache: number
@@ -62,8 +67,9 @@ export interface DemoAssignment {
 }
 
 export interface ModelsData {
-  /** Minutes since the price sources were last fetched. */
-  pricesAgeMin: number
+  /** When the price source was last retrieved (ISO) and which recorded snapshot that was. */
+  pricesRetrievedAt: string
+  pricesGeneration: number
   models: DemoModel[]
   /** The project's tasks; the first is the one the panel selects. */
   tasks: { n: number; title: string }[]
@@ -101,7 +107,7 @@ const observedModels = (data: ModelsData) => data.models.filter((model) => accep
 /* -------------------------------------------------------------------- decision */
 
 function context(data: ModelsData, filters: ModelDecisionFilters): ModelDecisionContext {
-  const retrieved = iso(Date.now() - data.pricesAgeMin * MIN)
+  const retrieved = data.pricesRetrievedAt
   return {
     schemaVersion: 2,
     snapshotID: SNAPSHOT_ID,
@@ -145,7 +151,7 @@ function context(data: ModelsData, filters: ModelDecisionFilters): ModelDecision
       pins: [
         {
           source: "openrouter",
-          snapshotID: "openrouter:demo/current",
+          snapshotID: `openrouter-models:${data.pricesGeneration}`,
           retrievedAt: retrieved,
           freshness: "current",
           semantics: "exact-published-route-quotes",
@@ -172,8 +178,8 @@ function configuration(data: ModelsData, model: DemoModel): ModelDecisionConfigu
       source: "openrouter",
       sourcePolicyRevision: 0,
       sourceRecordID: routeKey(model),
-      snapshotID: "openrouter:demo/current",
-      retrievedAt: iso(Date.now() - data.pricesAgeMin * MIN),
+      snapshotID: `openrouter-models:${data.pricesGeneration}`,
+      retrievedAt: data.pricesRetrievedAt,
       semantics: "exact-route-quote",
       freshness: "current",
     },
@@ -351,7 +357,13 @@ const SOURCES = [
   "epoch-benchmarks",
 ] as const
 
-function candidate(model: DemoModel): ModelComparisonOutput["candidates"][number] {
+const perToken = (perMillion: number) =>
+  (perMillion / 1e6).toFixed(12).replace(/0+$/, "").replace(/\.$/, "")
+
+function candidate(
+  data: ModelsData,
+  model: DemoModel,
+): ModelComparisonOutput["candidates"][number] {
   return {
     candidateID: `${model.providerID.length}:${model.providerID}|${model.id.length}:${model.id}|-`,
     identity: { providerID: model.providerID, modelID: model.id, variant: null },
@@ -382,8 +394,36 @@ function candidate(model: DemoModel): ModelComparisonOutput["candidates"][number
       ambiguousIdentity: false,
       evidence,
     },
-    correspondence: { status: "unresolved", basis: null, evidence },
-    externalModel: null,
+    correspondence: { status: "exact", basis: "exact-published-catalog-id", evidence },
+    externalModel: {
+      kind: "openrouter-model",
+      id: model.openrouterID,
+      canonicalSlug: model.openrouterID,
+      name: model.name,
+      contextLength: model.context,
+      architecture: {
+        modality: null,
+        inputModalities: null,
+        outputModalities: null,
+        tokenizer: null,
+        instructType: null,
+      },
+      supportedParameters: null,
+      prices: {
+        unit: "USD per token",
+        tiers: [
+          {
+            minPromptTokens: null,
+            utcStart: null,
+            utcEnd: null,
+            prompt: perToken(model.priceIn),
+            completion: perToken(model.priceOut),
+            inputCacheRead: perToken(model.priceCache),
+            inputCacheWrite: null,
+          },
+        ],
+      },
+    },
     externalModelEvidence: evidence,
     benchmarkCorrespondence: { status: "unresolved", basis: null, evidence },
     externalBenchmark: null,
@@ -393,7 +433,7 @@ function candidate(model: DemoModel): ModelComparisonOutput["candidates"][number
 }
 
 function comparison(data: ModelsData): ModelComparisonOutput {
-  const retrieved = iso(Date.now() - data.pricesAgeMin * MIN)
+  const retrieved = data.pricesRetrievedAt
   return {
     filters: {},
     sources: SOURCES.map((source, index) => {
@@ -409,7 +449,7 @@ function comparison(data: ModelsData): ModelComparisonOutput {
               source,
               snapshotID: uid(5, index + 1),
               projectDirectory: PROJECT.canonical,
-              generation: 1,
+              generation: data.pricesGeneration,
               retrievedAt: retrieved,
               asOf: null,
               version: null,
@@ -422,7 +462,7 @@ function comparison(data: ModelsData): ModelComparisonOutput {
           : null,
       }
     }),
-    candidates: data.models.map(candidate),
+    candidates: data.models.map((model) => candidate(data, model)),
     totalCandidates: data.models.length,
     nextCursor: null,
   }
@@ -432,11 +472,11 @@ function sourceStatus(data: ModelsData): ModelEvidenceOutput {
   return {
     sources: SOURCES.map((source) => {
       const priced = source === "native-catalog" || source === "openrouter-models"
-      const at = iso(Date.now() - data.pricesAgeMin * MIN)
+      const at = data.pricesRetrievedAt
       return {
         source,
         state: priced ? ("succeeded" as const) : ("never" as const),
-        generation: priced ? 1 : 0,
+        generation: priced ? data.pricesGeneration : 0,
         startedAt: priced ? at : null,
         completedAt: priced ? at : null,
         latestSnapshotID: null,

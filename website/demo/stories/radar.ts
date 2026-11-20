@@ -7,7 +7,11 @@ const spark = (variant: string): DemoModel => ({
   id: "muse-spark-1.3",
   variant,
 })
-const architectModel: DemoModel = { providerID: "opencode-go", id: "muse-pro-2", variant: "high" }
+const architectModel: DemoModel = {
+  providerID: "anthropic",
+  id: "claude-opus-5-5",
+  variant: "high",
+}
 
 const q203 = { n: 203, title: "Show sync state in the status bar" }
 const q204 = { n: 204, title: "Resolve conflicting edits by last writer" }
