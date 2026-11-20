@@ -11,6 +11,7 @@ import { startingRevision } from "./submission.ts"
 import { PlanTasker } from "./planning/tasking.ts"
 import { registerLocalInference } from "./webgpu/server.ts"
 import { registerTaskReads } from "./tasks/rpc.ts"
+import { registerStreams } from "./streams/rpc.ts"
 import { registerPlanningAgents } from "./planning/register.ts"
 import {
   createPlanningDecisions,
@@ -211,6 +212,9 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
+      )
+      yield* sectionEffect("setup:Streams", () =>
+        registerStreams(ctx, { databasePath: core.taskReads.repository.path }).pipe(Effect.orDie),
       )
       yield* sectionEffect("setup:Worker", () =>
         registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>

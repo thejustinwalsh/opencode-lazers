@@ -121,7 +121,22 @@ export function findSource(name: string): Source<never, Columns> | undefined {
 }
 
 /** The columns a frame of this window carries: list columns, plus detail columns for one item. */
-export function streamColumns(source: Source<never, Columns>, window: number): Columns {
+export type SourceRef<F, C extends Columns> = Pick<
+  SourceDefinition<F, C>,
+  "name" | "columns" | "detail"
+>
+
+/** What a consumer without a database (the GUI) needs to read a source's frames. */
+export const sourceRef = <F, C extends Columns>(source: SourceRef<F, C>): SourceRef<F, C> => ({
+  name: source.name,
+  columns: source.columns,
+  ...(source.detail ? { detail: source.detail } : {}),
+})
+
+export function streamColumns(
+  source: Pick<SourceDefinition<never, Columns>, "columns" | "detail">,
+  window: number,
+): Columns {
   return window === 1 && source.detail ? { ...source.columns, ...source.detail } : source.columns
 }
 

@@ -1,4 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads"
+import "./sources/index.ts"
 import { acquireSharedConnection } from "../storage.ts"
 import { encodeRow, frameSize, readRow, writeFrame, type Columns } from "./frame.ts"
 import {

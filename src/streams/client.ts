@@ -20,6 +20,8 @@ export type StreamOptions<F> = {
 export type Row<C extends Columns> = { readonly [K in keyof C]: unknown }
 
 export type Stream<C extends Columns> = {
+  /** The current frame's bytes as delivered; only on the copy transport (what an RPC server forwards). */
+  readonly bytes: Uint8Array | undefined
   /** Lazy rows over the current frame; valid until the next frame. */
   readonly items: readonly Row<C>[]
   readonly before: number | "more"
@@ -43,6 +45,7 @@ type Decoded = {
   row(index: number): unknown
   sequence: number
   buffer?: ArrayBuffer
+  bytes?: Uint8Array
 }
 
 /**
@@ -62,7 +65,7 @@ export function decodeFrameMessage<C extends Columns>(
     header: frame.header,
     row: frame.row,
     sequence: message.sequence,
-    ...(message.buffer ? { buffer: message.buffer } : {}),
+    ...(message.buffer ? { buffer: message.buffer } : { bytes: message.bytes! }),
   }
 }
 
@@ -226,6 +229,9 @@ export function openStream<F, C extends Columns>(
         { length: frame.header.count },
         (_, i) => frame.row(i) as Row<C>,
       ))
+    },
+    get bytes() {
+      return current?.bytes
     },
     get before() {
       return current?.header.before ?? 0
