@@ -58,6 +58,12 @@ const classification: Record<keyof typeof lifecycleMachines, Classification> = {
     ],
     terminal: [],
   },
+  // The owner confirms or discards a proposed profile; a newer proposal replaces a pending one.
+  profile: {
+    observable: ["REPLACED"],
+    architect: ["OWNER_CONFIRMED", "OWNER_DISCARDED"],
+    terminal: ["confirmed", "discarded"],
+  },
   plan: {
     observable: ["blocked", "accepted", "cancelled", "cleanup-blocked", "integrated"],
     architect: ["running", "cancelling", "cleaning"],

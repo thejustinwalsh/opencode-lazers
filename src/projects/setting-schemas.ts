@@ -44,6 +44,8 @@ export const projectSettingDefs = {
   weight: setting(amount, 1),
   spendCeilingTokens: setting(count.nullable(), null),
   planningAutoDispatch: setting(z.boolean(), true),
+  /** When the owner dismissed the "no verification profile" notice, as epoch milliseconds. */
+  setupDismissedAt: setting(count.nullable(), null),
 }
 
 type Values<D extends Record<string, SettingDef>> = { [K in keyof D]: z.output<D[K]["schema"]> }
