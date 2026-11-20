@@ -4,9 +4,9 @@ import { refreshPlan, refreshReservations, refreshTask } from "./refresh.ts"
 
 /**
  * Tasks folded per write transaction. A unit of work, not a cap: the loop pages until the project
- * is done. About 0.3 ms per task, so a page is a few tens of milliseconds.
+ * is done. Measured 2.3 ms per task (442 tasks/s, `rate.test.ts`), so a page holds the write lock for about 60 ms.
  */
-export const BACKFILL_PAGE = 100
+export const BACKFILL_PAGE = 25
 
 export function backfillState(db: Database, project: string) {
   db.query("INSERT OR IGNORE INTO task_schedule_state(project_directory) VALUES(?)").run(project)
@@ -45,11 +45,12 @@ export function backfillPage(
     .all(project, state.backfill_after, page)
   const planned = new Set<string>()
   for (const row of rows) {
-    if (row.plan_id && !planned.has(row.plan_id)) {
+    // A plan refresh covers its nodes; only tasks outside any plan need their own.
+    if (!row.plan_id) refreshTask(db, ctx, row.id)
+    else if (!planned.has(row.plan_id)) {
       planned.add(row.plan_id)
       refreshPlan(db, ctx, row.plan_id)
     }
-    refreshTask(db, ctx, row.id)
   }
   const done = rows.length < page
   if (done) {

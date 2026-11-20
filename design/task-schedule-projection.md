@@ -642,7 +642,13 @@ Implementation notes that differ from the sections above:
   refresh rewrites only the rows that changed.
 - Blockers are listed in reservation priority order (plan priority, plan rowid, start time), so a
   priority change queues `reservations`.
-- A missing observation is shown as waiting with an explicit reason, never as unknown.
+- Prerequisite observations are recorded per task (`taskDependencyIntegration`, `dispatch.ts`),
+  not per plan. A task with no unmet prerequisite and no recorded observation shows `eligible`;
+  unmet same-plan prerequisites, a hold, a pause or a recorded `waiting` proof show `waiting`
+  with their reason. Nothing shows `unknown`.
+- Measured: a refresh of one task is about 0.7 ms (20 statements); backfill runs at 442 tasks/s
+  (about 2.3 ms per task), so a page is 25 tasks, about 60 ms. Backfill pages by task, with the
+  plan refreshed once per page.
 
 Engineering calls (mine; reverse them cheaply if you disagree):
 
