@@ -1304,7 +1304,7 @@ test("registered verify-retained accepts a reassigned owner after reopen under t
   expect(f.prompts).toEqual(prompts)
   expect(f.created).toEqual(created)
   expect(f.removedWorkspaces).not.toContain(f.attempt.workspace)
-}, 60_000)
+})
 
 test("stopped-plan verify-retained preserves failed sealed-source check receipts and holds", async () => {
   const f = await failedCandidateFixture({
@@ -1352,7 +1352,7 @@ test("stopped-plan verify-retained preserves failed sealed-source check receipts
   expect(f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED")).toBe(
     undefined,
   )
-}, 60_000)
+})
 
 test("an owner change after admission does not fence or fail the retained call", async () => {
   const f = await failedCandidateFixture({
@@ -1493,7 +1493,7 @@ test("retained bun run verify may perform a no-op formatter and use its passing 
   if (operation.state === "failed")
     throw new Error(`No-op retained formatter failed: ${JSON.stringify(snapshot)}`)
   expect(snapshot.operation).not.toBeNull()
-}, 60_000)
+})
 
 test("retained verification does not accept a verifier that actually changes its bound candidate", async () => {
   const f = await failedFixture({
@@ -1537,7 +1537,7 @@ test("retained verification does not accept a verifier that actually changes its
   expect(
     f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
   ).toBeUndefined()
-}, 60_000)
+})
 
 test("retained acceptance repairs the same failed-history attempt without rewriting its failure", async () => {
   const f = await acceptedFailedAttemptFixture()
@@ -1580,7 +1580,7 @@ test("retained acceptance repairs the same failed-history attempt without rewrit
   })
   expect(f.prompts).toHaveLength(oldPromptCount + 1)
   expect(f.prompts.at(-1)?.sessionID).toBe(original.session_id)
-}, 30_000)
+})
 
 for (const timing of ["before admission", "during native observation"]) {
   test(`failed-history repair rejects missing retained acceptance ${timing}`, async () => {
@@ -1608,7 +1608,7 @@ for (const timing of ["before admission", "during native observation"]) {
     expect(f.store.attempts(f.planID)).toEqual([original])
     expect(f.store.nodes(f.planID)[0]?.state).toBe("accepted")
     expect(f.prompts).toHaveLength(oldPromptCount)
-  }, 30_000)
+  })
 }
 
 function writeInjectedPrivatePackage(candidateWorkspace: string): void {
@@ -1690,162 +1690,157 @@ test("retained verification refuses a physical destination alias of another work
   expect(f.store.plan(f.planID)?.state).toBe("blocked")
 })
 
-test(
-  "owner verifies an exact failed-attempt candidate with zero replacement prompts",
-  async () => {
-    const f = await failedFixture()
-    const planBefore = f.plan
-    const attemptBefore = f.attempt
-    expect(planBefore.state).toBe("blocked")
-    expect(attemptBefore.state).toBe("failed")
-    expect(attemptBefore.artifact).toMatch(/^[a-f0-9]{40}$/)
-    const exactArtifact = attemptBefore.artifact
-    if (!exactArtifact) throw new Error("Failed attempt did not retain its committed candidate")
-    expect(f.store.attempts(f.planID)).toHaveLength(1)
-    const sessionBefore = structuredClone(f.sessions.get(attemptBefore.session_id))
-    const promptCount = f.prompts.length
-    const sessionCount = f.created.length
-    const worktreeCount = f.worktreeCreations.length
-    const oldEffectPayload = JSON.stringify({ uncertain: true, originalAttemptOnly: true })
-    f.store.atomic((db) =>
-      db
-        .query(
-          `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
+test("owner verifies an exact failed-attempt candidate with zero replacement prompts", async () => {
+  const f = await failedFixture()
+  const planBefore = f.plan
+  const attemptBefore = f.attempt
+  expect(planBefore.state).toBe("blocked")
+  expect(attemptBefore.state).toBe("failed")
+  expect(attemptBefore.artifact).toMatch(/^[a-f0-9]{40}$/)
+  const exactArtifact = attemptBefore.artifact
+  if (!exactArtifact) throw new Error("Failed attempt did not retain its committed candidate")
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  const sessionBefore = structuredClone(f.sessions.get(attemptBefore.session_id))
+  const promptCount = f.prompts.length
+  const sessionCount = f.created.length
+  const worktreeCount = f.worktreeCreations.length
+  const oldEffectPayload = JSON.stringify({ uncertain: true, originalAttemptOnly: true })
+  f.store.atomic((db) =>
+    db
+      .query(
+        `INSERT INTO runner_effects(id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence)
        VALUES('retained-old-uncertain-effect',?,?,?,?,?,?,NULL,0)`,
-        )
-        .run(
-          f.planID,
-          f.task.id,
-          attemptBefore.id,
-          "old-resource-effect",
-          "uncertain",
-          oldEffectPayload,
-        ),
-    )
-    const oldEffectBefore = f.store
-      .effects(f.planID)
-      .find((effect) => effect.id === "retained-old-uncertain-effect")
-    const oldProfileBefore = readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")
+      )
+      .run(
+        f.planID,
+        f.task.id,
+        attemptBefore.id,
+        "old-resource-effect",
+        "uncertain",
+        oldEffectPayload,
+      ),
+  )
+  const oldEffectBefore = f.store
+    .effects(f.planID)
+    .find((effect) => effect.id === "retained-old-uncertain-effect")
+  const oldProfileBefore = readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")
 
-    const verifyCommand = {
-      requestID: "verify-retained-candidate",
-      planID: f.planID,
-      action: "verify-retained" as const,
-      projectID: "project",
-      planRevision: planBefore.revision,
-      taskID: f.task.id,
-      taskRevision: f.task.revision,
-      attemptID: attemptBefore.id,
-      artifact: exactArtifact,
-      reason: "Verify the exact committed implementation without replaying its worker turn",
-    }
-    const control = await registeredPlanCommand(f.runtime)
-    const result = (await control.execute(verifyCommand)) as {
-      operationID: string
-      status: string
-    }
+  const verifyCommand = {
+    requestID: "verify-retained-candidate",
+    planID: f.planID,
+    action: "verify-retained" as const,
+    projectID: "project",
+    planRevision: planBefore.revision,
+    taskID: f.task.id,
+    taskRevision: f.task.revision,
+    attemptID: attemptBefore.id,
+    artifact: exactArtifact,
+    reason: "Verify the exact committed implementation without replaying its worker turn",
+  }
+  const control = await registeredPlanCommand(f.runtime)
+  const result = (await control.execute(verifyCommand)) as {
+    operationID: string
+    status: string
+  }
 
-    expect(result.status).toBe("retained-verification-requested")
-    expect(result).not.toHaveProperty("generation")
-    expect(await control.execute(verifyCommand)).toEqual(result)
-    expect(control.permissionChecks).toEqual(["lz-plan-command", "lz-plan-command"])
-    await waitForRetainedOperationState(
-      f,
-      result.operationID,
-      ["accepted"],
-      "exact failed-candidate retained verification",
-    )
-    expect(f.worktreeCreations).toHaveLength(worktreeCount + 1)
-    const operation = f.store.atomic((db) =>
-      db
-        .query<{ payload: string }, [string]>(
-          "SELECT payload FROM runner_retained_verifications WHERE id=?",
-        )
-        .get(result.operationID),
-    )
-    expect(operation).toBeDefined()
-    const retained = JSON.parse(operation!.payload) as {
-      state: string
-      cleanupState: string
-      artifact: string
-      taskWorkspace: string | null
-    }
-    expect(retained.state).toBe("accepted")
-    expect(retained.cleanupState).toBe("complete")
-    expect(retained.artifact).toBe(exactArtifact)
-    // The call accepts the task only. The old uncertain effect keeps the plan from the
-    // ordinary combined check's acceptance until it is reconciled; the call never touches it.
-    expect(f.store.plan(f.planID)?.state).not.toBe("accepted")
-    expect(f.store.nodes(f.planID)[0]?.artifact).toBe(exactArtifact)
-    expect(f.store.attempts(f.planID)).toHaveLength(1)
-    expect(f.store.attempts(f.planID)[0]).toMatchObject({
-      id: attemptBefore.id,
-      state: "failed",
-      session_id: attemptBefore.session_id,
-      message_id: attemptBefore.message_id,
-      artifact: exactArtifact,
-      token_count: attemptBefore.token_count,
-      tool_count: attemptBefore.tool_count,
-      cost: attemptBefore.cost,
-    })
-    expect(f.prompts).toHaveLength(promptCount)
-    expect(f.created).toHaveLength(sessionCount)
-    expect(f.sessions.get(attemptBefore.session_id)).toEqual(sessionBefore)
-    expect(
-      f.store.effects(f.planID).find((effect) => effect.id === "retained-old-uncertain-effect"),
-    ).toEqual(oldEffectBefore)
-    expect(oldEffectBefore).toMatchObject({ state: "uncertain", payload: oldEffectPayload })
-    expect(readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")).toBe(oldProfileBefore)
-    expect(retained).not.toHaveProperty("combinedArtifact")
-    expect(retained.taskWorkspace).not.toBeNull()
-    expect(existsSync(retained.taskWorkspace!)).toBe(false)
-    const checks = f.store.atomic((db) =>
-      db
-        .query<
-          {
-            phase: string
-            check_id: string
-            state: string
-            receipt: string | null
-            cleanup_state: string
-          },
-          [string]
-        >(
-          "SELECT phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase",
-        )
-        .all(result.operationID),
-    )
-    expect(checks).toHaveLength(1)
-    expect(
-      checks.every((check) => check.state === "completed" && check.cleanup_state === "complete"),
-    ).toBe(true)
-    for (const check of checks) {
-      const receipt = JSON.parse(check.receipt!) as {
-        exitCode: number
-        cwd: string
-        isolation: {
-          operationID: string
+  expect(result.status).toBe("retained-verification-requested")
+  expect(result).not.toHaveProperty("generation")
+  expect(await control.execute(verifyCommand)).toEqual(result)
+  expect(control.permissionChecks).toEqual(["lz-plan-command", "lz-plan-command"])
+  await waitForRetainedOperationState(
+    f,
+    result.operationID,
+    ["accepted"],
+    "exact failed-candidate retained verification",
+  )
+  expect(f.worktreeCreations).toHaveLength(worktreeCount + 1)
+  const operation = f.store.atomic((db) =>
+    db
+      .query<{ payload: string }, [string]>(
+        "SELECT payload FROM runner_retained_verifications WHERE id=?",
+      )
+      .get(result.operationID),
+  )
+  expect(operation).toBeDefined()
+  const retained = JSON.parse(operation!.payload) as {
+    state: string
+    cleanupState: string
+    artifact: string
+    taskWorkspace: string | null
+  }
+  expect(retained.state).toBe("accepted")
+  expect(retained.cleanupState).toBe("complete")
+  expect(retained.artifact).toBe(exactArtifact)
+  // The call accepts the task only. The old uncertain effect keeps the plan from the
+  // ordinary combined check's acceptance until it is reconciled; the call never touches it.
+  expect(f.store.plan(f.planID)?.state).not.toBe("accepted")
+  expect(f.store.nodes(f.planID)[0]?.artifact).toBe(exactArtifact)
+  expect(f.store.attempts(f.planID)).toHaveLength(1)
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    id: attemptBefore.id,
+    state: "failed",
+    session_id: attemptBefore.session_id,
+    message_id: attemptBefore.message_id,
+    artifact: exactArtifact,
+    token_count: attemptBefore.token_count,
+    tool_count: attemptBefore.tool_count,
+    cost: attemptBefore.cost,
+  })
+  expect(f.prompts).toHaveLength(promptCount)
+  expect(f.created).toHaveLength(sessionCount)
+  expect(f.sessions.get(attemptBefore.session_id)).toEqual(sessionBefore)
+  expect(
+    f.store.effects(f.planID).find((effect) => effect.id === "retained-old-uncertain-effect"),
+  ).toEqual(oldEffectBefore)
+  expect(oldEffectBefore).toMatchObject({ state: "uncertain", payload: oldEffectPayload })
+  expect(readFileSync(join(f.oldHome, "profile", "sentinel"), "utf8")).toBe(oldProfileBefore)
+  expect(retained).not.toHaveProperty("combinedArtifact")
+  expect(retained.taskWorkspace).not.toBeNull()
+  expect(existsSync(retained.taskWorkspace!)).toBe(false)
+  const checks = f.store.atomic((db) =>
+    db
+      .query<
+        {
           phase: string
-          resources: Array<{ name: string; realPath: string; device: number; inode: number }>
-          sqlitePath: string
-        }
+          check_id: string
+          state: string
+          receipt: string | null
+          cleanup_state: string
+        },
+        [string]
+      >(
+        "SELECT phase,check_id,state,receipt,cleanup_state FROM runner_retained_verification_checks WHERE operation_id=? ORDER BY phase",
+      )
+      .all(result.operationID),
+  )
+  expect(checks).toHaveLength(1)
+  expect(
+    checks.every((check) => check.state === "completed" && check.cleanup_state === "complete"),
+  ).toBe(true)
+  for (const check of checks) {
+    const receipt = JSON.parse(check.receipt!) as {
+      exitCode: number
+      cwd: string
+      isolation: {
+        operationID: string
+        phase: string
+        resources: Array<{ name: string; realPath: string; device: number; inode: number }>
+        sqlitePath: string
       }
-      expect(receipt.exitCode).toBe(0)
-      expect(receipt.cwd).not.toBe(attemptBefore.workspace)
-      expect(receipt.isolation.operationID).toBe(result.operationID)
-      expect(receipt.isolation).not.toHaveProperty("generation")
-      expect(receipt.isolation.phase).toBe(check.phase)
-      expect(receipt.isolation.resources.length).toBe(9)
-      expect(
-        new Set(
-          receipt.isolation.resources.map((resource) => `${resource.device}:${resource.inode}`),
-        ).size,
-      ).toBe(9)
-      expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
     }
-  },
-  { timeout: 30_000 },
-)
+    expect(receipt.exitCode).toBe(0)
+    expect(receipt.cwd).not.toBe(attemptBefore.workspace)
+    expect(receipt.isolation.operationID).toBe(result.operationID)
+    expect(receipt.isolation).not.toHaveProperty("generation")
+    expect(receipt.isolation.phase).toBe(check.phase)
+    expect(receipt.isolation.resources.length).toBe(9)
+    expect(
+      new Set(receipt.isolation.resources.map((resource) => `${resource.device}:${resource.inode}`))
+        .size,
+    ).toBe(9)
+    expect(receipt.isolation.sqlitePath).toContain("retained-verification-resources")
+  }
+})
 
 test("failed retained task evidence never accepts the target or releases dependents", async () => {
   const f = await failedFixture({ successorCount: 1, failRetainedCheck: true })
@@ -3237,7 +3232,7 @@ test("verify-retained runs on the current candidate however far the plan version
     f.store.latestTransition(f.planID, f.task.id, "RETAINED_CANDIDATE_ACCEPTED"),
   ).toMatchObject({ operationID })
   expect(f.prompts).toHaveLength(1)
-}, 60_000)
+})
 
 test("a failed verify-retained records the failure and the next call verifies the same commit afresh", async () => {
   const f = await failedCandidateFixture({
@@ -3289,4 +3284,4 @@ test("a failed verify-retained records the failure and the next call verifies th
           .get(f.planID)!.n,
     ),
   ).toBe(2)
-}, 60_000)
+})

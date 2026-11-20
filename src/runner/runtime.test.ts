@@ -4622,31 +4622,24 @@ test("repairing one parallel branch retains its failed check and usage while its
   ])
 })
 
-test(
-  "missing and permission-denied skill suggestions never block admission or dispatch",
-  { timeout: 20_000 },
-  async () => {
-    for (const skillSuggestions of [
-      [],
-      ["missing-skill — Optional but not installed"],
-      ["denied-skill — Optional and may not be permitted"],
-    ]) {
-      const f = fixture({ skillSuggestions })
-      await f.runtime.command(
-        { requestID: "run", planID: f.receipt.planID, action: "run" },
-        "owner",
-      )
-      await driveWithTaskSourceLandings(f)
-      expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
-      for (const attempt of f.store.attempts(f.receipt.planID)) {
-        expectNoSkillBody(attempt.policy)
-        expect(
-          JSON.parse(JSON.parse(attempt.policy).context).specification.requirements.skills,
-        ).toEqual(skillSuggestions)
-      }
+test("missing and permission-denied skill suggestions never block admission or dispatch", async () => {
+  for (const skillSuggestions of [
+    [],
+    ["missing-skill — Optional but not installed"],
+    ["denied-skill — Optional and may not be permitted"],
+  ]) {
+    const f = fixture({ skillSuggestions })
+    await f.runtime.command({ requestID: "run", planID: f.receipt.planID, action: "run" }, "owner")
+    await driveWithTaskSourceLandings(f)
+    expect(f.store.plan(f.receipt.planID)?.state).toBe("accepted")
+    for (const attempt of f.store.attempts(f.receipt.planID)) {
+      expectNoSkillBody(attempt.policy)
+      expect(
+        JSON.parse(JSON.parse(attempt.policy).context).specification.requirements.skills,
+      ).toEqual(skillSuggestions)
     }
-  },
-)
+  }
+})
 
 test("repair handoffs do not copy legacy skill bodies into a new attempt", async () => {
   const f = fixture({ fail: true, repair: true, skillSuggestions: ["sqlite — Optional helper"] })
@@ -6729,7 +6722,7 @@ test("cleanup preserves live worker activity but accepts authoritative worker ab
   expect(f.events.filter((event) => /^(create|prompt):/.test(event)).length).toBe(
     workerAdmissionsBefore,
   )
-}, 20_000)
+})
 
 test("location retirement uses active project ownership outside the display plan listing", async () => {
   const f = fixture()
@@ -7964,7 +7957,7 @@ test("afterPlans rejects task-only, missing, malformed, mismatched and foreign i
     expect(f.store.attempts(child.planID)).toHaveLength(0)
     expect(f.events.filter((event) => event.startsWith("prompt:")).length).toBe(promptsBefore)
   }
-}, 30_000)
+})
 
 test("afterPlans requires the integrated change in selected HEAD; the recorded integration head is only an observation", async () => {
   for (const missingSource of ["integration-head", "artifact"] as const) {
@@ -15435,7 +15428,7 @@ test("84e85b0f-1: a notice claimed before a restart does not strand the takeover
   const result = await f.runtime.takeover(input, "owner")
   expect(result.status).toBe("taken-over")
   expect(steered).toEqual([])
-}, 5_000)
+})
 
 test("84e85b0f-2: a finished takeover does not keep its plan out of retention", async () => {
   const { f, worker } = await takeoverFixture()
@@ -15492,7 +15485,7 @@ test("7abe4acd-2: a handoff saved while a host read is in flight survives the tr
       ) as { workerHandoff?: { remaining?: string } },
   )
   expect(saved.workerHandoff?.remaining).toBe("the final warning")
-}, 10_000)
+})
 
 test("8c276019-1: a queued task of another plan is named as a scope owner", () => {
   const f = fixture()

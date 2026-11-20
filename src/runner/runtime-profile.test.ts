@@ -106,7 +106,7 @@ test("a project whose profile turns the audit off is accepted with no Fallow rev
     false,
   )
   expect(f.store.nodes(planID).every((node) => node.state === "accepted")).toBe(true)
-}, 30_000)
+})
 
 const CARGO_CHECK = "cargo fmt --check && cargo test --locked"
 const cargoProfile = {
@@ -133,7 +133,7 @@ test("with a confirmed profile a task check runs as phases with the profile's to
   expect(readFileSync(cargo.marker, "utf8")).toBe("cargo fmt --check\ncargo test --locked\n")
   expect(JSON.parse(check.environmentIdentity).profile.revision).toBe(row.revision)
   expect(JSON.parse(effect!.payload).profileRevisionID).toBeNumber()
-}, 30_000)
+})
 
 test("a revision confirmed while a check runs never disturbs it; the next verify effect uses the new one", async () => {
   fakeCargoHome()
@@ -184,7 +184,7 @@ test("a revision confirmed while a check runs never disturbs it; the next verify
   expect(next!.identity).toBe(2)
   expect(next!.pinned).not.toBe(first!.pinned)
   expect(f.store.plan(f.receipt.planID)?.state).not.toBe("blocked")
-}, 60_000)
+})
 
 test("with no profile stored the same check is one unrecognised command and no revision is recorded", async () => {
   fakeCargoHome()
@@ -194,7 +194,7 @@ test("with no profile stored the same check is one unrecognised command and no r
   const [effect] = verifyEffects(f)
   expect(checkOf(effect!)!.phases).toBeUndefined()
   expect(JSON.parse(effect!.payload).profileRevisionID).toBeUndefined()
-}, 30_000)
+})
 
 /** Fix scripts: each argument gets `// fixed`; `other` also writes a file it was not given. */
 function fixers() {
@@ -241,7 +241,7 @@ test("the profile's fix runs on the changed files its globs select, and nothing 
   expect(JSON.parse(effect!.payload).fixSteps).toHaveLength(1)
   expect(readFileSync(join(workspaceOf(f), "src/lib.rs"), "utf8")).toContain("// fixed")
   expect(readFileSync(join(workspaceOf(f), "README.md"), "utf8")).toBe("readme\n")
-}, 60_000)
+})
 
 test("the first failing fix entry holds the plan and the next entry never runs", async () => {
   fakeCargoHome()
@@ -261,7 +261,7 @@ test("the first failing fix entry holds the plan and the next entry never runs",
   await drive(f.runtime, 14)
   expect(f.store.plan(f.receipt.planID)?.reason).toContain(join(bin, "fail.sh"))
   expect(Bun.file(marker).size).toBe(0)
-}, 60_000)
+})
 
 test("a fix entry whose proof failed is not in the chain", async () => {
   fakeCargoHome()
@@ -279,7 +279,7 @@ test("a fix entry whose proof failed is not in the chain", async () => {
     [0],
   )
   expect(readFileSync(join(workspaceOf(f), "src/lib.rs"), "utf8")).not.toContain("twice")
-}, 60_000)
+})
 
 test("a fix that changes a file it was not given holds the plan", async () => {
   fakeCargoHome()
@@ -296,7 +296,7 @@ test("a fix that changes a file it was not given holds the plan", async () => {
   expect(f.store.plan(f.receipt.planID)?.reason).toContain(
     "Mechanical candidate preparation changed files it was not given: other.rs",
   )
-}, 60_000)
+})
 
 test("a later revision with another fix command never changes a running preparation or its replay", async () => {
   fakeCargoHome()
@@ -341,7 +341,7 @@ test("a later revision with another fix command never changes a running preparat
   const [effect] = preparation(f)
   expect(checkOf(effect!)!.command).toBe(`${join(bin, "fixer.sh")} 'src/lib.rs'`)
   expect(f.store.plan(f.receipt.planID)?.reason ?? "").not.toContain("inputs changed")
-}, 60_000)
+})
 
 test.skipIf(!requireToolchain("cargo", "profile fix chain formats with rustfmt"))(
   "a real cargo toolchain's formatter fixes the changed file",

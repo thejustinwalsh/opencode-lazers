@@ -1021,21 +1021,17 @@ test("wrong artifacts and changed routes reject without lifecycle changes", asyn
     await verifyRepairRejection(rejected)
 })
 
-test(
-  "foreground/input controls and uncertain effects reject without lifecycle changes",
-  { timeout: 20000 },
-  async () => {
-    for (const rejected of [
-      "busy",
-      "pending-input",
-      "pending-permission",
-      "pending-form",
-      "uncertain-effect",
-    ] as const) {
-      await verifyRepairRejection(rejected)
-    }
-  },
-)
+test("foreground/input controls and uncertain effects reject without lifecycle changes", async () => {
+  for (const rejected of [
+    "busy",
+    "pending-input",
+    "pending-permission",
+    "pending-form",
+    "uncertain-effect",
+  ] as const) {
+    await verifyRepairRejection(rejected)
+  }
+})
 
 test("native ownership and input races reject without reopening or prompting", async () => {
   const f = fixture({ repairRace: true })
