@@ -1,9 +1,10 @@
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { DemoDef } from "./demos"
+import { fitScale, frameStyle } from "./lib/demo-fit"
 import { isDemoMessage } from "./lib/demo-protocol"
 import type { ChapterInfo, DemoCommandBody } from "./lib/demo-protocol"
-import { color, type } from "./tokens.stylex"
+import { bp, color, type } from "./tokens.stylex"
 
 /**
  * A live demo: the real LAZERS panel running in an iframe (/demo/) that replays a recorded story.
@@ -15,16 +16,15 @@ import { color, type } from "./tokens.stylex"
 const s = stylex.create({
   figure: { margin: 0, display: "grid", gap: 16, minWidth: 0, justifyItems: "stretch" },
   plate: {
-    position: "relative",
-    overflow: "hidden",
     width: "100%",
     maxWidth: "var(--demo-max, 100%)",
-    marginInline: "auto",
     backgroundColor: "#14131c",
     border: `3px solid ${color.ink}`,
     boxShadow: "8px 10px 0 #A3A5F9",
-    containerType: "inline-size",
   },
+  /* The scaled iframe's box: the aspect ratio lives here, inside the border, so the content
+     box matches the design size exactly. */
+  view: { position: "relative", overflow: "hidden", width: "100%" },
   plateOnInk: { borderColor: color.peri, boxShadow: `8px 10px 0 ${color.magenta}` },
   placeholder: {
     position: "absolute",
@@ -79,12 +79,38 @@ const s = stylex.create({
     opacity: 0,
     transform: "scale(0.4)",
   },
-  steps: { margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 8 },
+  /* Narrow: one row of numbered buttons and the active caption above them, so a demo stays
+     shorter than the viewport. From 640px the buttons carry their captions in a column. */
+  steps: {
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    display: "grid",
+    gridTemplateColumns: { default: "repeat(4, minmax(0, 1fr))", [bp.mid]: "minmax(0, 1fr)" },
+    gap: 8,
+  },
+  liveCaption: {
+    display: { default: "block", [bp.mid]: "none" },
+    margin: 0,
+    minHeight: "3em",
+    fontSize: 15,
+    lineHeight: 1.45,
+    fontWeight: 600,
+  },
+  stepText: {
+    position: { default: "absolute", [bp.mid]: "static" },
+    width: { default: 1, [bp.mid]: "auto" },
+    height: { default: 1, [bp.mid]: "auto" },
+    overflow: { default: "hidden", [bp.mid]: "visible" },
+    clip: { default: "rect(0 0 0 0)", [bp.mid]: "auto" },
+    whiteSpace: { default: "nowrap", [bp.mid]: "normal" },
+  },
   step: { display: "block" },
   stepButton: {
     appearance: "none",
     display: "grid",
-    gridTemplateColumns: "auto 1fr",
+    gridTemplateColumns: { default: "1fr", [bp.mid]: "auto 1fr" },
+    justifyItems: { default: "center", [bp.mid]: "stretch" },
     columnGap: 12,
     alignItems: "baseline",
     width: "100%",
@@ -155,7 +181,7 @@ export function Demo({
   /** Names the figure for assistive technology. */
   label: string
   tone?: "paper" | "ink"
-  /** Caps the frame's CSS width; the panel scales down with it. */
+  /** Caps the frame's CSS width (default: the design width, so the panel is never scaled up). */
   maxWidth?: number
 }) {
   const plate = useRef<HTMLDivElement>(null)
@@ -187,7 +213,7 @@ export function Demo({
   useEffect(() => {
     const el = plate.current
     if (!el) return
-    const ro = new ResizeObserver(() => setScale(el.clientWidth / def.size.width))
+    const ro = new ResizeObserver(() => setScale(fitScale(el.clientWidth, def.size)))
     ro.observe(el)
     return () => ro.disconnect()
   }, [def.size.width])
@@ -253,8 +279,6 @@ export function Demo({
           }
           break
         }
-        case "view":
-          break
         case "end":
           // Replay from the first chapter once the story has finished.
           restart = window.setTimeout(() => {
@@ -287,55 +311,55 @@ export function Demo({
   return (
     <figure role="group" aria-label={label} {...stylex.props(s.figure)}>
       <div
-        ref={plate}
-        style={{ aspectRatio: aspect, "--demo-max": maxWidth ? `${maxWidth}px` : undefined }}
+        style={{ "--demo-max": `${maxWidth ?? def.size.width + 6}px` }}
         {...stylex.props(s.plate, tone === "ink" && s.plateOnInk)}
       >
-        {!mounted || scale === 0 ? (
-          <div aria-hidden="true" {...stylex.props(s.placeholder)}>
-            {def.panel} panel
-          </div>
-        ) : (
-          <>
-            <iframe
-              ref={(node) => {
-                iframe.current = node
-              }}
-              title={`${label}: replay of the real panel`}
-              src={demoURL(def, reduced ? "final" : undefined)}
-              tabIndex={-1}
-              // The panel is a replay, not a control: out of the tab order and the accessibility tree.
-              inert
-              aria-hidden="true"
-              style={{
-                width: def.size.width,
-                height: def.size.height,
-                transform: `scale(${scale})`,
-              }}
-              {...stylex.props(s.frame)}
-            />
-            {!reduced && (
-              <div
-                ref={pointer}
-                style={{ opacity: 0 }}
+        <div ref={plate} style={{ aspectRatio: aspect }} {...stylex.props(s.view)}>
+          {!mounted || scale === 0 ? (
+            <div aria-hidden="true" {...stylex.props(s.placeholder)}>
+              {def.panel} panel
+            </div>
+          ) : (
+            <>
+              <iframe
+                ref={(node) => {
+                  iframe.current = node
+                }}
+                title={`${label}: replay of the real panel`}
+                src={demoURL(def, reduced ? "final" : undefined)}
+                tabIndex={-1}
+                // The panel is a replay, not a control: out of the tab order and the accessibility tree.
+                inert
                 aria-hidden="true"
-                {...stylex.props(s.pointer)}
-              >
-                <span ref={ripple} {...stylex.props(s.ripple)} />
-                <svg viewBox="0 0 22 22" {...stylex.props(s.cursor)}>
-                  <path
-                    d="M2 2 L2 17 L6 13 L9 20 L12 19 L9 12 L15 12 Z"
-                    fill="#fff"
-                    stroke="#13095e"
-                    stroke-width="1.4"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </div>
-            )}
-          </>
-        )}
+                style={frameStyle(def.size, scale)}
+                {...stylex.props(s.frame)}
+              />
+              {!reduced && (
+                <div
+                  ref={pointer}
+                  style={{ opacity: 0 }}
+                  aria-hidden="true"
+                  {...stylex.props(s.pointer)}
+                >
+                  <span ref={ripple} {...stylex.props(s.ripple)} />
+                  <svg viewBox="0 0 22 22" {...stylex.props(s.cursor)}>
+                    <path
+                      d="M2 2 L2 17 L6 13 L9 20 L12 19 L9 12 L15 12 Z"
+                      fill="#fff"
+                      stroke="#13095e"
+                      stroke-width="1.4"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
+      <p aria-hidden="true" {...stylex.props(s.liveCaption)}>
+        {steps[Math.max(active, 0)]?.caption}
+      </p>
       <ol aria-label="Steps in this demo" {...stylex.props(s.steps)}>
         {steps.map((step, index) => (
           <li key={step.name} {...stylex.props(s.step)}>
@@ -348,7 +372,7 @@ export function Demo({
               <span aria-hidden="true" {...stylex.props(s.stepNum)}>
                 {index + 1}
               </span>
-              <span>{step.caption}</span>
+              <span {...stylex.props(s.stepText)}>{step.caption}</span>
               {!reduced && (
                 <span
                   key={index === active ? `run-${active}` : `idle-${index}`}

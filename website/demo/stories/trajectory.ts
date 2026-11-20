@@ -234,7 +234,7 @@ export default defineStory<TrajectoryData>({
   id: "trajectory",
   panel: "trajectory",
   title: "Trajectory",
-  size: { width: 420, height: 560 },
+  size: { width: 440, height: 660 },
   initial,
   chapters: [
     {
