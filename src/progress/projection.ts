@@ -172,7 +172,7 @@ function projectedRouteEvidence(value: unknown, stats: ReturnType<typeof privacy
 
 function projectedObservations(value: unknown, stats: ReturnType<typeof privacyStats>) {
   if (!Array.isArray(value)) return []
-  return value.slice(-25).flatMap((raw) => {
+  return value.flatMap((raw) => {
     const observation = object(raw)
     if (
       !observation ||
