@@ -9,6 +9,7 @@ src/audit/history.ts:554 | all | audit_sections | children of one audit run (sec
 src/audit/history.ts:621 | all | audit_sections | children of one audit run (sections, decisions) | SELECT run_id,analysis,summary,error,finding_count,captured_at FROM audit_sections WHERE r
 src/audit/history.ts:699 | all | audit_decisions | children of one audit run (sections, decisions) | SELECT payload,created_at,session_id FROM audit_decisions WHERE run_id=? ORDER BY id
 src/audit/history.ts:799 | all | audit_sections | children of one audit run (sections, decisions) | SELECT analysis,raw_file FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis
+src/retention/audit-runs.ts:138 | all | audit_sections | children of one audit run (one row per analysis kind) | SELECT analysis FROM audit_sections WHERE run_id=?
 src/context/repository-snapshots.ts:384 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT snapshot_id,file,bytes FROM context_repo_snapshots ORDER BY created_at ASC,rowid AS
 src/context/repository-snapshots.ts:415 | all | context_repo_snapshots | registry bounded by the cache byte limit; eviction deletes older rows | SELECT file FROM context_repo_snapshots
 src/managed-usage/store.ts:144 | star | managed_usage_boundaries | all columns are mapped; LIMIT 100000 in the statement | SELECT * FROM managed_usage_boundaries WHERE project_directory=? ORDER BY session_id,revis
