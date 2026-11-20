@@ -26,7 +26,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  height: clamp(480px, 74svh, 660px);
+  /* A share of the viewport, never taller than it: the message list gives way, not the frame. */
+  height: var(--lc-height);
+  max-height: calc(100svh - 24px);
   width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -556,6 +558,7 @@
 .lc-figure {
   margin: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
 }
