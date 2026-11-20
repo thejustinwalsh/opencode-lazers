@@ -37,6 +37,8 @@ export type NativeLivenessFixtureOptions = {
   /** Other native sessions by ID, e.g. children of the worker. */
   sessions?: Record<string, { parentID?: string; directory: string }>
   messages?: unknown[]
+  /** Runs as the host serves a current-turn page: a change that lands between the bracketing reads. */
+  onTurnRead?: () => void
   history?: Array<{ id: string; type: string }>
   busy?: ReturnType<typeof DateTime.nowUnsafe>
   idle?: ReturnType<typeof DateTime.nowUnsafe>
@@ -160,6 +162,7 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
       message: {
         list: async (input: { type?: string; cursor?: string; order?: string; limit?: number }) => {
           if (input.type !== "user" && input.type !== "synthetic") {
+            if (input.order === "desc" && !input.type) options.onTurnRead?.()
             messageListCalls.push({
               type: input.type,
               order: input.order,
@@ -210,7 +213,8 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
     app: { version },
     location: { directory: "/project", project: { id: "project" } },
     session: {
-      get: () => Effect.succeed(session),
+      // Each read is a snapshot, as the host returns: a later change cannot rewrite an earlier read.
+      get: () => Effect.succeed({ ...session, time: { ...session.time } }),
       context: () =>
         Effect.sync(() => {
           contextReads++

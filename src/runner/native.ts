@@ -384,6 +384,10 @@ function sessionExecutionState(value: NativeSessionInfo) {
     idle: value.time.idle ? DateTime.toEpochMillis(value.time.idle) : 0,
     outcome: value.outcome,
     archived: value.time.archived !== undefined,
+    // The session's own change stamp moves when a message lands. The one turn read sits between
+    // the session reads, so an input that arrives during it shows up here and the observation
+    // is unstable, rather than pairing the new input with the previous turn's outcome.
+    updated: value.time.updated ? DateTime.toEpochMillis(value.time.updated) : 0,
   })
 }
 

@@ -2029,3 +2029,26 @@ test("the tally pages long histories and counts a tool-heavy turn once per call"
   expect(fixture.messageListCalls.length - before).toBe(turnReadsPerCall + 1)
 })
 const turnReadsPerCall = 3
+
+test("a native input that lands between the bracketing reads is unstable, not paired with the old outcome", async () => {
+  const messages: unknown[] = [
+    { id: "msg_in_1", type: "user", text: "one" },
+    assistantMessage("msg_out_1", "done"),
+  ]
+  const fixture = nativeLivenessFixture({
+    idle: DateTime.nowUnsafe(),
+    outcome: "succeeded",
+    messages,
+    onTurnRead: () => {
+      // The input arrives while the turn is being read; the session record moves with it.
+      messages.push({ id: "msg_in_2", type: "user", text: "two" })
+      ;(fixture.session.time as { updated?: unknown }).updated = DateTime.makeUnsafe(Date.now() + 1)
+    },
+  })
+  ;(fixture.session.time as { updated?: unknown }).updated = DateTime.makeUnsafe(Date.now())
+  const observed = await fixture.host.session("ses_worker", { messages: true })
+  expect(observed?.observationUnstable).toBe(true)
+  // An unstable observation reports no outcome, so the old success is never paired with msg_in_2.
+  expect(observed?.outcome).toBeUndefined()
+  expect(observed?.turn).toMatchObject({ inputID: "msg_in_2" })
+})
