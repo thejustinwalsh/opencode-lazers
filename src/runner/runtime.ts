@@ -40,6 +40,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { QueueReview } from "./queue-review.ts"
 import { WorkerPreparation } from "./worker-preparation.ts"
 import { ContinuationPreparation } from "./continuation-preparation.ts"
 import { StartupSettlement } from "./startup-settlement.ts"
@@ -100,7 +101,7 @@ import {
   planCommandProblem,
   withoutLegacyVersion,
 } from "./plan-commands.ts"
-import type { PlanRow, NodeRow, AttemptRow, EffectRow, OutboxRow } from "./store.ts"
+import type { PlanRow, NodeRow, AttemptRow, EffectRow } from "./store.ts"
 import { appendRunnerEffectReceipt, RunnerStore } from "./store.ts"
 
 import { RETAINED_REPAIR_FENCE_FAILURE_REASON } from "./interrupted-continuation.ts"
@@ -113,7 +114,7 @@ import { ModelMappingResolver } from "../models/mapping-resolver.ts"
 import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
-import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
+import { sharedScheduler } from "./scheduler-coordinator.ts"
 import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
@@ -265,6 +266,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly queueReview: QueueReview
   private readonly workerPreparation: WorkerPreparation
   private readonly continuationPreparation: ContinuationPreparation
   private readonly startupSettlement: StartupSettlement
@@ -509,6 +511,13 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+    })
+    this.queueReview = new QueueReview(this.core, {
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      outcome: (...args) => this.outcome(...args),
+      fallowGate: (...args) => this.fallowGate(...args),
+      outcomeDelivery: this.outcomeDelivery,
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.recoveryDetector = new RecoveryDetector({
       store: this.store,
@@ -3151,127 +3160,12 @@ export class TaskRuntime {
     }
   }
 
-  private async requestQueueReview(
-    waits: { planID: string; prerequisitePlanIDs?: string[]; reservationTaskIDs?: string[] }[],
-    fence: number,
-  ) {
-    const current = () =>
-      waits.filter(
-        ({ planID }) =>
-          this.store.plan(planID)?.state === "running" &&
-          !this.store.effectiveDispatchPause(planID),
-      )
-    const waiting = current()
-    const anchor = waiting[0]
-    if (!anchor) return
-    const review = { waiting }
-    const event = "QUEUE_REVIEW_REQUESTED"
-    const prior = this.store.atomic((db) =>
-      db
-        .query<OutboxRow & { requestedAt: number }, [string, string]>(
-          `SELECT o.*, o.rowid AS sequence, CAST(json_extract(o.payload,'$.version') AS INTEGER) AS version,
-                COALESCE(json_extract(o.payload,'$.requestedAt'),
-                  (SELECT max(t.created_at) FROM runner_transitions t
-                   WHERE t.plan_id=o.plan_id AND t.event='QUEUE_REVIEW_REQUESTED'), 0) AS requestedAt
-           FROM runner_outbox o
-          WHERE o.plan_id=? AND json_extract(o.payload,'$.status')='queue-review'
-            AND json_extract(o.payload,'$.waiting')=?
-          ORDER BY o.rowid DESC LIMIT 1`,
-        )
-        .get(anchor.planID, JSON.stringify(waiting)),
-    )
-    if (prior && this.now() - prior.requestedAt < PROJECT_RECONCILIATION_INTERVAL_MS) return
-    if (prior?.state === "pending") return
-    const checking = () =>
-      verificationActivitiesForDatabase(this.store.repository.path).some(
-        (activity) =>
-          activity.metadata.projectDirectory === this.directory && activity.state === "running",
-      )
-    if (checking()) return
-    const active = this.store.activeProjectAttempts()
-    for (const attempt of active) {
-      const session = await this.host.session(attempt.session_id)
-      if (
-        session?.busy ||
-        session?.pendingInput ||
-        session?.observationUnstable ||
-        (session && this.backgroundBlockReason(session))
-      )
-        return
-    }
-    const owner = this.store.plan(anchor.planID)?.owner
-    if (!owner) return
-    const architect = await this.host.session(owner)
-    if (
-      architect?.busy ||
-      architect?.pendingInput ||
-      architect?.observationUnstable ||
-      (architect?.pendingPermissions ?? 0) > 0 ||
-      (architect?.pendingForms ?? 0) > 0
-    )
-      return
-
-    if (prior?.state === "delivered") {
-      // A delivered review still waiting in the Architect's inbox is not asked again.
-      if (prior.session_id !== owner || !this.validArchitect(architect)) return
-      const observation = await this.outcomeDelivery.outcomeObservation(
-        prior,
-        owner,
-        this.outcomeDelivery.ownership(prior),
-      )
-      if (observation === "queued") return
-    }
-    this.store.fenced(this.owner, fence, () => {
-      if (
-        checking() ||
-        this.store.plan(anchor.planID)?.owner !== owner ||
-        JSON.stringify(current()) !== JSON.stringify(waiting) ||
-        this.store
-          .activeProjectAttempts()
-          .some(
-            (attempt) =>
-              !active.some(
-                (observed) =>
-                  observed.id === attempt.id &&
-                  observed.message_id === attempt.message_id &&
-                  observed.state === attempt.state,
-              ),
-          )
-      )
-        return
-      const requestedAt = this.now()
-      this.store.record(anchor.planID, null, event, { ...review, requestedAt })
-      this.outcome(anchor.planID, { status: "queue-review", ...review, requestedAt }, true)
-    })
+  private requestQueueReview(...args: Parameters<QueueReview["requestQueueReview"]>) {
+    return this.queueReview.requestQueueReview(...args)
   }
 
-  /**
-   * Plans held at dispatch because the project had no Fallow config resume on their own once one
-   * exists (the same running transition the Architect's `run` makes), so a queued task never
-   * dead-ends on a rule that arrived after it.
-   */
-  private async releaseFallowConfigHolds(fence: number) {
-    const held = this.store.atomic((db) =>
-      db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM runner_plans WHERE project_directory=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
-        )
-        .all(this.directory),
-    )
-    if (held.length === 0 || (await this.fallowGate())) return
-    for (const { id } of held)
-      this.store.fenced(this.owner, fence, (db) => {
-        const changed = db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason LIKE 'FALLOW_CONFIG_REQUIRED%'",
-          )
-          .run(id).changes
-        if (changed === 1)
-          this.store.record(id, null, "RECONCILE_REQUESTED", {
-            caller: "fallow-config",
-            verificationEpoch: this.store.plan(id)!.version,
-          })
-      })
+  private releaseFallowConfigHolds(...args: Parameters<QueueReview["releaseFallowConfigHolds"]>) {
+    return this.queueReview.releaseFallowConfigHolds(...args)
   }
 
   private async runTick() {
