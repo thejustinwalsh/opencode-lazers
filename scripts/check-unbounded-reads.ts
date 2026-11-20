@@ -377,7 +377,7 @@ if (import.meta.main) {
       )
       process.exit(1)
     }
-    const todo = entries.filter((entry) => entry.reason === "todo").length
+    const todo = entries.filter((entry) => entry.reason.startsWith("todo")).length
     console.log(`unbounded reads: ${entries.length} listed (${todo} todo)`)
   }
 }
