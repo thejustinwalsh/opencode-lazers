@@ -323,3 +323,26 @@ describe("microphone pill", () => {
     expect(r.state.mic).toBe("idle")
   })
 })
+
+describe("remove downloaded model", () => {
+  test("removing unloads a ready model, then frees the bytes and says how many", () => {
+    let r = run(initialState(), ...type("one"), { t: "loaded", fromCache: true })
+    const id = r.state.current!.id
+    r = run(r.state, { t: "genDone", id, text: "A" }, { t: "removeModel" })
+    expect(kinds(r.effects)).toEqual(expect.arrayContaining(["unload", "removeWeights"]))
+    expect(r.state.phase.name).toBe("idle")
+    r = run(r.state, { t: "removed", bytes: 1_606_472_608 })
+    expect(r.state.notice).toBe("Removed the downloaded model and freed 1.6 GB.")
+  })
+  test("it is refused while a download or load is running", () => {
+    const r = run(initialState(), ...type("hi"), { t: "removeModel" })
+    expect(r.effects.map((e) => e.t)).toEqual(["load"])
+    expect(r.state.phase.name).toBe("starting")
+  })
+  test("a failed removal reports the reason; nothing cached says so", () => {
+    let r = run(initialState(), { t: "removeFailed", message: "File is in use." })
+    expect(r.state.notice).toContain("File is in use.")
+    r = run(initialState(), { t: "removed", bytes: 0 })
+    expect(r.state.notice).toBe("No downloaded model was stored in this browser.")
+  })
+})

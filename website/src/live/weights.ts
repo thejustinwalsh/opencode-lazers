@@ -132,9 +132,25 @@ async function discard(dir: FileSystemDirectoryHandle, name: string) {
   await dir.removeEntry(`${name}.ok`).catch(() => undefined)
 }
 
-export async function removeWeights(): Promise<void> {
+/** Deletes every cached byte (weights, tokenizer, markers) and returns how many were freed. */
+export async function removeWeights(): Promise<number> {
   const root = await navigator.storage.getDirectory()
-  await root.removeEntry("lazers-live-demo", { recursive: true }).catch(() => undefined)
+  let freed = 0
+  try {
+    const base = await root.getDirectoryHandle("lazers-live-demo")
+    const walk = async (dir: FileSystemDirectoryHandle): Promise<void> => {
+      for await (const [, handle] of dir as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+        if (handle.kind === "file") freed += (await (handle as FileSystemFileHandle).getFile()).size
+        else await walk(handle as FileSystemDirectoryHandle)
+      }
+    }
+    await walk(base)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError") return 0
+    throw error
+  }
+  await root.removeEntry("lazers-live-demo", { recursive: true })
+  return freed
 }
 
 type Progress = (files: FileProgress[]) => void
