@@ -127,8 +127,8 @@ revision. It is made incremental by session.
 
 - **Unit.** One worker session. Every quantity the valuation derives from facts (usage
   selection, route evidence, cost evidence, per-call usage rows, route candidates) is a
-  function of that session's facts alone; attempts only select and label. The *fact
-  digest* of a session is that attempt-independent reduction; per-session results that
+  function of that session's facts alone; attempts only select and label. The _fact
+  digest_ of a session is that attempt-independent reduction; per-session results that
   also read the session's attempts are memoized on the digest, keyed by a hash of those
   attempts.
 - **Stored.** `model_decision_progress` gains `session_id` (indexed with `seq`). A small
@@ -137,7 +137,7 @@ revision. It is made incremental by session.
   clock value. A read asks only for sessions with `changed` above the clock it last saw
   (O(changed), not O(facts)) and reads the facts of exactly those sessions through the
   index. Rows above the watermark and queued rows are read live as before; a session they
-  touch is keyed by a hash of those live facts. Digests are *not* stored: they live in a
+  touch is keyed by a hash of those live facts. Digests are _not_ stored: they live in a
   process-wide byte-budgeted LRU (`decision-session-digest`, evicting only, a miss
   re-reads that session). After a restart the cache is cold and one pass reads every
   session once, then reads are incremental again.

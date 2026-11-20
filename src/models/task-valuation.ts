@@ -339,12 +339,16 @@ function observedUsageEstimate(input: {
       ),
     ).values(),
   ].slice(0, 1_000)
-  const recoveryGapCount = input.request.progressFacts.filter((fact) => {
-    const value =
-      typeof fact === "object" && fact !== null ? (fact as Record<string, unknown>) : null
-    const kind = typeof value?.kind === "string" ? value.kind : ""
-    return kind === "worker-gap" || kind === "gap"
-  }).length
+  // Per-session digests hold only the decision kinds (step and usage-snapshot), never a gap.
+  const progressFacts = input.request.progressFacts
+  const recoveryGapCount = Array.isArray(progressFacts)
+    ? (progressFacts as readonly unknown[]).filter((fact) => {
+        const value =
+          typeof fact === "object" && fact !== null ? (fact as Record<string, unknown>) : null
+        const kind = typeof value?.kind === "string" ? value.kind : ""
+        return kind === "worker-gap" || kind === "gap"
+      }).length
+    : 0
   const assumptions = [
     `Priced ${tierAttribution.callCount} deduplicated retained call measurements against the selected published schedule; cumulative session snapshots are not added to their component steps.`,
     ...(tierAttribution.promptThresholds.length

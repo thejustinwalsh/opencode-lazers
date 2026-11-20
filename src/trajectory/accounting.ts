@@ -245,18 +245,7 @@ function cumulativeCategory(
   }
 }
 
-/** The captured fact array is shared by every cohort of one decision read: parse it once. */
-const parsedProgressFacts = new WeakMap<readonly unknown[], ProgressUsageFact[]>()
-
 function parseProgressFacts(values: readonly unknown[]): ProgressUsageFact[] {
-  const cached = parsedProgressFacts.get(values)
-  if (cached) return cached
-  const parsed = parseProgressFactsUncached(values)
-  parsedProgressFacts.set(values, parsed)
-  return parsed
-}
-
-function parseProgressFactsUncached(values: readonly unknown[]): ProgressUsageFact[] {
   return values.flatMap((value) => {
     const fact = object(value)
     if (!fact) return []
@@ -344,27 +333,34 @@ function additiveCategory(category: UsageCategory, steps: ProgressUsageFact[]): 
   }
 }
 
-function sessionUsage(
-  sessionID: string,
-  attempts: AccountingAttempt[],
-  progress: ProgressUsageFact[],
-) {
-  const native = attempts.find(
-    (attempt) => attempt.sessionStatus === "available" && attempt.sessionUsage !== null,
-  )
-  const cumulative = progress
-    .filter(
-      (fact) =>
-        fact.sessionID === sessionID &&
-        fact.kind === "worker-usage-snapshot" &&
-        fact.measurementBasis === "cumulative-session-snapshot" &&
-        fact.usage !== null,
-    )
-    .sort(compareProgressSnapshots)[0]
+/**
+ * What one session's retained facts contribute to accounting, independent of which attempts
+ * select the session: the latest cumulative snapshot, the additive steps (one per call, in usage
+ * time order) and the routes the steps observed. Reduced once per change of the session's facts.
+ */
+export type AccountingFactDigest = {
+  cumulative: ProgressUsageFact | null
+  additive: ProgressUsageFact[]
+  stepRoutes: AccountingStepRoute[]
+}
+
+const EMPTY_DIGEST: AccountingFactDigest = { cumulative: null, additive: [], stepRoutes: [] }
+
+/** Reduce the facts of one session, in their retained order. */
+export function digestAccountingFacts(values: readonly unknown[]): AccountingFactDigest {
+  const progress = parseProgressFacts(values)
+  const cumulative =
+    progress
+      .filter(
+        (fact) =>
+          fact.kind === "worker-usage-snapshot" &&
+          fact.measurementBasis === "cumulative-session-snapshot" &&
+          fact.usage !== null,
+      )
+      .sort(compareProgressSnapshots)[0] ?? null
   const additiveByIdentity = new Map<string, ProgressUsageFact>()
   for (const fact of progress) {
     if (
-      fact.sessionID !== sessionID ||
       fact.kind !== "worker-step" ||
       fact.measurementBasis !== "additive-step-measurement" ||
       !fact.usage
@@ -382,6 +378,45 @@ function sessionUsage(
       (left.sequence ?? Number.MIN_SAFE_INTEGER) - (right.sequence ?? Number.MIN_SAFE_INTEGER) ||
       left.id.localeCompare(right.id),
   )
+  return { cumulative, additive, stepRoutes: parseObservedProgressRoutes(values, progress) }
+}
+
+/** Per-session digests keyed by session id; a session absent from the map has no retained facts. */
+export type AccountingFactDigests = ReadonlyMap<string, { accounting: AccountingFactDigest }>
+
+const digestsOfArray = new WeakMap<
+  readonly unknown[],
+  Map<string, { accounting: AccountingFactDigest }>
+>()
+
+/** Group raw facts by session and digest each group; once per array. */
+function accountingDigestsOf(values: readonly unknown[]): AccountingFactDigests {
+  const cached = digestsOfArray.get(values)
+  if (cached) return cached
+  const groups = new Map<string, unknown[]>()
+  for (const value of values) {
+    const key = text(object(value)?.sessionID) ?? ""
+    const group = groups.get(key)
+    if (group) group.push(value)
+    else groups.set(key, [value])
+  }
+  const digests = new Map(
+    [...groups].map(([session, facts]) => [session, { accounting: digestAccountingFacts(facts) }]),
+  )
+  digestsOfArray.set(values, digests)
+  return digests
+}
+
+function sessionUsage(
+  sessionID: string,
+  attempts: AccountingAttempt[],
+  digest: AccountingFactDigest,
+) {
+  const native = attempts.find(
+    (attempt) => attempt.sessionStatus === "available" && attempt.sessionUsage !== null,
+  )
+  const cumulative = digest.cumulative
+  const additive = digest.additive
 
   let basis: UsageBasis
   let sourceUsage: Record<string, unknown> | null = null
@@ -464,30 +499,19 @@ function sessionUsage(
   }
 }
 
-function aggregateCategory(category: UsageCategory, sessions: ReturnType<typeof sessionUsage>[]) {
+type SessionUsage = ReturnType<typeof sessionUsage>
+
+/** The fields of a category total the decision valuation reads; the sum folds sessions in order. */
+function aggregateCore(category: UsageCategory, sessions: readonly SessionUsage[]) {
   const measures = sessions.map((session) => session.categories[category])
   const known = measures.flatMap((measure) => (measure.value === null ? [] : [measure.value]))
-  const observedAt = measures.flatMap((measure) =>
-    measure.observedAt === null ? [] : [measure.observedAt],
-  )
   const sources = [
     ...new Set(measures.flatMap((measure) => (measure.source ? [measure.source] : []))),
   ].toSorted()
   const sourceTypes = [...new Set(measures.flatMap((measure) => measure.sourceTypes))].toSorted()
-  const observationTimeBases = [
-    ...new Set(
-      measures.flatMap((measure) =>
-        measure.observationTimeBasis ? [measure.observationTimeBasis] : [],
-      ),
-    ),
-  ].toSorted()
   const missingSessions = sessions
     .filter((session) => session.categories[category].status !== "observed")
     .map((session) => session.sessionID)
-  const missingObservations = measures.reduce(
-    (total, measure) => total + measure.missingObservations,
-    0,
-  )
   const status: UsageStatus =
     known.length === 0
       ? measures.some((measure) => measure.status === "unavailable")
@@ -509,15 +533,36 @@ function aggregateCategory(category: UsageCategory, sessions: ReturnType<typeof 
           : "unknown",
     sources,
     sourceTypes,
+    missingSessionIDs: missingSessions,
+  }
+}
+
+function aggregateCategory(category: UsageCategory, sessions: SessionUsage[]) {
+  const core = aggregateCore(category, sessions)
+  const measures = sessions.map((session) => session.categories[category])
+  const observedAt = measures.flatMap((measure) =>
+    measure.observedAt === null ? [] : [measure.observedAt],
+  )
+  const observationTimeBases = [
+    ...new Set(
+      measures.flatMap((measure) =>
+        measure.observationTimeBasis ? [measure.observationTimeBasis] : [],
+      ),
+    ),
+  ].toSorted()
+  return {
+    ...core,
     observationTimeBases,
     observedAtRange: {
       earliest: observedAt.length ? Math.min(...observedAt) : null,
       latest: observedAt.length ? Math.max(...observedAt) : null,
     },
     observationCount: measures.reduce((total, measure) => total + measure.observationCount, 0),
-    missingObservations,
+    missingObservations: measures.reduce(
+      (total, measure) => total + measure.missingObservations,
+      0,
+    ),
     observationDetailsTruncated: measures.some((measure) => measure.observationDetailsTruncated),
-    missingSessionIDs: missingSessions,
     bySession: sessions.map((session) => ({
       sessionID: session.sessionID,
       ...session.categories[category],
@@ -697,48 +742,28 @@ function parseObservedProgressRoutes(values: readonly unknown[], progress: Progr
   )
 }
 
-/** Versioned, read-only task-wide accounting from frozen attempts and retained observations. */
-export function projectTaskEffortBasis(input: {
-  attempts: AccountingAttempt[]
-  progressFacts: readonly unknown[]
-  progressTruncated: boolean
-  truncatedContextSessionIDs: readonly string[]
-}) {
-  const progress = parseProgressFacts(input.progressFacts)
-  const progressBySession = new Map<string, ProgressUsageFact[]>()
-  for (const fact of progress) {
-    const group = progressBySession.get(fact.sessionID) ?? []
-    group.push(fact)
-    progressBySession.set(fact.sessionID, group)
-  }
-  const bySession = new Map<string, AccountingAttempt[]>()
-  for (const attempt of input.attempts) {
-    const group = bySession.get(attempt.sessionID) ?? []
-    group.push(attempt)
-    bySession.set(attempt.sessionID, group)
-  }
-  const sessions = [...bySession.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([sessionID, attempts]) =>
-      sessionUsage(sessionID, attempts, progressBySession.get(sessionID) ?? []),
-    )
-  const categories = Object.fromEntries(
-    CATEGORIES.map((category) => [category, aggregateCategory(category, sessions)]),
-  ) as Record<UsageCategory, ReturnType<typeof aggregateCategory>>
+type SessionRouteObservation = {
+  sessionID: string
+  attemptIDs: string[]
+  route: AccountingRoute
+  sourceOccurrence: string
+  source: string
+  sourceType: string
+  observedAt: number | null
+}
 
-  const sessionRoutes = new Map<
-    string,
-    {
-      sessionID: string
-      attemptIDs: string[]
-      route: AccountingRoute
-      sourceOccurrence: string
-      source: string
-      sourceType: string
-      observedAt: number | null
-    }
-  >()
-  for (const attempt of input.attempts) {
+/** The routes one session contributes, from its attempts and its digest, each list sorted. */
+type SessionRoutePieces = {
+  sessionRoutes: SessionRouteObservation[]
+  stepRoutes: AccountingStepRoute[]
+}
+
+function sessionRoutePieces(
+  attempts: AccountingAttempt[],
+  digest: AccountingFactDigest,
+): SessionRoutePieces {
+  const sessionRoutes = new Map<string, SessionRouteObservation>()
+  for (const attempt of attempts) {
     if (attempt.sessionStatus !== "available" || !attempt.currentRoute) continue
     const sourceOccurrence = JSON.stringify(["session-model", attempt.sessionID])
     const key = `${attempt.sessionID}\u0000${routeKey(attempt.currentRoute, sourceOccurrence)}`
@@ -757,19 +782,11 @@ export function projectTaskEffortBasis(input: {
       })
     }
   }
-  const observedSessionRoutes = [...sessionRoutes.values()].sort(
-    (left, right) =>
-      left.sessionID.localeCompare(right.sessionID) ||
-      routeKey(left.route, left.sourceOccurrence).localeCompare(
-        routeKey(right.route, right.sourceOccurrence),
-      ),
-  )
-
   const stepRoutes = new Map<string, AccountingStepRoute>()
-  for (const attempt of input.attempts)
+  for (const attempt of attempts)
     for (const observed of attempt.stepRoutes)
       addRouteSource(stepRoutes, {
-        attemptID: bySession.get(attempt.sessionID)?.length === 1 ? attempt.id : null,
+        attemptID: attempts.length === 1 ? attempt.id : null,
         sessionID: attempt.sessionID,
         messageID: observed.messageID,
         route: observed.route,
@@ -779,7 +796,7 @@ export function projectTaskEffortBasis(input: {
         recordedAt: null,
         eventID: null,
       })
-  for (const observed of parseObservedProgressRoutes(input.progressFacts, progress))
+  for (const observed of digest.stepRoutes)
     for (const source of observed.sources)
       addRouteSource(stepRoutes, {
         sessionID: observed.sessionID,
@@ -788,14 +805,209 @@ export function projectTaskEffortBasis(input: {
         ...source,
         sourceOccurrence: observed.sourceOccurrence,
       })
-  const observedStepRoutes = [...stepRoutes.values()].sort(
-    (left, right) =>
-      left.sessionID.localeCompare(right.sessionID) ||
-      (left.messageID ?? "").localeCompare(right.messageID ?? "") ||
-      routeKey(left.route, left.sourceOccurrence).localeCompare(
-        routeKey(right.route, right.sourceOccurrence),
-      ),
+  return {
+    sessionRoutes: [...sessionRoutes.values()].sort(
+      (left, right) =>
+        left.sessionID.localeCompare(right.sessionID) ||
+        routeKey(left.route, left.sourceOccurrence).localeCompare(
+          routeKey(right.route, right.sourceOccurrence),
+        ),
+    ),
+    stepRoutes: [...stepRoutes.values()].sort(
+      (left, right) =>
+        left.sessionID.localeCompare(right.sessionID) ||
+        (left.messageID ?? "").localeCompare(right.messageID ?? "") ||
+        routeKey(left.route, left.sourceOccurrence).localeCompare(
+          routeKey(right.route, right.sourceOccurrence),
+        ),
+    ),
+  }
+}
+
+/** A digest of a cached session carries a memo of what is derived from it and the attempts. */
+export type MemoizedAccountingDigest = AccountingFactDigest & { memo?: Map<string, unknown> }
+
+/** Derived results are shared between reads, so only cached digests (which carry a memo) memoize. */
+export function memoizedOnDigest<T>(
+  digest: { memo?: Map<string, unknown> } | undefined,
+  key: string,
+  compute: () => T,
+): T {
+  const memo = digest?.memo
+  if (!memo) return compute()
+  if (memo.has(key)) return memo.get(key) as T
+  // A session's attempts rarely vary; a different filter adds a key, so keep a few.
+  if (memo.size >= 8) memo.clear()
+  const value = compute()
+  memo.set(key, value)
+  return value
+}
+
+/** Identifies the attempts of one session for memo keys. */
+export const attemptsKey = (attempts: readonly AccountingAttempt[]) =>
+  Bun.hash(JSON.stringify(attempts)).toString(36)
+
+/** The usage and routes of one session as selected by `attempts`, memoized per digest. */
+function sessionDerived(
+  sessionID: string,
+  attempts: AccountingAttempt[],
+  digest: MemoizedAccountingDigest | undefined,
+) {
+  const facts = digest ?? EMPTY_DIGEST
+  const compute = () => ({
+    usage: attempts.length ? sessionUsage(sessionID, attempts, facts) : null,
+    routes: sessionRoutePieces(attempts, facts),
+  })
+  return digest?.memo
+    ? memoizedOnDigest(digest, `effort:${attemptsKey(attempts)}`, compute)
+    : compute()
+}
+
+export type EffortFactDigests = ReadonlyMap<string, { accounting: MemoizedAccountingDigest }>
+
+type EffortInput = {
+  attempts: AccountingAttempt[]
+  /** Raw facts, or the per-session digests of an incremental read. */
+  progressFacts: readonly unknown[] | EffortFactDigests
+  progressTruncated: boolean
+  truncatedContextSessionIDs: readonly string[]
+}
+
+/** Everything about the sessions and routes except the lists that grow with every call. */
+function composeEffort(input: EffortInput) {
+  const digests = Array.isArray(input.progressFacts)
+    ? accountingDigestsOf(input.progressFacts as readonly unknown[])
+    : (input.progressFacts as EffortFactDigests)
+  const bySession = new Map<string, AccountingAttempt[]>()
+  for (const attempt of input.attempts) {
+    const group = bySession.get(attempt.sessionID) ?? []
+    group.push(attempt)
+    bySession.set(attempt.sessionID, group)
+  }
+  const attemptSessionIDs = [...bySession.keys()].sort((left, right) => left.localeCompare(right))
+  const derived = new Map(
+    attemptSessionIDs.map((sessionID) => [
+      sessionID,
+      sessionDerived(sessionID, bySession.get(sessionID)!, digests.get(sessionID)?.accounting),
+    ]),
   )
+  const sessions = attemptSessionIDs.map((sessionID) => derived.get(sessionID)!.usage!)
+  const sessionRoutes = attemptSessionIDs.flatMap(
+    (sessionID) => derived.get(sessionID)!.routes.sessionRoutes,
+  )
+  // Sessions only the facts know about still count toward the observed step routes.
+  const stepSessionIDs = [...new Set([...attemptSessionIDs, ...digests.keys()])].sort(
+    (left, right) => left.localeCompare(right),
+  )
+  const stepRoutesBySession = new Map(
+    stepSessionIDs.map((sessionID) => [
+      sessionID,
+      (derived.get(sessionID) ?? sessionDerived(sessionID, [], digests.get(sessionID)?.accounting))
+        .routes.stepRoutes,
+    ]),
+  )
+  const sessionsWithCurrentRoute = new Set(sessionRoutes.map((item) => item.sessionID))
+  const uniqueSessionAttempts = [...bySession.values()].flatMap((attempts) =>
+    attempts.length ? [attempts[0]!] : [],
+  )
+  const contextCounts = {
+    available: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "available")
+      .length,
+    notRead: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "not-read").length,
+    unavailable: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "unavailable")
+      .length,
+  }
+  const missingSessionIDs = sessions
+    .filter((session) => session.sessionStatus === "missing")
+    .map((session) => session.sessionID)
+  const unavailableSessionIDs = sessions
+    .filter((session) => session.sessionStatus === "unavailable")
+    .map((session) => session.sessionID)
+  const usageCoverage = {
+    totalUniqueSessions: sessions.length,
+    nativeCumulativeSnapshots: sessions.filter(
+      (session) => session.selectedBasis === "native-session-cumulative-snapshot",
+    ).length,
+    retainedCumulativeSnapshots: sessions.filter(
+      (session) => session.selectedBasis === "retained-progress-cumulative-snapshot",
+    ).length,
+    additiveStepSubtotals: sessions.filter(
+      (session) => session.selectedBasis === "retained-progress-additive-steps",
+    ).length,
+    missingSessions: missingSessionIDs,
+    unavailableSessions: unavailableSessionIDs,
+    progressTruncated: input.progressTruncated,
+  }
+  const routeCoverage = {
+    totalUniqueSessions: sessions.length,
+    observedSessionRouteCount: sessionRoutes.length,
+    sessionsWithoutCurrentRoute: sessions
+      .filter((session) => !sessionsWithCurrentRoute.has(session.sessionID))
+      .map((session) => session.sessionID),
+    observedStepRouteCount: stepSessionIDs.reduce(
+      (total, sessionID) => total + stepRoutesBySession.get(sessionID)!.length,
+      0,
+    ),
+    stepContextsByStatus: contextCounts,
+    stepRouteCoverage:
+      "Observed retained native context and progress only; complete call history is not guaranteed.",
+    progressTruncated: input.progressTruncated,
+    truncatedContextSessionIDs: [...new Set(input.truncatedContextSessionIDs)].toSorted(),
+    missingSessionIDs,
+    unavailableSessionIDs,
+  }
+  return {
+    bySession,
+    sessions,
+    sessionRoutes,
+    stepRoutesBySession,
+    stepSessionIDs,
+    usageCoverage,
+    routeCoverage,
+  }
+}
+
+/** The part of the effort basis a decision valuation reads. */
+export type EffortUsageBasis = {
+  usage: {
+    categories: Record<UsageCategory, ReturnType<typeof aggregateCore>>
+    sessions: SessionUsage[]
+    coverage: ReturnType<typeof composeEffort>["usageCoverage"]
+  }
+  routes: { coverage: ReturnType<typeof composeEffort>["routeCoverage"] }
+}
+
+/**
+ * Usage and route coverage of the sessions of `attempts`, composed from per-session pieces. It
+ * returns what `projectTaskEffortBasis` returns for `usage.categories`, `usage.sessions`,
+ * `usage.coverage` and `routes.coverage`, without building the lists that grow with every call.
+ */
+export function projectTaskEffortUsage(input: EffortInput): EffortUsageBasis {
+  const composed = composeEffort(input)
+  return {
+    usage: {
+      categories: Object.fromEntries(
+        CATEGORIES.map((category) => [category, aggregateCore(category, composed.sessions)]),
+      ) as Record<UsageCategory, ReturnType<typeof aggregateCore>>,
+      sessions: composed.sessions,
+      coverage: composed.usageCoverage,
+    },
+    routes: { coverage: composed.routeCoverage },
+  }
+}
+
+/** Versioned, read-only task-wide accounting from frozen attempts and retained observations. */
+export function projectTaskEffortBasis(input: EffortInput) {
+  const composed = composeEffort(input)
+  const { bySession, sessions } = composed
+  const categories = Object.fromEntries(
+    CATEGORIES.map((category) => [category, aggregateCategory(category, sessions)]),
+  ) as Record<UsageCategory, ReturnType<typeof aggregateCategory>>
+  const observedSessionRoutes = composed.sessionRoutes
+  const observedStepRoutes = composed.stepSessionIDs.flatMap((sessionID) =>
+    composed.stepRoutesBySession.get(sessionID)!,
+  )
+  const totalSessions = sessions.length
 
   const sessionRoutesByID = new Map<string, typeof observedSessionRoutes>()
   for (const observation of observedSessionRoutes) {
@@ -803,12 +1015,7 @@ export function projectTaskEffortBasis(input: {
     group.push(observation)
     sessionRoutesByID.set(observation.sessionID, group)
   }
-  const stepRoutesByID = new Map<string, AccountingStepRoute[]>()
-  for (const observation of observedStepRoutes) {
-    const group = stepRoutesByID.get(observation.sessionID) ?? []
-    group.push(observation)
-    stepRoutesByID.set(observation.sessionID, group)
-  }
+  const stepRoutesByID = composed.stepRoutesBySession
 
   const routeAssessments = input.attempts.flatMap((attempt) => {
     const requestedRoute =
@@ -910,24 +1117,6 @@ export function projectTaskEffortBasis(input: {
         : []
     }),
   )
-  const uniqueSessionAttempts = [...bySession.values()].flatMap((attempts) =>
-    attempts.length ? [attempts[0]!] : [],
-  )
-  const totalSessions = sessions.length
-  const sessionsWithCurrentRoute = new Set(observedSessionRoutes.map((item) => item.sessionID))
-  const contextCounts = {
-    available: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "available")
-      .length,
-    notRead: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "not-read").length,
-    unavailable: uniqueSessionAttempts.filter((attempt) => attempt.contextStatus === "unavailable")
-      .length,
-  }
-  const missingSessionIDs = sessions
-    .filter((session) => session.sessionStatus === "missing")
-    .map((session) => session.sessionID)
-  const unavailableSessionIDs = sessions
-    .filter((session) => session.sessionStatus === "unavailable")
-    .map((session) => session.sessionID)
   const recordedCosts = input.attempts.flatMap((attempt) =>
     attempt.recordedCostUSD === null
       ? []
@@ -972,21 +1161,7 @@ export function projectTaskEffortBasis(input: {
       ],
       categories,
       sessions,
-      coverage: {
-        totalUniqueSessions: totalSessions,
-        nativeCumulativeSnapshots: sessions.filter(
-          (session) => session.selectedBasis === "native-session-cumulative-snapshot",
-        ).length,
-        retainedCumulativeSnapshots: sessions.filter(
-          (session) => session.selectedBasis === "retained-progress-cumulative-snapshot",
-        ).length,
-        additiveStepSubtotals: sessions.filter(
-          (session) => session.selectedBasis === "retained-progress-additive-steps",
-        ).length,
-        missingSessions: missingSessionIDs,
-        unavailableSessions: unavailableSessionIDs,
-        progressTruncated: input.progressTruncated,
-      },
+      coverage: composed.usageCoverage,
     },
     routes: {
       assignments: input.attempts.map((attempt) => ({
@@ -1070,21 +1245,7 @@ export function projectTaskEffortBasis(input: {
           : distinctObservedRoutes.length === 1
             ? "One observed route does not split cumulative session usage by call; task-wide usage remains session-aggregate."
             : "Observed route coverage is unavailable; no model attribution is made.",
-      coverage: {
-        totalUniqueSessions: totalSessions,
-        observedSessionRouteCount: observedSessionRoutes.length,
-        sessionsWithoutCurrentRoute: sessions
-          .filter((session) => !sessionsWithCurrentRoute.has(session.sessionID))
-          .map((session) => session.sessionID),
-        observedStepRouteCount: observedStepRoutes.length,
-        stepContextsByStatus: contextCounts,
-        stepRouteCoverage:
-          "Observed retained native context and progress only; complete call history is not guaranteed.",
-        progressTruncated: input.progressTruncated,
-        truncatedContextSessionIDs: [...new Set(input.truncatedContextSessionIDs)].toSorted(),
-        missingSessionIDs,
-        unavailableSessionIDs,
-      },
+      coverage: composed.routeCoverage,
     },
     cost: {
       recordedWorkerAttemptSubtotalUSD: {
