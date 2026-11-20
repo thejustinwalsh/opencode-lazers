@@ -8,7 +8,8 @@ import {
   checkSucceeded,
   isConclusiveNonTimeoutInterruption,
 } from "./checks.ts"
-import { git, runCheck } from "./artifacts.ts"
+import { git, runCheck, verificationEnvironmentIdentity } from "./artifacts.ts"
+import { delimiter } from "node:path"
 
 const roots: string[] = []
 afterEach(() => {
@@ -181,4 +182,74 @@ test("auto-fixing a tracked file produces a real successful receipt without a cl
 test("isolated HOME can use the actual Bun runtime executable without guessing a host CLI", () => {
   const result = checkEnvironment({ HOME: fixture(), PATH: "/usr/bin:/bin" })
   expect(Bun.which("bun", { PATH: result.PATH })).toBe(process.execPath)
+})
+
+function fakeExecutable(directory: string, name: string) {
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, name), "#!/bin/sh\nexit 0\n")
+  chmodSync(join(directory, name), 0o700)
+}
+
+test("with a profile, a toolchain outside PATH is found in its known home", () => {
+  const home = fixture()
+  fakeExecutable(join(home, ".cargo", "bin"), "cargo")
+  const result = checkEnvironment({ PATH: "/usr/bin:/bin", HOME: home }, ["cargo"])
+  expect(result.PATH).toBe(`${join(home, ".cargo", "bin")}${delimiter}/usr/bin:/bin`)
+})
+
+test("CARGO_HOME wins over the default home", () => {
+  const home = fixture()
+  const cargoHome = fixture()
+  fakeExecutable(join(home, ".cargo", "bin"), "cargo")
+  fakeExecutable(join(cargoHome, "bin"), "cargo")
+  const result = checkEnvironment({ PATH: "/usr/bin", HOME: home, CARGO_HOME: cargoHome }, [
+    "cargo",
+  ])
+  expect(result.PATH!.startsWith(join(cargoHome, "bin"))).toBe(true)
+})
+
+test("a toolchain already on PATH leaves PATH alone, and an unfound one adds nothing", () => {
+  const home = fixture()
+  const onPath = join(home, "path-bin")
+  fakeExecutable(onPath, "cargo")
+  expect(checkEnvironment({ PATH: onPath, HOME: home }, ["cargo"]).PATH).toBe(onPath)
+  expect(checkEnvironment({ PATH: "/usr/bin:/bin", HOME: home }, ["zig"]).PATH).toBe(
+    "/usr/bin:/bin",
+  )
+})
+
+test("with a profile, Bun is not added implicitly", () => {
+  const home = fixture()
+  fakeExecutable(join(home, ".cargo", "bin"), "cargo")
+  fakeExecutable(join(home, "bunhome", "bin"), "bun")
+  const result = checkEnvironment(
+    { PATH: "/usr/bin:/bin", HOME: home, BUN_INSTALL: join(home, "bunhome") },
+    ["cargo"],
+  )
+  expect(result.PATH).not.toContain("bunhome")
+})
+
+test("the environment identity without a profile is the string it always was", () => {
+  const keys = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ", "CI"] as const
+  const environment = Object.fromEntries(
+    keys.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+  )
+  const parsed = JSON.parse(verificationEnvironmentIdentity())
+  expect(Object.keys(parsed).sort()).toEqual(
+    ["architecture", "bunRevision", "bunVersion", "environment", "executable", "platform"].sort(),
+  )
+  expect(parsed.environment).toEqual(environment)
+})
+
+test("the identity with a profile adds its revision and env names", () => {
+  const identity = {
+    revision: 3,
+    toolchains: ["cargo"],
+    env: ["RUSTUP_HOME"],
+    toolVersions: { cargo: "cargo 9.9.9" },
+  }
+  const parsed = JSON.parse(verificationEnvironmentIdentity(identity))
+  expect(parsed.profile.revision).toBe(3)
+  expect(parsed.profile.env).toEqual(["RUSTUP_HOME"])
+  expect(verificationEnvironmentIdentity()).not.toBe(verificationEnvironmentIdentity(identity))
 })

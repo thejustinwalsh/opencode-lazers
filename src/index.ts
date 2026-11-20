@@ -21,6 +21,7 @@ import { registerArchitectContact } from "./runner/architect-contact-rpc.ts"
 import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { ensureArchitectMap } from "./context/architect-map.ts"
+import { ensureArchitectProfileGuidance } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { registerObservability } from "./observability/rpc.ts"
@@ -117,6 +118,9 @@ export default Plugin.define({
           // The map joins the Architect's cached prefix at its first prompt; orientation must
           // never block the prompt, so a failure leaves the session without it.
           await ensureArchitectMap(ctx.session, repository, prompt.sessionID).catch(() => false)
+          await ensureArchitectProfileGuidance(ctx.session, repository, prompt.sessionID).catch(
+            () => false,
+          )
         }),
       )
       yield* sectionEffect("setup:TaskReads", () =>

@@ -16,6 +16,7 @@ import { promisify } from "node:util"
 import { canonical } from "../identity.ts"
 import { checkEnvironment, checkSucceeded } from "./checks.ts"
 import { recognizedVerificationPhases } from "./quality-failure.ts"
+import type { CheckRunProfile } from "../projects/profile-runtime.ts"
 import { withTestHangGuard } from "./test-hang-guard.ts"
 import {
   DEFAULT_VERIFICATION_HARD_TIMEOUT_MS,
@@ -641,6 +642,8 @@ export type CheckRunOptions = {
   hardDeadline?: number
   /** Shared inactivity deadline, reset only by real stdout/stderr progress. */
   inactivityDeadline?: { value: number }
+  /** The project profile this run uses: tool lookup, command recognition and identity. */
+  profile?: CheckRunProfile
 }
 
 export type WindowsProcessTreeAdapter = {
@@ -656,8 +659,16 @@ const verificationEnvironment = () =>
     ),
   )
 
+/** What a profile adds to the environment identity: names and versions, never values. */
+export type ProfileIdentity = {
+  revision: number
+  toolchains: string[]
+  env: string[]
+  toolVersions: Record<string, string>
+}
+
 /** Stable, readable check-runtime metadata; module replacement is not an environment change. */
-export function verificationEnvironmentIdentity(): string {
+export function verificationEnvironmentIdentity(profile?: ProfileIdentity): string {
   return canonical({
     bunRevision: Bun.revision,
     bunVersion: Bun.version,
@@ -665,6 +676,7 @@ export function verificationEnvironmentIdentity(): string {
     platform: process.platform,
     architecture: process.arch,
     environment: verificationEnvironment(),
+    ...(profile ? { profile } : {}),
   })
 }
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768, onProgress?: () => void) {
@@ -841,7 +853,8 @@ export async function runCheck(
   if (options.signal?.aborted) throw new Error("Verification was cancelled before check launch")
   const inputIdentity = options.inputIdentity ?? artifact
   // Record runtime metadata without persisting environment credentials.
-  const environmentIdentity = options.environmentIdentity ?? verificationEnvironmentIdentity()
+  const environmentIdentity =
+    options.environmentIdentity ?? verificationEnvironmentIdentity(options.profile?.identity)
   const startedAt = Date.now()
   const inactivityTimeoutMs =
     check.inactivityTimeoutMs ?? DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS
@@ -856,7 +869,7 @@ export async function runCheck(
     stderr: "pipe",
     stdin: "ignore",
     detached: true,
-    env: checkEnvironment(options.environment ?? process.env),
+    env: checkEnvironment(options.environment ?? process.env, options.profile?.toolchains),
   })
   const windowsTreeAdapter =
     options.processTreeAdapter ??
@@ -1061,7 +1074,7 @@ export async function runDeclaredCheck(
   receiptPath: string,
   options: CheckRunOptions = {},
 ): Promise<CheckReceipt> {
-  const commands = recognizedVerificationPhases(check.command)
+  const commands = recognizedVerificationPhases(check.command, options.profile?.commands)
   if (!commands) return runCheck(directory, artifact, check, receiptPath, options)
   const phases: CheckPhaseReceipt[] = []
   const startedAt = Date.now()
@@ -1085,7 +1098,8 @@ export async function runDeclaredCheck(
         cwd: directory,
         artifact,
         inputIdentity: options.inputIdentity ?? artifact,
-        environmentIdentity: options.environmentIdentity ?? verificationEnvironmentIdentity(),
+        environmentIdentity:
+          options.environmentIdentity ?? verificationEnvironmentIdentity(options.profile?.identity),
         startedAt: Date.now(),
         endedAt: Date.now(),
         exitCode: null,

@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { z } from "zod"
+import { activeProfile } from "./projects/profile-store.ts"
 import { Tool } from "@opencode/schema/tool"
 import { TaskRepository } from "./storage.ts"
 import {
@@ -405,7 +406,10 @@ export function registerTaskTools(
                     "structured"
                   )
                     return { content: JSON.stringify(detail), output: detail }
-                  let instructions = taskInstructions(detail)
+                  let instructions = taskInstructions(
+                    detail,
+                    activeProfile(repository, repository.projectDirectory),
+                  )
                   if (detail.status === "found") {
                     // One orientation map per plan, captured when the plan was submitted, so every
                     // worker of the plan carries identical bytes ahead of the task's own source.
