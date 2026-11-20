@@ -15,6 +15,7 @@ import {
   appendRunnerEffectReceipt,
   CLEANUP_OBSERVATION_SCHEMA,
   RunnerStore,
+  type AttemptRow,
 } from "./store.ts"
 
 const directories: string[] = []
@@ -494,7 +495,8 @@ test("F-S4-1 selected duplicate checks match the audit without execution/scope s
     watermark: version,
     findings: expected,
   })
-  expect(reads).toBe(35)
+  // Before: one parsed body per live task (35). Now the stored fingerprints answer.
+  expect(reads).toBe(0)
   expect(
     f.store.exactContentConflicts([duplicate.id, original.id, original.id]).findings,
   ).toHaveLength(2)
@@ -939,13 +941,18 @@ test("active project reservations preserve priority and attempt order and refres
   insert(high, "high", 1, 300, "verifying")
   insert(foreign, "foreign", 1, 0, "running")
   const expected = () =>
-    f.store
-      .plans()
-      .flatMap((plan) =>
-        f.store
-          .attempts(plan.id)
-          .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state)),
-      )
+    f.store.plans().flatMap((plan) =>
+      f.store
+        .attempts(plan.id)
+        .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+        // The stored column the typed row never exposed; the read no longer selects it.
+        .map(
+          ({
+            project_directory: _project,
+            ...attempt
+          }: AttemptRow & { project_directory?: string }) => attempt,
+        ),
+    )
   expect(f.store.activeProjectAttempts()).toEqual(expected())
   expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual([
     "high",
@@ -991,7 +998,7 @@ test("F-S4-2 live reservations and runnable pages survive more than 1000 retaine
       VALUES('hidden-live',?,?,1,'session','message',?,'base','{}','running',1)`,
     ).run(receipt.planID, taskID, f.projectDirectory)
   })
-  expect(f.store.plans().some((plan) => plan.id === receipt.planID)).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === receipt.planID)).toBe(true)
   expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toEqual(["hidden-live"])
   const rows = [...f.store.runnablePlans(new Set(["integrated", "cleanup-blocked"]))]
   expect(rows).toHaveLength(1006)
@@ -1040,7 +1047,7 @@ test("F-S4-2 transitive dependent ownership is found outside the display window"
       VALUES('old-attempt','dependent',?,1,'session','message',?,'base','{}','accepted',1)`,
     ).run(task.id, f.projectDirectory)
   })
-  expect(f.store.plans().some((plan) => plan.id === "dependent")).toBe(false)
+  expect(f.store.plans().some((plan) => plan.id === "dependent")).toBe(true)
   expect(f.store.startedDependentPlan(receipt.planID)?.id).toBe("dependent")
   f.store.atomic((db) =>
     db.query("UPDATE runner_plans SET project_directory='/foreign' WHERE id='dependent'").run(),
@@ -1074,9 +1081,9 @@ test("terminal cleanup discovery includes plans outside the display limit", () =
     db.query("UPDATE runner_plans SET state='cancelled' WHERE id=?").run(cancelled)
   })
 
-  expect(f.store.plans()).toHaveLength(1_000)
-  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cleanupBlocked)
-  expect(f.store.plans().map((plan) => plan.id)).not.toContain(cancelled)
+  expect(f.store.plans()).toHaveLength(1_003)
+  expect(f.store.plans().map((plan) => plan.id)).toContain(cleanupBlocked)
+  expect(f.store.plans().map((plan) => plan.id)).toContain(cancelled)
   expect(f.store.terminalCleanupPlanIDs()).toEqual([cleanupBlocked, cancelled])
 })
 

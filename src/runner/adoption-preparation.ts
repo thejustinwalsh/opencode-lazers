@@ -20,6 +20,9 @@ import type { WorkerObservation } from "./worker-observation.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 
 /** What `AdoptionPreparation` reads from the coordinator and its sibling modules; calls are lazy arrows. */
+/** Integration events read per page when looking for the reviewed baseline. */
+const INTEGRATION_PAGE = 50
+
 export type AdoptionPreparationDeps = {
   backgroundBlockReason: WorkerObservation["backgroundBlockReason"]
   validArchitect: ArchitectOwnership["validArchitect"]
@@ -141,55 +144,53 @@ export class AdoptionPreparation {
       )
   }
   async reviewedAdoptionBaseline(targetBranch: string, oldArtifact: string, candidate: string) {
-    const rows = this.store.atomic((db) =>
-      db
-        .query<{ event: string; payload: string }, [string]>(
-          `SELECT t.event,t.payload FROM runner_transitions t
-           JOIN runner_plans p ON p.id=t.plan_id
-           WHERE p.project_directory=? AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
-           ORDER BY t.id`,
-        )
-        .all(this.directory),
-    )
     const firstParent = (await gitAsync(this.directory, ["rev-list", "--first-parent", candidate]))
       .split(/\s+/)
       .filter(Boolean)
     const firstParentIndex = new Map(firstParent.map((commit, index) => [commit, index]))
-    let baseline = oldArtifact
-    let nearest = Number.POSITIVE_INFINITY
-    for (const row of rows) {
-      let payload: { artifact?: unknown; branch?: unknown; head?: unknown }
-      try {
-        payload = JSON.parse(row.payload) as typeof payload
-      } catch {
-        continue
-      }
-      if (
-        payload.branch !== targetBranch ||
-        typeof payload.artifact !== "string" ||
-        typeof payload.head !== "string" ||
-        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.artifact) ||
-        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(payload.head) ||
-        payload.head === candidate
+    // The newest recorded integration of this branch whose head is on the candidate's first-parent
+    // line and descends from both artifacts is the baseline. Events are read newest first, a page
+    // at a time, filtered by branch in SQL, and reading stops at the first one that qualifies.
+    const commit = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
+    let before = Number.MAX_SAFE_INTEGER
+    for (;;) {
+      const page = this.store.read((db) =>
+        db
+          .query<
+            { id: number; artifact: unknown; head: unknown },
+            [string, string, string, number, number]
+          >(
+            `SELECT t.id,json_extract(t.payload,'$.artifact') AS artifact,
+               json_extract(t.payload,'$.head') AS head
+             FROM runner_transitions t JOIN runner_plans p ON p.id=t.plan_id
+             WHERE p.project_directory=?
+               AND t.event IN ('INTEGRATION_RECORDED','TASK_INTEGRATION_RECORDED')
+               AND json_valid(t.payload) AND json_extract(t.payload,'$.branch')=?
+               AND json_extract(t.payload,'$.head')<>? AND t.id<?
+             ORDER BY t.id DESC LIMIT ?`,
+          )
+          .all(this.directory, targetBranch, candidate, before, INTEGRATION_PAGE),
       )
-        continue
-      const position = firstParentIndex.get(payload.head)
-      if (position === undefined || position >= nearest) continue
-      try {
-        await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, payload.head])
-        await gitAsync(this.directory, [
-          "merge-base",
-          "--is-ancestor",
-          payload.artifact,
-          payload.head,
-        ])
-      } catch {
-        continue
+      for (const row of page) {
+        if (
+          typeof row.artifact !== "string" ||
+          typeof row.head !== "string" ||
+          !commit.test(row.artifact) ||
+          !commit.test(row.head) ||
+          !firstParentIndex.has(row.head)
+        )
+          continue
+        try {
+          await gitAsync(this.directory, ["merge-base", "--is-ancestor", oldArtifact, row.head])
+          await gitAsync(this.directory, ["merge-base", "--is-ancestor", row.artifact, row.head])
+        } catch {
+          continue
+        }
+        return row.head
       }
-      baseline = payload.head
-      nearest = position
+      if (page.length < INTEGRATION_PAGE) return oldArtifact
+      before = page.at(-1)!.id
     }
-    return baseline
   }
   async adoptionArtifactScopeViolations(attempt: AttemptRow, artifact: string, branch: string) {
     // Worker scope belongs to its patch. The owner reviews the integrated branch

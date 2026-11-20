@@ -280,7 +280,7 @@ export class ArchitectSources {
     if (
       result.nextCursor === null &&
       epoch === this.sourceEpochs.get(source.session_id) &&
-      this.store.architectRenewal(renewal.id)?.state === "committed"
+      this.store.architectRenewalState(renewal.id) === "committed"
     ) {
       const archived = page.archived ?? (await this.host.session(source.session_id))?.archived
       if (archived === true && epoch === this.sourceEpochs.get(source.session_id))
@@ -291,7 +291,7 @@ export class ArchitectSources {
   async inspectArchitectSourceSweep(renewal: ArchitectRenewalRow, fence: number) {
     const requestedCursors = new Set<string>()
     for (;;) {
-      const source = this.store.architectSource(renewal.previous_session_id)
+      const source = this.store.architectSourceHead(renewal.previous_session_id)
       if (!source) throw new Error("Durable Architect predecessor source is unavailable")
       const cursor = source.scan_cursor
       if (cursor !== null) {
@@ -307,7 +307,7 @@ export class ArchitectSources {
       } catch (error) {
         // A prompt hook can defer preparation between the page read and its journal
         // write. That expected state change ends the sweep without masking read errors.
-        if (this.store.architectRenewal(renewal.id)?.state !== "creating") return
+        if (this.store.architectRenewalState(renewal.id) !== "creating") return
         throw error
       }
     }

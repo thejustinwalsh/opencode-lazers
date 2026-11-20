@@ -18,6 +18,18 @@ import type { WorkerObservation } from "./worker-observation.ts"
 import type { RunnerTransitionRecord } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 
+/** The transition events retained-repair lineage and recovery checks read. */
+export const RETAINED_REPAIR_EVENTS = [
+  "RETAINED_REPAIR_REQUESTED",
+  "ATTEMPT_RESUMED",
+  "WORKER_STOPPED",
+  "BLOCKED",
+  "CANCEL",
+  "CANCEL_REQUESTED",
+] as const
+/** Transitions per read when the history is walked; a page size, not a limit. */
+const TRANSITION_PAGE = 500
+
 /** What `RetainedRepairRecords` reads from the coordinator and its sibling modules; calls are lazy arrows. */
 export type RetainedRepairRecordsDeps = {
   validArchitect: ArchitectOwnership["validArchitect"]
@@ -173,14 +185,29 @@ export class RetainedRepairRecords {
       return "Retained repair worker's current turn is not the repaired input"
     return undefined
   }
-  transitionHistory(planID: string): RunnerTransitionRecord[] {
-    return this.store.atomic((db) =>
-      db
-        .query<RunnerTransitionRecord, [string]>(
-          "SELECT id,task_id,event,payload FROM runner_transitions WHERE plan_id=? ORDER BY id",
-        )
-        .all(planID),
-    )
+  /**
+   * The transitions retained repair reads for one task of a plan: the repair, resume, stop, hold,
+   * cancel and cancel-request events of that task or of the plan as a whole, in id order. Read a
+   * page at a time; no other event of the plan's history is loaded.
+   */
+  transitionHistory(planID: string, taskID: string): RunnerTransitionRecord[] {
+    const events = RETAINED_REPAIR_EVENTS.map(() => "?").join(",")
+    const found: RunnerTransitionRecord[] = []
+    let after = 0
+    for (;;) {
+      const page = this.store.read((db) =>
+        db
+          .query<RunnerTransitionRecord, (string | number)[]>(
+            `SELECT id,task_id,event,payload FROM runner_transitions
+             WHERE plan_id=? AND (task_id=? OR task_id IS NULL) AND event IN (${events}) AND id>?
+             ORDER BY id LIMIT ${TRANSITION_PAGE}`,
+          )
+          .all(planID, taskID, ...RETAINED_REPAIR_EVENTS, after),
+      )
+      found.push(...page)
+      if (page.length < TRANSITION_PAGE) return found
+      after = page.at(-1)!.id
+    }
   }
   parseTransitionPayload<T>(transition: RunnerTransitionRecord | undefined): T | undefined {
     if (!transition) return undefined
@@ -266,7 +293,7 @@ export class RetainedRepairRecords {
       )
         return undefined
     }
-    const history = this.transitionHistory(attempt.plan_id)
+    const history = this.transitionHistory(attempt.plan_id, attempt.task_id)
     const repairTransition = history
       .filter(
         (entry) => entry.task_id === attempt.task_id && entry.event === "RETAINED_REPAIR_REQUESTED",

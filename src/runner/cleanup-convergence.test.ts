@@ -320,8 +320,8 @@ test("cleanup discovery exceeds the display window while unchanged holds skip ex
       for (let index = 0; index < 1_001; index++)
         insert.run(crypto.randomUUID(), root, "owner", JSON.stringify({ priority: 1 }))
     })
-    expect(store.plans()).toHaveLength(1_000)
-    expect(store.plans().map((plan) => plan.id)).not.toContain(records[0]!.planID)
+    expect(store.plans().length).toBeGreaterThan(1_000)
+    expect(store.plans().map((plan) => plan.id)).toContain(records[0]!.planID)
 
     const architectSession = (id: string, directory: string, metadata?: Record<string, unknown>) =>
       ({

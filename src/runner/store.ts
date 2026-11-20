@@ -24,7 +24,7 @@ import {
 import { installPrioritySchema, planPrioritySortSQL, prioritySortSQL } from "./priority.ts"
 import { installChangeIdentity, knownTree, sameArtifact } from "./identity-store.ts"
 import { architectSourceTransition, type ArchitectSourceState } from "./architect-source-machine.ts"
-import { canonical, fingerprint } from "../identity.ts"
+import { canonical, fingerprint, fingerprintStrings } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
 import type { TaskRepository } from "../storage.ts"
 import { outerPause, outerPauseIn, outerPauseReason } from "../projects/pause.ts"
@@ -213,6 +213,9 @@ export type ArchitectRenewalRow = {
   input_message_id: string | null
   error: string | null
   continuity_json: string | null
+  /** Count and fingerprint of the continuity inputs the renewal covers, stored when it begins. */
+  coverage_count: number | null
+  coverage_fingerprint: string | null
   started_at: number
 }
 type ArchitectContinuityRow = {
@@ -254,6 +257,148 @@ type ArchitectSourceRow = {
   updated_at: number
   scan_complete_at: number | null
   observation_json: string | null
+}
+/** The source row without its cached observation, for callers that never read the cache. */
+type ArchitectSourceHead = Omit<ArchitectSourceRow, "observation_json">
+type ArchitectSourceFlags = {
+  state: ArchitectSourceState
+  scan_complete_at: number | null
+  has_observation: number
+}
+const columnList = (alias: string, names: readonly string[]) =>
+  names.map((name) => `${alias}.${name}`).join(",")
+const RENEWAL_COLUMNS = [
+  "id",
+  "anchor_plan_id",
+  "previous_session_id",
+  "successor_session_id",
+  "directory",
+  "model",
+  "idle_at",
+  "generation",
+  "state",
+  "handoff_message_id",
+  "handoff_outbox_id",
+  "input_message_id",
+  "error",
+  "continuity_json",
+  "coverage_count",
+  "coverage_fingerprint",
+  "started_at",
+] as const
+const ATTEMPT_COLUMNS = [
+  "id",
+  "plan_id",
+  "task_id",
+  "number",
+  "session_id",
+  "message_id",
+  "workspace",
+  "base_commit",
+  "artifact",
+  "policy",
+  "state",
+  "started_at",
+  "token_count",
+  "tool_count",
+  "retry_count",
+  "cost",
+] as const
+const ADOPTION_COLUMNS = [
+  "id",
+  "plan_id",
+  "task_id",
+  "request_id",
+  "owner",
+  "plan_version",
+  "task_revision",
+  "attempt_id",
+  "node_state",
+  "attempt_state",
+  "old_artifact",
+  "descendant_commit",
+  "target_branch",
+  "landing_head",
+  "reviewed_baseline",
+  "candidate_tree",
+  "input_fingerprint",
+  "environment_identity",
+  "reason",
+  "combined_artifact",
+  "task_workspace",
+  "combined_workspace",
+  "state",
+  "hold_reason",
+  "created_at",
+  "updated_at",
+] as const
+/** A renewal without its continuity document, for callers that decide on state and ids. */
+type ArchitectRenewalHead = Omit<ArchitectRenewalRow, "continuity_json">
+const RENEWAL_HEAD_COLUMNS = RENEWAL_COLUMNS.filter((name) => name !== "continuity_json")
+const SOURCE_HEAD_COLUMNS = [
+  "session_id",
+  "renewal_id",
+  "anchor_plan_id",
+  "scan_cursor",
+  "scan_sweep",
+  "revision",
+  "state",
+  "updated_at",
+  "scan_complete_at",
+] as const
+/** Ids read per page when a list that grows with a session is walked or summarized. */
+const ID_PAGE = 500
+/** Tasks per read when the project's tasks are walked; a page size, not a limit. */
+const TASK_PAGE = 500
+/** Message ids of one coverage list in order, a page per read. The caller supplies the filter. */
+function* pagedMessageIDs(
+  db: Database,
+  select: string,
+  params: readonly (string | number)[],
+): Generator<string> {
+  let after = ""
+  for (;;) {
+    const page = db
+      .query<{ message_id: string }, (string | number)[]>(
+        `${select} AND message_id>? ORDER BY message_id LIMIT ${ID_PAGE}`,
+      )
+      .all(...params, after)
+    for (const row of page) yield row.message_id
+    if (page.length < ID_PAGE) return
+    after = page.at(-1)!.message_id
+  }
+}
+/**
+ * Summarize the renewals that have no stored coverage count and fingerprint, a batch of renewals
+ * at a time, each streamed a page of ids at a time. A renewal whose summary is set is not touched,
+ * so a second run reads one row and finishes.
+ */
+export function backfillRenewalCoverage(db: Database) {
+  for (;;) {
+    const batch = db
+      .query<{ id: string; previous_session_id: string }, []>(
+        `SELECT id,previous_session_id FROM runner_architect_renewals
+         WHERE coverage_count IS NULL ORDER BY id LIMIT 100`,
+      )
+      .all()
+    for (const renewal of batch) {
+      const summary = renewalCoverageSummary(db, renewal.id, renewal.previous_session_id)
+      db.query(
+        "UPDATE runner_architect_renewals SET coverage_count=?,coverage_fingerprint=? WHERE id=?",
+      ).run(summary.count, summary.fingerprint, renewal.id)
+    }
+    if (batch.length < 100) return
+  }
+}
+/** Count and fingerprint of a renewal's coverage rows, streamed a page at a time. */
+function renewalCoverageSummary(db: Database, renewalID: string, sessionID: string) {
+  return fingerprintStrings(
+    pagedMessageIDs(
+      db,
+      `SELECT message_id FROM runner_architect_renewal_coverage WHERE renewal_id=? AND session_id=?`,
+      [renewalID, sessionID],
+    ),
+  )
 }
 export type ArchitectObservedInput = {
   id: string
@@ -350,10 +495,17 @@ export type SchedulingNodeFact = NodeRow & {
   scope_payload: string | null
 }
 
-export type SchedulingReservationFact = AttemptRow & {
-  task_body: string
-  scope_payload: string | null
+/** The scope-bearing fields of a task proposal. */
+type ScopeFields = {
+  writeScope: readonly string[]
+  createScope: readonly { path: string; purpose: string }[]
+  protectedScope: readonly string[]
 }
+type ScopeProposal = ScopeFields
+/** What the scheduling page reads of a live attempt: its identity, task and workspace. */
+export type SchedulingReservationFact = Pick<AttemptRow, "id" | "plan_id" | "task_id" | "workspace">
+/** What the scheduling page reads of an open adoption: which task it holds. */
+export type SchedulingAdoptionFact = Pick<AdoptionRow, "id" | "plan_id" | "task_id">
 
 export type SchedulingFactSnapshot = {
   projectDirectory: string
@@ -370,7 +522,7 @@ export type SchedulingFactSnapshot = {
   reservations: SchedulingReservationFact[]
   totalReservationCount: number
   reservationsComplete: boolean
-  adoptions: AdoptionRow[]
+  adoptions: SchedulingAdoptionFact[]
   totalAdoptionCount: number
   adoptionsComplete: boolean
   taskIntegrations: TaskPrerequisiteIntegrationRow[]
@@ -806,6 +958,8 @@ function retireUnusedIndexes(db: Database) {
 }
 
 const DETAIL_PAGE_LIMIT = 200
+/** Plans per read when walking every plan: a page size, not a limit on how many are walked. */
+const PLAN_PAGE = 1_000
 export type DetailPage = {
   limit?: number
   activityBefore?: number
@@ -971,7 +1125,7 @@ export class RunnerStore {
         directory TEXT NOT NULL, model TEXT NOT NULL, idle_at INTEGER NOT NULL,
         generation INTEGER NOT NULL, state TEXT NOT NULL, handoff_message_id TEXT NOT NULL,
         handoff_outbox_id TEXT, input_message_id TEXT, error TEXT, continuity_json TEXT,
-        started_at INTEGER NOT NULL
+        started_at INTEGER NOT NULL, coverage_count INTEGER, coverage_fingerprint TEXT
       );
       CREATE INDEX IF NOT EXISTS runner_architect_renewals_source
         ON runner_architect_renewals(previous_session_id,started_at);
@@ -1242,6 +1396,13 @@ export class RunnerStore {
           .map((column) => column.name)
         if (!renewalColumns.includes("continuity_json"))
           db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN continuity_json TEXT")
+        // Generation 18: a renewal stores the count and fingerprint of the inputs it covers, so no
+        // read lists them. Renewals written before it are summarized here, one at a time.
+        if (!renewalColumns.includes("coverage_count"))
+          db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN coverage_count INTEGER")
+        if (!renewalColumns.includes("coverage_fingerprint"))
+          db.exec("ALTER TABLE runner_architect_renewals ADD COLUMN coverage_fingerprint TEXT")
+        backfillRenewalCoverage(db)
         const sourceColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_architect_sources)")
@@ -1431,29 +1592,55 @@ export class RunnerStore {
       })
     })
   }
-  plans() {
-    return this.read((db) =>
-      db
-        .query<PlanRow, [string]>(
-          `SELECT * FROM runner_plans WHERE project_directory=? ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
-        )
-        .all(this.repository.projectDirectory),
-    )
+  /**
+   * Walk plans in display order, one page per read, resuming from the last row's (priority, rowid)
+   * key. `columns` are the plan columns the caller uses; `states` filters in SQL. No plan is
+   * skipped however many the project holds.
+   */
+  private *planPages<Row extends object>(
+    columns: string,
+    states?: readonly string[],
+  ): Generator<Row> {
+    if (states && !states.length) return
+    const priority = planPrioritySortSQL("body")
+    const filter = states ? ` AND state IN (${states.map(() => "?").join(",")})` : ""
+    let cursor: { key: number; rowid: number } | undefined
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<Row & { plan_key: number; plan_rowid: number }, (string | number)[]>(
+            `SELECT ${columns},${priority} AS plan_key,rowid AS plan_rowid FROM runner_plans
+             WHERE project_directory=?${filter}
+             ${cursor ? `AND (${priority}>? OR (${priority}=? AND rowid>?))` : ""}
+             ORDER BY ${priority},rowid LIMIT ${PLAN_PAGE}`,
+          )
+          .all(
+            this.repository.projectDirectory,
+            ...(states ?? []),
+            ...(cursor ? [cursor.key, cursor.key, cursor.rowid] : []),
+          ),
+      )
+      for (const { plan_key, plan_rowid, ...row } of page) yield row as unknown as Row
+      if (page.length < PLAN_PAGE) return
+      const last = page.at(-1)!
+      cursor = { key: last.plan_key, rowid: last.plan_rowid }
+    }
+  }
+  /** Every plan of the project with its body, in display order, a page at a time. */
+  eachPlan(): Generator<PlanRow> {
+    return this.planPages<PlanRow>("*")
+  }
+  /** Every plan of the project; materializes all bodies, so tests and small tools only. */
+  plans(): PlanRow[] {
+    return [...this.eachPlan()]
   }
   /**
-   * Ids and states of the project's plans in the given states, in display order. A tick that only
-   * filters by state reads this instead of materializing every plan body; load one body with plan().
+   * Ids and states of the project's plans in the given states, in display order, a page at a
+   * time. A tick that only filters by state walks this instead of materializing plan bodies;
+   * load one body with plan().
    */
-  planHeads(states: readonly string[]): { id: string; state: PlanLifecycleState }[] {
-    if (!states.length) return []
-    return this.read((db) =>
-      db
-        .query<{ id: string; state: PlanLifecycleState }, string[]>(
-          `SELECT id,state FROM runner_plans WHERE project_directory=? AND state IN (${states.map(() => "?").join(",")})
-           ORDER BY ${planPrioritySortSQL("body")},rowid LIMIT 1000`,
-        )
-        .all(this.repository.projectDirectory, ...states),
-    )
+  planHeads(states: readonly string[]): Generator<{ id: string; state: PlanLifecycleState }> {
+    return this.planPages<{ id: string; state: PlanLifecycleState }>("id,state", states)
   }
   /** The first plan id in display order, without its body. */
   anchorPlanID(): string | null {
@@ -1577,55 +1764,80 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+          `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE r.id=? AND anchor.project_directory=?`,
         )
         .get(id, this.repository.projectDirectory),
     )
   }
+  /** A renewal's state alone, for the callers that only compare it. */
+  architectRenewalState(id: string): string | undefined {
+    return this.read((db) =>
+      db
+        .query<{ state: string }, [string, string]>(
+          `SELECT r.state FROM runner_architect_renewals r
+           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+           WHERE r.id=? AND anchor.project_directory=?`,
+        )
+        .get(id, this.repository.projectDirectory),
+    )?.state
+  }
   architectContinuity(sessionID: string) {
     return this.read((db) =>
       db
         .query<ArchitectContinuityRow, [string, string]>(
-          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+          `SELECT project_directory,session_id,revision,decisions,unresolved_questions,updated_at
+           FROM runner_architect_continuity WHERE project_directory=? AND session_id=?`,
         )
         .get(this.repository.projectDirectory, sessionID),
     )
   }
+  /** Whether the session has a continuity checkpoint, without reading its decisions. */
+  hasArchitectContinuity(sessionID: string): boolean {
+    return Boolean(
+      this.read((db) =>
+        db
+          .query<{ present: number }, [string, string]>(
+            `SELECT 1 AS present FROM runner_architect_continuity
+             WHERE project_directory=? AND session_id=? LIMIT 1`,
+          )
+          .get(this.repository.projectDirectory, sessionID),
+      ),
+    )
+  }
+  /** Message ids the session's current checkpoint covers, read a page at a time. */
   architectContinuityCoverage(sessionID: string, revision?: number) {
     const checkpoint = this.architectContinuity(sessionID)
     if (!checkpoint || (revision !== undefined && checkpoint.revision !== revision)) return []
-    return this.read((db) =>
-      db
-        .query<{ message_id: string }, [string, string, number]>(
-          `SELECT message_id FROM runner_architect_continuity_inputs
-           WHERE project_directory=? AND session_id=? AND continuity_revision=?
-           ORDER BY message_id`,
-        )
-        .all(this.repository.projectDirectory, sessionID, checkpoint.revision)
-        .map((row) => row.message_id),
-    )
+    return this.read((db) => [
+      ...pagedMessageIDs(
+        db,
+        `SELECT message_id FROM runner_architect_continuity_inputs
+         WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+        [this.repository.projectDirectory, sessionID, checkpoint.revision],
+      ),
+    ])
   }
+  /**
+   * Revision, input count and input fingerprint of the checkpoint a renewal covers. The count and
+   * fingerprint are columns of the renewal, written when it began; no coverage row is read except
+   * for a renewal that predates them.
+   */
   architectRenewalCoverageEvidence(id: string) {
     const renewal = this.architectRenewal(id)
     if (!renewal?.continuity_json) return null
     const parsed = JSON.parse(renewal.continuity_json) as { revision?: unknown }
     if (typeof parsed.revision !== "number" || !Number.isSafeInteger(parsed.revision)) return null
-    return this.read((db) => {
-      const inputIDs = db
-        .query<{ message_id: string }, [string, string]>(
-          `SELECT message_id FROM runner_architect_renewal_coverage
-           WHERE renewal_id=? AND session_id=? ORDER BY message_id`,
-        )
-        .all(id, renewal.previous_session_id)
-        .map((row) => row.message_id)
-      return {
-        revision: parsed.revision as number,
-        inputCount: inputIDs.length,
-        inputFingerprint: fingerprint(inputIDs),
-      }
-    })
+    const summary =
+      renewal.coverage_count !== null && renewal.coverage_fingerprint !== null
+        ? { count: renewal.coverage_count, fingerprint: renewal.coverage_fingerprint }
+        : this.read((db) => renewalCoverageSummary(db, id, renewal.previous_session_id))
+    return {
+      revision: parsed.revision as number,
+      inputCount: summary.count,
+      inputFingerprint: summary.fingerprint,
+    }
   }
   saveArchitectContinuity(input: {
     sessionID: string
@@ -1648,19 +1860,12 @@ export class RunnerStore {
         )
         .get(this.repository.projectDirectory, input.sessionID)
       const revision = (previous?.revision ?? 0) + 1
-      const coverageIDs = new Set(
+      const providedIDs = new Set(
         input.coverageInputs
           .filter((item) => item.type === "user")
           .filter((item) => !isGeneratedOutcome(db, input.sessionID, item.id, item.metadata))
           .map((item) => item.id),
       )
-      for (const row of db
-        .query<{ message_id: string }, [string]>(
-          `SELECT message_id FROM runner_architect_inputs
-           WHERE session_id=? AND disposition='prompt'`,
-        )
-        .all(input.sessionID))
-        coverageIDs.add(row.message_id)
       db.query(
         `INSERT INTO runner_architect_continuity(
           project_directory,session_id,revision,decisions,unresolved_questions,updated_at
@@ -1681,12 +1886,29 @@ export class RunnerStore {
       db.query(
         "DELETE FROM runner_architect_continuity_coverage WHERE project_directory=? AND session_id=?",
       ).run(this.repository.projectDirectory, input.sessionID)
-      for (const messageID of coverageIDs)
-        db.query(
-          `INSERT INTO runner_architect_continuity_inputs(
-            project_directory,session_id,continuity_revision,message_id
-          ) VALUES(?,?,?,?)`,
-        ).run(this.repository.projectDirectory, input.sessionID, revision, messageID)
+      const insertCovered = db.query(
+        `INSERT OR IGNORE INTO runner_architect_continuity_inputs(
+          project_directory,session_id,continuity_revision,message_id
+        ) VALUES(?,?,?,?)`,
+      )
+      for (const messageID of providedIDs)
+        insertCovered.run(this.repository.projectDirectory, input.sessionID, revision, messageID)
+      // Every prompt the session observed is covered too; SQL copies them, none is read here.
+      db.query(
+        `INSERT OR IGNORE INTO runner_architect_continuity_inputs(
+          project_directory,session_id,continuity_revision,message_id
+        ) SELECT ?,session_id,?,message_id FROM runner_architect_inputs
+          WHERE session_id=? AND disposition='prompt'`,
+      ).run(this.repository.projectDirectory, revision, input.sessionID)
+      // The summary is streamed from the rows just written, a page at a time.
+      const coverage = fingerprintStrings(
+        pagedMessageIDs(
+          db,
+          `SELECT message_id FROM runner_architect_continuity_inputs
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+          [this.repository.projectDirectory, input.sessionID, revision],
+        ),
+      )
       db.query(
         `INSERT INTO runner_architect_continuity_coverage(
           project_directory,session_id,continuity_revision,input_count,input_fingerprint,updated_at
@@ -1695,8 +1917,8 @@ export class RunnerStore {
         this.repository.projectDirectory,
         input.sessionID,
         revision,
-        coverageIDs.size,
-        fingerprint([...coverageIDs].toSorted()),
+        coverage.count,
+        coverage.fingerprint,
         input.now,
       )
       this.record(plan.id, null, "ARCHITECT_CONTINUITY_RECORDED", {
@@ -1704,18 +1926,24 @@ export class RunnerStore {
         revision,
         decisionCount: input.decisions.length,
         unresolvedQuestionCount: input.unresolvedQuestions.length,
-        inputCoverageCount: coverageIDs.size,
-        inputCoverageFingerprint: fingerprint([...coverageIDs].toSorted()),
+        inputCoverageCount: coverage.count,
+        inputCoverageFingerprint: coverage.fingerprint,
       })
       this.repository.changed()
-      return this.architectContinuity(input.sessionID)!
+      return { revision }
     })
   }
+  /** The newest renewal touching a plan, whole. A step that only tests it uses the head. */
   architectRenewalForPlan(planID: string) {
+    const head = this.architectRenewalHeadForPlan(planID)
+    return head ? (this.architectRenewal(head.id) ?? null) : null
+  }
+  /** The newest renewal touching a plan: its id and state, nothing else. */
+  architectRenewalHeadForPlan(planID: string) {
     return this.read((db) =>
       db
-        .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+        .query<{ id: string; state: string }, [string, string]>(
+          `SELECT r.id,r.state FROM runner_architect_renewals r
            JOIN runner_architect_renewal_plans p ON p.renewal_id=r.id
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE p.plan_id=? AND anchor.project_directory=?
@@ -1724,11 +1952,17 @@ export class RunnerStore {
         .get(planID, this.repository.projectDirectory),
     )
   }
+  /** The newest renewal of a source session, whole. A step that only tests it uses the head. */
   architectRenewalForSource(sessionID: string) {
+    const head = this.architectRenewalHeadForSource(sessionID)
+    return head ? (this.architectRenewal(head.id) ?? null) : null
+  }
+  /** The newest renewal of a source session: its id and state, nothing else. */
+  architectRenewalHeadForSource(sessionID: string) {
     return this.read((db) =>
       db
-        .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+        .query<{ id: string; state: string }, [string, string]>(
+          `SELECT r.id,r.state FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE r.previous_session_id=? AND anchor.project_directory=?
            ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
@@ -1736,18 +1970,30 @@ export class RunnerStore {
         .get(sessionID, this.repository.projectDirectory),
     )
   }
+  /** Renewals in flight, oldest first, read a page at a time; none is skipped. */
   architectRenewalsNeedingRecovery() {
-    return this.read((db) =>
-      db
-        .query<ArchitectRenewalRow, [string]>(
-          `SELECT r.* FROM runner_architect_renewals r
-           JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
-           WHERE anchor.project_directory=?
-             AND r.state IN ('creating','archiving','recovering-input','rolling-back')
-           ORDER BY r.started_at,r.generation,r.id`,
-        )
-        .all(this.repository.projectDirectory),
-    )
+    const found: ArchitectRenewalRow[] = []
+    let after: ArchitectRenewalRow | undefined
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<ArchitectRenewalRow, (string | number)[]>(
+            `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r
+             JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
+             WHERE anchor.project_directory=?
+               AND r.state IN ('creating','archiving','recovering-input','rolling-back')
+               ${after ? "AND (r.started_at,r.generation,r.id)>(?,?,?)" : ""}
+             ORDER BY r.started_at,r.generation,r.id LIMIT ${ID_PAGE}`,
+          )
+          .all(
+            this.repository.projectDirectory,
+            ...(after ? [after.started_at, after.generation, after.id] : []),
+          ),
+      )
+      found.push(...page)
+      if (page.length < ID_PAGE) return found
+      after = page.at(-1)
+    }
   }
   architectRenewalPlans(id: string) {
     return this.read((db) =>
@@ -1761,41 +2007,64 @@ export class RunnerStore {
         .all(id, this.repository.projectDirectory),
     )
   }
+  /**
+   * Ids of the active journals being scanned: the session and the renewal that owns it, oldest
+   * update first. A snapshot read a page at a time; the cached observation is not read.
+   */
   architectSources() {
-    return this.read((db) =>
-      db
-        .query<ArchitectSourceRow, [string]>(
-          `SELECT s.* FROM runner_architect_sources s
-           JOIN runner_architect_renewals r ON r.id=s.renewal_id
-           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
-           WHERE anchor.project_directory=? AND s.state='active'
-             AND r.state IN ('archiving','committed')
-           ORDER BY s.updated_at,s.session_id`,
-        )
-        .all(this.repository.projectDirectory),
-    )
+    const found: { session_id: string; renewal_id: string }[] = []
+    let after: { updated_at: number; session_id: string } | undefined
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<
+            { session_id: string; renewal_id: string; updated_at: number },
+            (string | number)[]
+          >(
+            `SELECT s.session_id,s.renewal_id,s.updated_at FROM runner_architect_sources s
+             JOIN runner_architect_renewals r ON r.id=s.renewal_id
+             JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+             WHERE anchor.project_directory=? AND s.state='active'
+               AND r.state IN ('archiving','committed')
+               ${after ? "AND (s.updated_at,s.session_id)>(?,?)" : ""}
+             ORDER BY s.updated_at,s.session_id LIMIT ${ID_PAGE}`,
+          )
+          .all(
+            this.repository.projectDirectory,
+            ...(after ? [after.updated_at, after.session_id] : []),
+          ),
+      )
+      for (const { session_id, renewal_id } of page) found.push({ session_id, renewal_id })
+      if (page.length < ID_PAGE) return found
+      after = page.at(-1)
+    }
   }
+  /** Session ids of every source journal of the project, read a page at a time. */
   architectSourceSessionIDs(): string[] {
-    return this.repository.read((db) =>
-      db
-        .query<{ session_id: string }, [string]>(
-          `SELECT s.session_id FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
-       WHERE p.project_directory=?`,
-        )
-        .all(this.repository.projectDirectory)
-        .map((row) => row.session_id),
-    )
+    const found: string[] = []
+    let after = ""
+    for (;;) {
+      const page = this.repository.read((db) =>
+        db
+          .query<{ session_id: string }, [string, string]>(
+            `SELECT s.session_id FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
+             WHERE p.project_directory=? AND s.session_id>? ORDER BY s.session_id LIMIT ${ID_PAGE}`,
+          )
+          .all(this.repository.projectDirectory, after),
+      )
+      for (const row of page) found.push(row.session_id)
+      if (page.length < ID_PAGE) return found
+      after = page.at(-1)!.session_id
+    }
   }
   invalidateArchitectSource(sessionID: string, now: number) {
-    const needsInvalidation = (source: ArchitectSourceRow | null) =>
+    const needsInvalidation = (source: ArchitectSourceFlags | null) =>
       source &&
       source.state !== "preparing" &&
-      (source.state !== "active" ||
-        source.scan_complete_at !== null ||
-        source.observation_json !== null)
-    if (!needsInvalidation(this.architectSource(sessionID))) return
+      (source.state !== "active" || source.scan_complete_at !== null || source.has_observation)
+    if (!needsInvalidation(this.architectSourceFlags(sessionID))) return
     return this.atomic((db) => {
-      const source = this.architectSource(sessionID)
+      const source = this.architectSourceFlags(sessionID)
       if (!source || !needsInvalidation(source)) return
       const state = architectSourceTransition(source.state, "ACTIVATE")
       db.query(
@@ -1804,15 +2073,28 @@ export class RunnerStore {
       ).run(state, now, sessionID)
     })
   }
+  /** What invalidation tests, without reading the cached observation itself. */
+  private architectSourceFlags(sessionID: string) {
+    return this.repository.read((db) =>
+      db
+        .query<ArchitectSourceFlags, [string, string]>(
+          `SELECT s.state,s.scan_complete_at,s.observation_json IS NOT NULL AS has_observation
+           FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND anchor.project_directory=?`,
+        )
+        .get(sessionID, this.repository.projectDirectory),
+    )
+  }
   retireArchitectSource(sessionID: string, schedulerOwner: string, fence: number, now: number) {
     return this.fenced(schedulerOwner, fence, (db) => {
-      const source = this.architectSource(sessionID)
+      const source = this.architectSourceHead(sessionID)
       if (
         !source ||
         source.state !== "active" ||
         source.scan_cursor !== null ||
         source.scan_complete_at === null ||
-        this.architectRenewal(source.renewal_id)?.state !== "committed"
+        this.architectRenewalState(source.renewal_id) !== "committed"
       )
         return false
       db.query("UPDATE runner_architect_sources SET state=?,updated_at=? WHERE session_id=?").run(
@@ -1823,37 +2105,62 @@ export class RunnerStore {
       return true
     })
   }
-  architectSource(sessionID: string) {
+  /** The source row without its cached observation. */
+  architectSourceHead(sessionID: string) {
     return this.repository.read((db) =>
       db
-        .query<ArchitectSourceRow, [string, string]>(
-          `SELECT s.* FROM runner_architect_sources s
+        .query<ArchitectSourceHead, [string, string]>(
+          `SELECT ${columnList("s", SOURCE_HEAD_COLUMNS)} FROM runner_architect_sources s
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND anchor.project_directory=?`,
         )
         .get(sessionID, this.repository.projectDirectory),
     )
   }
-  architectSourceInputs(sessionID: string) {
-    return this.read((db) =>
+  /** The full source row, including the cached observation the scanner resumes from. */
+  architectSource(sessionID: string) {
+    return this.repository.read((db) =>
       db
-        .query<
-          {
-            message_id: string
-            native_type: string | null
-            delivery: string | null
-            disposition: string
-          },
-          [string, string]
-        >(
-          `SELECT message_id,native_type,delivery,disposition FROM runner_architect_inputs
-           WHERE session_id=? AND EXISTS(
-             SELECT 1 FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
-             WHERE s.session_id=runner_architect_inputs.session_id AND p.project_directory=?
-           ) ORDER BY observed_at,message_id`,
+        .query<ArchitectSourceRow, [string, string]>(
+          `SELECT ${columnList("s", SOURCE_HEAD_COLUMNS)},s.observation_json FROM runner_architect_sources s
+           JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
+           WHERE s.session_id=? AND anchor.project_directory=?`,
         )
-        .all(sessionID, this.repository.projectDirectory),
+        .get(sessionID, this.repository.projectDirectory),
     )
+  }
+  /** The inputs observed on a source journal, oldest first, read a page at a time. */
+  architectSourceInputs(sessionID: string) {
+    type Input = {
+      message_id: string
+      observed_at: number
+      native_type: string | null
+      delivery: string | null
+      disposition: string
+    }
+    const found: Omit<Input, "observed_at">[] = []
+    let after: Input | undefined
+    for (;;) {
+      const page = this.read((db) =>
+        db
+          .query<Input, (string | number)[]>(
+            `SELECT message_id,observed_at,native_type,delivery,disposition FROM runner_architect_inputs
+             WHERE session_id=? AND EXISTS(
+               SELECT 1 FROM runner_architect_sources s JOIN runner_plans p ON p.id=s.anchor_plan_id
+               WHERE s.session_id=runner_architect_inputs.session_id AND p.project_directory=?
+             ) ${after ? "AND (observed_at,message_id)>(?,?)" : ""}
+             ORDER BY observed_at,message_id LIMIT ${ID_PAGE}`,
+          )
+          .all(
+            sessionID,
+            this.repository.projectDirectory,
+            ...(after ? [after.observed_at, after.message_id] : []),
+          ),
+      )
+      for (const { observed_at: _observedAt, ...input } of page) found.push(input)
+      if (page.length < ID_PAGE) return found
+      after = page.at(-1)
+    }
   }
   architectSourceMessageReferences(planID: string, sourceSessionID: string, messageIDs: string[]) {
     return this.read((db) => {
@@ -1873,13 +2180,13 @@ export class RunnerStore {
       const inputs = db
         .query<{ message_id: string; native_type: string | null }, string[]>(
           `SELECT message_id,native_type FROM runner_architect_inputs
-           WHERE session_id=? AND message_id IN (${placeholders})`,
+           WHERE session_id=? AND message_id IN (${placeholders}) LIMIT ${messageIDs.length}`,
         )
         .all(...params)
       const results = db
         .query<{ message_id: string }, string[]>(
           `SELECT message_id FROM runner_architect_source_results
-           WHERE session_id=? AND renewal_id=? AND message_id IN (${placeholders})`,
+           WHERE session_id=? AND renewal_id=? AND message_id IN (${placeholders}) LIMIT ${messageIDs.length}`,
         )
         .all(sourceSessionID, source.renewal_id, ...messageIDs)
       const references = new Map<
@@ -1926,16 +2233,16 @@ export class RunnerStore {
   }) {
     return this.fenced(input.schedulerOwner, input.fence, (db) => {
       const source = db
-        .query<ArchitectSourceRow, [string, string]>(
-          `SELECT s.* FROM runner_architect_sources s
+        .query<ArchitectSourceHead, [string, string]>(
+          `SELECT ${columnList("s", SOURCE_HEAD_COLUMNS)} FROM runner_architect_sources s
            JOIN runner_plans anchor ON anchor.id=s.anchor_plan_id
            WHERE s.session_id=? AND anchor.project_directory=? AND s.state IN ('active','preparing')`,
         )
         .get(input.sessionID, this.repository.projectDirectory)
       if (!source) return null
       const renewal = db
-        .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+        .query<Pick<ArchitectRenewalRow, "id" | "anchor_plan_id" | "state">, [string, string]>(
+          `SELECT r.id,r.anchor_plan_id,r.state FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE r.id=? AND anchor.project_directory=?`,
         )
@@ -2114,23 +2421,28 @@ export class RunnerStore {
 
       let staleCheckpoint = false
       if (input.nextCursor === null) {
-        const disappeared = db
-          .query<{ message_id: string; native_type: string | null }, [string, number]>(
-            `SELECT message_id,native_type FROM runner_architect_inputs
-             WHERE session_id=? AND last_seen_sweep<? AND disposition IN ('pending','steering')`,
-          )
-          .all(input.sessionID, sweep)
-        for (const row of disappeared) {
-          db.query(
-            `UPDATE runner_architect_inputs SET disposition='unknown',delivery=NULL,
-               referenced_revision=0,updated_at=?
-             WHERE session_id=? AND message_id=? AND disposition IN ('pending','steering')`,
-          ).run(input.now, input.sessionID, row.message_id)
-          changes.set(row.message_id, {
-            id: row.message_id,
-            type: row.native_type ?? "unknown",
-            disposition: "unknown",
-          })
+        // Each pass moves its rows out of the filter, so the loop ends when none are left.
+        for (;;) {
+          const disappeared = db
+            .query<{ message_id: string; native_type: string | null }, [string, number]>(
+              `SELECT message_id,native_type FROM runner_architect_inputs
+               WHERE session_id=? AND last_seen_sweep<? AND disposition IN ('pending','steering')
+               ORDER BY message_id LIMIT ${ID_PAGE}`,
+            )
+            .all(input.sessionID, sweep)
+          for (const row of disappeared) {
+            db.query(
+              `UPDATE runner_architect_inputs SET disposition='unknown',delivery=NULL,
+                 referenced_revision=0,updated_at=?
+               WHERE session_id=? AND message_id=? AND disposition IN ('pending','steering')`,
+            ).run(input.now, input.sessionID, row.message_id)
+            changes.set(row.message_id, {
+              id: row.message_id,
+              type: row.native_type ?? "unknown",
+              disposition: "unknown",
+            })
+          }
+          if (disappeared.length < ID_PAGE) break
         }
         if (source.state === "preparing" && renewal.state === "creating") {
           const uncovered = db
@@ -2211,7 +2523,7 @@ export class RunnerStore {
     )
   }
   architectRenewalBlocksDelivery(planID: string) {
-    const renewal = this.architectRenewalForPlan(planID)
+    const renewal = this.architectRenewalHeadForPlan(planID)
     return Boolean(
       renewal &&
       ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state),
@@ -2263,8 +2575,12 @@ export class RunnerStore {
       if (!plans.length || !plans.some((plan) => plan.id === input.anchorPlanID)) return null
 
       const continuity = db
-        .query<ArchitectContinuityRow, [string, string]>(
-          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        .query<
+          Pick<ArchitectContinuityRow, "revision" | "decisions" | "unresolved_questions">,
+          [string, string]
+        >(
+          `SELECT revision,decisions,unresolved_questions FROM runner_architect_continuity
+           WHERE project_directory=? AND session_id=?`,
         )
         .get(this.repository.projectDirectory, input.previousSessionID)
       if (!continuity) return null
@@ -2280,28 +2596,44 @@ export class RunnerStore {
         )
         .get(this.repository.projectDirectory, input.previousSessionID, continuity.revision)
       if (!coverage) return null
-      const coveredInputs = db
-        .query<{ message_id: string }, [string, string, number]>(
-          `SELECT message_id FROM runner_architect_continuity_inputs
-           WHERE project_directory=? AND session_id=? AND continuity_revision=?
-           ORDER BY message_id`,
-        )
-        .all(this.repository.projectDirectory, input.previousSessionID, continuity.revision)
-        .map((row) => row.message_id)
-      if (
-        coverage.input_count !== coveredInputs.length ||
-        coverage.input_fingerprint !== fingerprint(coveredInputs)
-      )
-        return null
-      const coveredInputSet = new Set(coveredInputs)
+      // The checkpoint's count is checked against its rows by counting them; the fingerprint is the
+      // one the checkpoint stored when it wrote those rows, and is carried to the renewal below.
+      const coveredCount =
+        db
+          .query<{ n: number }, [string, string, number]>(
+            `SELECT COUNT(*) AS n FROM runner_architect_continuity_inputs
+             WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+          )
+          .get(this.repository.projectDirectory, input.previousSessionID, continuity.revision)?.n ??
+        0
+      if (coverage.input_count !== coveredCount) return null
+      // The renewal's coverage rows are the checkpoint's, copied in SQL.
+      const copyCoverage = (renewalID: string) =>
+        db
+          .query(
+            `INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id)
+             SELECT ?,session_id,message_id FROM runner_architect_continuity_inputs
+             WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+          )
+          .run(
+            renewalID,
+            this.repository.projectDirectory,
+            input.previousSessionID,
+            continuity.revision,
+          )
+      // The first user input the checkpoint does not cover, found in SQL.
       const uncoveredInput = db
-        .query<{ message_id: string }, [string]>(
-          `SELECT message_id FROM runner_architect_inputs
-           WHERE session_id=? AND native_type='user'
-           ORDER BY observed_at,message_id`,
+        .query<{ message_id: string }, [string, string, number]>(
+          `SELECT i.message_id FROM runner_architect_inputs i
+           WHERE i.session_id=? AND i.native_type='user'
+             AND NOT EXISTS (
+               SELECT 1 FROM runner_architect_continuity_inputs c
+               WHERE c.project_directory=? AND c.session_id=i.session_id
+                 AND c.continuity_revision=? AND c.message_id=i.message_id
+             )
+           ORDER BY i.observed_at,i.message_id LIMIT 1`,
         )
-        .all(input.previousSessionID)
-        .find((row) => !coveredInputSet.has(row.message_id))
+        .get(input.previousSessionID, this.repository.projectDirectory, continuity.revision)
       if (uncoveredInput) {
         this.recordOnce(input.anchorPlanID, null, "ARCHITECT_RENEWAL_BLOCKED_STALE_CHECKPOINT", {
           sessionID: input.previousSessionID,
@@ -2321,7 +2653,7 @@ export class RunnerStore {
 
       const latest = db
         .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+          `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE r.previous_session_id=? AND anchor.project_directory=?
            ORDER BY r.started_at DESC,r.generation DESC LIMIT 1`,
@@ -2350,14 +2682,20 @@ export class RunnerStore {
         }
         db.query(
           `UPDATE runner_architect_renewals SET idle_at=?,state=lz_runner_transition('renewal',state,'creating'),handoff_message_id=?,
-             handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?
+             handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?,
+             coverage_count=?,coverage_fingerprint=?
            WHERE id=? AND state IN ('deferred','archive-failed')`,
-        ).run(input.idleAt, input.handoffMessageID, continuityJSON, input.now, latest.id)
+        ).run(
+          input.idleAt,
+          input.handoffMessageID,
+          continuityJSON,
+          input.now,
+          coverage.input_count,
+          coverage.input_fingerprint,
+          latest.id,
+        )
         db.query("DELETE FROM runner_architect_renewal_coverage WHERE renewal_id=?").run(latest.id)
-        for (const messageID of coveredInputs)
-          db.query(
-            "INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id) VALUES(?,?,?)",
-          ).run(latest.id, input.previousSessionID, messageID)
+        copyCoverage(latest.id)
         this.prepareArchitectSource(
           db,
           input.previousSessionID,
@@ -2380,7 +2718,7 @@ export class RunnerStore {
         }
         return db
           .query<ArchitectRenewalRow, [string]>(
-            "SELECT * FROM runner_architect_renewals WHERE id=?",
+            `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r WHERE r.id=?`,
           )
           .get(latest.id)!
       }
@@ -2399,8 +2737,9 @@ export class RunnerStore {
       db.query(
         `INSERT INTO runner_architect_renewals(
           id,anchor_plan_id,previous_session_id,successor_session_id,directory,model,idle_at,
-          generation,state,handoff_message_id,handoff_outbox_id,input_message_id,error,continuity_json,started_at
-        ) VALUES(?,?,?,?,?,?,?,?,'creating',?,NULL,NULL,NULL,?,?)`,
+          generation,state,handoff_message_id,handoff_outbox_id,input_message_id,error,continuity_json,
+          started_at,coverage_count,coverage_fingerprint
+        ) VALUES(?,?,?,?,?,?,?,?,'creating',?,NULL,NULL,NULL,?,?,?,?)`,
       ).run(
         id,
         input.anchorPlanID,
@@ -2413,15 +2752,14 @@ export class RunnerStore {
         input.handoffMessageID,
         continuityJSON,
         input.now,
+        coverage.input_count,
+        coverage.input_fingerprint,
       )
       this.prepareArchitectSource(db, input.previousSessionID, id, input.anchorPlanID, input.now)
       db.query(
         "UPDATE runner_architect_inputs SET renewal_id=COALESCE(renewal_id,?) WHERE session_id=?",
       ).run(id, input.previousSessionID)
-      for (const messageID of coveredInputs)
-        db.query(
-          "INSERT INTO runner_architect_renewal_coverage(renewal_id,session_id,message_id) VALUES(?,?,?)",
-        ).run(id, input.previousSessionID, messageID)
+      copyCoverage(id)
       for (const plan of plans) {
         const continuation = db
           .query<ContinuationRow, [string]>("SELECT * FROM runner_continuations WHERE plan_id=?")
@@ -2438,11 +2776,13 @@ export class RunnerStore {
         planIDs: plans.map((plan) => plan.id),
         idleAt: input.idleAt,
         continuityRevision: continuity.revision,
-        continuityCoverageCount: coveredInputs.length,
+        continuityCoverageCount: coverage.input_count,
         continuityCoverageFingerprint: coverage.input_fingerprint,
       })
       return db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
+        .query<ArchitectRenewalRow, [string]>(
+          `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r WHERE r.id=?`,
+        )
         .get(id)!
     })
   }
@@ -2460,8 +2800,8 @@ export class RunnerStore {
   ) {
     return this.atomic((db) => {
       const renewal = db
-        .query<ArchitectRenewalRow, [string, string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+        .query<ArchitectRenewalHead, [string, string, string]>(
+          `SELECT ${columnList("r", RENEWAL_HEAD_COLUMNS)} FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE (r.previous_session_id=? OR r.successor_session_id=?)
              AND anchor.project_directory=?
@@ -2559,7 +2899,7 @@ export class RunnerStore {
     return this.fenced(input.schedulerOwner, input.fence, (db) => {
       const renewal = db
         .query<ArchitectRenewalRow, [string, string]>(
-          `SELECT r.* FROM runner_architect_renewals r
+          `SELECT ${columnList("r", RENEWAL_COLUMNS)} FROM runner_architect_renewals r
            JOIN runner_plans anchor ON anchor.id=r.anchor_plan_id
            WHERE r.id=? AND anchor.project_directory=?`,
         )
@@ -2568,8 +2908,15 @@ export class RunnerStore {
       if (!renewal.continuity_json)
         throw new Error("Architect renewal requires an explicit durable continuity checkpoint")
       const continuity = db
-        .query<ArchitectContinuityRow, [string, string]>(
-          "SELECT * FROM runner_architect_continuity WHERE project_directory=? AND session_id=?",
+        .query<
+          Pick<
+            ArchitectContinuityRow,
+            "revision" | "decisions" | "unresolved_questions" | "updated_at"
+          >,
+          [string, string]
+        >(
+          `SELECT revision,decisions,unresolved_questions,updated_at FROM runner_architect_continuity
+           WHERE project_directory=? AND session_id=?`,
         )
         .get(this.repository.projectDirectory, renewal.previous_session_id)
       const currentContinuity = continuity
@@ -2596,17 +2943,16 @@ export class RunnerStore {
            WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
         )
         .get(this.repository.projectDirectory, renewal.previous_session_id, continuity!.revision)
-      const coveredInputIDs = db
-        .query<{ message_id: string }, [string, string]>(
-          `SELECT message_id FROM runner_architect_renewal_coverage
-           WHERE renewal_id=? AND session_id=? ORDER BY message_id`,
-        )
-        .all(renewal.id, renewal.previous_session_id)
-        .map((row) => row.message_id)
+      // The renewal stored its coverage count and fingerprint when it began; a renewal from before
+      // that is summarized once from its rows.
+      const covered =
+        renewal.coverage_count !== null && renewal.coverage_fingerprint !== null
+          ? { count: renewal.coverage_count, fingerprint: renewal.coverage_fingerprint }
+          : renewalCoverageSummary(db, renewal.id, renewal.previous_session_id)
       if (
         !checkpoint ||
-        checkpoint.input_count !== coveredInputIDs.length ||
-        checkpoint.input_fingerprint !== fingerprint(coveredInputIDs)
+        checkpoint.input_count !== covered.count ||
+        checkpoint.input_fingerprint !== covered.fingerprint
       ) {
         db.query(
           `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),error=?
@@ -2618,15 +2964,17 @@ export class RunnerStore {
         })
         return false
       }
-      const coveredInputSet = new Set(coveredInputIDs)
       const currentInput = db
-        .query<{ message_id: string }, [string]>(
-          `SELECT message_id FROM runner_architect_inputs
-           WHERE session_id=? AND native_type='user'
-           ORDER BY observed_at,message_id`,
+        .query<{ message_id: string }, [string, string]>(
+          `SELECT i.message_id FROM runner_architect_inputs i
+           WHERE i.session_id=? AND i.native_type='user'
+             AND NOT EXISTS (
+               SELECT 1 FROM runner_architect_renewal_coverage c
+               WHERE c.renewal_id=? AND c.message_id=i.message_id
+             )
+           ORDER BY i.observed_at,i.message_id LIMIT 1`,
         )
-        .all(renewal.previous_session_id)
-        .find((row) => !coveredInputSet.has(row.message_id))
+        .get(renewal.previous_session_id, renewal.id)
       if (currentInput) {
         db.query(
           `UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'deferred'),input_message_id=?,error=?
@@ -2848,9 +3196,19 @@ export class RunnerStore {
   finishArchitectRenewal(schedulerOwner: string, fence: number, id: string, wakeContext: unknown) {
     return this.fenced(schedulerOwner, fence, (db) => {
       const renewal = db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
+        .query<
+          Pick<
+            ArchitectRenewalRow,
+            "id" | "anchor_plan_id" | "previous_session_id" | "successor_session_id" | "state"
+          > & { has_continuity: number },
+          [string]
+        >(
+          `SELECT id,anchor_plan_id,previous_session_id,successor_session_id,state,
+             continuity_json IS NOT NULL AS has_continuity
+           FROM runner_architect_renewals WHERE id=?`,
+        )
         .get(id)
-      if (!renewal || renewal.state !== "archiving" || !renewal.continuity_json) return false
+      if (!renewal || renewal.state !== "archiving" || !renewal.has_continuity) return false
       const changed = db
         .query(
           "UPDATE runner_architect_renewals SET state=lz_runner_transition('renewal',state,'committed'),error=NULL WHERE id=? AND state='archiving'",
@@ -2875,7 +3233,9 @@ export class RunnerStore {
   ) {
     return this.fenced(schedulerOwner, fence, (db) => {
       const renewal = db
-        .query<ArchitectRenewalRow, [string]>("SELECT * FROM runner_architect_renewals WHERE id=?")
+        .query<ArchitectRenewalHead, [string]>(
+          `SELECT ${columnList("r", RENEWAL_HEAD_COLUMNS)} FROM runner_architect_renewals r WHERE r.id=?`,
+        )
         .get(id)
       if (!renewal || !["archiving", "recovering-input", "rolling-back"].includes(renewal.state))
         return false
@@ -3219,36 +3579,86 @@ export class RunnerStore {
         .all(planID, taskID),
     )
   }
+  /** The scope fields of a task's stored proposal, read without parsing the whole record. */
+  private taskScopeFields(taskID: string): ScopeFields {
+    const row = this.read((db) =>
+      db
+        .query<
+          {
+            write_scope: string | null
+            create_scope: string | null
+            protected_scope: string | null
+          },
+          [string, string]
+        >(
+          `SELECT json_extract(body,'$.proposal.writeScope') AS write_scope,
+             json_extract(body,'$.proposal.createScope') AS create_scope,
+             json_extract(body,'$.proposal.protectedScope') AS protected_scope
+           FROM tasks WHERE project_directory=? AND id=?`,
+        )
+        .get(this.repository.projectDirectory, taskID),
+    )
+    if (!row) {
+      // Not an id: a task reference resolves through the repository.
+      const task = this.repository.get(taskID)
+      if (!task) throw new Error("Task not found")
+      return {
+        writeScope: task.proposal.writeScope,
+        createScope: task.proposal.createScope ?? [],
+        protectedScope: task.proposal.protectedScope ?? [],
+      }
+    }
+    const list = <T>(text: string | null): T[] => (text ? (JSON.parse(text) as T[]) : [])
+    return {
+      writeScope: list<string>(row.write_scope),
+      createScope: list<ScopeFields["createScope"][number]>(row.create_scope),
+      protectedScope: list<string>(row.protected_scope),
+    }
+  }
+  /** The plan that holds a task, without its body or the rest of its execution. */
+  private planIDOfTask(taskID: string): string | undefined {
+    return this.read((db) =>
+      db
+        .query<{ plan_id: string }, [string, string]>(
+          `SELECT n.plan_id FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
+           WHERE p.project_directory=? AND n.task_id=?`,
+        )
+        .get(this.repository.projectDirectory, taskID),
+    )?.plan_id
+  }
   effectiveWriteScope(
     taskID: string,
-    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
+    task?: { proposal: { writeScope: readonly string[] } },
   ): string[] {
-    if (!task) throw new Error("Task not found")
-    const execution = this.execution(taskID)
-    const amendment = execution
-      ? this.latestTransition<{ writeScope: string[] }>(execution.planID, taskID, "SCOPE_AMENDED")
+    const writeScope = task ? task.proposal.writeScope : this.taskScopeFields(taskID).writeScope
+    const planID = this.planIDOfTask(taskID)
+    const amendment = planID
+      ? this.latestTransition<{ writeScope: string[] }>(planID, taskID, "SCOPE_AMENDED")
       : undefined
     return TaskProposalSchema.shape.writeScope.parse([
-      ...new Set([...task.proposal.writeScope, ...(amendment?.writeScope ?? [])]),
+      ...new Set([...writeScope, ...(amendment?.writeScope ?? [])]),
     ])
   }
   /**
    * The scope model in force: the task's edit/create/protected plus what Architect amendments added
    * (`amended`) or released (exact paths an amendment named that the task protected).
    */
-  effectiveScope(
-    taskID: string,
-    task: ReturnType<typeof this.repository.get> = this.repository.get(taskID),
-  ): ScopeModel {
-    if (!task) throw new Error("Task not found")
-    const edit = this.effectiveWriteScope(taskID, task)
-    const original = new Set(task.proposal.writeScope)
+  effectiveScope(taskID: string, task?: { proposal: Partial<ScopeProposal> }): ScopeModel {
+    const fields: ScopeFields = task
+      ? {
+          writeScope: task.proposal.writeScope ?? [],
+          createScope: task.proposal.createScope ?? [],
+          protectedScope: task.proposal.protectedScope ?? [],
+        }
+      : this.taskScopeFields(taskID)
+    const edit = this.effectiveWriteScope(taskID, { proposal: { writeScope: fields.writeScope } })
+    const original = new Set(fields.writeScope)
     const amended = edit.filter((pattern) => !original.has(pattern))
-    const protectedScope = task.proposal.protectedScope ?? []
+    const protectedScope = fields.protectedScope
     return {
       edit,
       amended,
-      create: task.proposal.createScope ?? [],
+      create: fields.createScope,
       protected: protectedScope,
       released: amended.filter((pattern) => !/[*?{}[\]!]/.test(pattern)),
     }
@@ -3758,25 +4168,48 @@ export class RunnerStore {
    * equal the all-pairs result.
    */
   audit(): { watermark: number; findings: Finding[] } {
+    this.ensureContentFingerprints()
     const { tasks, relations, watermark } = this.read((db) => {
-      const rows = db
-        .query<{ id: string }, [string]>(
-          "SELECT id FROM tasks WHERE project_directory=? ORDER BY rowid",
-        )
-        .all(this.repository.projectDirectory)
-        .filter((task) => !this.repository.taskDisposition(task.id))
-      const tasks = rows.map(({ id }) => {
-        const record = this.repository.get(id)
-        return {
-          id,
-          planned: !!this.execution(id),
-          content: fingerprint(record!.proposal),
-          scope: reservationPatterns(
-            this.effectiveWriteScope(id, record),
-            record!.proposal.createScope ?? [],
-          ),
+      // One page of tasks at a time: the stored fingerprint and the two scope arrays, not the body.
+      const tasks: { id: string; planned: boolean; content: string; scope: string[] }[] = []
+      let after = 0
+      for (;;) {
+        const page = db
+          .query<
+            {
+              rid: number
+              id: string
+              fingerprint: string | null
+              write_scope: string | null
+              create_scope: string | null
+            },
+            [string, number]
+          >(
+            `SELECT rowid AS rid,id,content_fingerprint AS fingerprint,
+               json_extract(body,'$.proposal.writeScope') AS write_scope,
+               json_extract(body,'$.proposal.createScope') AS create_scope
+             FROM tasks WHERE project_directory=?
+               AND NOT EXISTS (SELECT 1 FROM task_dispositions d
+                 WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
+               AND rowid>? ORDER BY rowid LIMIT ${TASK_PAGE}`,
+          )
+          .all(this.repository.projectDirectory, after)
+        for (const row of page) {
+          const write: string[] = row.write_scope ? JSON.parse(row.write_scope) : []
+          const create: { path: string }[] = row.create_scope ? JSON.parse(row.create_scope) : []
+          tasks.push({
+            id: row.id,
+            planned: this.planIDOfTask(row.id) !== undefined,
+            content: row.fingerprint ?? fingerprint(this.repository.get(row.id)!.proposal),
+            scope: reservationPatterns(
+              this.effectiveWriteScope(row.id, { proposal: { writeScope: write } }),
+              create,
+            ),
+          })
         }
-      })
+        if (page.length < TASK_PAGE) break
+        after = page.at(-1)!.rid
+      }
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
@@ -3855,25 +4288,50 @@ export class RunnerStore {
     }
     return { watermark, findings }
   }
-  /** Admission needs duplicate-content conflicts for its selected tasks, not a project audit. */
-  exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
-    return this.read((db) => {
-      const selected = new Set(taskIDs)
-      if (!selected.size) return { watermark: this.repository.version(), findings: [] }
-      const tasks = db
-        .query<{ id: string }, [string]>(
-          `SELECT id FROM tasks WHERE project_directory=?
-           AND NOT EXISTS (SELECT 1 FROM task_dispositions d
-             WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
-           ORDER BY rowid`,
+  /** Fill any task fingerprint still missing, so the readers below can compare stored values. */
+  private ensureContentFingerprints() {
+    const missing = this.read((db) =>
+      db
+        .query<{ one: number }, [string]>(
+          "SELECT 1 AS one FROM tasks WHERE project_directory=? AND content_fingerprint IS NULL LIMIT 1",
         )
-        .all(this.repository.projectDirectory)
-        .map(({ id }) => ({ id, content: fingerprint(this.repository.get(id)!.proposal) }))
+        .get(this.repository.projectDirectory),
+    )
+    if (missing) this.repository.backfillContentFingerprints()
+  }
+  /**
+   * Admission needs duplicate-content conflicts for its selected tasks, not a project audit. Each
+   * selected task's stored fingerprint finds its duplicates through the project's fingerprint index;
+   * no task body is read or parsed.
+   */
+  exactContentConflicts(taskIDs: readonly string[]): { watermark: number; findings: Finding[] } {
+    const selected = new Set(taskIDs)
+    if (!selected.size) return { watermark: this.repository.version(), findings: [] }
+    this.ensureContentFingerprints()
+    return this.read((db) => {
+      const directory = this.repository.projectDirectory
+      const live = `NOT EXISTS (SELECT 1 FROM task_dispositions d
+        WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)`
+      // The selected tasks that are live, in creation order, with their fingerprints.
+      const chosen: { rid: number; id: string; fingerprint: string | null }[] = []
+      const ids = [...selected]
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        const batch = ids.slice(offset, offset + 200)
+        chosen.push(
+          ...db
+            .query<{ rid: number; id: string; fingerprint: string | null }, string[]>(
+              `SELECT rowid AS rid,id,content_fingerprint AS fingerprint FROM tasks
+               WHERE project_directory=? AND ${live} AND id IN (${batch.map(() => "?").join(",")}) LIMIT ${batch.length}`,
+            )
+            .all(directory, ...batch),
+        )
+      }
+      chosen.sort((x, y) => x.rid - y.rid)
       const relations = db
         .query<{ task_id: string; other_task_id: string }, [string]>(
           "SELECT task_id,other_task_id FROM runner_relations WHERE project_directory=?",
         )
-        .all(this.repository.projectDirectory)
+        .all(directory)
       const related = new Set(
         relations.flatMap((r) => [
           JSON.stringify([r.task_id, r.other_task_id]),
@@ -3881,27 +4339,35 @@ export class RunnerStore {
         ]),
       )
       const findings: Finding[] = []
-      const byContent = new Map<string, number[]>()
-      tasks.forEach((task, i) => {
-        const group = byContent.get(task.content)
-        if (group) group.push(i)
-        else byContent.set(task.content, [i])
-      })
-      for (let i = 0; i < tasks.length; i++) {
-        const a = tasks[i]!
-        if (!selected.has(a.id)) continue
-        for (const j of byContent.get(a.content)!) {
-          const b = tasks[j]!
-          if (i === j || (j < i && selected.has(b.id)) || related.has(JSON.stringify([a.id, b.id])))
-            continue
-          const pair = i < j ? [a.id, b.id] : [b.id, a.id]
-          findings.push({
-            id: fingerprint({ code: "exact-content", taskIDs: pair }).slice(0, 24),
-            code: "exact-content",
-            taskIDs: pair,
-            evidence: "Validated proposal fingerprints match",
-            actions: ["distinct", "duplicate", "supplements"],
-          })
+      for (const a of chosen) {
+        const content = a.fingerprint ?? fingerprint(this.repository.get(a.id)!.proposal)
+        let after = 0
+        for (;;) {
+          const page = db
+            .query<{ rid: number; id: string }, [string, string, number]>(
+              `SELECT rowid AS rid,id FROM tasks
+               WHERE project_directory=? AND content_fingerprint=? AND ${live} AND rowid>?
+               ORDER BY rowid LIMIT ${TASK_PAGE}`,
+            )
+            .all(directory, content, after)
+          for (const b of page) {
+            if (
+              b.id === a.id ||
+              (b.rid < a.rid && selected.has(b.id)) ||
+              related.has(JSON.stringify([a.id, b.id]))
+            )
+              continue
+            const pair = a.rid < b.rid ? [a.id, b.id] : [b.id, a.id]
+            findings.push({
+              id: fingerprint({ code: "exact-content", taskIDs: pair }).slice(0, 24),
+              code: "exact-content",
+              taskIDs: pair,
+              evidence: "Validated proposal fingerprints match",
+              actions: ["distinct", "duplicate", "supplements"],
+            })
+          }
+          if (page.length < TASK_PAGE) break
+          after = page.at(-1)!.rid
         }
       }
       return { watermark: this.repository.version(), findings }
@@ -3982,7 +4448,7 @@ export class RunnerStore {
     return this.read((db) =>
       db
         .query<AttemptRow, [string]>(
-          `SELECT a.* FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
+          `SELECT ${columnList("a", ATTEMPT_COLUMNS)} FROM runner_attempts a JOIN runner_plans p ON a.plan_id=p.id
            WHERE a.project_directory=? AND a.state IN ('preparing','running','verifying')
            ORDER BY ${planPrioritySortSQL("p.body")},p.rowid,a.started_at,a.number`,
         )
@@ -4103,10 +4569,7 @@ export class RunnerStore {
 
       const reservations = db
         .query<SchedulingReservationFact, [string, string, number]>(
-          `SELECT a.*,t.body AS task_body,
-             (SELECT tr.payload FROM runner_transitions tr
-              WHERE tr.plan_id=a.plan_id AND tr.task_id=a.task_id AND tr.event='SCOPE_AMENDED'
-              ORDER BY tr.id DESC LIMIT 1) AS scope_payload
+          `SELECT a.id,a.plan_id,a.task_id,a.workspace
            FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
            JOIN tasks t ON t.project_directory=? AND t.id=a.task_id
            WHERE p.project_directory=? AND a.state IN ('preparing','running','verifying')
@@ -4123,8 +4586,8 @@ export class RunnerStore {
       const reservationsComplete = reservations.length === totalReservationCount
 
       const adoptions = db
-        .query<AdoptionRow, [string, number]>(
-          `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+        .query<SchedulingAdoptionFact, [string, number]>(
+          `SELECT a.id,a.plan_id,a.task_id FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
            WHERE p.project_directory=? AND a.state IN ('pending','task-checks','combined-checks')
            ORDER BY p.rowid,a.created_at,a.id LIMIT ?`,
         )
@@ -4280,7 +4743,7 @@ export class RunnerStore {
       planID
         ? db
             .query<AdoptionRow, [string, string]>(
-              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+              `SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
                WHERE p.project_directory=? AND a.plan_id=?
                  AND a.state IN ('pending','task-checks','combined-checks')
                ORDER BY a.created_at,a.id`,
@@ -4288,7 +4751,7 @@ export class RunnerStore {
             .all(this.repository.projectDirectory, planID)
         : db
             .query<AdoptionRow, [string]>(
-              `SELECT a.* FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
+              `SELECT ${columnList("a", ADOPTION_COLUMNS)} FROM runner_adoptions a JOIN runner_plans p ON p.id=a.plan_id
                WHERE p.project_directory=?
                  AND a.state IN ('pending','task-checks','combined-checks')
                ORDER BY a.created_at,a.id`,

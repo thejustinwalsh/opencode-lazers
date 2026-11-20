@@ -329,11 +329,14 @@ export class PlanStep {
       return
     }
     const contactPaused = this.store.architectContactPaused()
-    const planRenewal = contactPaused ? undefined : this.store.architectRenewalForPlan(plan.id)
-    if (
-      planRenewal &&
-      ["creating", "archiving", "recovering-input", "rolling-back"].includes(planRenewal.state)
-    ) {
+    // The newest renewal's state decides; the row (with its continuity) is loaded only when live.
+    const planHead = contactPaused ? undefined : this.store.architectRenewalHeadForPlan(plan.id)
+    const planRenewal =
+      planHead &&
+      ["creating", "archiving", "recovering-input", "rolling-back"].includes(planHead.state)
+        ? this.store.architectRenewal(planHead.id)
+        : undefined
+    if (planRenewal) {
       await this.timed("step:continueArchitectRenewal", () =>
         this.continueArchitectRenewal(planRenewal, fence),
       )
@@ -361,11 +364,13 @@ export class PlanStep {
       return
     }
     if (this.validArchitect(owner) && !contactPaused) {
-      const renewal = this.store.architectRenewalForSource(owner.id)
-      if (
-        renewal &&
-        ["creating", "archiving", "recovering-input", "rolling-back"].includes(renewal.state)
-      ) {
+      const sourceHead = this.store.architectRenewalHeadForSource(owner.id)
+      const renewal =
+        sourceHead &&
+        ["creating", "archiving", "recovering-input", "rolling-back"].includes(sourceHead.state)
+          ? this.store.architectRenewal(sourceHead.id)
+          : undefined
+      if (renewal) {
         await this.timed("step:continueArchitectRenewal", () =>
           this.continueArchitectRenewal(renewal, fence),
         )

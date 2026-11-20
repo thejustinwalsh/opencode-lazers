@@ -1,7 +1,7 @@
 /** Task-database ownership inventory. Workspace verification witness tables live in separate databases. */
 export const schemaModules = {
   tasks: {
-    generation: 9,
+    generation: 10,
     source: "src/storage.ts",
     tables: [
       "tasks",
@@ -50,7 +50,7 @@ export const schemaModules = {
     tables: ["lazers_profile_revisions", "lazers_profile_proofs", "lazers_profile_pins"],
   },
   runner: {
-    generation: 17,
+    generation: 18,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",

@@ -242,7 +242,7 @@ export class ArchitectRenewal {
       this.architectRoute(owner).action !== "fresh"
     )
       return false
-    if (!this.store.architectContinuity(owner.id)) return false
+    if (!this.store.hasArchitectContinuity(owner.id)) return false
     const labelPlan = PlanInput.parse(JSON.parse(plan.body))
     const label = labelPlan.title ?? labelPlan.objective.slice(0, 120)
     const renewal = this.store.beginArchitectRenewal({
@@ -422,7 +422,7 @@ export class ArchitectRenewal {
           const continuity = this.renewalContinuity(renewal)
           const anchor = this.store.plan(renewal.anchor_plan_id)
           if (!anchor) throw new Error("Architect renewal plan disappeared")
-          const source = this.store.architectSource(renewal.previous_session_id)
+          const source = this.store.architectSourceHead(renewal.previous_session_id)
           if (!source) throw new Error("Architect predecessor source disappeared before handoff")
           const payload = {
             status: "architect-handoff",
@@ -616,7 +616,7 @@ export class ArchitectRenewal {
           )
           return
         }
-        const source = this.store.architectSource(renewal.previous_session_id)
+        const source = this.store.architectSourceHead(renewal.previous_session_id)
         if (!source) throw new Error("Architect predecessor source disappeared before commit")
         const payload = {
           status: "architect-handoff",
