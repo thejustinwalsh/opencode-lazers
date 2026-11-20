@@ -14,12 +14,8 @@ import {
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  MAX_FALLOW_THREADS,
-  runFallowModule,
-  type GitCall,
-  type RunOptions,
-} from "../fallow-wasi.ts"
+import { MAX_FALLOW_THREADS, type GitCall, type RunOptions } from "../fallow-wasi.ts"
+import { runDirectFallowModule } from "./resource-lifetime/direct-analysis.ts"
 
 export const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
 export const wasmBytes = readFileSync(new URL("./fallow.wasm", import.meta.url))
@@ -35,16 +31,16 @@ export type ModuleKind = (typeof moduleKinds)[number]
 export type OpResult = { report: Record<string, any>; git: GitCall[]; stderr: string }
 
 /** Run one request against the shipped module and unwrap its envelope. */
-export function runOp(
+export async function runOp(
   op: string,
   root: string,
   extra: Record<string, unknown> = {},
   options: RunOptions = {},
   kind: ModuleKind = "single",
-): OpResult {
+): Promise<OpResult> {
   const git: GitCall[] = []
   const threads = kind === "threads" ? MAX_FALLOW_THREADS : 1
-  const outcome = runFallowModule(
+  const outcome = await runDirectFallowModule(
     kind === "threads" ? threadedWasmModule : wasmModule,
     {
       op,
@@ -52,7 +48,11 @@ export function runOp(
       options: { threads, explain: true, css: true, cache: options.cache === true },
       ...extra,
     },
-    { maxThreads: threads, ...options, onGit: (call) => (git.push(call), options.onGit?.(call)) },
+    {
+      maxThreads: threads,
+      ...options,
+      onGit: (call) => (git.push(call), options.onGit?.(call)),
+    },
   )
   const parsed = JSON.parse(outcome.stdout) as {
     report?: Record<string, any>
@@ -63,8 +63,8 @@ export function runOp(
 }
 
 /** Error code of a request that must fail. */
-export function errorCode(op: string, root: string, extra: Record<string, unknown> = {}) {
-  const outcome = runFallowModule(wasmModule, { op, root, ...extra })
+export async function errorCode(op: string, root: string, extra: Record<string, unknown> = {}) {
+  const outcome = await runDirectFallowModule(wasmModule, { op, root, ...extra })
   return (JSON.parse(outcome.stdout) as { error?: { code: string } }).error?.code
 }
 
