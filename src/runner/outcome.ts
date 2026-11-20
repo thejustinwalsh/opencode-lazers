@@ -2,9 +2,32 @@ import { FallowAcceptance } from "../audit/contract.ts"
 import { findingLine, renderNotice } from "../audit/fallow-render.ts"
 import { ScopeReport, scopeNotice } from "./scope.ts"
 import { RECOVERY_BUNDLE_STATUS, recoveryBundleText } from "./recovery-bundle.ts"
+import { runbook, type Delivery } from "../guidance/index.ts"
+import { DIVERGENCE_REASON_PREFIX } from "./scope.ts"
+
+/**
+ * Where the situational runbooks of a notice come from: `delivery` tracks what the receiving
+ * session already holds (absent: every opening event carries its full runbook), `planID` scopes
+ * the once-per-plan ones.
+ */
+export type NoticeGuidance = { delivery?: Delivery; planID?: string }
+
+function suppressionRelated(fallow: unknown): boolean {
+  const parsed = FallowAcceptance.safeParse(fallow)
+  if (!parsed.success) return false
+  return (
+    parsed.data.package.findings.some(
+      (finding) => finding.suppression !== undefined || finding.rule.includes("suppression"),
+    ) || (parsed.data.dispositions ?? []).some((item) => item.disposition === "suppressed")
+  )
+}
+
+function suppressionGuidance(guidance: NoticeGuidance | undefined): string {
+  return `\n${guidance?.delivery ? guidance.delivery.once("fallow-suppressions", guidance.planID ?? "") : runbook("fallow-suppressions")}`
+}
 
 /** Human action beside durable machine identity, without replaying full check logs. */
-export function outcomeText(serialized: string, project?: string) {
+export function outcomeText(serialized: string, project?: string, guidance?: NoticeGuidance) {
   const payload = JSON.parse(serialized)
   let action: string
   switch (payload.status) {
@@ -83,12 +106,24 @@ export function outcomeText(serialized: string, project?: string) {
     default:
       action = "Recorded runtime update; no automatic action is requested."
   }
-  if (payload.status === "task-accepted" && payload.fallow) action += fallowNotice(payload.fallow)
+  if (
+    payload.status === "blocked" &&
+    String(payload.reason ?? "").startsWith(DIVERGENCE_REASON_PREFIX)
+  )
+    action += `\n${runbook("scope-divergence")}`
+  if (payload.status === "task-accepted" && payload.fallow) {
+    action += fallowNotice(payload.fallow)
+    if (suppressionRelated(payload.fallow)) action += suppressionGuidance(guidance)
+  }
   if (payload.status === "task-accepted" && payload.scope) {
     const scope = ScopeReport.safeParse(payload.scope)
     if (scope.success) action += scopeNotice(scope.data)
   }
-  if (payload.status === "accepted" && payload.fallow) action += planFallowNotice(payload.fallow)
+  if (payload.status === "accepted" && payload.fallow) {
+    const notice = planFallowNotice(payload.fallow)
+    action += notice
+    if (notice && suppressionRelated(payload.fallow)) action += suppressionGuidance(guidance)
+  }
   const evidence = Array.isArray(payload.evidence)
     ? payload.evidence.map((check: unknown) =>
         typeof check === "object" && check !== null && "id" in check ? check.id : check,
@@ -104,13 +139,20 @@ export function outcomeText(serialized: string, project?: string) {
 export function coalescedOutcomeText(
   entries: ReadonlyArray<{ planID: string; payload: string }>,
   project?: string,
+  delivery?: Delivery,
 ) {
-  if (entries.length === 1) return outcomeText(entries[0]!.payload, project)
+  const guidanceFor = (planID: string): NoticeGuidance => ({
+    planID,
+    ...(delivery ? { delivery } : {}),
+  })
+  if (entries.length === 1)
+    return outcomeText(entries[0]!.payload, project, guidanceFor(entries[0]!.planID))
   const plans = new Set(entries.map((entry) => entry.planID)).size
   return [
     `LAZERS outcomes${project ? ` · ${project}` : ""}: ${entries.length} updates across ${plans} ${plans === 1 ? "plan" : "plans"}, the latest state of each`,
     ...entries.map(
-      (entry) => `--- plan ${entry.planID} ---\n${outcomeText(entry.payload, project)}`,
+      (entry) =>
+        `--- plan ${entry.planID} ---\n${outcomeText(entry.payload, project, guidanceFor(entry.planID))}`,
     ),
   ].join("\n\n")
 }

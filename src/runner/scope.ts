@@ -341,11 +341,14 @@ function workerReason(message: string | undefined): string {
   return `"${text.length > 400 ? `${text.slice(0, 400)}…` : text}" (final message)`
 }
 
+/** How the hold reason of a divergence begins; the notice that carries it adds the runbook. */
+export const DIVERGENCE_REASON_PREFIX = "Scope divergence needs a decision"
+
 /** The one-line hold reason for a divergence nobody decided. */
 export function divergenceReason(report: ScopeReport, workerMessage?: string): string {
   const shown = report.divergences.slice(0, REASON_PATH_LIMIT).map(divergenceLine)
   const more = report.divergences.length - shown.length
-  return `Scope divergence needs a decision: ${report.divergences.length} change(s) outside the task's scope: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. Worker's reason: ${workerReason(workerMessage)}. Accept with amend-scope and a reason, send it back with retained-repair, or cancel.`
+  return `${DIVERGENCE_REASON_PREFIX}: ${report.divergences.length} change(s) outside the task's scope: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. Worker's reason: ${workerReason(workerMessage)}. Accept with amend-scope and a reason, send it back with retained-repair, or cancel.`
 }
 
 /** What the one repair tells the worker about scope and size. Empty when nothing applies. */

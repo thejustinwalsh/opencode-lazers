@@ -283,6 +283,14 @@ export const FallowConfigSuggestOutput = z.strictObject({
     workspaces: z.array(text),
   }),
   next: text,
+  /** The config runbook on a session's first suggest, the pointer to it after. */
+  guidance: text.optional(),
+})
+
+/** A runbook returned on request: `lz-fallow-config` with mode guide. */
+export const FallowConfigGuideOutput = z.strictObject({
+  topic: z.enum(["config", "suppressions"]),
+  guidance: text,
 })
 
 export const FallowDryRunOutput = z.strictObject({

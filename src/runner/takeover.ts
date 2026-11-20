@@ -6,6 +6,7 @@ import { openConcerns } from "../recovery/detector.ts"
 import type { HandoffStore } from "../recovery/handoff/store.ts"
 import { git } from "./artifacts.ts"
 import { messageID } from "./runtime-helpers.ts"
+import { runbook } from "../guidance/index.ts"
 import type { HostSession, RunnerHost } from "./host.ts"
 import type { AttemptRow, RunnerStore } from "./store.ts"
 
@@ -188,6 +189,8 @@ export type TakeoverResult = {
   workerQuiet?: boolean
   handoff?: TakeoverHandoff
   facts?: TakeoverFacts
+  /** The runbook for finishing a taken-over task; it arrives with the handoff that opens it. */
+  guidance?: string
   next: string
 }
 
@@ -812,6 +815,7 @@ export class TakeoverExecution {
       ...(payload.workerQuiet === undefined ? {} : { workerQuiet: payload.workerQuiet }),
       ...(payload.handoff ? { handoff: payload.handoff } : {}),
       ...(payload.facts ? { facts: payload.facts } : {}),
+      guidance: runbook("takeover"),
       next: `Read the handoff, then finish the task yourself in ${payload.workspace}: edit and commit there (uncommitted work is kept; ${payload.wipRef ?? "no snapshot was needed"}). Then lz-plan-command {action:"takeover-submit", planID:"${row.plan_id}", taskID:"${row.task_id}", reason}; the runtime verifies it like a worker result.${payload.workerQuiet === false ? " The worker did not go quiet after interruption; check it before writing." : ""}`,
     }
   }
@@ -825,12 +829,8 @@ function takeoverIDFor(requestID: string): string {
 }
 
 function takeoverNotice(payload: Payload, attempt: AttemptRow, minutes: number): string {
-  return [
-    `The Architect is taking task ${attempt.task_id} over from you now. Reason: ${payload.reason}`,
-    "Stop starting new work. Within the next step or two:",
-    "1. Commit your work in progress in this workspace (a WIP commit is fine; never discard changes).",
-    "2. Call lz-takeover-handoff once: done, remaining, workspaceState, struggledWith, tried (plain text; anything missing is fine).",
-    "3. End your turn.",
-    `After ${minutes} minutes you are stopped and the runtime writes the handoff from recorded facts.`,
-  ].join("\n")
+  return runbook("worker-takeover-notice")
+    .replace("{task}", attempt.task_id)
+    .replace("{reason}", payload.reason)
+    .replace("{minutes}", String(minutes))
 }

@@ -2,6 +2,7 @@ import type { HostSession } from "./host.ts"
 import type { PlanRow, OutboxRow } from "./store.ts"
 import { appendOutboxReceipt } from "./store.ts"
 import { coalescedOutcomeText } from "./outcome.ts"
+import { Delivery } from "../guidance/index.ts"
 import { isOwnedOutcomeTranscript, isOwnedQueuedOutcome, parseOutcomeOwnership } from "./inbox.ts"
 import type { OutcomeOwnership } from "./inbox.ts"
 import { sameProject } from "../project-key.ts"
@@ -421,6 +422,7 @@ export class OutcomeDelivery {
     // The pause may be set while this tick is already delivering: check again at the send.
     if (this.runtime.store.architectContactPaused()) return false
     const ownership = this.ownership(carrier) ?? this.createOwnership(carrier, sessionID)
+    const guidance = new Delivery(sessionID)
     try {
       await host.notify({
         sessionID,
@@ -428,6 +430,7 @@ export class OutcomeDelivery {
         text: coalescedOutcomeText(
           summary.map((row) => ({ planID: row.plan_id, payload: row.payload })),
           this.runtime.store.repository.projectCode(),
+          guidance,
         ),
         resume: rows.some((row) => Boolean(row.resume)),
         metadata: ownership,
@@ -456,6 +459,8 @@ export class OutcomeDelivery {
         return true
       }
     }
+    // The notice reached the session, so the runbooks it carried count as delivered.
+    guidance.commit()
     for (const row of rows)
       this.outcomeState(
         row,

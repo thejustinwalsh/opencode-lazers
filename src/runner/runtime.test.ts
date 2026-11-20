@@ -1,4 +1,5 @@
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
+import { runbook } from "../guidance/index.ts"
 import { FallowConfigRequiredError, refusalMessage } from "../audit/fallow-refusal.ts"
 import { afterEach, expect, spyOn, test } from "bun:test"
 import { Effect } from "effect"
@@ -15623,6 +15624,7 @@ test("takeover: the worker writes its handoff in time, stops, and the Architect'
     "owner",
   )
   expect(result.status).toBe("taken-over")
+  expect(result.guidance).toBe(runbook("takeover"))
   expect(result.handoff).toMatchObject({ author: "worker", struggledWith: "the content check" })
   // Recorded facts accompany the worker's own account.
   expect(result.facts).toMatchObject({ attempts: 1 })
