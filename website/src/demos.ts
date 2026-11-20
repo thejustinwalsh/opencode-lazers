@@ -6,7 +6,7 @@
  */
 export interface DemoDef {
   story: string
-  panel: "tasks" | "radar" | "trajectory" | "models" | "local"
+  panel: "tasks" | "radar" | "trajectory" | "models"
   size: { width: number; height: number }
   /** What the panel is, in a sentence, for the figure's text alternative. */
   summary: string
@@ -119,33 +119,6 @@ export const DEMOS = {
         name: "assign",
         caption:
           "Assignments routes each agent to a model. Moving Implementor off Claude Opus 5.5 changes what its accepted tasks cost.",
-      },
-    ],
-  },
-  local: {
-    story: "local",
-    panel: "local",
-    size: { width: 560, height: 176 },
-    summary:
-      "The local inference indicator in the session header: hidden while off, then downloading, available, and working while a local decision runs.",
-    steps: [
-      {
-        name: "off",
-        caption: "Local inference starts off. Nothing loads and the header shows no icon.",
-      },
-      {
-        name: "download",
-        caption:
-          "Turn it on in Settings, LAZERS. The first request downloads the model; D1 is about 625 MB.",
-      },
-      {
-        name: "ready",
-        caption: "The model is resident on the GPU through WebGPU, and the icon reads Available.",
-      },
-      {
-        name: "decide",
-        caption:
-          "A typed decision runs on the device, and the icon reads Working. Task review uses these decisions.",
       },
     ],
   },

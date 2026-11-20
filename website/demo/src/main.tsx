@@ -14,7 +14,6 @@ const modules: Record<PanelID, () => Promise<PanelModule>> = {
   radar: () => import("./panels/radar.ts") as never,
   trajectory: () => import("./panels/trajectory.ts") as never,
   models: () => import("./panels/models.ts") as never,
-  local: () => import("./panels/local.tsx") as never,
 }
 
 async function boot() {

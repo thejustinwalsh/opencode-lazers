@@ -4,7 +4,7 @@
  * contracts, validated against the contracts' schemas by scripts/build-website-demo.ts and
  * emitted as JSON (public/demo/stories/<id>.json).
  */
-export type PanelID = "tasks" | "radar" | "trajectory" | "models" | "local"
+export type PanelID = "tasks" | "radar" | "trajectory" | "models"
 
 /** One simulated user action, performed as real DOM events on the real panel. */
 export type Action =

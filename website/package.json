@@ -14,7 +14,9 @@
     "@chenglou/pretext": "^1.0.0",
     "@fontsource-variable/archivo": "^5.3.0",
     "@stylexjs/stylex": "^0.19.2",
-    "preact": "^11.2.0"
+    "preact": "^11.2.0",
+    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-a3718c8/runntime-0.2.0-a3718c8.tgz",
+    "typegpu": "0.12.5"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.6",
