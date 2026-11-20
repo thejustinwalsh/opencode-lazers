@@ -125,7 +125,7 @@ export function projectsOperations(
       if (outcome.ok && !paused) options.wake?.()
       return outcome
     },
-    setSetting(scope: ProjectScope, name: string, value: number | null): ProjectsOutcome {
+    setSetting(scope: ProjectScope, name: string, value: unknown): ProjectsOutcome {
       const stored = value === null ? undefined : value
       return guarded(repository, scope, () =>
         scope.kind === "global"

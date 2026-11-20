@@ -1571,3 +1571,22 @@ type ResolveResult = {
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/webgpu/system-one.ts
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/task.ts
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/runner/takeover.ts
+
+## Corrections (host)
+
+Differences found while implementing Tasks 4 and 15 against the code on `main`.
+
+**Task 4**
+
+- The setting declarations moved to a new pure-zod file, `src/projects/setting-schemas.ts` (not in the plan's file list). It holds one `setting(schema, builtIn)` entry per setting; `GlobalSettings`, `ProjectSettings`, the built-in defaults, write validation and the RPC views (`GlobalSettingsView`, `ProjectSettingsView` in `contract.ts`) are all derived from it, so a new setting (the project profile's structured value) is added by one entry there. It is separate from `settings.ts` because `contract.ts` is imported by the GUI bundle and `settings.ts` imports the database schema.
+- The hand-written view schemas in `contract.ts` are replaced by the derived ones. The plan said `setSetting.input.value` becomes `z.json()`; it did, and `null` still clears the stored value.
+- Existing tests that asserted the whole settings object with `toEqual` (`settings.test.ts` x2, `rpc.test.ts` x1) now use `toMatchObject`, since the objects gained keys. No assertion about an existing setting's value changed.
+- A test writes rows in the previous code's format (JSON text per number setting) and reads them back.
+
+**Task 15**
+
+- `create` maps "already exists" by reading the session back after any create failure: the native API has no typed duplicate-session error (`SessionNotFoundError` is the only tag the code relies on). A failed create whose id does not read back rethrows.
+- `reply` sums tokens over every assistant step after the last user message, not only the last assistant message, because a review of several tool steps spends tokens in each. `text` is the last assistant message that has text; `finish` is the final step's finish reason.
+- `prompt`'s `directory` is part of the port but the native `session.prompt` addresses the session by id, so it is not sent.
+- The route lookup is exported as `planningModel(routes?)` (`lazers-planning`, else `lazers-implementor`, else undefined); `create` takes the model from the caller rather than reading routes itself, so the adapter stays a pure `ctx.session` wrapper.
+- `ModelRef` is the existing `ModelPolicy` (`providerID`, `id`, `variant?`).

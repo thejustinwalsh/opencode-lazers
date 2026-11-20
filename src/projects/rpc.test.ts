@@ -117,13 +117,13 @@ test("a code edit is stored; invalid and taken codes are refused and keep the ol
 test("settings save, validate, and clearing falls back to the option default", async () => {
   const f = await fixture({ project: { spendCeilingTokens: 5000 } })
   const key = f.keyA
-  const setting = (name: string, value: number | null) =>
+  const setting = (name: string, value: unknown) =>
     f.ops.setSetting({ kind: "project", key }, name, value)
   expect(f.ops.list().projects[0]!.settings.spendCeilingTokens).toBe(5000)
   expect(setting("limit", 3)).toEqual({ ok: true })
   expect(setting("weight", 2.5)).toEqual({ ok: true })
   expect(setting("spendCeilingTokens", 100)).toEqual({ ok: true })
-  expect(f.ops.list().projects[0]!.settings).toEqual({
+  expect(f.ops.list().projects[0]!.settings).toMatchObject({
     limit: 3,
     weight: 2.5,
     spendCeilingTokens: 100,
@@ -132,6 +132,7 @@ test("settings save, validate, and clearing falls back to the option default", a
   expect(setting("limit", 0)).toMatchObject({ ok: false, refusal: "SETTING_INVALID" })
   expect(setting("limit", 1.5)).toMatchObject({ ok: false, refusal: "SETTING_INVALID" })
   expect(setting("nope", 1)).toMatchObject({ ok: false, refusal: "SETTING_INVALID" })
+  expect(setting("limit", "3")).toMatchObject({ ok: false, refusal: "SETTING_INVALID" })
   expect(f.ops.list().projects[0]!.settings.limit).toBe(3)
   setting("limit", null)
   setting("spendCeilingTokens", null)
@@ -145,6 +146,32 @@ test("settings save, validate, and clearing falls back to the option default", a
   })
   expect(f.ops.setSetting({ kind: "global" }, "globalSlots", 4)).toEqual({ ok: true })
   expect(f.ops.list().globalSettings.globalSlots).toBe(4)
+})
+
+test("structured and boolean settings save through the RPC and list back", async () => {
+  const f = await fixture()
+  const project = (name: string, value: unknown) =>
+    f.ops.setSetting({ kind: "project", key: f.keyA }, name, value)
+  const global = (name: string, value: unknown) => f.ops.setSetting({ kind: "global" }, name, value)
+  const external = { kind: "external", providerID: "openrouter", modelID: "x" }
+  expect(global("decisionModel", external)).toEqual({ ok: true })
+  expect(global("decisionSlicer", "whole")).toEqual({ ok: true })
+  expect(project("planningAutoDispatch", false)).toEqual({ ok: true })
+  expect(f.ops.list().globalSettings).toMatchObject({
+    decisionModel: external,
+    decisionSlicer: "whole",
+  })
+  expect(f.ops.list().projects[0]!.settings.planningAutoDispatch).toBe(false)
+  expect(global("decisionModel", { kind: "external" })).toMatchObject({
+    ok: false,
+    refusal: "SETTING_INVALID",
+  })
+  expect(project("planningAutoDispatch", "yes")).toMatchObject({
+    ok: false,
+    refusal: "SETTING_INVALID",
+  })
+  expect(global("decisionModel", null)).toEqual({ ok: true })
+  expect(f.ops.list().globalSettings.decisionModel).toEqual({ kind: "local" })
 })
 
 test("a project's Architect-contact pause is shown with its reason", async () => {

@@ -28,8 +28,16 @@ function repository() {
 
 test("built-in defaults apply when nothing is stored or passed", () => {
   const repo = repository()
-  expect(globalSettings(repo)).toEqual({ globalSlots: null, agingMs: 600_000, historyCacheMB: 128 })
-  expect(projectSettings(repo, "k")).toEqual({ limit: null, weight: 1, spendCeilingTokens: null })
+  expect(globalSettings(repo)).toMatchObject({
+    globalSlots: null,
+    agingMs: 600_000,
+    historyCacheMB: 128,
+  })
+  expect(projectSettings(repo, "k")).toMatchObject({
+    limit: null,
+    weight: 1,
+    spendCeilingTokens: null,
+  })
 })
 
 test("a stored value wins over a passed default; clearing falls back to the default", () => {
@@ -58,7 +66,11 @@ test("project settings of one key do not leak to another or to global", () => {
   setProjectSetting(repo, "a", "limit", 2)
   expect(projectSettings(repo, "a")).toMatchObject({ weight: 3, limit: 2 })
   expect(projectSettings(repo, "b")).toMatchObject({ weight: 1, limit: null })
-  expect(globalSettings(repo)).toEqual({ globalSlots: null, agingMs: 600_000, historyCacheMB: 128 })
+  expect(globalSettings(repo)).toMatchObject({
+    globalSlots: null,
+    agingMs: 600_000,
+    historyCacheMB: 128,
+  })
 })
 
 test("invalid values are refused and leave the stored value", () => {
@@ -95,4 +107,60 @@ test("the spend ceiling is the stored project value, else the plugin option, els
   expect(spendCeilingFor(repo, "/repo", 7_000)).toBeUndefined()
   setProjectSetting(repo, key, "spendCeilingTokens", undefined)
   expect(spendCeilingFor(repo, "/repo", 7_000)).toBe(7_000)
+})
+
+test("a structured setting round-trips and is validated per name", () => {
+  const repo = repository()
+  expect(globalSettings(repo).decisionModel).toEqual({ kind: "local" })
+  expect(globalSettings(repo).decisionSlicer).toBe("uncertainty")
+  const external = { kind: "external", providerID: "openrouter", modelID: "x" } as const
+  setGlobalSetting(repo, "decisionModel", external)
+  expect(globalSettings(repo).decisionModel).toEqual(external)
+  setGlobalSetting(repo, "decisionSlicer", "whole")
+  expect(globalSettings(repo).decisionSlicer).toBe("whole")
+  expect(() => setGlobalSetting(repo, "decisionModel", { kind: "external" } as never)).toThrow(
+    /Invalid decisionModel/,
+  )
+  expect(() => setGlobalSetting(repo, "decisionSlicer", "other" as never)).toThrow(
+    /Invalid decisionSlicer/,
+  )
+  expect(globalSettings(repo).decisionModel).toEqual(external)
+  setGlobalSetting(repo, "decisionModel", undefined)
+  expect(globalSettings(repo).decisionModel).toEqual({ kind: "local" })
+})
+
+test("planningAutoDispatch defaults to true and stores false", () => {
+  const repo = repository()
+  expect(projectSettings(repo, "k").planningAutoDispatch).toBe(true)
+  setProjectSetting(repo, "k", "planningAutoDispatch", false)
+  expect(projectSettings(repo, "k").planningAutoDispatch).toBe(false)
+  expect(projectSettings(repo, "other").planningAutoDispatch).toBe(true)
+  expect(() => setProjectSetting(repo, "k", "planningAutoDispatch", 1 as never)).toThrow()
+})
+
+test("a database written before structured values reads unchanged", () => {
+  const repo = repository()
+  // The rows the previous code wrote: JSON text per number setting, nothing for the new names.
+  repo.atomic((db) => {
+    const put = db.query("INSERT INTO lazers_settings VALUES(?,?,?,0)")
+    put.run("global", "globalSlots", "4")
+    put.run("global", "agingMs", "1200000")
+    put.run("global", "historyCacheMB", "64")
+    put.run("k", "limit", "2")
+    put.run("k", "weight", "2.5")
+    put.run("k", "spendCeilingTokens", "null")
+  })
+  expect(globalSettings(repo)).toEqual({
+    globalSlots: 4,
+    agingMs: 1_200_000,
+    historyCacheMB: 64,
+    decisionModel: { kind: "local" },
+    decisionSlicer: "uncertainty",
+  })
+  expect(projectSettings(repo, "k")).toEqual({
+    limit: 2,
+    weight: 2.5,
+    spendCeilingTokens: null,
+    planningAutoDispatch: true,
+  })
 })
