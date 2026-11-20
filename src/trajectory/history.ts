@@ -6,18 +6,28 @@ import type {
 } from "../observability/contract.ts"
 
 /**
- * The cache never refuses a capture. These only decide what it forgets, and a forgotten capture
- * is recaptured on demand ("evicted" / "expired"). None was measured; each is a product choice:
- * - TTL_MS: how long a cursor stays valid (a person reading one panel).
- * - MAX_ENTRIES: captures kept at once (one per open Trajectory panel, with headroom).
- * - RETAIN_BYTES: the serialised size the cache keeps warm beyond the newest capture. LZ-200
- *   (3 attempts, ~92M tokens) projects to roughly 22 MB (1,856 progress facts at 5.6 MB in
- *   tasks.sqlite plus 768 native messages at 16.5 MB), so this holds about three such tasks.
- *   A single capture larger than this is still served; it only evicts every other entry.
+ * A memory-budgeted LRU. It never refuses a read: older captures are evicted, least recently
+ * used first, to make room, and a capture larger than the whole budget is served in one page
+ * without being cached. A forgotten capture is recaptured on demand ("evicted" / "expired").
+ * - TTL_MS: how long a cursor stays valid; a product choice (a person reading one panel), not
+ *   measured.
+ * - DEFAULT_HISTORY_CACHE_MB: the `historyCacheMB` plugin option's default. Measured on the
+ *   owner's live data: the largest task (LZ-200, 3 attempts, ~92M tokens) projects to about
+ *   22 MB (5.6 MB of progress facts in tasks.sqlite plus 16.5 MB of native session messages
+ *   in opencode.db; the next largest has 11 MB of progress facts). 128 MB keeps about five of
+ *   those warm.
  */
 const TTL_MS = 5 * 60_000
-const MAX_ENTRIES = 16
-const RETAIN_BYTES = 64 * 1024 * 1024
+export const DEFAULT_HISTORY_CACHE_MB = 128
+
+/** The `historyCacheMB` plugin option in bytes; anything but a positive number is the default. */
+export function historyCacheBytes(option: unknown): number {
+  const megabytes =
+    typeof option === "number" && Number.isFinite(option) && option > 0
+      ? option
+      : DEFAULT_HISTORY_CACHE_MB
+  return Math.floor(megabytes * 1024 * 1024)
+}
 
 type Boundary = {
   repositoryVersion: number
@@ -122,14 +132,17 @@ export class TrajectoryHistoryCache {
   private readonly entries = new Map<string, HistoryEntry>()
   private bytes = 0
 
+  private readonly limits: { ttlMs: number; maxBytes: number }
+
   constructor(
     private readonly secret: Uint8Array,
-    private readonly limits = {
-      ttlMs: TTL_MS,
-      maxEntries: MAX_ENTRIES,
-      maxBytes: RETAIN_BYTES,
-    },
-  ) {}
+    limits: { ttlMs?: number; maxBytes?: number } = {},
+  ) {
+    this.limits = {
+      ttlMs: limits.ttlMs ?? TTL_MS,
+      maxBytes: limits.maxBytes ?? historyCacheBytes(undefined),
+    }
+  }
 
   capture(
     identity: TrajectoryHistoryIdentity,
@@ -165,12 +178,10 @@ export class TrajectoryHistoryCache {
       expiresAt: now + this.limits.ttlMs,
       bytes,
     }
-    // Eviction only: a capture of any size is admitted, older ones make room for it.
-    while (
-      this.entries.size > 0 &&
-      (this.entries.size >= this.limits.maxEntries ||
-        this.bytes + entry.bytes > this.limits.maxBytes)
-    )
+    // Larger than the whole budget: serve every event in one page and keep nothing.
+    if (entry.bytes > this.limits.maxBytes) return this.page(entry, 0, true, true)
+    // Least recently used first (the map is in recency order; `continue` refreshes it).
+    while (this.entries.size > 0 && this.bytes + entry.bytes > this.limits.maxBytes)
       this.evictOldest()
     this.entries.set(entry.id, entry)
     this.bytes += entry.bytes
@@ -202,6 +213,8 @@ export class TrajectoryHistoryCache {
       parsed.offset >= entry.eventIDs.length
     )
       throw new TrajectoryHistoryUnavailableError("invalid-cursor")
+    this.entries.delete(entry.id)
+    this.entries.set(entry.id, entry)
     return this.page(entry, parsed.offset, false)
   }
 
@@ -209,13 +222,15 @@ export class TrajectoryHistoryCache {
     entry: HistoryEntry,
     offset: number,
     includeEventIDs: boolean,
+    whole = false,
   ): TrajectoryHistoryPage {
     const report = structuredClone(entry.report)
     const trajectory = object(report.trajectory)
     const events = trajectory?.events
     if (!trajectory || !Array.isArray(events))
       throw new Error("Cached trajectory history is invalid")
-    const pageEvents = events.slice(offset, offset + entry.identity.limit)
+    const size = whole ? Math.max(events.length, entry.identity.limit) : entry.identity.limit
+    const pageEvents = events.slice(offset, offset + size)
     const nextOffset = offset + pageEvents.length
     const nextCursor =
       nextOffset < events.length
@@ -239,8 +254,8 @@ export class TrajectoryHistoryCache {
         ...report,
         trajectory: {
           ...trajectory,
-          page: Math.floor(offset / entry.identity.limit) + 1,
-          limit: entry.identity.limit,
+          page: Math.floor(offset / size) + 1,
+          limit: size,
           totalEvents: events.length,
           events: pageEvents,
           nextCursor,

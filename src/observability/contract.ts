@@ -838,7 +838,7 @@ const TrajectoryHistoryOutput = z.strictObject({
   boundary: Boundary,
   capturedAt: z.number().finite(),
   expiresAt: z.number().finite(),
-  eventIDs: z.array(z.string()).max(10_000).optional(),
+  eventIDs: z.array(z.string()).optional(),
   report: z.record(z.string(), z.unknown()),
 })
 const TrajectoryHistoryErrorData = z.strictObject({

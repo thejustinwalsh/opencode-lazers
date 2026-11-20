@@ -13,6 +13,7 @@ import { nativeContextPermission } from "../context/tools.ts"
 import { createModelsTaskValuationProvider } from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
+import { historyCacheBytes } from "../trajectory/history.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { registerProject } from "../project-key.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
@@ -220,6 +221,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     crypto.getRandomValues(new Uint8Array(32)),
     radarSessionHost,
     taskValuationProvider,
+    historyCacheBytes(info.options.historyCacheMB),
   )
   built("observationReads")
   const taskReads = new AssociationTaskReads(repository)
