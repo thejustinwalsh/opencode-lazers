@@ -2,33 +2,53 @@ import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { timedHooks } from "../diagnostics/stall-probe.ts"
 import type { InferenceBroker } from "../webgpu/broker.ts"
+import { defaultFeatures, FeatureSettings, featureEnabled } from "../webgpu/features.ts"
 import { LocalInference } from "../webgpu/rpc.ts"
-import { SystemOneRequest } from "../webgpu/system-one.ts"
+import { globalSettings } from "../projects/settings.ts"
+import { SystemOneRequest, type SystemOneInput } from "../webgpu/system-one.ts"
 import type { TaskRepository } from "../storage.ts"
-import { localDecider } from "./decision/deciders.ts"
+import { deciderFor, localDecider, type ExternalGenerate } from "./decision/deciders.ts"
 import { PlanningDecisions } from "./decision/step.ts"
 import { PlanningStore } from "./store.ts"
 
-/** The decision service of one project: the store, and the local decision model behind the broker. */
+/**
+ * The decision service of one project. Settings choose the model (the local D1 behind the
+ * broker, an external catalogue model, or none, so the Architect classifies) and the slicer; both
+ * are read at each ask. The local "decisions" feature is read from storage the way the local
+ * inference server reads it, so a switched-off feature is recorded as `feature-off`.
+ */
 export function createPlanningDecisions(
-  ctx: Pick<Plugin.Context, "rpc">,
+  ctx: Pick<Plugin.Context, "rpc" | "storage" | "options" | "experimental">,
   repository: TaskRepository,
   broker: Pick<InferenceBroker, "attached">,
   projectID: string,
 ): PlanningDecisions {
-  const local = localDecider(
-    broker,
-    // A feature turned off in Settings answers with an error, which the step records.
-    () => true,
-    (input, signal) =>
-      Effect.runPromise(ctx.rpc(LocalInference).systemOne(SystemOneRequest.parse(input)), {
-        signal,
-      }) as never,
-  )
+  const decisionsOn = async () => {
+    const stored = await Effect.runPromise(ctx.storage.get("webgpu.features"))
+    const parsed = FeatureSettings.safeParse(stored)
+    const features = parsed.success
+      ? parsed.data
+      : defaultFeatures(stored === undefined && ctx.options.webgpu === true)
+    return featureEnabled(features, "decisions")
+  }
+  const systemOne = (input: SystemOneInput, signal: AbortSignal) =>
+    Effect.runPromise(ctx.rpc(LocalInference).systemOne(SystemOneRequest.parse(input)), {
+      signal,
+    }) as never
+  const generate: ExternalGenerate = (input, signal) =>
+    Effect.runPromise(ctx.experimental.generate.decisions(input as never), { signal }) as never
   return new PlanningDecisions({
     store: new PlanningStore(repository),
     projectKey: projectID,
-    decider: () => local,
+    constants: () => ({ strategy: globalSettings(repository).decisionSlicer }),
+    decider: async () => {
+      const setting = globalSettings(repository).decisionModel
+      const on = setting.kind === "local" ? await decisionsOn() : true
+      return deciderFor(setting, {
+        local: localDecider(broker, () => on, systemOne),
+        generate,
+      })
+    },
   })
 }
 

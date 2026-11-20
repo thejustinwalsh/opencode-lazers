@@ -112,7 +112,7 @@ test("the spend ceiling is the stored project value, else the plugin option, els
 test("a structured setting round-trips and is validated per name", () => {
   const repo = repository()
   expect(globalSettings(repo).decisionModel).toEqual({ kind: "local" })
-  expect(globalSettings(repo).decisionSlicer).toBe("uncertainty")
+  expect(globalSettings(repo).decisionSlicer).toBe("windows")
   const external = { kind: "external", providerID: "openrouter", modelID: "x" } as const
   setGlobalSetting(repo, "decisionModel", external)
   expect(globalSettings(repo).decisionModel).toEqual(external)
@@ -155,7 +155,7 @@ test("a database written before structured values reads unchanged", () => {
     agingMs: 1_200_000,
     historyCacheMB: 64,
     decisionModel: { kind: "local" },
-    decisionSlicer: "uncertainty",
+    decisionSlicer: "windows",
   })
   expect(projectSettings(repo, "k")).toEqual({
     limit: 2,
