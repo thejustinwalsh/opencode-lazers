@@ -145,3 +145,115 @@ B, D, E, F, G, H and C2; the hierarchy pruning rule (children at least half as l
 ## Files (scratch, not committed)
 
 Folder `/private/tmp/claude-501/-Users-tjw-Documents-ChatGPT-opencode-lazers/b47493ed-6bdc-45ea-82fa-61d28bfbfe2d/scratchpad/spike-decision/`: `labels.json` (labelled set), `build-set.ts`, `tree.json` (decision tree as data), `lib.ts` (approaches A to H, slicers, outline), `harness.ts` and `page/` (loopback server, Playwright, D1 page), `runall.ts`, `analyze.ts`, `stab.ts`, limit and latency probes (`lat*.ts`, `lim*.ts`, `ovh.ts`), `raw/` (per-approach results `A.rep0.json`, `C.rep0.json`, `C1.rep0.json`, `default-limits/` and `old-batch/` results, the request cache `cache-fixed.jsonl`, probe logs).
+
+## Second run: atomic judgments
+
+Direction: `system-one-prompting.md` ("the model makes small judgments about what the text says; code makes the decision"). Same 44 labelled asks, same fixed-limit device, same C slicing (about 4 sentences, one-sentence overlap, at most 650 characters per piece), every request under 400 input tokens (median 101, maximum 237 per question). 42 asks scored; P08 and P09 excluded as before. Harness files (scratch folder): `obs.ts` (observations and rules, written before scoring), `second.ts`, `analyze2.ts`, `obsauc.ts`, `tuned.ts`, `sub.ts`, `ph.ts`, results `raw/S1.json`, `raw/T_v1.json`, `raw/T_v2.json`.
+
+### What the local D1 supports (measured)
+
+- `criteria` with `true` and `false` text on a Noul: supported and it matters. Same state, same question: P(yes) 0.99 with criteria against 0.25 without. The runtime renders options as `false: <text>` and `true: <text>`.
+- `score` with three levels: supported (answer is the expected index plus a probability per level).
+- Several questions in one request: accepted, but **N questions cost N passes**. The decider loops over the questions and repeats the state for each (`decider.ts`, confirmed by reading and by timing): on a 104-token state, 1 question took 80 ms (104 input tokens), 8 questions took 460 ms (703 input tokens). The saving of the hosted model's "barely changes the response time" does not hold locally. Keep the piece small; the 14 questions per piece cost about 0.07 s each (D01: 1,288 requests in 88 s).
+- Model identity: LAZERS names it `d1-omni-2b` with an 8,192-token context (`src/webgpu/system-one.ts:31`, `tools.ts:73`). The weights run here are `d1-omni-600m-text-q8.safetensors` (`models.d1.D1_OMNI_600M.Q8`), and the runtime reports a 16,384-token context ("D1 prompt exceeds its 16384-token context"). I did not run a 2B model. The discrepancy is in LAZERS's naming and its stated context, not fixed here.
+
+### The questions (13 Nouls and one Score per piece)
+
+Each is a short positive statement with `true`/`false` criteria; the example sits inside the `true` text where it helps. Full wording in `obs.ts`. Ids: `names_code` (names a specific file, function, table or command), `existing_behaviour` (describes behaviour that exists today), `open_choice` (leaves a choice about behaviour open), `states_check` (states how the result is checked), `multi_change` (more than one separate change), `stored_data` (changes stored data, a schema or a migration), `symptom_only` (a symptom without its cause), `may_exist` (asks for something that may already exist), `depends_other` (depends on other work finishing first), `undefined_term` (uses a term it does not define), `user_visible` (changes what the user sees), `wording_only` (only wording, formatting or a rename), `adds_new` (adds a new module, tool, setting or table; added to the starting set for Zoom out). The Score "How many separate changes does this text describe?" has levels one / two or three / four or more.
+
+### Code, fixed before scoring
+
+- For each observation, the ask's value is the maximum P(yes) over its pieces. Fuzzy OR is max, NOT is 1 - x.
+- comprehension = max(undefined_term, 1 if the ask has at least 8 pieces) x (1 - wording_only)
+- grounding = max(names_code, existing_behaviour) x (1 - wording_only)
+- readiness = max(states_check, open_choice) x (1 - wording_only)
+- critic = max(stored_data, depends_other) x (1 - wording_only)
+- zoom-out = max(adds_new, symptom_only, may_exist) x (1 - wording_only)
+- An agent is **yes** at 0.7 or above, **no** at 0.3 or below; between is **middle ("Architect decides")**. `user_visible` and `multi_change` feed no agent.
+- Size: sum over pieces of the expected number of changes (1, 2.5 or 5 weighted by the Score probabilities), times 0.75 when there are several overlapping pieces; at most 1.75 is one task, at most 4.5 a few tasks, otherwise a large effort.
+
+### Per observation (rate over asks of the per-ask maximum; AUC against the label of the agent it feeds)
+
+| Observation | Yes (>=0.7) | Middle | No (<=0.3) | Compared label | AUC |
+|---|---|---|---|---|---|
+| names_code | 8 | 8 | 26 | grounding | 0.85 |
+| existing_behaviour | 12 | 12 | 18 | grounding | 0.77 |
+| open_choice | 20 | 20 | 2 | readiness | **0.56** |
+| states_check | 4 | 11 | 27 | readiness | 0.72 |
+| multi_change | 13 | 15 | 14 | size not one task | 0.63 |
+| stored_data | 2 | 10 | 30 | critic | 0.72 |
+| symptom_only | 10 | 13 | 19 | zoom-out | 0.77 |
+| may_exist | 13 | 10 | 19 | zoom-out | 0.77 |
+| depends_other | 12 | 10 | 20 | critic | 0.72 |
+| undefined_term | 5 | 15 | 22 | comprehension | 0.77 |
+| user_visible | 14 | 18 | 10 | (none) | n/a |
+| wording_only | 19 | 20 | 3 | no agent helpful (5 asks) | **0.62** |
+| adds_new | 5 | 17 | 20 | zoom-out | 0.74 |
+
+Each single observation ranks its agent's label better (AUC 0.72 to 0.85, except two) than the previous run's per-agent questions did (0.54 to 0.78 per agent, 0.66 to 0.71 pooled). Three example pieces per observation (high / middle / low, with the score); the wording can be judged by eye:
+
+- names_code: 0.83 "Preserve the good parts and reach the planned outcome by deleting bad c..." (an overreach, no name) / 0.50 "Partial LZ-211 acceptance is retained..." / 0.03 "code: z.string().min(2).max(6), name: z.st..." (a miss: code with names scored no).
+- existing_behaviour: 0.79 "Anything else is deleted." / 0.50 "...touch the same runtime files; coord..." / 0.12 "**Step 5: Commit** `feat(projects): generate a short code...`".
+- open_choice: 0.81 "5. **Cold wake.**" / 0.50 "...base or combined SHA that still..." / 0.23 "Flow 1. ask arrives 2.".
+- states_check: 0.81 "Acceptance - `bun run verify` and the focused runner, tasks, recovery and adoption tests pass." (correct) / 0.49 "2. Runs the decision model on each piece..." / 0.02 "Build order 4. Readiness, Critic, Zoom out; the final pass...".
+- multi_change: 0.90 "Task 12: Least-served-first selection New `src/runner/fair-share.ts`, pure:" / 0.50 "3. Init notice, the Architect setup session and the session-start hook." / 0.11 "A sentinel row in `runner_leases` ... with a 30...".
+- stored_data: 0.57 "`notes.rewriteRef` and the note ..." (only two asks reach yes) / 0.05 "`projects(repository: TaskRepository): ProjectRow[]`".
+- symptom_only: 0.84 "these started failing after the dependency bump; get the suite green" (correct) / 0.50 "**Deprecation.**" / 0.13 "The contributor contracts, `design/runtime-state-machines.md`...".
+- may_exist: 0.83 "Demonstrate same-attempt continuation without an Archite..." / 0.50 "Not a gate: with no profile, work runs..." / 0.07 "`all` scope in the observation contract and reads code...".
+- depends_other: 0.87 "Migration - create the `project` row with its aliases." (an overreach) / 0.50 "Global pause set, then a project registered afterwards..." / 0.09 "The span is measured, like the verification inactivity timeout...".
+- undefined_term: 0.74 "Task 8b: the remaining reads under `all` (built)" / 0.50 "Init | click v Architect session with setup instructions..." / 0.12 "Clean up the mess in the runner. Nobody can follow it anymore.".
+- user_visible: 0.78 "Add a copy button to the code blocks in the chat panel." (correct) / 0.50 "Current native regular-Desktop observations remain separate..." / 0.12 "OpenCode's project id is still used at the boundary...".
+- wording_only: 0.83 "Task 2: Store the code on the project - Reopening the database and registering again keeps both code" (**wrong**: a behavioural test) / 0.50 "Kept - `runner_leases`." / 0.17 "LAZERS keys project data by its own `project` row...".
+- adds_new: 0.91 "Task 5: Two-level settings store - Create: `src/projects/settings.ts`" (correct) / 0.50 "A rebase or re-sign of a worker branch keeps its evidence..." / 0.06 "LZ-200 as integrated (2026-11-20, ...".
+
+The middle example in each list is the piece closest to 0.5, so it shows the boundary rather than a typical middle piece. The middle band holds 10 to 20 of 42 asks on every observation, and `open_choice` and `wording_only` almost never say no (2 and 3 of 42).
+
+### Rule results against the labels (decided before scoring)
+
+| Agent | Hits (yes and helpful) | False (yes, unhelpful) | In middle | Helpful in set | Rule AUC |
+|---|---|---|---|---|---|
+| comprehension | 0 | 0 | 2 | 21 | 0.72 |
+| grounding | 1 | 0 | 4 | 29 | 0.71 |
+| readiness | 0 | 0 | 11 | 29 | 0.67 |
+| critic | 0 | 0 | 4 | 25 | 0.72 |
+| zoom-out | 0 | 0 | 11 | 27 | 0.62 |
+
+Pooled: 1 yes (a hit, no false), 32 middle (24 helpful, 8 unhelpful), 177 no (106 helpful, 71 unhelpful); AUC 0.69. **Under the pre-registered rule, 41 of 42 asks have no agent at yes and 17 of 42 have at least one agent in the middle band.** The cause is the `(1 - wording_only)` guard: `wording_only` is yes on 19 asks and middle on 20, because the maximum over pieces of a weak observation reaches 0.7 somewhere in almost any ask. Asks over 2,000 characters (9 asks) have all 45 helpful pairs at no. That is a defect of the rule (a maximum over pieces suits "does any piece say X"; it does not suit a guard), not of the thresholds. The rule was not changed in the table above.
+
+Size from the breadth score and the number of pieces: exact 16/42, simple versus complex 29/42, confusion (rows one / few / large, columns one / few / large): 5 10 1 / 2 6 6 / 0 7 5. This is no better than A (20/42, 29/42) or C (18/42, 27/42); an expected-changes score still calls most one-liners `a few tasks`.
+
+Cost: 14 requests per piece; requests per ask median 14, maximum 3,682 (the 45 KB plan, 263 pieces); seconds per ask median 1.0, p90 53, worst 260; 10 of 42 asks over 5 seconds, all over 2,000 characters. Pieces per ask median 1, maximum 263.
+
+### Comparison with rows A and C
+
+| Row | Size exact | Simple vs complex | Agent AUC | Yes (hits / false) | Requests per ask (median / max) | Seconds per ask (median / worst) |
+|---|---|---|---|---|---|---|
+| A whole, yes/no per agent | 20/42 | 29/42 | 0.66 | at 0.2: 65 / 23 | 2 / 2 | 1.4 / 223 |
+| C sliced, yes/no per agent | 18/42 | 27/42 | 0.71 | at 0.2: 81 / 28 | 18 / 1,841 | 1.4 / 142 |
+| Second run, rule as written | 16/42 | 29/42 | 0.69 | at 0.7: 1 / 0 | 14 / 3,682 | 1.0 / 260 |
+| Second run, guard dropped (post-hoc, see below) | 16/42 | 29/42 | **0.78** | at 0.7: 65 / 9 | same | same |
+
+Post-hoc look, **not pre-registered and chosen after seeing the numbers** (thresholds untouched, only the guard removed): with `wording_only` out of the rules, 65 hits and 9 false at 0.7, 41 helpful and 29 unhelpful in the middle, 25 helpful and 41 unhelpful at no; pooled AUC 0.78; 14 of 42 asks have no agent at yes and 32 of 42 have an agent in the middle. Per agent: comprehension AUC 0.78 (10 hits, 0 false), grounding 0.80 (13, 1), readiness 0.56 (14, 6), critic 0.76 (12, 1), zoom-out 0.89 (16, 1). This is the best agent separation of any run so far (precision at yes 0.88, recall at yes 0.50, against the label base rate of 0.62), but the label set is the one I wrote and the rule change was made with the results in view; treat it as a hypothesis for the backtest.
+
+### Rewording the two weakest observations (tuned on this set, so optimistic)
+
+The weakest by AUC: `open_choice` (0.56) and `wording_only` (0.62).
+
+| Observation and form | AUC before -> after | Yes / middle / no before -> after |
+|---|---|---|
+| open_choice, reworded Noul ("The text leaves a default, format, limit or error case for the builder to decide.", criteria rewritten) | 0.56 -> 0.60 | 20/20/2 -> 15/25/2 |
+| open_choice, two-option choice (open / settled) | 0.56 -> 0.53 | 20/20/2 -> 38/2/2 |
+| wording_only, reworded Noul ("The change is only a typo, a rename or formatting.", criteria with 'recieve' example) | 0.62 -> 0.71 | 19/20/3 -> 10/20/12 |
+| wording_only, two-option choice (wording or rename only / behaviour change) | 0.62 -> 0.49 | 19/20/3 -> 19/14/9 |
+
+The reworded Nouls help a little; the two-option choice form that the demos use (`mod.ts:48`) did not, and made `open_choice` almost always "open". Rule results with the reworded Nouls swapped in: pooled AUC 0.71, 4 yes (all hits), 54 middle, 39 of 42 asks with no agent at yes, 28 of 42 with an agent in the middle. With the choice forms: AUC 0.51. Both are tuned on the set and only show that wording moves single observations by about 0.05 to 0.1 AUC.
+
+### Reading
+
+1. Atomic observations separate better one at a time (0.72 to 0.85) than the agent-level questions did (0.54 to 0.78 per agent). The model reads what is in the text far better than it predicts which reviewer helps.
+2. The combination rule is where this run failed, and the failure is visible and inspectable: `wording_only` takes the maximum over many pieces and zeroes every agent. A guard should be applied per piece or not at all. With the guard removed the same observations and thresholds give pooled AUC 0.78, but that is a post-hoc finding.
+3. Size is not improved by a breadth Score plus counting pieces; size stays near 40% exact. Leave size to the Architect or to a count of structure in code until a backtest on real recorded asks says otherwise.
+4. Cost is the same order as C (14 passes per piece against 7); N questions cost N passes, so each observation added costs about 0.07 s per piece. Long plans still cost seconds per kilobyte; the 45 KB plan took 260 s.
+5. The middle band is wide. On the set, 32 of 42 asks have at least one agent in the middle under the guard-free rule. "Architect decides" would be the common outcome, not the exception, unless the observations are sharpened.
+
+Not done in this run: stability repeat (D1 was deterministic in the first run), the whole-text and tree variants with atomic questions, and any re-score of P08 and P09. Labels, set size and one model build are unchanged limits.
