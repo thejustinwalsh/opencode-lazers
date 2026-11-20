@@ -101,7 +101,7 @@ export const schemaModules = {
     tables: ["repo_map_sources", "repo_maps", "repo_map_deliveries"],
   },
   planning: {
-    generation: 1,
+    generation: 2,
     source: "src/planning/store.ts",
     tables: [
       "planning_decisions",

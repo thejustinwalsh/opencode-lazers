@@ -230,3 +230,9 @@ Decision:
   1 s at 1,100; 18 s at 6,600). A long ask is always sliced; a slow prompt defeats a fast judgement.
 - **Device limits:** the D1 device requests its computed largest buffer, 16,384 x 9,216 x 4 bytes
   = 604 MB, clamped to the adapter (`src/webgpu/device-limits.ts`).
+- **When the decision model does not run** (local inference off, no window, a timeout, no model),
+  the note does not stop at "not run". It carries the decision model's own questions, generated from
+  the same definitions: the size choices and each planning agent's one-line "use when". It tells
+  the Architect to answer them itself before planning and to state its picks in one line. The
+  Architect's pick is recorded in the same decision record (`architect_json`, source `architect`),
+  so a later threshold can be compared against D1 on the same shape.

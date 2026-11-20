@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { PlanningBody, validateBody, type Validation } from "./draft.ts"
 import { planMarkdownLink } from "./links.ts"
-import { renderBreakdown, renderFullPlan } from "./render.ts"
+import { decisionNote, renderBreakdown, renderFullPlan } from "./render.ts"
+import { AGENT_ORDER, SIZE_CHOICES, useWhen } from "./decision/tree.ts"
 
 const planningID = "0b4e2c1a-0000-4000-8000-000000000001"
 const draft = (draftID: string, objective: string, dependsOn: string[] = []) => ({
@@ -106,4 +107,45 @@ test("the full plan has a section per task draft", () => {
   expect(text).toContain("# Planning flow (r3)")
   expect(text).toContain("## Task plan-link")
   expect(text).toContain("dependsOn: store-schema, breakdown")
+})
+
+const row = (over: Record<string, unknown> = {}) =>
+  ({
+    messageId: "m1",
+    status: "decided",
+    size: "a few tasks",
+    scoresJson: JSON.stringify({
+      comprehension: { score: 0.05 },
+      grounding: { score: 0.45 },
+      readiness: { score: 0.38 },
+      critic: { score: 0.06 },
+      "zoom-out": { score: 0.06 },
+    }),
+    threshold: 0,
+    ...over,
+  }) as never
+
+test("a decided note carries the size and scores and no self-classify instruction", () => {
+  const note = decisionNote(row(), [{ title: "Plan view", state: "in-review" }])
+  expect(note).toBe(
+    [
+      "[lz-planning decision m=m1] size: a few tasks · agent scores: comprehension 0.05, grounding 0.45, readiness 0.38, critic 0.06, zoom-out 0.06 · open plans: Plan view (in-review)",
+      "All five planning agents run on a stored plan; the scores are context (threshold 0, hand-picked; cuts none).",
+    ].join("\n"),
+  )
+  expect(note).not.toContain("answer these yourself")
+})
+
+test("a simple ask says no planning flow", () => {
+  expect(decisionNote(row({ size: "one task" }))).toBe(
+    "[lz-planning decision m=m1] size: one task — no planning flow; ask one question first if the ask is unclear.",
+  )
+})
+
+test("with the decision model not run the note gives the Architect the same questions", () => {
+  const note = decisionNote(row({ status: "unavailable", reason: "no-window", size: null }))
+  expect(note).toContain("decision model not run (no-window)")
+  expect(note).toContain("answer these yourself")
+  for (const choice of SIZE_CHOICES) expect(note).toContain(choice)
+  for (const id of AGENT_ORDER) expect(note).toContain(`- ${id}: ${useWhen(id)}`)
 })
