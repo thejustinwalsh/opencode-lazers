@@ -3,7 +3,8 @@ import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import type { TaskRepository } from "../storage.ts"
 import { runnableFix } from "./profile-runtime.ts"
-import { activeProfile } from "./profile-store.ts"
+import { activeProfile, activeProfileForKey } from "./profile-store.ts"
+import { projectKeyOfDirectory, projectSettings } from "./settings.ts"
 import type { ActiveProfile, ProofRecord } from "./profile-store.ts"
 
 /** Key of the keyed session instruction that carries the project's verification profile. */
@@ -96,5 +97,53 @@ export function ensureArchitectProfileGuidance(
     return true
   })().finally(() => inFlight.delete(sessionID))
   inFlight.set(sessionID, run)
+  return run
+}
+
+/** Key of the keyed session instruction that points an Architect at project setup. */
+export const setupPointerKey = "lazers-project-setup"
+const pointerInFlight = new Map<string, Promise<boolean>>()
+const pointerInstalled = new Set<string>()
+
+const SETUP_POINTER =
+  "This project has no LAZERS profile, so the runtime uses the commands you write in tasks.\n`lz-project-profile` (mode `guide`) explains how to propose one."
+
+/**
+ * Installs a two-line pointer to project setup on an Architect session of a project with no
+ * confirmed profile, whose owner has not dismissed the notice. Setup sessions already carry the
+ * runbook and get nothing. The pointer is not the runbook: a long-lived project would otherwise
+ * pay for it in every session.
+ */
+export function ensureSetupPointer(
+  session: SessionApi,
+  repository: TaskRepository,
+  sessionID: string,
+): Promise<boolean> {
+  if (pointerInstalled.has(sessionID)) return Promise.resolve(false)
+  const running = pointerInFlight.get(sessionID)
+  if (running) return running
+  const run = (async () => {
+    const id = Session.ID.make(sessionID)
+    const info = await Effect.runPromise(session.get({ sessionID: id }))
+    if (info.agent !== "architect") return false
+    if ((info.metadata as Record<string, unknown> | undefined)?.lazersProjectSetup !== undefined)
+      return false
+    const key = projectKeyOfDirectory(repository, info.location.directory)
+    if (!key) return false
+    if (activeProfileForKey(repository, key)) return false
+    if (projectSettings(repository, key).setupDismissedAt !== null) return false
+    const entries = await Effect.runPromise(session.instructions.entry.list({ sessionID: id }))
+    if (!entries.some((entry) => entry.key === setupPointerKey))
+      await Effect.runPromise(
+        session.instructions.entry.put({
+          sessionID: id,
+          key: setupPointerKey,
+          value: SETUP_POINTER,
+        }),
+      )
+    pointerInstalled.add(sessionID)
+    return !entries.some((entry) => entry.key === setupPointerKey)
+  })().finally(() => pointerInFlight.delete(sessionID))
+  pointerInFlight.set(sessionID, run)
   return run
 }

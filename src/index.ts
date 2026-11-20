@@ -22,7 +22,7 @@ import type { ProjectIndex } from "./context/index.ts"
 import { registerContextTools } from "./context/tools.ts"
 import { ensureArchitectMap } from "./context/architect-map.ts"
 import { registerProfileTools } from "./projects/profile-tools.ts"
-import { ensureArchitectProfileGuidance } from "./projects/profile-guidance.ts"
+import { ensureArchitectProfileGuidance, ensureSetupPointer } from "./projects/profile-guidance.ts"
 import { freezePlanMap } from "./context/repo-map-store.ts"
 import { registerTrajectoryTools } from "./trajectory/tools.ts"
 import { registerObservability } from "./observability/rpc.ts"
@@ -135,6 +135,7 @@ export default Plugin.define({
           await ensureArchitectProfileGuidance(ctx.session, repository, prompt.sessionID).catch(
             () => false,
           )
+          await ensureSetupPointer(ctx.session, repository, prompt.sessionID).catch(() => false)
         }),
       )
       yield* sectionEffect("setup:TaskReads", () =>
