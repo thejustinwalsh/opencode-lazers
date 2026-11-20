@@ -127,7 +127,7 @@ export const TaskProposalSchema = z
         z.strictObject({
           id: identifier,
           command: text.describe(
-            "Executable verification. Run available formatter/linter automatic fixes before remaining checks; for LAZERS use bun run verify plus relevant tests. The runtime adds a 120 s per-test hang guard (`bun test --timeout 120000`) to a bun test command without its own --timeout.",
+            "Executable verification. Run available formatter/linter automatic fixes before remaining checks, then the project's verification commands and relevant tests. The runtime adds a 120 s per-test hang guard (`bun test --timeout 120000`) to a bun test command without its own --timeout.",
           ),
           timeoutMs: z
             .int()

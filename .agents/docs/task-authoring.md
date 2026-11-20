@@ -21,7 +21,7 @@ description is unknown rather than inferred. Workers may load a useful native
 skill progressively, subject to OpenCode's normal permission check; an absent or
 denied suggestion does not block a task. An empty applicable list is sufficient.
 Quality checks run formatter and linter automatic fixes before remaining checks.
-For LAZERS use `bun run verify` plus relevant behavior tests. The runtime appends `--timeout 120000` to any `bun test` check without its own `--timeout` (Bun's 5 s per-test default fails correct work under load; only the command-line flag applies to every file). The receipt keeps your command and records the effective one beside it. Choose test targets
+Use the project's verification commands (its profile lists them) plus relevant behavior tests. The runtime appends `--timeout 120000` to any `bun test` check without its own `--timeout` (Bun's 5 s per-test default fails correct work under load; only the command-line flag applies to every file). The receipt keeps your command and records the effective one beside it. Choose test targets
 from repository findings and inspect which cases ran. Do not create model repair
 turns for mechanically fixable formatting or lint.
 Do not fill fields with boilerplate.

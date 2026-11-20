@@ -1,6 +1,6 @@
 # Project profile and init
 
-Status: design approved by the owner in conversation on 2026-11-20. Not built.
+Status: built on branch `feat/profile-store`; the implementation plan is `.agents/plans/project-profile.md`.
 Related: [Architect planning flow](architect-planning.md), [multi-project](multi-project.md).
 Facts behind it: the toolchain survey reported in the driver session (verification commands are
 free text per task; the runtime assumes Bun and TypeScript in eight places).
