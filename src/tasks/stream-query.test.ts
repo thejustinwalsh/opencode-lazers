@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { validProposal } from "../../test/proposal.ts"
 import { RecoveryDetector } from "../recovery/detector.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 import { insertTask, openFixture, submitPlan, type Fixture } from "./schedule/fixture.ts"
@@ -32,7 +31,6 @@ async function project() {
   const heldPlan = submitPlan(f, "held", [held])
   const grindPlan = submitPlan(f, "grind", [grind, calm])
   f.reads.runner.setDispatchPause(heldPlan, { reason: "hold", untilPlans: [] }, { caller: "t" })
-  const proposal = validProposal()
   f.repository.atomic((db) => {
     db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id IN (?,?,?)").run(
       firstPlan,

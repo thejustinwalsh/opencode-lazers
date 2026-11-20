@@ -11,6 +11,8 @@ import { Observability } from "../../../../src/observability/contract.ts"
 import type { TopologyResponse } from "../../../../src/observability/contract.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
 import type { Read } from "../adapter.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
+import { taskStreams } from "./tasks-streams.ts"
 
 /**
  * Pure answers for the Tasks panel: a compact description of the tasks at one moment, expanded
@@ -358,7 +360,9 @@ function currentActivity(data: TasksData, ids: string[]) {
 }
 
 export function rpc(data: () => TasksData) {
+  const streams = taskStreams(data, PROJECT.canonical)
   return {
+    [Streams.id]: streams,
     [Tasks.id]: {
       get: (input: { taskID: string }) => detail(data(), input.taskID),
       currentActivity: (input: { taskIDs: string[] }) => currentActivity(data(), input.taskIDs),
