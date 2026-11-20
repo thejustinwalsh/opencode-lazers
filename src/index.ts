@@ -113,6 +113,20 @@ export default Plugin.define({
       )
       yield* sectionEffect("setup:Projects", () =>
         registerProjects(ctx, repository, {
+          projectID: ctx.location.project.id,
+          sessionOf: async (id) => {
+            const session = await runtime.host.session(id, { messages: false })
+            return session && session.projectID === ctx.location.project.id
+              ? {
+                  id: session.id,
+                  archived: session.archived,
+                  ...(session.agent ? { agent: session.agent } : {}),
+                  ...(session.pendingForms !== undefined
+                    ? { pendingForms: session.pendingForms }
+                    : {}),
+                }
+              : null
+          },
           loaded: loadedProjectDirectories,
           wake: () => core.wake(),
           defaults: {

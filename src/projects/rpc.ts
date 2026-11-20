@@ -8,6 +8,9 @@ import { pauseRecords, setPause } from "./pause.ts"
 import type { PauseScope } from "./pause.ts"
 import { ProjectCodeError, projects, setProjectCode } from "./registry.ts"
 import { isLoaded, liveDirectories } from "./scope.ts"
+import { needsYouPage } from "./needs-you.ts"
+import type { NeedsYouSession } from "./needs-you.ts"
+import { allProjectsAccess } from "./read-access.ts"
 import { globalSettings, projectSettings, setGlobalSetting, setProjectSetting } from "./settings.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
 
@@ -139,12 +142,39 @@ export function projectsOperations(
 }
 
 export function registerProjects(
-  ctx: Pick<Plugin.Context, "rpc">,
+  ctx: Pick<Plugin.Context, "rpc" | "permission" | "session">,
   repository: Controls,
-  options: Parameters<typeof projectsOperations>[1],
+  options: Parameters<typeof projectsOperations>[1] & {
+    /** This location's OpenCode project id, for the caller's session check. */
+    projectID: string
+    /** Reads a session of this location's project; native questions come only from these. */
+    sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
+  },
 ) {
   const operations = projectsOperations(repository, options)
   return timedRpc(ctx.rpc).register(Projects, {
+    needsYou: (input) =>
+      Effect.tryPromise({
+        try: async () => {
+          const access = await allProjectsAccess(ctx, {
+            sessionID: input.sessionID,
+            projectID: options.projectID,
+            repository,
+            loaded: options.loaded,
+            unavailable: "Needs you scope is unavailable",
+          })
+          const page = await needsYouPage({
+            repository,
+            units: access.units,
+            canRead: access.canRead,
+            ownDirectory: repository.projectDirectory,
+            ...(input.cursor ? { cursor: input.cursor } : {}),
+            ...(options.sessionOf ? { sessionOf: options.sessionOf } : {}),
+          })
+          return page ?? { items: [], nextCursor: null }
+        },
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(Effect.orDie),
     list: () => Effect.sync(() => operations.list()),
     setCode: (input) => Effect.sync(() => operations.setCode(input.key, input.code)),
     setPause: (input) =>
