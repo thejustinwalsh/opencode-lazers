@@ -198,9 +198,9 @@ export const schemaModules = {
     tables: ["model_mappings"],
   },
   audit: {
-    generation: 1,
+    generation: 2,
     source: "src/audit/history.ts",
-    tables: ["audit_runs", "audit_sections", "audit_decisions"],
+    tables: ["audit_runs", "audit_sections", "audit_decisions", "audit_findings"],
   },
   observability: {
     generation: 1,

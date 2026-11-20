@@ -1,6 +1,15 @@
 import { setFallowConfig } from "./config.ts"
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, readFileSync, writeFileSync } from "node:fs"
+import { Database } from "bun:sqlite"
+import {
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
@@ -374,4 +383,122 @@ test("a cancelled real scan leaves a retrievable interrupted run without task fa
   const saved = f.history.list().runs[0]!
   expect(saved).toMatchObject({ state: "interrupted", taskID: f.task.id, attemptID: f.attemptID })
   expect(new RunnerStore(f.repository).attempts(f.planID)[0]!.state).toBe("running")
+})
+
+/** Everything a reader of a run can see, in one value: summaries, pages, reports and the export. */
+async function readers(history: AuditHistory, runID: string, withList = true) {
+  const exported = readFileSync(await history.export(runID), "utf8")
+  return {
+    // `list` also moves a page of old sections, so a test of the unmoved state leaves it out.
+    list: withList ? history.list({ limit: 10 }) : null,
+    summary: history.summary(history.get(runID)),
+    pages: [
+      history.detail(runID),
+      history.detail(runID, { analysis: "deadCode", limit: 7, offset: 5 }),
+      history.detail(runID, { path: "src/f3.ts" }),
+      history.detail(runID, { includeReports: true, limit: 1 }),
+    ],
+    sections: history.sections(runID),
+    exported,
+  }
+}
+
+const sectionRows = (f: ReturnType<typeof fixture>) =>
+  f.repository.atomic((db) =>
+    db
+      .query<{ run_id: string; analysis: string; payload: string; raw_file: number }, []>(
+        "SELECT run_id,analysis,payload,raw_file FROM audit_sections ORDER BY rowid",
+      )
+      .all(),
+  )
+
+test("sections stored before report files read the same, move in pages, and free their blobs", async () => {
+  const f = fixture()
+  const start = f.history.start({ requestID: "legacy-blob", workspace: f.workspace }, f.actor)
+  const runID = start.run.runID
+  const reports = {
+    deadCode: many(40),
+    health: { summary: { score: 90 }, findings: [{ path: "src/x.ts", line: 2, name: "x" }] },
+    duplication: { stats: { clone_groups: 0 }, clone_groups: [] },
+  }
+  for (const [name, value] of Object.entries(reports)) f.history.section(runID, name, value)
+  f.history.finish(runID)
+  const current = await readers(f.history, runID)
+  expect(sectionRows(f).every((row) => row.raw_file === 1 && row.payload === "")).toBe(true)
+
+  // Rewind the database to generation 1: reports in the blob, no file, no `raw_file` column.
+  const blobs = f.history.sections(runID).map((s) => [s.analysis, JSON.stringify(s.report)])
+  f.repository.atomic((db) => {
+    for (const [analysis, json] of blobs)
+      db.query("UPDATE audit_sections SET payload=? WHERE run_id=? AND analysis=?").run(
+        json!,
+        runID,
+        analysis!,
+      )
+    db.exec("ALTER TABLE audit_sections DROP COLUMN raw_file")
+    db.exec("UPDATE schema_modules SET generation=1 WHERE module='audit'")
+  })
+  rmSync(join(f.root, "data", "audits", runID), { recursive: true, force: true })
+  const payloadBytes = f.repository.atomic(
+    (db) =>
+      db.query<{ n: number }, []>("SELECT SUM(LENGTH(payload)) AS n FROM audit_sections").get()!.n,
+  )
+
+  // A reload reopens the database: the upgrade adds the column and moves no data.
+  f.repository.close()
+  const reopened = new AuditHistory(f.open())
+  expect(sectionRows(f).every((row) => row.raw_file === 0 && row.payload !== "")).toBe(true)
+  const unlisted = { ...current, list: null }
+  expect(await readers(reopened, runID, false)).toEqual(unlisted)
+
+  // Pages: two sections, then the last one; nothing is moved twice.
+  expect(reopened.compact(2)).toMatchObject({ moved: 2, remaining: 1 })
+  expect(await readers(reopened, runID, false)).toEqual(unlisted)
+  expect(reopened.compact(2)).toMatchObject({ moved: 1, remaining: 0 })
+  expect(reopened.compact(2)).toMatchObject({ moved: 0, remaining: 0 })
+  expect(sectionRows(f).every((row) => row.raw_file === 1 && row.payload === "")).toBe(true)
+  expect(await readers(reopened, runID)).toEqual(current)
+
+  // Bytes: the blobs are gone from the database; the files hold the same reports compressed.
+  const fileBytes = sectionRows(f)
+    .map(
+      (row) => statSync(join(f.root, "data", "audits", row.run_id, `${row.analysis}.json.gz`)).size,
+    )
+    .reduce((a, b) => a + b, 0)
+  expect(fileBytes).toBeLessThan(payloadBytes / 3)
+  console.info(`audit sections: ${payloadBytes} blob bytes -> ${fileBytes} file bytes`)
+})
+
+test("a missing report file fails the report readers and leaves findings readable", async () => {
+  const f = fixture()
+  const runID = f.history.start({ requestID: "missing-file", workspace: f.workspace }, f.actor).run
+    .runID
+  f.history.section(runID, "deadCode", many(3))
+  f.history.finish(runID)
+  rmSync(join(f.root, "data", "audits", runID), { recursive: true })
+  expect(f.history.detail(runID).totalFindings).toBe(3)
+  expect(() => f.history.sections(runID)).toThrow("is missing")
+  await expect(f.history.export(runID)).rejects.toThrow("is missing")
+})
+
+test("list reads the sections of every run in one query", () => {
+  const f = fixture()
+  for (const name of ["a", "b", "c"]) {
+    const run = f.history.start({ requestID: name, workspace: f.workspace }, f.actor).run
+    f.history.section(run.runID, "deadCode", many(1))
+    f.history.finish(run.runID)
+  }
+  const sql: string[] = []
+  const original = Database.prototype.query
+  Database.prototype.query = function (this: Database, text: string) {
+    sql.push(text)
+    return original.call(this, text)
+  } as typeof original
+  try {
+    const runs = f.history.list().runs
+    expect(runs.map((run) => run.analyses.length)).toEqual([1, 1, 1])
+  } finally {
+    Database.prototype.query = original
+  }
+  expect(sql.filter((text) => /FROM audit_sections\s+WHERE run_id/.test(text))).toHaveLength(1)
 })
