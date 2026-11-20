@@ -1309,6 +1309,11 @@ export class TaskRepository {
     return receipt
   }
 
+  /** True once `close` ran and nothing has used the repository since; late work must not reopen it. */
+  get isClosed(): boolean {
+    return this.shared === undefined
+  }
+
   close(): void {
     this.listeners.clear()
     this.shared?.release()

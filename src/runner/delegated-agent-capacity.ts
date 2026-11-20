@@ -334,6 +334,8 @@ export class DelegatedAgentCapacity {
   private async initialize() {
     const projectKey = await this.projectKeyPromise
     this.resolvedProjectKey = projectKey
+    // A core released while the key resolved: touching the repository would reopen its database.
+    if (this.repository.isClosed) return projectKey
     const projectDirectory = canonicalDirectory(this.repository.projectDirectory)
     const now = this.clock.now()
     // The project registry (`registerProject`) owns lazers_projects and its paths; this only
@@ -351,6 +353,13 @@ export class DelegatedAgentCapacity {
     projectDirectory: string,
     now: number,
   ) {
+    // The runner schema belongs to the runner store; a database it has not prepared has no attempts.
+    const hasAttempts = db
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('runner_attempts','runner_plans','runner_nodes')",
+      )
+      .all()
+    if (hasAttempts.length < 3) return
     const projectPaths = new Set([
       projectDirectory,
       canonicalDirectory(this.repository.projectDirectory),
