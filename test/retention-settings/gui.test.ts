@@ -14,6 +14,8 @@ import type {
 const status: RetentionStatusView = {
   fileBytes: 2_520_000_000,
   freeBytes: 0,
+  autoVacuum: "incremental",
+  compactionDiskBytes: 0,
   presets: [
     { days: 7, rows: 9000, bytes: 700_000_000 },
     { days: 14, rows: 100, bytes: 20_000_000 },
@@ -61,6 +63,7 @@ const slice = (done: boolean, rows: number): RetentionSliceView => ({
   skipped: [],
   fileBytes: 2_520_000_000,
   freeBytes: 600_000_000,
+  reclaimedBytes: 0,
 })
 
 test("the days field accepts presets and a custom count from 1 to 3650 only", () => {
