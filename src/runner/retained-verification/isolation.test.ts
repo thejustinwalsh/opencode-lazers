@@ -844,8 +844,11 @@ test("isolation verification of a large tree yields to the event loop in short s
     }
     // Structural signal: a setImmediate chain only advances when the walk hands
     // the event loop a turn. A walk that blocked would complete with ~0 ticks.
-    // Wall-clock gaps are checked only as a generous bound against one long block.
-    let last = performance.now()
+    // A walk that blocked would put nearly all of its time into one slice, so the worst slice
+    // is bounded as a share of the whole walk. An absolute bound fails when the machine is
+    // loaded and the process itself is descheduled.
+    const started = performance.now()
+    let last = started
     let worstSlice = 0
     let ticks = 0
     let running = true
@@ -866,7 +869,7 @@ test("isolation verification of a large tree yields to the event loop in short s
     }
     // 600 directories at 32 per batch, plus depth, means dozens of awaited batches.
     expect(ticks).toBeGreaterThan(20)
-    expect(worstSlice).toBeLessThan(500)
+    expect(worstSlice).toBeLessThan((performance.now() - started) / 2)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
