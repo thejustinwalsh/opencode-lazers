@@ -2,6 +2,7 @@ import type { FindingSeverity } from "./contract.ts"
 import type { PlanningBody, Validation } from "./draft.ts"
 import { AGENT_ORDER, SIZE_CHOICES, SIZE_CRITERIA, useWhen } from "./decision/tree.ts"
 import { planMarkdownLink } from "./links.ts"
+import { firstSentence } from "./sentence.ts"
 import type { DecisionRow } from "./store.ts"
 
 export type ReviewSummary = {
@@ -11,20 +12,6 @@ export type ReviewSummary = {
   ownerQuestions: number
   tokens: number
   costUSD?: number
-}
-
-const OBJECTIVE_MAX = 100
-
-/** The first sentence of the objective, at most 100 characters, `…` when cut. */
-function firstSentence(proposal: unknown): string {
-  const objective =
-    proposal !== null && typeof proposal === "object"
-      ? (proposal as { objective?: unknown }).objective
-      : undefined
-  if (typeof objective !== "string" || !objective.trim()) return "(no objective yet)"
-  const text = objective.trim().replace(/\s+/g, " ")
-  const sentence = text.split(/(?<=[.!?])\s/u)[0]!
-  return sentence.length > OBJECTIVE_MAX ? `${sentence.slice(0, OBJECTIVE_MAX - 1)}…` : sentence
 }
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`

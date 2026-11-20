@@ -391,6 +391,17 @@ export class PlanningStore {
     )
   }
 
+  /** Every plan of a project, newest first. */
+  projectPlannings(projectKey: string): PlanningRow[] {
+    return this.repository.read((db) =>
+      select<PlanningRow>(
+        db,
+        "SELECT * FROM planning_plannings WHERE project_key=? ORDER BY updated_at DESC, id",
+        [projectKey],
+      ),
+    )
+  }
+
   /**
    * Append-only. `expectedRevision` is the revision the author edited from: when another revision
    * landed since, nothing is written and the current revision comes back as `conflict`.

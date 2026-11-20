@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
-import { timedHooks } from "../diagnostics/stall-probe.ts"
+import { timedHooks, timedRpc } from "../diagnostics/stall-probe.ts"
 import type { InferenceBroker } from "../webgpu/broker.ts"
 import { defaultFeatures, FeatureSettings, featureEnabled } from "../webgpu/features.ts"
 import { LocalInference } from "../webgpu/rpc.ts"
@@ -9,6 +9,8 @@ import { SystemOneRequest, type SystemOneInput } from "../webgpu/system-one.ts"
 import type { TaskRepository } from "../storage.ts"
 import { deciderFor, localDecider, type ExternalGenerate } from "./decision/deciders.ts"
 import { PlanningDecisions } from "./decision/step.ts"
+import { planningView } from "./read.ts"
+import { PlanningRpc } from "./rpc-contract.ts"
 import { PlanningStore } from "./store.ts"
 
 /**
@@ -99,4 +101,42 @@ export function registerPlanningDecisionHooks(
       }
     }),
   )
+}
+
+/** `lz.planning`: reads of this project's stored plans, never of another project's. */
+export function registerPlanningRpc(
+  ctx: Pick<Plugin.Context, "rpc">,
+  repository: TaskRepository,
+  projectID: string,
+) {
+  const store = new PlanningStore(repository)
+  return timedRpc(ctx.rpc).register(PlanningRpc, {
+    get: (input) =>
+      Effect.sync(() => planningView(store, projectID, input.planningID, input.revision) ?? null),
+    resolve: (input) =>
+      Effect.sync(() => {
+        const row = store.planning(input.planningID)
+        return row && row.projectKey === projectID
+          ? ({
+              status: "found",
+              planningID: row.id,
+              projectKey: row.projectKey,
+              projectDirectory: row.projectDirectory,
+            } as const)
+          : ({ status: "not_found" } as const)
+      }),
+    list: (input) =>
+      Effect.sync(() =>
+        (input.sessionID
+          ? store.plannings(input.sessionID)
+          : store.projectPlannings(projectID)
+        ).map((row) => ({
+          id: row.id,
+          title: row.title,
+          state: row.state,
+          revision: row.revision,
+          updatedAt: row.updatedAt,
+        })),
+      ),
+  })
 }
