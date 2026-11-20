@@ -36,13 +36,13 @@ import type { VerificationTimeoutDefaults } from "./runner/verification-timeout.
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
 function result<T>(
-  run: () => T,
+  run: () => T | Promise<T>,
   structured = false,
   render: (output: T) => string = JSON.stringify,
 ) {
-  return Effect.sync(() => {
+  return Effect.promise(async () => {
     try {
-      const output = run()
+      const output = await run()
       return structured ? { content: render(output), output } : { content: JSON.stringify(output) }
     } catch (error) {
       return {
@@ -74,10 +74,15 @@ export function registerTaskTools(
   // retry a write just because its old connection was disposed.
   const path = repository.path
   const projectDirectory = repository.projectDirectory
-  function withRepository<T>(run: (connection: TaskRepository) => T): T {
+  /**
+   * One connection per execution, with the work retried while another process holds the write
+   * lock (`retryBusy`): every handler here is request-keyed or reads/upserts, so repeating it is
+   * safe, and the wait yields the event loop instead of failing after the synchronous budget.
+   */
+  async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
     const connection = new TaskRepository(path, projectDirectory)
     try {
-      return run(connection)
+      return await connection.retryBusy(() => run(connection))
     } finally {
       connection.close()
     }
@@ -122,7 +127,7 @@ export function registerTaskTools(
                     (revision) => ({ revision }),
                     (error: unknown) => ({ error }),
                   )
-                  const receipt = withRepository((connection) => {
+                  const receipt = await withRepository((connection) => {
                     const submitted = submitTask(
                       connection,
                       parsed.data,
@@ -183,7 +188,7 @@ export function registerTaskTools(
                   if (context.agent !== "architect")
                     throw new Tool.Error({ message: "Task disposition is restricted to Architect" })
                   const parsed = TaskDispositionInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     connection.recordDisposition(parsed, {
                       sessionID: context.sessionID,
                       agent: String(context.agent),
@@ -226,7 +231,7 @@ export function registerTaskTools(
                       message: "Task classification is restricted to Architect",
                     })
                   const parsed = TaskClassificationToolInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     guardedWrite(
                       connection,
                       {
@@ -275,7 +280,7 @@ export function registerTaskTools(
                   if (context.agent !== "architect")
                     throw new Tool.Error({ message: "Task correction is restricted to Architect" })
                   const parsed = TaskCorrectionToolInput.parse(input)
-                  const receipt = withRepository((connection) =>
+                  const receipt = await withRepository((connection) =>
                     guardedWrite(
                       connection,
                       {
@@ -335,7 +340,7 @@ export function registerTaskTools(
                   try {
                     const output = reader.inspect(parsed.taskID)
                     if (output.status === "found")
-                      withRepository((connection) =>
+                      await withRepository((connection) =>
                         observeRevision(
                           connection,
                           context.sessionID,
@@ -381,11 +386,11 @@ export function registerTaskTools(
               Effect.tryPromise({
                 try: async (signal) => {
                   const { format, ...query } = input
-                  const detail = withRepository((connection) =>
+                  const detail = await withRepository((connection) =>
                     new TaskReads(connection).get(query),
                   )
                   if (detail.status === "found" && detail.classification)
-                    withRepository((connection) => {
+                    await withRepository((connection) => {
                       observeRevision(
                         connection,
                         context.sessionID,

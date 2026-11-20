@@ -20,10 +20,11 @@ type ModelToolContext = Pick<Plugin.Context, "tool" | "permission"> & {
 export function registerModelTools(ctx: ModelToolContext, repository: TaskRepository) {
   const path = repository.path
   const projectDirectory = repository.projectDirectory
-  const withRepository = <T>(run: (connection: TaskRepository) => T): T => {
+  // Retried while another process holds the write lock; settings reads and writes are idempotent.
+  const withRepository = async <T>(run: (connection: TaskRepository) => T): Promise<T> => {
     const connection = new TaskRepository(path, projectDirectory)
     try {
-      return run(connection)
+      return await connection.retryBusy(() => run(connection))
     } finally {
       connection.close()
     }
@@ -49,7 +50,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const output = withRepository((connection) =>
+                  const output = await withRepository((connection) =>
                     new ModelSettingsService(connection).settings(input),
                   )
                   return { content: JSON.stringify(output), output }
@@ -86,7 +87,7 @@ export function registerModelTools(ctx: ModelToolContext, repository: TaskReposi
                 )
               return Effect.tryPromise({
                 try: async () => {
-                  const output = withRepository((connection) =>
+                  const output = await withRepository((connection) =>
                     new ModelSettingsService(connection).configureCurrent(input),
                   )
                   if (ctx.agent && output.status === "updated" && isAgentSubject(input.persona))

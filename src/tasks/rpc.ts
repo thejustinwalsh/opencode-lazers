@@ -364,20 +364,22 @@ export function registerTaskReads(
                           message: "Task advice attachment is restricted to Architect",
                         })
                       const parsed = TaskAdviceToolInput.parse(input)
-                      const receipt = guardedWrite(
-                        reads.repository,
-                        {
-                          sessionID: context.sessionID,
-                          taskID: parsed.taskID,
-                          kind: "advice",
-                          recordKey: "advice",
-                        },
-                        (expectedRevision) =>
-                          recordTaskAdvice(
-                            reads.repository,
-                            { ...parsed, expectedRevision },
-                            { sessionID: context.sessionID, agent: String(context.agent) },
-                          ),
+                      const receipt = await reads.repository.retryBusy(() =>
+                        guardedWrite(
+                          reads.repository,
+                          {
+                            sessionID: context.sessionID,
+                            taskID: parsed.taskID,
+                            kind: "advice",
+                            recordKey: "advice",
+                          },
+                          (expectedRevision) =>
+                            recordTaskAdvice(
+                              reads.repository,
+                              { ...parsed, expectedRevision },
+                              { sessionID: context.sessionID, agent: String(context.agent) },
+                            ),
+                        ),
                       )
                       return { content: JSON.stringify(receipt) }
                     },

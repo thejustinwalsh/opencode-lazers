@@ -199,10 +199,17 @@ export function registerAuditTools(
             resources: ["*"],
           })
           .pipe(
-            Effect.map(() => {
-              const output = history.decide(input, { sessionID: call.sessionID, agent: call.agent })
-              return { content: JSON.stringify(output), output }
-            }),
+            Effect.flatMap(() =>
+              Effect.promise(() =>
+                repository.retryBusy(() => {
+                  const output = history.decide(input, {
+                    sessionID: call.sessionID,
+                    agent: call.agent,
+                  })
+                  return { content: JSON.stringify(output), output }
+                }),
+              ),
+            ),
           ),
     })
     editor.add({
@@ -562,11 +569,13 @@ export function registerAuditTools(
             Effect.flatMap(() =>
               Effect.tryPromise({
                 try: async () => {
-                  const revision = setFallowConfig(
-                    repository,
-                    input.set,
-                    { sessionID: call.sessionID, agent: call.agent },
-                    input.reason,
+                  const revision = await repository.retryBusy(() =>
+                    setFallowConfig(
+                      repository,
+                      input.set,
+                      { sessionID: call.sessionID, agent: call.agent },
+                      input.reason,
+                    ),
                   )
                   const output = {
                     sha256: revision.sha256,
