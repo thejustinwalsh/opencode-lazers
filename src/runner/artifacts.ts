@@ -656,8 +656,16 @@ const verificationEnvironment = () =>
     ),
   )
 
+/** What a profile adds to the environment identity: names and versions, never values. */
+export type ProfileIdentity = {
+  revision: number
+  toolchains: string[]
+  env: string[]
+  toolVersions: Record<string, string>
+}
+
 /** Stable, readable check-runtime metadata; module replacement is not an environment change. */
-export function verificationEnvironmentIdentity(): string {
+export function verificationEnvironmentIdentity(profile?: ProfileIdentity): string {
   return canonical({
     bunRevision: Bun.revision,
     bunVersion: Bun.version,
@@ -665,6 +673,7 @@ export function verificationEnvironmentIdentity(): string {
     platform: process.platform,
     architecture: process.arch,
     environment: verificationEnvironment(),
+    ...(profile ? { profile } : {}),
   })
 }
 async function bounded(stream: ReadableStream<Uint8Array>, limit = 32768, onProgress?: () => void) {

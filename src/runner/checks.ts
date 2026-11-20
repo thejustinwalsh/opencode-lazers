@@ -1,13 +1,28 @@
-import { join, dirname, isAbsolute, basename } from "node:path"
+import { join, dirname, isAbsolute, basename, delimiter } from "node:path"
+import { toolchainFacts } from "../projects/toolchains.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 
 /** Desktop services may start without the user's package-manager directory on PATH. */
-export function checkEnvironment(environment: Record<string, string | undefined> = process.env) {
+export function checkEnvironment(
+  environment: Record<string, string | undefined> = process.env,
+  toolchains?: readonly string[],
+) {
   const result = Object.fromEntries(
     Object.entries(environment).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   )
+  // A project with a profile names its toolchains; Bun is not assumed.
+  if (toolchains !== undefined) {
+    for (const name of toolchains) {
+      const facts = toolchainFacts(name)
+      if (Bun.which(facts.executable, { PATH: result.PATH ?? "" })) continue
+      const found = locateTool(facts.executable, facts.homes(result, process.execPath), result)
+      if (found.path)
+        result.PATH = [dirname(found.path), result.PATH].filter(Boolean).join(delimiter)
+    }
+    return result
+  }
   if (Bun.which("bun", { PATH: result.PATH ?? "" })) return result
   const candidates = [
     result.BUN_INSTALL && join(result.BUN_INSTALL, "bin"),
@@ -22,6 +37,20 @@ export function checkEnvironment(environment: Record<string, string | undefined>
     break
   }
   return result
+}
+
+/** Searches PATH, then the toolchain's known homes; `searched` lists every directory tried. */
+export function locateTool(
+  executable: string,
+  homes: readonly string[],
+  environment: Record<string, string>,
+): { path?: string; searched: string[] } {
+  const searched = [...(environment.PATH ?? "").split(delimiter).filter(Boolean), ...homes]
+  for (const directory of searched) {
+    const path = Bun.which(executable, { PATH: directory })
+    if (path) return { path, searched }
+  }
+  return { searched }
 }
 
 /** Command outcomes establish checks. Workspace and environment metadata are diagnostics. */
