@@ -36,7 +36,13 @@ export function harness(
   let globalPause: ProjectsListing["globalPause"] = null
   let reachable = options.reachable ?? true
   const calls: Call[] = []
-  const settings = { globalSlots: null, agingMs: 600_000, historyCacheMB: 128 }
+  const settings = {
+    globalSlots: null,
+    agingMs: 600_000,
+    historyCacheMB: 128,
+    decisionModel: { kind: "local" as const },
+    decisionSlicer: "windows" as const,
+  }
   const ok: ProjectsOutcome = { ok: true }
   const find = (scope: ProjectScope) =>
     scope.kind === "project" ? projects.find((p) => p.key === scope.key) : undefined
@@ -157,6 +163,24 @@ export function harness(
           checked={props.checked}
           onChange={(e) => props.onChange(e.currentTarget.checked)}
         />
+      ),
+      Select: (props: {
+        label: string
+        value: string
+        options: readonly { value: string; label: string }[]
+        onChange(value: string): void
+      }) => (
+        <select
+          aria-label={props.label}
+          value={props.value}
+          onChange={(e) => props.onChange(e.currentTarget.value)}
+        >
+          {props.options.map((option) => (
+            <option value={option.value} selected={option.value === props.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       ),
       Button: (props: { children: JSX.Element; onClick?(): void }) => (
         <button type="button" onClick={() => props.onClick?.()}>
