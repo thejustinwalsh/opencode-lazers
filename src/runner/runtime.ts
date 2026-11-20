@@ -20,7 +20,7 @@ import {
   effectSuperseded,
   fallowAcceptance,
 } from "./runtime-helpers.ts"
-import type { StartupRecoveryAuthorization, WorkerObservationFence } from "./runtime-helpers.ts"
+import type { StartupRecoveryAuthorization } from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -29,6 +29,7 @@ import { ArchitectRenewal } from "./architect-renewal.ts"
 import { Dispatch } from "./dispatch.ts"
 import { WorkerObservation } from "./worker-observation.ts"
 import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
+import { AttemptAdvance } from "./attempt-advance.ts"
 import { CheckActivities } from "./check-activities.ts"
 import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
@@ -453,15 +454,6 @@ function commandWakesScheduler(command: PlanCommand, result: unknown): boolean {
   }
 }
 
-/** What the pass over one running attempt carries from step to step. */
-type AdvanceContext = {
-  plan: PlanRow
-  attempt: AttemptRow
-  fence: number
-  observation: WorkerObservationFence
-  session: HostSession
-}
-
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
@@ -480,6 +472,7 @@ export class TaskRuntime {
   private readonly dispatchModule: Dispatch
   private readonly workerObservation: WorkerObservation
   private readonly cleanupAudit: CleanupAudit
+  private readonly attemptAdvance: AttemptAdvance
   private readonly checkActivities: CheckActivities
   private readonly verificationCandidate: VerificationCandidate
   private readonly effectReconciliation: EffectReconciliation
@@ -507,7 +500,6 @@ export class TaskRuntime {
   private readonly startedAuditorReports = new Set<string>()
   private readonly workerNoProgressWindowMs: number
   private readonly cancelIdleWaitMs: number
-  private readonly workerProgress = new Map<string, { fingerprint: string; since: number }>()
   private readonly verificationTimeoutDefaults: VerificationTimeoutDefaults
   private readonly architectPromptHook: boolean
   private readonly requestTick: () => Promise<void>
@@ -757,6 +749,18 @@ export class TaskRuntime {
       journal: this.journal,
     })
     this.cleanupAudit = new CleanupAudit(this.core)
+    this.attemptAdvance = new AttemptAdvance(this.core, {
+      autoResumeInterrupted: this.autoResumeInterrupted,
+      workerNoProgressWindowMs: this.workerNoProgressWindowMs,
+      command: (...args) => this.command(...args),
+      prepareWorker: (...args) => this.prepareWorker(...args),
+      verify: (...args) => this.verify(...args),
+      failAttempt: (...args) => this.failAttempt(...args),
+      validArchitect: this.validArchitect.bind(this),
+      observeUsage: (...args) => this.observeUsage(...args),
+      journal: this.journal,
+      workerObservation: this.workerObservation,
+    })
     this.sources = new ArchitectSources(this.core, {
       isStopped: () => this.stopped,
       ownership: this.ownership,
@@ -7446,512 +7450,12 @@ export class TaskRuntime {
    *   `cancelled`.
    * A live session, or an intended or uncertain effect of the attempt, is never settled.
    */
-  private static readonly staleAttemptWindowMs = 60_000
-  private readonly staleAttemptProbes = new Map<string, { since: number; probed: number }>()
-  private async settleStaleAttempts(fence: number) {
-    for (const attempt of this.store.activeProjectAttempts()) {
-      const plan = this.store.plan(attempt.plan_id)
-      if (!plan) continue
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((item) => item.task_id === attempt.task_id)
-        .at(-1)
-      if (latest?.id !== attempt.id) continue
-      // The Architect is finishing this task itself. Its attempt has no native session, so absence
-      // says nothing about it: only accept, a plan cancellation, or the abandonment hold ends it.
-      if (isTakeoverAttempt(attempt.policy)) continue
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        continue
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      let target: "accepted" | "failed" | "cancelled" | undefined
-      let cause: string
-      if (node && ["accepted", "incorporated"].includes(node.state)) {
-        if (!["running", "verifying"].includes(attempt.state)) continue
-        target = "accepted"
-        cause = "node-already-accepted"
-      } else if (
-        ["running", "verifying"].includes(attempt.state) &&
-        ["blocked", "cancelled", "failed", "exhausted"].includes(plan.state)
-      ) {
-        // Give the ordinary worker observation time to settle the attempt first, then probe the
-        // host at most once per window so a held plan costs no extra read on every tick.
-        const now = this.now()
-        const seen = this.staleAttemptProbes.get(attempt.id)
-        if (seen === undefined) this.staleAttemptProbes.set(attempt.id, { since: now, probed: now })
-        if (seen === undefined || now - seen.probed < TaskRuntime.staleAttemptWindowMs) continue
-        seen.probed = now
-        const session = attempt.session_id ? await this.host.session(attempt.session_id) : null
-        if (
-          session &&
-          (!session.archived ||
-            session.busy ||
-            session.pendingInput ||
-            (session.pendingPermissions ?? 0) > 0 ||
-            (session.pendingForms ?? 0) > 0 ||
-            session.observationUnstable ||
-            (session.runningShells ?? 0) > 0 ||
-            (session.activeChildren ?? 0) > 0)
-        )
-          continue
-        target = plan.state === "blocked" ? "failed" : "cancelled"
-        cause = session ? "session-archived-and-quiet" : "session-absent"
-      } else continue
-      this.store.fenced(this.owner, fence, (db) => {
-        if (this.store.plan(plan.id)?.version !== plan.version) return
-        const changed = db
-          .query(
-            `UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,?),artifact=COALESCE(artifact,?)
-             WHERE id=? AND state=?`,
-          )
-          .run(target!, node?.artifact ?? null, attempt.id, attempt.state).changes
-        if (changed !== 1) return
-        this.store.record(plan.id, attempt.task_id, "ATTEMPT_STALE_SETTLED", {
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          from: attempt.state,
-          to: target,
-          planState: plan.state,
-          nodeState: node?.state ?? null,
-          cause,
-        })
-      })
-    }
+  private settleStaleAttempts(...args: Parameters<AttemptAdvance["settleStaleAttempts"]>) {
+    return this.attemptAdvance.settleStaleAttempts(...args)
   }
 
-  private failMissingWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    observation?: WorkerObservationFence,
-  ) {
-    this.store.fenced(this.owner, fence, () => {
-      if (observation && !this.workerObservationCurrent(observation)) return
-      const currentPlan = this.store.plan(plan.id)
-      const latest = this.store
-        .attempts(plan.id)
-        .filter((item) => item.task_id === attempt.task_id)
-        .at(-1)
-      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
-      if (
-        !currentPlan ||
-        !["running", "blocked"].includes(currentPlan.state) ||
-        latest?.id !== attempt.id ||
-        latest.message_id !== attempt.message_id ||
-        latest.state !== attempt.state ||
-        node?.state !== attempt.state ||
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        return
-      this.failAttempt(currentPlan, latest, "Owned worker session definitively missing")
-      this.store.record(plan.id, attempt.task_id, "WORKER_SESSION_ABSENT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        observedAt: this.now(),
-        action: "fail",
-        retainedWorkPreserved: true,
-      })
-    })
-  }
-
-  /**
-   * A turn that streams nothing for the whole window is stuck: interrupt it once
-   * so the ordinary interrupted-worker path (auto-resume, hold) takes over.
-   * Background shells and child sessions count as progress.
-   */
-  private async interruptStalledWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    fence: number,
-  ) {
-    if (this.workerNoProgressWindowMs <= 0) return
-    const fingerprint = JSON.stringify([
-      session.tokens,
-      session.activityAt,
-      session.idleAt,
-      session.runningShells ?? 0,
-      session.activeChildren ?? 0,
-    ])
-    const now = this.now()
-    const seen = this.workerProgress.get(session.id)
-    if (
-      !seen ||
-      seen.fingerprint !== fingerprint ||
-      (session.runningShells ?? 0) > 0 ||
-      (session.activeChildren ?? 0) > 0
-    ) {
-      this.workerProgress.set(session.id, { fingerprint, since: now })
-      return
-    }
-    if (now - seen.since < this.workerNoProgressWindowMs) return
-    const payload = {
-      attemptID: attempt.id,
-      sessionID: session.id,
-      activityAt: session.activityAt ?? null,
-      windowMs: this.workerNoProgressWindowMs,
-    }
-    const prior = this.store.latestTransition<typeof payload>(
-      plan.id,
-      attempt.task_id,
-      "WORKER_NO_PROGRESS_INTERRUPT",
-    )
-    if (prior && JSON.stringify(prior) === JSON.stringify(payload)) return
-    await this.host.interrupt(session.id)
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, "WORKER_NO_PROGRESS_INTERRUPT", payload),
-    )
-  }
-
-  private async advanceAttempt(plan: PlanRow, attempt: AttemptRow, fence: number) {
-    if (attempt.state === "preparing") {
-      await this.prepareWorker(plan, attempt, fence)
-      return
-    }
-    if (!new Set(["running", "blocked"]).has(plan.state)) return
-    const observation = this.workerObservationFence(plan, attempt)
-    if (!observation) return
-    const session = await this.observeAdvancedSession(plan, attempt, fence, observation)
-    if (!session) return
-    const ctx: AdvanceContext = { plan, attempt, fence, observation, session }
-    if (await this.holdWorkerWaits(ctx)) return
-    if (await this.settleIdleWorker(ctx)) return
-    await this.finishWorkerTurn(ctx)
-  }
-
-  /** The worker's session as the runtime now sees it, or undefined when the pass should stop. */
-  private async observeAdvancedSession(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    fence: number,
-    observation: WorkerObservationFence,
-  ): Promise<HostSession | undefined> {
-    let session = await this.host.session(attempt.session_id)
-    if (session) this.observeUsage(attempt, session, fence)
-    if (!this.workerObservationCurrent(observation)) return undefined
-    if (!session) {
-      this.failMissingWorker(plan, attempt, fence, observation)
-      return undefined
-    }
-    if (
-      plan.state === "blocked" &&
-      this.approvalWaitReason(plan.reason) &&
-      session.pendingPermissions === 0 &&
-      session.pendingForms === 0 &&
-      session.pendingInput === false &&
-      !session.observationUnstable &&
-      session.outcome === undefined
-    ) {
-      const detailed = await this.host.session(attempt.session_id, { messages: true })
-      if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return undefined
-      if (!detailed) return undefined
-      session = detailed
-    }
-    return session
-  }
-
-  /** The turn belongs to an earlier continuation input, not the one this attempt is waiting on. */
-  private staleContinuationTurn(attempt: AttemptRow, session: HostSession) {
-    return Boolean(
-      session.turn &&
-      !this.matchesWorkerInput(attempt, session.turn.inputID) &&
-      this.isPriorContinuationInput(attempt, session.turn.inputID),
-    )
-  }
-
-  /** The plan is already held on this exact terminal worker observation. */
-  private terminalHoldUnchanged(plan: PlanRow, attempt: AttemptRow, session: HostSession) {
-    const previousHold = this.store.latestTransition<{ workerObservation?: TerminalWorkerHold }>(
-      plan.id,
-      null,
-      "BLOCKED",
-    )?.workerObservation
-    const unchanged =
-      (session.outcome === "failed" || session.outcome === "succeeded") &&
-      (session.outcome === "succeeded" ||
-        (typeof session.idleAt === "number" && Number.isFinite(session.idleAt))) &&
-      previousHold?.kind === "terminal-worker-observation" &&
-      previousHold.attemptID === attempt.id &&
-      previousHold.sessionID === session.id &&
-      previousHold.workspace === attempt.workspace &&
-      previousHold.outcome === session.outcome &&
-      previousHold.idleAt === session.idleAt &&
-      (!session.turn ||
-        (previousHold.inputID === session.turn.inputID &&
-          previousHold.turnState === session.turn.state))
-    return { previousHold, unchanged }
-  }
-
-  /** Holds the plan while the worker waits on approvals, input or background work. True when held. */
-  private async holdWorkerWaits(ctx: AdvanceContext): Promise<boolean> {
-    const { plan, attempt, fence, observation, session } = ctx
-    if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-      this.holdApprovalObservation(plan, attempt, session, observation, fence)
-      return true
-    }
-    if (
-      plan.state === "blocked" &&
-      this.approvalWaitReason(plan.reason) &&
-      session.outcome === undefined
-    ) {
-      this.resumeTransientObservationWait(plan, attempt, session, observation, fence, true)
-      return true
-    }
-    if (this.staleContinuationTurn(attempt, session)) return true
-    if (session.busy) await this.interruptStalledWorker(plan, attempt, session, fence)
-    else this.workerProgress.delete(session.id)
-    const backgroundReason = this.backgroundBlockReason(session)
-    const { previousHold, unchanged } = this.terminalHoldUnchanged(plan, attempt, session)
-    if (
-      !session.busy &&
-      !session.pendingInput &&
-      !session.observationUnstable &&
-      backgroundReason &&
-      session.outcome !== "interrupted" &&
-      ((session.outcome !== "failed" && session.outcome !== "succeeded") ||
-        unchanged ||
-        session.archived ||
-        session.outcome === "succeeded")
-    ) {
-      this.hold(
-        plan,
-        backgroundReason,
-        ["audit", "reconcile", "cancel"],
-        unchanged ? previousHold : undefined,
-        observation,
-      )
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      return true
-    }
-    return false
-  }
-
-  /**
-   * An idle worker with an outcome is read again with its messages before the outcome is trusted.
-   * True when the pass is settled (held, failed or still unstable); false to go on to the outcome.
-   */
-  private async settleIdleWorker(ctx: AdvanceContext): Promise<boolean> {
-    const { plan, attempt, fence, observation } = ctx
-    if (
-      !ctx.session.busy &&
-      !ctx.session.pendingInput &&
-      !ctx.session.observationUnstable &&
-      ctx.session.outcome
-    ) {
-      const detailed = await this.host.session(attempt.session_id, { messages: true })
-      if (detailed) this.observeUsage(attempt, detailed, fence)
-      if (!this.workerObservationCurrent(observation)) return true
-      if (!detailed) {
-        this.failMissingWorker(plan, attempt, fence, observation)
-        return true
-      }
-      ctx.session = detailed
-      const session = detailed
-      if ((session.pendingPermissions ?? 0) > 0 || (session.pendingForms ?? 0) > 0) {
-        this.holdApprovalObservation(plan, attempt, session, observation, fence)
-        return true
-      }
-      if (session.busy || session.pendingInput || session.observationUnstable) return true
-      if (this.staleContinuationTurn(attempt, session)) return true
-      const detailedBackgroundReason = this.backgroundBlockReason(session)
-      if (session.outcome === "interrupted") {
-        await this.holdInterruptedWorker(ctx, detailedBackgroundReason)
-        return true
-      }
-      if (detailedBackgroundReason) {
-        this.holdDetailedBackground(ctx, detailedBackgroundReason)
-        return true
-      }
-    }
-    const { session } = ctx
-    return Boolean(
-      session.busy || session.pendingInput || session.observationUnstable || !session.outcome,
-    )
-  }
-
-  private async holdInterruptedWorker(ctx: AdvanceContext, backgroundReason: string | undefined) {
-    const { plan, attempt, fence, observation, session } = ctx
-    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, "interrupted", session.turn?.inputID)
-    const reason = backgroundReason
-      ? `Worker execution was interrupted; ${backgroundReason}`
-      : "Worker execution was interrupted; the runtime could not resume it"
-    if (backgroundReason) this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-    this.hold(
-      plan,
-      reason,
-      ["audit", "reconcile", "cancel"],
-      this.terminalWorkerObservation(attempt, session),
-      observation,
-    )
-    if (!backgroundReason) await this.autoResumeInterruptedWorker(plan.id, attempt.id)
-  }
-
-  /** A worker that ended (or is idle) while background work it started is still running. */
-  private holdDetailedBackground(ctx: AdvanceContext, backgroundReason: string) {
-    const { plan, attempt, fence, observation, session } = ctx
-    if (session.outcome === "failed" || session.outcome === "succeeded") {
-      this.workerEvent(
-        plan,
-        attempt,
-        "WORKER_STOPPED",
-        fence,
-        session.outcome,
-        session.turn?.inputID,
-      )
-      this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-      this.hold(
-        plan,
-        `Worker execution ${session.outcome === "failed" ? "failed" : "completed"}; ${backgroundReason}`,
-        ["audit", "reconcile", "cancel"],
-        this.terminalWorkerObservation(attempt, session),
-        observation,
-      )
-      return
-    }
-    this.hold(plan, backgroundReason, ["audit", "reconcile", "cancel"], undefined, observation)
-    this.backgroundWait(plan, attempt, session, backgroundReason, fence)
-  }
-
-  /** The worker is idle with an outcome: fail, hold, or move the attempt on to verification. */
-  private async finishWorkerTurn(ctx: AdvanceContext) {
-    const { attempt, fence, session } = ctx
-    if (this.resumeTransientObservationWait(ctx.plan, attempt, session, ctx.observation, fence)) {
-      ctx.plan = this.store.plan(ctx.plan.id)!
-      ctx.observation = this.workerObservationFence(ctx.plan, attempt) ?? ctx.observation
-    }
-    const { plan, observation } = ctx
-    if (
-      session.outcome === "succeeded" &&
-      (!session.turn ||
-        !this.matchesWorkerInput(attempt, session.turn.inputID) ||
-        session.turn.state !== "completed")
-    ) {
-      this.settleUnconfirmedSuccess(plan, attempt, session, observation)
-      return
-    }
-    this.workerEvent(plan, attempt, "WORKER_STOPPED", fence, session.outcome, session.turn?.inputID)
-    if (session.outcome !== "succeeded") {
-      if (session.outcome === "interrupted") {
-        this.hold(
-          plan,
-          "Worker execution was interrupted; the runtime could not resume it",
-          ["audit", "reconcile", "resume", "cancel"],
-          this.terminalWorkerObservation(attempt, session),
-          observation,
-        )
-        await this.autoResumeInterruptedWorker(plan.id, attempt.id)
-        return
-      }
-      this.failAttempt(
-        plan,
-        attempt,
-        `Worker ${session.outcome}`,
-        session.outcome === "failed" ? this.terminalWorkerObservation(attempt, session) : undefined,
-      )
-      return
-    }
-    const task = this.store.repository.get(attempt.task_id)!
-    if (attempt.state === "running") {
-      this.store.move(plan.id, task.id, "VERIFY")
-      this.store.atomic((db) =>
-        db
-          .query(
-            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
-          )
-          .run(attempt.id),
-      )
-    }
-    await this.verify(plan, attempt, task.proposal, fence)
-  }
-
-  /** The worker reported success without a completed response to the assigned input. */
-  private settleUnconfirmedSuccess(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-  ) {
-    if (
-      session.turn &&
-      this.matchesWorkerInput(attempt, session.turn.inputID) &&
-      session.turn.state === "pending"
-    )
-      return
-    // A completed turn for a different input is a follow-up the Architect can bind
-    // (reconcile); say so and advertise it.
-    if (session.turn && !this.matchesWorkerInput(attempt, session.turn.inputID)) {
-      this.hold(
-        plan,
-        "Native worker success does not match a completed response to the current assigned input",
-        ["audit", "reconcile", "retry", "cancel"],
-        undefined,
-        observation,
-      )
-      return
-    }
-    // The worker went idle without a completed response to its assigned input:
-    // an observable failure of the attempt, retried through the normal path.
-    this.failAttempt(
-      plan,
-      attempt,
-      "Worker went idle without a completed response to the assigned input",
-    )
-  }
-
-  /**
-   * An interrupted worker resumes from its live state; nobody has to command it.
-   * Bounded per attempt so a worker that keeps being interrupted surfaces in the hold.
-   */
-  private async autoResumeInterruptedWorker(planID: string, attemptID: string) {
-    if (!this.autoResumeInterrupted) return
-    const plan = this.store.plan(planID)
-    const attempt = this.store.attempts(planID).find((candidate) => candidate.id === attemptID)
-    if (!plan || plan.state !== "blocked" || !attempt) return
-    const prior = this.store.activity(planID, attempt.task_id).filter(
-      (event) =>
-        event.event === "WORKER_AUTO_RESUMED" &&
-        (() => {
-          try {
-            return (JSON.parse(event.payload) as { attemptID?: unknown }).attemptID === attempt.id
-          } catch {
-            return false
-          }
-        })(),
-    ).length
-    if (prior >= 3 || !this.validArchitect(await this.host.session(plan.owner))) return
-    this.store.record(planID, attempt.task_id, "WORKER_AUTO_RESUMED", {
-      attemptID: attempt.id,
-      messageID: attempt.message_id,
-    })
-    try {
-      await this.command(
-        {
-          requestID: `auto-resume:${attempt.id}:${attempt.message_id}`,
-          planID,
-          action: "resume",
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          reason: "The worker was interrupted; the runtime resumes it from its live state",
-        },
-        plan.owner,
-      )
-    } catch {
-      // The hold stays and advertises resume; the next observation tries again within the bound.
-    }
+  private advanceAttempt(...args: Parameters<AttemptAdvance["advanceAttempt"]>) {
+    return this.attemptAdvance.advanceAttempt(...args)
   }
 
   private prepareVerificationCandidate(
