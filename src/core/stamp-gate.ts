@@ -59,6 +59,21 @@ export class StampGate<T> {
     }
   }
 
+  /** The synchronous form of `run`, for reads inside a database callback. No in-flight sharing. */
+  runSync(key: string, stamp: string | number, read: () => T): T {
+    const entry = this.entries.get(key)
+    if (entry && entry.stamp === stamp) {
+      this.entries.delete(key)
+      this.entries.set(key, entry)
+      this.counts.hit++
+      return entry.value
+    }
+    this.counts.ran++
+    const value = read()
+    this.store(key, stamp, value)
+    return value
+  }
+
   /** Bytes held now. */
   get size() {
     return this.bytes

@@ -12,6 +12,7 @@ import {
   captureTrajectoryHistory,
   inspectTrajectoryStatus,
 } from "../trajectory/read.ts"
+import { StampGate } from "../core/stamp-gate.ts"
 import { TrajectoryHistoryCache } from "../trajectory/history.ts"
 import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
@@ -62,7 +63,6 @@ type PlanRecord = {
   revision: number
   version: number
   state: string
-  body: string
   reason: string | null
 }
 type NodeRecord = {
@@ -202,12 +202,54 @@ function machineDefinition() {
   }
 }
 
-function planInput(plan: Pick<PlanRecord, "body">) {
+function planInput(plan: { body: string }) {
   try {
     return PlanInput.parse(JSON.parse(plan.body))
   } catch {
     return null
   }
+}
+
+type ParsedPlanInput = ReturnType<typeof planInput>
+
+/**
+ * Parsed plan inputs by plan id and body revision, so a plan body is read and zod-parsed once
+ * per revision instead of every project read. A parsed input is the title, priority and plan
+ * edges: well under 1 KB typically (estimated from the schema, not measured on live data), so
+ * the 4 MB budget holds several thousand plans; least recently used are evicted, never refused.
+ */
+const planInputs = new StampGate<ParsedPlanInput>({ maxBytes: 4 * 1024 * 1024 })
+
+function planInputFor(db: Database, plan: Pick<PlanRecord, "id" | "revision">) {
+  return planInputs.runSync(`${db.filename}\0${plan.id}`, plan.revision, () => {
+    const body = db
+      .query<{ body: string }, [string]>("SELECT body FROM runner_plans WHERE id=?")
+      .get(plan.id)?.body
+    return body === undefined ? null : planInput({ body })
+  })
+}
+
+type TopologyAssociations = {
+  associations: { taskIDs: Set<string>; planIDs: Set<string> }
+  allPlans: PlanRecord[]
+}
+
+/**
+ * The plan-derived part of a topology read (association closure over plan edges and the
+ * project's plan headers), gated on the observation revision, the task-change version and the
+ * dispatch pauses (a pause table the revision triggers do not cover). One gate per core, found
+ * through the core's observation secret.
+ */
+const topologyGates = new WeakMap<Uint8Array, StampGate<TopologyAssociations>>()
+function topologyGate(secret: Uint8Array) {
+  let gate = topologyGates.get(secret)
+  if (!gate) {
+    // Each entry is id lists plus plan headers (about 200 bytes a plan, 1000 plans maximum per
+    // scope): about 200 KB. 8 MB holds dozens of scopes; estimated, not measured on live data.
+    gate = new StampGate<TopologyAssociations>({ maxBytes: 8 * 1024 * 1024 })
+    topologyGates.set(secret, gate)
+  }
+  return gate
 }
 
 function initialAssociations(db: Database, projectDirectory: string, scope: SingleScope) {
@@ -224,20 +266,6 @@ function loadTopologyAssociations(
   extraSessionIDs: Iterable<string> = [],
 ) {
   const stamp = sourceStampFromDatabase(db, projectDirectory, secret)
-  const associations = initialAssociations(db, projectDirectory, scope)
-  if (scope.kind === "session") {
-    for (const sessionID of extraSessionIDs) {
-      if (sessionID === scope.sessionID) continue
-      const extra = sessionAssociations(db, projectDirectory, sessionID)
-      for (const taskID of extra.taskIDs) associations.taskIDs.add(taskID)
-      for (const planID of extra.planIDs) associations.planIDs.add(planID)
-    }
-  }
-  const allPlans = db
-    .query<PlanRecord, [string]>(
-      "SELECT id,revision,version,state,body,reason FROM runner_plans WHERE project_directory=? ORDER BY rowid",
-    )
-    .all(projectDirectory)
   const pauses = new Map<
     string,
     { reason: string; untilPlans: string[]; level?: "project" | "global" }
@@ -252,38 +280,73 @@ function loadTopologyAssociations(
         { reason: row.reason, untilPlans: JSON.parse(row.until_plans) as string[] },
       ]),
   )
-  const plansByID = new Map(allPlans.map((plan) => [plan.id, plan]))
-
-  // A session-linked plan also links the actual plans it waits on. Resolve only
-  // those same-project relationships; never accept a project/plan ID as scope.
-  const pending = [...associations.planIDs]
-  while (pending.length) {
-    const id = pending.pop()!
-    const plan = plansByID.get(id)
-    const input = plan && planInput(plan)
-    for (const dependency of new Set([
-      ...(input?.afterPlans ?? []),
-      ...(pauses.get(id)?.untilPlans ?? []),
-    ])) {
-      if (plansByID.has(dependency) && !associations.planIDs.has(dependency)) {
-        associations.planIDs.add(dependency)
-        pending.push(dependency)
+  const revision = db
+    .query<{ revision: number }, [string]>(
+      "SELECT revision FROM observation_revisions WHERE project_directory=?",
+    )
+    .get(projectDirectory)?.revision
+  const key = JSON.stringify([
+    db.filename,
+    projectDirectory,
+    scope.kind,
+    scope.sessionID,
+    [...extraSessionIDs].sort(),
+  ])
+  const gated = () => {
+    const associations = initialAssociations(db, projectDirectory, scope)
+    if (scope.kind === "session") {
+      for (const sessionID of extraSessionIDs) {
+        if (sessionID === scope.sessionID) continue
+        const extra = sessionAssociations(db, projectDirectory, sessionID)
+        for (const taskID of extra.taskIDs) associations.taskIDs.add(taskID)
+        for (const planID of extra.planIDs) associations.planIDs.add(planID)
       }
     }
-    if (associations.planIDs.size > 1000)
-      throw new Error("Observation scope is too large; narrow it")
-  }
-
-  if (associations.planIDs.size) {
-    const planIDs = [...associations.planIDs]
-    const placeholders = planIDs.map(() => "?").join(",")
-    for (const row of db
-      .query<{ task_id: string }, string[]>(
-        `SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})`,
+    // Plan headers only: bodies are read per plan, once per revision, through `planInputFor`.
+    const allPlans = db
+      .query<PlanRecord, [string]>(
+        "SELECT id,revision,version,state,reason FROM runner_plans WHERE project_directory=? ORDER BY rowid",
       )
-      .all(...planIDs))
-      associations.taskIDs.add(row.task_id)
+      .all(projectDirectory)
+    const plansByID = new Map(allPlans.map((plan) => [plan.id, plan]))
+
+    // A session-linked plan also links the actual plans it waits on. Resolve only
+    // those same-project relationships; never accept a project/plan ID as scope.
+    const pending = [...associations.planIDs]
+    while (pending.length) {
+      const id = pending.pop()!
+      const plan = plansByID.get(id)
+      const input = plan && planInputFor(db, plan)
+      for (const dependency of new Set([
+        ...(input?.afterPlans ?? []),
+        ...(pauses.get(id)?.untilPlans ?? []),
+      ])) {
+        if (plansByID.has(dependency) && !associations.planIDs.has(dependency)) {
+          associations.planIDs.add(dependency)
+          pending.push(dependency)
+        }
+      }
+      if (associations.planIDs.size > 1000)
+        throw new Error("Observation scope is too large; narrow it")
+    }
+
+    if (associations.planIDs.size) {
+      const planIDs = [...associations.planIDs]
+      const placeholders = planIDs.map(() => "?").join(",")
+      for (const row of db
+        .query<{ task_id: string }, string[]>(
+          `SELECT task_id FROM runner_nodes WHERE plan_id IN (${placeholders})`,
+        )
+        .all(...planIDs))
+        associations.taskIDs.add(row.task_id)
+    }
+    return { associations, allPlans }
   }
+  const { associations, allPlans } = topologyGate(secret).runSync(
+    key,
+    `${stamp.repositoryVersion}:${revision ?? 0}:${JSON.stringify([...pauses])}`,
+    gated,
+  )
   // A project or global pause holds every plan and is stricter than a plan's own.
   const outer = outerPauseIn(db, projectDirectory)
   if (outer)
@@ -324,7 +387,9 @@ function loadTopologySource(
   const planIDs = [...associations.planIDs]
   const placeholders = planIDs.map(() => "?").join(",")
   const selectedPlanIDs = new Set(planIDs)
-  const plans = allPlans.filter((plan) => selectedPlanIDs.has(plan.id))
+  const plans = allPlans
+    .filter((plan) => selectedPlanIDs.has(plan.id))
+    .map((plan) => ({ ...plan, input: planInputFor(db, plan) }))
   const nodes = planIDs.length
     ? db
         .query<NodeRecord, string[]>(
@@ -451,7 +516,7 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
     waitingOn.set(edge.successor, values)
   }
   const plans = projection.plans.map((plan, queuePosition) => {
-    const input = planInput(plan)
+    const input = plan.input
     const nodes = projection.nodes.filter((node) => node.plan_id === plan.id)
     return {
       id: plan.id,
