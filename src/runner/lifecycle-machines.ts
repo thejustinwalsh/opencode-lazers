@@ -200,6 +200,12 @@ const workspaceMachine = defineLifecycle("runner-verification-workspace", "unall
   uncertain: ["owned", "removed"],
   removed: ["uncertain"],
 })
+const capacityMachine = defineLifecycle("runner-agent-admission", "queued", {
+  queued: ["admitted", "cancelled", "released"],
+  admitted: ["queued", "released", "cancelled"],
+  released: ["queued", "admitted"],
+  cancelled: ["queued", "admitted"],
+})
 export const lifecycleMachines = {
   task: taskMachine,
   dispatch: dispatchControlMachine,
@@ -218,6 +224,7 @@ export const lifecycleMachines = {
   cleanup: verificationCleanupMachine,
   workspace: workspaceMachine,
   takeover: takeoverMachine,
+  capacity: capacityMachine,
 } as const
 
 /** SQL invokes the same XState transition against the row's current persisted value. */

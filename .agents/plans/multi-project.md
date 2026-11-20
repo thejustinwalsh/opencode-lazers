@@ -428,6 +428,20 @@ type NeedsYouItem = {
 
 Starts after LZ-200 is integrated; its limit contract is read from the integrated code.
 
+**LZ-200 as integrated (2026-11-20, `src/runner/delegated-agent-capacity.ts`).** Build stage 4 on it, not beside it.
+
+| Concern      | LZ-200 delivers                                                                                                                   | Stage 4 adds                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Unit counted | Admitted runner attempt while `preparing`/`running`; admitted native subagent (LAZERS parent, not `architect`)                    | Slot from dispatch until verification ends (checks, Fallow) |
+| Rows         | `delegated_agent_admissions`, one per request, state in `lifecycleMachines.capacity` (`queued`/`admitted`/`released`/`cancelled`) | Leased rows with heartbeat (Task 11); can extend this table |
+| Limit        | Projects `limit` (`projectSettingsIn`), read in the admitting transaction; `null` = no wait                                       | `globalSlots` across projects                               |
+| Order        | Per project: plan priority, plan order, task order; native helpers FIFO behind tasks                                              | Project chosen by `nextProject` (weight, aging)             |
+| Release      | Reconciled when the attempt leaves `preparing`/`running`; native on observed child completion or dead queue owner                 | Verification runs and plan checks hold and release slots    |
+| Takeover     | `holdTaskSlotInTransaction` moves the worker's admission to the Architect's attempt (counts once, never refused)                  | Same slot kept through the takeover's verification          |
+| Pause        | A paused plan/project selects nothing, so it queues nothing; running work is untouched                                            | Paused or unloaded projects excluded from `nextProject`     |
+| Reasons      | Tasks scheduling read and `lz-inspect-plan` (`delegatedAgentCapacity`) show limit, active, queued and the wait reason             | Global-limit and next-in-line reasons in Tasks and Radar    |
+| Held run     | A held (`blocked`) plan's queued requests are cancelled; its running attempt keeps its admission until it stops                   | A held run releases its slot                                |
+
 ### Task 11: Leased slots
 
 New `src/runner/slots.ts`: `acquire(store, { projectKey, holder, kind: "task" | "plan-check" | "takeover" }): boolean`, `release(store, holder)`, `reconcile(store, now)` releasing leases whose heartbeat is older than the runtime's claim window. Table `lazers_slots`. A task holds one slot from dispatch until its verification ends.

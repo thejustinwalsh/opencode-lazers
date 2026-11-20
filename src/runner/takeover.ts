@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite"
 import { join } from "node:path"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -203,6 +204,13 @@ export type TakeoverDeps = {
   handoffWindowMs?: number
   stopWaitMs?: number
   pollMs?: number
+  /** Move the task's capacity slot from the worker's attempt to the Architect's, in `settle`. */
+  holdSlot?: (
+    db: Database,
+    attempt: { planID: string; taskID: string; attemptNumber: number },
+    attemptID: string,
+    fromAttemptID: string,
+  ) => void
 }
 
 export function isTakeoverSession(id: string): boolean {
@@ -778,6 +786,12 @@ export class TakeoverExecution {
       db.query(
         "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running') WHERE id=?",
       ).run(architectAttemptID)
+      this.deps.holdSlot?.(
+        db,
+        { planID: row.plan_id, taskID: row.task_id, attemptNumber: number },
+        architectAttemptID,
+        worker.id,
+      )
       const changed = db
         .query(
           "UPDATE runner_takeovers SET state=lz_runner_transition('takeover',state,'taken-over'),payload=?,updated_at=? WHERE id=? AND state='stopping'",

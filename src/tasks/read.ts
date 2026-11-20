@@ -1,5 +1,6 @@
 import { scopePatternsConflict } from "../runner/artifacts.ts"
 import { PlanInput } from "../runner/schema.ts"
+import { prerequisitePlanAction } from "../runner/prerequisite-proof.ts"
 import { taskAuditHistory } from "../audit/history.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
@@ -227,6 +228,14 @@ export class TaskReads {
           ...(execution
             ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
             : {}),
+          ...(execution &&
+          (execution.waitingOnPlans !== undefined || execution.waitingOnPlansComplete === false)
+            ? {
+                waitingOnPlans: execution.waitingOnPlans ?? [],
+                waitingOnPlansCount: execution.waitingOnPlansCount,
+                waitingOnPlansComplete: execution.waitingOnPlansComplete,
+              }
+            : {}),
           // Same definition as the Running filter: a running node in a plan that is not held or
           // cancelled, and not paused.
           ...(execution &&
@@ -393,6 +402,32 @@ export class TaskReads {
       !["queued", "ready"].includes(execution.state)
     )
       return execution
+    if (execution.waitingOnPlansComplete === false)
+      return {
+        ...execution,
+        state: "blocked" as const,
+        reason: "Prerequisite plan facts are incomplete; dependent work remains queued.",
+      }
+    const prerequisites = execution.waitingOnPlans ?? []
+    if (prerequisites.length) {
+      const count = execution.waitingOnPlansCount ?? prerequisites.length
+      const details = prerequisites
+        .slice(0, 4)
+        .map(
+          (required) =>
+            `${required.title ?? "Prerequisite plan"} [${required.planID}] is ${required.state ?? "unavailable"}${required.reason ? `: ${required.reason}` : ""}`,
+        )
+        .join("; ")
+      const more = count > prerequisites.length ? `; ${count - prerequisites.length} more` : ""
+      const actions = [
+        ...new Set(prerequisites.map((required) => prerequisitePlanAction(required.state ?? ""))),
+      ].join(" ")
+      return {
+        ...execution,
+        state: "blocked" as const,
+        reason: `Waiting for prerequisite integration: ${details}${more}. ${actions}`,
+      }
+    }
     let input: ReturnType<typeof PlanInput.safeParse>
     try {
       input = PlanInput.safeParse(JSON.parse(plan.body))
@@ -400,23 +435,6 @@ export class TaskReads {
       return execution
     }
     if (!input.success) return execution
-    const prerequisites = (input.data.afterPlans ?? []).flatMap((id) => {
-      const required = this.runner.plan(id)
-      if (required && ["cleaning", "cleanup-blocked", "integrated"].includes(required.state))
-        return []
-      const refs = required
-        ? this.runner
-            .nodes(id)
-            .map((node) => this.repository.referenceFor(node.task_id) ?? node.task_id)
-        : []
-      return [`${refs.join(", ") || id} (${required?.state ?? "not found"})`]
-    })
-    if (prerequisites.length)
-      return {
-        ...execution,
-        state: "blocked" as const,
-        reason: `Waiting for prerequisite integration: ${prerequisites.join("; ")}`,
-      }
     const mode = input.data.workspaceMode
     const scope = this.runner.effectiveReservationScope(taskID)
     const blockers = [

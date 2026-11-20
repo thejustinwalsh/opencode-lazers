@@ -45,11 +45,18 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
         description:
           "Inspect plans, read-only. Without a view: all project plans, or one plan by planID, compact: IDs, title/objective, state/version/reason, model, schedule, node states and waiting reasons, attempt/effect/outcome counts, check exit status; no policies, transcripts or check output. full=true adds troubleshooting detail: the latest retained verification per task and the activity, evidence and delivery history, newest `limit` rows (default 200, max 1000) oldest-first; pass `paging.<list>.next` back as activityBefore, evidenceBefore or deliveryBefore for the next older page (null when exhausted). Commands, output, paths, private reasons and environment contents are redacted. view='journal' with planID pages the plan's Architect source journal (limit 1-100, default 50; pass nextCursor back): metadata-only session/message references, no message bodies, no proof of transcript completeness or native consumption; a cursor stays valid until that plan's journal changes. view='source-messages' with planID, sourceSessionID and up to 10 journaled messageIDs fetches those original messages with secrets and URLs redacted and metadata, reasoning, tools and attachments omitted. Inspection never acknowledges or advances anything.",
         schema: InspectPlanInput,
-        run: (input: unknown, sessionID?: string) => {
+        run: async (input: unknown, sessionID?: string) => {
           const parsed = InspectPlanInput.parse(input)
-          return "view" in parsed && parsed.view === "source-messages"
-            ? runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
-            : inspectPlan(runtime.store, parsed)
+          if ("view" in parsed) {
+            if (parsed.view === "source-messages")
+              return runtime.inspectArchitectSourceMessages(parsed, sessionID ?? "")
+            return inspectPlan(runtime.store, parsed)
+          }
+          return inspectPlan(
+            runtime.store,
+            parsed,
+            await runtime.delegatedAgentCapacity.inspectionSnapshot(),
+          )
         },
       },
       {

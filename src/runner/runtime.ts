@@ -185,6 +185,7 @@ import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler
 import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
+import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
 import {
   matchesReviewInputAlias,
   observeReviewInput,
@@ -266,6 +267,7 @@ function isUnavailableSessionRecoveryGap(fact: ProgressRow) {
 // Recheck external/native facts periodically, but don't repeat full safety
 // observations on every ordinary scheduler tick when durable facts are stable.
 export type TaskRuntimeOptions = {
+  delegatedAgentProjectKey?: string | Promise<string>
   /** Deprecated alias of `architectCacheWindowMs`. */
   architectIdleWindowMs?: number
   architectCacheWindowMs?: number
@@ -742,6 +744,7 @@ export class TaskRuntime {
   private readonly sourceEpochs = new Map<string, number>()
   private sourceResyncPending = false
   private readonly schedulingRead: TaskSchedulingRead
+  readonly delegatedAgentCapacity: DelegatedAgentCapacity
   constructor(
     readonly store: RunnerStore,
     readonly host: RunnerHost,
@@ -753,7 +756,17 @@ export class TaskRuntime {
     this.host = takeoverAwareHost(host)
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
-    this.schedulingRead = new TaskSchedulingRead(store, this.now)
+    this.delegatedAgentCapacity = new DelegatedAgentCapacity(
+      store.repository,
+      options.delegatedAgentProjectKey,
+    )
+    this.schedulingRead = new TaskSchedulingRead(
+      store,
+      this.now,
+      {},
+      undefined,
+      this.delegatedAgentCapacity,
+    )
     this.autoResumeInterrupted = options.autoResumeInterrupted ?? true
     this.fallowReviewEnabled = (options.fallowReview ?? "on") === "on"
     this.fallowReviewRun = options.fallowReviewRun ?? defaultFallowReview
@@ -804,6 +817,13 @@ export class TaskRuntime {
       handoff: new HandoffStore(this.store.repository),
       notify: (planID, result) =>
         this.outcome(planID, { status: "takeover-ready", takeover: result }, true),
+      holdSlot: (db, attempt, attemptID, fromAttemptID) =>
+        this.delegatedAgentCapacity.holdTaskSlotInTransaction(
+          db,
+          attempt,
+          attemptID,
+          fromAttemptID,
+        ),
       ...(options.takeoverHandoffWindowMs === undefined
         ? {}
         : { handoffWindowMs: options.takeoverHandoffWindowMs }),
@@ -4339,6 +4359,11 @@ export class TaskRuntime {
     )
       throw new Error("Retained artifact or effective scope reservation changed before admission")
 
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: task.id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     this.store.move(plan.id, task.id, "RETAINED_REPAIR", command.reason)
     const cleared = db
       .query(
@@ -5061,6 +5086,12 @@ export class TaskRuntime {
     if (settledStartupEffect)
       return this.commandAuthorizeStartupRecovery(db, ctx, plan, attempt, settledStartupEffect)
 
+    if (!retry)
+      this.delegatedAgentCapacity.requeueRunnerInTransaction(
+        db,
+        { planID: plan.id, taskID: node.task_id, attemptNumber: attempt.number },
+        attempt.id,
+      )
     if (retry) this.store.move(plan.id, node.task_id, "RETRY", command.reason)
     else if (node.state !== "running")
       this.store.move(plan.id, node.task_id, "RESUME", command.reason)
@@ -5236,6 +5267,11 @@ export class TaskRuntime {
     )
       throw new Error("Retained repair recovery authorization changed before reservation")
     const resumedMessageID = messageID()
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     this.store.move(plan.id, attempt.task_id, "RESUME", command.reason)
     const updatedAttempt = db
       .query(
@@ -5477,6 +5513,11 @@ export class TaskRuntime {
       base: attempt!.base_commit,
       policy: attempt!.policy,
     }
+    this.delegatedAgentCapacity.requeueRunnerInTransaction(
+      db,
+      { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
+      attempt.id,
+    )
     db.query(
       "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND version=?",
     ).run(plan.id, plan.version)
@@ -7838,6 +7879,7 @@ export class TaskRuntime {
   private async step(initialPlan: PlanRow, fence: number) {
     let plan = this.store.plan(initialPlan.id)
     if (!plan) return
+    if (plan.state !== "running") await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
     if (plan.state === "cancelling") {
       const activities = await this.timed("step:cancelCheckActivities", () =>
         this.cancelCheckActivities(plan!.id),
@@ -7947,6 +7989,7 @@ export class TaskRuntime {
       .filter((e) => ["intended", "uncertain"].includes(e.state))
     const pending = unresolved[0]
     if (pending) {
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
       const attempt = pending.attempt_id
         ? this.store.attempts(plan.id).find((item) => item.id === pending.attempt_id)
         : undefined
@@ -8060,6 +8103,7 @@ export class TaskRuntime {
         )
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id)
       if (
         !this.store.effectiveDispatchPause(plan.id) &&
         this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
@@ -8137,10 +8181,37 @@ export class TaskRuntime {
       return node ? [node] : []
     })
     if (selected.length) {
+      const admissionRequests = new Map<string, string>()
+      for (const node of selected) {
+        const attemptNumber =
+          this.store.attempts(plan.id).filter((attempt) => attempt.task_id === node.task_id)
+            .length + 1
+        admissionRequests.set(
+          node.task_id,
+          await this.delegatedAgentCapacity.ensureRunnerQueued({
+            planID: plan.id,
+            taskID: node.task_id,
+            attemptNumber,
+          }),
+        )
+      }
+      const activeTaskIDs = this.store
+        .attempts(plan.id)
+        .filter(
+          (attempt) =>
+            attempt.state === "running" ||
+            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
+        )
+        .map((attempt) => attempt.task_id)
+      await this.delegatedAgentCapacity.cancelRunnerQueue(plan.id, [
+        ...new Set([...selected.map((node) => node.task_id), ...activeTaskIDs]),
+      ])
       await Promise.all(
         selected.map(async (node) => {
           try {
-            await this.timed("step:dispatch", () => this.dispatch(plan!, node, fence))
+            await this.timed("step:dispatch", () =>
+              this.dispatch(plan!, node, fence, admissionRequests.get(node.task_id)!),
+            )
           } catch (error) {
             const current = this.store.plan(plan!.id)
             if (current && current.state !== "blocked")
@@ -8153,6 +8224,16 @@ export class TaskRuntime {
     const outstanding = this.store
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
+    await this.delegatedAgentCapacity.cancelRunnerQueue(
+      plan.id,
+      outstanding
+        .filter(
+          (attempt) =>
+            attempt.state === "running" ||
+            (attempt.state === "preparing" && this.preparationAllowed(attempt)),
+        )
+        .map((attempt) => attempt.task_id),
+    )
     if (outstanding.length) {
       if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
         return {
@@ -9193,7 +9274,7 @@ export class TaskRuntime {
     )
   }
 
-  private async dispatch(plan: PlanRow, node: NodeRow, fence: number) {
+  private async dispatch(plan: PlanRow, node: NodeRow, fence: number, admissionRequestID: string) {
     // Work queued before the project had a config (or before this rule) must not dead-end: the
     // plan's Architect gets the same actionable refusal through the hold path, and the tick
     // releases the hold once a config exists.
@@ -9306,7 +9387,7 @@ export class TaskRuntime {
       costEstimate: { status: "unavailable", currency: "USD", kind: "equivalent-api" },
     }
     let attempt!: AttemptRow
-    const admitted = this.store.fenced(this.owner, fence, (db) => {
+    const admitted = this.store.fencedAtomic(this.owner, fence, (db) => {
       const current = this.store.plan(plan.id)
       const currentNode = this.store
         .nodes(plan.id)
@@ -9319,7 +9400,7 @@ export class TaskRuntime {
         current.body !== plan.body ||
         currentNode?.state !== node.state
       )
-        return false
+        return "stale" as const
       if (
         this.store
           .activeAdoptions()
@@ -9331,6 +9412,8 @@ export class TaskRuntime {
           )
       )
         throw new Error("A pending descendant adoption reserves this task's scope")
+      if (!this.delegatedAgentCapacity.admitRunnerInTransaction(db, admissionRequestID, id))
+        return "waiting" as const
       if (node.state === "queued") this.store.move(plan.id, task.id, "READY")
       this.store.move(plan.id, task.id, "DISPATCH")
       db.query(
@@ -9348,9 +9431,13 @@ export class TaskRuntime {
         Date.now(),
       )
       attempt = this.store.attempts(plan.id).find((a) => a.id === id)!
-      return true
+      return "admitted" as const
     })
-    if (!admitted) return
+    if (admitted !== "admitted") {
+      if (admitted === "stale")
+        await this.delegatedAgentCapacity.cancelRunnerRequest(admissionRequestID)
+      return
+    }
     const admissionPlan = this.store.plan(plan.id)!
     const admissionOwner = admissionPlan.owner
     this.store.record(plan.id, task.id, "CONTEXT_RESOLVED", {
@@ -9435,8 +9522,11 @@ export class TaskRuntime {
       plan?.state !== "running" ||
       currentAttempt?.state !== "preparing" ||
       !this.preparationAllowed(currentAttempt)
-    )
+    ) {
+      if (currentAttempt)
+        await this.delegatedAgentCapacity.cancelRunnerAttemptQueue(currentAttempt.id)
       return false
+    }
     const recovery = this.startupRecoveryAuthorization(plan, currentAttempt)
     if (recovery && !this.startupRecoveryAuthorityCurrent(plan, currentAttempt, recovery))
       return false
@@ -9523,7 +9613,15 @@ export class TaskRuntime {
     }
 
     const prerequisites = input.afterPlans ?? []
-    if (!prerequisites.length) return true
+    if (!prerequisites.length)
+      return this.delegatedAgentCapacity.admitRunnerAttempt(
+        {
+          planID,
+          taskID: currentAttempt.task_id,
+          attemptNumber: currentAttempt.number,
+        },
+        currentAttempt.id,
+      )
 
     try {
       // The reservation base is immutable prerequisite proof. A later HEAD is
@@ -9555,7 +9653,19 @@ export class TaskRuntime {
       if (await gitAsync(currentAttempt.workspace, ["ls-files", "-u", "-z"])) return false
       if (protectedPaths(changed, this.store.effectiveScope(currentAttempt.task_id)).length)
         return false
-      return (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
+      const eligible =
+        (await this.integratedPrerequisiteBaseline(prerequisites, baseline)) === baseline
+      return (
+        eligible &&
+        this.delegatedAgentCapacity.admitRunnerAttempt(
+          {
+            planID,
+            taskID: currentAttempt.task_id,
+            attemptNumber: currentAttempt.number,
+          },
+          currentAttempt.id,
+        )
+      )
     } catch {
       return false
     }
@@ -12008,6 +12118,12 @@ export class TaskRuntime {
         db.query(
           "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),artifact=NULL WHERE id=?",
         ).run(attempt.id)
+        // Back with the Architect, the task holds its slot again (released while verifying).
+        this.delegatedAgentCapacity.holdTaskSlotInTransaction(
+          db,
+          { planID: plan.id, taskID: attempt.task_id, attemptNumber: attempt.number },
+          attempt.id,
+        )
       }
       const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)!
       if (node.state === "verifying") this.store.move(plan.id, attempt.task_id, "RESUME", reason)

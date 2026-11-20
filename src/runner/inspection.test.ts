@@ -92,6 +92,23 @@ function fixture() {
   return { projectDirectory, repository, store, input, first, second, prerequisite }
 }
 
+test("waiting plan facts cap project lookups and mark truncated coverage", () => {
+  const f = fixture()
+  const prerequisites = Array.from({ length: 102 }, () => crypto.randomUUID())
+  const facts = f.store.waitingOnPlanFacts(prerequisites)
+
+  expect(facts.plans).toHaveLength(100)
+  expect(facts.plans[0]).toMatchObject({
+    planID: prerequisites[0],
+    title: null,
+    state: null,
+    version: null,
+    reason: null,
+  })
+  expect(facts.count).toBe(101)
+  expect(facts.complete).toBe(false)
+})
+
 function retainedOperation(
   projectDirectory: string,
   planID: string,
@@ -266,6 +283,7 @@ test("compact inspection keeps scheduling signal without serializing logs", () =
   expect(compact.waitingOnPlans).toEqual([
     {
       planID: prerequisite.planID,
+      title: "Compact runner view",
       state: "draft",
       version: 1,
       reason: null,
@@ -301,6 +319,7 @@ test("compact inspection keeps scheduling signal without serializing logs", () =
   expect(all.plans.find((plan) => plan.id === receipt.planID)?.waitingOnPlans).toEqual([
     {
       planID: prerequisite.planID,
+      title: "Compact runner view",
       state: "draft",
       version: 1,
       reason: null,

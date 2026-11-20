@@ -11,6 +11,10 @@ import { buildExecutionList } from "./execution-list.ts"
 import { SchedulingOutput } from "./scheduling-contract.ts"
 import { TaskSchedulingRead } from "./scheduling-read.ts"
 import { taskRowPresentation } from "./row-presentation.ts"
+import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
+import { setProjectSetting } from "../projects/settings.ts"
+import { inspectPlan } from "../runner/inspection.ts"
+import { TaskReads } from "./read.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -155,6 +159,81 @@ test("Session visibility preserves the project-wide winner and exposes it only w
   expect(project.next).toMatchObject({ status: "known", candidate: { taskID: local.task.id } })
 })
 
+test("delegated-agent overflow is visible as a truthful Tasks and inspection wait", async () => {
+  const f = fixture()
+  const active = f.create("active-agent", 1)
+  const waiting = f.create("waiting-agent", 0)
+  const capacity = new DelegatedAgentCapacity(f.repository, "github.com/example/scheduling")
+  setProjectSetting(f.repository, await capacity.key(), "limit", 1)
+  const requestID = await capacity.ensureRunnerQueued({
+    planID: active.plan.planID,
+    taskID: active.task.id,
+    attemptNumber: 1,
+  })
+  const attemptID = crypto.randomUUID()
+  f.repository.atomic((db) => {
+    expect(capacity.admitRunnerInTransaction(db, requestID, attemptID)).toBe(true)
+    db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=? AND task_id=?").run(
+      active.plan.planID,
+      active.task.id,
+    )
+    db.query(
+      `INSERT INTO runner_attempts
+       (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,policy,state,started_at)
+       VALUES(?,?,?,1,?,?,?,?,?,'running',?)`,
+    ).run(
+      attemptID,
+      active.plan.planID,
+      active.task.id,
+      "active-worker",
+      "active-message",
+      join(f.directory, ".worktree-active-agent"),
+      git(f.directory, ["rev-parse", "HEAD"]),
+      "{}",
+      Date.now(),
+    )
+  })
+  const waitingRequest = await capacity.ensureRunnerQueued({
+    planID: waiting.plan.planID,
+    taskID: waiting.task.id,
+    attemptNumber: 1,
+  })
+  const page = await new TaskSchedulingRead(f.store, Date.now, {}, undefined, capacity).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+
+  expect(page).toMatchObject({
+    next: { status: "waiting" },
+    delegatedAgents: { limit: 1, active: 1, queued: 1 },
+  })
+  expect(page.plans.find((plan) => plan.planID === waiting.plan.planID)?.nodes[0]).toMatchObject({
+    taskID: waiting.task.id,
+    decision: "waiting",
+    reason: "Waiting for delegated-agent capacity (1 of 1 slots in use).",
+  })
+  expect(waitingRequest).toBeTruthy()
+  const capacityDetail = await capacity.inspectionSnapshot()
+  const inspection = inspectPlan(
+    f.store,
+    { planID: waiting.plan.planID, full: false },
+    capacityDetail,
+  )
+  expect(inspection).toMatchObject({
+    nodes: [
+      {
+        taskID: waiting.task.id,
+        reason: "Waiting for delegated-agent capacity (1 of 1 slots in use).",
+      },
+    ],
+    plan: {
+      schedule: {
+        delegatedAgentCapacity: { limit: 1, active: 1, queued: 1 },
+      },
+    },
+  })
+})
+
 test("Session associations include same-project afterPlans prerequisites but not unrelated plans", async () => {
   const f = fixture()
   const prerequisite = f.create("session-b-linked-prerequisite", 0, false, [], "session-b")
@@ -184,6 +263,128 @@ test("Session associations include same-project afterPlans prerequisites but not
     coveredPlanCount: 2,
     nodeCount: 2,
     coveredNodeCount: 2,
+  })
+})
+
+test("task, scheduling, and inspection reads expose bounded project-scoped plan prerequisite facts", async () => {
+  const f = fixture()
+  const prerequisite = f.create("source-prerequisite", 1)
+  const dependent = f.create("dependent-plan", 2, false, [prerequisite.plan.planID])
+  const tasks = new TaskReads(f.repository)
+
+  const task = tasks.get({ taskID: dependent.task.id })
+  expect(task).toMatchObject({
+    status: "found",
+    execution: {
+      waitingOnPlans: [
+        {
+          planID: prerequisite.plan.planID,
+          title: "Plan source-prerequisite",
+          state: "running",
+          version: 1,
+        },
+      ],
+      waitingOnPlansCount: 1,
+      waitingOnPlansComplete: true,
+    },
+  })
+  if (task.status !== "found") throw new Error("Expected task detail")
+  const execution = task.execution
+  if (!execution) throw new Error("Expected task execution")
+  expect(execution.reason).toContain("Waiting for prerequisite integration")
+  expect(execution.reason).toContain(prerequisite.plan.planID)
+
+  const inspection = inspectPlan(f.store, {
+    planID: dependent.plan.planID,
+    full: false,
+  })
+  expect(inspection).toMatchObject({
+    waitingOnPlans: [
+      {
+        planID: prerequisite.plan.planID,
+        title: "Plan source-prerequisite",
+        state: "running",
+        version: 1,
+      },
+    ],
+    waitingOnPlansCount: 1,
+    waitingOnPlansComplete: true,
+  })
+  expect(inspectPlan(f.store, { planID: dependent.plan.planID, full: true })).toMatchObject({
+    waitingOnPlans: [
+      {
+        planID: prerequisite.plan.planID,
+        title: "Plan source-prerequisite",
+        state: "running",
+        version: 1,
+      },
+    ],
+    waitingOnPlansCount: 1,
+    waitingOnPlansComplete: true,
+  })
+
+  const schedule = await new TaskSchedulingRead(f.store, () => 13).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+  expect(
+    schedule.plans.find((plan) => plan.planID === dependent.plan.planID)?.nodes[0],
+  ).toMatchObject({
+    decision: "waiting",
+    reason: "Waiting for accepted prerequisite plans to be integrated.",
+    waitingOnPlans: [prerequisite.plan.planID],
+  })
+
+  f.repository.atomic((db) => {
+    db.query(
+      "UPDATE runner_plans SET state='cancelled',reason='cancelled by owner' WHERE id=?",
+    ).run(prerequisite.plan.planID)
+    f.repository.changed()
+  })
+  const cancelled = tasks.get({ taskID: dependent.task.id })
+  if (cancelled.status !== "found") throw new Error("Expected task detail")
+  const cancelledExecution = cancelled.execution
+  if (!cancelledExecution) throw new Error("Expected task execution")
+  expect(cancelledExecution.reason).toContain("cancelled")
+  expect(cancelledExecution.reason).toContain("never restarted automatically")
+  expect(cancelledExecution.waitingOnPlans?.[0]).toMatchObject({
+    planID: prerequisite.plan.planID,
+    state: "cancelled",
+    reason: "cancelled by owner",
+  })
+  const cancelledSchedule = await new TaskSchedulingRead(f.store, () => 14).read({
+    scope: { kind: "project", sessionID: "owner" },
+    limit: 10,
+  })
+  const cancelledScheduleNode = cancelledSchedule.plans.find(
+    (plan) => plan.planID === dependent.plan.planID,
+  )?.nodes[0]
+  expect(cancelledScheduleNode?.reason).toContain("never restarted automatically")
+  expect(cancelledScheduleNode?.waitingOnPlans).toEqual([prerequisite.plan.planID])
+})
+
+test("unknown plan prerequisite facts are explicitly incomplete in Tasks and inspection", () => {
+  const f = fixture()
+  const dependent = f.create("unknown-prerequisite", 1)
+  f.repository.atomic((db) => {
+    db.query(
+      "UPDATE runner_plans SET body=json_set(body,'$.afterPlans','not-an-array') WHERE id=?",
+    ).run(dependent.plan.planID)
+    f.repository.changed()
+  })
+
+  const task = new TaskReads(f.repository).get({ taskID: dependent.task.id })
+  if (task.status !== "found") throw new Error("Expected task detail")
+  expect(task.execution).toMatchObject({
+    waitingOnPlans: [],
+    waitingOnPlansCount: 0,
+    waitingOnPlansComplete: false,
+    reason: "Prerequisite plan facts are incomplete; dependent work remains queued.",
+  })
+  expect(inspectPlan(f.store, { planID: dependent.plan.planID, full: false })).toMatchObject({
+    waitingOnPlans: [],
+    waitingOnPlansCount: 0,
+    waitingOnPlansComplete: false,
   })
 })
 
@@ -225,6 +426,9 @@ test.each([100, 101])(
       f.repository.changed()
     })
 
+    // The project's limit (Projects settings) is below the synthetic active reservations.
+    const capacity = new DelegatedAgentCapacity(f.repository)
+    setProjectSetting(f.repository, await capacity.key(), "limit", 3)
     const read = new TaskSchedulingRead(f.store, () => 90)
     const scope = { kind: "project" as const, sessionID: "session-a" }
     const firstPage = SchedulingOutput.parse(await read.read({ scope, limit: 100 }))
@@ -244,6 +448,12 @@ test.each([100, 101])(
     })
     expect(firstPage.selectionComplete).toBe(true)
     expect(firstPage.next).toMatchObject({
+      status: "waiting",
+      reason: "Waiting for delegated-agent capacity; all configured slots are in use.",
+    })
+    // With spare capacity, the unrelated candidate remains the global next task.
+    setProjectSetting(f.repository, await capacity.key(), "limit", reservationCount + 1)
+    expect((await read.read({ scope, limit: 100 })).next).toMatchObject({
       status: "known",
       candidate: { taskID: globalNext.task.id },
     })

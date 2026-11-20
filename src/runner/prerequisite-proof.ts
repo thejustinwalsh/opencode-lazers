@@ -5,6 +5,7 @@ export type PrerequisiteIntegrationRow = {
   plan_id: string
   project_directory: string
   state: string
+  reason?: string | null
   artifact: string | null
   accepted_id: number | null
   accepted_version: number | null
@@ -29,6 +30,16 @@ export type IntegrationDecision =
   | { status: "ready"; baseline: string }
   | { status: "waiting"; reason: string }
   | { status: "unknown"; reason: string }
+
+export function prerequisitePlanAction(state: string) {
+  if (state === "cancelling" || state === "cancelled")
+    return "The runtime drops this cancelled edge and notifies the Architect; dependent work can continue. Cancelled workers are never restarted automatically."
+  if (state === "accepted")
+    return "The current Architect must integrate this accepted source before dependent work can continue."
+  if (["blocked", "failed", "exhausted"].includes(state))
+    return "The current Architect must resolve or replan this prerequisite; failed work is not restarted automatically."
+  return "The prerequisite must complete and its source be integrated before dependent work can continue."
+}
 
 /** Stored change identity for an artifact SHA (tree, patch-id, change id, base tree), if any. */
 export type ArtifactEvidenceLookup = (

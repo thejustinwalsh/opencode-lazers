@@ -114,7 +114,11 @@ export default Plugin.define({
       yield* sectionEffect("setup:TaskReads", () =>
         registerTaskReads(ctx, core.taskReads, runtime).pipe(Effect.orDie),
       )
-      yield* sectionEffect("setup:Worker", () => registerWorker(ctx, runtime.store, agentRoutes))
+      yield* sectionEffect("setup:Worker", () =>
+        registerWorker(ctx, runtime.store, agentRoutes, runtime.delegatedAgentCapacity, () =>
+          core.wake(),
+        ),
+      )
       const stubsMode = architectContextStubsMode(ctx.options.architectContextStubs)
       if (stubsMode !== "off")
         yield* sectionEffect("setup:ContextStubs", () =>

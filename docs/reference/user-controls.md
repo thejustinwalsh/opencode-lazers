@@ -73,6 +73,10 @@ The pill stays visible before the first response so you can turn automatic read 
 
 **Remove** beside **Downloaded models** clears the local model cache. The next local request downloads the files again.
 
+### Delegated-agent capacity
+
+A project's **Limit** in **Settings → Projects** is the most delegated agents it runs at once, shared by all of its checkouts and worktrees. It counts runtime-dispatched Implementors and Auditors and native OpenCode subagents such as research and review helpers started from LAZERS sessions; an Architect session is not counted, except that an Architect takeover keeps the task's one slot. With no limit set, nothing waits for capacity. Work beyond the limit stays queued and refills by task priority and dependency eligibility. A changed limit applies on the next scheduler pass and never interrupts active work. A paused project starts nothing new, so it takes no slot. Tasks shows capacity waits, and `lz-inspect-plan` includes the current limit, active and waiting counts, and task-specific wait reasons.
+
 ### Provider usage in the session header
 
 **Show usage ring** shows or hides the session-header ring. Choose **OpenRouter** or **OpenCode Go** as the provider. The page shows only that provider's setting: the **Weekly budget** for OpenRouter, or the **Monthly** or **Rolling 5-hour** allowance for Go.
