@@ -17,7 +17,11 @@ import {
   errorText,
   isRerunnableEffect,
 } from "./runtime-helpers.ts"
-import type { RunnerTransitionRecord, StartupRecoveryAuthorization } from "./runtime-helpers.ts"
+import type {
+  RetainedVerificationSeed,
+  RunnerTransitionRecord,
+  StartupRecoveryAuthorization,
+} from "./runtime-helpers.ts"
 import type { RuntimeCore } from "./runtime-core.ts"
 import { RuntimeJournal } from "./runtime-journal.ts"
 import { ArchitectOwnership } from "./architect-ownership.ts"
@@ -35,6 +39,7 @@ import { VerificationCandidate } from "./verification-candidate.ts"
 import { EffectReconciliation } from "./effect-reconciliation.ts"
 import { VerificationReview } from "./verification-review.ts"
 import { PlanFinish } from "./plan-finish.ts"
+import { RetainedVerificationPreparation } from "./retained-verification-preparation.ts"
 import { RetainedRepairRecords } from "./retained-repair-records.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
@@ -127,7 +132,7 @@ import { ModelMappingStore } from "../models/mapping-store.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 
 import { PROJECT_RECONCILIATION_INTERVAL_MS, sharedScheduler } from "./scheduler-coordinator.ts"
-import { canonicalProjectWorktreePath, samePhysicalWorkspace } from "./workspace-location.ts"
+import { samePhysicalWorkspace } from "./workspace-location.ts"
 import { selectSchedulingCandidates } from "./scheduling-selection.ts"
 import type { SchedulingReservation } from "./scheduling-selection.ts"
 import { DelegatedAgentCapacity } from "./delegated-agent-capacity.ts"
@@ -158,8 +163,7 @@ import {
   verificationActivitiesForDatabase,
 } from "./verification-activities.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
-import type { RetainedVerification } from "./retained-verification/schema.ts"
-import { retainedVerificationEnvironmentIdentity } from "./retained-verification/isolation.ts"
+
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
 import { retainedVerificationProbeBasis } from "./retained-verification/probe.ts"
 
@@ -289,8 +293,6 @@ type RetainedRepairRecoverySeed = {
   workerObservation: string
 }
 
-type RetainedVerificationSeed = RetainedVerification
-
 /** A plan reconcile longer than this leaves a PLAN_STEP_SLOW record naming where the time went. */
 const SLOW_RECONCILE_MS = 30_000
 
@@ -414,6 +416,7 @@ export class TaskRuntime {
   private readonly effectReconciliation: EffectReconciliation
   private readonly verificationReview: VerificationReview
   private readonly planFinish: PlanFinish
+  private readonly retainedVerificationPrep: RetainedVerificationPreparation
   private readonly repairRecords: RetainedRepairRecords
   private running = false
   private stopped = false
@@ -589,6 +592,14 @@ export class TaskRuntime {
       validArchitect: this.ownership.validArchitect.bind(this.ownership),
       preparationAllowed: (...args) => this.preparationAllowed(...args),
       backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+    })
+    this.retainedVerificationPrep = new RetainedVerificationPreparation(this.core, {
+      retainedAttemptModel: (...args) => this.retainedAttemptModel(...args),
+      retainedRepairForAttempt: (...args) => this.retainedRepairForAttempt(...args),
+      retainedRepairObservation: (...args) => this.retainedRepairObservation(...args),
+      retainedRepairWorkerProblem: (...args) => this.retainedRepairWorkerProblem(...args),
+      backgroundBlockReason: (...args) => this.backgroundBlockReason(...args),
+      validArchitect: this.ownership.validArchitect.bind(this.ownership),
     })
     this.outcomeDelivery = new OutcomeDelivery({
       directory: this.directory,
@@ -914,8 +925,10 @@ export class TaskRuntime {
     return this.schedulingRead.read(input)
   }
 
-  private retainedVerificationWorkspacePath(operationID: string, phase: "task") {
-    return canonicalProjectWorktreePath(this.directory, `retained-${operationID}-${phase}`)
+  private retainedVerificationWorkspacePath(
+    ...args: Parameters<RetainedVerificationPreparation["retainedVerificationWorkspacePath"]>
+  ) {
+    return this.retainedVerificationPrep.retainedVerificationWorkspacePath(...args)
   }
 
   /**
@@ -1253,297 +1266,27 @@ export class TaskRuntime {
   }
 
   private retainedRepairCandidateCurrent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    binding: NonNullable<RetainedVerification["repair"]>,
+    ...args: Parameters<RetainedVerificationPreparation["retainedRepairCandidateCurrent"]>
   ) {
-    const repair = this.retainedRepairForAttempt(attempt)
-    if (
-      !repair ||
-      repair.operationID !== binding.operationID ||
-      repair.sessionID !== attempt.session_id ||
-      repair.workspace !== attempt.workspace
-    )
-      return false
-    try {
-      const route = this.retainedAttemptModel(plan, attempt)
-      const repairRoute = ModelPolicy.parse(repair.route)
-      if (!route || !sameModelSnapshot(route, repairRoute)) return false
-      const effects = this.store.effects(plan.id)
-      if (
-        effects.some(
-          (effect) =>
-            effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-        )
-      )
-        return false
-      return effects.some((effect) => {
-        if (
-          effect.attempt_id !== attempt.id ||
-          effect.kind !== "prompt" ||
-          effect.state !== "completed"
-        )
-          return false
-        const payload = JSON.parse(effect.payload) as { repairID?: unknown; messageID?: unknown }
-        return payload.repairID === binding.operationID && payload.messageID === attempt.message_id
-      })
-    } catch {
-      return false
-    }
+    return this.retainedVerificationPrep.retainedRepairCandidateCurrent(...args)
   }
 
-  private async observeRetainedRepairCandidate(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    binding: NonNullable<RetainedVerification["repair"]>,
-    observeOwner?: () => Promise<void>,
+  private observeRetainedRepairCandidate(
+    ...args: Parameters<RetainedVerificationPreparation["observeRetainedRepairCandidate"]>
   ) {
-    const model = ModelPolicy.parse(JSON.parse(attempt.policy).model)
-    const validate = (worker: HostSession | null | undefined) => {
-      const problem = this.retainedRepairWorkerProblem(
-        plan,
-        attempt,
-        worker,
-        attempt.message_id,
-        model,
-      )
-      if (problem) throw new Error(problem)
-      const backgroundProblem = worker ? this.backgroundBlockReason(worker) : undefined
-      if (backgroundProblem) throw new Error(`Retained repair is not idle: ${backgroundProblem}`)
-    }
-    const before = await this.host.session(attempt.session_id, { messages: true })
-    validate(before)
-    await observeOwner?.()
-    const after = await this.host.session(attempt.session_id, { messages: true })
-    validate(after)
-    if (
-      !before ||
-      !after ||
-      this.retainedRepairObservation(before) !== this.retainedRepairObservation(after) ||
-      !this.retainedRepairCandidateCurrent(plan, attempt, binding)
-    )
-      throw new Error("Retained repair changed during candidate observation")
+    return this.retainedVerificationPrep.observeRetainedRepairCandidate(...args)
   }
 
   private assertRetainedVerificationScopeAvailable(
-    planID: string,
-    taskID: string,
-    attemptID: string,
-    taskWorkspace: string,
+    ...args: Parameters<RetainedVerificationPreparation["assertRetainedVerificationScopeAvailable"]>
   ) {
-    // Checks use private worktrees/resources, not an implementor's source scope.
-    // Serialize shared authority and physical destinations, not unrelated paths
-    // with the same relative names in different checkouts.
-    const occupiesDestination = (workspace: string | null | undefined) =>
-      Boolean(workspace && samePhysicalWorkspace(workspace, taskWorkspace))
-    const competingAttempt = this.store
-      .activeProjectAttempts()
-      .find(
-        (candidate) =>
-          candidate.id !== attemptID &&
-          ["preparing", "running", "verifying"].includes(candidate.state) &&
-          (candidate.task_id === taskID || occupiesDestination(candidate.workspace)),
-      )
-    if (competingAttempt)
-      throw new Error(
-        "A conflicting active implementation attempt uses this task or verification checkout",
-      )
-    const conflictingAdoption = this.store
-      .activeAdoptions()
-      .find(
-        (candidate) =>
-          candidate.plan_id === planID ||
-          candidate.task_id === taskID ||
-          occupiesDestination(candidate.task_workspace) ||
-          occupiesDestination(candidate.combined_workspace),
-      )
-    if (conflictingAdoption)
-      throw new Error("A conflicting descendant adoption prevents retained verification")
-    const conflictingVerification = this.store.atomic((db) =>
-      activeRetainedVerifications(db, this.directory).find(
-        (candidate) =>
-          candidate.planID === planID ||
-          candidate.taskID === taskID ||
-          occupiesDestination(candidate.taskWorkspace),
-      ),
-    )
-    if (conflictingVerification)
-      throw new Error("A conflicting retained verification authority is already active")
+    return this.retainedVerificationPrep.assertRetainedVerificationScopeAvailable(...args)
   }
 
-  private async prepareRetainedVerification(
-    plan: PlanRow,
-    command: PlanCommand,
-    caller: string,
-    ownerSession: HostSession | null | undefined,
-  ): Promise<RetainedVerificationSeed> {
-    if (
-      !command.projectID ||
-      !command.planRevision ||
-      !command.taskRevision ||
-      !command.taskID ||
-      !command.attemptID ||
-      !command.artifact ||
-      !command.reason
-    )
-      throw new Error(
-        "Retained verification requires current project, plan, task, attempt and candidate bindings",
-      )
-    if (!this.validArchitect(ownerSession) || command.projectID !== this.projectID)
-      throw new Error("Retained verification requires the current same-project Architect owner")
-    if (command.planRevision !== plan.revision)
-      throw new Error("Retained verification plan revision is stale")
-    if (this.store.activeAdoptions(plan.id).length)
-      throw new Error("A descendant adoption conflicts with retained verification")
-    const input = PlanInput.parse(JSON.parse(plan.body))
-    const task = this.store.repository.get(command.taskID)
-    const node = this.store.nodes(plan.id).find((item) => item.task_id === command.taskID)
-    const attempt = this.store
-      .attempts(plan.id)
-      .filter((item) => item.task_id === command.taskID)
-      .at(-1)
-    if (
-      !task ||
-      !node ||
-      !attempt ||
-      attempt.id !== command.attemptID ||
-      task.revision !== command.taskRevision ||
-      input.nodes.find((entry) => entry.taskID === task.id)?.revision !== task.revision ||
-      !sameProject(task.provenance.projectID, this.projectID) ||
-      task.provenance.projectDirectory !== this.directory ||
-      this.store.repository.taskDisposition(task.id)
-    )
-      throw new Error(
-        "Retained verification must name the current task revision and latest original attempt",
-      )
-    const stoppedPlan = ["blocked", "accepted", "cleanup-blocked"].includes(plan.state)
-    if (!stoppedPlan) throw new Error("Retained verification requires a stopped or accepted plan")
-    const repairingCandidate = attempt.artifact !== null && attempt.artifact !== command.artifact
-    const repair = repairingCandidate ? this.retainedRepairForAttempt(attempt) : undefined
-    const repairBinding =
-      repair && attempt.artifact
-        ? { operationID: repair.operationID, previousArtifact: attempt.artifact }
-        : undefined
-    if (
-      repairingCandidate &&
-      (!repairBinding ||
-        node.artifact !== null ||
-        node.state !== "running" ||
-        attempt.state !== "running" ||
-        !this.retainedRepairCandidateCurrent(plan, attempt, repairBinding))
-    )
-      throw new Error(
-        "Candidate does not match the recorded result or current authorized retained repair",
-      )
-    if (
-      !repairingCandidate &&
-      ((attempt.artifact !== null && attempt.artifact !== command.artifact) ||
-        (node.artifact !== null && node.artifact !== command.artifact))
-    )
-      throw new Error(
-        "Candidate does not match the exact committed result recorded for the latest attempt",
-      )
-    if (node.state === "cancelled" || node.state === "exhausted" || node.state === "incorporated")
-      throw new Error("A cancelled, exhausted or incorporated task cannot be retained-verified")
-    const id = crypto.randomUUID()
-    const taskWorkspace = this.retainedVerificationWorkspacePath(id, "task")
-    this.assertRetainedVerificationScopeAvailable(plan.id, task.id, attempt.id, taskWorkspace)
-    if (!existsSync(attempt.workspace)) throw new Error("Original attempt workspace is unavailable")
-    const originalWorkspace = realpathSync(attempt.workspace)
-    if (
-      realpathSync(await gitAsync(attempt.workspace, ["rev-parse", "--show-toplevel"])) !==
-      originalWorkspace
-    )
-      throw new Error("Original attempt workspace is not a canonical repository checkout")
-    if (originalWorkspace !== realpathSync(this.directory)) {
-      const worktrees = await this.host.worktrees()
-      if (!worktrees.some((workspace) => samePhysicalWorkspace(workspace, originalWorkspace)))
-        throw new Error(
-          "Original attempt checkout is not positively owned by the native worktree adapter",
-        )
-    }
-    if (
-      (await gitAsync(attempt.workspace, ["rev-parse", `${command.artifact}^{commit}`])) !==
-      command.artifact
-    )
-      throw new Error(
-        "Candidate must be an exact committed Git identity in the original attempt repository",
-      )
-    if (
-      (attempt.artifact === null || repairingCandidate) &&
-      (await gitAsync(attempt.workspace, ["rev-parse", "HEAD"])) !== command.artifact
-    )
-      throw new Error(
-        "Unrecorded candidate must be the exact committed HEAD of the original attempt",
-      )
-    if (repairBinding) {
-      if (
-        !(await commitIsAncestor(
-          attempt.workspace,
-          repairBinding.previousArtifact,
-          command.artifact,
-        ))
-      )
-        throw new Error("Retained repair candidate must descend from its prior artifact")
-      if (
-        this.store
-          .effects(plan.id)
-          .some(
-            (effect) =>
-              effect.attempt_id === attempt.id && ["intended", "uncertain"].includes(effect.state),
-          )
-      )
-        throw new Error("Uncertain original effects prevent repaired-candidate verification")
-      await this.observeRetainedRepairCandidate(plan, attempt, repairBinding)
-    }
-    if (!(await commitIsAncestor(attempt.workspace, attempt.base_commit, command.artifact)))
-      throw new Error("Candidate is not based on the original attempt's committed baseline")
-    const changed = (
-      await gitAsync(attempt.workspace, [
-        "diff",
-        "--name-only",
-        "--no-renames",
-        "-z",
-        attempt.base_commit,
-        command.artifact,
-      ])
-    )
-      .split("\0")
-      .filter(Boolean)
-    const violations = protectedPaths(changed, this.store.effectiveScope(task.id))
-    if (violations.length)
-      throw new Error(
-        `Retained candidate changes protected paths: ${violations.slice(0, 20).join(", ")}`,
-      )
-
-    const environmentIdentity = retainedVerificationEnvironmentIdentity()
-    const seed = {
-      schemaVersion: 1 as const,
-      id,
-      projectID: this.projectID,
-      projectDirectory: this.directory,
-      planID: plan.id,
-      planRevision: plan.revision,
-      owner: caller,
-      taskID: task.id,
-      taskRevision: task.revision,
-      attemptID: attempt.id,
-      originalSessionID: attempt.session_id,
-      originalMessageID: attempt.message_id,
-      originalWorkspace: originalWorkspace,
-      artifact: command.artifact,
-      ...(repairBinding ? { repair: repairBinding } : {}),
-      taskWorkspace,
-      taskWorkspaceState: null,
-      environmentIdentity,
-      reason: command.reason,
-      state: "pending" as const,
-      failureReason: null,
-      cleanupState: "pending" as const,
-      createdAt: this.now(),
-      updatedAt: this.now(),
-    }
-    return seed
+  private prepareRetainedVerification(
+    ...args: Parameters<RetainedVerificationPreparation["prepareRetainedVerification"]>
+  ) {
+    return this.retainedVerificationPrep.prepareRetainedVerification(...args)
   }
 
   private sameModel(...args: Parameters<RetainedRepairRecords["sameModel"]>) {

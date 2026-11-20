@@ -1,3 +1,4 @@
+import type { RetainedVerification } from "./retained-verification/schema.ts"
 import { fallowOutcome } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
 import type { FallowDisposition } from "../audit/contract.ts"
@@ -161,3 +162,5 @@ export type RunnerTransitionRecord = {
   event: string
   payload: string
 }
+
+export type RetainedVerificationSeed = RetainedVerification
