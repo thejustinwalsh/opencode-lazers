@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite"
+import type { TaskRepository } from "../storage.ts"
 import type { RunnerStore } from "./store.ts"
 
 /** What a measured stretch of code pulled out of SQLite into JavaScript. */
@@ -22,6 +23,24 @@ export function meterReads(store: RunnerStore): ReadMeter {
   })
   store.read = ((run: (db: Database) => unknown) =>
     original((db) => run(wrap(db)))) as typeof store.read
+  return meter
+}
+
+/**
+ * Count what every `read` and `atomic` call of a repository returns, whichever module makes it.
+ * The runner, progress recorder and observers all reach SQLite through these two methods.
+ */
+export function meterRepository(repository: TaskRepository): ReadMeter {
+  const read = repository.read.bind(repository)
+  const atomic = repository.atomic.bind(repository)
+  const { meter, wrap } = newMeter(() => {
+    repository.read = read
+    repository.atomic = atomic
+  })
+  repository.read = ((run: (db: Database) => unknown) =>
+    read((db) => run(wrap(db)))) as typeof repository.read
+  repository.atomic = ((run: (db: Database) => unknown) =>
+    atomic((db) => run(wrap(db)))) as typeof repository.atomic
   return meter
 }
 
@@ -64,7 +83,8 @@ function newMeter(stop: () => void) {
           return new Proxy(statement, {
             get(inner, method) {
               const value = Reflect.get(inner, method)
-              if (method !== "all" && method !== "get") return value.bind?.(inner) ?? value
+              if (method !== "all" && method !== "get" && method !== "values")
+                return value.bind?.(inner) ?? value
               return (...args: unknown[]) => {
                 const result = (value as (...a: unknown[]) => unknown).apply(inner, args)
                 count(sql, result)

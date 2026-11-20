@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { meterRepository } from "../runner/read-meter.fixture.ts"
 import { TaskRepository } from "../storage.ts"
 import type { PlanningAgentId } from "./contract.ts"
 import { fieldHashes, PlanningBody, validateBody } from "./draft.ts"
@@ -333,4 +334,36 @@ test("an open review of the same plan, stage and revision is joined, and a path 
   const own = f.store.findings("p1").filter((x) => x.source === "path-check")
   expect(own).toHaveLength(1)
   expect(own[0]).toMatchObject({ revision: 4, severity: "major", draftId: "plan-link" })
+})
+
+test("an idle tick with settled history reads no review rows and makes no host call", async () => {
+  const f = fixture()
+  const reviews = f.make()
+  // History: three settled, returned reviews with their runs, findings and questions.
+  for (let round = 0; round < 3; round++) {
+    const review = await f.start(reviews, "comprehension", "grounding")
+    await reviews.run(review.id)
+    expect(f.store.review(review.id)!.settledAt).not.toBeNull()
+  }
+  await reviews.tick()
+  const created = f.created.length
+  const interrupts = f.interrupts.length
+  const notices = f.notices.length
+
+  const meter = meterRepository(f.repository)
+  await reviews.tick()
+  await reviews.tick()
+  meter.stop()
+  if (process.env.READ_SWEEP_NUMBERS)
+    console.log(
+      `[read-sweep] idle planning tick x2 rows=${meter.rows} bytes=${meter.bytes} statements=${meter.statements.length}`,
+    )
+  // Two queries per tick, both returning only open or unannounced reviews: none.
+  expect(meter.rows).toBe(0)
+  expect(meter.statements.length).toBe(4)
+  expect([f.created.length, f.interrupts.length, f.notices.length]).toEqual([
+    created,
+    interrupts,
+    notices,
+  ])
 })
