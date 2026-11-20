@@ -1913,7 +1913,7 @@ export class ObservationReads {
   private readonly machine = machineDefinition()
   private readonly validTransitions = stateTransitionSet()
   private readonly history: TrajectoryHistoryCache
-  private readonly live = new TrajectoryLiveCache()
+  private readonly live: TrajectoryLiveCache
   private readonly liveRadarReader: LiveRadarReader
 
   constructor(
@@ -1928,6 +1928,9 @@ export class ObservationReads {
   ) {
     this.history = new TrajectoryHistoryCache(
       secret,
+      historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
+    )
+    this.live = new TrajectoryLiveCache(
       historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
     )
     this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
