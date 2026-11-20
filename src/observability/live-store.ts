@@ -6,7 +6,7 @@ import { AttemptModel, readAttemptSummary } from "../tasks/attempt-summary.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
-import { storedBucketCounts, storedBucketHead } from "../tasks/schedule/stored.ts"
+import { storedGroupHead, storedWorkload } from "../tasks/schedule/stored.ts"
 import { openConcerns } from "../recovery/detector.ts"
 
 function safeJSON(text: string): unknown {
@@ -357,14 +357,10 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
 function readWorkload(db: Database, metrics: LiveStoreMetrics, projectDirectory: string) {
   try {
     countQuery(metrics)
-    const counts = storedBucketCounts(db, projectDirectory)
-    if (!counts) return undefined
-    countRows(metrics, [counts])
-    return {
-      queued: counts.queued,
-      needsYou: counts.blocked,
-      failed: counts.failed,
-    } satisfies LiveWorkload
+    const workload = storedWorkload(db, projectDirectory)
+    if (!workload) return undefined
+    countRows(metrics, [workload])
+    return workload satisfies LiveWorkload
   } catch {
     return undefined
   }
@@ -853,12 +849,11 @@ export class LiveReadStore {
    * counts, in schedule order, plus the bucket's total. A project that is not indexed yet says so.
    */
   readGroupTasks(group: "needs-you" | "failed" | "queued", signal: AbortSignal) {
-    const bucket = group === "needs-you" ? "blocked" : group === "failed" ? "failed" : "queued"
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
     try {
       return connection.store.read((db) => {
         signal.throwIfAborted()
-        const head = storedBucketHead(db, this.projectDirectory, bucket, LIVE_GROUP_TASKS)
+        const head = storedGroupHead(db, this.projectDirectory, group, LIVE_GROUP_TASKS)
         if (!head) return { indexing: true as const, total: 0, tasks: [] }
         return {
           total: head.total,

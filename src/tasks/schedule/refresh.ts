@@ -9,7 +9,7 @@ import { isTakeoverAttempt, openConcerns } from "../../recovery/detector.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import { taskClassificationFor } from "../classification.ts"
 import { taskTitle } from "../presentation.ts"
-import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
+import { bucketOf, encodeSortKey, ownerHoldOf, priorityKeyOf, rankOf } from "./key.ts"
 import { effectiveStatus, reservationFingerprint } from "./status.ts"
 import type { PlanWait, Reservation } from "./status.ts"
 import type { DirtyKind } from "./schema.ts"
@@ -625,6 +625,12 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     plan_state: plan?.state ?? null,
     rank,
     bucket,
+    owner_hold: ownerHoldOf({
+      nodeState: placement?.state ?? null,
+      planState: plan?.state ?? null,
+    })
+      ? 1
+      : 0,
     priority_key: priorityKeyOf(plan?.priority),
     finished_at: finishedAt,
     finished_basis: basis,

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { RECOVERY_BUNDLE_EVENT } from "../runner/recovery-bundle.ts"
 import type { TaskRepository } from "../storage.ts"
-import { scheduleReady } from "../tasks/schedule/stored.ts"
+import { storedOwnerHolds } from "../tasks/schedule/stored.ts"
 import { canonicalPath, pickUnit } from "./scope.ts"
 import { projectSettingsIn } from "./settings.ts"
 import type { ProjectRef, ProjectUnit } from "./scope.ts"
@@ -23,39 +23,23 @@ export type NeedsYouEntry = {
 export type NeedsYouItem = NeedsYouEntry & { project: ProjectRef }
 
 /**
- * Owner holds of one checkout: the tasks in the stored Blocked bucket, the ones the Tasks panel's
- * Needs you filter lists, every one of them, newest first. Read from the stored list
+ * Owner holds of one checkout: the tasks whose own node or plan is Blocked (stored `owner_hold`; a task
+ * held back by a reservation or prerequisite plan waits on no owner), every one of them, newest first. Read from the stored list
  * (`task_schedule`, bucket index), so it works for a project that is not loaded as long as the
  * project is indexed; `undefined` says it is not, and no hold is listed for it.
  */
 export function ownerHolds(db: Database, directory: string): NeedsYouEntry[] | undefined {
-  if (!scheduleReady(db, directory)) return undefined
-  return db
-    .query<
-      {
-        task_id: string
-        title: string
-        reference: string
-        reason: string | null
-        created_at: string
-      },
-      [string]
-    >(
-      `SELECT task_id,title,reference,node_reason AS reason,created_at FROM task_schedule
-        WHERE project_directory=? AND retired=0 AND bucket='blocked' ORDER BY seq DESC`,
-    )
-    .all(directory)
-    .map((row) => {
-      const since = Date.parse(row.created_at)
-      return {
-        kind: "owner-hold" as const,
-        id: row.task_id,
-        title: row.title,
-        reference: row.reference,
-        ...(row.reason ? { reason: row.reason } : {}),
-        ...(Number.isFinite(since) ? { since } : {}),
-      }
-    })
+  return storedOwnerHolds(db, directory)?.map((row) => {
+    const since = Date.parse(row.created_at)
+    return {
+      kind: "owner-hold" as const,
+      id: row.task_id,
+      title: row.title,
+      reference: row.reference,
+      ...(row.reason ? { reason: row.reason } : {}),
+      ...(Number.isFinite(since) ? { since } : {}),
+    }
+  })
 }
 
 /**

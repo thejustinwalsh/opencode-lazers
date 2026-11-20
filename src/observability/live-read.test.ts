@@ -238,9 +238,9 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
     // The workload is the Tasks panel's own chip counters, read as stored: each step below
     // settles the owner, as the project core does, before the read.
     await fixture.index()
-    // The queued task waits behind the running attempt's checkout, which the list shows as
-    // Blocked (a held-back task counts under Blocked, not Queued).
-    expect((await read()).workload).toEqual({ queued: 0, needsYou: 1, failed: 0 })
+    // The queued task waits behind the running attempt's checkout: the list shows it Blocked, but
+    // it waits on no owner, so it stays Queued here.
+    expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='blocked'").run())
     await fixture.index()
@@ -268,7 +268,7 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
     fixture.store.atomic((db) => db.query("UPDATE lazers_dispatch_pause SET state='enabled'").run())
     await fixture.index()
-    expect((await read()).workload).toEqual({ queued: 0, needsYou: 1, failed: 0 })
+    expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     // A session without a native parent omits the field rather than carrying null.
     const owner = (await read()).sessions.find((item) => item.sessionID !== "ses-failed")

@@ -46,6 +46,19 @@ export function bucketOf(facts: {
   return "open"
 }
 
+/**
+ * Whether the task waits on the owner: its own node, or its plan, is recorded Blocked (and the
+ * task is not finished). A task held back by a reservation, a prerequisite plan or an adoption
+ * shows Blocked but does not need the owner; this is what separates the two, and what the old
+ * Needs you filter read.
+ */
+export function ownerHoldOf(facts: { nodeState: string | null; planState: string | null }) {
+  const { nodeState: node, planState: plan } = facts
+  if (node === null || plan === "cancelled") return false
+  if (["cancelled", "failed", "exhausted", "incorporated", "accepted"].includes(node)) return false
+  return node === "blocked" || plan === "blocked"
+}
+
 export type KeyFacts = {
   planID: string | null
   nodeState: string | null

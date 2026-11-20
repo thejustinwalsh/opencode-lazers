@@ -1,4 +1,4 @@
-import { TaskScheduleOwner } from "../tasks/schedule/owner.ts"
+import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -162,8 +162,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   built("runnerStore")
   // Backfills the Tasks projection of this project, then drains what stale copies queued and
   // retries parked refreshes; idle it holds a table subscription and no timer.
-  const scheduleOwner = new TaskScheduleOwner(repository)
-  scheduleOwner.start()
+  // One owner per database per process serves every project core that loads it.
+  const scheduleLease = acquireScheduleOwner(repository.path, info.projectDirectory)
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -294,7 +294,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const disposeCore = async () => {
     scheduler = undefined
     displayBackfill.stop()
-    scheduleOwner.close()
+    scheduleLease.release()
     await registration.dispose()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.

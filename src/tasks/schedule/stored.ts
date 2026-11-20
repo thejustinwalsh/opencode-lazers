@@ -40,17 +40,96 @@ export function storedBucketCounts(
   return counts
 }
 
-/** The first `limit` tasks of one bucket in schedule order, and how many the bucket holds. */
-export function storedBucketHead(db: Database, project: string, bucket: Bucket, limit: number) {
+type Head = { task_id: string; reference: string; title: string; seq: number }
+
+/** Tasks waiting on the owner: their own node or plan is Blocked (`owner_hold`, partial index). */
+function holdCount(db: Database, project: string) {
+  return db
+    .query<{ n: number }, [string]>(
+      "SELECT COUNT(*) AS n FROM task_schedule WHERE project_directory=? AND retired=0 AND owner_hold=1",
+    )
+    .get(project)!.n
+}
+
+/**
+ * Queued tasks as the old Queued filter counted them: the stored Queued bucket plus the queued
+ * tasks held back by a reservation, a prerequisite plan or an adoption, which show Blocked but
+ * wait on no owner.
+ */
+function heldQueued(db: Database, project: string) {
+  return db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM task_schedule WHERE project_directory=? AND retired=0
+        AND bucket='blocked' AND owner_hold=0 AND node_state='queued'`,
+    )
+    .get(project)!.n
+}
+
+/** The Radar workload: queued, needs-you (owner holds) and failed, from stored counters. */
+export function storedWorkload(db: Database, project: string) {
   const counts = storedBucketCounts(db, project)
   if (!counts) return undefined
   return {
-    total: counts[bucket],
-    rows: db
-      .query<{ task_id: string; reference: string; title: string }, [string, string, number]>(
-        `SELECT task_id,reference,title FROM task_schedule
-          WHERE project_directory=? AND retired=0 AND bucket=? ORDER BY sort_key,task_id LIMIT ?`,
-      )
-      .all(project, bucket, limit),
+    queued: counts.queued + heldQueued(db, project),
+    needsYou: holdCount(db, project),
+    failed: counts.failed,
   }
+}
+
+/** The newest `limit` tasks behind one Radar group, and how many the group holds. */
+export function storedGroupHead(
+  db: Database,
+  project: string,
+  group: "needs-you" | "failed" | "queued",
+  limit: number,
+) {
+  const workload = storedWorkload(db, project)
+  if (!workload) return undefined
+  const head = (where: string) =>
+    db
+      .query<Head, [string, number]>(
+        `SELECT task_id,reference,title,seq FROM task_schedule
+          WHERE project_directory=? AND retired=0 AND ${where} ORDER BY seq DESC LIMIT ?`,
+      )
+      .all(project, limit)
+  const rows =
+    group === "needs-you"
+      ? head("owner_hold=1")
+      : group === "failed"
+        ? head("bucket='failed'")
+        : [
+            ...head("bucket='queued'"),
+            ...head("bucket='blocked' AND owner_hold=0 AND node_state='queued'"),
+          ]
+            .toSorted((a, b) => b.seq - a.seq)
+            .slice(0, limit)
+  return {
+    total:
+      group === "needs-you"
+        ? workload.needsYou
+        : group === "failed"
+          ? workload.failed
+          : workload.queued,
+    rows,
+  }
+}
+
+/** Every owner hold of one project, newest first. */
+export function storedOwnerHolds(db: Database, project: string) {
+  if (!scheduleReady(db, project)) return undefined
+  return db
+    .query<
+      {
+        task_id: string
+        title: string
+        reference: string
+        reason: string | null
+        created_at: string
+      },
+      [string]
+    >(
+      `SELECT task_id,title,reference,node_reason AS reason,created_at FROM task_schedule
+        WHERE project_directory=? AND retired=0 AND owner_hold=1 ORDER BY seq DESC`,
+    )
+    .all(project)
 }

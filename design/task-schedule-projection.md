@@ -483,7 +483,7 @@ module ... generation` when the stored generation exceeds the module's (`storage
 ### Paged, resumable backfill
 
 `task_schedule_state(project_directory, ready, backfill_after, reservations_fp, generation)`.
-The project core owns the backfill (as `DecisionProjectionOwner` owns the decision fold):
+The database-wide schedule owner (see below) owns the backfill, one project at a time (as `DecisionProjectionOwner` owns the decision fold):
 
 ```
 loop:  BEGIN IMMEDIATE
@@ -564,9 +564,27 @@ Cost to read: the first page is a single index range seek of 30 to 100 rows inst
 window functions. Cost to write: a plan-scoped refresh is about 10 indexed point reads and
 N(plan) upserts, estimated at 0.3 ms per node.
 
-## What is deleted, and what moves first
+## What was deleted, and what moved (status after the migration)
 
-Deleted after the callers move:
+- The old read is gone (`Tasks.query`, `TaskReads.query`/`queryAll`, `readPage`, `stateCounts`, the
+  snapshot cursor, `scheduledTaskPageSQL`, `taskStatePredicate`). `TaskReads.get` still uses
+  `effectiveExecution` for the one-task detail. The old order and chip SQL survive only as the
+  audit oracle in `src/tasks/schedule/live-audit.ts`.
+- **Recorded parity.** What the old read showed on the test corpora (random differential seeds,
+  the golden mix, the real-runtime steps, the agent tool's pages) is committed as
+  `recorded-projection.json` and `stream-query.recorded.json`; tests compare the stored list
+  with it, so parity outlives the oracle.
+- **The owner is per database.** One `TaskScheduleOwner` per database per process
+  (`acquireScheduleOwner`, shared by every project core; the last release stops it)
+  backfills every project found in `tasks`, each with its own `ready`, and drains the queue.
+- **Needs you is a stored fact.** `task_schedule.owner_hold` is 1 when the task's own node or plan
+  is recorded Blocked and the task is not finished. A task held back by a reservation, a
+  prerequisite plan or an adoption shows Blocked (the Blocked chip follows the displayed status)
+  but needs no owner, so Needs you and the Radar workload read `owner_hold`, not the bucket.
+- **Search** matches the stored `search_text` of six fields (id, reference, objective, scope,
+  acceptance, context), not the whole task body the old read searched.
+
+Originally planned for deletion after the callers move:
 
 - `src/tasks/schedule-order.ts` and `scheduledTaskPageSQL`; the `readPage` clause builder, the
   `stateCounts` helper and the `created_version` snapshot machinery (`storage.ts:912-1060`);

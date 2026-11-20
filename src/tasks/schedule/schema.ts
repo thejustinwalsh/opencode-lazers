@@ -38,6 +38,7 @@ export const TABLES_SQL = `
     plan_state TEXT,
     rank INTEGER NOT NULL,
     bucket TEXT NOT NULL,
+    owner_hold INTEGER NOT NULL DEFAULT 0,
     priority_key INTEGER NOT NULL,
     finished_at INTEGER NOT NULL DEFAULT 0,
     finished_basis TEXT,
@@ -65,6 +66,8 @@ export const TABLES_SQL = `
   );
   CREATE INDEX task_schedule_order ON task_schedule(project_directory, retired, sort_key);
   CREATE INDEX task_schedule_bucket ON task_schedule(project_directory, retired, bucket, sort_key);
+  CREATE INDEX task_schedule_bucket_recent ON task_schedule(project_directory, retired, bucket, seq);
+  CREATE INDEX task_schedule_hold ON task_schedule(project_directory, seq) WHERE owner_hold=1 AND retired=0;
   CREATE INDEX task_schedule_creator
     ON task_schedule(project_directory, session_id, retired, sort_key);
   CREATE INDEX task_schedule_recent ON task_schedule(project_directory, retired, seq);
