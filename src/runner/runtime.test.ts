@@ -15527,7 +15527,8 @@ test("a plan queued before the project had a config holds with the actionable re
   await f.runtime.tick()
   expect(f.store.plan(planID)?.state).toBe("blocked")
   expect(f.store.plan(planID)?.reason).toStartWith("FALLOW_CONFIG_REQUIRED")
-  expect(f.store.plan(planID)?.reason).toContain("lz-fallow-config-set")
+  expect(f.store.plan(planID)?.reason).toContain("call lz-fallow-config with mode suggest")
+  expect(f.store.plan(planID)?.reason).toContain("mode guide returns it again")
   setFallowConfig(
     f.store.repository,
     { entry: [] },
