@@ -15781,6 +15781,52 @@ test("takeover: the worker writes its handoff in time, stops, and the Architect'
   expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
 })
 
+// Live LZ-200: the Architect's takeover result was accepted, then combined verification failed
+// on it. No command reopened the accepted takeover: takeover-submit wanted a running attempt,
+// retained repair a native worker. The Architect now corrects its own work and resubmits.
+test("takeover: an accepted takeover held on combined verification is corrected and resubmitted by the Architect", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.completeWorker(worker.session_id, "interrupted")
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Dead worker" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submitTakeover(f, worker.task_id, "submit-1")
+  await drive(f.runtime, 10)
+  const planID = f.receipt.planID
+  const accepted = f.store.attempts(planID).find((a) => a.id === taken.attemptID)!
+  expect(accepted.state).toBe("accepted")
+  f.store.atomic((db) =>
+    db
+      .query(
+        "UPDATE runner_plans SET state='blocked',reason='Combined artifact verification failed',artifact=NULL,version=version+1 WHERE id=?",
+      )
+      .run(planID),
+  )
+
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "Correct the combined failure",
+  ])
+  const corrected = git(worker.workspace, ["rev-parse", "HEAD"])
+  const resubmitted = (await submitTakeover(f, worker.task_id, "submit-2")) as { status: string }
+  expect(resubmitted.status).toBe("takeover-submitted")
+  expect(f.store.plan(planID)!.state).toBe("running")
+  expect(f.store.nodes(planID)[0]!.state).toBe("verifying")
+  await drive(f.runtime, 10)
+  const again = f.store.attempts(planID).find((a) => a.id === taken.attemptID)!
+  expect(again.state).toBe("accepted")
+  expect(again.artifact).toBe(corrected)
+  expect(f.store.nodes(planID)[0]!.artifact).toBe(corrected)
+  expect(f.store.attempts(planID)).toHaveLength(accepted.number)
+  expect(f.store.plan(planID)!.state).toBe("accepted")
+})
+
 test("takeover: a worker that writes nothing is stopped when the window passes; uncommitted work is kept", async () => {
   const { f, worker, steered } = await takeoverFixture()
   f.host.steerWorker = async (input) => void steered.push(input.id)

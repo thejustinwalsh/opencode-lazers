@@ -4847,14 +4847,22 @@ export class TaskRuntime {
       .at(-1)
     // A verifying attempt resubmits only when its verification is held: a new candidate then.
     const resubmitHeld = attempt?.state === "verifying" && plan.state === "blocked"
+    // An accepted takeover result the plan is held on (combined verification) is the Architect's
+    // own work: it corrects it in the same workspace and resubmits, as a worker's retained repair.
+    const reopenAccepted =
+      attempt?.state === "accepted" &&
+      plan.state === "blocked" &&
+      attempt !== undefined &&
+      isTakeoverAttempt(attempt.policy)
     if (
       !attempt ||
       !isTakeoverAttempt(attempt.policy) ||
-      (attempt.state !== "running" && !resubmitHeld)
+      (attempt.state !== "running" && !resubmitHeld && !reopenAccepted)
     )
       throw new Error(
         "takeover-submit needs the task's running takeover attempt; call lz-request-handoff first",
       )
+    if (reopenAccepted) this.assertTakeoverReopenable(plan, attempt, ctx.obs)
     const submission =
       this.store
         .activity(plan.id, attempt.task_id)
@@ -4865,18 +4873,32 @@ export class TaskRuntime {
         ).length + 1
     const takeoverID = (JSON.parse(attempt.policy) as { takeover: { takeoverID: string } }).takeover
       .takeoverID
+    if (reopenAccepted) {
+      this.store.move(plan.id, attempt.task_id, "RETAINED_REPAIR", command.reason)
+      this.store.move(plan.id, attempt.task_id, "DISPATCH")
+    }
     if (!resubmitHeld) this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
     this.store.atomic((db) => {
       // Each submission is a new candidate: its own input identity, so mechanical-fix and check
       // effects journaled for an earlier submission are never matched or reused (as a repair
       // attempt's new attempt or a retained repair's new input keys them apart).
+      const state = resubmitHeld
+        ? "state"
+        : reopenAccepted
+          ? "lz_runner_transition('attempt',lz_runner_transition('attempt',lz_runner_transition('attempt',state,'preparing'),'running'),'verifying')"
+          : "lz_runner_transition('attempt',state,'verifying')"
       db.query(
-        `UPDATE runner_attempts SET state=${resubmitHeld ? "state" : "lz_runner_transition('attempt',state,'verifying')"},message_id=?,artifact=NULL WHERE id=?`,
+        `UPDATE runner_attempts SET state=${state},message_id=?,artifact=NULL WHERE id=?`,
       ).run(`takeover-${takeoverID}-submission-${submission}`, attempt.id)
+      if (reopenAccepted)
+        db.query("UPDATE runner_nodes SET artifact=NULL WHERE plan_id=? AND task_id=?").run(
+          plan.id,
+          attempt.task_id,
+        )
       // A resubmission after a failed verification lifts its hold.
       if (plan.state === "blocked")
         db.query(
-          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,artifact=NULL,version=version+1 WHERE id=?",
         ).run(plan.id)
     })
     this.store.record(plan.id, attempt.task_id, "TAKEOVER_SUBMITTED", {
@@ -4886,6 +4908,27 @@ export class TaskRuntime {
     })
     this.tickRequested = true
     return { status: "takeover-submitted", attemptID: attempt.id, version: plan.version }
+  }
+
+  /** The retained-repair boundaries, for the Architect's own accepted takeover result. */
+  private assertTakeoverReopenable(plan: PlanRow, attempt: AttemptRow, obs: GitObservations) {
+    const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)
+    if (
+      !node ||
+      node.state !== "accepted" ||
+      !node.artifact ||
+      plan.artifact !== null ||
+      this.store.latestTransition(plan.id, attempt.task_id, "TASK_INTEGRATION_RECORDED") ||
+      this.store.repository.taskDisposition(attempt.task_id) ||
+      obs.isAncestor(this.directory, node.artifact, obs.git(this.directory, ["rev-parse", "HEAD"]))
+    )
+      throw new Error("Only an accepted, unintegrated takeover result held by its plan reopens")
+    if (
+      this.store.effects(plan.id).some((effect) => ["intended", "uncertain"].includes(effect.state))
+    )
+      throw new Error("Uncertain effects prevent reopening the takeover result")
+    this.assertNoDispatchedDependents(plan, attempt.task_id, PlanInput.parse(JSON.parse(plan.body)))
+    if (!existsSync(attempt.workspace)) throw new Error("The takeover's retained workspace is gone")
   }
 
   /**
@@ -12175,7 +12218,15 @@ export class TaskRuntime {
       }
     }
     if (receipts.some((r) => !checkSucceeded(r))) {
-      this.hold(plan, "Combined artifact verification failed")
+      // An Architect's accepted takeover result is corrected by the Architect: it resubmits.
+      const takenOver = this.store
+        .attempts(plan.id)
+        .some((attempt) => attempt.state === "accepted" && isTakeoverAttempt(attempt.policy))
+      this.hold(
+        plan,
+        "Combined artifact verification failed",
+        takenOver ? ["takeover-submit", "audit", "reconcile", "cancel"] : undefined,
+      )
       return
     }
     const planFallow = await this.planFallowReview(
