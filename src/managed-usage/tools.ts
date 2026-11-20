@@ -14,6 +14,8 @@ import type { ManagedUsageStore } from "./store.ts"
 type ManagedUsageToolContext = Pick<Plugin.Context, "location" | "permission" | "session" | "tool">
 
 const UNAVAILABLE = "Managed usage scope is unavailable"
+const ENROLLMENT_UNAVAILABLE =
+  "Managed usage enrollment is unavailable because the pinned API cannot prove a future-generation boundary"
 
 async function readSession(ctx: ManagedUsageToolContext, sessionID: string, signal: AbortSignal) {
   return Effect.runPromise(ctx.session.get({ sessionID: Session.ID.make(sessionID) }), { signal })
@@ -115,119 +117,35 @@ async function hasArchitectLineage(
   return false
 }
 
-type EnrollmentCall = { sessionID: string; agent: string; messageID: string }
-type EnrollmentAuthority = {
-  caller: Awaited<ReturnType<typeof readSession>>
-  target: { agent: string; busy: boolean }
-}
-
-async function authorizeEnrollment(
-  ctx: ManagedUsageToolContext,
-  store: ManagedUsageStore,
-  projectID: string,
-  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
-  call: EnrollmentCall,
-  signal: AbortSignal,
-): Promise<EnrollmentAuthority> {
-  const caller = await authorizeArchitectCaller(ctx, call, projectID, store, signal)
-  const target = await authorizeManagedTarget(
-    ctx,
-    caller,
-    request.sessionID,
-    projectID,
-    store,
-    signal,
-  )
-  if (String(caller.id) !== request.sessionID && target.busy) throw new Error(UNAVAILABLE)
-  return { caller, target }
-}
-
-function stableEnrollmentAuthority(
-  initial: EnrollmentAuthority,
-  current: EnrollmentAuthority,
-  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
-) {
-  const sameCaller = String(current.caller.id) === String(initial.caller.id)
-  const sameAgent = current.target.agent === initial.target.agent
-  const targetIsIdle = String(current.caller.id) === request.sessionID || !current.target.busy
-  if (!sameCaller || !sameAgent || !targetIsIdle) throw new Error(UNAVAILABLE)
-}
-
-function existingEnrollmentResult(
-  store: ManagedUsageStore,
-  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>,
-) {
-  const retry = store.findEnrollmentRequest(request.requestID, request)
-  if (retry) return retry
-  const currentRevision = store.sessionRevision(request.sessionID)
-  if (request.expectedRevision === currentRevision) return null
-  return {
-    status: "conflict" as const,
-    reason: "stale-revision" as const,
-    expectedRevision: request.expectedRevision,
-    currentRevision,
-  }
-}
-
-async function commitEnrollment(input: {
-  ctx: ManagedUsageToolContext
-  store: ManagedUsageStore
-  capture: ManagedUsageCapture
-  projectID: string
-  request: z.infer<typeof ManagedUsageEnrollmentInputSchema>
-  call: EnrollmentCall
-  initial: EnrollmentAuthority
-  signal: AbortSignal
-}) {
-  const { ctx, store, capture, projectID, request, call, initial, signal } = input
-  const pending = capture.beginEnrollment(request.sessionID)
-  let boundarySequence = capture.boundarySequence(request.sessionID)
-  try {
-    const current = await authorizeEnrollment(ctx, store, projectID, request, call, signal)
-    stableEnrollmentAuthority(initial, current, request)
-    signal.throwIfAborted()
-    boundarySequence = capture.boundarySequence(request.sessionID)
-    const result = store.enroll({
-      request,
-      agent: initial.target.agent,
-      boundarySequence,
-      excludedAssistantMessageID:
-        String(current.caller.id) === request.sessionID ? call.messageID : null,
-    })
-    const committed = result.status === "enrolled"
-    pending.finish(committed ? result.boundarySequence : boundarySequence, committed)
-    return result
-  } finally {
-    pending.finish(boundarySequence, false)
-  }
-}
-
 async function executeManagedUsageEnrollment(input: {
   ctx: ManagedUsageToolContext
   store: ManagedUsageStore
-  capture: ManagedUsageCapture
   projectID: string
   projectDirectory: string
   raw: unknown
-  call: EnrollmentCall
+  call: { sessionID: string; agent: string }
   signal: AbortSignal
-}) {
-  const request = ManagedUsageEnrollmentInputSchema.parse(input.raw)
-  assertProject(request, input.ctx)
-  const initial = await authorizeEnrollment(
+}): Promise<never> {
+  const caller = await authorizeArchitectCaller(
     input.ctx,
-    input.store,
-    input.projectID,
-    request,
     input.call,
+    input.projectID,
+    input.store,
     input.signal,
   )
+  const request = ManagedUsageEnrollmentInputSchema.parse(input.raw)
+  assertProject(request, input.ctx)
+  const target = await authorizeManagedTarget(
+    input.ctx,
+    caller,
+    request.sessionID,
+    input.projectID,
+    input.store,
+    input.signal,
+  )
+  if (String(caller.id) !== request.sessionID && target.busy) throw new Error(UNAVAILABLE)
   input.signal.throwIfAborted()
-  const existing = existingEnrollmentResult(input.store, request)
-  if (existing) return { content: JSON.stringify(existing), output: existing }
-  input.store.validateAssociation(request.association)
-  const result = await commitEnrollment({ ...input, request, initial })
-  return { content: JSON.stringify(result), output: result }
+  throw new Error(ENROLLMENT_UNAVAILABLE)
 }
 
 function validateReadScope(
@@ -264,7 +182,7 @@ export function registerManagedUsageTools(input: {
     editor.add({
       name: "lz-enroll-managed-usage",
       description:
-        "Enroll a same-project Architect-managed session at a durable future-generation boundary and freeze its task, plan, or unallocated association. Exact retries are idempotent; use the returned revision for a later scope change.",
+        "Currently unavailable: the pinned OpenCode API cannot prove that a generation starts after enrollment. Enrollment and reassociation fail closed; no association is written.",
       input: z.toJSONSchema(ManagedUsageEnrollmentInputSchema, { io: "input" }),
       output: z.toJSONSchema(z.record(z.string(), z.unknown()), { io: "output" }),
       options: {
@@ -285,12 +203,14 @@ export function registerManagedUsageTools(input: {
               Effect.tryPromise({
                 try: (signal) =>
                   executeManagedUsageEnrollment({
-                    ...input,
+                    ctx: input.ctx,
+                    store: input.store,
+                    projectID: input.projectID,
+                    projectDirectory: input.projectDirectory,
                     raw,
                     call: {
                       sessionID: String(call.sessionID),
                       agent: String(call.agent),
-                      messageID: String(call.messageID),
                     },
                     signal,
                   }),

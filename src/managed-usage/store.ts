@@ -8,7 +8,16 @@ import {
   type ManagedUsageEnrollmentInput,
   type ManagedUsageNativeFact,
 } from "./contract.ts"
+import { insertManagedUsageCoverageGaps, insertManagedUsageGap } from "./capture-gaps.ts"
+import {
+  enrollManagedUsageBoundary,
+  type ManagedUsageEnrollmentReceipt,
+  type ManagedUsageEnrollmentResult,
+} from "./enrollment.ts"
+import type { ManagedUsageLocation } from "./native-location.ts"
 import { managedUsageSchemaModule } from "./schema.ts"
+
+export type { ManagedUsageEnrollmentResult } from "./enrollment.ts"
 
 const MAX_SNAPSHOT_FACTS = 100_000
 const MAX_SNAPSHOT_GAPS = 10_000
@@ -28,6 +37,7 @@ export type ManagedUsageBoundary = {
   excludedAssistantMessageID: string | null
   agent: string
   association: ManagedUsageAssociation
+  nativeLocation: ManagedUsageLocation | null
   createdAt: number
 }
 
@@ -54,23 +64,6 @@ export type ManagedUsageSnapshot = {
   listenerGapCountsTruncated: boolean
 }
 
-export type ManagedUsageEnrollmentReceipt = {
-  status: "enrolled"
-  sessionID: string
-  revision: number
-  boundarySequence: number | null
-  association: ManagedUsageAssociation
-}
-
-export type ManagedUsageEnrollmentResult =
-  | ManagedUsageEnrollmentReceipt
-  | {
-      status: "conflict"
-      reason: "request-id-reused" | "stale-revision" | "stale-boundary"
-      expectedRevision: number
-      currentRevision: number
-    }
-
 type BoundaryRow = {
   session_id: string
   revision: number
@@ -78,6 +71,8 @@ type BoundaryRow = {
   boundary_sequence: number
   excluded_assistant_message_id: string | null
   managed_agent: string
+  native_directory: string | null
+  workspace_id: string | null
   association_kind: string
   plan_id: string | null
   task_id: string | null
@@ -122,14 +117,6 @@ function incrementRevision(db: Database, projectDirectory: string) {
   )
 }
 
-function associationColumns(association: ManagedUsageAssociation) {
-  return association.kind === "task"
-    ? { kind: association.kind, planID: association.planID, taskID: association.taskID }
-    : association.kind === "plan"
-      ? { kind: association.kind, planID: association.planID, taskID: null }
-      : { kind: association.kind, planID: null, taskID: null }
-}
-
 function snapshotCounts(db: Database, projectDirectory: string) {
   const count = (table: string) =>
     db
@@ -166,6 +153,10 @@ function snapshotBoundaries(db: Database, projectDirectory: string) {
       excludedAssistantMessageID: row.excluded_assistant_message_id,
       agent: row.managed_agent,
       association: associationFromRow(row),
+      nativeLocation:
+        row.native_directory === null
+          ? null
+          : { directory: row.native_directory, workspaceID: row.workspace_id },
       createdAt: row.created_at,
     }))
 }
@@ -252,6 +243,8 @@ export class ManagedUsageStore {
             boundary_sequence INTEGER NOT NULL CHECK(boundary_sequence >= -1),
             excluded_assistant_message_id TEXT,
             managed_agent TEXT NOT NULL,
+            native_directory TEXT,
+            workspace_id TEXT,
             association_kind TEXT NOT NULL CHECK(association_kind IN ('task','plan','unallocated')),
             plan_id TEXT,
             task_id TEXT,
@@ -296,6 +289,8 @@ export class ManagedUsageStore {
             listener_id TEXT NOT NULL,
             session_id TEXT NOT NULL,
             kind TEXT NOT NULL CHECK(kind IN ('listener-started','stream-failed','stream-ended','listener-stopped','authority-changed','observation-failed','unidentified-event','unsequenced-event','buffer-overflow')),
+            native_directory TEXT,
+            workspace_id TEXT,
             recorded_at INTEGER NOT NULL,
             UNIQUE(project_directory,listener_id,session_id,kind)
           );
@@ -322,10 +317,22 @@ export class ManagedUsageStore {
         db.exec(
           "ALTER TABLE managed_usage_boundaries ADD COLUMN excluded_assistant_message_id TEXT",
         )
+      if (!hasColumn(db, "managed_usage_boundaries", "native_directory"))
+        db.exec("ALTER TABLE managed_usage_boundaries ADD COLUMN native_directory TEXT")
+      if (!hasColumn(db, "managed_usage_boundaries", "workspace_id"))
+        db.exec("ALTER TABLE managed_usage_boundaries ADD COLUMN workspace_id TEXT")
       if (!hasColumn(db, "managed_usage_facts", "sequence"))
         db.exec("ALTER TABLE managed_usage_facts ADD COLUMN sequence INTEGER")
       if (!hasColumn(db, "managed_usage_fact_conflicts", "sequence"))
         db.exec("ALTER TABLE managed_usage_fact_conflicts ADD COLUMN sequence INTEGER")
+      if (!hasColumn(db, "managed_usage_capture_gaps", "native_directory"))
+        db.exec("ALTER TABLE managed_usage_capture_gaps ADD COLUMN native_directory TEXT")
+      if (!hasColumn(db, "managed_usage_capture_gaps", "workspace_id"))
+        db.exec("ALTER TABLE managed_usage_capture_gaps ADD COLUMN workspace_id TEXT")
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS managed_usage_boundaries_location
+         ON managed_usage_boundaries(project_directory,native_directory,workspace_id,session_id)`,
+      )
     })
     // The schema is shared by every project in this database, but the revision row is not.
     // Initialize it on every project-scoped store construction, not only on first migration.
@@ -446,87 +453,22 @@ export class ManagedUsageStore {
     request: ManagedUsageEnrollmentInput
     agent: string
     boundarySequence: number
+    nativeLocation?: ManagedUsageLocation | null
     excludedAssistantMessageID?: string | null
   }): ManagedUsageEnrollmentResult {
-    const association = ManagedUsageAssociationSchema.parse(input.request.association)
     if (!Number.isSafeInteger(input.boundarySequence) || input.boundarySequence < -1)
       throw new Error("Managed usage enrollment boundary is unavailable")
-    const requestFingerprint = fingerprint(input.request)
-    const columns = associationColumns(association)
     return this.repository.atomic((db) => {
-      const existing = db
-        .query<{ request_fingerprint: string; receipt_json: string }, [string, string]>(
-          `SELECT request_fingerprint,receipt_json FROM managed_usage_boundaries
-           WHERE project_directory=? AND request_id=?`,
-        )
-        .get(this.repository.projectDirectory, input.request.requestID)
-      if (existing) {
-        if (existing.request_fingerprint !== requestFingerprint)
-          return {
-            status: "conflict" as const,
-            reason: "request-id-reused" as const,
-            expectedRevision: input.request.expectedRevision,
-            currentRevision: this.currentSessionRevision(db, input.request.sessionID),
-          }
-        return JSON.parse(existing.receipt_json) as ManagedUsageEnrollmentReceipt
-      }
-
-      const currentRevision = this.currentSessionRevision(db, input.request.sessionID)
-      if (input.request.expectedRevision !== currentRevision)
-        return {
-          status: "conflict" as const,
-          reason: "stale-revision" as const,
-          expectedRevision: input.request.expectedRevision,
-          currentRevision,
-        }
-
-      const previousBoundary = db
-        .query<{ boundary_sequence: number }, [string, string]>(
-          `SELECT boundary_sequence FROM managed_usage_boundaries
-           WHERE project_directory=? AND session_id=? ORDER BY revision DESC LIMIT 1`,
-        )
-        .get(this.repository.projectDirectory, input.request.sessionID)
-      if (previousBoundary && input.boundarySequence < previousBoundary.boundary_sequence)
-        return {
-          status: "conflict" as const,
-          reason: "stale-boundary" as const,
-          expectedRevision: input.request.expectedRevision,
-          currentRevision,
-        }
-
-      this.validateAssociationInDatabase(db, association)
-      if (currentRevision === Number.MAX_SAFE_INTEGER)
-        throw new Error("Managed usage association revision is exhausted")
-      const revision = currentRevision + 1
-      const receipt: ManagedUsageEnrollmentReceipt = {
-        status: "enrolled",
-        sessionID: input.request.sessionID,
-        revision,
-        boundarySequence: input.boundarySequence < 0 ? null : input.boundarySequence,
-        association,
-      }
-      db.query(
-        `INSERT INTO managed_usage_boundaries(
-          project_directory,session_id,revision,request_id,request_fingerprint,receipt_json,
-          boundary_sequence,excluded_assistant_message_id,managed_agent,association_kind,plan_id,task_id,created_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(
-        this.repository.projectDirectory,
-        input.request.sessionID,
-        revision,
-        input.request.requestID,
-        requestFingerprint,
-        canonical(receipt),
-        input.boundarySequence,
-        input.excludedAssistantMessageID ?? null,
-        input.agent,
-        columns.kind,
-        columns.planID,
-        columns.taskID,
-        Date.now(),
-      )
-      incrementRevision(db, this.repository.projectDirectory)
-      return receipt
+      return enrollManagedUsageBoundary({
+        db,
+        projectDirectory: this.repository.projectDirectory,
+        ...input,
+        currentSessionRevision: (database, sessionID) =>
+          this.currentSessionRevision(database, sessionID),
+        validateAssociation: (database, association) =>
+          this.validateAssociationInDatabase(database, association),
+        incrementRevision,
+      })
     })
   }
 
@@ -618,65 +560,42 @@ export class ManagedUsageStore {
     })
   }
 
-  recordGap(input: { listenerID: string; sessionID: string; kind: string; recordedAt?: number }) {
-    const kind = input.kind
-    if (
-      ![
-        "listener-started",
-        "stream-failed",
-        "stream-ended",
-        "listener-stopped",
-        "authority-changed",
-        "observation-failed",
-        "unidentified-event",
-        "unsequenced-event",
-        "buffer-overflow",
-      ].includes(kind)
-    )
-      throw new Error("Invalid managed usage gap kind")
+  recordGap(input: {
+    listenerID: string
+    sessionID: string
+    kind: string
+    nativeLocation?: ManagedUsageLocation | null
+    recordedAt?: number
+  }) {
     return this.repository.atomic((db) => {
-      db.query(
-        `INSERT OR IGNORE INTO managed_usage_capture_gaps(
-          project_directory,listener_id,session_id,kind,recorded_at
-        ) VALUES(?,?,?,?,?)`,
-      ).run(
-        this.repository.projectDirectory,
-        input.listenerID,
-        input.sessionID,
-        kind,
-        input.recordedAt ?? Date.now(),
-      )
-      const changed = db.query("SELECT changes() AS count").get() as { count: number }
-      if (changed.count > 0) incrementRevision(db, this.repository.projectDirectory)
-      return changed.count > 0
+      const changed = insertManagedUsageGap(db, this.repository.projectDirectory, input)
+      if (changed) incrementRevision(db, this.repository.projectDirectory)
+      return changed
     })
   }
 
   recordGapForAll(input: { listenerID: string; kind: string; recordedAt?: number }) {
     return this.repository.atomic((db) => {
-      const sessions = db
-        .query<{ session_id: string }, [string]>(
-          `SELECT DISTINCT session_id FROM managed_usage_boundaries
-           WHERE project_directory=? ORDER BY session_id LIMIT 100_000`,
-        )
-        .all(this.repository.projectDirectory)
-      let changedCount = 0
-      const insert = db.query(
-        `INSERT OR IGNORE INTO managed_usage_capture_gaps(
-          project_directory,listener_id,session_id,kind,recorded_at
-        ) VALUES(?,?,?,?,?)`,
-      )
-      for (const { session_id } of sessions) {
-        insert.run(
-          this.repository.projectDirectory,
-          input.listenerID,
-          session_id,
-          input.kind,
-          input.recordedAt ?? Date.now(),
-        )
-        const changed = db.query("SELECT changes() AS count").get() as { count: number }
-        changedCount += changed.count
-      }
+      const changedCount = insertManagedUsageCoverageGaps(db, this.repository.projectDirectory, {
+        ...input,
+        scope: { kind: "project" },
+      })
+      if (changedCount > 0) incrementRevision(db, this.repository.projectDirectory)
+      return changedCount
+    })
+  }
+
+  recordGapForLocation(input: {
+    listenerID: string
+    nativeLocation: ManagedUsageLocation
+    kind: string
+    recordedAt?: number
+  }) {
+    return this.repository.atomic((db) => {
+      const changedCount = insertManagedUsageCoverageGaps(db, this.repository.projectDirectory, {
+        ...input,
+        scope: { kind: "location", nativeLocation: input.nativeLocation },
+      })
       if (changedCount > 0) incrementRevision(db, this.repository.projectDirectory)
       return changedCount
     })

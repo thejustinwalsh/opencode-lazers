@@ -273,6 +273,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const disposeCore = async () => {
     scheduler = undefined
     await registration.dispose()
+    await managedUsageCapture.stopAllObservers()
     await runtime.stop()
     // Hand the lease to a successor core immediately instead of letting the TTL lapse.
     try {

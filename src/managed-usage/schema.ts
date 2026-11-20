@@ -1,5 +1,5 @@
 export const managedUsageSchemaModule = {
-  generation: 2,
+  generation: 3,
   source: "src/managed-usage/store.ts",
   tables: [
     "managed_usage_meta",

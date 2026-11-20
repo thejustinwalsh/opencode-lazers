@@ -55,12 +55,17 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
-function enrollment(requestID: string, expectedRevision: number, association: unknown) {
+function enrollment(
+  requestID: string,
+  expectedRevision: number,
+  association: unknown,
+  sessionID = "ses-managed",
+) {
   return ManagedUsageEnrollmentInputSchema.parse({
     requestID,
     projectID,
     projectDirectory,
-    sessionID: "ses-managed",
+    sessionID,
     expectedRevision,
     association,
   })
@@ -70,9 +75,11 @@ function nativeEvent(
   type: "session.step.started" | "session.step.ended",
   messageID: string,
   seq: number,
+  sessionID = "ses-managed",
+  location?: { directory: string; workspaceID?: string },
 ) {
   const data: Record<string, unknown> = {
-    sessionID: "ses-managed",
+    sessionID,
     assistantMessageID: messageID,
   }
   if (type === "session.step.started")
@@ -85,10 +92,11 @@ function nativeEvent(
       tokens: { input: 7, output: 3, reasoning: 1, cache: { read: 2, write: 1 } },
     })
   return {
-    id: `event-${seq}`,
+    ...(location ? { location } : {}),
+    id: `event-${sessionID}-${seq}`,
     type,
     created: seq,
-    durable: { aggregateID: "ses-managed", seq, version: 1 },
+    durable: { aggregateID: sessionID, seq, version: 1 },
     data,
   }
 }
@@ -154,82 +162,47 @@ async function waitForFactCount(store: ManagedUsageStore, count: number) {
   }
 }
 
-test("registered reassociation fences events delivered behind a stalled native session read", async () => {
+test("delayed native events cannot be reassociated by fail-closed public enrollment", async () => {
   const { store } = fixture()
   const capture = new ManagedUsageCapture(store)
   store.enroll({
-    request: enrollment("initial", 0, { kind: "task", planID, taskID }),
+    request: enrollment("initial", 0, { kind: "unallocated" }),
     agent: "explore",
-    boundarySequence: 4,
+    boundarySequence: -1,
+    nativeLocation: { directory: projectDirectory, workspaceID: null },
   })
 
   const blocker = deferred()
   const firstObservation = deferred()
-  const queuedEventsObserved = deferred()
   const keepOpen = deferred()
-  let childReads = 0
   const managed = {
     id: "ses-managed",
     projectID,
     parentID: "ses-architect",
     agent: "explore",
-    location: { directory: projectDirectory },
+    location: { directory: projectDirectory, workspaceID: null },
     time: {},
   }
-  const architect = {
-    id: "ses-architect",
-    projectID,
-    agent: "architect",
-    location: { directory: projectDirectory },
-    time: {},
-  }
-  const registered = toolsFixture()
-  const session = {
-    get: ({ sessionID }: { sessionID: string }) => {
-      if (sessionID === "ses-managed") {
-        childReads++
-        if (childReads === 1)
-          return Effect.promise(async () => {
-            firstObservation.resolve()
-            await blocker.promise
-            return managed
-          })
-        if (childReads === 3) queuedEventsObserved.resolve()
-        return Effect.succeed(managed)
-      }
-      return sessionID === "ses-architect"
-        ? Effect.succeed(architect)
-        : Effect.fail(new Error("missing"))
-    },
-  }
-  const context = {
-    location: { project: { id: projectID, canonical: projectDirectory } },
-    permission: { assert: () => Effect.void },
-    session,
-    tool: registered.tool,
-  }
-  await Effect.runPromise(
-    Effect.scoped(
-      registerManagedUsageTools({
-        ctx: context as never,
-        store,
-        capture,
-        projectID,
-        projectDirectory,
-        priceProvider: async (calls) =>
-          projectManagedUsageValuation({ calls, index: null, freshness: "unknown" }),
-      }),
-    ),
-  )
   const nativeContext = {
-    ...context,
+    location: { directory: projectDirectory, workspaceID: null },
+    session: {
+      get: () =>
+        Effect.promise(async () => {
+          firstObservation.resolve()
+          await blocker.promise
+          return managed
+        }),
+    },
     event: {
       subscribe: () =>
-        Stream.fromIterable([
-          nativeEvent("session.step.started", "msg-blocked", 5),
-          nativeEvent("session.step.started", "msg-before-reassociation", 6),
-          nativeEvent("session.step.ended", "msg-before-reassociation", 7),
-        ]),
+        Stream.concat(
+          Stream.succeed(
+            nativeEvent("session.step.started", "msg-delayed", 1, "ses-managed", {
+              directory: projectDirectory,
+            }),
+          ),
+          Stream.never,
+        ),
     },
   }
   const nativeRun = Effect.runPromise(
@@ -243,40 +216,74 @@ test("registered reassociation fences events delivered behind a stalled native s
 
   try {
     expect(await resolvesWithin(firstObservation.promise, 1_000)).toBe(true)
-    expect(await resolvesWithin(queuedEventsObserved.promise, 1_000)).toBe(true)
-    expect(capture.boundarySequence("ses-managed")).toBe(7)
-
-    const result = await Effect.runPromise(
-      registered.tools.get("lz-enroll-managed-usage")!.execute(
+    const registered = toolsFixture()
+    const sessions = new Map<string, Record<string, unknown>>([
+      [
+        "ses-architect",
         {
-          requestID: "reassociate",
+          id: "ses-architect",
+          projectID,
+          agent: "architect",
+          location: { directory: projectDirectory, workspaceID: null },
+          time: {},
+        },
+      ],
+      ["ses-managed", managed],
+    ])
+    const context = {
+      location: { project: { id: projectID, canonical: projectDirectory } },
+      permission: { assert: () => Effect.void },
+      session: {
+        get: ({ sessionID }: { sessionID: string }) => {
+          const session = sessions.get(String(sessionID))
+          return session ? Effect.succeed(session) : Effect.fail(new Error("missing"))
+        },
+      },
+      tool: registered.tool,
+    }
+    await Effect.runPromise(
+      Effect.scoped(
+        registerManagedUsageTools({
+          ctx: context as never,
+          store,
+          capture,
           projectID,
           projectDirectory,
-          sessionID: "ses-managed",
-          expectedRevision: 1,
-          association: { kind: "unallocated" },
-        },
-        callContext(),
+          priceProvider: async (calls) =>
+            projectManagedUsageValuation({ calls, index: null, freshness: "unknown" }),
+        }),
       ),
     )
-    expect(result.output).toMatchObject({ status: "enrolled", revision: 2, boundarySequence: 7 })
+    await expect(
+      Effect.runPromise(
+        registered.tools.get("lz-enroll-managed-usage")!.execute(
+          {
+            requestID: "reassociate",
+            projectID,
+            projectDirectory,
+            sessionID: "ses-managed",
+            expectedRevision: 1,
+            association: { kind: "task", planID, taskID },
+          },
+          callContext(),
+        ),
+      ),
+    ).rejects.toThrow("cannot prove a future-generation boundary")
+    blocker.resolve()
+    await waitForFactCount(store, 1)
   } finally {
     blocker.resolve()
     keepOpen.resolve()
     await nativeRun
   }
 
-  await waitForFactCount(store, 3)
-  expect(store.snapshot().factCount).toBe(3)
-  expect(
-    managedUsageGenerations(store.snapshot()).find(
-      (generation) => generation.assistantMessageID === "msg-before-reassociation",
-    ),
-  ).toMatchObject({
-    association: { kind: "task", planID, taskID },
-    startSequence: 6,
-    terminalSequence: 7,
-    outcome: "succeeded",
+  await waitForFactCount(store, 1)
+  expect(store.snapshot()).toMatchObject({ boundaryCount: 1, factCount: 1 })
+  expect(store.sessionRevision("ses-managed")).toBe(1)
+  expect(managedUsageGenerations(store.snapshot())[0]).toMatchObject({
+    assistantMessageID: "msg-delayed",
+    association: { kind: "unallocated" },
+    outcome: "pending",
   })
 })
 
@@ -287,9 +294,13 @@ test("redundant location observer start and stop does not create capture gaps", 
     request: enrollment("observer-base", 0, { kind: "unallocated" }),
     agent: "explore",
     boundarySequence: -1,
+    nativeLocation: { directory: projectDirectory, workspaceID: null },
   })
   const initial = store.snapshot()
-  const observer = { event: { subscribe: () => Stream.never } } as never
+  const observer = {
+    location: { directory: projectDirectory, workspaceID: null },
+    event: { subscribe: () => Stream.never },
+  } as never
 
   const observed = await Effect.runPromise(
     Effect.scoped(
@@ -327,4 +338,132 @@ test("redundant location observer start and stop does not create capture gaps", 
     sessionID: "ses-managed",
     kind: "listener-stopped",
   })
+})
+
+test("worktree stream failure records coverage gaps only in its native location", async () => {
+  const { store } = fixture()
+  const capture = new ManagedUsageCapture(store)
+  const mainLocation = { directory: projectDirectory, workspaceID: null }
+  const workspaceLocation = { directory: projectDirectory, workspaceID: "workspace-1" }
+  store.enroll({
+    request: enrollment("main-location", 0, { kind: "unallocated" }, "ses-main"),
+    agent: "explore",
+    boundarySequence: -1,
+    nativeLocation: mainLocation,
+  })
+  store.enroll({
+    request: enrollment("workspace-location", 0, { kind: "unallocated" }, "ses-workspace"),
+    agent: "explore",
+    boundarySequence: -1,
+    nativeLocation: workspaceLocation,
+  })
+
+  const observed = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerManagedUsageNative(
+          {
+            location: mainLocation,
+            event: { subscribe: () => Stream.never },
+          } as never,
+          capture,
+          projectID,
+        )
+        yield* registerManagedUsageNative(
+          {
+            location: workspaceLocation,
+            event: { subscribe: () => Stream.fail(new Error("worktree stream failed")) },
+          } as never,
+          capture,
+          projectID,
+        )
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const snapshot = store.snapshot()
+          if (snapshot.listenerGaps.some((gap) => gap.kind === "stream-failed")) return snapshot
+          yield* Effect.sleep(10)
+        }
+        return store.snapshot()
+      }),
+    ),
+  )
+
+  expect(
+    observed.listenerGaps.filter((gap) => gap.kind === "stream-failed").map((gap) => gap.sessionID),
+  ).toEqual(["ses-workspace"])
+  expect(observed.listenerGaps).toContainEqual(
+    expect.objectContaining({ sessionID: "ses-main", kind: "listener-started" }),
+  )
+  expect(observed.listenerGaps).toContainEqual(
+    expect.objectContaining({ sessionID: "ses-workspace", kind: "listener-started" }),
+  )
+})
+
+test("registration aborts and joins deferred session reads before repository release", async () => {
+  const { repository, store } = fixture()
+  const capture = new ManagedUsageCapture(store)
+  store.enroll({
+    request: enrollment("teardown-base", 0, { kind: "unallocated" }),
+    agent: "explore",
+    boundarySequence: -1,
+    nativeLocation: { directory: projectDirectory, workspaceID: null },
+  })
+  const readStarted = deferred()
+  const readInterrupted = deferred()
+  const keepOpen = deferred()
+  const session = {
+    id: "ses-managed",
+    projectID,
+    agent: "explore",
+    location: { directory: projectDirectory, workspaceID: null },
+    time: {},
+  }
+  const context = {
+    location: { directory: projectDirectory, workspaceID: null },
+    session: {
+      get: () =>
+        Effect.promise(
+          (signal) =>
+            new Promise<typeof session>((resolve) => {
+              readStarted.resolve()
+              signal.addEventListener(
+                "abort",
+                () => {
+                  readInterrupted.resolve()
+                  resolve(session)
+                },
+                { once: true },
+              )
+            }),
+        ),
+    },
+    event: {
+      subscribe: () =>
+        Stream.concat(
+          Stream.succeed(
+            nativeEvent("session.step.started", "msg-interrupted", 1, "ses-managed", {
+              directory: projectDirectory,
+            }),
+          ),
+          Stream.never,
+        ),
+    },
+  }
+
+  const registration = Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* registerManagedUsageNative(context as never, capture, projectID)
+        yield* Effect.promise(() => keepOpen.promise)
+      }),
+    ),
+  )
+  expect(await resolvesWithin(readStarted.promise, 1_000)).toBe(true)
+  keepOpen.resolve()
+  expect(await resolvesWithin(registration, 1_000)).toBe(true)
+  expect(await resolvesWithin(readInterrupted.promise, 1_000)).toBe(true)
+  expect(repository.isClosed).toBe(false)
+  expect(store.snapshot().factCount).toBe(0)
+
+  repository.close()
+  expect(repository.isClosed).toBe(true)
 })

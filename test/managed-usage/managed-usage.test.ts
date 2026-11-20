@@ -200,7 +200,12 @@ function fact(input: FactInput): ManagedUsageNativeFact {
 }
 
 function enrollStore(store: ManagedUsageStore, request = enrollment({}), boundarySequence = 4) {
-  return store.enroll({ request, agent: "explore", boundarySequence })
+  return store.enroll({
+    request,
+    agent: "explore",
+    boundarySequence,
+    nativeLocation: { directory: projectDirectory, workspaceID: null },
+  })
 }
 
 function nativeEvent(input: {
@@ -587,6 +592,7 @@ test("native capture deduplicates replays, handles terminal-before-start and sto
     time: {},
   }
   const ctx = {
+    location: { directory: projectDirectory },
     session: {
       get: ({ sessionID }: { sessionID: string }) =>
         String(sessionID) === session.id
@@ -733,6 +739,7 @@ test("native subscription captures failed generations and gives uncovered starts
     }),
   ]
   const ctx = {
+    location: { directory: projectDirectory },
     session: {
       get: () => Effect.succeed(session),
     },
@@ -790,6 +797,7 @@ test("native observation failures are reported separately from authority changes
     sequence: 6,
   })
   const ctx = {
+    location: { directory: projectDirectory },
     session: { get: () => Effect.fail(new Error("private session backend detail")) },
     event: { subscribe: () => Stream.fromIterable([event]) },
   }
@@ -830,15 +838,7 @@ function registeredTools() {
   return { tools, editor }
 }
 
-function deferred() {
-  let resolve!: () => void
-  const promise = new Promise<void>((done) => {
-    resolve = done
-  })
-  return { promise, resolve }
-}
-
-test("registered enrollment validates caller lineage and project, retries exactly, and rejects stale/worker/foreign targets", async () => {
+test("registered enrollment authorizes caller and target before failing closed without writes", async () => {
   const { store } = fixture()
   const capture = new ManagedUsageCapture(store)
   const sessions = new Map<string, Record<string, unknown>>([
@@ -970,16 +970,21 @@ test("registered enrollment validates caller lineage and project, retries exactl
     expectedRevision: 0,
     association: { kind: "task", planID, taskID },
   }
-  const first = await Effect.runPromise(enrollTool.execute(request, callContext()))
-  expect(first.output).toMatchObject({ status: "enrolled", revision: 1, boundarySequence: null })
-  const retry = await Effect.runPromise(enrollTool.execute(request, callContext()))
-  expect(retry.output).toEqual(first.output)
-
-  const stale = await Effect.runPromise(
-    enrollTool.execute({ ...request, requestID: "stale-request" }, callContext()),
+  const enrollmentUnavailable = /cannot prove a future-generation boundary/
+  await expect(Effect.runPromise(enrollTool.execute(request, callContext()))).rejects.toThrow(
+    enrollmentUnavailable,
   )
-  expect(stale.output).toMatchObject({ status: "conflict", reason: "stale-revision" })
-  expect(store.sessionRevision("ses-managed")).toBe(1)
+  await expect(Effect.runPromise(enrollTool.execute(request, callContext()))).rejects.toThrow(
+    enrollmentUnavailable,
+  )
+
+  await expect(
+    Effect.runPromise(
+      enrollTool.execute({ ...request, requestID: "stale-request" }, callContext()),
+    ),
+  ).rejects.toThrow(enrollmentUnavailable)
+  expect(store.sessionRevision("ses-managed")).toBe(0)
+  expect(store.snapshot().boundaryCount).toBe(0)
 
   changeTargetOnSecondRead = true
   await expect(
@@ -1022,7 +1027,7 @@ test("registered enrollment validates caller lineage and project, retries exactl
       Effect.runPromise(readTool.execute({ scope, limit: 20 }, callContext())),
     ).rejects.toThrow()
   expect(priceReads).toBe(0)
-  expect(store.sessionRevision("ses-managed")).toBe(1)
+  expect(store.sessionRevision("ses-managed")).toBe(0)
 
   priceReadEffect.current = () => {
     sessions.get("ses-architect")!.time = { archived: Date.now() }
@@ -1036,12 +1041,11 @@ test("registered enrollment validates caller lineage and project, retries exactl
     ),
   ).rejects.toThrow()
   expect(priceReads).toBe(1)
-  expect(store.currentRevision()).toBe(1)
+  expect(store.currentRevision()).toBe(0)
 })
 
-test("concurrent exact enrollment retries use the committed watermark for buffered facts", async () => {
+test("concurrent public enrollment attempts fail closed without writing attribution", async () => {
   const { store } = fixture()
-  const capture = new ManagedUsageCapture(store)
   const sessions = new Map<string, Record<string, unknown>>([
     [
       "ses-architect",
@@ -1066,27 +1070,12 @@ test("concurrent exact enrollment retries use the committed watermark for buffer
     ],
   ])
   const { tools, editor } = registeredTools()
-  const gates = [deferred(), deferred()]
-  const started = [deferred(), deferred()]
-  let targetReads = 0
   const context = {
     location: { project: { id: projectID, canonical: projectDirectory } },
     permission: { assert: () => Effect.void },
     session: {
       get: ({ sessionID }: { sessionID: string }) => {
         const value = sessions.get(String(sessionID))
-        if (String(sessionID) === "ses-managed") {
-          const index = targetReads++
-          if (index >= 2) {
-            const gateIndex = index - 2
-            return Effect.promise(async () => {
-              started[gateIndex]!.resolve()
-              await gates[gateIndex]!.promise
-              if (!value) throw new Error("not found")
-              return value
-            })
-          }
-        }
         return value ? Effect.succeed(value) : Effect.fail(new Error("not found"))
       },
     },
@@ -1103,7 +1092,7 @@ test("concurrent exact enrollment retries use the committed watermark for buffer
       registerManagedUsageTools({
         ctx: context as never,
         store,
-        capture,
+        capture: new ManagedUsageCapture(store),
         projectID,
         projectDirectory,
         priceProvider: async (calls) =>
@@ -1113,68 +1102,21 @@ test("concurrent exact enrollment retries use the committed watermark for buffer
   )
   const enrollTool = tools.get("lz-enroll-managed-usage")!
   const request = {
-    requestID: "concurrent-retry",
+    requestID: "concurrent-first",
     projectID,
     projectDirectory,
     sessionID: "ses-managed",
     expectedRevision: 0,
     association: { kind: "task", planID, taskID },
   }
-  const first = Effect.runPromise(enrollTool.execute(request, callContext()))
-  const second = Effect.runPromise(enrollTool.execute(request, callContext()))
-  await Promise.all(started.map((value) => value.promise))
-
-  const eventContext = {
-    session: {
-      get: () =>
-        Effect.succeed({
-          id: "ses-managed",
-          projectID,
-          agent: "explore",
-          time: {},
-        }),
-    },
-  } as never
-  for (const event of [
-    nativeEvent({
-      type: "session.step.started",
-      sessionID: "ses-managed",
-      messageID: "msg-before",
-      sequence: 5,
-    }),
-    nativeEvent({
-      type: "session.step.ended",
-      sessionID: "ses-managed",
-      messageID: "msg-before",
-      sequence: 6,
-    }),
+  const results = await Promise.allSettled([
+    Effect.runPromise(enrollTool.execute(request, callContext())),
+    Effect.runPromise(
+      enrollTool.execute({ ...request, requestID: "concurrent-second" }, callContext()),
+    ),
   ])
-    await capture.observe(event, eventContext, projectID, "listener")
-
-  gates[0]!.resolve()
-  const firstResult = await first
-  for (const event of [
-    nativeEvent({
-      type: "session.step.started",
-      sessionID: "ses-managed",
-      messageID: "msg-after",
-      sequence: 9,
-    }),
-    nativeEvent({
-      type: "session.step.ended",
-      sessionID: "ses-managed",
-      messageID: "msg-after",
-      sequence: 10,
-    }),
-  ])
-    await capture.observe(event, eventContext, projectID, "listener")
-  gates[1]!.resolve()
-  const secondResult = await second
-  expect(firstResult.output).toEqual(secondResult.output)
-  expect(store.snapshot().factCount).toBe(2)
-  expect(
-    managedUsageGenerations(store.snapshot()).map((generation) => generation.assistantMessageID),
-  ).toEqual(["msg-after"])
+  expect(results.every((result) => result.status === "rejected")).toBe(true)
+  expect(store.snapshot()).toMatchObject({ boundaryCount: 0, factCount: 0, revision: 0 })
 })
 
 test("registered managed usage read returns a task-attributed current-market quote", async () => {
