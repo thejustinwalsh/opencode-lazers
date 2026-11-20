@@ -1,6 +1,12 @@
 import { dirname } from "node:path"
 import type { TaskRepository } from "../storage.ts"
 import { RETENTION_PRESET_DAYS } from "./contract.ts"
+import {
+  BACKFILL_PAGE_ROWS,
+  BACKFILL_TABLES,
+  backfillPage,
+  backfillState,
+} from "../runner/identity-backfill.ts"
 import { compactionDiskBytes, incrementalVacuum, spaceState, type AutoVacuum } from "./vacuum.ts"
 import {
   classifyPlans,
@@ -85,6 +91,8 @@ const AS_OF_WINDOW_MS = 24 * 3_600_000
 
 export class RetentionService {
   private running: Promise<RetentionSlice> | undefined
+  /** Set once every history table is keyed: an idle tick then reads nothing for it. */
+  private keysBackfilled = false
 
   constructor(private readonly deps: Dependencies) {
     installRetentionSchema(deps.repository)
@@ -269,6 +277,31 @@ export class RetentionService {
   }
 
   /**
+   * Idle step: key the rows of the two history tables written before the integer key columns
+   * existed, one page per transaction with a turn of the event loop between, until the time is
+   * used. Returns the rows keyed. Cheap when finished (one read per table per tick).
+   */
+  async backfillKeys(budgetMs: number): Promise<number> {
+    if (this.keysBackfilled) return 0
+    const { repository } = this.deps
+    const started = Date.now()
+    let rows = 0
+    for (const table of BACKFILL_TABLES) {
+      while (Date.now() - started < budgetMs) {
+        if (repository.read((db) => backfillState(db, table).backfilled)) break
+        const page = repository.atomic((db) => backfillPage(db, table, BACKFILL_PAGE_ROWS))
+        rows += page.rows
+        if (page.done) break
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+    }
+    this.keysBackfilled = repository.read((db) =>
+      BACKFILL_TABLES.every((table) => backfillState(db, table).backfilled),
+    )
+    return rows
+  }
+
+  /**
    * Returns true when no removable worktree remains to try. One native removal at a time, each
    * after a fresh look at what still owns the tree; anything left in place is reported with its
    * reason, and the next purge (manual, or automatic at its interval) looks again.
@@ -328,9 +361,10 @@ export class RetentionService {
    */
   async autoTick() {
     if (this.running) return
-    const due = this.deps.repository.read((db) =>
-      workIsActive(db) ? null : autoRetentionDue(db, this.now()),
-    )
+    // One page while attempts run, the whole slice at a quiet point.
+    const busy = this.deps.repository.read(workIsActive)
+    await this.backfillKeys(busy ? 1 : SLICE_MS)
+    const due = this.deps.repository.read((db) => (busy ? null : autoRetentionDue(db, this.now())))
     if (due === null) return
     await this.retire({ days: due.days, trigger: "auto" })
   }

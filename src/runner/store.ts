@@ -1,4 +1,9 @@
-import { installIdentityKeys, installOwnerKeys } from "./identity-keys.ts"
+import {
+  installIdentityKeys,
+  installKeyColumns,
+  installOwnerKeys,
+  planKey,
+} from "./identity-keys.ts"
 import { ensureTransitionIndexes } from "./transition-indexes.ts"
 import {
   type PlanLifecycleState,
@@ -1332,6 +1337,7 @@ export class RunnerStore {
           END;
       `)
         installOwnerKeys(db)
+        installKeyColumns(db)
         const reminderColumns = new Set(
           db
             .query<{ name: string }, []>("PRAGMA table_info(runner_progress_reminders)")
@@ -4041,8 +4047,16 @@ export class RunnerStore {
     if (!plan) throw new Error("Plan not found")
     this.atomic((db) => {
       db.query(
-        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
-      ).run(planID, taskID, plan.version, event, JSON.stringify(payload), Date.now())
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at,plan_n) VALUES(?,?,?,?,?,?,?)",
+      ).run(
+        planID,
+        taskID,
+        plan.version,
+        event,
+        JSON.stringify(payload),
+        Date.now(),
+        planKey(db, planID),
+      )
       this.repository.changed()
     })
   }

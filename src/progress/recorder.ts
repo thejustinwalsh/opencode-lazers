@@ -16,6 +16,7 @@ import { toolDetail } from "./tool-detail.ts"
 import type { PathScope } from "./tool-detail.ts"
 import { homedir } from "node:os"
 import { sameProject } from "../project-key.ts"
+import { attemptKey, planKey } from "../runner/identity-keys.ts"
 import { sessionOwners, type SessionOwners } from "./session-owners.ts"
 import {
   installSessionStampSchema,
@@ -1709,8 +1710,8 @@ export class ProgressRecorder {
         .query(
           `INSERT OR IGNORE INTO runner_progress
            (project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,source,
-            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload,plan_n,attempt_n)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           directory,
@@ -1729,6 +1730,8 @@ export class ProgressRecorder {
           fact.messageID ?? null,
           fact.dedupeKey,
           payload,
+          planKey(db, assignment.planID),
+          attemptKey(db, assignment.attemptID),
         )
       if (inserted.changes) {
         return db.query<{ seq: number }, []>("SELECT last_insert_rowid() AS seq").get()!.seq
