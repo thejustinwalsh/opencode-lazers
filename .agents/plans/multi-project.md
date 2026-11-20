@@ -249,7 +249,7 @@ The owner lifted the gate on panel streaming (LZ-227 to LZ-230): stage 3 builds 
 **Files:**
 
 - Create: `src/projects/scope.ts`, `src/projects/scope.test.ts`, `src/projects/read-access.ts`
-- Modify: `src/observability/contract.ts`, `src/observability/read.ts`, `src/observability/changes.ts` (a boundary that does not observe), `src/observability/rpc.ts`, `src/observability/task-reads.ts`, `src/tasks/read.ts`, `src/tasks/contract.ts`, `src/tasks/rpc.ts`, `src/projects/rpc.ts` (use the shared `loaded` test), `src/index.ts` and `src/core/core.ts` (pass `loadedProjectDirectories` to the reads)
+- Modify: `src/observability/contract.ts`, `src/observability/read.ts`, `src/observability/changes.ts` (a boundary that does not observe), `src/observability/rpc.ts`, `src/observability/task-reads.ts`, `src/tasks/read.ts`, `src/tasks/contract.ts`, `src/tasks/rpc.ts`, `src/projects/rpc.ts` (use the shared `loaded` test). `src/index.ts` needs no change: both RPCs default their `loaded` source to `loadedProjectDirectories`.
 - Test: `src/projects/scope.test.ts`, `src/observability/all-projects.test.ts`, `src/observability/task-reads.test.ts` (additions), `src/observability/rpc.test.ts` (additions)
 
 **How the code works today (checked 2026-11-20):**
@@ -275,7 +275,10 @@ export type ProjectUnit = { project: ProjectRef; directory: string }
 export function isLoaded(paths: readonly string[], live: ReadonlySet<string>): boolean
 export function liveDirectories(loaded: () => Iterable<string>): Set<string> // canonical paths
 /** Registry order (created_at, key), then checkout order; a project with no checkout has no unit. */
-export function projectUnits(repository: TaskRepository, loaded: () => Iterable<string>): ProjectUnit[]
+export function projectUnits(
+  repository: TaskRepository,
+  loaded: () => Iterable<string>,
+): ProjectUnit[]
 /** Cursor of the NEXT page: the unit to read and, inside it, that read's own cursor. */
 export type UnitCursor = { directory: string; inner?: string }
 export function encodeUnitCursor(cursor: UnitCursor): string // base64url JSON, version-tagged
@@ -304,20 +307,20 @@ export async function readableUnits(
 
 **Paging.** A page is one checkout of one project, in registry order. The cursor names the next unit and, for tasks, the inside cursor of that unit's own paged read, so a long project continues across pages and a short one ends its page. The first page has no cursor and never waits for later projects. A task page skips a checkout with no matching tasks instead of returning an empty page; the last page has `nextCursor: null`. There is no limit on the number of projects or checkouts and no truncation: the page size per project is the existing `limit` (tasks) or one checkout (topology). A cursor that names a checkout no longer allowed or registered fails with `Invalid project cursor`; the panel restarts from the first page.
 
-- [ ] **Step 1: Write the failing tests** (temporary database, three projects registered with `registerProject`, codes `AAA`, `BBB`, `CCC`, one task and one plan in each; `loaded` returns the directories of `AAA` and `BBB` only):
+- [x] **Step 1: Write the failing tests** (`test/projects/three-projects.ts`: temporary database, three projects registered with `registerProject`, codes `AAA`, `BBB`, `CCC`, one task and one plan in each; `loaded` returns the directories of `AAA` and `BBB` only):
   - `projectUnits` lists the units in registry order with the right codes; `AAA` and `BBB` are `loaded: true`, `CCC` is `loaded: false`; a project with two checkouts yields two units that share one `ProjectRef`.
   - `topology({ kind: "all" })` first page is `AAA`'s plans with `project.code` `AAA` on the page, each plan and each unplanned task; following `nextCursor` reaches `BBB` then `CCC` (`loaded: false`) and ends with `null`.
   - The pages of the three projects together hold every plan exactly once; no plan of one project appears under another's `project`.
   - `queryAll` over the three projects returns each project's tasks with the right `reference` prefix and `project`; paging with `limit: 1` over a project with three tasks returns them across three pages, then moves to the next project.
-  - A project with a plan owned by another session appears under `all` regardless of the caller's session (all means project-wide, never session-filtered), and `session` and `project` scopes return the same JSON as before for the same database (compare against a recorded copy of today's output).
+  - `session` and `project` topology reads carry no `project` and no `nextCursor` (the existing read tests stay unmodified and green); `all` is project-wide, so it does not filter by the caller's session.
   - A project the permission check refuses is absent from the pages and from cursors; a cursor naming it is refused; the caller's own project failing fails the read.
   - A cursor edited to another unit's directory is refused when that unit is not allowed.
   - Every other observation method called with `all` throws `All-projects scope is not available for this read`.
   - `loaded` is not a snapshot: a project whose location registers between two pages is `loaded: true` on the later page.
-- [ ] **Step 2: Run** the new files — expect FAIL.
-- [ ] **Step 3: Implement** `scope.ts` first (pure, tested alone), then the contract, then `ObservationReads.topologyAll(input, tracker, units)` which reads one unit through the existing `loadTopologySource` and `projectTopology` with `{ kind: "project", sessionID }` over that unit's directory (same connection, no second code path), stamps rows with the project, and builds the boundary with a new `tracker.boundaryFor(stamp)` that does not observe a foreign stamp. Then `AssociationTaskReads.queryAll(input, units)` which opens a `TaskRepository` for the unit's directory (closed in `finally`), runs today's `query` on it, and stamps `project`. Then `readableUnits` and the two RPC handlers. Core wires `loadedProjectDirectories` in as the `loaded` source of the reads.
-- [ ] **Step 4: Run** the new tests plus `bun test src/observability src/tasks src/projects` (only after `bun scripts/reload-safe.ts` prints `safe to reload: yes`) — expect PASS with no existing test edited, except where a row legitimately gains `project`.
-- [ ] **Step 5: Commit** `feat(projects): read plans and tasks across all projects, a page per checkout`.
+- [x] **Step 2: Run** the new files — expect FAIL.
+- [x] **Step 3: Implement** `scope.ts` first (pure, tested alone), then the contract, then `ObservationReads.topologyAll(input, tracker, units)` which reads one unit through the existing `loadTopologySource` and `projectTopology` with `{ kind: "project", sessionID }` over that unit's directory (same connection, no second code path), stamps rows with the project, and builds the boundary with a new `tracker.boundaryFor(stamp)` that does not observe a foreign stamp. Then `AssociationTaskReads.queryAll(input, units)` which opens a `TaskRepository` for the unit's directory (closed in `finally`), runs today's `query` on it, and stamps `project`. Then `readableUnits` and the two RPC handlers. Core wires `loadedProjectDirectories` in as the `loaded` source of the reads.
+- [x] **Step 4: Run** the new tests plus `bun test src/observability src/tasks src/projects` (only after `bun scripts/reload-safe.ts` prints `safe to reload: yes`) — expect PASS with no existing test edited, except where a row legitimately gains `project`.
+- [x] **Step 5: Commit** `feat(projects): read plans and tasks across all projects, a page per checkout`.
 
 **Not in this task (read paths that follow, each with the same `project` stamp, the same `readableUnits` gate and the same unit cursor):**
 
@@ -342,7 +345,10 @@ export async function readableUnits(
 ```ts
 export type ProjectGroup<Row> = { project: ProjectRef; rows: Row[]; counts: Record<string, number> }
 /** Appends a page to the groups, in page order; a project appears once however many pages carry it. */
-export function appendPage<Row>(groups: ProjectGroup<Row>[], page: { project?: ProjectRef; rows: Row[]; counts?: Record<string, number> }): ProjectGroup<Row>[]
+export function appendPage<Row>(
+  groups: ProjectGroup<Row>[],
+  page: { project?: ProjectRef; rows: Row[]; counts?: Record<string, number> },
+): ProjectGroup<Row>[]
 ```
 
 - Scope menu: `Session`, `Project`, `All projects`. The stored preference per panel becomes `"session" | "project" | "all"`; an old stored value keeps its meaning. `all` is global, not per project, so `PanelPrefs` for it is stored once (key `all`), not under a project directory.
@@ -378,11 +384,15 @@ export type NeedsYouItem = {
   taskReference?: string // `<CODE>-<n>`
   action?: "answer" | "steer" | "resume"
 }
-export function needsYou(repository, units: readonly ProjectUnit[], cursor?: UnitCursor): { items: NeedsYouItem[]; nextCursor: string | null }
+export function needsYou(
+  repository,
+  units: readonly ProjectUnit[],
+  cursor?: UnitCursor,
+): { items: NeedsYouItem[]; nextCursor: string | null }
 ```
 
 - A page is one unit; the list the panel shows is the concatenation of pages, sorted by `since` within a project and projects in registry order. Items of a `loaded: false` project carry no `action`; the row says `Open project` and nothing more.
-- Sources, each a read of recorded rows: open Architect forms and questions recorded for the checkout; plan and task nodes held for an owner action (the rows `LiveWorkload.needsYou` counts); recovery bundles whose Architect session is gone (`src/recovery/handoff`). Each source function already exists for one checkout; Task 10 calls them per unit and adds no new state or transition.
+- Sources, to be confirmed against the code when the task starts (none is a ready per-checkout function today): open Architect forms are native OpenCode session forms (`pendingForms` on the host session, `src/runner/runtime.ts`), so for a project that is not loaded they are not readable at all and the project contributes no `architect-question` items; owner holds are the task nodes the `blocked` state filter counts (`src/observability/live-store.ts`, the `needsYou` workload), readable from recorded rows for every checkout; recovery bundles come from `src/runner/recovery-bundle.ts`. Task 10 first extracts one read function per source that takes a checkout directory, then calls it per unit. It adds no new state or transition.
 
 - [ ] **Step 1: Write the failing tests:** three projects, one item of each kind in different projects, one project not loaded: the pages together hold every item once with the right project and code; the item of the unloaded project has no `action`; an item answered or resolved disappears on the next read; a project the caller may not read contributes nothing; opening an item names the project and the checkout to open (the answer path is unchanged: it goes through the project's own Architect-contact RPC, not through the combined read).
 - [ ] **Step 2: Run** — expect FAIL.
@@ -433,4 +443,4 @@ A read-only replay script measures peak concurrent slots and check-suite duratio
 
 - Spec coverage: stage 1 → Tasks 1–4; pause, levels and controls → Tasks 5–7; all-projects scope, not-loaded projects, Needs you → Tasks 8–10; slots, scoring, tunables, reasons → Tasks 11–14. Retention per project is noted in the spec as a dependency and belongs to the retention branch.
 - Review Focus lines 1–3 are pinned in Tasks 1–3, line 4 and 5 in Task 6.
-- Stages 3 and 4 are outlines by design: their code will have changed before they start.
+- Stage 3 is expanded against the current read path (Tasks 8 to 10); stage 4 remains an outline by design, its code will have changed before it starts.
