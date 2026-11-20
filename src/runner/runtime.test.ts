@@ -1,3 +1,4 @@
+import { VerificationReview } from "./verification-review.ts"
 import { setProjectSetting } from "../projects/settings.ts"
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
 import { classifyPlans } from "../retention/retention.ts"
@@ -15513,7 +15514,7 @@ test("8c276019-1: a queued task of another plan is named as a scope owner", () =
       effectiveReservationScope: (id: string) => [`src/${id}.ts`],
     },
   }
-  const owners = (f.runtime as any).scopeOwners.call(fake, plans[0], "task-a")
+  const owners = (VerificationReview.prototype as any).scopeOwners.call(fake, plans[0], "task-a")
   expect(owners).toEqual([{ taskID: "task-b", patterns: ["src/task-b.ts"] }])
 })
 
