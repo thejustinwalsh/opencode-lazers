@@ -97,17 +97,39 @@ function snapshotOf<T extends ModelEvidenceSnapshot["source"]>(
     : null
 }
 
+/**
+ * Native records by provider and model id, built once per parsed snapshot. Snapshots are
+ * memoized by id in the source store, so the same object returns until it is evicted, and the
+ * index is released with it. A catalog scan per observed route is quadratic in catalog size.
+ */
+const nativeRecordIndexes = new WeakMap<NativeSnapshot, Map<string, number[]>>()
+
+function nativeRecordIndex(snapshot: NativeSnapshot) {
+  let index = nativeRecordIndexes.get(snapshot)
+  if (!index) {
+    index = new Map()
+    snapshot.records.forEach((record, position) => {
+      const key = `${record.providerID}\u0000${record.id}`
+      const positions = index!.get(key)
+      if (positions) positions.push(position)
+      else index!.set(key, [position])
+    })
+    nativeRecordIndexes.set(snapshot, index)
+  }
+  return index
+}
+
 function exactNativeRecords(
   source: SourceRead | null,
   route: CurrentPriceApplicability["route"],
 ): Array<{ record: NativeRecord; recordIndex: number }> {
   const snapshot = snapshotOf(source, "native-catalog")
   if (!snapshot) return []
-  return snapshot.records.flatMap((record, index) =>
-    record.providerID === route.providerID && record.id === route.modelID
-      ? [{ record, recordIndex: recordIndex(source!, index) }]
-      : [],
-  )
+  const positions = nativeRecordIndex(snapshot).get(`${route.providerID}\u0000${route.modelID}`)
+  return (positions ?? []).map((position) => ({
+    record: snapshot.records[position]!,
+    recordIndex: recordIndex(source!, position),
+  }))
 }
 
 function hasNativeConfiguration(
@@ -411,7 +433,15 @@ function inputIdentity(
       snapshotState: source.snapshotState,
       snapshotID: source.snapshotID,
       refresh: source.refresh,
-      snapshot: source.snapshot,
+      // Snapshots are immutable by id and generation; hashing whole bodies per build was the cost.
+      snapshot: source.snapshot
+        ? {
+            snapshotID: source.snapshot.snapshotID,
+            generation: source.snapshot.generation,
+            retrievedAt: source.snapshot.retrievedAt,
+            records: source.snapshot.records.length,
+          }
+        : null,
     }))
   const routes = [...observedRoutes].sort(
     (left, right) =>
