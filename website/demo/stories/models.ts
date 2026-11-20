@@ -134,7 +134,7 @@ export default defineStory<ModelsData>({
   id: "models",
   panel: "models",
   title: "Models",
-  size: { width: 420, height: 560 },
+  size: { width: 440, height: 700 },
   initial,
   chapters: [
     {

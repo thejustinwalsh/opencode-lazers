@@ -45,7 +45,7 @@ export default defineStory<TasksData>({
   id: "hero",
   panel: "tasks",
   title: "Tasks",
-  size: { width: 420, height: 560 },
+  size: { width: 420, height: 600 },
   initial: t(queued),
   chapters: [
     {

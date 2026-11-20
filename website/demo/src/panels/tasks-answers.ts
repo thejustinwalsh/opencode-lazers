@@ -42,7 +42,7 @@ export interface TasksData {
 
 export const PROJECT = { canonical: "/workspace/lazers-demo", id: "demo-project" }
 const SESSION = "ses-demo"
-const CREATED = "2026-11-19T13:20:00.000Z"
+const CREATED = "2026-11-19T13:56:00.000Z"
 const MIN = 60_000
 
 /** RFC 4122 v4-shaped ids, stable per kind and number. */

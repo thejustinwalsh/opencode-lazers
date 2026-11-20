@@ -32,7 +32,6 @@ export type DemoMessage =
       down: boolean
       off: boolean
     }
-  | { demo: true; story: string; type: "view"; x: number }
   | { demo: true; story: string; type: "end" }
 
 /** page -> iframe */

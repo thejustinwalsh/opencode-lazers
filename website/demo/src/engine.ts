@@ -67,7 +67,8 @@ export class Engine<D> {
     this.data = opts.story.initial
     // The panel reads "now" from the story, so recorded timestamps stay in the past.
     const clock = this.clock
-    Date.now = () => T0 + clock.t
+    // Whole milliseconds: contracts take integers and the clock advances by fractions.
+    Date.now = () => Math.floor(T0 + clock.t)
   }
 
   private setData(data: D) {

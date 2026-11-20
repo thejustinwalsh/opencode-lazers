@@ -17,7 +17,7 @@ export const DEMOS = {
   tasks: {
     story: "hero",
     panel: "tasks",
-    size: { width: 420, height: 560 },
+    size: { width: 420, height: 600 },
     summary:
       "The Tasks panel: four tasks in scheduled order. One runs, then is verified and accepted, and the task waiting on it starts.",
     steps: [
@@ -42,7 +42,7 @@ export const DEMOS = {
   radar: {
     story: "radar",
     panel: "radar",
-    size: { width: 420, height: 560 },
+    size: { width: 420, height: 580 },
     summary:
       "The Radar panel: an Architect and two workers with their models and current calls, a held worker, then the Map view.",
     steps: [
@@ -71,7 +71,7 @@ export const DEMOS = {
   trajectory: {
     story: "trajectory",
     panel: "trajectory",
-    size: { width: 420, height: 560 },
+    size: { width: 440, height: 660 },
     summary:
       "The Trajectory panel: one task's recorded attempts on a timeline. The first attempt fails its tests, the second fills in and is accepted.",
     steps: [
@@ -93,7 +93,7 @@ export const DEMOS = {
   models: {
     story: "models",
     panel: "models",
-    size: { width: 420, height: 560 },
+    size: { width: 440, height: 700 },
     summary:
       "The Models panel: a comparison of models by measured cost per accepted task, then the Assignments view where an agent is given a different model.",
     steps: [
@@ -120,7 +120,7 @@ export const DEMOS = {
   local: {
     story: "local",
     panel: "local",
-    size: { width: 560, height: 120 },
+    size: { width: 560, height: 150 },
     summary:
       "The local inference indicator in the session header: hidden while off, then downloading, available, and working while a local decision runs.",
     steps: [
