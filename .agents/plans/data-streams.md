@@ -362,6 +362,78 @@ key as the continue marker). A final commit adds a source check: a show-read ent
 (RPC handler or tool `execute`) that calls `repository.read` fails `bun run verify`,
 with remaining sites listed in an allowlist and burned down.
 
+#### Migration recipe
+
+Learned migrating the first sources (`tasks.list`, the agent task tools). Follow it for each
+panel or tool.
+
+1. **List the reads and the fields.** For the panel or tool, list every RPC method and
+   statement it uses and every field its rows render. For each field decide: a SQL column of
+   tables the reader can read (go), a value built from main-thread memory or an in-process
+   projection (not a column: it needs a stored projection written in the writer's
+   transaction first), or a TypeScript derivation of columns (compute it in the consumer
+   from the columns, or add a column).
+2. **Define the source** in `src/streams/sources/<name>.ts` with `defineSource`: `table`
+   (a table, a view, or an aliased subquery), `tables` naming every table read (a write to
+   one refreshes the stream), `key`, `orders` that end with the key and use list columns
+   only, a `filter` over index-backed columns, `columns`, `detail` for a detail pane.
+   Leave `count` at the default probe unless a stored counter exists. Import the file in
+   `src/streams/sources/index.ts`. Never accept free text, JSON-path or session filters
+   that have no index; list them as needing an index or a stored column.
+3. **Parity test** next to the source: seed the repository the old read's tests use, walk
+   the stream from the head to the end by sliding, and compare ids, order and every
+   SQL-derived field with the old read for every filter and order the consumer offers.
+4. **Read-meter test:** wrap the main repository with `meterRepository`, open the stream,
+   slide and seek, and assert `statements` is empty; assert the same meter sees the old
+   path's statements so the test is not vacuous.
+5. **Consumer.** Server side (tool, report, fold): `openStream(pool, source, ...)` with the
+   pool from `acquireReaderPool` held by the project core, window = the tool's page size,
+   read one window, return the edge key as the continue marker, close in the same call.
+   GUI: `createStream(transport, sourceRef, options)` over `Streams` RPC; window from the
+   view (visible rows plus slop each side), `slide` on scroll, rows keyed by the source key.
+6. **Delete** the replaced read, its paging state and caches, and its
+   `scripts/unbounded-reads.allowlist` entries; list remaining callers by file:line.
+7. **Verify:** `bun run verify`, the new tests, the consumer's DOM or tool tests, a server
+   and GUI build in the worktree. The heap sampler's `readerPools` line shows the pool
+   (workers, streams, statements, buffers) in the live service.
+8. **Report** each filter or order with no index, each field that blocked the migration,
+   and each caller left behind.
+
+#### Findings: the Tasks panel
+
+The Tasks panel did not migrate in the first pass. Three things block it, and some filters
+have no index.
+
+1. **The list is a derived tree.** `src/tasks/panel.tsx` renders rows built by
+   `execution-list.ts` and `virtual-rows.ts` from `Tasks.query` pages, `scheduling` pages
+   (up to 1,000 plans), `topology`, current activity and dependencies, with expand and
+   collapse and plan grouping. `Tasks.query` is one input; `scheduling`, `topology` and
+   `currentActivity` read on the main thread too, so each needs its own source before the
+   panel reads nothing there.
+2. **The schedule order is not a keyset order.** `scheduledTaskPageSQL` computes `position`
+   as `COUNT(*) OVER () - ROW_NUMBER() OVER (ORDER BY ...)` across the whole project (state
+   rank, plan priority, plan FIFO, finish time from `runner_transitions`). A stream needs a
+   stored, incrementally maintained rank, updated in the transaction that moves a node or
+   plan.
+3. **Fields come from main-thread state or TypeScript.** `status`, `reason`,
+   `waitingOnPlans` and `startedAt` come from `effectiveExecution`, which reads in-memory
+   runner reservations; `title` is `taskTitle(objective)`; `classification`, `concern`,
+   `takeover` and `matches` are TypeScript derivations. Decision: no overlay; a source never
+   depends on main-thread memory, so the rank, effective state, blocker reason and flags
+   become a stored projection written with the runner's transition.
+
+Filters with no index or stored column, so no source offers them: `search`
+(`instr(lower(tasks.body), ...)`, a scan of bodies), `scopePath`
+(`json_each(json_extract(body,'$.proposal.writeScope'))`) and `sessionID`
+(`json_extract(body,'$.provenance.sessionID')`). Each needs a stored, indexed column
+(session id; a normalized scope table) or a text index before it can be a filter.
+
+The agent tools `lz-list-tasks` and `lz-query-tasks` (`src/tools.ts`) did not migrate:
+both return the full `TaskSummary` (effective `status`, `reason`, `recordedState`,
+`waitingOnPlans`, `startedAt`, `concern`, `takeover`, `classification`, `matches`,
+`disposition`), and `lz-query-tasks` also filters by search, scope path and session and
+returns `count`, `snapshot` and `stateCounts`. They wait for the stored projection.
+
 ## Order and lanes
 
 ```
