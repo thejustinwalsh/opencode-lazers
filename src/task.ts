@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
+import { REFERENCE_EXACT } from "./projects/code.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
 /** Reserved for the runtime's own `fallow audit` receipt; authored checks cannot use it. */
@@ -222,9 +223,11 @@ export const IdempotencyKeySchema = z
   .regex(/\S/, "Key must contain non-whitespace text")
 export const TaskReferenceSchema = z
   .string()
-  .max(19)
-  .regex(/^LZ-[1-9]\d{0,15}$/)
-  .refine((reference) => Number.isSafeInteger(Number(reference.slice(3))))
+  .max(40)
+  .regex(REFERENCE_EXACT)
+  .refine((reference) =>
+    Number.isSafeInteger(Number(reference.slice(reference.lastIndexOf("-") + 1))),
+  )
 export const TaskSubmissionSchema = TaskProposalSchema.safeExtend({
   idempotencyKey: IdempotencyKeySchema,
 })

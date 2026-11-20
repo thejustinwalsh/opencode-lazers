@@ -278,7 +278,12 @@ You are the stronger model. Choose one:
   Then edit and commit in that workspace and send it with `lz-plan-command
 {action:"takeover-submit", planID, taskID, reason}`; the runtime verifies it
   like any worker result. A failure comes back to you with its checks and
-  Fallow findings: fix and `takeover-submit` again, or cancel. If the call returns `in-progress`, call it again with
+  Fallow findings: fix and `takeover-submit` again, or cancel. Any hold on a
+  taken-over task clears the same way: each `takeover-submit` is a fresh
+  candidate. If the Architect that took it over is gone, any live Architect
+  continues with `takeover-submit`. A failed takeover attempt is taken over
+  again with `lz-request-handoff` on that attempt; the work in its workspace
+  carries over. If the call returns `in-progress`, call it again with
   the same `requestID`.
 - **Split or re-plan**: submit the remaining work as new tasks, then cancel.
 - **Cancel**: `lz-plan-command cancel`.

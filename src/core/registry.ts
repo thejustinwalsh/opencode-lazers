@@ -9,6 +9,7 @@ const registryKey = Symbol.for("lazers.core.v1")
 
 type Entry = {
   key: string
+  projectDirectory: string
   refs: number
   value: unknown
   hub: CapabilityHub<object>
@@ -51,7 +52,14 @@ export function acquireCore<C, X extends object>(spec: CoreSpec<C, X>): CoreHand
     const unregister = hub.register(spec.directory, spec.ctx)
     try {
       const created = spec.create(hub)
-      entry = { key: spec.key, refs: 0, value: created.core, hub, dispose: created.dispose }
+      entry = {
+        key: spec.key,
+        projectDirectory: spec.projectDirectory,
+        refs: 0,
+        value: created.core,
+        hub,
+        dispose: created.dispose,
+      }
     } finally {
       unregister()
     }
@@ -82,4 +90,11 @@ export function coreSnapshot() {
     refs: entry.refs,
     providers: entry.hub.size,
   }))
+}
+
+/** Canonical project roots that have a live core in this process. */
+export function loadedProjectDirectories(): string[] {
+  return [...registry().entries.values()]
+    .filter((entry) => entry.hub.size > 0 && typeof entry.projectDirectory === "string")
+    .map((entry) => entry.projectDirectory)
 }
