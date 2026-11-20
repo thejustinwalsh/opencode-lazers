@@ -1,5 +1,5 @@
 import { parentPort } from "node:worker_threads"
-import { hostImports, type ThreadStart } from "./fallow-wasi.ts"
+import { hostImports, StdoutBuffer, type ThreadStart } from "./fallow-wasi.ts"
 
 /**
  * A helper thread of the threaded Fallow module: one rayon pool worker. For each run it is sent,
@@ -17,7 +17,7 @@ if (!port) throw new Error("fallow-thread must run in a worker thread")
 
 /** Run the thread to completion; true when its entry point returned. Holds no reference after. */
 function enter(start: ThreadStart): boolean {
-  const sinks = { input: new Uint8Array(), inputOffset: 0, out: [], err: [] }
+  const sinks = { input: new Uint8Array(), inputOffset: 0, out: new StdoutBuffer(), err: [] }
   const { wasi, imports } = hostImports(start.roots, () => start.memory, sinks)
   const instance = new WebAssembly.Instance(start.module, {
     ...imports,

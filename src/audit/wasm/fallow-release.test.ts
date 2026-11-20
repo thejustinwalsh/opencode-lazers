@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
-import { ThreadPool } from "../fallow-wasi.ts"
-import { makeFixture, runOp } from "./test-support.ts"
+import { makeFixture, runOp, testThreadPool } from "./test-support.ts"
 
 /**
  * Each threaded run declares a 4 GiB shared WebAssembly.Memory. Nothing frees it but the
@@ -17,18 +16,17 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 test("repeated threaded runs in one process do not accumulate shared memories", async () => {
-  const pool = new ThreadPool()
+  const reusedBefore = testThreadPool.reused
   const memories: WeakRef<WebAssembly.Memory>[] = []
   const aliveAtCreation: number[] = []
   const runs = 8
-  try {
+  {
     for (let i = 0; i < runs; i++) {
       runOp(
         "health",
         dir,
         {},
         {
-          threadPool: pool,
           onMemory: (memory) => {
             aliveAtCreation.push(memories.filter((ref) => ref.deref() !== undefined).length)
             memories.push(new WeakRef(memory))
@@ -36,13 +34,14 @@ test("repeated threaded runs in one process do not accumulate shared memories", 
         },
         "threads",
       )
-      // Let the engine drop objects kept alive for the current turn.
+      // Let the engine drop objects kept alive for the current turn, and the helpers rejoin.
+      await testThreadPool.settled()
       await Bun.sleep(0)
     }
     expect(aliveAtCreation).toHaveLength(runs)
     // At most the previous run's memory may linger; without release this grows by one per run.
     expect(Math.max(...aliveAtCreation)).toBeLessThanOrEqual(1)
-  } finally {
-    pool.terminateAll()
+    // The suite's one shared pool serves the helpers: later runs take idle helpers, not new workers.
+    expect(testThreadPool.reused).toBeGreaterThan(reusedBefore)
   }
 }, 120_000)

@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import { Effect } from "effect"
 import type { AnalyzerScope, AuditScope, FallowAnalyzer } from "./analyzer.ts"
+import { AnalysisScheduler, type AnalysisExecutor } from "./analysis-scheduler.ts"
 import type { FallowThreads } from "./fallow-threads.ts"
 import type {
   FallowWorkerKind,
@@ -46,7 +47,8 @@ type WasmDuplication = {
   }
 }
 
-class AnalyzerError extends Error {
+/** A failure of the analyzer with a typed `code` (`analyzer-memory`, `analyzer-panic`, ...). */
+export class AnalyzerError extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -130,15 +132,21 @@ function toDuplicationReport(report: WasmDuplication): DuplicationReport {
 }
 
 type Pending = {
+  id: number
   resolve: (response: FallowWorkerResponse) => void
   reject: (error: Error) => void
 }
 
-/** One worker thread, spawned on first use and replaced after a terminate. */
-class WorkerClient {
+/**
+ * One worker thread, spawned on first use and replaced after a terminate. It runs one request
+ * at a time; `AnalysisScheduler` decides which request that is and owns the time limits.
+ */
+class WorkerClient implements AnalysisExecutor<
+  Omit<FallowWorkerRequest, "id">,
+  FallowWorkerResponse
+> {
   private worker: Worker | undefined
-  private pending: (Pending & { id: number }) | undefined
-  private queue: Promise<unknown> = Promise.resolve()
+  private pending: Pending | undefined
   private nextID = 1
 
   private spawn(): Worker {
@@ -169,7 +177,7 @@ class WorkerClient {
   }
 
   /** Terminating is the only cancel; the next request starts a fresh worker. */
-  private stop(reason: Error): void {
+  cancel(reason: Error): void {
     const worker = this.worker
     this.worker = undefined
     const pending = this.pending
@@ -178,50 +186,18 @@ class WorkerClient {
     pending?.reject(reason)
   }
 
-  private exchange(
-    request: Omit<FallowWorkerRequest, "id">,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
-  ): Promise<FallowWorkerResponse> {
+  run(request: Omit<FallowWorkerRequest, "id">): Promise<FallowWorkerResponse> {
     return new Promise((resolve, reject) => {
       const id = this.nextID++
       const worker = this.worker ?? this.spawn()
-      const timer = setTimeout(
-        () => this.stop(new Error(`timeout: analyzer call exceeded ${timeoutMs}ms`)),
-        timeoutMs,
-      )
-      const onAbort = () =>
-        this.stop(new Error(`cancelled: ${String(signal?.reason ?? "aborted")}`))
-      signal?.addEventListener("abort", onAbort, { once: true })
-      const done = () => {
-        clearTimeout(timer)
-        signal?.removeEventListener("abort", onAbort)
-      }
-      this.pending = {
-        id,
-        resolve: (response) => (done(), resolve(response)),
-        reject: (error) => (done(), reject(error)),
-      }
+      this.pending = { id, resolve, reject }
       worker.postMessage({ ...request, id })
     })
-  }
-
-  request(
-    request: Omit<FallowWorkerRequest, "id">,
-    signal: AbortSignal | undefined,
-    timeoutMs: number,
-  ): Promise<FallowWorkerResponse> {
-    signal?.throwIfAborted()
-    const run = this.queue.then(() => {
-      signal?.throwIfAborted()
-      return this.exchange(request, signal, timeoutMs)
-    })
-    this.queue = run.catch(() => undefined)
-    return run
   }
 }
 
 const client = new WorkerClient()
+const scheduler = new AnalysisScheduler(client)
 
 let cacheEnabled = true
 
@@ -265,7 +241,7 @@ async function call(
   audit?: Pick<AuditScope, "base" | "baseRoot">,
 ): Promise<Record<string, unknown>> {
   const files = scope.files ? relativePaths(scope.root, scope.files) : undefined
-  const response = await client.request(
+  const response = await scheduler.submit(
     {
       kind,
       root: scope.root,
@@ -278,12 +254,23 @@ async function call(
       ...(scope.cachePublish ? { cachePublish: scope.cachePublish } : {}),
       ...(audit ? { base: audit.base, baseRoot: audit.baseRoot } : {}),
     },
-    scope.signal,
-    scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    {
+      priority: scope.priority ?? "interactive",
+      signal: scope.signal,
+      timeoutMs: scope.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    },
   )
   if ("error" in response) throw new AnalyzerError(response.error.code, response.error.message)
   if (response.fallback !== undefined) noteFallback(response.fallback)
-  return response.report
+  if (response.envelope) {
+    const parsed = JSON.parse(new TextDecoder().decode(response.envelope)) as {
+      report?: Record<string, unknown>
+      error?: { code: string; message: string }
+    }
+    if (parsed.error) throw new AnalyzerError(parsed.error.code, parsed.error.message)
+    return parsed.report ?? {}
+  }
+  return response.report ?? {}
 }
 
 /** The report sections `lz-fallow-report` stores, each as the native binding would return it. */
@@ -337,6 +324,13 @@ export const wasmFallowAnalyzer: FallowAnalyzer = {
   },
   async projectInfo(scope) {
     return await call("projectInfo", scope)
+  },
+  async combined(scope) {
+    return (await fallowCombined(scope)) as unknown as {
+      deadCode: DeadCodeReport
+      health: HealthReport
+      duplication: DuplicationReport
+    }
   },
   async audit(scope) {
     return await call("audit", scope, {}, scope)

@@ -20,7 +20,57 @@ import { workerURL } from "../worker-url.ts"
  */
 export type WasiRequest = Record<string, unknown> & { op: string; root: string }
 
-export type WasiOutcome = { stdout: string; stderr: string; exitCode: number | undefined }
+/**
+ * What a run produced. The report leaves as bytes (`stdoutBytes`, which a worker can hand to its
+ * parent without a copy); `stdout` decodes them on demand, for callers that read text.
+ */
+export class WasiOutcome {
+  constructor(
+    readonly stdoutBytes: Uint8Array,
+    readonly stderr: string,
+    readonly exitCode: number | undefined,
+    /** Bytes of stdout moved when its buffer grew, for measurement. */
+    readonly stdoutRegrown = 0,
+  ) {}
+  get stdout(): string {
+    return decoder.decode(this.stdoutBytes)
+  }
+}
+
+/**
+ * The module's stdout, appended in place into one growing buffer: no slice per `fd_write`, no
+ * concatenation at the end. The capacity doubles from `STDOUT_FIRST_BYTES`, so growth copies at
+ * most the bytes written so far once over the whole run. `take` returns exactly the bytes
+ * written, as the only buffer left (the capacity beyond them is released).
+ */
+export const STDOUT_FIRST_BYTES = 64 * 1024
+export class StdoutBuffer {
+  private bytes = new Uint8Array(STDOUT_FIRST_BYTES)
+  length = 0
+  /** Bytes moved by growth, for measurement. */
+  regrown = 0
+
+  append(chunk: Uint8Array): void {
+    const needed = this.length + chunk.length
+    if (needed > this.bytes.length) {
+      let capacity = this.bytes.length
+      while (capacity < needed) capacity *= 2
+      const next = new Uint8Array(capacity)
+      next.set(this.bytes.subarray(0, this.length))
+      this.regrown += this.length
+      this.bytes = next
+    }
+    this.bytes.set(chunk, this.length)
+    this.length = needed
+  }
+
+  take(): Uint8Array {
+    const exact = new Uint8Array(this.bytes.buffer.transfer(this.length))
+    this.bytes = new Uint8Array(0)
+    this.length = 0
+    return exact
+  }
+}
 
 export type GitCall = { cwd: string; args: string[]; env: Record<string, string | null> }
 
@@ -203,19 +253,40 @@ export class ThreadPool {
     return { worker, flag: new Int32Array(new SharedArrayBuffer(4)) }
   }
 
-  /** After a run: keep the helpers that left the module, end the others. */
+  private readonly settling = new Set<Promise<void>>()
+
+  /**
+   * After a run: keep the helpers that left the module, end the others. A helper that has not
+   * flagged yet is waited for without blocking this thread (`Atomics.waitAsync`, at most
+   * `HELPER_WAIT_MS`), so the answer is not held back by the helpers' own collection; it joins
+   * the pool when it flags. `settled` resolves when every such wait is over.
+   */
   settle(helpers: readonly Helper[], keep: boolean): void {
     for (const helper of helpers) {
-      let done = false
-      if (keep) {
-        try {
-          Atomics.wait(helper.flag, 0, HELPER_RUNNING, HELPER_WAIT_MS)
-        } catch {}
-        done = Atomics.load(helper.flag, 0) === HELPER_DONE
+      if (!keep) {
+        void helper.worker.terminate()
+        continue
       }
-      if (done) this.idle.push(helper)
-      else void helper.worker.terminate()
+      if (Atomics.load(helper.flag, 0) === HELPER_DONE) {
+        this.idle.push(helper)
+        continue
+      }
+      const wait = Atomics.waitAsync(helper.flag, 0, HELPER_RUNNING, HELPER_WAIT_MS)
+      const finished = wait.async ? wait.value : Promise.resolve("not-equal")
+      const done: Promise<void> = Promise.resolve(finished)
+        .catch(() => undefined)
+        .then(() => {
+          if (Atomics.load(helper.flag, 0) === HELPER_DONE) this.idle.push(helper)
+          else void helper.worker.terminate()
+        })
+        .finally(() => void this.settling.delete(done))
+      this.settling.add(done)
     }
+  }
+
+  /** Resolves when no helper of a finished run is still being waited for. */
+  async settled(): Promise<void> {
+    while (this.settling.size > 0) await Promise.all([...this.settling])
   }
 
   terminateAll(): void {
@@ -241,7 +312,7 @@ export function isThreadedModule(module: WebAssembly.Module): boolean {
 export type Sinks = {
   input: Uint8Array
   inputOffset: number
-  out: Uint8Array[]
+  out: StdoutBuffer
   err: Uint8Array[]
   /** Bytes held in `err`; maintained by `keepTail`. */
   errBytes?: number
@@ -396,9 +467,9 @@ export function hostImports(
     for (let i = 0; i < count; i++) {
       const pointer = dv.getUint32(iovs + i * 8, true)
       const length = dv.getUint32(iovs + i * 8 + 4, true)
-      const chunk = new Uint8Array(getMemory().buffer, pointer, length).slice()
-      if (fd === 1) sinks.out.push(chunk)
-      else keepTail(sinks, chunk)
+      const view = new Uint8Array(getMemory().buffer, pointer, length)
+      if (fd === 1) sinks.out.append(view)
+      else keepTail(sinks, view.slice())
       total += length
     }
     dv.setUint32(nwritten, total, true)
@@ -549,9 +620,13 @@ export function hostImports(
       Object.entries(table).map(([name, fn]) => [
         name,
         (...args: unknown[]) => {
-          const values = args.map((arg) => (typeof arg === "number" ? arg >>> 0 : arg))
-          const result = (fn as (...values: unknown[]) => number)(...values)
-          trace?.(name, values, result, getMemory())
+          // Converted in place: the rest array is the only allocation of the call.
+          for (let i = 0; i < args.length; i++) {
+            const arg = args[i]
+            if (typeof arg === "number") args[i] = arg >>> 0
+          }
+          const result = (fn as (...values: unknown[]) => number).apply(undefined, args)
+          trace?.(name, args, result, getMemory())
           return result
         },
       ]),
@@ -607,7 +682,7 @@ function runFallowModuleOnce(
   const sinks: Sinks = {
     input: new TextEncoder().encode(JSON.stringify({ ...request, root: roots[0] })),
     inputOffset: 0,
-    out: [],
+    out: new StdoutBuffer(),
     err: [],
   }
   const threaded = isThreadedModule(module)
@@ -678,9 +753,11 @@ function runFallowModuleOnce(
   } finally {
     pool.settle(helpers, options.threadPool !== undefined)
   }
-  return {
-    stdout: decoder.decode(Buffer.concat(sinks.out)),
-    stderr: decoder.decode(Buffer.concat(sinks.err)),
+  const regrown = sinks.out.regrown
+  return new WasiOutcome(
+    sinks.out.take(),
+    decoder.decode(Buffer.concat(sinks.err)),
     exitCode,
-  }
+    regrown,
+  )
 }

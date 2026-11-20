@@ -3,7 +3,12 @@ import { dirname, join, sep } from "node:path"
 import { parentPort } from "node:worker_threads"
 import { wasmURL } from "../worker-url.ts"
 import { CACHE_MAX_FILES, publishCache, seedCache } from "./fallow-cache.ts"
-import { FallowModules, sharedMemoryAvailable, type FallowThreads } from "./fallow-threads.ts"
+import {
+  FallowModules,
+  sharedMemoryAvailable,
+  ThreadsUnsupported,
+  type FallowThreads,
+} from "./fallow-threads.ts"
 import { memoryExhausted, runFallowModule, ThreadPool, WasiTrap } from "./fallow-wasi.ts"
 
 /**
@@ -57,7 +62,13 @@ export type FallowWorkerResponse =
   | {
       id: number
       ok: true
-      report: Record<string, unknown>
+      /** An answer the worker made itself, without running the module. */
+      report?: Record<string, unknown>
+      /**
+       * The module's stdout as it wrote it (a JSON envelope: `{ report }` or `{ error }`), handed
+       * over by transfer, not copied. The receiver parses it once.
+       */
+      envelope?: ArrayBuffer
       /** Why this call ran on the single-threaded module although threads were on. */
       fallback?: string
     }
@@ -122,10 +133,6 @@ async function enumerate(root: string): Promise<string[]> {
   return paths.filter(isSource)
 }
 
-type Envelope = { ok?: boolean; report?: Record<string, unknown> } & {
-  error?: { code: string; message: string }
-}
-
 /** Directories to preopen besides the root: the config's, when it lives outside the root. */
 function extraRoots(request: FallowWorkerRequest): string[] {
   const roots: string[] = []
@@ -148,7 +155,8 @@ const threadPool = new ThreadPool()
 const modules = new FallowModules(
   () => load("fallow.wasm"),
   async () => {
-    if (!sharedMemoryAvailable()) throw new Error("shared memory is unavailable in this runtime")
+    if (!sharedMemoryAvailable())
+      throw new ThreadsUnsupported("shared memory is unavailable in this runtime")
     return load("fallow-threads.wasm")
   },
 )
@@ -170,7 +178,7 @@ async function resolved(request: FallowWorkerRequest): Promise<FallowWorkerReque
 
 async function run(
   raw: FallowWorkerRequest,
-): Promise<{ report: Record<string, unknown>; fallback?: string }> {
+): Promise<{ report?: Record<string, unknown>; envelope?: ArrayBuffer; fallback?: string }> {
   const request = await resolved(raw)
   const inMemory = request.kind === "complexity" || request.kind === "duplication"
   const files = request.kind === "duplication" ? request.changed : request.files
@@ -225,10 +233,9 @@ async function run(
   }
   if (request.cachePublish && cached)
     await publishCache(request.root, request.cachePublish).catch(() => 0)
-  const parsed = JSON.parse(executed.result.stdout) as Envelope
-  if (parsed.error) throw new WorkerError(parsed.error.code, parsed.error.message)
+  // The report is not parsed here: its bytes go to the caller as they are, and are parsed once.
   return {
-    report: parsed.report ?? {},
+    envelope: executed.result.stdoutBytes.buffer as ArrayBuffer,
     ...(executed.fallback ? { fallback: executed.fallback } : {}),
   }
 }
@@ -249,7 +256,24 @@ if (!port) throw new Error("fallow-worker must run in a worker thread")
 let queue: Promise<unknown> = Promise.resolve()
 port.on("message", (request: FallowWorkerRequest) => {
   queue = queue.then(async () => {
-    port.postMessage(await handle(request))
+    // One request's failure, even of the answer itself, must not stop the ones behind it.
+    try {
+      const response = await handle(request)
+      port.postMessage(
+        response,
+        "envelope" in response && response.envelope ? [response.envelope] : [],
+      )
+    } catch (error) {
+      port.postMessage({
+        id: request.id,
+        error: {
+          code: "analyzer-unavailable",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      } satisfies FallowWorkerResponse)
+    }
+    // Helpers that were still leaving the module rejoin the pool before the next run takes them.
+    await threadPool.settled()
     // A finished run leaves its linear memory (100 to 250 MB on this repository, gigabytes on a
     // large one) for the collector; do not let several accumulate between collections.
     Bun.gc(true)

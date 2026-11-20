@@ -66,6 +66,17 @@ describe("worker behaviour", () => {
     expect(report.findings).toEqual([])
   }, 60_000)
 
+  test("a background request queued before an interactive one is answered after it", async () => {
+    const finished: string[] = []
+    const track = <T>(name: string, run: Promise<T>) => run.then(() => void finished.push(name))
+    await Promise.all([
+      track("running", wasmFallowAnalyzer.duplication({ root: dir })),
+      track("background", wasmFallowAnalyzer.duplication({ root: dir, priority: "background" })),
+      track("interactive", wasmFallowAnalyzer.complexity({ root: dir })),
+    ])
+    expect(finished).toEqual(["running", "interactive", "background"])
+  }, 60_000)
+
   test("a symlink pointing outside the root is not read", async () => {
     const report = await wasmFallowAnalyzer.complexity({
       root: dir,

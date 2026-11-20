@@ -1,9 +1,11 @@
 import { canonical } from "../identity.ts"
-import { realpathSync } from "node:fs"
+import { existsSync, realpathSync, statSync } from "node:fs"
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
 import { chmod, mkdir, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { schemaModules } from "../database-schema.ts"
+import { rawReportPath, readRawReport, writeRawReport } from "./audit-raw.ts"
 
 export type AuditActor = { sessionID: string; agent: string }
 export type { AuditRun, AuditDecision } from "./contract.ts"
@@ -15,6 +17,13 @@ type AuditFinding = {
   path: string | null
   line: number | null
   details: unknown
+}
+type AnalysisSummary = {
+  name: string
+  summary: unknown
+  error: string | null
+  findingCount: number
+  capturedAt: number
 }
 type Section = { analysis: string; report: unknown; error: string | null; capturedAt: number }
 function object(value: unknown): Record<string, unknown> | undefined {
@@ -44,6 +53,9 @@ function auditFindings(runID: string, analysis: string, report: unknown): AuditF
   }
   return result
 }
+
+/** Legacy sections moved to files per call: about 4 MB of reports at the measured 468 KB average. */
+const COMPACT_PAGE = 8
 
 type AuditStartInput = {
   requestID: string
@@ -293,10 +305,17 @@ function insertFindings(
   )
 }
 
-/** The task database is authoritative. JSON files are replaceable exports. */
+/**
+ * The task database is authoritative for runs, summaries, findings and decisions. A section's raw
+ * report is a compressed file beside it (`audit-raw.ts`); the readable `<run>.json` is a
+ * replaceable export built from those files.
+ */
 export class AuditHistory {
   constructor(readonly repository: TaskRepository) {
-    repository.atomic((db) =>
+    // The generation, not a startup scan, decides whether an upgrade runs, so it happens once per
+    // database after a restart or a plugin reload, and the data moves later in pages (`compact`).
+    const module = schemaModules.audit
+    repository.installSchema("audit", module.generation, module.tables, (db) => {
       db.exec(`
       CREATE TABLE IF NOT EXISTS audit_runs (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, task_id TEXT,
@@ -309,7 +328,8 @@ export class AuditHistory {
       CREATE TABLE IF NOT EXISTS audit_sections (
         run_id TEXT NOT NULL REFERENCES audit_runs(id), analysis TEXT NOT NULL,
         payload TEXT NOT NULL, summary TEXT, error TEXT, captured_at INTEGER NOT NULL,
-        finding_count INTEGER NOT NULL, PRIMARY KEY(run_id,analysis)
+        finding_count INTEGER NOT NULL, raw_file INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(run_id,analysis)
       );
       CREATE TABLE IF NOT EXISTS audit_decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, project_directory TEXT NOT NULL,
@@ -325,8 +345,17 @@ export class AuditHistory {
         PRIMARY KEY(run_id,analysis,ordinal)
       );
       CREATE INDEX IF NOT EXISTS audit_findings_id ON audit_findings(run_id,finding_id);
-    `),
-    )
+    `)
+      // Generation 1 kept the whole report in `payload`; `raw_file` says it now lives in a file.
+      const columns = db.query<{ name: string }, []>("PRAGMA table_info(audit_sections)").all()
+      if (!columns.some((column) => column.name === "raw_file"))
+        db.exec("ALTER TABLE audit_sections ADD COLUMN raw_file INTEGER NOT NULL DEFAULT 0")
+    })
+  }
+  /** True until a `compact` call finds nothing left to move; sections stored now never need it. */
+  private pendingCompaction = true
+  private get dataDirectory() {
+    return dirname(this.repository.path)
   }
   get(runID: string): AuditRun {
     const row = this.repository.atomic((db) =>
@@ -361,44 +390,123 @@ export class AuditHistory {
     const findings = auditFindings(runID, analysis, report)
     const capturedAt = Date.now()
     this.repository.atomic((db) => {
-      db.query("INSERT INTO audit_sections VALUES(?,?,?,?,?,?,?)").run(
+      // The row goes first: a section stored twice fails here, before its file is touched, and a
+      // failed file write rolls the row back.
+      db.query(
+        "INSERT INTO audit_sections(run_id,analysis,payload,summary,error,captured_at,finding_count,raw_file) VALUES(?,?,?,?,?,?,?,1)",
+      ).run(
         runID,
         analysis,
-        JSON.stringify(report ?? null),
+        "",
         JSON.stringify(summary),
         error ?? null,
         capturedAt,
         findings.length,
       )
       insertFindings(db, runID, analysis, capturedAt, findings)
+      writeRawReport(
+        rawReportPath(this.dataDirectory, runID, analysis),
+        JSON.stringify(report ?? null),
+      )
     })
   }
 
+  /** The serialized report of a section: its file, or the blob of a section stored before files. */
+  private rawText(runID: string, analysis: string, payload: string, rawFile: number): string {
+    return rawFile
+      ? readRawReport(rawReportPath(this.dataDirectory, runID, analysis), analysis)
+      : payload
+  }
+
   /**
-   * Findings are indexed once, when their section is stored. A run stored before the index
-   * existed is indexed on first read: its sections are parsed once, then never again.
+   * Moves sections stored with their report in the database (generation 1) into files, at most
+   * `limit` per call, so a large history never moves in one startup or one transaction. Each
+   * section is indexed first when its findings are not, then its blob is emptied. Returns the
+   * work done; `remaining` is what a later call still moves. The freed pages are reclaimed by a
+   * vacuum, not here.
+   */
+  compact(limit = COMPACT_PAGE, runID?: string) {
+    const rows = this.repository.atomic((db) =>
+      db
+        .query<
+          { run_id: string; analysis: string; payload: string; captured_at: number },
+          (string | number)[]
+        >(
+          `SELECT run_id,analysis,payload,captured_at FROM audit_sections WHERE raw_file=0
+           ${runID ? "AND run_id=?" : ""} ORDER BY rowid LIMIT ?`,
+        )
+        .all(...(runID ? [runID] : []), limit),
+    )
+    let payloadBytes = 0,
+      fileBytes = 0
+    for (const row of rows) {
+      this.repository.atomic((db) => {
+        const current = db
+          .query<{ n: number; raw_file: number }, [string, string]>(
+            "SELECT finding_count AS n,raw_file FROM audit_sections WHERE run_id=? AND analysis=?",
+          )
+          .get(row.run_id, row.analysis)
+        if (!current || current.raw_file) return
+        const indexed = db
+          .query<{ n: number }, [string, string]>(
+            "SELECT COUNT(*) AS n FROM audit_findings WHERE run_id=? AND analysis=?",
+          )
+          .get(row.run_id, row.analysis)!.n
+        if (indexed !== current.n)
+          this.reindex(db, row.run_id, row.analysis, row.payload, row.captured_at)
+        fileBytes += writeRawReport(
+          rawReportPath(this.dataDirectory, row.run_id, row.analysis),
+          row.payload,
+        )
+        db.query(
+          "UPDATE audit_sections SET payload='',raw_file=1 WHERE run_id=? AND analysis=?",
+        ).run(row.run_id, row.analysis)
+        payloadBytes += Buffer.byteLength(row.payload)
+      })
+    }
+    const remaining = this.repository.atomic(
+      (db) =>
+        db
+          .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_sections WHERE raw_file=0")
+          .get()!.n,
+    )
+    return { moved: rows.length, payloadBytes, fileBytes, remaining }
+  }
+
+  private reindex(db: Database, runID: string, analysis: string, text: string, capturedAt: number) {
+    db.query("DELETE FROM audit_findings WHERE run_id=? AND analysis=?").run(runID, analysis)
+    insertFindings(
+      db,
+      runID,
+      analysis,
+      capturedAt,
+      auditFindings(runID, analysis, JSON.parse(text)),
+    )
+  }
+
+  /**
+   * Findings are indexed once, when their section is stored. A section stored before the index
+   * existed is indexed on first read: its report is parsed once, then never again.
    */
   private indexFindings(runID: string) {
     this.repository.atomic((db) => {
       const stale = db
-        .query<{ analysis: string; payload: string; captured_at: number }, [string]>(
-          `SELECT s.analysis,s.payload,s.captured_at FROM audit_sections s WHERE s.run_id=?
+        .query<
+          { analysis: string; payload: string; captured_at: number; raw_file: number },
+          [string]
+        >(
+          `SELECT s.analysis,s.payload,s.captured_at,s.raw_file FROM audit_sections s WHERE s.run_id=?
            AND s.finding_count != (SELECT COUNT(*) FROM audit_findings f WHERE f.run_id=s.run_id AND f.analysis=s.analysis)`,
         )
         .all(runID)
-      for (const row of stale) {
-        db.query("DELETE FROM audit_findings WHERE run_id=? AND analysis=?").run(
-          runID,
-          row.analysis,
-        )
-        insertFindings(
+      for (const row of stale)
+        this.reindex(
           db,
           runID,
           row.analysis,
+          this.rawText(runID, row.analysis, row.payload, row.raw_file),
           row.captured_at,
-          auditFindings(runID, row.analysis, JSON.parse(row.payload)),
         )
-      }
     })
   }
   finish(runID: string, interrupted?: string, finishedAt = Date.now()) {
@@ -424,26 +532,33 @@ export class AuditHistory {
       )
       this.repository.changed()
     })
+    if (this.pendingCompaction) this.pendingCompaction = this.compact().remaining > 0
     return run
   }
   sections(runID: string): Section[] {
     this.get(runID)
-    return this.repository.atomic((db) =>
+    const rows = this.repository.atomic((db) =>
       db
         .query<
-          { analysis: string; payload: string; error: string | null; captured_at: number },
+          {
+            analysis: string
+            payload: string
+            error: string | null
+            captured_at: number
+            raw_file: number
+          },
           [string]
         >(
-          "SELECT analysis,payload,error,captured_at FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
+          "SELECT analysis,payload,error,captured_at,raw_file FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
         )
-        .all(runID)
-        .map((s) => ({
-          analysis: s.analysis,
-          report: JSON.parse(s.payload),
-          error: s.error,
-          capturedAt: s.captured_at,
-        })),
+        .all(runID),
     )
+    return rows.map((s) => ({
+      analysis: s.analysis,
+      report: JSON.parse(this.rawText(runID, s.analysis, s.payload, s.raw_file)),
+      error: s.error,
+      capturedAt: s.captured_at,
+    }))
   }
   list(
     input: {
@@ -474,35 +589,54 @@ export class AuditHistory {
           offset,
         ),
     )
+    // Old sections move to files a page at a time as the history is read.
+    if (this.pendingCompaction) this.pendingCompaction = this.compact().remaining > 0
+    const runs = rows.slice(0, limit).map((r) => JSON.parse(r.payload) as AuditRun)
+    const analyses = this.analysesOf(runs.map((run) => run.runID))
     return {
-      runs: rows.slice(0, limit).map((r) => this.summary(JSON.parse(r.payload) as AuditRun)),
+      runs: runs.map((run) => this.summaryWith(run, analyses.get(run.runID) ?? [])),
       nextOffset: rows.length > limit ? offset + limit : null,
     }
   }
-  summary(run: AuditRun) {
-    const analyses = this.repository.atomic((db) =>
+  /** Sections' summaries for several runs in one query, each run's in the order a single read gives. */
+  private analysesOf(runIDs: string[]) {
+    const byRun = new Map<string, AnalysisSummary[]>()
+    if (runIDs.length === 0) return byRun
+    const rows = this.repository.atomic((db) =>
       db
         .query<
           {
+            run_id: string
             analysis: string
             summary: string
             error: string | null
             finding_count: number
             captured_at: number
           },
-          [string]
+          string[]
         >(
-          "SELECT analysis,summary,error,finding_count,captured_at FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
+          `SELECT run_id,analysis,summary,error,finding_count,captured_at FROM audit_sections
+           WHERE run_id IN (${runIDs.map(() => "?").join(",")}) ORDER BY captured_at,analysis`,
         )
-        .all(run.runID)
-        .map((s) => ({
-          name: s.analysis,
-          summary: JSON.parse(s.summary),
-          error: s.error,
-          findingCount: s.finding_count,
-          capturedAt: s.captured_at,
-        })),
+        .all(...runIDs),
     )
+    for (const s of rows) {
+      const list = byRun.get(s.run_id) ?? []
+      list.push({
+        name: s.analysis,
+        summary: JSON.parse(s.summary) as unknown,
+        error: s.error,
+        findingCount: s.finding_count,
+        capturedAt: s.captured_at,
+      })
+      byRun.set(s.run_id, list)
+    }
+    return byRun
+  }
+  summary(run: AuditRun) {
+    return this.summaryWith(run, this.analysesOf([run.runID]).get(run.runID) ?? [])
+  }
+  private summaryWith(run: AuditRun, analyses: AnalysisSummary[]) {
     const { requestInput: _requestInput, ...metadata } = run
     return { ...metadata, reportPath: this.reportPath(run.runID), analyses }
   }
@@ -513,7 +647,6 @@ export class AuditHistory {
       path?: string
       offset?: number
       limit?: number
-      includeReports?: boolean
     } = {},
   ) {
     const run = this.get(runID)
@@ -578,11 +711,6 @@ export class AuditHistory {
       })),
       totalFindings: total,
       nextOffset: offset + limit < total ? offset + limit : null,
-      ...(input.includeReports
-        ? {
-            reports: Object.fromEntries(this.sections(runID).map((s) => [s.analysis, s.report])),
-          }
-        : {}),
     }
   }
   decide(input: AuditDecision, actor: AuditActor) {
@@ -636,6 +764,19 @@ export class AuditHistory {
     return join(dirname(this.repository.path), "audits", `${runID}.json`)
   }
   /**
+   * The export of a finished run is written once: while the file is newer than the run's end it
+   * is returned as it is (the whole millisecond of the finish must be behind it, as the clock
+   * of a file and the clock of the run differ below a millisecond), so a replayed request or a second read rewrites nothing. A run still
+   * collecting, a missing file and a file older than the end of the run are written again.
+   */
+  async exportOnce(runID: string) {
+    const run = this.get(runID)
+    const path = this.reportPath(runID)
+    if (run.finishedAt !== null && existsSync(path) && statSync(path).mtimeMs >= run.finishedAt + 1)
+      return path
+    return this.export(runID)
+  }
+  /**
    * Writes the export section by section: one report is read, serialized and written at a time,
    * so the file's size is never held in memory. The bytes equal `JSON.stringify(value, null, 2)`
    * of `{ ...run, schemaVersion: 2, reports }`.
@@ -652,20 +793,26 @@ export class AuditHistory {
       let first = true
       const names = this.repository.atomic((db) =>
         db
-          .query<{ analysis: string }, [string]>(
-            "SELECT analysis FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
+          .query<{ analysis: string; raw_file: number }, [string]>(
+            "SELECT analysis,raw_file FROM audit_sections WHERE run_id=? ORDER BY captured_at,analysis",
           )
-          .all(runID)
-          .map((row) => row.analysis),
+          .all(runID),
       )
-      for (const analysis of names) {
-        const payload = this.repository.atomic(
-          (db) =>
-            db
-              .query<{ payload: string }, [string, string]>(
-                "SELECT payload FROM audit_sections WHERE run_id=? AND analysis=?",
-              )
-              .get(runID, analysis)!.payload,
+      for (const { analysis, raw_file } of names) {
+        const payload = this.rawText(
+          runID,
+          analysis,
+          raw_file
+            ? ""
+            : this.repository.atomic(
+                (db) =>
+                  db
+                    .query<{ payload: string }, [string, string]>(
+                      "SELECT payload FROM audit_sections WHERE run_id=? AND analysis=?",
+                    )
+                    .get(runID, analysis)!.payload,
+              ),
+          raw_file,
         )
         const body = JSON.stringify(JSON.parse(payload), null, 2).replaceAll("\n", "\n    ")
         writer.write(`${first ? "\n" : ",\n"}    ${JSON.stringify(analysis)}: ${body}`)

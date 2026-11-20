@@ -72,7 +72,6 @@ export const AuditDetailOutput = z.strictObject({
   ),
   totalFindings: z.int().nonnegative(),
   nextOffset: z.int().nonnegative().nullable(),
-  reports: z.record(z.string(), z.unknown()).optional(),
 })
 
 const Thresholds = z.strictObject({

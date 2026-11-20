@@ -41,3 +41,19 @@ test("a fresh cache directory still gets its ignore-everything file", async () =
   expect(await publishCache(from, to)).toBe(1)
   expect(await readFile(join(to, ".fallow", ".gitignore"), "utf8")).toBe("*\n")
 })
+
+test("publishing copies only the cache files that changed", async () => {
+  const { from, to } = await fixture()
+  await rm(join(to, ".fallow", ".gitignore"))
+  await writeFile(join(from, ".fallow", "churn.bin"), "churn")
+  expect(await publishCache(from, to)).toBe(2)
+  // Nothing changed: no copy, so no rewrite of the canonical cache after every run.
+  expect(await publishCache(from, to)).toBe(0)
+  // Same size, different bytes: copied. A grown file: copied.
+  await writeFile(join(from, ".fallow", "cache.bin"), "fixtuRe")
+  expect(await publishCache(from, to)).toBe(1)
+  expect(await readFile(join(to, ".fallow", "cache.bin"), "utf8")).toBe("fixtuRe")
+  await writeFile(join(from, ".fallow", "churn.bin"), "churn grew")
+  expect(await publishCache(from, to)).toBe(1)
+  expect(await publishCache(from, to)).toBe(0)
+})

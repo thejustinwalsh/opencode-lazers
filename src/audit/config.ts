@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
 import type { TaskRepository } from "../storage.ts"
 
@@ -88,8 +88,11 @@ function parseJsonConfig(path: string, content: string): object | null {
   return parsed as object
 }
 
+/** Distinct from any name a caller or test picks, as cleanup removes a directory by this prefix. */
+const CONFIG_DIRECTORY_PREFIX = "lz-fallow-resolved-config-"
+
 async function materialise(name: string, content: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "lz-fallow-config-"))
+  const directory = await mkdtemp(join(tmpdir(), CONFIG_DIRECTORY_PREFIX))
   const path = join(directory, name)
   await writeFile(path, content, "utf8")
   return path
@@ -169,7 +172,13 @@ export async function hasFallowConfig(input: {
 
 export async function cleanupResolvedFallowConfig(resolved: ResolvedFallowConfig): Promise<void> {
   if (!resolved.configPath) return
-  await rm(resolved.configPath, { recursive: false, force: true }).catch(() => {})
+  // The file lives alone in a directory `materialise` made; removing only the file left one
+  // empty directory in the temp folder per resolution (16,000 on a development machine).
+  const directory = dirname(resolved.configPath)
+  const target = basename(directory).startsWith(CONFIG_DIRECTORY_PREFIX)
+    ? directory
+    : resolved.configPath
+  await rm(target, { recursive: target === directory, force: true }).catch(() => {})
 }
 
 /** Resolves the effective config at the workspace's current HEAD, for tools with no base commit. */

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url"
 import {
   MAX_FALLOW_THREADS,
   runFallowModule,
+  ThreadPool,
   type GitCall,
   type RunOptions,
 } from "../fallow-wasi.ts"
@@ -27,6 +28,13 @@ export const wasmModule = new WebAssembly.Module(wasmBytes)
 export const threadedWasmModule = new WebAssembly.Module(
   readFileSync(new URL("./fallow-threads.wasm", import.meta.url)),
 )
+
+/**
+ * One helper-thread pool per test process, shared by every threaded run in every file, so a
+ * suite starts the helpers once instead of two Bun workers per run. The linear memory is not
+ * shared: a run's memory is released when the run returns (see `runFallowModule`).
+ */
+export const testThreadPool = new ThreadPool()
 
 /** The shipped modules: one thread, and the threaded build run with `MAX_FALLOW_THREADS`. */
 export const moduleKinds = ["single", "threads"] as const
@@ -52,7 +60,12 @@ export function runOp(
       options: { threads, explain: true, css: true, cache: options.cache === true },
       ...extra,
     },
-    { maxThreads: threads, ...options, onGit: (call) => (git.push(call), options.onGit?.(call)) },
+    {
+      maxThreads: threads,
+      threadPool: testThreadPool,
+      ...options,
+      onGit: (call) => (git.push(call), options.onGit?.(call)),
+    },
   )
   const parsed = JSON.parse(outcome.stdout) as {
     report?: Record<string, any>

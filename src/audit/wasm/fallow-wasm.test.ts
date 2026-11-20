@@ -167,7 +167,7 @@ describe("fallow-threads.wasm", () => {
     expect(text(first)).toBe(text(single))
   })
 
-  test("helper workers return with each run and are reused by the next, with identical output", () => {
+  test("helper workers return with each run and are reused by the next, with identical output", async () => {
     const pool = new ThreadPool()
     const text = () =>
       runFallowModule(
@@ -177,6 +177,9 @@ describe("fallow-threads.wasm", () => {
       ).stdout.replace(/"elapsed_ms":[0-9.]+/g, "")
     const first = text()
     expect(pool.created).toBe(2)
+    // The run did not block on its helpers: they join the pool once they have flagged.
+    await pool.settled()
+    expect(pool.idleCount).toBe(2)
     const second = text()
     expect(pool.created).toBe(2)
     expect(pool.reused).toBe(2)

@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import {
   cleanupResolvedFallowConfig,
@@ -72,6 +72,25 @@ test("repo config file at the base commit wins over a stored LAZERS config", asy
   expect(resolved.source).toBe("repo")
   expect(resolved.config).toEqual({ health: { maxCyclomatic: 5 } })
   await cleanupResolvedFallowConfig(resolved)
+})
+
+test("cleaning up a resolved config removes its temp directory, not only the file", async () => {
+  const { dir, base } = await repoWithConfig({ health: { maxCyclomatic: 5 } })
+  const resolved = await resolveFallowConfig({
+    directory: dir,
+    baseCommit: base,
+    repository: repository(dir),
+  })
+  const directory = dirname(resolved.configPath!)
+  expect(existsSync(directory)).toBe(true)
+  await cleanupResolvedFallowConfig(resolved)
+  expect(existsSync(directory)).toBe(false)
+  // A path outside a directory this module made is removed alone.
+  const own = join(dir, "own.json")
+  writeFileSync(own, "{}")
+  await cleanupResolvedFallowConfig({ source: "repo", config: {}, configPath: own })
+  expect(existsSync(own)).toBe(false)
+  expect(existsSync(dir)).toBe(true)
 })
 
 test("a repo config changed in the working tree but not committed at base is ignored", async () => {

@@ -177,11 +177,23 @@ export async function dryRunFallowConfig(
     const configPath = join(directory, ".fallowrc.json")
     await writeFile(configPath, JSON.stringify(candidate), "utf8")
     const scope = { root: workspace, configPath }
-    const [dead, health, dupes] = await Promise.all([
-      analyzer.deadCode(scope),
-      analyzer.complexity(scope),
-      analyzer.duplication(scope),
-    ])
+    // One engine run when the analyzer has one (it shares the duplication report and is a single
+    // queue entry); else the three separate calls. The engine's health report also lists
+    // CRAP-only findings, which the complexity analysis does not, so they are left out here.
+    const { dead, health, dupes } = analyzer.combined
+      ? await analyzer.combined(scope).then((all) => ({
+          dead: all.deadCode,
+          health: {
+            ...all.health,
+            findings: all.health.findings.filter((f) => f.exceeded !== "crap"),
+          },
+          dupes: all.duplication,
+        }))
+      : await Promise.all([
+          analyzer.deadCode(scope),
+          analyzer.complexity(scope),
+          analyzer.duplication(scope),
+        ]).then(([dead, health, dupes]) => ({ dead, health, dupes }))
     const classes: z.infer<typeof FallowDryRunOutput>["classes"] = []
     const deadRecord = dead as unknown as Record<string, unknown[]>
     for (const list of DEAD_CODE_LISTS) {
@@ -195,7 +207,16 @@ export async function dryRunFallowConfig(
         ),
       )
     }
-    const complexity = health.findings.map((f) => ({
+    // Ranked the same whichever analysis produced them, so the sample does not depend on the
+    // order the engine happened to list them in.
+    const ranked = [...health.findings].sort(
+      (a, b) =>
+        b.cognitive - a.cognitive ||
+        b.cyclomatic - a.cyclomatic ||
+        a.path.localeCompare(b.path) ||
+        a.line - b.line,
+    )
+    const complexity = ranked.map((f) => ({
       file: f.path,
       line: f.line,
       subject: `${f.name} cyclomatic ${f.cyclomatic} cognitive ${f.cognitive}`,

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+import { createReadStream } from "node:fs"
 import { copyFile, lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { FALLOW_CACHE_MAX_MB } from "./fallow-wasi.ts"
@@ -18,7 +20,8 @@ import { FALLOW_CACHE_MAX_MB } from "./fallow-wasi.ts"
 export const CACHE_MAX_FILES = 12_000
 
 const CACHE_FILES = ["cache.bin", "churn.bin", "graph-cache.bin"]
-const MAX_BYTES = FALLOW_CACHE_MAX_MB * 1024 * 1024 * 2
+/** The engine keeps each cache file within its own cap, so a larger one is not its cache. */
+const MAX_BYTES = FALLOW_CACHE_MAX_MB * 1024 * 1024
 
 async function plainDirectory(path: string): Promise<boolean> {
   try {
@@ -39,6 +42,19 @@ async function cacheFiles(directory: string): Promise<string[]> {
   return found
 }
 
+async function digest(path: string): Promise<string> {
+  const hash = createHash("sha256")
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+  return hash.digest("hex")
+}
+
+/** The same bytes are already there: equal size, then equal content. Nothing is copied for them. */
+async function sameFile(from: string, to: string, size: number): Promise<boolean> {
+  const target = await lstat(to).catch(() => undefined)
+  if (!target?.isFile() || target.size !== size) return false
+  return (await digest(from).catch(() => "a")) === (await digest(to).catch(() => "b"))
+}
+
 async function copyCache(from: string, to: string): Promise<number> {
   const names = await cacheFiles(from)
   if (names.length === 0) return 0
@@ -52,6 +68,8 @@ async function copyCache(from: string, to: string): Promise<number> {
   })
   let copied = 0
   for (const name of names) {
+    const size = (await lstat(join(from, name)).catch(() => undefined))?.size
+    if (size !== undefined && (await sameFile(join(from, name), join(to, name), size))) continue
     const temporary = join(to, `${name}.seed-${process.pid}.tmp`)
     try {
       await copyFile(join(from, name), temporary)
