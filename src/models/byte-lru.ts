@@ -7,6 +7,8 @@ export type ByteLru<V> = {
   get(key: string): V | undefined
   set(key: string, value: V, bytes: number): void
   delete(key: string): void
+  /** Drops every entry whose key starts with `prefix`. */
+  deleteByPrefix(prefix: string): void
   clear(): void
   readonly size: number
   readonly bytes: number
@@ -57,6 +59,9 @@ function createByteLru<V>(budget: () => number): ByteLru<V> {
       if (!entry) return
       total -= entry.bytes
       entries.delete(key)
+    },
+    deleteByPrefix(prefix) {
+      for (const key of [...entries.keys()]) if (key.startsWith(prefix)) this.delete(key)
     },
     clear() {
       entries.clear()

@@ -1,24 +1,26 @@
 import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
-import type { ModelDecisionPriceState } from "./decision-read.ts"
-import type { CurrentPriceApplicability } from "./current-price-index.ts"
+import type { PriceInputs } from "./price-state.ts"
 import type {
   DecisionWorkerMethod,
   WorkerRequest,
   WorkerResponse,
 } from "./decision-worker-protocol.ts"
 
-export type ThreadedDecisionReaderOptions = {
+export type ThreadedDecisionWorkerOptions = {
   path: string
-  projectDirectory: string
-  readPriceState(
-    routes: readonly CurrentPriceApplicability[],
-    signal?: AbortSignal,
-  ): Promise<ModelDecisionPriceState>
+  /** The OpenCode-owned price inputs; the worker reads all evidence itself. */
+  readPriceInputs(signal?: AbortSignal): Promise<PriceInputs>
   workerURL?: URL
   /** How often the worker re-checks a recently read snapshot; tests shorten it. */
   warmIntervalMs?: number
+}
+
+export type ThreadedDecisionWorker = {
+  /** A reader for one project of this database; all readers share the worker thread. */
+  reader(projectDirectory: string): ModelDecisionReader
+  close(): void
 }
 
 type Pending = {
@@ -29,12 +31,12 @@ type Pending = {
 
 /**
  * Decision reads run on a worker thread so ledger capture and projection never occupy the
- * OpenCode service event loop. The worker owns the snapshot cache; this proxy only posts
- * requests and awaits results.
+ * OpenCode service event loop. One worker serves every project of a database; it owns the
+ * snapshot caches, and this proxy only posts requests and awaits results.
  */
-export function createThreadedDecisionReader(
-  options: ThreadedDecisionReaderOptions,
-): ModelDecisionReader & { close(): void } {
+export function createThreadedDecisionWorker(
+  options: ThreadedDecisionWorkerOptions,
+): ThreadedDecisionWorker {
   let worker: Worker | undefined
   let nextID = 0
   let closed = false
@@ -55,7 +57,6 @@ export function createThreadedDecisionReader(
       {
         workerData: {
           path: options.path,
-          projectDirectory: options.projectDirectory,
           ...(options.warmIntervalMs === undefined
             ? {}
             : { warmIntervalMs: options.warmIntervalMs }),
@@ -67,8 +68,8 @@ export function createThreadedDecisionReader(
     const reply = (message: WorkerRequest) => created.postMessage(message)
     created.on("message", (message: WorkerResponse) => {
       if (message.type === "price") {
-        options.readPriceState(message.routes, pending.get(message.callID)?.controller.signal).then(
-          (state) => reply({ type: "price", requestID: message.requestID, state }),
+        options.readPriceInputs(pending.get(message.callID)?.controller.signal).then(
+          (inputs) => reply({ type: "price", requestID: message.requestID, inputs }),
           (error: unknown) =>
             reply({
               type: "price",
@@ -93,7 +94,12 @@ export function createThreadedDecisionReader(
     return created
   }
 
-  const call = <T>(method: DecisionWorkerMethod, input: unknown, signal?: AbortSignal) => {
+  const call = <T>(
+    projectDirectory: string,
+    method: DecisionWorkerMethod,
+    input: unknown,
+    signal?: AbortSignal,
+  ) => {
     signal?.throwIfAborted()
     const target = acquire()
     const id = ++nextID
@@ -115,15 +121,24 @@ export function createThreadedDecisionReader(
       }
       pending.set(id, { resolve: resolve as never, reject, controller })
       signal?.addEventListener("abort", onAbort, { once: true })
-      target.postMessage({ type: "call", id, method, input } satisfies WorkerRequest)
+      target.postMessage({
+        type: "call",
+        id,
+        projectDirectory,
+        method,
+        input,
+      } satisfies WorkerRequest)
     })
   }
 
   return {
-    overview: (input, opts) => call("overview", input, opts?.signal),
-    rows: (input, opts) => call("rows", input, opts?.signal),
-    configurations: (input, opts) => call("configurations", input, opts?.signal),
-    inspect: (input, opts) => call("inspect", input, opts?.signal),
+    reader: (projectDirectory) => ({
+      overview: (input, opts) => call(projectDirectory, "overview", input, opts?.signal),
+      rows: (input, opts) => call(projectDirectory, "rows", input, opts?.signal),
+      configurations: (input, opts) =>
+        call(projectDirectory, "configurations", input, opts?.signal),
+      inspect: (input, opts) => call(projectDirectory, "inspect", input, opts?.signal),
+    }),
     close() {
       if (closed) return
       closed = true
@@ -136,4 +151,12 @@ export function createThreadedDecisionReader(
       }
     },
   }
+}
+
+/** A single-project reader on its own worker; tests and one-off readers use it. */
+export function createThreadedDecisionReader(
+  options: ThreadedDecisionWorkerOptions & { projectDirectory: string },
+): ModelDecisionReader & { close(): void } {
+  const worker = createThreadedDecisionWorker(options)
+  return { ...worker.reader(options.projectDirectory), close: () => worker.close() }
 }

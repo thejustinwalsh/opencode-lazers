@@ -458,7 +458,7 @@ export class ModelEvidenceStore {
             this.projectDirectory,
           )
         for (const { snapshot_id } of pruned)
-          parsedSnapshots.delete(`${this.projectDirectory}\u0000${snapshot_id}`)
+          parsedSnapshots.deleteByPrefix(`${this.projectDirectory}\u0000${snapshot_id}\u0000`)
       })
       .immediate()
   }
@@ -710,6 +710,15 @@ export type ModelEvidenceComparisonSourceRead = {
   snapshotID: string | null
   refresh: ModelEvidenceRefreshStatus | null
   snapshot: ModelEvidenceSnapshot | null
+  /** Present on a stamp-only read: what identifies the snapshot, without its records. */
+  stamp?: { generation: number; retrievedAt: string; recordCount: number }
+}
+
+export type ModelEvidenceComparisonReadOptions = {
+  /** Read only these sources; others are left out of the result. Default: all. */
+  sources?: readonly ModelEvidenceSource[]
+  /** Return the snapshot's stamp and never its records (no body read, no parse). */
+  stampOnly?: boolean
 }
 
 type CoreEvidenceSource = Exclude<ModelEvidenceSource, "models-dev" | "epoch-benchmarks">
@@ -732,7 +741,9 @@ export class ModelEvidenceReadStore {
 
   readComparisonSources(
     selection?: ModelEvidenceComparisonSnapshotSelection,
+    options: ModelEvidenceComparisonReadOptions = {},
   ): ModelEvidenceComparisonSourceRead[] {
+    const wanted = options.sources ?? MODEL_EVIDENCE_SOURCES
     const read = this.db.transaction(() => {
       const snapshotsTable = this.tableExists("model_evidence_snapshots")
       const refreshesTable = this.tableExists("model_evidence_refreshes")
@@ -755,7 +766,7 @@ export class ModelEvidenceReadStore {
         : []
       const refreshBySource = new Map(refreshRows.map((row) => [row.source, row]))
 
-      return MODEL_EVIDENCE_SOURCES.map((source): ModelEvidenceComparisonSourceRead => {
+      return wanted.map((source): ModelEvidenceComparisonSourceRead => {
         const refreshRow = refreshBySource.get(source)
         const refresh = refreshesTable
           ? ModelEvidenceRefreshStatusSchema.parse(
@@ -841,8 +852,23 @@ export class ModelEvidenceReadStore {
         if (meta.source !== source)
           throw new Error("Model evidence snapshot source does not match its selection")
 
+        if (options.stampOnly)
+          return {
+            source,
+            storage,
+            snapshotState: "available",
+            snapshotID,
+            refresh,
+            snapshot: null,
+            stamp: {
+              generation: meta.generation,
+              retrievedAt: meta.retrieved_at,
+              recordCount: meta.record_count,
+            },
+          }
+
         // Snapshots are immutable by id, so a parsed one is reused; only metadata is read per call.
-        const cacheKey = `${this.projectDirectory}\u0000${snapshotID}`
+        const cacheKey = `${this.projectDirectory}\u0000${snapshotID}\u0000${meta.generation}:${meta.record_count}:${meta.body_bytes}`
         let snapshot = parsedSnapshots.get(cacheKey)
         if (!snapshot) {
           const row = this.db
