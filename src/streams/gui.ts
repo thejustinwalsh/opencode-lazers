@@ -45,6 +45,8 @@ export type GuiStream<C extends Columns> = {
   revision: Accessor<number>
   /** The last failure, cleared by the next frame. */
   error: Accessor<Error | undefined>
+  /** The first frame of the current options has arrived; false again while a reopen is pending. */
+  loaded: Accessor<boolean>
   /** Move the window by items; the new frame replaces `items`. */
   slide(delta: number): void
   seek(anchor: StreamAnchorInput): void
@@ -80,10 +82,12 @@ export function createStream<F, C extends Columns>(
   const [after, setAfter] = createSignal<number | "more">(0)
   const [revision, setRevision] = createSignal(0)
   const [error, setError] = createSignal<Error | undefined>(undefined)
+  const [loaded, setLoaded] = createSignal(false)
   let controls: { slide(delta: number): void; seek(anchor: StreamAnchorInput): void } | undefined
 
   createEffect(() => {
     const opts = options()
+    setLoaded(false)
     const stream = newStreamID()
     const columns = streamColumns(source, opts.window)
     let applied = -1
@@ -100,6 +104,7 @@ export function createStream<F, C extends Columns>(
         setAfter(decoded.header.after)
         setRevision(decoded.header.revision)
         setError(undefined)
+        setLoaded(true)
       })
     }
     const open = () => {
@@ -162,6 +167,7 @@ export function createStream<F, C extends Columns>(
     after,
     revision,
     error,
+    loaded,
     slide: (delta) => controls?.slide(delta),
     seek: (anchor) => controls?.seek(anchor),
   }
@@ -238,5 +244,37 @@ export function rpcStreamsTransport(
       if (!listening) void listen()
       return () => void listeners.delete(listener)
     },
+  }
+}
+
+/**
+ * One window of a source read once: open, decode, close. For a caller that is not a Solid owner
+ * (a controller that loads a list on demand); a panel list uses `createStream`.
+ */
+export async function readWindow<F, C extends Columns>(
+  transport: StreamsTransport,
+  source: SourceRef<F, C>,
+  options: GuiStreamOptions<F>,
+): Promise<Array<Record<string, unknown>>> {
+  const stream = newStreamID()
+  try {
+    const frame = await transport.open({
+      stream,
+      source: source.name,
+      filter: options.filter,
+      order: options.order,
+      window: options.window,
+      ...(options.anchor ? { anchor: options.anchor } : {}),
+    })
+    const bytes = base64ToBytes(frame.data)
+    const decoded = readFrame(bytes.buffer, bytes.byteOffset, streamColumns(source, options.window))
+    return Array.from({ length: decoded.header.count }, (_, index) => {
+      const row = decoded.row(index) as Record<string, unknown>
+      return Object.fromEntries(
+        Object.keys(streamColumns(source, options.window)).map((name) => [name, row[name]]),
+      )
+    })
+  } finally {
+    await transport.close(stream).catch(() => {})
   }
 }

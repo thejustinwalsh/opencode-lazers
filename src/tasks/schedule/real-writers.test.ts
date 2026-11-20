@@ -13,7 +13,7 @@ import {
 } from "../../runner/runtime.fixture.ts"
 import { TaskReads } from "../read.ts"
 import { backfillPage } from "./backfill.ts"
-import { compareReads } from "./parity.ts"
+import { expectProjection } from "./parity.fixture.ts"
 import { installTaskScheduleSchema } from "./schema.ts"
 
 useRuntimeFixtureCleanup()
@@ -50,8 +50,15 @@ const snapshot = (f: F) =>
 
 /**
  * After a step of a real writer: nothing is queued, the incremental rows equal a full rebuild, and
- * the stored list equals the old `Tasks.query` (modulo INTENTIONAL_DIFFERENCES).
+ * the stored list equals what the old `Tasks.query` showed, recorded before it was removed.
  */
+const scenarios = new WeakMap<object, number>()
+let scenarioCount = 0
+/** A stable name for each test's fixture: the order the tests run in. */
+const scenarioOf = (f: F) => {
+  if (!scenarios.has(f)) scenarios.set(f, ++scenarioCount)
+  return `scenario ${scenarios.get(f)}`
+}
 function check(f: F, label: string) {
   const queued = f.repository.read(
     (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_schedule_dirty").get()!.n,
@@ -60,8 +67,7 @@ function check(f: F, label: string) {
     (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_schedule_failed").get()!.n,
   )
   expect({ label, queued, parked }).toEqual({ label, queued: 0, parked: 0 })
-  const divergences = compareReads(f.repository, new TaskReads(f.repository, f.store))
-  expect({ label, divergences }).toEqual({ label, divergences: [] })
+  expectProjection(`${scenarioOf(f)}/${label}`, f.repository)
   const before = snapshot(f)
   f.repository.atomic((db) => {
     installTaskScheduleSchema(db)

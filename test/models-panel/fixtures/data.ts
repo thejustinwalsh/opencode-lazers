@@ -1,4 +1,4 @@
-import { GetOutput, QueryOutput } from "../../../src/tasks/contract.ts"
+import { GetOutput, AgentQueryOutput } from "../../../src/tasks/contract.ts"
 import { TaskSpecSchema } from "../../../src/task.ts"
 import { TrajectoryOutput } from "../../../src/observability/contract.ts"
 import { ModelComparisonOutputSchema } from "../../../src/models/comparison-schema.ts"
@@ -197,9 +197,8 @@ export function taskPage(
   objective: string,
   sessionID: string,
 ) {
-  return QueryOutput.parse({
+  return AgentQueryOutput.parse({
     projectDirectory,
-    snapshot: 1,
     count: 1,
     tasks: [
       {

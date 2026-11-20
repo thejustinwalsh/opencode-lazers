@@ -2,21 +2,13 @@ import { scopePatternsConflict } from "../runner/artifacts.ts"
 import { PlanInput } from "../runner/schema.ts"
 import { prerequisitePlanAction } from "../runner/prerequisite-proof.ts"
 import { taskAuditHistory } from "../audit/history.ts"
-import { createHash } from "node:crypto"
-import { z } from "zod"
 import { ReadOnlyTaskRepository } from "../storage.ts"
 import type { TaskRepository } from "../storage.ts"
-import type { TaskSpec } from "../task.ts"
-import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
-import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
-import { encodeUnitCursor, pickUnit } from "../projects/scope.ts"
+import { GetInput, GetOutput } from "./contract.ts"
 import type { ProjectRef, UnitAccess } from "../projects/scope.ts"
 import { findOwner } from "../projects/resolve.ts"
-import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
-import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
-import { taskTitle } from "./presentation.ts"
+import { isTakeoverAttempt } from "../recovery/detector.ts"
 import { RunnerStore } from "../runner/store.ts"
-import { effectiveTaskStateFilter } from "./state-filter.ts"
 import { taskAdviceSnapshot } from "./advice.ts"
 import { attemptModel, readAttemptSummary } from "./attempt-summary.ts"
 import type { TaskState } from "../runner/schema.ts"
@@ -48,65 +40,6 @@ export type CurrentActivityTarget = {
   planVersion: number | null
 }
 
-const Cursor = z.strictObject({
-  filter: z.string(),
-  snapshot: z.int().nonnegative(),
-  before: z.int().positive(),
-})
-
-function summarize(
-  task: TaskSpec,
-  reference: string,
-  search: string,
-  scopePath: string | undefined,
-  disposition: TaskSummary["disposition"],
-  classification: TaskSummary["classification"],
-): TaskSummary {
-  const matches: TaskSummary["matches"] = []
-  const needle = search.toLowerCase()
-  const fields = {
-    id: task.id,
-    reference,
-    objective: task.proposal.objective,
-    scope: task.proposal.writeScope.join("\n"),
-    acceptance: task.proposal.acceptance.map((item) => item.assertion).join("\n"),
-    context: task.proposal.context.map((item) => item.reference).join("\n"),
-  }
-  for (const [field, value] of Object.entries(fields)) {
-    const index = needle ? value.toLowerCase().indexOf(needle) : -1
-    if (index >= 0 && matches.length < 4) {
-      matches.push({
-        field,
-        snippet: value.slice(Math.max(0, index - 40), index + 160).slice(0, 240),
-      })
-    }
-  }
-  if (scopePath && matches.length < 4) {
-    matches.push({ field: "scope candidate", snippet: fields.scope.slice(0, 240) })
-  }
-  if (needle && matches.length === 0) {
-    matches.push({
-      field: "specification",
-      snippet: "Literal match in the stored task specification.",
-    })
-  }
-  return {
-    taskID: task.id,
-    reference,
-    ...(task.proposal.sourcePlan ? { sourcePlan: task.proposal.sourcePlan } : {}),
-    revision: task.revision,
-    status: task.status,
-    reason: null,
-    ...(disposition ? { disposition } : {}),
-    classification,
-    title: taskTitle(task.proposal.objective),
-    objective: task.proposal.objective.slice(0, 400),
-    createdAt: task.createdAt,
-    sessionID: task.provenance.sessionID,
-    matches,
-  }
-}
-
 /** Reads of another checkout of the shared database that cannot write; `close` releases it. */
 function readsAt(path: string, directory: string) {
   const repository = new ReadOnlyTaskRepository(path, directory)
@@ -123,135 +56,6 @@ export class TaskReads {
     runner?: RunnerStore,
   ) {
     this.runner = runner ?? new RunnerStore(repository)
-  }
-
-  /**
-   * One page of every project's tasks. Reads the checkout the cursor names (the first allowed
-   * one without a cursor) through that checkout's own paged query, so a long project continues
-   * across pages; a checkout with no matching task is skipped. `units` are the checkouts the
-   * caller may read and `sessionID` is the caller, not a filter.
-   */
-  async queryAll(input: unknown, access: UnitAccess): Promise<TaskPage> {
-    const { allProjects, sessionID: _caller, cursor, ...rest } = QueryInput.parse(input)
-    if (!allProjects) throw new Error("Not an all-projects query")
-    let from = cursor
-    for (;;) {
-      const picked = await pickUnit(access.units, from)
-      if (!picked) break
-      const at = readsAt(this.repository.path, picked.unit.directory)
-      try {
-        const page = at.reads.query({
-          ...rest,
-          ...(picked.inner ? { cursor: picked.inner } : {}),
-        })
-        if (page.tasks.length > 0 || page.nextCursor)
-          return {
-            ...page,
-            project: picked.unit.project,
-            tasks: page.tasks.map((task) => ({ ...task, project: picked.unit.project })),
-            nextCursor: page.nextCursor
-              ? encodeUnitCursor({ directory: picked.unit.directory, inner: page.nextCursor })
-              : picked.nextCursor,
-          }
-        if (!picked.nextCursor) break
-        from = picked.nextCursor
-      } finally {
-        at.close()
-      }
-    }
-    return {
-      projectDirectory: this.repository.projectDirectory,
-      snapshot: this.repository.version(),
-      count: 0,
-      tasks: [],
-      nextCursor: null,
-      serverTime: new Date().toISOString(),
-    }
-  }
-
-  query(input: unknown): TaskPage {
-    const query = QueryInput.parse(input)
-    if (query.allProjects) throw new Error("An all-projects query is read with queryAll")
-    const filter = createHash("sha256")
-      .update(
-        JSON.stringify([
-          this.repository.projectDirectory,
-          query.sessionID,
-          query.search,
-          query.scopePath,
-          effectiveTaskStateFilter(query.state, query.includeCompleted),
-          query.includeRetired,
-          query.sort,
-        ]),
-      )
-      .digest("hex")
-    let cursor: z.infer<typeof Cursor> | undefined
-    if (query.cursor) {
-      try {
-        cursor = Cursor.parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")))
-      } catch {
-        throw new Error("Invalid task cursor")
-      }
-      if (cursor.filter !== filter || cursor.before > cursor.snapshot) {
-        throw new Error("Task cursor does not match this project, session, or filter")
-      }
-    }
-    const page = this.repository.readPage({
-      ...query,
-      state: effectiveTaskStateFilter(query.state, query.includeCompleted),
-      snapshot: cursor?.snapshot,
-      before: cursor?.before,
-      stateCounts: !cursor,
-    })
-    const visible = page.rows.slice(0, query.limit)
-    const last = visible.at(-1)
-    const nextCursor =
-      page.rows.length > query.limit && last
-        ? Buffer.from(
-            JSON.stringify({ filter, snapshot: page.version, before: last.position }),
-          ).toString("base64url")
-        : null
-    return QueryOutput.parse({
-      projectDirectory: this.repository.projectDirectory,
-      snapshot: page.version,
-      count: page.count,
-      ...("stateCounts" in page && page.stateCounts ? { stateCounts: page.stateCounts } : {}),
-      tasks: visible.map(({ task, reference, classification }) => {
-        const execution = this.effectiveExecution(task.id)
-        const disposition = this.repository.taskDisposition(task.id)
-        return {
-          ...summarize(task, reference, query.search, query.scopePath, disposition, classification),
-          ...(execution?.dispatchPause
-            ? { dispatchPause: execution.dispatchPause, dispatchPausePlanID: execution.planID }
-            : {}),
-          status: execution?.state ?? task.status,
-          ...(execution
-            ? { recordedState: this.recordedNodeState(task.id, execution.planID) }
-            : {}),
-          ...(execution &&
-          (execution.waitingOnPlans !== undefined || execution.waitingOnPlansComplete === false)
-            ? {
-                waitingOnPlans: execution.waitingOnPlans ?? [],
-                waitingOnPlansCount: execution.waitingOnPlansCount,
-                waitingOnPlansComplete: execution.waitingOnPlansComplete,
-              }
-            : {}),
-          // Same definition as the Running filter: a running node in a plan that is not held or
-          // cancelled, and not paused.
-          ...(execution &&
-          execution.state === "running" &&
-          !["blocked", "cancelled"].includes(this.runner.plan(execution.planID)?.state ?? "") &&
-          !execution.dispatchPause
-            ? this.startedAt(task.id, execution.planID)
-            : {}),
-          ...(execution ? this.concern(task.id, execution.planID, execution.state) : {}),
-          ...(execution ? this.takeover(task.id, execution.planID, execution.state) : {}),
-          reason: execution?.reason ?? disposition?.reason ?? null,
-        }
-      }),
-      nextCursor,
-      serverTime: new Date().toISOString(),
-    })
   }
 
   /**
@@ -457,11 +261,6 @@ export class TaskReads {
     }
   }
 
-  recordedStateForTask(taskID: string): TaskState | undefined {
-    const execution = this.effectiveExecution(taskID)
-    return execution ? this.recordedNodeState(taskID, execution.planID) : undefined
-  }
-
   /** The latest attempt's compact activity; a failed read leaves the pane without it. */
   protected attemptSummary(attemptID: string) {
     try {
@@ -473,68 +272,6 @@ export class TaskReads {
     } catch {
       return {}
     }
-  }
-
-  /** The open worker concern of one unsettled task with its totals, as `{ concern }`, or nothing. */
-  protected concern(
-    taskID: string,
-    planID: string,
-    state: string,
-  ): { concern: TaskConcern } | Record<string, never> {
-    if (!canStruggle(state)) return {}
-    return this.repository.read((db): { concern: TaskConcern } | Record<string, never> => {
-      const open = openConcerns(db, this.repository.projectDirectory, { taskID })
-      if (!open.length) return {}
-      const facts = readTrajectoryFacts(db, planID, taskID, Date.now())
-      return {
-        concern: {
-          line: open.map((item) => item.reason).join("; "),
-          reasons: open.map((item) => item.ruleID),
-          totals: {
-            attempts: facts.attempts,
-            verifyRounds: facts.verifyRounds,
-            attemptMs: facts.attemptMs,
-            tokens: facts.tokens,
-            toolCalls: facts.toolCalls,
-            costUSD: facts.costUSD,
-          },
-        },
-      }
-    })
-  }
-
-  /** `{ takeover: true }` while an unsettled task's latest attempt is the Architect's takeover. */
-  protected takeover(
-    taskID: string,
-    planID: string,
-    state: string,
-  ): { takeover: true } | Record<string, never> {
-    if (!canStruggle(state)) return {}
-    const policy = this.repository.read(
-      (db) =>
-        db
-          .query<{ policy: string }, [string, string]>(
-            "SELECT policy FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC LIMIT 1",
-          )
-          .get(planID, taskID)?.policy,
-    )
-    return policy !== undefined && isTakeoverAttempt(policy) ? { takeover: true } : {}
-  }
-
-  /** Start of the latest attempt, as `{ startedAt }`, or nothing when none is recorded. */
-  protected startedAt(
-    taskID: string,
-    planID: string,
-  ): { startedAt: number } | Record<string, never> {
-    const started = this.repository.read(
-      (db) =>
-        db
-          .query<{ started_at: number }, [string, string]>(
-            "SELECT started_at FROM runner_attempts WHERE plan_id=? AND task_id=? ORDER BY number DESC,started_at DESC LIMIT 1",
-          )
-          .get(planID, taskID)?.started_at,
-    )
-    return started === undefined ? {} : { startedAt: started }
   }
 
   protected recordedNodeState(taskID: string, planID: string): TaskState | undefined {

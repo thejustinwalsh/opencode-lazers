@@ -3,6 +3,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../proposal.ts"
 import { TaskRepository } from "../../src/storage.ts"
+import { TaskScheduleOwner } from "../../src/tasks/schedule/owner.ts"
+import { ensureTaskScheduleSchema } from "../../src/tasks/schedule/schema.ts"
 import { RunnerStore } from "../../src/runner/store.ts"
 import type { AttemptRow } from "../../src/runner/store.ts"
 import type { TrajectoryHost, TrajectorySession } from "../../src/trajectory/native.ts"
@@ -410,9 +412,19 @@ export function makeFixture(
   const host: TrajectoryHost = {
     session: async (id) => sessions.get(id) ?? null,
   }
+  let owner: TaskScheduleOwner | undefined
+  /** Index the project's tasks as its core's owner does, so the stored task list answers. */
+  const index = async () => {
+    if (!owner) {
+      ensureTaskScheduleSchema(repository)
+      owner = new TaskScheduleOwner(repository)
+    }
+    await owner.settle()
+  }
   const close = () => {
+    owner?.close()
     repository.close()
     rmSync(directory, { recursive: true, force: true })
   }
-  return { directory, repository, store, task, receipt, attempts, sessions, host, close }
+  return { directory, repository, store, task, receipt, attempts, sessions, host, index, close }
 }

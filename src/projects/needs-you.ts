@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { RECOVERY_BUNDLE_EVENT } from "../runner/recovery-bundle.ts"
 import type { TaskRepository } from "../storage.ts"
-import { taskStatePredicate } from "../tasks/state-filter.ts"
-import { taskTitle } from "../tasks/presentation.ts"
+import { storedOwnerHolds } from "../tasks/schedule/stored.ts"
 import { canonicalPath, pickUnit } from "./scope.ts"
 import { projectSettingsIn } from "./settings.ts"
 import type { ProjectRef, ProjectUnit } from "./scope.ts"
@@ -24,46 +23,23 @@ export type NeedsYouEntry = {
 export type NeedsYouItem = NeedsYouEntry & { project: ProjectRef }
 
 /**
- * Owner holds of one checkout: the tasks the Tasks panel's Needs you filter lists (`blocked`),
- * every one of them, newest first. Read from recorded rows only, so it works for a project that
- * is not loaded.
+ * Owner holds of one checkout: the tasks whose own node or plan is Blocked (stored `owner_hold`; a task
+ * held back by a reservation or prerequisite plan waits on no owner), every one of them, newest first. Read from the stored list
+ * (`task_schedule`, bucket index), so it works for a project that is not loaded as long as the
+ * project is indexed; `undefined` says it is not, and no hold is listed for it.
  */
-export function ownerHolds(db: Database, directory: string): NeedsYouEntry[] {
-  return db
-    .query<
-      {
-        id: string
-        title: string | null
-        reference: string | null
-        reason: string | null
-        created: string | null
-      },
-      [string]
-    >(
-      `SELECT tasks.id AS id, substr(json_extract(tasks.body,'$.proposal.objective'),1,600) AS title,
-              r.reference AS reference, json_extract(tasks.body,'$.createdAt') AS created,
-              (SELECT n.reason FROM runner_nodes n JOIN runner_plans p ON p.id=n.plan_id
-                WHERE n.task_id=tasks.id AND p.project_directory=tasks.project_directory
-                ORDER BY p.rowid DESC LIMIT 1) AS reason
-         FROM tasks
-         LEFT JOIN task_references r ON r.project_directory=tasks.project_directory AND r.task_id=tasks.id
-        WHERE tasks.project_directory=?
-          AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
-          AND ${taskStatePredicate("blocked", "tasks")}
-        ORDER BY tasks.rowid DESC`,
-    )
-    .all(directory)
-    .map((row) => {
-      const since = row.created ? Date.parse(row.created) : Number.NaN
-      return {
-        kind: "owner-hold" as const,
-        id: row.id,
-        title: taskTitle(row.title ?? ""),
-        ...(row.reference ? { reference: row.reference } : {}),
-        ...(row.reason ? { reason: row.reason } : {}),
-        ...(Number.isFinite(since) ? { since } : {}),
-      }
-    })
+export function ownerHolds(db: Database, directory: string): NeedsYouEntry[] | undefined {
+  return storedOwnerHolds(db, directory)?.map((row) => {
+    const since = Date.parse(row.created_at)
+    return {
+      kind: "owner-hold" as const,
+      id: row.task_id,
+      title: row.title,
+      reference: row.reference,
+      ...(row.reason ? { reason: row.reason } : {}),
+      ...(Number.isFinite(since) ? { since } : {}),
+    }
+  })
 }
 
 /**
@@ -165,6 +141,8 @@ export async function needsYouPage(input: {
       items: NeedsYouItem[]
       /** False when this checkout's native questions could not be read, so none are listed. */
       questionsRead: boolean
+      /** False when this checkout's task list is not indexed yet, so no hold is listed. */
+      holdsRead: boolean
       nextCursor: string | null
     }
   | undefined
@@ -175,11 +153,13 @@ export async function needsYouPage(input: {
   const questionsRead =
     input.sessionOf !== undefined &&
     canonicalPath(unit.directory) === canonicalPath(input.ownDirectory)
-  const { entries, owners } = input.repository.read((db) => {
+  const { entries, owners, holds } = input.repository.read((db) => {
     const bundle = openRecoveryBundle(db, unit.directory)
+    const holds = ownerHolds(db, unit.directory)
     return {
+      holds: holds !== undefined,
       entries: [
-        ...ownerHolds(db, unit.directory),
+        ...(holds ?? []),
         ...(bundle ? [bundle] : []),
         // The profile is the project's, so only its first checkout lists it.
         ...(input.units.find((candidate) => candidate.project.key === unit.project.key) === unit
@@ -195,6 +175,7 @@ export async function needsYouPage(input: {
   return {
     project: unit.project,
     questionsRead,
+    holdsRead: holds,
     items: [...entries, ...architectQuestions(sessions)]
       .toSorted((a, b) => (a.since ?? 0) - (b.since ?? 0))
       .map((entry) => ({ ...entry, project: unit.project })),

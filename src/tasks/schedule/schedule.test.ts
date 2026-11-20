@@ -1,9 +1,10 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { drainTaskSchedule, retryParked } from "./drain.ts"
+import { TaskScheduleOwner } from "./owner.ts"
 import { BACKFILL_PAGE, backfillPage } from "./backfill.ts"
 import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
-import { compareReads } from "./parity.ts"
+import { expectProjection } from "./parity.fixture.ts"
 import { SCHEDULE_TRIGGERS, installTaskScheduleSchema } from "./schema.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
 import type { Fixture } from "./fixture.ts"
@@ -22,13 +23,13 @@ const open = () => {
 const rows = <T>(f: Fixture, sql: string, ...params: (string | number)[]) =>
   f.repository.read((db) => db.query<T, (string | number)[]>(sql).all(...params))
 
-test("a plan of two tasks with a dependency projects and matches the old read", () => {
+test("a plan of two tasks with a dependency projects and matches the recorded old read", () => {
   const f = open()
   const a = insertTask(f.repository, "alpha")
   const b = insertTask(f.repository, "beta")
   insertTask(f.repository, "loose")
   submitPlan(f, "p", [a, b], { dependencies: [[a, b]] })
-  expect(compareReads(f.repository, f.reads)).toEqual([])
+  expectProjection("schedule/two-task plan", f.repository)
   expect(rows(f, "SELECT parent_task_id,child_task_id,kind FROM task_schedule_edges")).toEqual([
     { parent_task_id: b, child_task_id: a, kind: "plan" },
   ])
@@ -495,4 +496,33 @@ test("a task in two plans shows its newest plan, like currentActivityTargets", (
   )[0]
   expect(row).toEqual({ plan_id: second, node_state: "running" })
   expect(f.reads.currentActivityTargets([a])[0]?.planID).toBe(second)
+})
+
+// ---- Owner ----------------------------------------------------------------------------------
+
+test("the owner backfills a project until ready, drains parked work when due, and closes", async () => {
+  const f = open()
+  for (let i = 0; i < 30; i++) insertTask(f.repository, `t${i}`)
+  f.repository.atomic((db) => installTaskScheduleSchema(db))
+  const owner = new TaskScheduleOwner(f.repository)
+  expect(owner.ready()).toBe(false)
+  owner.start()
+  await owner.settle()
+  expect(owner.ready()).toBe(true)
+  expect(rows<{ n: number }>(f, "SELECT COUNT(*) n FROM task_schedule")[0]!.n).toBe(30)
+  // A parked refresh comes due and the owner's retry clears it.
+  breakScopes(f)
+  f.repository.atomic((db) =>
+    db
+      .query(
+        "INSERT OR IGNORE INTO task_schedule_dirty(kind,ref) SELECT 'task',id FROM tasks LIMIT 1",
+      )
+      .run(),
+  )
+  expect(parked(f).length).toBe(1)
+  fixScopes(f)
+  f.repository.atomic((db) => db.query("UPDATE task_schedule_failed SET next_at=0").run())
+  await owner.settle()
+  expect(parked(f)).toEqual([])
+  owner.close()
 })

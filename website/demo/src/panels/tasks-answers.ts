@@ -11,6 +11,8 @@ import { Observability } from "../../../../src/observability/contract.ts"
 import type { TopologyResponse } from "../../../../src/observability/contract.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
 import type { Read } from "../adapter.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
+import { taskStreams } from "./tasks-streams.ts"
 
 /**
  * Pure answers for the Tasks panel: a compact description of the tasks at one moment, expanded
@@ -99,32 +101,6 @@ function summary(data: TasksData, task: DemoTask): TaskSummary {
     createdAt: CREATED,
     sessionID: SESSION,
     matches: [],
-  }
-}
-
-function query(
-  data: TasksData,
-  input: { state?: string; search?: string; limit?: number },
-): TaskPage {
-  const accept = filters[input.state ?? "open"] ?? filters.open!
-  const needle = (input.search ?? "").toLowerCase()
-  const tasks = data.tasks
-    .filter((task) => accept(task.state))
-    .filter((task) => !needle || `${ref(task.n)} ${task.title}`.toLowerCase().includes(needle))
-  const stateCounts = Object.fromEntries(
-    Object.entries(filters).map(([name, test]) => [
-      name,
-      data.tasks.filter((task) => test(task.state)).length,
-    ]),
-  )
-  return {
-    projectDirectory: PROJECT.canonical,
-    snapshot: 1,
-    count: tasks.length,
-    stateCounts,
-    tasks: tasks.map((task) => summary(data, task)),
-    nextCursor: null,
-    serverTime: new Date(Date.now()).toISOString(),
   }
 }
 
@@ -384,9 +360,10 @@ function currentActivity(data: TasksData, ids: string[]) {
 }
 
 export function rpc(data: () => TasksData) {
+  const streams = taskStreams(data, PROJECT.canonical)
   return {
+    [Streams.id]: streams,
     [Tasks.id]: {
-      query: (input: never) => query(data(), input),
       get: (input: { taskID: string }) => detail(data(), input.taskID),
       currentActivity: (input: { taskIDs: string[] }) => currentActivity(data(), input.taskIDs),
     },
@@ -398,12 +375,6 @@ export function rpc(data: () => TasksData) {
 /** Every distinct read this data answers, with the contract schema that must accept it. */
 export function reads(data: TasksData): Read[] {
   const out: Read[] = []
-  for (const filter of Object.keys(filters))
-    out.push({
-      label: `lazers.tasks.query ${filter}`,
-      schema: Tasks.methods.query.output,
-      value: query(data, { state: filter }),
-    })
   for (const task of data.tasks)
     out.push({
       label: `lazers.tasks.get ${ref(task.n)}`,

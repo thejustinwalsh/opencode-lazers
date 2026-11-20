@@ -5,98 +5,7 @@ import type {
   TaskDetail,
   CurrentActivityOutput,
   CurrentTaskActivity,
-  TaskPage,
-  TaskQuery,
-  TaskSummary,
 } from "./contract.ts"
-import type { TopologyResponse } from "../observability/contract.ts"
-import { SchedulingSnapshot as SchedulingSnapshotSchema } from "./scheduling-contract.ts"
-import type {
-  SchedulingInput,
-  SchedulingPage,
-  SchedulingScope,
-  SchedulingSnapshot,
-} from "./scheduling-contract.ts"
-
-function sameIDs(left: readonly string[], right: readonly string[]) {
-  return left.length === right.length && left.every((id, index) => id === right[index])
-}
-
-function relationshipsMatch(
-  topology: TopologyResponse,
-  scheduling: SchedulingSnapshot,
-  visibleTaskIDs: readonly string[],
-) {
-  if (topology.scope.kind !== scheduling.scope.kind) return false
-  if (
-    topology.scope.kind === "session" &&
-    scheduling.scope.kind === "session" &&
-    topology.scope.sessionID !== scheduling.scope.sessionID
-  )
-    return false
-
-  const topologyByTask = new Map<string, (typeof topology.plans)[number]>()
-  const schedulingByTask = new Map<string, (typeof scheduling.plans)[number]>()
-  const topologyPlanByID = new Map(topology.plans.map((plan) => [plan.id, plan]))
-  const schedulingPlanByID = new Map(scheduling.plans.map((plan) => [plan.planID, plan]))
-  for (const plan of topology.plans) {
-    for (const node of plan.nodes) {
-      if (topologyByTask.has(node.taskID)) return false
-      topologyByTask.set(node.taskID, plan)
-    }
-  }
-  for (const plan of scheduling.plans) {
-    for (const node of plan.nodes) {
-      if (schedulingByTask.has(node.taskID)) return false
-      schedulingByTask.set(node.taskID, plan)
-    }
-  }
-
-  const comparedPlans = new Set<string>()
-  for (const taskID of visibleTaskIDs) {
-    const topologyPlan = topologyByTask.get(taskID)
-    const schedulingPlan = schedulingByTask.get(taskID)
-    if (!topologyPlan && !schedulingPlan) continue
-    if (!topologyPlan || !schedulingPlan || topologyPlan.id !== schedulingPlan.planID) return false
-    comparedPlans.add(topologyPlan.id)
-  }
-
-  for (const planID of comparedPlans) {
-    const topologyPlan = topologyPlanByID.get(planID)!
-    const schedulingPlan = schedulingPlanByID.get(planID)!
-    if (!schedulingPlan.nodesComplete) return false
-    const afterPlansMatch =
-      schedulingPlan.afterPlansComplete === false
-        ? schedulingPlan.afterPlans.every(
-            (planID, index) => topologyPlan.afterPlans[index] === planID,
-          )
-        : sameIDs(topologyPlan.afterPlans, schedulingPlan.afterPlans)
-    if (!afterPlansMatch) return false
-
-    const topologyNodes = topologyPlan.nodes.toSorted((left, right) => left.ordinal - right.ordinal)
-    const schedulingNodes = schedulingPlan.nodes.toSorted(
-      (left, right) => left.ordinal - right.ordinal,
-    )
-    if (
-      topologyNodes.length !== schedulingNodes.length ||
-      topologyNodes.some(
-        (node, index) =>
-          node.taskID !== schedulingNodes[index]?.taskID ||
-          node.ordinal !== schedulingNodes[index]?.ordinal,
-      )
-    )
-      return false
-
-    const topologyEdges = topologyPlan.dependencies
-      .map((edge) => `${edge.prerequisite}:${edge.successor}`)
-      .toSorted()
-    const schedulingEdges = schedulingNodes
-      .flatMap((node) => node.prerequisites.map((prerequisite) => `${prerequisite}:${node.taskID}`))
-      .toSorted()
-    if (!sameIDs(topologyEdges, schedulingEdges)) return false
-  }
-  return true
-}
 
 export type TaskPanelChange = {
   projectDirectory: string
@@ -105,11 +14,13 @@ export type TaskPanelChange = {
   activitySessionID?: string
 }
 
+/**
+ * What the Tasks panel asks of the server beside its list streams: one task's detail, the current
+ * activity of the rows in view, the Start action, and the change feed. The list, its counts and the
+ * inspector's relations are stream windows (`panel-streams.ts`).
+ */
 export interface TaskTransport {
-  query(input: TaskQuery, signal: AbortSignal): Promise<TaskPage>
   get(taskID: string, signal: AbortSignal): Promise<TaskDetail>
-  topology?(signal: AbortSignal): Promise<TopologyResponse>
-  scheduling?(input: SchedulingInput, signal: AbortSignal): Promise<SchedulingPage>
   currentActivity?(taskIDs: string[], signal: AbortSignal): Promise<CurrentActivityOutput>
   start(input: StartTaskInput, signal: AbortSignal): Promise<StartTaskReply>
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
@@ -117,58 +28,24 @@ export interface TaskTransport {
 }
 export interface PanelData {
   key: string
-  tasks: TaskSummary[]
-  page?: TaskPage
-  topology?: TopologyResponse
-  topologyError?: string
-  scheduling?: SchedulingSnapshot
-  schedulingError: string
   currentActivity: Record<string, CurrentTaskActivity>
   activityError: string
   detail?: TaskDetail
   selectedID?: string
-  linkedDetails: Record<string, Extract<TaskDetail, { status: "found" }>>
-  loading: boolean
   stale: boolean
   error: string
-  /** Epoch ms of the last successful list read; the shown tasks were current then. */
-  asOf?: number
-  /** Task count per state filter for this scope and search, from the first page of the last read. */
-  stateCounts?: NonNullable<TaskPage["stateCounts"]>
-  /** The next page failed to load. Only `retryMore` requests it again; the list stays usable. */
-  moreError: string
-}
-/** `moreError` when the next page repeated a cursor or listed nothing new. */
-export const STALLED_PAGE = "The next page did not advance."
-
-/** Views kept across panel re-mounts, so a tab switch renders the last content at once. */
-const CACHE_LIMIT = 24
-/** Last page, counts and selected detail per view key; module-level so it outlives the panel. */
-export const taskViewCache = new Map<string, PanelData>()
-/** The inspector's last complete data per server, project and session. */
-export const inspectedCache = new Map<string, { identity: string; data: PanelData }>()
-/** Canonical project per server, session and directory, so a re-mount skips the lookup. */
-export const projectCache = new Map<string, string>()
-
-/** Insert as most recent and drop the oldest beyond the limit. */
-export function remember<V>(cache: Map<string, V>, key: string, value: V) {
-  cache.delete(key)
-  cache.set(key, value)
-  while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!)
 }
 
 const blank = (key = ""): PanelData => ({
   key,
-  tasks: [],
   currentActivity: {},
   activityError: "",
-  schedulingError: "",
-  linkedDetails: {},
-  loading: true,
   stale: false,
   error: "",
-  moreError: "",
 })
+
+/** Task ids one activity read may name (the contract's own limit). */
+const ACTIVITY_TASKS = 40
 
 /** Owns cancellation and response identity independently of the mounted Solid view. */
 export class TaskPanelState {
@@ -177,78 +54,28 @@ export class TaskPanelState {
   private detailController = new AbortController()
   private activityController?: AbortController
   private generation = 0
-  private listRequest = 0
-  private requestedMore: TaskPage | undefined
-  /**
-   * Cursors already followed in the current page chain (refresh reads and `more`). A next cursor
-   * found here is a cycle; reading it again could never reach the end.
-   */
-  private followedCursors = new Set<string>()
   private detailRequest = 0
   private activityRequest = 0
   private transport?: TaskTransport
-  private query: TaskQuery = {}
-  private schedulingScope?: SchedulingScope
   private project = ""
   private retry?: ReturnType<typeof setTimeout>
   private activityRefreshTimer?: ReturnType<typeof setTimeout>
   private pendingActivityTaskIDs = new Set<string>()
   private pendingActivitySessionIDs = new Set<string>()
   private activitySessions = new Map<string, string>()
+  /** The rows in view, whose activity is read. */
+  private observed: string[] = []
   private retryDelayMs = 1_000
-  private refreshPending = false
-  private pendingVersion = 0
-  private refreshing = false
+  private seenVersion = 0
   private starts = new Map<string, Promise<StartTaskReply>>()
-  private linkedRequests = new Map<
-    string,
-    Promise<Extract<TaskDetail, { status: "found" }> | undefined>
-  >()
-
-  private async readScheduling(
-    scope: SchedulingScope,
-    signal: AbortSignal,
-    isCurrent: () => boolean,
-  ): Promise<SchedulingSnapshot> {
-    const transport = this.transport
-    if (!transport?.scheduling) throw new Error("Scheduling read is unavailable")
-    const first = await transport.scheduling({ scope, limit: 100 }, signal)
-    if (!isCurrent() || signal.aborted) throw new Error("Scheduling read was superseded")
-    const sameScope = (page: SchedulingPage) =>
-      page.scope.kind === scope.kind && page.scope.sessionID === scope.sessionID
-    if (!sameScope(first)) throw new Error("Scheduling response belongs to another scope")
-    const plans = [...first.plans]
-    let page = first
-    const cursors = new Set<string>()
-    while (page.nextCursor) {
-      if (cursors.has(page.nextCursor)) throw new Error("Scheduling cursor did not advance")
-      cursors.add(page.nextCursor)
-      page = await transport.scheduling({ scope, cursor: page.nextCursor, limit: 100 }, signal)
-      if (!isCurrent() || signal.aborted) throw new Error("Scheduling read was superseded")
-      if (
-        page.snapshotID !== first.snapshotID ||
-        page.repositoryVersion !== first.repositoryVersion ||
-        !sameScope(page)
-      )
-        throw new Error("Scheduling pages changed during the read")
-      plans.push(...page.plans)
-      if (plans.length > 1_000) throw new Error("Scheduling page bound was exceeded")
-    }
-    const { nextCursor: _nextCursor, ...snapshot } = first
-    return SchedulingSnapshotSchema.parse({ ...snapshot, plans })
-  }
 
   constructor(
     private readonly changed: (data: PanelData) => void,
     private readonly selected: (id: string) => void = () => {},
-    /** Keeps the last read per view; a later state for the same view starts from it. */
-    private readonly cache?: Map<string, PanelData>,
   ) {}
 
   private update(change: Partial<PanelData>) {
     this.data = { ...this.data, ...change }
-    if (this.cache && this.data.key && this.data.page)
-      remember(this.cache, this.data.key, this.data)
     this.changed(this.data)
   }
 
@@ -261,57 +88,38 @@ export class TaskPanelState {
     this.retryDelayMs = Math.min(this.retryDelayMs * 2, 30_000)
   }
 
-  connect(
-    key: string,
-    project: string,
-    transport: TaskTransport,
-    query: TaskQuery,
-    selectedID?: string,
-    schedulingScope?: SchedulingScope,
-  ) {
+  connect(key: string, project: string, transport: TaskTransport, selectedID?: string) {
     this.close()
     this.controller = new AbortController()
     this.transport = transport
-    this.query = query
-    this.schedulingScope = schedulingScope
     this.project = project
     // The same view on a new connection (a reconnect) keeps what it last read; the next read
     // replaces it. Another view starts empty.
-    const previous =
-      this.data.key === key && this.data.page ? this.data : (this.cache?.get(key) ?? this.data)
     const kept =
-      previous.key === key && previous.page
-        ? {
-            tasks: previous.tasks,
-            page: previous.page,
-            topology: previous.topology,
-            topologyError: previous.topologyError,
-            scheduling: previous.scheduling,
-            currentActivity: previous.currentActivity,
-            linkedDetails: previous.linkedDetails,
-            detail: previous.detail,
-            asOf: previous.asOf,
-            stateCounts: previous.stateCounts,
-            loading: false,
-          }
+      this.data.key === key
+        ? { detail: this.data.detail, currentActivity: this.data.currentActivity }
         : {}
     this.data = { ...blank(key), ...kept }
     this.update({ selectedID })
-    const generation = this.generation
-    const signal = this.controller.signal
-    void this.watch(generation, transport, signal)
-    // Restored/native-link detail is independent of optional topology or list failures.
+    void this.watch(this.generation, transport, this.controller.signal)
+    // Restored/native-link detail is independent of the list.
     if (selectedID) void this.select(selectedID)
-    void this.refresh()
   }
 
-  private activityTaskIDs(tasks: TaskSummary[], selectedID?: string) {
-    return [
-      ...new Set([
-        ...tasks.slice(0, 30).map((task) => task.taskID),
-        ...(selectedID ? [selectedID] : []),
-      ]),
-    ].slice(0, 40)
+  /** The rows in view; their current activity is read, and read again when they change. */
+  observe(taskIDs: readonly string[]) {
+    const next = [...new Set(taskIDs)].slice(0, ACTIVITY_TASKS)
+    const known = new Set(this.observed)
+    this.observed = next
+    const added = next.filter((taskID) => !known.has(taskID))
+    if (added.length) this.queueCurrentActivity(added)
+  }
+
+  private activityTaskIDs(selectedID?: string) {
+    return [...new Set([...this.observed, ...(selectedID ? [selectedID] : [])])].slice(
+      0,
+      ACTIVITY_TASKS,
+    )
   }
 
   private cancelCurrentActivity() {
@@ -344,21 +152,15 @@ export class TaskPanelState {
       this.clearPendingActivityRefresh()
       return
     }
-    if (this.refreshing || this.activityController) return
-    const taskIDs = [...this.pendingActivityTaskIDs]
-    this.pendingActivityTaskIDs.clear()
-    void this.observeCurrentActivity(
-      taskIDs,
-      this.generation,
-      this.listRequest,
-      this.data.selectedID,
-    )
+    if (this.activityController) return
+    const taskIDs = [...this.pendingActivityTaskIDs].slice(0, ACTIVITY_TASKS)
+    for (const taskID of taskIDs) this.pendingActivityTaskIDs.delete(taskID)
+    void this.observeCurrentActivity(taskIDs, this.generation, this.data.selectedID)
   }
 
   private async observeCurrentActivity(
     taskIDs: string[],
     generation: number,
-    listRequest: number,
     selectedID: string | undefined,
   ) {
     const transport = this.transport
@@ -372,12 +174,11 @@ export class TaskPanelState {
     const isCurrent = () =>
       generation === this.generation &&
       request === this.activityRequest &&
-      listRequest === this.listRequest &&
       selectedAtRequest === this.data.selectedID &&
       !signal.aborted
     const requested = new Set(taskIDs)
-    // A refresh is not a loss of observation. Keep the last result visible
-    // until this read replaces it; active lists can refresh continuously.
+    // A refresh is not a loss of observation. Keep the last result visible until this read
+    // replaces it; active lists can refresh continuously.
     this.update({ activityError: "" })
     try {
       const response = await transport.currentActivity(taskIDs, signal)
@@ -393,7 +194,7 @@ export class TaskPanelState {
           this.activitySessions.set(activity.taskID, activity.workerSessionID)
         }
       }
-      while (this.activitySessions.size > 40)
+      while (this.activitySessions.size > ACTIVITY_TASKS)
         this.activitySessions.delete(this.activitySessions.keys().next().value!)
       this.flushPendingActivitySessions()
       this.update({
@@ -418,13 +219,9 @@ export class TaskPanelState {
     if (!transport?.currentActivity || this.controller.signal.aborted) return
     const taskIDs = sessionID
       ? this.activityTaskIDsForSession(sessionID)
-      : this.activityTaskIDs(this.data.tasks, this.data.selectedID)
+      : this.activityTaskIDs(this.data.selectedID)
     if (taskIDs.length) this.queueCurrentActivity(taskIDs)
-    else if (
-      sessionID &&
-      (this.refreshing || this.activityController) &&
-      this.pendingActivitySessionIDs.size < 80
-    )
+    else if (sessionID && this.activityController && this.pendingActivitySessionIDs.size < 80)
       this.pendingActivitySessionIDs.add(sessionID)
   }
 
@@ -432,7 +229,7 @@ export class TaskPanelState {
     return [...this.activitySessions]
       .filter(([, workerSessionID]) => workerSessionID === sessionID)
       .map(([taskID]) => taskID)
-      .slice(0, 40)
+      .slice(0, ACTIVITY_TASKS)
   }
 
   private flushPendingActivitySessions() {
@@ -445,381 +242,14 @@ export class TaskPanelState {
     if (taskIDs.size) this.queueCurrentActivity([...taskIDs])
   }
 
-  /** One generation of the read was replaced or cancelled while a request was in flight. */
-  private superseded(generation: number, request: number, signal?: AbortSignal) {
-    return (
-      Boolean(signal?.aborted) || generation !== this.generation || request !== this.listRequest
-    )
-  }
-
-  /** The execution topology for the first page: carried, retried (a moved boundary), or superseded. */
-  private async readTopologyFor(
-    transport: TaskTransport,
-    first: TaskPage,
-    attempt: number,
-    generation: number,
-    request: number,
-    signal: AbortSignal,
-  ): Promise<
-    | "superseded"
-    | "retry"
-    | { topology: TopologyResponse | undefined; topologyError: string; boundaryMatches: boolean }
-  > {
-    if (!transport.topology)
-      return { topology: undefined, topologyError: "", boundaryMatches: true }
-    let boundaryMatches = true
-    try {
-      const observed = await transport.topology(signal)
-      if (this.superseded(generation, request, signal)) return "superseded"
-      if (observed.boundary.repositoryVersion !== first.snapshot) {
-        boundaryMatches = false
-        if ((!transport.scheduling || !this.schedulingScope) && attempt < 2) return "retry"
-      }
-      return { topology: observed, topologyError: "", boundaryMatches }
-    } catch (error) {
-      if (signal.aborted || generation !== this.generation) return "superseded"
-      const message = panelErrorMessage(error, "")
-      const topologyError = message
-        ? `Execution links unavailable: ${message}. Showing ungrouped tasks.`
-        : "Execution links unavailable. Showing ungrouped tasks."
-      return { topology: undefined, topologyError, boundaryMatches }
-    }
-  }
-
-  /** Follows the cursor chain from the first page up to the wanted count. */
-  private async followTaskPages(
-    transport: TaskTransport,
-    first: TaskPage,
-    generation: number,
-    request: number,
-    signal: AbortSignal,
-  ) {
-    const wanted = Math.max(
-      first.tasks.length,
-      this.data.tasks.length + Math.max(0, first.count - (this.data.page?.count ?? first.count)),
-    )
-    let page = first
-    const tasks: TaskSummary[] = []
-    const listed = new Set<string>()
-    const append = (next: readonly TaskSummary[]) => {
-      const before = tasks.length
-      for (const task of next) {
-        if (listed.has(task.taskID)) continue
-        listed.add(task.taskID)
-        tasks.push(task)
-      }
-      return tasks.length - before
-    }
-    append(first.tasks)
-    const followed = new Set<string>()
-    let stalled = false
-    let changedSnapshot = false
-    while (page.nextCursor && tasks.length < wanted) {
-      // A repeated cursor or a page that lists nothing new would re-read forever: stop here and
-      // leave the rest to an explicit Retry.
-      if (followed.has(page.nextCursor)) {
-        stalled = true
-        break
-      }
-      followed.add(page.nextCursor)
-      const next = await transport.query({ ...this.query, cursor: page.nextCursor }, signal)
-      if (generation !== this.generation || request !== this.listRequest) return "superseded"
-      if (next.snapshot !== first.snapshot) {
-        page = next
-        changedSnapshot = true
-        break
-      }
-      const added = append(next.tasks)
-      if (next.nextCursor && (added === 0 || followed.has(next.nextCursor))) {
-        // Keep the page that made progress, so Retry re-reads the cursor that stalled.
-        if (added > 0) page = next
-        stalled = true
-        break
-      }
-      page = next
-    }
-    return { page, tasks, followed, stalled, changedSnapshot }
-  }
-
-  /** The scheduling snapshot for this read, or the reason it is unavailable. */
-  private async readSchedulingFor(
-    prior: SchedulingSnapshot | undefined,
-    generation: number,
-    request: number,
-    signal: AbortSignal,
-  ) {
-    if (!this.schedulingScope)
-      return {
-        scheduling: prior,
-        schedulingError: "Scheduling scope is unavailable.",
-        succeeded: false,
-      }
-    try {
-      const scheduling = await this.readScheduling(
-        this.schedulingScope,
-        signal,
-        () => generation === this.generation && request === this.listRequest,
-      )
-      return { scheduling, schedulingError: "", succeeded: true }
-    } catch {
-      if (this.superseded(generation, request, signal)) return "superseded" as const
-      return {
-        scheduling: prior,
-        schedulingError: "Scheduling is unavailable or stale. Refresh to confirm Next.",
-        succeeded: false,
-      }
-    }
-  }
-
-  /** One attempt at a stable task snapshot: retry, superseded, or the page set with its sidecars. */
-  private async readSnapshotAttempt(
-    transport: TaskTransport,
-    attempt: number,
-    prior: SchedulingSnapshot | undefined,
-    generation: number,
-    request: number,
-    signal: AbortSignal,
-  ) {
-    const first = await transport.query({ ...this.query, cursor: undefined }, signal)
-    if (generation !== this.generation || request !== this.listRequest) return "superseded"
-    if (first.projectDirectory !== this.project)
-      throw new Error("Task response belongs to another project")
-    const observed = await this.readTopologyFor(
-      transport,
-      first,
-      attempt,
-      generation,
-      request,
-      signal,
-    )
-    if (observed === "superseded" || observed === "retry") return observed
-    let { topology, topologyError } = observed
-    const followed = await this.followTaskPages(transport, first, generation, request, signal)
-    if (followed === "superseded") return followed
-    const { page, tasks, stalled, changedSnapshot } = followed
-    if (changedSnapshot && attempt < 2) return "retry"
-    if (changedSnapshot) throw new Error("Task pages changed during the read; retry")
-    if (!topology && transport.topology && !topologyError)
-      topologyError = "Execution topology is unavailable. Showing ungrouped tasks."
-    const read = await this.readSchedulingFor(prior, generation, request, signal)
-    if (read === "superseded") return read
-    const { scheduling, schedulingError } = read
-    if (topology && read.succeeded && scheduling) {
-      if (
-        !relationshipsMatch(
-          topology,
-          scheduling,
-          tasks.map((task) => task.taskID),
-        )
-      ) {
-        topology = undefined
-        topologyError =
-          "Execution relationships changed during the read. Showing scheduling-backed groups."
-      }
-    } else if (topology && !observed.boundaryMatches) {
-      topology = undefined
-      topologyError = "Execution topology changed during the task read. Showing ungrouped tasks."
-    }
-    if (!topology && read.succeeded && topologyError.includes("Showing ungrouped tasks."))
-      topologyError = topologyError.replace(
-        "Showing ungrouped tasks.",
-        "Showing scheduling-backed groups where covered.",
-      )
-    return {
-      page,
-      tasks,
-      stateCounts: first.stateCounts,
-      topology,
-      topologyError,
-      scheduling,
-      schedulingError,
-      followed: followed.followed,
-      stalled,
-    }
-  }
-
-  /** The stable snapshot (three attempts), or undefined when the read was superseded. */
-  private async readStableSnapshot(
-    transport: TaskTransport,
-    generation: number,
-    request: number,
-    signal: AbortSignal,
-  ) {
-    const prior = this.data.scheduling
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const read = await this.readSnapshotAttempt(
-        transport,
-        attempt,
-        prior,
-        generation,
-        request,
-        signal,
-      )
-      if (read === "superseded") return undefined
-      if (read === "retry") continue
-      if (signal.aborted || generation !== this.generation || request !== this.listRequest)
-        return undefined
-      return read
-    }
-    throw new Error("Could not read a stable task snapshot")
-  }
-
-  /** Runs the finally-block bookkeeping of a refresh: re-arm, retry, or settle. */
-  private settleRefresh(generation: number) {
-    if (generation !== this.generation) return
-    this.refreshing = false
-    if (
-      this.refreshPending ||
-      (this.pendingVersion > (this.data.page?.snapshot ?? 0) && !this.data.error)
-    ) {
-      this.refreshPending = false
-      this.pendingVersion = 0
-      void this.refresh()
-    } else if (this.data.error || this.data.topologyError) {
-      this.retryRead(generation)
-    } else {
-      if (this.retry) clearTimeout(this.retry)
-      this.retry = undefined
-      this.retryDelayMs = 1_000
-      this.flushCurrentActivity()
-    }
-    this.announceIdle()
-  }
-
+  /** Read the selected task and the rows in view again (the panel's Retry, and a change event). */
   async refresh() {
     const transport = this.transport
     if (!transport || this.controller.signal.aborted) return
-    if (this.refreshing) {
-      this.refreshPending = true
-      return
-    }
-    this.refreshing = true
-    const generation = this.generation
-    const request = ++this.listRequest
-    this.clearPendingActivityRefresh()
-    this.activitySessions.clear()
-    this.cancelCurrentActivity()
-    this.update({ activityError: "" })
-    const signal = this.controller.signal
-    try {
-      const read = await this.readStableSnapshot(transport, generation, request, signal)
-      if (!read) return
-      const { page, tasks, stateCounts, followed, stalled } = read
-      this.followedCursors = followed
-      this.requestedMore = stalled ? page : undefined
-      this.update({
-        tasks,
-        page,
-        topology: read.topology,
-        topologyError: read.topologyError,
-        scheduling: read.scheduling,
-        schedulingError: read.schedulingError,
-        loading: false,
-        stale: !transport.online(),
-        error: "",
-        asOf: Date.now(),
-        ...(stateCounts ? { stateCounts } : {}),
-        // The failed page is gone with the cursor; a later one starts clean. A stalled chain keeps
-        // its next page behind Retry.
-        ...(stalled ? { moreError: STALLED_PAGE } : page.nextCursor ? {} : { moreError: "" }),
-      })
-      const selectedForActivity = this.data.selectedID ?? tasks[0]?.taskID
-      await this.observeCurrentActivity(
-        this.activityTaskIDs(tasks, selectedForActivity),
-        generation,
-        request,
-        this.data.selectedID,
-      )
-      if (generation !== this.generation || request !== this.listRequest) return
-      if (!this.data.selectedID && tasks.length) await this.select(tasks[0]!.taskID)
-      else if (this.data.selectedID) await this.select(this.data.selectedID, true)
-    } catch (error) {
-      if (generation === this.generation && !signal.aborted) {
-        this.update({ loading: false, stale: true, error: panelErrorMessage(error) })
-      }
-    } finally {
-      this.settleRefresh(generation)
-    }
-  }
-
-  /**
-   * Readers that wait for the in-flight read to end (the next page near the end of the list) only
-   * re-run on a data change; announce the end of the read as one.
-   */
-  private announceIdle() {
-    if (!this.refreshing) this.update({})
-  }
-
-  /**
-   * Request the page after the current one. `key` is the view the caller is showing: a request
-   * for another filter/scope is ignored. Each page object is requested at most once; a refresh
-   * yields a new page object and re-arms it. A failed page sets `moreError` and stays failed —
-   * across refreshes too — until `retryMore`, so neither the list's retry nor a refresh spins it.
-   */
-  async more(key: string) {
-    const page = this.data.page
-    const cursor = page?.nextCursor
-    const transport = this.transport
-    if (!cursor || !transport || this.refreshing || this.data.key !== key) return
-    if (this.data.moreError) return
-    if (this.requestedMore === page) return
-    this.requestedMore = page
-    this.refreshing = true
-    const generation = this.generation
-    const request = ++this.listRequest
-    this.cancelCurrentActivity()
-    try {
-      const page = await transport.query({ ...this.query, cursor }, this.controller.signal)
-      if (generation !== this.generation || request !== this.listRequest) return
-      if (page.projectDirectory !== this.project)
-        throw new Error("Task response belongs to another project")
-      this.followedCursors.add(cursor)
-      const seen = new Set(this.data.tasks.map((task) => task.taskID))
-      const added = page.tasks.filter((task) => !seen.has(task.taskID))
-      const cycled = Boolean(page.nextCursor && this.followedCursors.has(page.nextCursor))
-      // A page that lists nothing new with another cursor, or a cursor already followed, would
-      // re-request forever as the loader stays in view. Stop at the last page that made progress;
-      // only `retryMore` reads on.
-      if (page.nextCursor && (cycled || added.length === 0)) {
-        if (added.length > 0) this.update({ page, tasks: [...this.data.tasks, ...added] })
-        this.requestedMore = this.data.page
-        this.update({ moreError: STALLED_PAGE })
-        return
-      }
-      this.update({ page, tasks: [...this.data.tasks, ...added] })
-      const selectedID = this.data.selectedID
-      await this.observeCurrentActivity(
-        this.activityTaskIDs(page.tasks, selectedID),
-        generation,
-        request,
-        selectedID,
-      )
-    } catch (error) {
-      if (
-        generation === this.generation &&
-        request === this.listRequest &&
-        !this.controller.signal.aborted
-      )
-        this.update({ moreError: panelErrorMessage(error) })
-    } finally {
-      if (generation === this.generation) {
-        this.refreshing = false
-        if (this.refreshPending || this.pendingVersion > (this.data.page?.snapshot ?? 0)) {
-          this.refreshPending = false
-          this.pendingVersion = 0
-          void this.refresh()
-        } else this.flushCurrentActivity()
-        this.announceIdle()
-      }
-    }
-  }
-
-  /** Explicitly request the page that failed, for the view `key` the caller is showing. */
-  retryMore(key: string) {
-    if (this.data.key !== key || !this.data.moreError) return
-    this.requestedMore = undefined
-    this.update({ moreError: "" })
-    void this.more(key)
+    this.update({ error: "", stale: !transport.online() })
+    this.refreshCurrentActivity()
+    const selectedID = this.data.selectedID
+    if (selectedID) await this.select(selectedID, true)
   }
 
   async select(taskID: string, refresh = false) {
@@ -839,12 +269,13 @@ export class TaskPanelState {
       // it. Clearing it here dropped requests from Attention whenever the next selection
       // superseded the read (keyboard stepping through Attention).
       this.update({ activityError: "" })
-      void this.observeCurrentActivity([taskID], generation, this.listRequest, taskID)
+      void this.observeCurrentActivity([taskID], generation, taskID)
     }
     try {
       const detail = await transport.get(taskID, signal)
       if (generation === this.generation && request === this.detailRequest && !signal.aborted) {
-        this.update({ detail })
+        this.update({ detail, error: "", stale: !transport.online() })
+        this.retryDelayMs = 1_000
       }
     } catch (error) {
       if (generation === this.generation && request === this.detailRequest && !signal.aborted) {
@@ -852,32 +283,6 @@ export class TaskPanelState {
         this.retryRead(generation)
       }
     }
-  }
-
-  async resolveLinked(taskID: string) {
-    const cached = this.data.linkedDetails[taskID]
-    if (cached) return cached
-    const pending = this.linkedRequests.get(taskID)
-    if (pending) return pending
-    const transport = this.transport
-    if (!transport || this.controller.signal.aborted) return undefined
-    const generation = this.generation
-    const signal = this.controller.signal
-    const request = transport
-      .get(taskID, signal)
-      .then((detail) => {
-        if (generation !== this.generation || signal.aborted || detail.status !== "found")
-          return undefined
-        const linkedDetails = { ...this.data.linkedDetails, [taskID]: detail }
-        this.update({ linkedDetails })
-        return detail
-      })
-      .catch(() => undefined)
-    this.linkedRequests.set(taskID, request)
-    void request.finally(() => {
-      if (this.linkedRequests.get(taskID) === request) this.linkedRequests.delete(taskID)
-    })
-    return request
   }
 
   async start(input: StartTaskInput): Promise<StartTaskReply> {
@@ -906,17 +311,15 @@ export class TaskPanelState {
         for await (const event of transport.changes(signal)) {
           if (generation !== this.generation || signal.aborted) return
           if (event.projectDirectory !== this.project) continue
-          if (event.resnapshotRequired) {
-            void this.refresh()
-            continue
-          }
-          if (event.activitySessionID) {
+          if (event.activitySessionID && !event.resnapshotRequired) {
             this.refreshCurrentActivity(event.activitySessionID)
             continue
           }
-          if (event.version <= (this.data.page?.snapshot ?? 0)) continue
-          this.pendingVersion = Math.max(this.pendingVersion, event.version)
-          if (!this.refreshing) void this.refresh()
+          // The list follows its streams; the detail and the activity of the rows in view follow
+          // the change feed.
+          if (!event.resnapshotRequired && event.version <= this.seenVersion) continue
+          this.seenVersion = Math.max(this.seenVersion, event.version)
+          void this.refresh()
         }
         if (!signal.aborted) throw new Error("Task update connection closed")
       } catch (error) {
@@ -937,7 +340,6 @@ export class TaskPanelState {
 
   close() {
     this.generation++
-    this.listRequest++
     this.detailRequest++
     this.controller.abort()
     this.detailController.abort()
@@ -945,15 +347,11 @@ export class TaskPanelState {
     this.clearPendingActivityRefresh()
     this.activitySessions.clear()
     this.starts.clear()
-    this.linkedRequests.clear()
     if (this.retry) clearTimeout(this.retry)
     this.retry = undefined
     this.retryDelayMs = 1_000
-    this.refreshPending = false
-    this.requestedMore = undefined
-    this.followedCursors = new Set()
+    this.observed = []
+    this.seenVersion = 0
     this.transport = undefined
-    this.refreshing = false
-    this.pendingVersion = 0
   }
 }

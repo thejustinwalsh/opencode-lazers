@@ -1,6 +1,6 @@
 import type { IconName } from "@opencode/plugin/gui"
 import type { CurrentTaskActivity } from "./contract.ts"
-import type { ExecutionListRow } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 
 /** Visual family of a task row; each tone pairs a state glyph with a theme status color. */
 export type TaskTone =

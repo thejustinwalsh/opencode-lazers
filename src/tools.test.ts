@@ -10,6 +10,8 @@ import { join } from "node:path"
 import { validProposal } from "../test/proposal.ts"
 import { nativeTools } from "../test/retry-process.ts"
 import { SQLITE_BUSY_TIMEOUT_MS, TaskRepository } from "./storage.ts"
+import { ensureTaskScheduleSchema } from "./tasks/schedule/schema.ts"
+import { TaskScheduleOwner } from "./tasks/schedule/owner.ts"
 import { submitTask } from "./submission.ts"
 import { RunnerStore } from "./runner/store.ts"
 import { GetInstructionsOutput } from "./tasks/contract.ts"
@@ -74,7 +76,11 @@ async function setup(
 ) {
   const directory = mkdtempSync(join(tmpdir(), "lazers-tool-"))
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), process.cwd())
+  // The project core's owner indexes the project; the tools read the index through a stream.
+  ensureTaskScheduleSchema(repository)
+  const owner = new TaskScheduleOwner(repository)
   cleanup.push(() => {
+    owner.close()
     repository.close()
     rmSync(directory, { recursive: true, force: true })
   })
@@ -119,6 +125,9 @@ async function setup(
       ),
     ),
   )
+  // With the runner tables in place the owner indexes the project.
+  new RunnerStore(repository)
+  await owner.settle()
   return { tools, repository, assertions }
 }
 
@@ -1099,6 +1108,9 @@ test("native retries and conflicts skip inaccessible Git; canonical project scop
   })
   expect(repository.list()).toEqual([original!])
   const other = new TaskRepository(repository.path, "/another-canonical-repository")
+  // Each project's core indexes its own tasks.
+  const otherOwner = new TaskScheduleOwner(other)
+  await otherOwner.settle()
   try {
     // Use an accessible Git worktree, but an independent host canonical identity.
     const isolated = await nativeTools(other, { workspace: process.cwd() })
@@ -1212,3 +1224,32 @@ test.each(lockedWrites)(
   },
   30_000,
 )
+
+test("lz-query-tasks pages with the id of the last task as the continue marker", async () => {
+  const { tools } = await setup()
+  const submitted: string[] = []
+  for (const key of ["page-a", "page-b", "page-c"]) {
+    const receipt = await Effect.runPromise(
+      tools.get("lz-submit-task")!.execute(keyedProposal(key), context),
+    )
+    submitted.push(JSON.parse(String(receipt.content)).taskID)
+  }
+  const query = async (input: object) =>
+    JSON.parse(
+      String(
+        (await Effect.runPromise(tools.get("lz-query-tasks")!.execute(input, context))).content,
+      ),
+    )
+  const first = await query({ limit: 2 })
+  expect(first.tasks).toHaveLength(2)
+  expect(first.nextCursor).toBe(first.tasks[1].taskID)
+  const second = await query({ limit: 2, cursor: first.nextCursor })
+  expect(second.tasks).toHaveLength(1)
+  expect(second.nextCursor).toBeNull()
+  expect(
+    new Set([...first.tasks, ...second.tasks].map((task: { taskID: string }) => task.taskID)),
+  ).toEqual(new Set(submitted))
+  await expect(query({ limit: 2, cursor: crypto.randomUUID() })).resolves.toMatchObject({
+    status: "error",
+  })
+})

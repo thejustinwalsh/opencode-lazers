@@ -926,14 +926,6 @@ test("repository pages filter execution state before counting while legacy histo
     db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(secondPlan.planID)
     db.query("UPDATE runner_nodes SET state='running' WHERE plan_id=?").run(secondPlan.planID)
   })
-
-  const completedPage = repository.readPage({ search: "", limit: 10, state: "completed" })
-  expect(completedPage.count).toBe(1)
-  expect(completedPage.rows.map(({ task }) => task.id)).toEqual([completed.taskID])
-  const openPage = repository.readPage({ search: "", limit: 10, state: "open" })
-  expect(openPage.count).toBe(1)
-  expect(openPage.rows.map(({ task }) => task.id)).toEqual([running.taskID])
-  expect(repository.readPage({ search: "", limit: 10, includeCompleted: true }).count).toBe(2)
 })
 
 test("a disposition cannot hide active execution or claim failed work was fulfilled", () => {

@@ -1,4 +1,4 @@
-import type { ExecutionListRow } from "../tasks/execution-list.ts"
+import type { ExecutionListRow } from "../tasks/task-row.ts"
 import { taskStateView } from "../tasks/task-state.ts"
 import type { TaskStateView } from "../tasks/task-state.ts"
 

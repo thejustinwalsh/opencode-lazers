@@ -3,7 +3,6 @@ export const openedTaskView = () => ({
   scope: "session" as const,
   selectedID: null,
   search: "",
-  listScroll: 0,
   detailScroll: 0,
   history: false,
   revealTaskID: "",

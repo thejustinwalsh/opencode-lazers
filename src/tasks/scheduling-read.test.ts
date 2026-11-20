@@ -7,10 +7,8 @@ import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
 import { git } from "../runner/artifacts.ts"
 import { RunnerStore } from "../runner/store.ts"
-import { buildExecutionList } from "./execution-list.ts"
 import { SchedulingOutput } from "./scheduling-contract.ts"
 import { TaskSchedulingRead } from "./scheduling-read.ts"
-import { taskRowPresentation } from "./row-presentation.ts"
 import { DelegatedAgentCapacity } from "../runner/delegated-agent-capacity.ts"
 import { setProjectSetting } from "../projects/settings.ts"
 import { inspectPlan } from "../runner/inspection.ts"
@@ -458,18 +456,6 @@ test.each([100, 101])(
       candidate: { taskID: globalNext.task.id },
     })
 
-    const { nextCursor: _nextCursor, ...snapshot } = firstPage
-    const list = buildExecutionList({
-      tasks: [],
-      revealTaskIDs: new Set([target.task.id]),
-      scheduling: snapshot,
-    })
-    const row = list.plans[0]?.rows.find((candidate) => candidate.taskID === target.task.id)
-    expect(row?.scheduling?.reservationTaskIDs).toHaveLength(Math.min(reservationCount, 100))
-    if (reservationCount > 100)
-      expect(row?.scheduling?.reason).toContain("Showing 100 of 101 blocker task references.")
-    else expect(row?.scheduling?.reason).toBe("A conflicting write scope is reserved.")
-
     const session = SchedulingOutput.parse(
       await read.read({ scope: { kind: "session", sessionID: "session-a" }, limit: 100 }),
     )
@@ -485,15 +471,6 @@ test.each([100, 101])(
     expect(session.coverage.reservationsComplete).toBe(true)
     expect(session.next.status).toBe("unknown")
     expect(session.next).not.toMatchObject({ candidate: { taskID: globalNext.task.id } })
-    const { nextCursor: _sessionCursor, ...sessionSnapshot } = session
-    const sessionList = buildExecutionList({
-      tasks: [],
-      revealTaskIDs: new Set([target.task.id]),
-      scheduling: sessionSnapshot,
-    })
-    expect(sessionList.plans[0]?.rows[0]?.scheduling?.reason).toContain(
-      "No blocker references are visible in this session; known blockers outside this scope are not shown.",
-    )
   },
 )
 
@@ -563,15 +540,6 @@ test("partial reservation capture keeps known blockers waiting and unknown candi
   expect(page.next.status).toBe("unknown")
   expect(page.next).not.toEqual({ status: "none" })
   expect(omitted.task.id).not.toBe(captured.task.id)
-  const { nextCursor: _cursor, ...snapshot } = page
-  const list = buildExecutionList({
-    tasks: [],
-    revealTaskIDs: new Set([knownBlocked.task.id]),
-    scheduling: snapshot,
-  })
-  expect(list.plans[0]?.rows[0]?.scheduling?.reason).toContain(
-    "At least 1 blocker task reference is known; reservation coverage is incomplete.",
-  )
 })
 
 test("an outside-Session global winner never promotes a lower local task and pages stay scoped", async () => {
@@ -1017,17 +985,6 @@ test("more than 100 waiting plan references remain bounded, counted, and navigab
     waitingOnPlansCount: 101,
     waitingOnPlansComplete: false,
   })
-
-  const { nextCursor: _nextCursor, ...snapshot } = page
-  const list = buildExecutionList({
-    tasks: [],
-    revealTaskIDs: new Set([dependent.task.id]),
-    scheduling: snapshot,
-  })
-  const row = list.plans[0]?.rows.find((candidate) => candidate.taskID === dependent.task.id)
-  expect(row?.scheduling?.waitingOnPlans).toEqual(prerequisites.slice(0, 100))
-  expect(row?.scheduling?.reason).toContain("Showing 100 of 101 prerequisite plan references.")
-  expect(taskRowPresentation(row!).blockerTotal).toBe(101)
 })
 
 test("an unknown resume condition leaves Next unknown", async () => {

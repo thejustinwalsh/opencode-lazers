@@ -28,22 +28,6 @@ const QueryFields = {
 }
 /** The query an agent tool offers: this project, optionally one session. Never all projects. */
 export const AgentQueryInput = z.strictObject(QueryFields)
-/**
- * The Tasks RPC query. `allProjects` reads every registered project, a page per checkout, for the
- * owner's panel; `sessionID` then names the calling session and does not filter, and `cursor` is a
- * project cursor. Agent tools use `AgentQueryInput`, which has no such field.
- */
-export const QueryInput = z
-  .strictObject({ allProjects: z.literal(true).optional(), ...QueryFields })
-  .superRefine((input, ctx) => {
-    if (input.allProjects && !input.sessionID)
-      ctx.addIssue({
-        code: "custom",
-        path: ["sessionID"],
-        message: "An all-projects query names the calling session",
-      })
-  })
-export type TaskQuery = z.input<typeof QueryInput>
 const GetFields = {
   taskID: z.union([z.uuid(), TaskReferenceSchema]),
   revision: z.int().positive().optional(),
@@ -82,8 +66,6 @@ export const TaskConcern = z.strictObject({
 export type TaskConcern = z.infer<typeof TaskConcern>
 
 const TaskSummary = z.strictObject({
-  /** Present in an all-projects page only. */
-  project: ProjectRef.optional(),
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
   dispatchPause: DispatchPause.optional(),
@@ -95,7 +77,7 @@ const TaskSummary = z.strictObject({
   /** Raw task-node lifecycle, distinct from a plan-level effective hold. */
   recordedState: TaskState.optional(),
   /** Plan prerequisites use typed plan identities, not the task IDs in waitingOn. */
-  waitingOnPlans: z.array(ExecutionPlanWait).max(MAX_EXECUTION_PLAN_WAIT_REFERENCES).optional(),
+  waitingOnPlans: z.array(ExecutionPlanWait).optional(),
   waitingOnPlansCount: z.int().nonnegative().optional(),
   waitingOnPlansComplete: z.boolean().optional(),
   /** Epoch ms the current attempt started; present only while the task is running or verifying. */
@@ -114,19 +96,21 @@ const TaskSummary = z.strictObject({
   matches: z.array(z.strictObject({ field: z.string(), snippet: z.string().max(240) })).max(4),
 })
 export type TaskSummary = z.infer<typeof TaskSummary>
-export const QueryOutput = z.strictObject({
-  /** An all-projects page: the project of every task on it. */
-  project: ProjectRef.optional(),
+/**
+ * A page an agent tool returns: one window of the stored list. `count` and `stateCounts` are the
+ * stored per-state counters, left out when a search, scope path, creating session or retired
+ * tasks narrow the list; `nextCursor` is the id of the last task on the page while more follow.
+ */
+export const AgentQueryOutput = z.strictObject({
   projectDirectory: z.string(),
-  snapshot: z.int().nonnegative(),
-  count: z.int().nonnegative(),
-  /** Tasks per state filter for this scope and search; first page only, absent on later pages. */
+  count: z.int().nonnegative().optional(),
+  /** Tasks per state filter for this project; first page only. */
   stateCounts: z.partialRecord(TaskStateFilter, z.int().nonnegative()).optional(),
   tasks: z.array(TaskSummary).max(100),
   nextCursor: z.string().nullable(),
   serverTime: z.iso.datetime(),
 })
-export type TaskPage = z.infer<typeof QueryOutput>
+export type TaskPage = z.infer<typeof AgentQueryOutput>
 const Execution = z.strictObject({
   dispatchPause: DispatchPause.optional(),
   planID: z.uuid(),
@@ -245,7 +229,6 @@ export const Changed = z.strictObject({
 export const Tasks = Rpc.define({
   id: "lazers.tasks",
   methods: {
-    query: { input: QueryInput, output: QueryOutput },
     get: { input: GetInput, output: GetOutput },
     currentActivity: { input: CurrentActivityInput, output: CurrentActivityOutput },
     start: { input: StartInput, output: StartOutput },

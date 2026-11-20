@@ -221,6 +221,7 @@ export default Plugin.define({
             projectID,
             projectDirectory: repository.projectDirectory,
             projectIds: projectIdsFor,
+            read: (run) => repository.read(run),
             assertRead: async (sessionID) => {
               await authorizeRead(
                 ctx,

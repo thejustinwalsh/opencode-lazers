@@ -235,24 +235,18 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
       db.query("UPDATE runner_plans SET state='running',reason=NULL").run()
       db.query("UPDATE runner_nodes SET state='queued'").run()
     })
-    // The workload is the Tasks panel's own definition: it must equal TaskRepository.stateCounts.
-    const tasksCounts = () => {
-      const counts = fixture.repository.readPage({
-        search: "",
-        limit: 1,
-        state: "all",
-        stateCounts: true,
-      }).stateCounts!
-      return { queued: counts.queued, needsYou: counts.blocked, failed: counts.failed }
-    }
-    expect(live.workload).toEqual(tasksCounts())
-    expect(live.workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
+    // The workload is the Tasks panel's own chip counters, read as stored: each step below
+    // settles the owner, as the project core does, before the read.
+    await fixture.index()
+    // The queued task waits behind the running attempt's checkout: the list shows it Blocked, but
+    // it waits on no owner, so it stays Queued here.
+    expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='blocked'").run())
-    expect((await read()).workload).toEqual(tasksCounts())
+    await fixture.index()
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 1, failed: 0 })
     fixture.store.atomic((db) => db.query("UPDATE runner_nodes SET state='failed'").run())
-    expect((await read()).workload).toEqual(tasksCounts())
+    await fixture.index()
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 1 })
     // A paused plan's queued work is Paused, not Queued, exactly as in Tasks.
     fixture.store.atomic((db) => {
@@ -261,7 +255,7 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
         "INSERT INTO runner_dispatch_controls(plan_id,state,reason,until_plans,updated_at) SELECT id,'paused','test','[]',1 FROM runner_plans",
       ).run()
     })
-    expect((await read()).workload).toEqual(tasksCounts())
+    await fixture.index()
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
     // A global pause holds the same queued work as Paused, with no plan pause involved.
     fixture.store.atomic((db) => {
@@ -270,9 +264,10 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
         "INSERT INTO lazers_dispatch_pause(scope,state,reason,by,updated_at) VALUES('global','paused','test','owner',1)",
       ).run()
     })
-    expect((await read()).workload).toEqual(tasksCounts())
+    await fixture.index()
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
-    fixture.store.atomic((db) => db.query("DELETE FROM lazers_dispatch_pause").run())
+    fixture.store.atomic((db) => db.query("UPDATE lazers_dispatch_pause SET state='enabled'").run())
+    await fixture.index()
     expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     // A session without a native parent omits the field rather than carrying null.
@@ -694,6 +689,7 @@ test("the live attempt read carries the call count, model and tick summary of on
       summary: { lastActivityAt: 5000, ticks: [{ at: 5000, failed: true }], files: 1 },
       task: { state: expect.any(String), planState: expect.any(String) },
     })
+    await fixture.index()
     for (const group of ["needs-you", "failed", "queued"] as const) {
       const listed = reads.liveGroup(
         { scope: { kind: "project", sessionID: "anchor" }, group },

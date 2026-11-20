@@ -128,6 +128,8 @@ const NeedsYouPage = z.strictObject({
   items: z.array(NeedsYouItem),
   /** False when native questions of this checkout were not readable, so none are listed. */
   questionsRead: z.boolean().optional(),
+  /** False when this checkout's task list is not indexed yet, so no owner hold is listed. */
+  holdsRead: z.boolean().optional(),
   nextCursor: z.string().nullable(),
 })
 

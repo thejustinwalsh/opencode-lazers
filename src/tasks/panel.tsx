@@ -21,6 +21,7 @@ import {
   Switch,
   createEffect,
   createMemo,
+  createRoot,
   createSignal,
   createUniqueId,
   onCleanup,
@@ -30,16 +31,12 @@ import {
 import type { Accessor, JSX } from "solid-js"
 import type { TaskProposal } from "../task.ts"
 import { Tasks } from "./contract.ts"
-import { TasksScheduling } from "./scheduling-contract.ts"
-import type { SchedulingScope } from "./scheduling-contract.ts"
-import { Observability } from "../observability/contract.ts"
-import {
-  TaskPanelState,
-  inspectedCache,
-  projectCache,
-  remember,
-  taskViewCache,
-} from "./panel-state.ts"
+import { Streams } from "../streams/contract.ts"
+import { TASK_ROW_HEIGHT } from "./panel-layout.ts"
+import { createStream, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import { TaskPanelState } from "./panel-state.ts"
+import { createSelectedFacts, createTaskList, type TaskList } from "./panel-streams.ts"
 import { taskChanges } from "./events.ts"
 import type { PanelData } from "./panel-state.ts"
 import { DetailsPane } from "../details-pane.tsx"
@@ -61,17 +58,14 @@ import {
   taskSequencing,
   taskStateTooltip,
 } from "./row-presentation.ts"
-import { buildExecutionList } from "./execution-list.ts"
-import type { ExecutionListRow } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 import type { TaskBlocker, TaskGlyph, TaskRowPresentation } from "./row-presentation.ts"
 import { TaskRing } from "./state-glyph.tsx"
 import {
   anchoredScrollTop,
   viewportAnchor,
   estimateItemSize,
-  flattenExecutionList,
   itemIndex,
-  listedRows,
   navigationTarget,
   taskIndex,
   taskItems,
@@ -108,7 +102,8 @@ const View = Schema.Struct({
   /** Details pane: closed by default; size is the body's fraction of the panel. */
   open: Schema.optionalKey(Schema.Boolean),
   size: Schema.optionalKey(Schema.Number),
-  listScroll: Schema.Number,
+  /** The task of the first row in view; the list reopens around it. */
+  anchorTaskID: Schema.optionalKey(Schema.String),
   detailScroll: Schema.Number,
   state: Schema.optionalKey(
     Schema.Literals([
@@ -138,7 +133,6 @@ const initial: typeof View.Type = {
   scope: "session",
   selectedID: null,
   search: "",
-  listScroll: 0,
   detailScroll: 0,
   history: false,
   revealTaskID: "",
@@ -236,11 +230,6 @@ function objectiveExtendsTitle(objective: string) {
 
 /** Rows rendered beyond the viewport on each side. */
 const VIRTUAL_OVERSCAN = 8
-/**
- * Request the next page once the viewport's overscanned window is this close to the end of the
- * list. Measured from the viewport, never from rows pinned to stay mounted for focus.
- */
-const LOAD_MORE_WITHIN = 10
 /** Bounded wait for a scrolled-to row to mount before giving up on focusing it. */
 const FOCUS_ATTEMPTS = 10
 
@@ -279,10 +268,11 @@ function VirtualItemView(props: {
   )
 }
 
-/** The lookup key for a session's canonical project. */
-function scopeKey(source: { server: string; session: string; directory: string }) {
-  return `${source.server}\0${source.session}\0${source.directory}`
-}
+/** Rows the list shows before its viewport is measured. */
+const INITIAL_FIT_ROWS = 20
+/** Slide the window by this many rows when the view comes this near an end of it. */
+const SLIDE_ROWS = 25
+const SLIDE_TRIGGER = 8
 
 function TaskPanel(
   props: PanelProps & {
@@ -296,22 +286,25 @@ function TaskPanel(
   const frame = usePanel()
   const [data, setData] = createSignal<PanelData>({
     key: "",
-    moreError: "",
-    tasks: [],
     currentActivity: {},
     activityError: "",
-    schedulingError: "",
-    linkedDetails: {},
-    loading: true,
     stale: false,
     error: "",
   })
+  /** The streams of the connected view; absent until a view connects. */
+  const [taskList, setList] = createSignal<TaskList>()
+  const [facts, setFacts] = createSignal<ReturnType<typeof createSelectedFacts>>()
+  /** Rows that fit in the list's viewport; the stream window follows it. */
+  const [fit, setFit] = createSignal(INITIAL_FIT_ROWS)
+  /** Epoch ms of the last list frame; the shown tasks were current then. */
+  const [asOf, setAsOf] = createSignal<number>()
+  /** A task a person asked to see: the list moves to it once its place is known. */
+  const [pendingReveal, setPendingReveal] = createSignal<string>()
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [showAllCriteria, setShowAllCriteria] = createSignal(false)
   const listID = createUniqueId()
   const [startFeedback, setStartFeedback] = createSignal({ taskID: "", error: "" })
   const [copyStatus, setCopyStatus] = createSignal("")
-  const [revealedTaskIDs, setRevealedTaskIDs] = createSignal<Set<string>>(new Set())
   /** Item keys of expanded dependency accordions; per view, never persisted. Default collapsed. */
   const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(new Set())
   /** Where the tree starts inside the scrolling list, below the notes. */
@@ -358,17 +351,11 @@ function TaskPanel(
       { location: { directory: source.directory } },
       { signal },
     )
-    remember(projectCache, scopeKey(source), location.project.canonical)
     return { ...source, project: location.project.canonical }
   })
   const current = () => {
     if (!frame.visible() || !props.session.location || !props.session.directory) return undefined
     const value = scope.latest
-    // A re-mounted panel knows this project already: the lookup refreshes in the background.
-    const source = scopeSource()
-    const cached = source ? projectCache.get(scopeKey(source)) : undefined
-    if (source && cached && !(value && !scope.loading && value.session === source.session))
-      return { ...source, project: cached }
     return value &&
       value.session === props.session.id &&
       value.server === props.session.server.id &&
@@ -392,14 +379,11 @@ function TaskPanel(
       draft.projects[value.project] = { ...(draft.projects[value.project] ?? initial), ...change }
     })
   }
-  const state = new TaskPanelState(
-    setData,
-    (selectedID) =>
-      save({
-        selectedID,
-        detailScroll: selectedID === prefs().selectedID ? prefs().detailScroll : 0,
-      }),
-    taskViewCache,
+  const state = new TaskPanelState(setData, (selectedID) =>
+    save({
+      selectedID,
+      detailScroll: selectedID === prefs().selectedID ? prefs().detailScroll : 0,
+    }),
   )
   onCleanup(() => {
     state.close()
@@ -413,69 +397,65 @@ function TaskPanel(
       if (!value || !frame.visible() || !ctx.stores.taskView(props.session).ready()) {
         return undefined
       }
-      const key = JSON.stringify([
-        value.server,
-        value.project,
-        value.session,
-        prefs().scope,
-        prefs().search,
-        stateFilter(),
-      ])
+      // The connection holds the scope; a search or a state chip only moves the list's own stream.
+      const key = JSON.stringify([value.server, value.project, value.session, prefs().scope])
       return { value, key }
     },
     ({ value, key }) => {
       const view = prefs()
-      const sessionID = view.scope === "session" ? value.session : undefined
       const rpc = () => props.session.server.client.rpc(Tasks)
+      const location = { directory: value.directory }
+      const streams = new AbortController()
+      const transport = rpcStreamsTransport(
+        () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+        streams.signal,
+        { location },
+      )
+      const taskScope = { kind: view.scope, sessionID: value.session }
+      setList(
+        createTaskList({
+          transport,
+          project: value.project,
+          scope: taskScope,
+          search: () => prefs().search,
+          state: stateFilter,
+          fit,
+          expanded: expandedKeys,
+          startAt: untrack(() => prefs().anchorTaskID),
+        }),
+      )
+      setFacts(
+        createSelectedFacts({
+          transport,
+          project: value.project,
+          scope: taskScope,
+          taskID: () => data().selectedID,
+        }),
+      )
+      const sessionID = view.scope === "session" ? value.session : undefined
       state.connect(
         key,
         value.project,
         {
-          query: (input, signal) =>
-            rpc().query(input, { location: { directory: value.directory }, signal }),
           get: (taskID, signal) =>
-            rpc().get(
-              { taskID, ...(sessionID ? { sessionID } : {}) },
-              { location: { directory: value.directory }, signal },
-            ),
-          topology: (signal) =>
-            value.client.rpc(Observability).topology(
-              {
-                scope:
-                  view.scope === "session"
-                    ? { kind: "session", sessionID: value.session }
-                    : { kind: "project", sessionID: value.session },
-              },
-              { location: { directory: value.directory }, signal },
-            ),
-          scheduling: (input, signal) =>
-            value.client
-              .rpc(TasksScheduling)
-              .read(input, { location: { directory: value.directory }, signal }),
+            rpc().get({ taskID, ...(sessionID ? { sessionID } : {}) }, { location, signal }),
           currentActivity: (taskIDs, signal) =>
             rpc().currentActivity(
               { sessionID: value.session, scope: view.scope, taskIDs },
-              { location: { directory: value.directory }, signal },
+              { location, signal },
             ),
-          start: (input, signal) =>
-            rpc().start(input, { location: { directory: value.directory }, signal }),
+          start: (input, signal) => rpc().start(input, { location, signal }),
           changes: (signal) => taskChanges(value.client.event, value.project, signal),
           online: () => props.session.server.connected,
         },
-        {
-          search: view.search,
-          sort: "schedule",
-          state: stateFilter(),
-          sessionID,
-          limit: 30,
-        },
         view.selectedID ?? undefined,
-        {
-          kind: view.scope,
-          sessionID: value.session,
-        } satisfies SchedulingScope,
       )
-      onCleanup(() => state.close())
+      onCleanup(() => {
+        state.close()
+        streams.abort()
+        setList(undefined)
+        setFacts(undefined)
+      })
     },
     {
       equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
@@ -484,101 +464,117 @@ function TaskPanel(
   )
   const expectedKey = () => {
     const value = current()
-    const view = prefs()
-    return value
-      ? JSON.stringify([
-          value.server,
-          value.project,
-          value.session,
-          view.scope,
-          view.search,
-          preferredTaskStateFilter(view.state, view.history),
-        ])
-      : ""
+    return value ? JSON.stringify([value.server, value.project, value.session, prefs().scope]) : ""
   }
-  // Disclosure starts over only for another view (scope, filter, search, session, project). A
-  // transient gap with no view (a reconnect) keeps it for its return.
-  let revealIdentity = ""
-  createEffect(() => {
+  /** The list a person is looking at: another search, chip or scope is another list. */
+  const listKey = () => {
     const key = expectedKey()
-    if (!key || key === revealIdentity) return
-    revealIdentity = key
-    setRevealedTaskIDs(new Set<string>())
+    return key ? JSON.stringify([key, prefs().search, stateFilter()]) : ""
+  }
+  // Disclosure starts over only for another list (scope, filter, search, session, project). A
+  // transient gap with no view (a reconnect) keeps it for its return.
+  let listIdentity = ""
+  createEffect(() => {
+    const key = listKey()
+    if (!key || key === listIdentity) return
+    listIdentity = key
     setExpandedKeys(new Set<string>())
   })
   const visible = () => (data().key === expectedKey() ? data() : undefined)
   const selectionKey = () => JSON.stringify([expectedKey(), visible()?.selectedID])
-  /**
-   * What the inspector reads. A filter, scope or reconnect replaces the list data with an empty
-   * load; the inspector keeps the last data that held a task's detail until another arrives. It
-   * is dropped only for another server, project or session.
-   */
-  const identity = () => {
-    const value = current()
-    return value ? JSON.stringify([value.server, value.project, value.session]) : ""
-  }
-  const [lastInspected, setLastInspected] = createSignal<{ identity: string; data: PanelData }>()
-  createEffect(() => {
-    const value = visible()
-    // Only a finished read holds every input the inspector derives its state from.
-    if (value?.detail && !value.loading) {
-      setLastInspected({ identity: identity(), data: value })
-      remember(inspectedCache, identity(), { identity: identity(), data: value })
-    }
-  })
   // One clock for every elapsed cell, once a minute; only those cells read it.
   const [minute, setMinute] = createSignal(Date.now())
   const minuteTimer = setInterval(() => setMinute(Date.now()), 60_000)
   onCleanup(() => clearInterval(minuteTimer))
+  createEffect(() => {
+    const current = taskList()
+    if (!current?.loaded()) return
+    current.schedule.revision()
+    setAsOf(Date.now())
+  })
   const status = createPanelStatus(() => {
     const value = visible()
-    const error = scope.error ? String(scope.error) : (value?.error ?? "")
+    const streamError = taskList()?.error()
+    const error = scope.error
+      ? String(scope.error)
+      : (value?.error ?? "") || (streamError ? streamError.message : "")
     return {
       subject: "tasks",
-      hasContent: Boolean(value?.page),
-      loading: !scope.error && (!value || value.loading),
+      hasContent: Boolean(taskList()?.loaded()),
+      loading: !scope.error && !taskList()?.loaded() && !error,
       disconnected: Boolean(value?.stale) || !props.session.server.connected,
       ...(error ? { error } : {}),
-      ...(value?.asOf ? { asOf: value.asOf } : {}),
+      ...(asOf() ? { asOf: asOf()! } : {}),
     }
   })
-  const inspected = (): PanelData | undefined => {
-    const value = visible()
-    // While a reload is in flight the detail can arrive before the topology, scheduling and
-    // activity it is presented with; a partial set would show the recorded lifecycle instead of
-    // the real status. Hold the last complete set instead.
-    if (value?.detail && !value.loading) return value
-    const kept = lastInspected() ?? inspectedCache.get(identity())
-    if (kept && kept.identity === identity()) return kept.data
-    // First load: nothing complete to hold yet, so present no task rather than a partial one.
-    if (!value?.detail) return value
-    const { detail: _partial, ...withoutDetail } = value
-    return withoutDetail
-  }
-  const executionList = createMemo(() =>
-    buildExecutionList({
-      topology: inspected()?.topology,
-      tasks: inspected()?.tasks ?? [],
-      scheduling: inspected()?.scheduling,
-      search: prefs().search,
-      revealTaskIDs: revealedTaskIDs(),
-    }),
+  /** The rows of the list's window, and the selected task's own row when it is outside it. */
+  const listRows = createMemo(
+    () =>
+      taskList()
+        ?.rows()
+        .map(({ row }) => row) ?? [],
   )
-  const schedulingPlans = () => inspected()?.scheduling?.plans ?? []
-  const schedulingNode = (taskID: string) =>
-    schedulingPlans()
-      .flatMap((plan) => plan.nodes)
-      .find((node) => node.taskID === taskID)
-  const schedulingPlan = (planID: string | undefined) =>
-    planID ? schedulingPlans().find((plan) => plan.planID === planID) : undefined
-  const openPrerequisitePlan = (planID: string) => {
-    const firstTask = schedulingPlan(planID)?.nodes.toSorted((a, b) => a.ordinal - b.ordinal)[0]
-    if (firstTask) chooseTask(firstTask.taskID)
+  const selectedRow = (): ExecutionListRow | undefined => {
+    const selectedID = visible()?.selectedID
+    if (!selectedID) return undefined
+    const own = facts()?.row()
+    return own?.taskID === selectedID ? own : listRows().find((row) => row.taskID === selectedID)
   }
+  const openPrerequisitePlan = async (planID: string) => {
+    const first = await firstTaskOfPlan(planID)
+    if (first) chooseTask(first)
+  }
+  /** The first step of a plan: a one-shot read of its tasks in plan order. */
+  const firstTaskOfPlan = (planID: string) =>
+    new Promise<string | undefined>((resolve) => {
+      const value = current()
+      if (!value) return resolve(undefined)
+      createRoot((dispose) => {
+        const stream = createStream(
+          rpcStreamsTransport(
+            () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+            AbortSignal.timeout(10_000),
+            { location: { directory: value.directory } },
+          ),
+          taskScheduleRef,
+          () => ({
+            filter: {
+              project: value.project,
+              scope: { kind: prefs().scope, sessionID: value.session },
+              planID,
+              state: "all" as const,
+              includeRetired: true,
+            },
+            order: "plan",
+            window: 1,
+          }),
+        )
+        createEffect(() => {
+          if (!stream.loaded() && !stream.error()) return
+          const [first] = stream.items()
+          resolve(first ? String(first.task_id) : undefined)
+          dispose()
+        })
+      })
+    })
   const revealTask = (taskID: string) => {
-    setRevealedTaskIDs((current) => new Set([...current, taskID]))
+    setPendingReveal(taskID)
     queueMicrotask(() => scrollToTask(taskID))
   }
+  // A task outside the window: the list moves to it once the task's own row says where it sorts.
+  createEffect(() => {
+    const taskID = pendingReveal()
+    if (!taskID) return
+    const l = taskList()
+    const own = facts()?.row()
+    if (!l?.loaded()) return
+    if (taskIndex(l.items(), taskID) >= 0) {
+      setPendingReveal(undefined)
+      scrollToTask(taskID)
+      return
+    }
+    if (own?.taskID === taskID) l.reveal(taskID, own.bucket)
+  })
   const selectTask = (taskID: string) => {
     revealTask(taskID)
     void state.select(taskID)
@@ -603,7 +599,7 @@ function TaskPanel(
       handledReveal = ""
       return
     }
-    if (!value || value.loading || handledReveal === taskID) return
+    if (!value || !taskList()?.loaded() || handledReveal === taskID) return
     handledReveal = taskID
     save({ revealTaskID: "", open: true })
     if (value.selectedID === taskID) {
@@ -611,19 +607,40 @@ function TaskPanel(
       focusTaskRow(taskID)
     } else selectTask(taskID)
   })
+  // A list starts at its top; a window slides, so a stored offset means nothing in a new one.
   createEffect(() => {
     const value = visible()
-    const view = prefs()
-    listRestore.restore(expectedKey(), Boolean(value && !value.loading), list, view.listScroll)
+    listRestore.restore(listKey(), Boolean(value && taskList()?.loaded()), list, 0)
     detailRestore.restore(
       selectionKey(),
       value?.detail?.status === "found" &&
         value.detail.task.id === value.selectedID &&
         Boolean(detail()),
       detail(),
-      view.detailScroll,
+      prefs().detailScroll,
     )
   })
+  // A list reopened around the task that was first in view scrolls back to it, once.
+  let anchoredList = ""
+  createEffect(() => {
+    const key = listKey()
+    void items()
+    void virtualRows()
+    const id = untrack(() => prefs().anchorTaskID)
+    if (!key || anchoredList === key || !taskList()?.loaded() || !listRestore.restored(key)) return
+    anchoredList = key
+    const index = id ? taskIndex(items(), id) : -1
+    if (index >= 0) virtualizer.scrollToIndex(index, { align: "start" })
+  })
+  /** Remember the task of the first row in view, for the next time this list opens. */
+  const rememberFirstRow = () => {
+    if (!list || anchoredList !== listKey()) return
+    const first = virtualizer.getVirtualItemForOffset(list.scrollTop)
+    const item = first ? items()[first.index] : undefined
+    if (!item || item.kind !== "task") return
+    const taskID = item.key.split(">")[0]!.replace(/^task:/, "")
+    if (taskID !== prefs().anchorTaskID) save({ anchorTaskID: taskID })
+  }
   createEffect(() => feedback.reset(selectionKey()))
   createEffect(() => {
     const value = current()
@@ -632,108 +649,106 @@ function TaskPanel(
     if (data().key !== expectedKey() || data().selectedID === selectedID || !selectedID) return
     void state.select(selectedID)
   })
+  // With nothing selected, the first row is.
+  createEffect(() => {
+    const [first] = listRows()
+    if (!first || !taskList()?.loaded() || visible()?.selectedID || !visible()) return
+    void state.select(first.taskID)
+  })
   createEffect(() => {
     selectionKey()
     setCopyStatus("")
   })
   const selectedTask = () => {
-    const result = inspected()?.detail
+    const result = visible()?.detail
     return result?.status === "found" ? result.task : undefined
   }
   const selectedExecution = () => {
-    const detail = inspected()?.detail
+    const detail = visible()?.detail
     return detail?.status === "found" ? detail.execution : undefined
   }
   const selectedDetail = () => {
-    const result = inspected()?.detail
+    const result = visible()?.detail
     return result?.status === "found" ? result : undefined
   }
   const selectedActivity = () => {
-    const taskID = inspected()?.selectedID
-    return taskID ? inspected()?.currentActivity[taskID] : undefined
+    const taskID = visible()?.selectedID
+    return taskID ? visible()?.currentActivity[taskID] : undefined
   }
-  const selectedRecordedState = () => {
-    const taskID = inspected()?.selectedID
-    const execution = selectedExecution()
-    const node = inspected()
-      ?.topology?.plans.find((plan) => plan.id === execution?.planID)
-      ?.nodes.find((item) => item.taskID === taskID)
-    return (
-      selectedDetail()?.recordedState ?? node?.state ?? execution?.state ?? selectedTask()?.status
-    )
-  }
+  const selectedRecordedState = () =>
+    selectedDetail()?.recordedState ??
+    selectedRow()?.status ??
+    selectedExecution()?.state ??
+    selectedTask()?.status
   const selectedIsWaiting = () => {
     const recordedState = selectedRecordedState()
     if (recordedState && terminalLifecycleStates.has(recordedState)) return false
-    const taskID = inspected()?.selectedID
-    const execution = selectedExecution()
-    const plan = inspected()?.topology?.plans.find((item) => item.id === execution?.planID)
-    const node = plan?.nodes.find((item) => item.taskID === taskID)
-    const terminal = ["accepted", "incorporated", "failed", "exhausted", "cancelled"].includes(
-      node?.state ?? "",
-    )
-    const topologyWaiting = Boolean(
-      node &&
-      plan?.state !== "cancelled" &&
-      (node.state === "blocked" || (plan?.state === "blocked" && !terminal)),
-    )
     return Boolean(
       selectedActivity()?.waiting ||
-      topologyWaiting ||
-      execution?.state === "blocked" ||
-      (taskID ? schedulingNode(taskID)?.decision === "waiting" : false),
+      selectedRow()?.waiting ||
+      selectedExecution()?.state === "blocked" ||
+      selectedRow()?.scheduling?.decision === "waiting",
     )
   }
   const selectedHoldReasons = () => {
     const activity = selectedActivity()
-    const taskID = inspected()?.selectedID
-    const execution = selectedExecution()
-    const plan = inspected()?.topology?.plans.find((item) => item.id === execution?.planID)
-    const node = plan?.nodes.find((item) => item.taskID === taskID)
+    const row = selectedRow()
     return selectedIsWaiting()
       ? distinctReasons([
           activity?.waiting ? activity.holdReason : null,
-          node?.reason,
-          plan?.reason,
-          execution?.reason,
-          taskID && schedulingNode(taskID)?.decision === "waiting"
-            ? schedulingNode(taskID)?.reason
-            : null,
-          schedulingPlan(execution?.planID)?.reason,
+          row?.waiting ? row.holdReason : null,
+          facts()?.plan()?.reason,
+          selectedExecution()?.reason,
+          row?.scheduling?.decision === "waiting" ? row.scheduling.reason : null,
         ])
       : []
   }
   const selectedRelations = () => {
-    const taskID = inspected()?.selectedID
-    const plan = schedulingPlan(selectedExecution()?.planID)
-    const waitSet = new Set([
-      ...(selectedExecution()?.waitingOn ?? []),
-      ...(taskID ? (schedulingNode(taskID)?.waitingOn ?? []) : []),
-    ])
-    const waitingOn = [...waitSet]
+    const waitingOn = [
+      ...new Set([
+        ...(selectedExecution()?.waitingOn ?? []),
+        ...(facts()?.blockers() ?? []).map((blocker) => blocker.taskID),
+      ]),
+    ]
     const waitingSet = new Set(waitingOn)
-    const prerequisites = new Set<string>()
-    const successors = new Set<string>()
-    for (const plan of inspected()?.topology?.plans ?? [])
-      for (const edge of plan.dependencies) {
-        if (edge.successor === taskID && !waitingSet.has(edge.prerequisite))
-          prerequisites.add(edge.prerequisite)
-        if (edge.prerequisite === taskID) successors.add(edge.successor)
-      }
+    const plan = facts()?.plan()
     return {
-      prerequisites: [...prerequisites],
+      prerequisites: (facts()?.prerequisites() ?? [])
+        .map((related) => related.taskID)
+        .filter((taskID) => !waitingSet.has(taskID)),
       waitingOn,
-      waitingOnPlans: taskID ? (schedulingNode(taskID)?.waitingOnPlans ?? []) : [],
-      successors: [...successors],
-      planPrerequisites: plan?.afterPlans ?? [],
+      waitingOnPlans: (facts()?.waits() ?? []).map((wait) => wait.planID),
+      successors: (facts()?.successors() ?? []).map((related) => related.taskID),
+      planPrerequisites: (facts()?.afterPlans() ?? []).map((after) => after.planID),
       planPrerequisitesCount: plan?.afterPlansCount ?? plan?.afterPlans.length ?? 0,
-      planPrerequisitesComplete: plan?.afterPlansComplete ?? true,
+      planPrerequisitesComplete: true,
     }
   }
-  const relationLabel = (taskID: string) =>
-    inspected()?.tasks.find((task) => task.taskID === taskID)?.reference ??
-    inspected()?.linkedDetails[taskID]?.reference ??
-    taskID.slice(0, 8)
+  /** The reference of every task a relation or a listed row names. */
+  const references = createMemo(() => {
+    const byID = new Map<string, string>()
+    const add = (related: { taskID: string; reference?: string }) => {
+      if (related.reference) byID.set(related.taskID, related.reference)
+    }
+    for (const row of listRows()) add(row)
+    const own = facts()
+    for (const related of [
+      ...(own?.blockers() ?? []),
+      ...(own?.prerequisites() ?? []),
+      ...(own?.successors() ?? []),
+    ])
+      add(related)
+    return byID
+  })
+  const relationLabel = (taskID: string) => references().get(taskID) ?? taskID.slice(0, 8)
+  const planTitle = (planID: string) =>
+    facts()
+      ?.afterPlans()
+      .find((plan) => plan.planID === planID)?.title ||
+    facts()
+      ?.waits()
+      .find((wait) => wait.planID === planID)?.title ||
+    undefined
   const renderRelation = (taskID: string) => {
     const reference = createMemo(() => relationLabel(taskID))
     return (
@@ -755,51 +770,21 @@ function TaskPanel(
     )
   }
   const renderPlanRelation = (planID: string) => {
-    const plan = schedulingPlan(planID)
-    const title = plan?.title ?? `Plan ${planID.slice(0, 8)}`
+    const title = planTitle(planID) ?? `Plan ${planID.slice(0, 8)}`
     return (
       <button
         type="button"
         class="lazers-tasks-dependency-ref"
         aria-label={`Open prerequisite ${title}`}
         title={planID}
-        onClick={() => openPrerequisitePlan(planID)}
+        onClick={() => void openPrerequisitePlan(planID)}
       >
         {title}
       </button>
     )
   }
-  createEffect(() => {
-    const value = visible()
-    if (!value?.selectedID || value.detail?.status !== "found") return
-    const relationIDs = new Set([
-      ...selectedRelations().waitingOn,
-      ...selectedRelations().prerequisites,
-      ...selectedRelations().successors,
-    ])
-    for (const taskID of relationIDs) {
-      const hasReference = Boolean(
-        value.tasks.find((task) => task.taskID === taskID)?.reference ??
-        value.linkedDetails[taskID]?.reference,
-      )
-      if (!hasReference) void state.resolveLinked(taskID)
-    }
-  })
-  /** Every row the model knows, listed or reachable only as a dependency. */
-  const rowValues = createMemo(() => {
-    const model = executionList()
-    return [...listedRows(model), ...model.related]
-  })
   /** The whole list as one flat sequence; only a window of it is ever mounted. */
-  const hasMore = () => Boolean(visible()?.page?.nextCursor)
-  const items = createMemo(() =>
-    flattenExecutionList({
-      model: executionList(),
-      expanded: expandedKeys(),
-      hasMore: hasMore(),
-      order: (inspected()?.tasks ?? []).map((task) => task.taskID),
-    }),
-  )
+  const items = createMemo(() => taskList()?.items() ?? [])
   const itemByKey = createMemo(() => new Map(items().map((item) => [item.key, item])))
   /**
    * The tree's one tab stop: the selected row, else the first row. It is always a listed item, and
@@ -876,7 +861,7 @@ function TaskPanel(
     isRingGlyph(glyph) ? <TaskRing glyph={glyph} /> : <Ui.Icon name={glyph} size="small" />
   /** A known task's row state; tasks outside the model stay neutral. */
   const listedPresentation = (taskID: string): TaskRowPresentation | undefined => {
-    const listed = rowValues().find((row) => row.taskID === taskID)
+    const listed = listRows().find((row) => row.taskID === taskID)
     return listed
       ? taskRowPresentation(listed, visible()?.currentActivity[taskID], relationLabel)
       : undefined
@@ -1001,6 +986,14 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
+            <Show when={taskRow().stale}>
+              <span
+                class="lazers-tasks-row-stale"
+                title="This row could not be refreshed; it shows its last values."
+              >
+                Stale
+              </span>
+            </Show>
             <Show when={taskRow().concern}>
               {(concern) => (
                 <Label tone="warning" title={`Concern: ${concern().line}`}>
@@ -1053,7 +1046,7 @@ function TaskPanel(
   const renderBlockerLink = (blocker: TaskBlocker, total: number) => {
     const name = () =>
       blocker.kind === "plan"
-        ? (schedulingPlan(blocker.id)?.title ?? `Plan ${blocker.id.slice(0, 8)}`)
+        ? (planTitle(blocker.id) ?? `Plan ${blocker.id.slice(0, 8)}`)
         : relationLabel(blocker.id)
     const more = () => (total > 1 ? ` and ${total - 1} more` : "")
     // The link takes the blocker's own state color, so a failed or running prerequisite reads at once.
@@ -1069,7 +1062,7 @@ function TaskPanel(
           aria-label={`Open blocker ${name()}${state() ? `, ${state()!.label.toLowerCase()}` : ""}${more()}`}
           onClick={(event) => {
             event.stopPropagation()
-            if (blocker.kind === "plan") openPrerequisitePlan(blocker.id)
+            if (blocker.kind === "plan") void openPrerequisitePlan(blocker.id)
             else chooseTask(blocker.id)
           }}
         >
@@ -1101,17 +1094,13 @@ function TaskPanel(
       projectDirectory: value.project,
     })
   }
-  const selectedRow = () => {
-    const selectedID = inspected()?.selectedID
-    return selectedID ? rowValues().find((row) => row.taskID === selectedID) : undefined
-  }
   const selectedPresentation = () => {
     const row = selectedRow()
     const activity = selectedActivity()
     if (row) return taskStateView(row, activity, relationLabel)
     return taskStateView(
       {
-        taskID: inspected()?.selectedID ?? "",
+        taskID: visible()?.selectedID ?? "",
         title: "",
         status: selectedRecordedState() ?? "submitted",
         reason: selectedExecution()?.reason ?? null,
@@ -1129,49 +1118,20 @@ function TaskPanel(
       relationLabel,
     )
   }
-  /** The selected task's scheduling facts, with coverage text composed by the list model. */
-  const selectedScheduling = () => {
-    const row = selectedRow()
-    if (row?.scheduling) return row.scheduling
-    const node = schedulingNode(inspected()?.selectedID ?? "")
-    return node
-      ? {
-          decision: node.decision,
-          reason: node.reason,
-          waitingOn: node.waitingOn,
-          reservationTaskIDs: node.reservationTaskIDs,
-        }
-      : undefined
-  }
+  /** The selected task's scheduling facts, from its stored row. */
+  const selectedScheduling = () => selectedRow()?.scheduling
   const selectedReservations = () => selectedScheduling()?.reservationTaskIDs ?? []
   /** Priority, plan and order of the selected task's plan; detail only, never a list decoration. */
   const selectedPlanFacts = () => {
-    const taskID = inspected()?.selectedID
-    if (!taskID) return undefined
-    const planID = selectedExecution()?.planID
-    const scheduled =
-      schedulingPlans().find((plan) => plan.planID === planID) ??
-      schedulingPlans().find((plan) => plan.nodes.some((node) => node.taskID === taskID))
-    const topology = inspected()?.topology?.plans.find(
-      (plan) => plan.id === (planID ?? scheduled?.planID),
-    )
-    if (scheduled)
-      return {
-        title: scheduled.title,
-        priority: scheduled.priority,
-        planOrder: scheduled.planOrder,
-        step: scheduled.nodes.find((node) => node.taskID === taskID)?.ordinal,
-        state: planStateLabel(scheduled.lifecycle),
-      }
-    if (topology)
-      return {
-        title: topology.title ?? `Plan ${topology.id.slice(0, 8)}`,
-        priority: topology.priority ?? 0,
-        planOrder: topology.queuePosition,
-        step: topology.nodes.find((node) => node.taskID === taskID)?.ordinal,
-        state: planStateLabel(topology.state),
-      }
-    return undefined
+    const plan = facts()?.plan()
+    const row = selectedRow()
+    if (!visible()?.selectedID || !plan) return undefined
+    return {
+      title: plan.title || `Plan ${plan.id.slice(0, 8)}`,
+      priority: plan.priority,
+      step: row?.ordinal,
+      state: planStateLabel(plan.state),
+    }
   }
   /** "Priority 1 · Plan name · step 2": one line for what were four fact rows. */
   const selectedMeta = () => {
@@ -1205,23 +1165,20 @@ function TaskPanel(
       </Show>
     </Show>
   )
-  const selectedSequencing = () => {
-    const row = selectedRow()
-    return taskSequencing(
-      row ?? {
-        taskID: inspected()?.selectedID ?? "",
-        title: "",
-        status: "",
-        reason: null,
-        waiting: false,
-        holdReason: null,
-        ordinal: 0,
-        contextOnly: false,
-        prerequisites: [...selectedRelations().prerequisites, ...selectedRelations().waitingOn],
-        successors: [],
-      },
-    )
-  }
+  const selectedSequencing = () =>
+    taskSequencing({
+      taskID: visible()?.selectedID ?? "",
+      title: "",
+      status: "",
+      reason: null,
+      waiting: false,
+      holdReason: null,
+      ordinal: 0,
+      contextOnly: false,
+      ...selectedRow(),
+      prerequisites: [...selectedRelations().prerequisites, ...selectedRelations().waitingOn],
+      successors: [],
+    })
   const renderSchedulingReference = (taskID: string) => (
     <button
       type="button"
@@ -1234,9 +1191,7 @@ function TaskPanel(
       {relationLabel(taskID)}
     </button>
   )
-  const selectedSourcePlan = () =>
-    inspected()?.tasks.find((task) => task.taskID === inspected()?.selectedID)?.sourcePlan ??
-    selectedRow()?.sourcePlan
+  const selectedSourcePlan = () => selectedRow()?.sourcePlan
   /** One contextual action leads; the rest stay one menu away. */
   const primaryAction = (): "start" | "architect" | "trajectory" => {
     if (canStart(selectedExecution()?.state ?? selectedTask()?.status ?? "")) return "start"
@@ -1387,16 +1342,15 @@ function TaskPanel(
     if (state === "blocked") return "Blocked / waiting"
     return state[0]!.toUpperCase() + state.slice(1)
   }
-  /** "23 open · 4 running": the read's own count for this filter, and running only when every task is loaded. */
+  /** "23 open · 4 running": the stored counters for this filter; none while a search narrows it. */
   const headerCount = () => {
-    const value = visible()
-    if (!value?.page) return ""
+    const count = taskList()?.chipCount(stateFilter())
+    if (count === undefined) return ""
     const filter = stateFilter()
-    const count = String(value.page.count)
-    if (filter === "all") return count
+    if (filter === "all") return String(count)
     const label = `${count} ${stateLabel(filter).toLowerCase()}`
-    // The Running filter's own count from the read; absent or zero is omitted.
-    const running = filter === "open" ? (value.stateCounts?.running ?? 0) : 0
+    // Running is shown next to Open; zero is omitted.
+    const running = filter === "open" ? (taskList()?.chipCount("running") ?? 0) : 0
     return running ? `${label} · ${running} running` : label
   }
   let focusedSelection = ""
@@ -1418,6 +1372,7 @@ function TaskPanel(
     })
   })
   const measureTreeOffset = () => {
+    if (list) setFit(Math.max(INITIAL_FIT_ROWS, Math.ceil(list.clientHeight / TASK_ROW_HEIGHT) + 1))
     if (!list || !tree) return
     setTreeOffset(
       Math.max(
@@ -1448,12 +1403,23 @@ function TaskPanel(
     const top = list.scrollTop
     // From the layout, not the mounted window: a jump scroll fires before the window follows it.
     anchor = viewportAnchor(top, treeOffset(), virtualizer.getVirtualItemForOffset(top))
+    // At the top with rows still before the window: a slide prepends them, so hold the first task.
+    if (!anchor && top <= 0 && taskList()?.before() !== 0) {
+      const first = virtualizer.getVirtualItemForOffset(treeOffset() + 1)
+      const item = first ? items()[first.index] : undefined
+      const next = item?.kind === "loader" ? items()[first!.index + 1] : item
+      const measured = next
+        ? virtualizer.measurementsCache[items().indexOf(next)]?.start
+        : undefined
+      if (next && measured !== undefined)
+        anchor = { key: next.key, offset: measured - treeOffset() - top }
+    }
   }
   // Rows inserted or removed above the viewport (refresh) must not move what the person reads.
   // Within one view only; a new view restores its own saved scroll.
   createEffect(() => {
     const current = items()
-    const view = expectedKey()
+    const view = listKey()
     untrack(() => {
       if (!list) return
       if (view !== anchorView) {
@@ -1500,18 +1466,28 @@ function TaskPanel(
       element?.focus({ preventScroll: true })
     })
   })
-  // The next page loads as the end of the list comes into range; each page is requested once.
-  // The range is the viewport's, not the mounted rows': a pinned tab stop or focused row far below
-  // the viewport must not read as "near the end".
+  // The window follows the view: as the viewport nears either end of the rows held, the window
+  // slides a quarter of its height toward it. The range is the viewport's, not the mounted rows':
+  // a pinned tab stop or focused row far away must not read as "near the end".
   createEffect(() => {
-    const value = visible()
+    const current = taskList()
     viewportEnd()
     void virtualRows().length
     const count = items().length
-    const end = virtualizer.range?.endIndex
-    if (!value || value.loading || !value.page?.nextCursor || end === undefined) return
-    if (Math.min(end + VIRTUAL_OVERSCAN, count - 1) < count - 1 - LOAD_MORE_WITHIN) return
-    void state.more(expectedKey())
+    const range = virtualizer.range
+    if (!current?.loaded() || !range) return
+    if (current.after() !== 0 && count - 1 - range.endIndex < SLIDE_TRIGGER)
+      current.slide(SLIDE_ROWS)
+    else if (current.before() !== 0 && range.startIndex < SLIDE_TRIGGER) current.slide(-SLIDE_ROWS)
+  })
+  // The rows in view are the ones whose activity is read.
+  createEffect(() => {
+    taskList()
+    state.observe(
+      virtualRows().flatMap((virtual) =>
+        virtual.item.kind === "task" ? [virtual.item.row.taskID] : [],
+      ),
+    )
   })
   onMount(() => {
     measureTreeOffset()
@@ -1638,9 +1614,7 @@ function TaskPanel(
   const progress = createMemo(() =>
     taskProgress({
       state: selectedRecordedState() ?? selectedTask()?.status ?? "submitted",
-      planState: inspected()?.topology?.plans.find(
-        (plan) => plan.id === selectedExecution()?.planID,
-      )?.state,
+      planState: facts()?.plan()?.state,
       held: selectedPresentation().explained && selectedPresentation().tone !== "failed",
       attemptState: latestAttempt()?.state,
       reason: selectedExecution()?.reason,
@@ -1772,11 +1746,13 @@ function TaskPanel(
               items={[
                 {
                   label: "This session",
-                  onSelect: () => save({ scope: "session", selectedID: null }),
+                  onSelect: () =>
+                    save({ scope: "session", selectedID: null, anchorTaskID: undefined }),
                 },
                 {
                   label: "Project tasks",
-                  onSelect: () => save({ scope: "project", selectedID: null }),
+                  onSelect: () =>
+                    save({ scope: "project", selectedID: null, anchorTaskID: undefined }),
                 },
               ]}
             />
@@ -1791,8 +1767,8 @@ function TaskPanel(
                 ...group.map((state) => ({
                   label: stateLabel(state),
                   // Counts come from the read; an older server sends none and the menu omits them.
-                  ...(visible()?.stateCounts?.[state] !== undefined
-                    ? { keys: [String(visible()!.stateCounts![state])] }
+                  ...(taskList()?.chipCount(state) !== undefined
+                    ? { keys: [String(taskList()!.chipCount(state))] }
                     : {}),
                   ...(state === stateFilter() ? { icon: "check" as const } : {}),
                   // The selection survives: it stays while the task is listed, and the inspector keeps
@@ -1801,7 +1777,7 @@ function TaskPanel(
                     save({
                       state,
                       history: state !== "open",
-                      listScroll: 0,
+                      anchorTaskID: undefined,
                     }),
                 })),
               ])}
@@ -1814,7 +1790,7 @@ function TaskPanel(
               size="small"
               pressed={searchOpen()}
               onClick={() => {
-                if (searchOpen()) save({ search: "" })
+                if (searchOpen()) save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(!searchOpen())
               }}
             />
@@ -1825,7 +1801,7 @@ function TaskPanel(
             class="lazers-tasks-search"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
-                save({ search: "" })
+                save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(false)
               }
             }}
@@ -1836,7 +1812,7 @@ function TaskPanel(
               label="Find tasks"
               placeholder="Search tasks…"
               value={prefs().search}
-              onInput={(search) => save({ search })}
+              onInput={(search) => save({ search, anchorTaskID: undefined })}
               autofocus
             />
             <Ui.IconButton
@@ -1844,7 +1820,7 @@ function TaskPanel(
               size="small"
               label="Close search"
               onClick={() => {
-                save({ search: "" })
+                save({ search: "", anchorTaskID: undefined })
                 setSearchOpen(false)
               }}
             />
@@ -1875,10 +1851,9 @@ function TaskPanel(
             ref={(element) => {
               list = element
             }}
-            onScroll={(event) => {
+            onScroll={() => {
               captureAnchor()
-              if (listRestore.restored(expectedKey()))
-                save({ listScroll: event.currentTarget.scrollTop })
+              rememberFirstRow()
             }}
           >
             <PanelStatus
@@ -1887,13 +1862,6 @@ function TaskPanel(
               onRetry={() => void state.refresh()}
               skeleton="rows"
             />
-            <Show when={status.showContent() && visible()?.topologyError}>
-              {(message) => (
-                <div class="lazers-tasks-note" role="status">
-                  {message()}
-                </div>
-              )}
-            </Show>
             <Show when={status.showContent() && visible()?.activityError}>
               {(message) => (
                 <div class="lazers-tasks-note" role="status">
@@ -1901,25 +1869,9 @@ function TaskPanel(
                 </div>
               )}
             </Show>
-            <Show when={status.showContent() && visible()?.schedulingError}>
-              {(message) => (
-                <div class="lazers-tasks-scheduling-warning" role="status">
-                  {message()}
-                </div>
-              )}
-            </Show>
-            <Show
-              when={
-                status.showContent() &&
-                visible() &&
-                !visible()?.topology &&
-                !visible()?.topologyError
-              }
-            >
+            <Show when={status.showContent() && taskList()?.indexed() === false}>
               <div class="lazers-tasks-note" role="status">
-                {visible()?.scheduling && !visible()?.schedulingError
-                  ? "Execution topology unavailable. Showing scheduling-backed tasks where covered."
-                  : "Execution topology unavailable. Showing tasks without dependency detail."}
+                Tasks are being indexed.
               </div>
             </Show>
             <Show
@@ -1930,17 +1882,19 @@ function TaskPanel(
                 </Show>
               }
             >
-              {(value) => (
+              {(_value) => (
                 <>
                   <Show
-                    when={listedRows(executionList()).length}
+                    when={listRows().length}
                     fallback={
                       <div class="lazers-tasks-note">
-                        {prefs().search
-                          ? "No matching tasks."
-                          : stateFilter() === "all"
-                            ? "No tasks in this view."
-                            : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
+                        {taskList()?.indexed() === false
+                          ? ""
+                          : prefs().search
+                            ? "No matching tasks."
+                            : stateFilter() === "all"
+                              ? "No tasks in this view."
+                              : `No ${stateLabel(stateFilter()).toLowerCase()} tasks in this ${prefs().scope === "session" ? "session" : "project"}.`}
                       </div>
                     }
                   >
@@ -1982,7 +1936,7 @@ function TaskPanel(
                                   return (
                                     <div class="lazers-tasks-loader" role="status">
                                       <Show
-                                        when={value().moreError}
+                                        when={taskList()?.error()}
                                         fallback={
                                           <>
                                             <Ui.Loader size="small" />
@@ -1993,7 +1947,7 @@ function TaskPanel(
                                         Could not load more tasks.
                                         <Ui.Button
                                           variant="ghost"
-                                          onClick={() => state.retryMore(expectedKey())}
+                                          onClick={() => taskList()?.retry()}
                                         >
                                           Retry
                                         </Ui.Button>

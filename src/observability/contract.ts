@@ -757,6 +757,8 @@ export const LiveGroupOutput = z.strictObject({
   /** All-projects scope: the project of this page and the next cursor. */
   ...AllPage,
   group: z.enum(["needs-you", "failed", "queued"]),
+  /** Present while this project's task list is not indexed yet; `total` and `tasks` are then empty. */
+  indexing: z.literal(true).optional(),
   total: z.int().nonnegative(),
   tasks: z
     .array(

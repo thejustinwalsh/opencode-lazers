@@ -9,7 +9,7 @@ import { isTakeoverAttempt, openConcerns } from "../../recovery/detector.ts"
 import { TaskSpecSchema } from "../../task.ts"
 import { taskClassificationFor } from "../classification.ts"
 import { taskTitle } from "../presentation.ts"
-import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
+import { bucketOf, encodeSortKey, ownerHoldOf, priorityKeyOf, rankOf } from "./key.ts"
 import { effectiveStatus, reservationFingerprint } from "./status.ts"
 import type { PlanWait, Reservation } from "./status.ts"
 import type { DirtyKind } from "./schema.ts"
@@ -288,9 +288,10 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
   if (plan)
     for (const id of plan.afterPlans) {
       const required = db
-        .query<{ state: string; reason: string | null; body: string }, [string, string]>(
-          "SELECT state,reason,body FROM runner_plans WHERE project_directory=? AND id=?",
-        )
+        .query<
+          { state: string; version: number | null; reason: string | null; body: string },
+          [string, string]
+        >("SELECT state,version,reason,body FROM runner_plans WHERE project_directory=? AND id=?")
         .get(project, id)
       if (required && INTEGRATED_PLAN.has(required.state)) continue
       let title: string | null = null
@@ -305,6 +306,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
         planID: id,
         title,
         state: required?.state.slice(0, 80) ?? null,
+        version: required?.version ?? null,
         reason: required?.reason?.slice(0, 400) ?? null,
       })
     }
@@ -519,6 +521,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
       plan_id: wait.planID,
       title: wait.title,
       state: wait.state,
+      version: wait.version,
       reason: wait.reason,
     })),
   )
@@ -622,6 +625,12 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     plan_state: plan?.state ?? null,
     rank,
     bucket,
+    owner_hold: ownerHoldOf({
+      nodeState: placement?.state ?? null,
+      planState: plan?.state ?? null,
+    })
+      ? 1
+      : 0,
     priority_key: priorityKeyOf(plan?.priority),
     finished_at: finishedAt,
     finished_basis: basis,
@@ -629,6 +638,8 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     sort_key: sortKey,
     status: status.status,
     reason: displayReason,
+    node_reason: placement?.reason ?? null,
+    plan_reason: plan?.reason ?? null,
     started_at: startedAt,
     takeover: struggling && latest && isTakeoverAttempt(latest.policy) ? 1 : 0,
     concern: open.length
@@ -642,6 +653,17 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     dispatch_pause: json(status.dispatchPause),
     dispatch_pause_plan_id: status.dispatchPause ? (placement?.plan_id ?? null) : null,
     wait_plans_count: waits.length,
+    wait_plan_ids: JSON.stringify(waits.map((wait) => wait.planID)),
+    // Every task the row waits behind: unmet dependencies, then unaccepted prerequisites, then the
+    // reservations holding it back (the three lists `rowBlockers` merged).
+    blocker_task_ids: JSON.stringify([
+      ...new Set([
+        ...edges.filter((edge) => edge.waiting === 1).map((edge) => edge.child_task_id as string),
+        ...waitingOn,
+        ...status.blockers,
+      ]),
+    ]),
+    dependency_waiting: edges.some((edge) => edge.waiting === 1) ? 1 : 0,
     blocker_count: status.blockers.length,
     dependency_count: edges.length,
     decision,

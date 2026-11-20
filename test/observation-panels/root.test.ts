@@ -4,6 +4,8 @@ import { Agent } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Schema } from "effect"
+import { frameSize, writeFrame } from "../../src/streams/frame.ts"
+import { taskScheduleColumns } from "../../src/streams/sources/tasks-ref.ts"
 import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
@@ -1043,7 +1045,7 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       { service: "lazers.models", method: "comparison", count: 3 },
       { service: "lazers.models", method: "refreshSources", count: 1 },
       { service: "lazers.models", method: "settings", count: 1 },
-      { service: "lazers.tasks", method: "query", count: 1 },
+      { service: "lazers.streams", method: "open", count: 1 },
       { service: "lazers.tasks", method: "get", count: 1 },
       { service: "lazers.observability", method: "trajectoryStatus", count: 1 },
     ] as const
@@ -1604,36 +1606,64 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
               return output
             },
           }
-        if (definition.id === "lazers.tasks")
+        if (definition.id === "lazers.streams")
           return {
-            query: async (
-              input: {
-                state: string
-                includeCompleted: boolean
-                includeRetired: boolean
-                limit: number
-              },
+            // The task list is one window of the stored list, served here as one frame.
+            open: async (
+              input: { stream: string },
               options: { location: { directory: string }; signal: AbortSignal },
             ) => {
               const directory = options.location.directory
               const count = nextCount(`${directory}:queryTasks`)
-              record(directory, "lazers.tasks", "query", input, options.signal)
-              return directory === DIRECTORY_A
-                ? taskPage(
-                    directory,
-                    TASK_A,
-                    "LZ-17",
-                    count > 1 ? "Objective A refreshed" : "Objective A initial",
-                    "ses-models-panel",
-                  )
-                : taskPage(
-                    directory,
-                    TASK_B,
-                    "LZ-42",
-                    "Objective B project only",
-                    "ses-models-panel",
-                  )
+              record(directory, "lazers.streams", "open", input, options.signal)
+              const page =
+                directory === DIRECTORY_A
+                  ? taskPage(
+                      directory,
+                      TASK_A,
+                      "LZ-17",
+                      count > 1 ? "Objective A refreshed" : "Objective A initial",
+                      "ses-models-panel",
+                    )
+                  : taskPage(
+                      directory,
+                      TASK_B,
+                      "LZ-42",
+                      "Objective B project only",
+                      "ses-models-panel",
+                    )
+              const cells = page.tasks.map((task) =>
+                Object.keys(taskScheduleColumns).map((name) => {
+                  const known: Record<string, unknown> = {
+                    task_id: task.taskID,
+                    reference: task.reference,
+                    title: task.title,
+                    objective: task.objective,
+                    status: task.status,
+                    classification: task.classification,
+                    created_at: task.createdAt,
+                    session_id: task.sessionID,
+                    revision: 1,
+                    retired: false,
+                    stale: false,
+                  }
+                  return known[name] ?? null
+                }),
+              )
+              const header = {
+                revision: 1,
+                count: cells.length,
+                before: 0 as const,
+                after: 0 as const,
+              }
+              const buffer = new ArrayBuffer(frameSize(taskScheduleColumns, cells))
+              writeFrame(buffer, 0, taskScheduleColumns, header, cells)
+              return { seq: 1, data: Buffer.from(buffer).toString("base64") }
             },
+            close: async () => ({ closed: true }),
+          }
+        if (definition.id === "lazers.tasks")
+          return {
             get: async (
               input: { taskID: string },
               options: { location: { directory: string }; signal: AbortSignal },
@@ -3084,15 +3114,14 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       calls.some(
         (call) =>
           call.directory === DIRECTORY_A &&
-          call.service === "lazers.tasks" &&
-          call.method === "query" &&
-          JSON.stringify(call.input) ===
-            JSON.stringify({
-              state: "all",
-              includeCompleted: true,
-              includeRetired: true,
-              limit: 100,
-            }),
+          call.service === "lazers.streams" &&
+          call.method === "open" &&
+          (call.input as { source: string }).source === "tasks.schedule" &&
+          (call.input as { window: number }).window === 100 &&
+          (call.input as { order: string }).order === "recent" &&
+          (call.input as { filter: { state: string; includeRetired: boolean } }).filter.state ===
+            "all" &&
+          (call.input as { filter: { includeRetired: boolean } }).filter.includeRetired === true,
       ),
     ).toBe(true)
     expect(

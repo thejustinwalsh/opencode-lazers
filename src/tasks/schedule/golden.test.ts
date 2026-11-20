@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
 import { validProposal } from "../../../test/proposal.ts"
-import { compareReads, projectedIDs } from "./parity.ts"
+import { expectProjection, projectedIDs } from "./parity.fixture.ts"
+import { installTaskScheduleSchema } from "./schema.ts"
+import { backfillPage } from "./backfill.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
 import type { Fixture } from "./fixture.ts"
 
@@ -87,7 +89,7 @@ test("golden: the stored order is the recorded order of the mixed fixture", () =
   const { f, ids } = seed()
   const names = new Map(Object.entries(ids).map(([name, id]) => [id, name]))
   expect(projectedIDs(f.repository, "all", "schedule").map((id) => names.get(id))).toEqual(GOLDEN)
-  expect(compareReads(f.repository, f.reads)).toEqual([])
+  expectProjection("golden", f.repository)
 })
 
 test("a reservation-blocked task counts under Blocked: the one deliberate chip difference", () => {
@@ -108,16 +110,16 @@ test("a reservation-blocked task counts under Blocked: the one deliberate chip d
       .get(ids.openB!),
   )
   expect(row).toEqual({ status: "blocked", bucket: "blocked", blocker_count: 1 })
-  expect(
-    f.reads.query({ sort: "schedule", limit: 100, state: "queued" }).tasks.map((t) => t.taskID),
-  ).toContain(ids.openB!)
+  // The old Queued filter listed it; the stored Queued chip does not.
   expect(projectedIDs(f.repository, "queued", "schedule")).not.toContain(ids.openB!)
-  expect(compareReads(f.repository, f.reads)).toEqual([])
+  expectProjection("golden/reservation", f.repository)
   void validProposal
 })
 
 test("a missing trigger shows up as a divergence (the guard guards)", () => {
   const { f } = seed()
+  const rows = () =>
+    f.repository.read((db) => db.query("SELECT * FROM task_schedule ORDER BY seq").all())
   f.repository.atomic((db) => {
     for (const row of db
       .query<{ name: string }, []>(
@@ -127,5 +129,11 @@ test("a missing trigger shows up as a divergence (the guard guards)", () => {
       db.exec(`DROP TRIGGER ${row.name}`)
     db.query("UPDATE runner_nodes SET state='failed' WHERE state='running'").run()
   })
-  expect(compareReads(f.repository, f.reads).length).toBeGreaterThan(0)
+  // Without its trigger the row is stale: a full rebuild changes it.
+  const stale = rows()
+  f.repository.atomic((db) => {
+    installTaskScheduleSchema(db)
+    while (!backfillPage(db, f.repository.projectDirectory, 50).done);
+  })
+  expect(rows()).not.toEqual(stale)
 })

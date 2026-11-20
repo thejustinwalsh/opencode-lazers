@@ -145,7 +145,6 @@ export default Plugin.define({
           scope: "project" as const,
           selectedID: null,
           search: "",
-          listScroll: 0,
           detailScroll: 0,
         }
         draft.projects[target.projectDirectory] = {

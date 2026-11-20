@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { ExecutionListRow } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 import {
   elapsedLabel,
   isRingGlyph,

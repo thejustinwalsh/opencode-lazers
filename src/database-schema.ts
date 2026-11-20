@@ -218,7 +218,7 @@ export const schemaModules = {
     tables: ["audit_runs", "audit_sections", "audit_decisions", "audit_findings"],
   },
   "task-schedule": {
-    generation: 1,
+    generation: 4,
     source: "src/tasks/schedule/schema.ts",
     tables: [
       "task_schedule",

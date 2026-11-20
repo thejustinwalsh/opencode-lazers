@@ -1,17 +1,21 @@
 import { expect, test } from "bun:test"
-import type { ExecutionList, ExecutionListRow, ExecutionPlanGroup } from "./execution-list.ts"
+import type { ExecutionListRow } from "./task-row.ts"
 import {
+  LOADER_KEY,
+  LOADER_START_KEY,
   anchoredScrollTop,
   estimateItemSize,
-  flattenExecutionList,
   navigationTarget,
+  spliceItems,
   taskIndex,
   taskItems,
   viewportAnchor,
 } from "./virtual-rows.ts"
 import type { VirtualItem } from "./virtual-rows.ts"
 
-const row = (taskID: string, prerequisites: string[] = []): ExecutionListRow => ({
+/** A graph of task id to the ids it depends on; a row's dependency count is its edge count. */
+type Graph = Record<string, string[]>
+const rowOf = (taskID: string, graph: Graph): ExecutionListRow => ({
   taskID,
   title: taskID,
   status: "queued",
@@ -19,35 +23,34 @@ const row = (taskID: string, prerequisites: string[] = []): ExecutionListRow => 
   waiting: false,
   holdReason: null,
   ordinal: 0,
+  dependencyCount: graph[taskID]?.length ?? 0,
   contextOnly: false,
-  prerequisites,
+  prerequisites: [],
   successors: [],
 })
-const group = (planID: string, rows: ExecutionListRow[]): ExecutionPlanGroup => ({
-  planID,
-  planVersion: 1,
-  title: planID,
-  hasRecordedTitle: true,
-  nonterminalCount: rows.length,
-  totalCount: rows.length,
-  rows,
-})
-const model = (
-  plans: ExecutionPlanGroup[],
-  unplanned: ExecutionListRow[] = [],
-  related: ExecutionListRow[] = [],
-): ExecutionList => ({ plans, unplanned, related, topologyAvailable: true })
-const flatten = (list: ExecutionList, options: { expanded?: string[]; hasMore?: boolean } = {}) =>
-  flattenExecutionList({
-    model: list,
+function splice(
+  listed: string[],
+  graph: Graph,
+  options: {
+    expanded?: string[]
+    loaders?: { start?: boolean; end?: boolean }
+    priority?: Record<string, number>
+  } = {},
+) {
+  return spliceItems({
+    rows: listed.map((taskID) => ({
+      row: rowOf(taskID, graph),
+      priority: options.priority?.[taskID],
+    })),
     expanded: new Set(options.expanded ?? []),
-    hasMore: options.hasMore,
+    children: (_key, taskID) => (graph[taskID] ?? []).map((child) => rowOf(child, graph)),
+    loaders: options.loaders,
   })
+}
 const keys = (items: readonly VirtualItem[]) => items.map((item) => item.key)
 
-test("every task is one flat row: no plan headings, plans and unplanned tasks interleave in model order", () => {
-  const list = model([group("p", [row("t1"), row("t2")]), group("q", [row("t3")])], [row("u1")])
-  const items = flatten(list)
+test("every task is one flat row", () => {
+  const items = splice(["t1", "t2", "t3", "u1"], {})
   expect(keys(items)).toEqual(["task:t1", "task:t2", "task:t3", "task:u1"])
   expect(taskItems(items).map((item) => [item.level, item.setSize, item.posInSet])).toEqual([
     [1, 4, 1],
@@ -59,8 +62,7 @@ test("every task is one flat row: no plan headings, plans and unplanned tasks in
 })
 
 test("a task with dependencies is a collapsed accordion by default", () => {
-  const list = model([group("p", [row("a"), row("b", ["a"])])])
-  const items = flatten(list)
+  const items = splice(["a", "b"], { b: ["a"] })
   expect(keys(items)).toEqual(["task:a", "task:b"])
   expect(taskItems(items).map((item) => [item.expandable, item.expanded])).toEqual([
     [false, false],
@@ -70,8 +72,9 @@ test("a task with dependencies is a collapsed accordion by default", () => {
 
 test("expanding lists the dependency tree as nested rows, duplicated across expanded trees", () => {
   // c depends on b, b depends on a; d also depends on b: b's subtree repeats under d.
-  const list = model([group("p", [row("a"), row("b", ["a"]), row("c", ["b"]), row("d", ["b"])])])
-  const items = flatten(list, {
+  const graph = { b: ["a"], c: ["b"], d: ["b"] }
+  const listed = ["a", "b", "c", "d"]
+  const items = splice(listed, graph, {
     expanded: ["task:c", "task:c>b", "task:d", "task:d>b"],
   })
   expect(keys(items)).toEqual([
@@ -87,7 +90,7 @@ test("expanding lists the dependency tree as nested rows, duplicated across expa
   const nested = taskItems(items).filter((item) => item.key === "task:c>b>a")[0]!
   expect(nested).toMatchObject({ depth: 2, level: 3, parentKey: "task:c>b", setSize: 1 })
   // Collapsing a parent hides its whole subtree but keeps sibling expansion.
-  expect(keys(flatten(list, { expanded: ["task:c>b", "task:d", "task:d>b"] }))).toEqual([
+  expect(keys(splice(listed, graph, { expanded: ["task:c>b", "task:d", "task:d>b"] }))).toEqual([
     "task:a",
     "task:b",
     "task:c",
@@ -98,49 +101,45 @@ test("expanding lists the dependency tree as nested rows, duplicated across expa
 })
 
 test("dependency cycles are listed once and never expand again", () => {
-  const list = model([group("p", [row("a", ["b"]), row("b", ["a"]), row("s", ["s"])])])
-  const items = flatten(list, { expanded: ["task:a", "task:a>b", "task:a>b>a", "task:s"] })
+  const graph = { a: ["b"], b: ["a"], s: ["s"] }
+  const items = splice(["a", "b", "s"], graph, {
+    expanded: ["task:a", "task:a>b", "task:a>b>a", "task:s"],
+  })
   expect(keys(items)).toEqual(["task:a", "task:a>b", "task:a>b>a", "task:b", "task:s", "task:s>s"])
   const cyclic = taskItems(items).find((item) => item.key === "task:a>b>a")!
   expect(cyclic).toMatchObject({ expandable: false, expanded: false })
 })
 
-test("dependencies outside the list resolve from related rows, else from the reference alone", () => {
-  const external = {
-    ...row("far"),
-    contextOnly: true,
-    title: "Far away",
-    prerequisites: ["deeper"],
-  }
-  const list = model([group("p", [row("a", ["far", "ghost"])])], [], [external])
-  const items = flatten(list, { expanded: ["task:a", "task:a>far"] })
-  expect(keys(items)).toEqual(["task:a", "task:a>far", "task:a>far>deeper", "task:a>ghost"])
-  const ghost = taskItems(items).find((item) => item.key === "task:a>ghost")!
-  expect(ghost.row).toMatchObject({ contextOnly: true, title: "Task ghost" })
-  expect(ghost.expandable).toBe(false)
+test("loader items stand at an end of the window only while rows remain beyond it", () => {
+  expect(keys(splice(["t1", "t2"], {}))).toEqual(["task:t1", "task:t2"])
+  expect(keys(splice(["t1", "t2"], {}, { loaders: { end: true } }))).toEqual([
+    "task:t1",
+    "task:t2",
+    LOADER_KEY,
+  ])
+  expect(keys(splice(["t1", "t2"], {}, { loaders: { start: true, end: true } }))).toEqual([
+    LOADER_START_KEY,
+    "task:t1",
+    "task:t2",
+    LOADER_KEY,
+  ])
 })
 
-test("a loader item trails the list only while another page exists", () => {
-  const list = model([group("p", [row("t1"), row("t2")])])
-  expect(keys(flatten(list))).toEqual(["task:t1", "task:t2"])
-  expect(keys(flatten(list, { hasMore: true }))).toEqual(["task:t1", "task:t2", "loader:more"])
-})
-
-test("item keys are stable when later pages append rows", () => {
-  const page1 = model([group("p", [row("t1"), row("t2")])], [row("u1")])
-  const page2 = model([group("p", [row("t1"), row("t2"), row("t3")])], [row("u1"), row("u2")])
-  const before = keys(flatten(page1, { hasMore: true }))
-  const after = keys(flatten(page2))
-  expect(before.filter((key) => key !== "loader:more")).toEqual(
-    after.filter((key) => key !== "task:t3" && key !== "task:u2"),
-  )
-  expect(after.indexOf("task:t1")).toBe(before.indexOf("task:t1"))
-  expect(after.indexOf("task:u1")).toBe(before.indexOf("task:u1") + 1)
+test("item keys are stable when the window slides", () => {
+  const before = keys(splice(["t1", "t2", "t3"], {}, { loaders: { end: true } }))
+  const after = keys(splice(["t2", "t3", "t4"], {}, { loaders: { start: true, end: true } }))
+  expect(before.filter((key) => !key.startsWith("loader"))).toEqual([
+    "task:t1",
+    "task:t2",
+    "task:t3",
+  ])
+  expect(after.indexOf("task:t2")).toBe(before.indexOf("task:t1") + 1)
+  expect(after.indexOf("task:t3")).toBe(after.indexOf("task:t2") + 1)
 })
 
 test("keyboard navigation reads the model in visual order and moves through the dependency tree", () => {
-  const list = model([group("p", [row("a"), row("b", ["a"]), row("c")])])
-  const items = flatten(list, { expanded: ["task:b"] })
+  const graph = { b: ["a"] }
+  const items = splice(["a", "b", "c"], graph, { expanded: ["task:b"] })
   expect(keys(items)).toEqual(["task:a", "task:b", "task:b>a", "task:c"])
   const go = (key: string, direction: Parameters<typeof navigationTarget>[2]) =>
     navigationTarget(items, key, direction)?.key
@@ -157,14 +156,13 @@ test("keyboard navigation reads the model in visual order and moves through the 
   expect(go("task:a", "ArrowRight")).toBeUndefined()
   expect(go("task:a", "ArrowLeft")).toBeUndefined()
   // A collapsed accordion has nothing to enter: the caller expands it first.
-  expect(navigationTarget(flatten(list), "task:b", "ArrowRight")).toBeUndefined()
+  expect(navigationTarget(splice(["a", "b", "c"], graph), "task:b", "ArrowRight")).toBeUndefined()
   // Unknown keys fall back to the first row.
   expect(go("task:missing", "ArrowDown")).toBe("task:a")
 })
 
 test("a task's index prefers its listed row over a repeat inside an expanded tree", () => {
-  const list = model([group("p", [row("x", ["a"]), row("a")])])
-  const items = flatten(list, { expanded: ["task:x"] })
+  const items = splice(["x", "a"], { x: ["a"] }, { expanded: ["task:x"] })
   expect(keys(items)).toEqual(["task:x", "task:x>a", "task:a"])
   expect(taskIndex(items, "a")).toBe(2)
   expect(taskIndex(items, "x")).toBe(0)
@@ -194,31 +192,14 @@ test("no anchor while the list top or the notes above the tree are at the viewpo
 })
 
 test("size estimates follow the compact row height", () => {
-  const items = flatten(model([group("r", [row("a"), row("b")])]), { hasMore: true })
+  const items = splice(["a", "b"], {}, { loaders: { end: true } })
   expect(items.map(estimateItemSize)).toEqual([32, 32, 32])
 })
 
-test("top-level rows follow the read's order, not the plan grouping; unlisted rows come last", () => {
-  const list = model(
-    [{ ...group("p1", [row("a"), row("b")]), priority: 1 }, group("p2", [row("c")])],
-    [row("u")],
-  )
-  const items = flattenExecutionList({
-    model: list,
-    expanded: new Set(),
-    order: ["c", "u", "b"],
-  })
-  expect(taskItems(items).map((item) => item.row.taskID)).toEqual(["c", "u", "b", "a"])
-  // Without an order the model order stands.
-  expect(taskItems(flatten(list)).map((item) => item.row.taskID)).toEqual(["a", "b", "c", "u"])
-})
-
 test("priority rides on listed rows only and is omitted for none", () => {
-  const list = model([
-    { ...group("p", [row("a"), row("b", ["a"])]), priority: 3 },
-    { ...group("q", [row("c")]), priority: 0 },
-  ])
-  const items = taskItems(flatten(list, { expanded: ["task:b"] }))
+  const items = taskItems(
+    splice(["a", "b", "c"], { b: ["a"] }, { expanded: ["task:b"], priority: { a: 3, b: 3 } }),
+  )
   expect(items.map((item) => [item.key, item.priority])).toEqual([
     ["task:a", 3],
     ["task:b", 3],
