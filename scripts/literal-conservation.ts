@@ -152,6 +152,14 @@ if (import.meta.main) {
     process.exit(2)
   }
   const before = tally(literals(shown.stdout.toString()))
+  // A module that already existed on the base (such as `runtime-helpers.ts`) counts as it was.
+  const existing = modules.filter(
+    (path) => Bun.spawnSync(["git", "cat-file", "-e", `${ref}:${path}`]).exitCode === 0,
+  )
+  for (const path of existing) {
+    const content = Bun.spawnSync(["git", "show", `${ref}:${path}`]).stdout.toString()
+    for (const value of literals(content)) before.set(value, (before.get(value) ?? 0) + 1)
+  }
   const after = tally([source, ...modules].flatMap((path) => literals(readFileSync(path, "utf8"))))
   let differences = 0
   for (const key of new Set([...before.keys(), ...after.keys()])) {
