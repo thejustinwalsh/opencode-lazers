@@ -350,7 +350,6 @@ test("F-S4-3 unchanged conditions do not append transitions or advance the repos
 test("S2-4 runner module upgrade installs the shared lookup indexes and skips current DDL", () => {
   const f = fixture()
   const indexes = [
-    ["runner_progress_plan_seq", "SELECT * FROM runner_progress WHERE plan_id=? ORDER BY seq"],
     ["runner_attempts_plan", "SELECT * FROM runner_attempts WHERE plan_id=?"],
   ] as const
   f.store.atomic((db) => {

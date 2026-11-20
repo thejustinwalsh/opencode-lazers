@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite"
 import { acquireSharedConnection } from "../storage.ts"
+import { schemaModules } from "../database-schema.ts"
 import { budgetFromEnv, sharedByteLru } from "./byte-lru.ts"
 import type { SharedConnection } from "../storage.ts"
 import {
@@ -120,7 +121,8 @@ export class ModelEvidenceStore {
     this.shared = shared
     this.db = shared.db
     try {
-      shared.once("model-evidence", (db) =>
+      // Keyed by generation: the connection (and its `once` keys) outlives a plugin reload.
+      shared.once(`model-evidence@${schemaModules["model-sources"].generation}`, (db) =>
         db.exec(`
         CREATE TABLE IF NOT EXISTS model_evidence_snapshots (
           snapshot_id TEXT PRIMARY KEY,
@@ -132,8 +134,9 @@ export class ModelEvidenceStore {
           body TEXT NOT NULL,
           UNIQUE(project_directory, source, generation)
         );
-        CREATE INDEX IF NOT EXISTS model_evidence_snapshots_project_source
-          ON model_evidence_snapshots(project_directory, source, generation DESC);
+        -- Redundant: the UNIQUE(project_directory, source, generation) index serves the same
+        -- lookups, and a backward scan of it gives generation DESC.
+        DROP INDEX IF EXISTS model_evidence_snapshots_project_source;
         CREATE TABLE IF NOT EXISTS model_evidence_refreshes (
           project_directory TEXT NOT NULL,
           source TEXT NOT NULL,

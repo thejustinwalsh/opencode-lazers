@@ -50,7 +50,7 @@ export const schemaModules = {
     tables: ["lazers_profile_revisions", "lazers_profile_proofs", "lazers_profile_pins"],
   },
   runner: {
-    generation: 15,
+    generation: 16,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",
@@ -147,7 +147,7 @@ export const schemaModules = {
     ],
   },
   "recovery-progress": {
-    generation: 2,
+    generation: 3,
     source: "src/recovery/journal.ts",
     tables: [
       "recovery_progress_facts",
@@ -183,7 +183,7 @@ export const schemaModules = {
     ],
   },
   "model-sources": {
-    generation: 1,
+    generation: 2,
     source: "src/models/source-store.ts",
     tables: [
       "model_evidence_snapshots",

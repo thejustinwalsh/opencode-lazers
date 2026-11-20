@@ -714,6 +714,20 @@ function retireConflictScans(db: Database) {
   db.exec("DROP TABLE IF EXISTS runner_conflict_scans; DROP TABLE IF EXISTS runner_audits")
 }
 
+/**
+ * Generation 16: indexes no statement uses (EXPLAIN QUERY PLAN over every statement in src/ and
+ * scripts/, run with and without each). `runner_progress_plan_seq` (plan_id,seq) is covered by
+ * `runner_progress_plan_recency` for the one plan that touched it (src/observability/read.ts:655,
+ * which sorts by recency anyway); `native_tool_calls_session` only served `toolCalls()`
+ * (src/progress/recorder.ts:1830, no production caller) and `native_tool_calls_local` has the same
+ * (project_directory, session_id) prefix. DROP INDEX frees pages without rewriting a row.
+ */
+function retireUnusedIndexes(db: Database) {
+  db.exec(
+    "DROP INDEX IF EXISTS runner_progress_plan_seq; DROP INDEX IF EXISTS native_tool_calls_session",
+  )
+}
+
 const DETAIL_PAGE_LIMIT = 200
 export type DetailPage = {
   limit?: number
@@ -749,6 +763,7 @@ export class RunnerStore {
       schemaModules.runner.tables,
       (db) => {
         retireConflictScans(db)
+        retireUnusedIndexes(db)
         db.exec(`
       CREATE TABLE IF NOT EXISTS runner_plans (
         id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, owner TEXT NOT NULL,
@@ -937,7 +952,6 @@ export class RunnerStore {
         call_id TEXT, message_id TEXT, dedupe_key TEXT NOT NULL, payload TEXT NOT NULL,
         UNIQUE(project_directory,dedupe_key)
       );
-      CREATE INDEX IF NOT EXISTS runner_progress_plan_seq ON runner_progress(plan_id,seq);
       CREATE INDEX IF NOT EXISTS runner_progress_attempt_seq
         ON runner_progress(project_directory,attempt_id,seq);
       CREATE TABLE IF NOT EXISTS native_tool_calls (
@@ -952,8 +966,6 @@ export class RunnerStore {
         sources_json TEXT NOT NULL, event_ids_json TEXT NOT NULL, payload TEXT NOT NULL,
         PRIMARY KEY(project_directory,session_id,identity_kind,invocation_id)
       );
-      CREATE INDEX IF NOT EXISTS native_tool_calls_session
-        ON native_tool_calls(project_directory,session_id,first_observed_at);
       CREATE INDEX IF NOT EXISTS native_tool_calls_parent
         ON native_tool_calls(project_directory,session_id,parent_call_id);
       CREATE TABLE IF NOT EXISTS runner_progress_reconciled (

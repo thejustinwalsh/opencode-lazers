@@ -319,8 +319,6 @@ export class RecoveryJournal {
       );
       CREATE INDEX IF NOT EXISTS recovery_progress_facts_project_cursor
         ON recovery_progress_facts(project_directory,change_id);
-      CREATE INDEX IF NOT EXISTS recovery_progress_facts_project_source
-        ON recovery_progress_facts(project_directory,source_seq,change_id);
       CREATE TABLE IF NOT EXISTS recovery_progress_coverage (
         project_directory TEXT PRIMARY KEY,
         coverage_kind TEXT NOT NULL CHECK(coverage_kind='legacy-or-unavailable'),
@@ -336,6 +334,10 @@ export class RecoveryJournal {
         PRIMARY KEY(project_directory,consumer_id)
       );
     `)
+
+    // No statement searches facts by source_seq (EXPLAIN over every statement in src/ and scripts/);
+    // the cursor index serves the page, diagnostic, prune and retention reads.
+    db.exec("DROP INDEX IF EXISTS recovery_progress_facts_project_source")
 
     const insert = (kind: "inserted" | "modified", previousStatus: string, fields: string) => `
       INSERT INTO recovery_progress_facts (
