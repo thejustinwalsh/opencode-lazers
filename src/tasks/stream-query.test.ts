@@ -152,3 +152,11 @@ test("fields no stored counter answers are left out, not scanned", async () => {
     expect(page.stateCounts).toBeUndefined()
   }
 })
+
+test("a process with no schedule owner indexes the project before answering", async () => {
+  const f: Fixture = openFixture()
+  cleanups.push(() => f.close())
+  const id = insertTask(f.repository, "existing")
+  const page = await queryTaskPage(f.repository, { limit: 10 })
+  expect(page.tasks.map((task) => task.taskID)).toEqual([id])
+})

@@ -7,13 +7,17 @@ import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
 import type { RadarNativeSession, RadarSessionHost } from "../../src/observability/native.ts"
 import { Tasks } from "../../src/tasks/contract.ts"
+import { openStream } from "../../src/streams/client.ts"
+import { acquireReaderPool } from "../../src/streams/pool.ts"
+import "../../src/streams/sources/index.ts"
+import { taskScheduleSource } from "../../src/streams/sources/tasks.ts"
 import { registerTaskReads } from "../../src/tasks/rpc.ts"
 import type { TaskRuntime } from "../../src/runner/runtime.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import { validProposal } from "../proposal.ts"
 import { firstAttemptID, makeFixture, taskID } from "../trajectory/fixture.ts"
 
-test("registered Tasks RPC discovers durable worker links without widening project scope", async () => {
+test("registered Tasks reads discover durable worker links without widening project scope", async () => {
   const fixture = makeFixture()
   const foreignRepository = new TaskRepository(fixture.repository.path, "/foreign-project")
   const foreignTaskID = crypto.randomUUID()
@@ -34,7 +38,6 @@ test("registered Tasks RPC discovers durable worker links without widening proje
   })
   let handlers:
     | {
-        query(input: unknown): Effect.Effect<unknown>
         get(input: unknown): Effect.Effect<unknown>
       }
     | undefined
@@ -58,16 +61,44 @@ test("registered Tasks RPC discovers durable worker links without widening proje
       ),
     )
     expect(handlers).toBeDefined()
-    const workerQuery = (await Effect.runPromise(
-      handlers!.query({ sessionID: "ses-failed", limit: 20, includeCompleted: true }),
-    )) as { tasks: Array<{ taskID: string }> }
-    expect(workerQuery.tasks.map((item) => item.taskID)).toEqual([taskID])
+    // The list is the `tasks.schedule` stream: `authorize` forces the session view and the
+    // project, and the session filter lists the tasks the session is linked to.
+    await fixture.index()
+    const lease = acquireReaderPool(fixture.repository.path)
+    const context = {
+      projectID: "project",
+      projectDirectory: fixture.repository.projectDirectory,
+      projectIds: (id: string) => [id],
+      assertRead: async () => {},
+    }
+    const listed = async (sessionID: string, extra: object = {}) => {
+      const filter = await taskScheduleSource.authorize!(
+        { scope: { kind: "session", sessionID }, state: "all", ...extra } as never,
+        context,
+      )
+      const stream = openStream(lease.pool, taskScheduleSource, {
+        filter,
+        order: "schedule",
+        window: 20,
+      })
+      try {
+        await stream.ready()
+        return stream.items.map((row) => String(row.task_id))
+      } finally {
+        stream.close()
+      }
+    }
+    try {
+      expect(await listed("ses-failed")).toEqual([taskID])
+      expect(await listed("ses-unrelated")).toEqual([])
+      // A caller cannot widen the scope by naming another project in the filter.
+      expect(await listed("ses-failed", { project: "/foreign-project" })).toEqual([taskID])
+    } finally {
+      lease.release()
+    }
     expect(
       await Effect.runPromise(handlers!.get({ taskID, sessionID: "ses-failed" })),
     ).toMatchObject({ status: "found", task: { id: taskID } })
-    expect(
-      await Effect.runPromise(handlers!.query({ sessionID: "ses-unrelated", limit: 20 })),
-    ).toMatchObject({ count: 0, tasks: [] })
     expect(await Effect.runPromise(handlers!.get({ taskID, sessionID: "ses-unrelated" }))).toEqual({
       status: "not_found",
     })
