@@ -1,3 +1,5 @@
+import type { HostSession } from "./host.ts"
+import { ModelPolicy } from "./schema.ts"
 import type { RetainedVerification } from "./retained-verification/schema.ts"
 import { fallowOutcome } from "./fallow-check.ts"
 import type { FallowReviewResult } from "../audit/review.ts"
@@ -164,3 +166,36 @@ export type RunnerTransitionRecord = {
 }
 
 export type RetainedVerificationSeed = RetainedVerification
+
+export type RetainedRepairRecoverySeed = {
+  operationID: string
+  attemptID: string
+  taskID: string
+  failedMessageID: string
+  interruptedInputID: string
+  owner: string
+  taskRevision: number
+  planVersion: number
+  planRevision: number
+  resumedTransitionID: number
+  blockedTransitionID: number
+  cancelledTransitionID: number
+  usage: { tokenCount: number | null; toolCount: number; cost: number | null }
+  worker: HostSession
+  workerObservation: string
+}
+
+export type RetainedRepairSeed = {
+  taskID: string
+  attemptID: string
+  artifact: string
+  previousMessageID: string
+  nativeInputID: string
+  messageID: string
+  operationID: string
+  owner: string
+  sessionID: string
+  workspace: string
+  model: ModelPolicy
+  workerObservation: string
+}
