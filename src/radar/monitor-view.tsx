@@ -18,6 +18,7 @@ import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
 import {
   ActivityLane,
+  Callout,
   Disclosure,
   Identifiers,
   Label,
@@ -34,6 +35,7 @@ import {
   recentCalls,
   toolName,
   workerLane,
+  workerSignals,
   workerState,
   workerStats,
 } from "./worker-pane.ts"
@@ -736,6 +738,7 @@ export function RadarMonitorView(props: Props) {
   }
   /** One state word per session; a worker's task word is the one Tasks shows. */
   const stateOf = (session: LiveSession) => workerState(session, attemptOf(session))
+  const signalsOf = (session: LiveSession) => workerSignals(attemptOf(session))
   const groupOf = (node: { id: string; kind: string; parent: string | null }) => {
     const id = node.kind === "more" ? (node.parent ?? "") : node.id
     return id === "item:needs-you"
@@ -834,6 +837,18 @@ export function RadarMonitorView(props: Props) {
                 {renderStateGlyph(session())}
               </span>
               <span class="lazers-radar-inspector-word">{stateOf(session()).word}</span>
+              <Show when={signalsOf(session()).concern}>
+                {(concern) => (
+                  <Label tone="warning" title={`Concern: ${concern().line}`}>
+                    Concern
+                  </Label>
+                )}
+              </Show>
+              <Show when={signalsOf(session()).takeover}>
+                <Label tone="interactive" title="The Architect is finishing this task itself">
+                  Takeover
+                </Label>
+              </Show>
               <Show when={session().assignment?.taskReference}>
                 {(reference) => (
                   <code class="lazers-radar-session-ref" style={{ "font-family": props.monoFont }}>
@@ -1177,6 +1192,19 @@ export function RadarMonitorView(props: Props) {
           >
             {(session) => (
               <>
+                <Show when={signalsOf(session()).concern}>
+                  {(concern) => (
+                    <Callout
+                      iconTone="attention"
+                      icon={<Ui.Icon name="circle-exclamation" size="small" />}
+                      text={concern().line}
+                    >
+                      <Show when={concern().recommendation}>
+                        {(text) => <p class="lazers-radar-note">{text()}</p>}
+                      </Show>
+                    </Callout>
+                  )}
+                </Show>
                 <Show when={lastCallLine()}>
                   {(call) => (
                     <p class="lazers-radar-last-call">

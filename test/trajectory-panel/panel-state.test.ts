@@ -12,6 +12,7 @@ import {
   selectedAttemptFor,
   selectedEventFor,
   TrajectoryPanelState,
+  TrajectoryViewCache,
 } from "../../src/trajectory-panel/panel-state.ts"
 import {
   createTrajectoryTransport,
@@ -2247,6 +2248,52 @@ test("a first read that never answers becomes a failure with a retry path, not a
     expect(state.data.historyError).toBe("")
   } finally {
     state.close()
+    fixture.close()
+  }
+})
+
+test("an identical failing capture is not repeated by a re-mounted panel; Retry asks at once", async () => {
+  const fixture = makeFixture()
+  const tracker = new ObservationChangeTracker(fixture.repository, cursorSecret, "project")
+  tracker.initialize()
+  const { transport } = transportFor(fixture, tracker)
+  let calls = 0
+  const original = transport.history
+  transport.history = async () => {
+    calls++
+    throw new Error("history read failed")
+  }
+  const cache = new TrajectoryViewCache()
+  const reference = fixture.repository.referenceFor(taskID)!
+  const scope = { kind: "project", sessionID: "ses-owner" } as const
+  const mount = async (key: string) => {
+    const state = new TrajectoryPanelState(
+      () => {},
+      () => {},
+      undefined,
+      { ...manualPaging, cache },
+    )
+    state.connect(key, "project", fixture.directory, scope, transport, {
+      taskID: null,
+      selection: null,
+      target: targetFor(fixture, taskID, reference, key),
+    })
+    await waitFor(state, () => Boolean(state.data.historyError))
+    for (let index = 0; index < 8; index++) await tick()
+    return state
+  }
+  try {
+    const first = await mount("first")
+    expect(calls).toBe(1)
+    first.close()
+    const second = await mount("second")
+    expect(calls).toBe(1)
+    expect(second.data.historyError).toContain("history read failed")
+    await second.recaptureActivity()
+    expect(calls).toBe(2)
+    second.close()
+  } finally {
+    transport.history = original
     fixture.close()
   }
 })

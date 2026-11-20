@@ -1217,7 +1217,9 @@ export class HandoffStore {
   recordConcern(input: unknown, callerInput: unknown): Receipt<RecoveryConcernRecordType> {
     const parsed = ignoreLegacyVersion(RecoveryConcernInput).parse(input)
     const caller = HandoffActor.parse(callerInput)
-    if (caller.role !== "architect")
+    // The scheduler's detector records concerns itself; only it may use the runtime role.
+    const detector = caller.role === "runtime"
+    if (caller.role !== "architect" && !detector)
       throw new Error("Only the source plan's Architect may attach a recovery concern")
     return this.repository.atomic((db) => {
       const existing = db
@@ -1229,7 +1231,7 @@ export class HandoffStore {
       const row = this.resolveSourceRow(db, { attemptID: parsed.sourceAttemptID })
       if (!row) throw new Error("No project-owned source attempt matches this concern")
       const handoffSource = this.sourceFromRow(row, 1)
-      this.assertArchitectOwnsPlan(db, handoffSource, caller)
+      if (!detector) this.assertArchitectOwnsPlan(db, handoffSource, caller)
       const source = this.recoverySourceFromRow(row)
       if (existing) {
         const record = RecoveryConcernRecord.parse(JSON.parse(existing.payload))

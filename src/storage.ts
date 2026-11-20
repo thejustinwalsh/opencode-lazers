@@ -49,6 +49,7 @@ import {
   type TaskDispositionRecord as TaskDispositionRecordType,
 } from "./task-disposition.ts"
 import { installProjectSchema } from "./project-key.ts"
+import { installProjectControlsSchema } from "./projects/settings.ts"
 
 export function taskDatabasePath(dataDirectory?: string): string {
   const directory =
@@ -412,6 +413,7 @@ export class TaskRepository {
       // The connection and its `once` keys outlive a plugin reload (they hang off globalThis), so
       // a schema added later needs its own key or a reloaded service never installs it.
       shared.once("task-observations", () => installObservedRevisionsSchema(this))
+      shared.once("project-controls", () => installProjectControlsSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined

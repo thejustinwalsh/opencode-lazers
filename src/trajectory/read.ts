@@ -1,4 +1,5 @@
 import { sameProject } from "../project-key.ts"
+import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { DateTime } from "effect"
 import type { TaskSpec } from "../task.ts"
@@ -850,6 +851,7 @@ function attemptView(
   sessionError: string | null,
   stats: PrivacyStats,
   checks: CheckView[],
+  concern?: { line: string; action?: string; because?: string },
 ) {
   const admitted =
     modelFromPolicy(attempt.policy, stats) ?? modelView(parseObject(snapshot.row.model), stats)
@@ -864,6 +866,17 @@ function attemptView(
     planID: safeText(attempt.plan_id, stats, 128),
     number: attempt.number,
     state: safeText(attempt.state, stats, 80),
+    // The Architect finishing the task itself, not a worker's attempt.
+    ...(isTakeoverAttempt(attempt.policy) ? { takeover: { agent: "architect" as const } } : {}),
+    ...(concern
+      ? {
+          concern: {
+            line: safeText(concern.line, stats, 600),
+            ...(concern.action ? { action: safeText(concern.action, stats, 40) } : {}),
+            ...(concern.because ? { because: safeText(concern.because, stats, 600) } : {}),
+          },
+        }
+      : {}),
     sessionID: safeText(attempt.session_id, stats, 128),
     baseCommit: safeText(attempt.base_commit, stats, 128),
     resultCommit: attempt.artifact ? safeText(attempt.artifact, stats, 128) : null,
@@ -1007,6 +1020,8 @@ async function readAttemptSessions(
   const reads: SessionReads = { sessions: new Map(), errors: new Map(), statuses: new Map() }
   const sessionsByAssignment = new Map<string, Promise<TrajectorySession | null>>()
   for (const { attempt } of allAttempts) {
+    // An Architect takeover has no native worker session to read; nothing is missing.
+    if (isTakeoverAttempt(attempt.policy)) continue
     try {
       const sessionKey = JSON.stringify([attempt.session_id, attempt.id, attempt.workspace])
       let read = sessionsByAssignment.get(sessionKey)
@@ -1227,6 +1242,7 @@ function effortTokenUsage(
   )
   const completeSessionIDs = new Set(completeSessions.map((session) => session.sessionID))
   const unknownUsageAttempts = allAttempts
+    .filter(({ attempt }) => !isTakeoverAttempt(attempt.policy))
     .filter(({ attempt }) => !completeSessionIDs.has(attempt.session_id))
     .map(({ attempt }) => safeText(attempt.id, stats, 128))
   return {
@@ -1247,10 +1263,12 @@ function effortTokenUsage(
     knownSessions: completeSessions.length,
     totalSessions: taskEffortBasis.usage.coverage.totalUniqueSessions,
     unknownAttempts: unknownUsageAttempts,
-    legacyAttemptScalarsNotAdded: attemptViews.map((attempt) => ({
-      attemptID: attempt.id,
-      ...attempt.legacyTokenCount,
-    })),
+    legacyAttemptScalarsNotAdded: attemptViews
+      .filter((attempt) => !attempt.takeover)
+      .map((attempt) => ({
+        attemptID: attempt.id,
+        ...attempt.legacyTokenCount,
+      })),
   }
 }
 
@@ -1383,7 +1401,7 @@ function coverageView(
     compacted: stats.compacted > 0,
     ongoing: busy,
     attemptsWithoutRecordedSessions: attemptViews.filter(
-      (attempt) => attempt.sessionStatus !== "available",
+      (attempt) => attempt.sessionStatus !== "available" && !attempt.takeover,
     ).length,
     workerProgress: {
       facts: progressRows.length,
@@ -1434,6 +1452,9 @@ function paginateEvents(
   const cursorMarket = object(object(cursorSummary.effort)?.marketEquivalentCost)
   const cursorIndex = object(cursorMarket?.currentIndex)
   if (cursorIndex) delete cursorIndex.retrievedAt
+  // A concern raised mid-read must not invalidate a continuation.
+  if (Array.isArray(cursorSummary.attempts))
+    for (const entry of cursorSummary.attempts) delete object(entry)?.concern
   if (input.cursor && options.allEvents) throw new Error("Invalid or stale trajectory cursor")
   // Full captures and live status never issue continuation tokens.
   const pagination = options.allEvents
@@ -1535,6 +1556,17 @@ export async function inspectTrajectory(
     : rawEvents
   const focusedTaskPlans = focusedPlanViews(store, task, rawPlans, checksByPlan, stats)
 
+  // One read: the task's open concerns, shown on the attempt each was raised against.
+  const concerns = new Map<string, { line: string; action?: string; because?: string }>()
+  for (const open of store.read((db) =>
+    openConcerns(db, store.repository.projectDirectory, { taskID: task.id }),
+  )) {
+    const known = concerns.get(open.attemptID)
+    concerns.set(open.attemptID, {
+      line: known ? `${known.line}; ${open.reason}` : open.reason,
+      ...(open.advice ? { action: open.advice.action, because: open.advice.because } : {}),
+    })
+  }
   const attemptViews = allAttempts.map(({ attempt, snapshot }) =>
     attemptView(
       attempt,
@@ -1544,18 +1576,21 @@ export async function inspectTrajectory(
       reads.errors.get(attempt.id) ?? null,
       stats,
       allChecks,
+      concerns.get(attempt.id),
     ),
   )
   const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)
   const valuationInput: ProjectTaskValuationRequest = {
-    attempts: allAttempts.map((entry) =>
-      valuationAttempt(
-        entry,
-        reads.sessions.get(entry.attempt.id) ?? null,
-        reads.statuses.get(entry.attempt.id) ?? "missing",
-        stats,
+    attempts: allAttempts
+      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
+      .map((entry) =>
+        valuationAttempt(
+          entry,
+          reads.sessions.get(entry.attempt.id) ?? null,
+          reads.statuses.get(entry.attempt.id) ?? "missing",
+          stats,
+        ),
       ),
-    ),
     progressFacts: projectedProgressFacts,
     progressTruncated,
     truncatedContextSessionIDs,

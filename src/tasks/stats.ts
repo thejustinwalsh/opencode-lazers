@@ -1,10 +1,14 @@
 import { callsText, durationText } from "../details/format.ts"
+import { tokenLabel } from "../recovery/token-label.ts"
+import type { TaskConcern } from "./contract.ts"
 import type { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
 
 export type StatAttempt = {
   state: string
   startedAt: number
   toolCount: number
+  /** An Architect takeover records no tool count of its own. */
+  takeover?: true
   model?: AttemptModel
   summary?: AttemptSummary
 }
@@ -38,6 +42,8 @@ export function taskStats(input: {
   attempt?: StatAttempt
   /** The task's state word is Running/Verifying; false for a held, waiting or interrupted task. */
   working?: boolean
+  /** Totals across every attempt; given only for a concern task, where one attempt misleads. */
+  concern?: TaskConcern["totals"]
 }): Array<{ label: string; value?: string }> {
   const { attempt } = input
   const end = attempt ? attemptEnd(attempt, input.now, input.working ?? true) : undefined
@@ -51,9 +57,23 @@ export function taskStats(input: {
     },
     {
       label: "Calls",
-      ...(attempt ? { value: callsText(attempt.toolCount, attempt.summary?.files) } : {}),
+      ...(attempt && !attempt.takeover
+        ? { value: callsText(attempt.toolCount, attempt.summary?.files) }
+        : {}),
     },
     { label: "Model", ...(modelText(attempt?.model) ? { value: modelText(attempt?.model)! } : {}) },
+    ...(input.concern ? concernStats(input.concern) : []),
+  ]
+}
+
+/** The cost of a concern task across all its attempts, so a person can judge it. */
+function concernStats(totals: TaskConcern["totals"]) {
+  return [
+    { label: "Total time", value: durationText(totals.attemptMs) },
+    ...(totals.toolCalls > 0 ? [{ label: "Total calls", value: callsText(totals.toolCalls) }] : []),
+    ...(totals.tokens > 0 ? [{ label: "Tokens", value: tokenLabel(totals.tokens) }] : []),
+    ...(totals.costUSD === null ? [] : [{ label: "Cost", value: `$${totals.costUSD.toFixed(2)}` }]),
+    { label: "Rounds", value: String(totals.verifyRounds) },
   ]
 }
 

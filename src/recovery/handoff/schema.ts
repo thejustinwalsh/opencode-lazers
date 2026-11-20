@@ -124,7 +124,8 @@ type HandoffRequestBody = z.infer<typeof HandoffRequestBody>
 export const HandoffActor = z.strictObject({
   sessionID: identifier,
   agent: identifier,
-  role: z.enum(["worker", "architect"]),
+  /** `runtime` is the scheduler's deterministic detector, never a session. */
+  role: z.enum(["worker", "architect", "runtime"]),
 })
 export type HandoffActor = z.infer<typeof HandoffActor>
 

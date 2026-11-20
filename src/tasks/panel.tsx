@@ -84,6 +84,7 @@ import {
   ActivityLane,
   Callout,
   Disclosure,
+  Label,
   Identifiers,
   Progress,
   Section,
@@ -931,6 +932,8 @@ function TaskPanel(
           : []),
         ...(presentation().tone === "paused" ? [`paused: ${presentation().detail}`] : []),
         ...(attentionLabel(activity) ? [attentionLabel(activity)] : []),
+        ...(taskRow().concern ? [`concern: ${taskRow().concern!.line}`] : []),
+        ...(taskRow().takeover ? ["takeover"] : []),
         ...(taskRow().contextOnly ? ["context"] : []),
       ].join(", ")
     }
@@ -956,7 +959,11 @@ function TaskPanel(
           chooseTask(taskRow().taskID)
         }}
       >
-        <div class="lazers-tasks-row" data-tone={presentation().tone}>
+        <div
+          class="lazers-tasks-row"
+          data-tone={presentation().tone}
+          data-concern={taskRow().concern ? "true" : undefined}
+        >
           <Show
             when={expandable()}
             fallback={<span class="lazers-tasks-disclosure-spacer" aria-hidden="true" />}
@@ -993,6 +1000,18 @@ function TaskPanel(
             <Show when={taskRowBlocker(presentation())}>
               {(blocker) => renderBlockerLink(blocker(), presentation().blockerTotal)}
             </Show>
+            <Show when={taskRow().concern}>
+              {(concern) => (
+                <Label tone="warning" title={`Concern: ${concern().line}`}>
+                  Concern
+                </Label>
+              )}
+            </Show>
+            <Show when={taskRow().takeover}>
+              <Label tone="interactive" title="The Architect is finishing this task itself">
+                Takeover
+              </Label>
+            </Show>
             <Show when={runningStart(taskRow())}>
               {(start) => (
                 <span
@@ -1008,7 +1027,12 @@ function TaskPanel(
                 class="lazers-tasks-state"
                 data-state={taskRow().status}
                 data-waiting={waiting()}
-                data-tone={presentation().tone}
+                data-tone={
+                  taskRow().concern &&
+                  ["running", "ready", "scheduled"].includes(presentation().tone)
+                    ? "attention"
+                    : presentation().tone
+                }
                 role="img"
                 aria-label={presentation().label}
               >
@@ -1629,6 +1653,7 @@ function TaskPanel(
           now: minute(),
           attempt: latestAttempt(),
           working: selectedPresentation().tone === "running",
+          ...(selectedRow()?.concern ? { concern: selectedRow()!.concern!.totals } : {}),
         })
       : []
   }

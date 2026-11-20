@@ -753,6 +753,16 @@ export const LiveAttemptOutput = z.strictObject({
           planReason: z.string().max(600).nullable(),
         })
         .optional(),
+      /** An open worker concern on the task, with the rule's recommended action when recorded. */
+      concern: z
+        .strictObject({
+          line: z.string().max(600),
+          action: z.enum(["acknowledge", "steer", "takeover", "cancel"]).optional(),
+          because: z.string().max(600).optional(),
+        })
+        .optional(),
+      /** The attempt is the Architect finishing the task itself, not a worker's attempt. */
+      takeover: z.literal(true).optional(),
     })
     .nullable(),
 })
@@ -828,7 +838,7 @@ const TrajectoryHistoryOutput = z.strictObject({
   boundary: Boundary,
   capturedAt: z.number().finite(),
   expiresAt: z.number().finite(),
-  eventIDs: z.array(z.string()).max(10_000).optional(),
+  eventIDs: z.array(z.string()).optional(),
   report: z.record(z.string(), z.unknown()),
 })
 const TrajectoryHistoryErrorData = z.strictObject({

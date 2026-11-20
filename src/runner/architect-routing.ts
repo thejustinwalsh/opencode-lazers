@@ -36,10 +36,13 @@ export function architectReuseMaxContextTokens(value: unknown): number {
   return value
 }
 
-/** Context size measured from the session's reported usage; unknown is treated as large. */
+/**
+ * Context size is the newest request's prompt size. `usage` and `tokens` are cumulative spend
+ * over the whole session, so they say nothing about how full the window is and are never a
+ * context size. Unknown is treated as large.
+ */
 export function architectContextTokens(session: HostSession): number | null {
-  if (session.usage) return session.usage.input + session.usage.cacheRead + session.usage.cacheWrite
-  return session.tokens
+  return session.contextTokens ?? null
 }
 
 /**

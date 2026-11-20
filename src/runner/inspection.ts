@@ -64,8 +64,10 @@ export type CompactNode = {
     number: number
     state: string
     startedAt: number
-    toolCount: number
-    retryCount: number
+    /** Absent for an Architect takeover, which records no tool or retry counts. */
+    toolCount?: number
+    retryCount?: number
+    takeover?: true
   } | null
 }
 export type CompactPlanDetail = {
@@ -87,7 +89,7 @@ export type CompactPlanDetail = {
       afterPlans: string[]
       integrationOrder: string[]
       dependencies: DependencyRow[]
-      dispatchPause?: { reason: string; untilPlans: string[] } | null
+      dispatchPause?: { reason: string; untilPlans: string[]; level?: "project" | "global" } | null
     }
   }
   waitingOnPlans: CompactWaitingPlan[]
@@ -115,7 +117,7 @@ export type CompactInspectionSummary = {
       workspaceMode: string
       afterPlans: string[]
       integrationOrder: string[]
-      dispatchPause?: { reason: string; untilPlans: string[] } | null
+      dispatchPause?: { reason: string; untilPlans: string[]; level?: "project" | "global" } | null
     }
     waitingOnPlans: CompactWaitingPlan[]
     counts: { nodes: number; nodesByState: Record<string, number> }
@@ -157,6 +159,7 @@ type AttemptRow = {
   retry_count: number
   token_count: number | null
   cost: number | null
+  takeover: number
 }
 type EffectRow = {
   id: string
@@ -264,7 +267,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
         .all(plan.id),
       attempts: db
         .query<AttemptRow, [string]>(
-          "SELECT id,task_id,number,state,started_at,tool_count,retry_count,token_count,cost FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
+          "SELECT id,task_id,number,state,started_at,tool_count,retry_count,token_count,cost,json_extract(policy,'$.takeover') IS NOT NULL AS takeover FROM runner_attempts WHERE plan_id=? ORDER BY started_at,number",
         )
         .all(plan.id),
       effects: db
@@ -357,7 +360,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
       priority: plan.priority ?? 0,
       workspaceMode: plan.workspaceMode,
       afterPlans: arrayJSON<string>(plan.afterPlans, []),
-      dispatchPause: store.dispatchPause(plan.id) ?? null,
+      dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
       dependencies,
     },
@@ -400,8 +403,12 @@ function compactPlan(store: RunnerStore, plan: PlanRow) {
               number: latestAttempt.number,
               state: latestAttempt.state,
               startedAt: latestAttempt.started_at,
-              toolCount: latestAttempt.tool_count,
-              retryCount: latestAttempt.retry_count,
+              ...(latestAttempt.takeover
+                ? { takeover: true as const }
+                : {
+                    toolCount: latestAttempt.tool_count,
+                    retryCount: latestAttempt.retry_count,
+                  }),
             }
           : null,
       }
@@ -435,7 +442,7 @@ function compactPlanSummary(store: RunnerStore, plan: PlanRow) {
       priority: plan.priority ?? 0,
       workspaceMode: plan.workspaceMode,
       afterPlans: arrayJSON<string>(plan.afterPlans, []),
-      dispatchPause: store.dispatchPause(plan.id) ?? null,
+      dispatchPause: store.effectiveDispatchPause(plan.id) ?? null,
       integrationOrder: arrayJSON<string>(plan.integrationOrder, []),
     },
     waitingOnPlans: waitingOnPlans(store, plan),

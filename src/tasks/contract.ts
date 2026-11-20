@@ -28,6 +28,23 @@ export const GetInput = z.strictObject({
   sessionID: z.string().min(1).max(200).optional(),
 })
 export const GetInstructionsOutput = z.string()
+/** A task that keeps consuming effort without landing; see `assessConcern`. */
+export const TaskConcern = z.strictObject({
+  /** The one-line reason(s), e.g. "3 verification rounds; 92M tokens across 2 attempt(s)". */
+  line: z.string(),
+  reasons: z.array(z.string()),
+  /** Totals across every attempt, so a person can judge the cost. */
+  totals: z.strictObject({
+    attempts: z.int().nonnegative(),
+    verifyRounds: z.int().nonnegative(),
+    attemptMs: z.number().nonnegative(),
+    tokens: z.number().nonnegative(),
+    toolCalls: z.int().nonnegative(),
+    costUSD: z.number().nonnegative().nullable(),
+  }),
+})
+export type TaskConcern = z.infer<typeof TaskConcern>
+
 const TaskSummary = z.strictObject({
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
@@ -41,6 +58,10 @@ const TaskSummary = z.strictObject({
   recordedState: TaskState.optional(),
   /** Epoch ms the current attempt started; present only while the task is running or verifying. */
   startedAt: z.number().finite().optional(),
+  /** Present only while the task is unsettled and its recorded facts trip a concern rule. */
+  concern: TaskConcern.optional(),
+  /** True while the task's latest attempt is the Architect finishing it (a takeover attempt). */
+  takeover: z.literal(true).optional(),
   reason: z.string().nullable(),
   disposition: TaskDispositionRecord.optional(),
   classification: TaskClassificationRevision,
@@ -86,6 +107,8 @@ const TaskAttempt = z.strictObject({
   artifact: z.string().nullable(),
   tokenCount: z.number().nullable(),
   toolCount: z.int().nonnegative(),
+  /** The attempt is the Architect finishing the task; its tokens and tool calls are not recorded. */
+  takeover: z.literal(true).optional(),
   /** The model the attempt was assigned, when its policy recorded one. */
   model: AttemptModel.optional(),
   /** Compact activity read; present on the task's latest attempt only. */

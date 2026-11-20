@@ -51,6 +51,8 @@ export type AttemptPaneProps = {
   reason: EndReason | null
   /** The glyph for the Callout, already drawn. */
   reasonIcon: JSX.Element
+  /** An open concern and an Architect takeover, from `attemptSignals`. */
+  signals?: { concern?: { line: string; recommendation?: string }; takeover?: true }
   events: readonly TrajectoryEvent[]
   notes: readonly string[]
   identifiers: ReadonlyArray<{ label: string; value?: string | null }>
@@ -123,6 +125,20 @@ export function AttemptPane(props: AttemptPaneProps) {
   const gapTotal = () => recordGapCount(props.events, props.notes)
   return (
     <div class="lazers-trajectory-pane-body" data-pane="attempt">
+      <Show when={props.signals?.concern}>
+        {(concern) => (
+          <Callout
+            class="lazers-trajectory-callout"
+            iconTone="attention"
+            icon={<props.ui.Icon name="circle-exclamation" size="small" />}
+            text={concern().line}
+          >
+            <Show when={concern().recommendation}>
+              {(text) => <p class="lazers-trajectory-note">{text()}</p>}
+            </Show>
+          </Callout>
+        )}
+      </Show>
       <Show when={props.reason}>
         {(reason) => (
           <Callout
@@ -142,7 +158,11 @@ export function AttemptPane(props: AttemptPaneProps) {
               ? `${durationText(props.duration.ms)}${props.duration.open ? " so far" : ""}`
               : null,
           },
-          { label: "Calls", value: callsText(props.calls, props.files) },
+          {
+            label: "Calls",
+            // An Architect takeover records no tool count of its own: omit rather than show 0.
+            value: props.signals?.takeover ? null : callsText(props.calls, props.files),
+          },
           { label: "Tokens", value: tokensText(props.report.effort.tokenUsage) },
           {
             label: "Cost",

@@ -2,6 +2,7 @@ import { taskMachine } from "./machine.ts"
 import { dispatchControlMachine } from "./dispatch-control-machine.ts"
 import { architectSourceMachine } from "./architect-source-machine.ts"
 import { architectContactMachine } from "./architect-contact-machine.ts"
+import { dispatchPauseMachine } from "../projects/pause-machine.ts"
 import type { Database } from "bun:sqlite"
 import { createMachine, transition } from "xstate"
 
@@ -178,6 +179,20 @@ const verificationCleanupMachine = defineLifecycle("runner-verification-cleanup"
   complete: ["pending"],
 })
 
+/**
+ * An Architect takes a task over from its worker. The worker is told and given a bounded window
+ * to write its handoff, then stopped; the Architect continues in the same workspace through a
+ * new attempt. Every state exits on an observable fact: the notice was sent (or the worker is
+ * already stopped), the handoff was saved, the window passed, the worker went quiet.
+ */
+const takeoverMachine = defineLifecycle("runner-takeover", "notifying", {
+  notifying: ["awaiting-handoff", "stopping", "cancelled"],
+  "awaiting-handoff": ["stopping", "cancelled"],
+  stopping: ["taken-over", "cancelled"],
+  "taken-over": [],
+  cancelled: [],
+})
+
 const workspaceMachine = defineLifecycle("runner-verification-workspace", "unallocated", {
   unallocated: ["reserved", "owned", "uncertain", "removed"],
   reserved: ["owned", "uncertain", "removed"],
@@ -190,6 +205,7 @@ export const lifecycleMachines = {
   dispatch: dispatchControlMachine,
   source: architectSourceMachine,
   contact: architectContactMachine,
+  pause: dispatchPauseMachine,
   plan: planMachine,
   attempt: attemptMachine,
   effect: effectMachine,
@@ -201,6 +217,7 @@ export const lifecycleMachines = {
   check: verificationCheckMachine,
   cleanup: verificationCleanupMachine,
   workspace: workspaceMachine,
+  takeover: takeoverMachine,
 } as const
 
 /** SQL invokes the same XState transition against the row's current persisted value. */

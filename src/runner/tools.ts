@@ -7,6 +7,7 @@ import { nativeWorkerOptions } from "./catalog.ts"
 import { InspectPlanInput, inspectPlan } from "./inspection.ts"
 import { ArchitectContinuityInput, CommandInput, PlanSubmissionInput } from "./schema.ts"
 import type { TaskRuntime } from "./runtime.ts"
+import { TakeoverInput, WorkerHandoffInput } from "./takeover.ts"
 
 export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
   return ctx.tool.transform((editor) => {
@@ -24,6 +25,20 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
           "Use a stable requestID; the plan's state decides what applies and a refusal lists the available actions. Resume without taskID re-runs the combined check on the current candidate. Defaults: 15m inactivity/60m hard; project/per-check timing overrides. retained-repair recovers runtime-fenced retained repair; user cancellation is excluded. verify-retained verifies the given commit in a temporary worktree without an implementation turn and records pass or fail; run it again after a failure; handles startup settlement.",
         schema: CommandInput,
         run: (input: unknown, sessionID: string) => runtime.command(input, sessionID),
+      },
+      {
+        name: "lz-request-handoff",
+        description:
+          "Take a task over from its worker: tells the worker, waits up to 5 minutes for its handoff, stops it, and returns the handoff, workspace, commits and uncommitted paths.",
+        schema: TakeoverInput,
+        run: (input: unknown, sessionID: string) => runtime.takeover(input, sessionID),
+      },
+      {
+        name: "lz-takeover-handoff",
+        description:
+          "Worker only, after a takeover notice: hand your task to the Architect in one call. Plain text: done, remaining, workspace state, struggled with, tried. Then end your turn.",
+        schema: WorkerHandoffInput,
+        run: (input: unknown, sessionID: string) => runtime.takeoverHandoff(input, sessionID),
       },
       {
         name: "lz-inspect-plan",
@@ -76,6 +91,7 @@ export function registerRunnerTools(ctx: Plugin.Context, runtime: TaskRuntime) {
                         "lz-submit-plan",
                         "lz-plan-command",
                         "lz-record-architect-continuity",
+                        "lz-request-handoff",
                       ].includes(definition.name)
                     )
                       throw new Error("Plan orchestration is restricted to Architect")

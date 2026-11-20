@@ -244,6 +244,19 @@ async function setup(
       input: unknown,
       call: ReturnType<typeof toolContext>,
     ): Promise<T> => {
+      if (name === "lz-request-handoff") {
+        const { HandoffStore } = await import("../../src/recovery/handoff/store.ts")
+        const caller = call as unknown as { sessionID: string; agent: string }
+        const agent = String(caller.agent)
+        return new HandoffStore(fixture.repository).request(
+          { ...(input as object), requestID: (input as { requestID?: string }).requestID ?? "r" },
+          {
+            sessionID: String(caller.sessionID),
+            agent,
+            role: agent === "architect" ? "architect" : "worker",
+          },
+        ) as T
+      }
       const tool = tools.get(name)
       if (!tool) throw new Error(`Missing registered tool ${name}`)
       const result = await Effect.runPromise(tool.execute(input, call))
@@ -264,7 +277,6 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
     "lz-disposition-recovery-concern",
     "lz-checkpoint-recovery-worker",
     "lz-respond-recovery-checkpoint",
-    "lz-request-handoff",
     "lz-submit-handoff",
     "lz-verify-handoff",
     "lz-disposition-handoff",
@@ -272,6 +284,8 @@ test("registered controls preserve concern decisions, tracked same-worker checkp
   ])
     expect(f.tools.has(name)).toBe(true)
   expect(f.tools.has("lz-finalize-handoff")).toBe(false)
+  // lz-request-handoff is the runner's blocking takeover call now; tests record requests directly.
+  expect(f.tools.has("lz-request-handoff")).toBe(false)
 
   const concernID = crypto.randomUUID()
   const firstConcernInput = {

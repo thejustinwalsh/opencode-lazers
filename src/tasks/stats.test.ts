@@ -61,3 +61,44 @@ test("a held attempt still recorded as running stops its runtime at the last act
   // The lane still spans to now, so the quiet stretch collapses to an idle span before "now".
   expect(attemptLane(attempt, 44 * HOUR)!.durationMs).toBe(44 * HOUR - attempt.startedAt)
 })
+
+test("a concern task adds its totals across attempts to the stat row", () => {
+  const totals = {
+    attempts: 2,
+    verifyRounds: 3,
+    attemptMs: 4 * HOUR + 10 * 60_000,
+    tokens: 92_000_000,
+    toolCalls: 1009,
+    costUSD: null,
+  }
+  const stats = values(taskStats({ createdAt: 0, now: HOUR, concern: totals }))
+  expect(stats).toMatchObject({
+    "Total time": "4h 10m",
+    "Total calls": "1009",
+    Tokens: "92M",
+    Rounds: "3",
+  })
+  expect("Cost" in stats).toBe(false)
+  expect("Total time" in values(taskStats({ createdAt: 0, now: HOUR }))).toBe(false)
+})
+
+test("an Architect takeover attempt shows no Calls, and a concern shows no zero totals", () => {
+  const takeover = { state: "running", startedAt: 1_000_000, toolCount: 0, takeover: true as const }
+  const shownTakeover = values(
+    taskStats({ createdAt: 0, now: 1_000_000 + 60_000, attempt: takeover }),
+  )
+  expect(shownTakeover).toMatchObject({ Runtime: "1m", Calls: undefined, Model: undefined })
+  const totals = {
+    attempts: 2,
+    verifyRounds: 3,
+    attemptMs: 60_000,
+    tokens: 0,
+    toolCalls: 0,
+    costUSD: null,
+  }
+  const shown = values(taskStats({ createdAt: 0, now: HOUR, concern: totals }))
+  expect(shown).not.toHaveProperty("Tokens")
+  expect(shown).not.toHaveProperty("Total calls")
+  expect(shown).not.toHaveProperty("Cost")
+  expect(shown["Total time"]).toBe("1m")
+})

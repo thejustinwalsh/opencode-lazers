@@ -32,7 +32,15 @@ import type { EventFilter } from "./event-names.ts"
 import { isSpanWidth, layoutMarks } from "./marks.ts"
 import type { MarkGlyph } from "./marks.ts"
 import { taskStatePresentation } from "./state-presentation.ts"
-import { attemptDuration, lastWorkerActivity, reportTaskView, taskReason } from "./attempt-state.ts"
+import {
+  attemptDuration,
+  attemptName,
+  attemptSignals,
+  lastWorkerActivity,
+  reportTaskView,
+  taskReason,
+} from "./attempt-state.ts"
+import { Label } from "../details/index.ts"
 import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
 import type { TaskGlyph } from "../tasks/row-presentation.ts"
@@ -1170,7 +1178,7 @@ function PanelView(
     if (!kind || kind === "attempt") return undefined
     const start = contextStart()
     const base = {
-      parent: [reference(), attempt ? `Attempt ${attempt.number}` : ""].filter(Boolean).join(" · "),
+      parent: [reference(), attempt ? attemptName(attempt) : ""].filter(Boolean).join(" · "),
       onParent: () => {
         if (attempt) chooseAttempt(attempt.id)
       },
@@ -1374,8 +1382,21 @@ function PanelView(
                   <span>{presentation().label}</span>
                 </span>
               </Show>
+              <Show when={attemptSignals(attempt()).concern}>
+                {(concern) => (
+                  <Label tone="warning" title={`Concern: ${concern().line}`}>
+                    Concern
+                  </Label>
+                )}
+              </Show>
+              <Show when={attemptSignals(attempt()).takeover}>
+                <Label tone="interactive" title="The Architect is finishing this task itself">
+                  Takeover
+                </Label>
+              </Show>
               <span class="lazers-trajectory-kind">
-                Attempt {attempt().number} of {report()?.attempts.length ?? attempt().number}
+                {attempt().takeover ? "Architect" : "Attempt"} {attempt().number} of{" "}
+                {report()?.attempts.length ?? attempt().number}
               </span>
               <Show when={reference()}>
                 <span class="lazers-trajectory-kind lazers-kit-mono">{reference()}</span>
@@ -1551,12 +1572,12 @@ function PanelView(
                     <Show when={(report()?.attempts.length ?? 0) > 0}>
                       <span class="lazers-trajectory-attempt-menu">
                         <Ui.Menu
-                          label={`Attempt ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
+                          label={`${headerAttempt()?.takeover ? "Architect" : "Attempt"} ${headerAttempt()?.number ?? 1} of ${report()?.attempts.length ?? 1}`}
                           trigger="button"
                           icon="chevron-down"
                           placement="bottom-start"
                           items={(report()?.attempts ?? []).map((attempt) => ({
-                            label: `Attempt ${attempt.number} · ${attempt.state}`,
+                            label: `${attemptName(attempt)} · ${attempt.state}`,
                             onSelect: () => state.selectAttempt(attempt.id),
                           }))}
                         />
@@ -1572,11 +1593,11 @@ function PanelView(
                         </span>
                       )}
                     </Show>
-                    <Show when={headerAttempt()}>
-                      {(attempt) => (
+                    <Show when={headerAttempt() && !headerAttempt()?.takeover}>
+                      {(_) => (
                         <span>
-                          <b>{attempt().toolCount.value.toLocaleString()}</b>{" "}
-                          {attempt().toolCount.value === 1 ? "call" : "calls"}
+                          <b>{headerAttempt()!.toolCount.value.toLocaleString()}</b>{" "}
+                          {headerAttempt()!.toolCount.value === 1 ? "call" : "calls"}
                         </span>
                       )}
                     </Show>
@@ -1891,12 +1912,14 @@ function PanelView(
                                 }
                                 aria-selected={selected()}
                                 tabIndex={activeAttempt() === lane().attempt.id ? 0 : -1}
-                                aria-label={`Attempt ${lane().attempt.number}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
+                                aria-label={`${attemptName({ number: lane().attempt.number, takeover: detail()?.takeover })}, ${lane().attempt.state}${duration() ? `, ${durationText(duration()!.ms)}${duration()!.open ? " so far" : ""}` : ""}, ${detail() && !detail()!.takeover ? `${detail()!.toolCount.value.toLocaleString()} calls` : ""}`}
                                 title={basisText(lane().attempt.timingBasis)}
                                 onClick={() => chooseAttempt(lane().attempt.id)}
                               >
                                 <span class="lazers-trajectory-label-cell lazers-trajectory-attempt-label">
-                                  <span class="lazers-trajectory-lane-name">Attempt</span>
+                                  <span class="lazers-trajectory-lane-name">
+                                    {detail()?.takeover ? "Architect" : "Attempt"}
+                                  </span>
                                   <span class="lazers-trajectory-lane-count">
                                     {lane().attempt.number}
                                   </span>
@@ -2248,6 +2271,7 @@ function PanelView(
                 summary={view().summary}
                 reason={view().reason}
                 reasonIcon={view().icon}
+                signals={attemptSignals(view().attempt)}
                 events={view().events}
                 notes={dataGaps()}
                 identifiers={view().identifiers}

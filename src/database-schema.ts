@@ -29,8 +29,13 @@ export const schemaModules = {
     source: "src/project-key.ts",
     tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
   },
+  "project-controls": {
+    generation: 1,
+    source: "src/projects/settings.ts",
+    tables: ["lazers_settings", "lazers_dispatch_pause"],
+  },
   runner: {
-    generation: 12,
+    generation: 13,
     source: "src/runner/store.ts",
     tables: [
       "runner_architect_journal_revisions",
@@ -47,6 +52,7 @@ export const schemaModules = {
       "runner_attempts",
       "runner_effects",
       "runner_adoptions",
+      "runner_takeovers",
       "runner_adoption_checks",
       "runner_adoption_evidence",
       "runner_evidence",

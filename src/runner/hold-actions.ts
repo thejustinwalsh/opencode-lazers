@@ -12,6 +12,12 @@ export type HoldFamily = {
 
 export const HOLD_FAMILIES: readonly HoldFamily[] = [
   {
+    // The Architect's own result after a takeover: it fixes and submits again, or cancels.
+    name: "takeover-verification",
+    match: /^Takeover verification failed/,
+    actions: ["takeover-submit", "cancel"],
+  },
+  {
     name: "fallow-config-required",
     match: /^FALLOW_CONFIG_REQUIRED/,
     actions: ["run", "reconcile", "cancel"],

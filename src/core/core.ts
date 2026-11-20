@@ -13,8 +13,10 @@ import { nativeContextPermission } from "../context/tools.ts"
 import { createModelsTaskValuationProvider } from "../models/server.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { nativeRadarSessionHost } from "../observability/native.ts"
+import { historyCacheBytes } from "../trajectory/history.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { registerProject } from "../project-key.ts"
+import { globalSettings, spendCeilingFor } from "../projects/settings.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { nativeHost } from "../runner/native.ts"
 import { TaskRuntime } from "../runner/runtime.ts"
@@ -194,6 +196,13 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     architectReuseMaxContextTokens: info.options.architectReuseMaxContextTokens as
       number | undefined,
     fallowReview: info.options.fallowReview === "off" ? "off" : "on",
+    // Read per evaluation: a value set in Settings wins over the plugin option.
+    workerSpendCeilingTokens: () =>
+      spendCeilingFor(
+        repository,
+        repository.projectDirectory,
+        info.options.workerSpendCeilingTokens,
+      ),
     // Deprecated alias of architectCacheWindowMs.
     architectIdleWindowMs: info.options.architectIdleWindowMs as number | undefined,
     verificationTimeoutDefaults: verificationDefaults,
@@ -216,6 +225,14 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     crypto.getRandomValues(new Uint8Array(32)),
     radarSessionHost,
     taskValuationProvider,
+    // Sized once at load; a value set in Settings wins over the plugin option on the next load.
+    historyCacheBytes(
+      globalSettings(repository, {
+        ...(typeof info.options.historyCacheMB === "number"
+          ? { historyCacheMB: info.options.historyCacheMB }
+          : {}),
+      }).historyCacheMB,
+    ),
   )
   built("observationReads")
   const taskReads = new AssociationTaskReads(repository)

@@ -8,6 +8,7 @@ import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
 import { taskStatePredicate } from "../tasks/state-filter.ts"
+import { openConcerns } from "../recovery/detector.ts"
 
 function safeJSON(text: string): unknown {
   try {
@@ -856,11 +857,13 @@ export class LiveReadStore {
           .query<
             {
               id: string
+              task_id: string
               number: number
               state: string
               started_at: number
               tool_count: number
               model: string | null
+              takeover: number
               node_state: string | null
               node_reason: string | null
               plan_state: string
@@ -868,8 +871,9 @@ export class LiveReadStore {
             },
             [string, string]
           >(
-            `SELECT a.id,a.number,a.state,a.started_at,a.tool_count,
+            `SELECT a.id,a.task_id,a.number,a.state,a.started_at,a.tool_count,
                     json_extract(a.policy,'$.model') AS model,
+                    json_extract(a.policy,'$.takeover') IS NOT NULL AS takeover,
                     n.state AS node_state,substr(n.reason,1,600) AS node_reason,
                     p.state AS plan_state,substr(p.reason,1,600) AS plan_reason
                FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
@@ -879,6 +883,10 @@ export class LiveReadStore {
           .get(input.sessionID, this.projectDirectory)
         if (!row) return null
         const model = AttemptModel.safeParse(row.model ? safeJSON(row.model) : undefined)
+        // One indexed read of this task's open concerns; an unsettled node only.
+        const concern = row.node_state
+          ? openConcerns(db, this.projectDirectory, { taskID: row.task_id })
+          : []
         return {
           id: row.id,
           number: row.number,
@@ -887,6 +895,23 @@ export class LiveReadStore {
           toolCount: row.tool_count,
           ...(model.success ? { model: model.data } : {}),
           summary: readAttemptSummary(db, this.projectDirectory, row.id),
+          ...(concern.length
+            ? {
+                concern: {
+                  line: concern
+                    .map((item) => item.reason)
+                    .join("; ")
+                    .slice(0, 600),
+                  ...(concern[0]!.advice
+                    ? {
+                        action: concern[0]!.advice.action,
+                        because: concern[0]!.advice.because.slice(0, 600),
+                      }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(row.takeover ? { takeover: true as const } : {}),
           ...(row.node_state
             ? {
                 task: {

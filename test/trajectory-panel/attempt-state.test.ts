@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import {
   attemptDuration,
+  attemptName,
+  attemptSignals,
   holdReason,
   holdReasons,
   lastWorkerActivity,
@@ -99,4 +101,17 @@ test("a late runner event is not worker activity", () => {
   expect(
     attemptDuration(attempt, 40_000_000, { lastActivity: lastWorkerActivity(events, "a1") }),
   ).toEqual({ ms: 2_863_000, open: false })
+})
+
+test("an attempt with an open concern or an Architect takeover is marked; others show nothing", () => {
+  expect(attemptSignals({})).toEqual({})
+  expect(attemptSignals({ concern: { line: "Long run" } })).toEqual({
+    concern: { line: "Long run" },
+  })
+  expect(
+    attemptSignals({ concern: { line: "Long run", action: "steer", because: "Check in" } }),
+  ).toEqual({ concern: { line: "Long run", recommendation: "Recommended: steer. Check in" } })
+  expect(attemptSignals({ takeover: { agent: "architect" } })).toEqual({ takeover: true })
+  expect(attemptName({ number: 2 })).toBe("Attempt 2")
+  expect(attemptName({ number: 3, takeover: { agent: "architect" } })).toBe("Architect takeover")
 })

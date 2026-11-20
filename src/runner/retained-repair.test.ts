@@ -1165,3 +1165,52 @@ test("retained repair preserves uncommitted work in the original worker", async 
   expect(readFileSync(path, "utf8")).toBe("useful partial work")
   expect(f.store.attempts(f.planID)).toHaveLength(1)
 })
+
+test("a resumed retained repair whose worker is still running on its prior input leaves preparing", async () => {
+  const f = fixture()
+  await accept(f)
+  const attempt = f.store.attempts(f.planID)[0]!
+  const worker = f.sessions.get(attempt.session_id)!
+  await f.runtime.command(retainedRepairCommand(f), "owner")
+  await f.runtime.tick()
+  const repairMessageID = f.store.attempts(f.planID)[0]!.message_id
+  // The worker is mid-turn on the repair input, then a stale observation reads it as interrupted.
+  worker.busy = false
+  worker.outcome = "interrupted"
+  worker.turn = { inputID: repairMessageID, state: "interrupted" }
+  await f.runtime.tick()
+  expect(f.store.plan(f.planID)?.state).toBe("blocked")
+  await f.runtime.command(
+    {
+      requestID: "resume-stale-interrupted-repair",
+      planID: f.planID,
+      expectedVersion: f.store.plan(f.planID)!.version,
+      action: "resume",
+      taskID: f.tasks[0]!.id,
+      attemptID: attempt.id,
+      reason: "Continue the interrupted retained repair.",
+    },
+    "owner",
+  )
+  expect(f.store.attempts(f.planID)[0]?.state).toBe("preparing")
+  // The worker was in fact still running its turn the whole time.
+  worker.busy = true
+  worker.outcome = undefined
+  worker.turn = { inputID: repairMessageID, state: "pending" }
+  for (let tick = 0; tick < 4; tick++) await f.runtime.tick()
+  expect(f.store.attempts(f.planID)[0]).toMatchObject({
+    state: "running",
+    message_id: repairMessageID,
+  })
+  expect(f.store.plan(f.planID)?.state).toBe("running")
+  expect(taskEvents(f, f.tasks[0]!.id, "WORKER_RESUME_ADOPTED")).toHaveLength(1)
+  // No second input was queued behind the live turn.
+  expect(f.prompts).toHaveLength(2)
+  worker.busy = false
+  worker.outcome = "succeeded"
+  worker.turn = { inputID: repairMessageID, state: "completed" }
+  await settleVerification(f.runtime)
+  await settleVerification(f.runtime)
+  expect(f.store.attempts(f.planID)[0]?.state).toBe("accepted")
+  expect(f.prompts).toHaveLength(2)
+})

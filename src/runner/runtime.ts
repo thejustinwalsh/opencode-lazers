@@ -21,6 +21,9 @@ import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
 import { RecoveryBundles } from "./recovery-bundle.ts"
+import { RecoveryDetector, isTakeoverAttempt } from "../recovery/detector.ts"
+import { TakeoverExecution, takeoverAwareHost, type TakeoverResult } from "./takeover.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 import { sameModelSnapshot, sameNativeModel } from "./model-route.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { isWorkerAgent, workerAgent } from "./worker-agent.ts"
@@ -35,6 +38,7 @@ import {
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs"
 import { dirname, extname, join } from "node:path"
 import { fingerprint } from "../identity.ts"
+import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import {
   effectiveVerificationCheck,
   verificationDeadline as resolveVerificationDeadline,
@@ -270,6 +274,16 @@ export type TaskRuntimeOptions = {
   /** Cancellation waits this long after interrupting a busy worker, then settles without its idleness. Default 30 seconds. */
   cancelIdleWaitMs?: number
   architectReuseMaxContextTokens?: number
+  /**
+   * Total tokens of a task past which the recovery detector raises a takeover concern, with
+   * stronger wording as the spend doubles. Off when undefined. It never stops the worker.
+   */
+  /** A token ceiling, or a read of it taken at each evaluation. */
+  workerSpendCeilingTokens?: number | (() => number | undefined)
+  /** Takeover timing; tests shorten it. Defaults in `takeover.ts`. */
+  takeoverHandoffWindowMs?: number
+  takeoverStopWaitMs?: number
+  takeoverPollMs?: number
   /** Review each candidate for introduced duplication and complexity. Default "on". */
   fallowReview?: "on" | "off"
   /** The review itself; defaults to the Fallow analyzer. Tests inject a stub. */
@@ -683,6 +697,8 @@ type AdvanceContext = {
 export class TaskRuntime {
   private readonly outcomeDelivery: OutcomeDelivery
   private readonly recoveryBundles: RecoveryBundles
+  private readonly recoveryDetector: RecoveryDetector
+  private readonly takeovers: TakeoverExecution
   private readonly worktreeCleanup: WorktreeCleanup
   private readonly adoptionExecution: AdoptionExecution
   private readonly retainedVerificationExecution: RetainedVerificationExecution
@@ -731,6 +747,8 @@ export class TaskRuntime {
     progress?: ProgressRecorder,
     options: TaskRuntimeOptions = {},
   ) {
+    // Attempts the Architect works itself have no native session: one choke point reads them as absent.
+    this.host = takeoverAwareHost(host)
     this.progress = progress ?? new ProgressRecorder(store, projectID)
     this.now = options.now ?? Date.now
     this.schedulingRead = new TaskSchedulingRead(store, this.now)
@@ -767,6 +785,30 @@ export class TaskRuntime {
       reconcilePlan: (...args) => this.reconcilePlan(...args),
       store: this.store,
       validArchitect: this.validArchitect.bind(this),
+    })
+    this.recoveryDetector = new RecoveryDetector({
+      store: this.store,
+      handoff: new HandoffStore(this.store.repository),
+      now: this.now,
+      ...(options.workerSpendCeilingTokens === undefined
+        ? {}
+        : { spendCeilingTokens: options.workerSpendCeilingTokens }),
+    })
+    this.takeovers = new TakeoverExecution({
+      store: this.store,
+      host: this.host,
+      now: this.now,
+      validArchitect: this.validArchitect.bind(this),
+      handoff: new HandoffStore(this.store.repository),
+      notify: (planID, result) =>
+        this.outcome(planID, { status: "takeover-ready", takeover: result }, true),
+      ...(options.takeoverHandoffWindowMs === undefined
+        ? {}
+        : { handoffWindowMs: options.takeoverHandoffWindowMs }),
+      ...(options.takeoverStopWaitMs === undefined
+        ? {}
+        : { stopWaitMs: options.takeoverStopWaitMs }),
+      ...(options.takeoverPollMs === undefined ? {} : { pollMs: options.takeoverPollMs }),
     })
     this.recoveryBundles = new RecoveryBundles({
       store: this.store,
@@ -4216,6 +4258,7 @@ export class TaskRuntime {
     if (command.action === "settle-startup") return this.commandSettleStartup(db, ctx, plan)
     if (command.action === "reassign") return this.commandReassign(db, ctx, plan)
     if (command.action === "cancel") return this.commandCancel(db, ctx, plan)
+    if (command.action === "takeover-submit") return this.commandTakeoverSubmit(ctx, plan)
     if (command.action === "resume" || command.action === "retry")
       return this.commandResumeOrRetry(db, ctx, plan)
     if (command.action === "reconcile") return this.commandReconcile(db, ctx, plan)
@@ -4791,9 +4834,60 @@ export class TaskRuntime {
     return { status: "reassigned", version: plan.version + 1 }
   }
 
+  /** The Architect finished a task it took over: its attempt goes to the ordinary verification. */
+  private commandTakeoverSubmit(ctx: CommandContext, plan: PlanRow) {
+    const { command } = ctx
+    if (!command.taskID || !command.reason)
+      throw new Error("takeover-submit requires taskID and reason")
+    const attempt = this.store
+      .attempts(plan.id)
+      .filter((item) => item.task_id === command.taskID)
+      .at(-1)
+    if (!attempt || !isTakeoverAttempt(attempt.policy) || attempt.state !== "running")
+      throw new Error(
+        "takeover-submit needs the task's running takeover attempt; call lz-request-handoff first",
+      )
+    this.store.move(plan.id, attempt.task_id, "VERIFY", command.reason)
+    this.store.atomic((db) => {
+      db.query(
+        "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'verifying') WHERE id=?",
+      ).run(attempt.id)
+      // A resubmission after a failed verification lifts its hold.
+      if (plan.state === "blocked")
+        db.query(
+          "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=?",
+        ).run(plan.id)
+    })
+    const submissions = this.store
+      .activity(plan.id, attempt.task_id)
+      .filter((event) => event.event === "TAKEOVER_SUBMITTED").length
+    this.store.record(plan.id, attempt.task_id, "TAKEOVER_SUBMITTED", {
+      attemptID: attempt.id,
+      reason: command.reason,
+      submission: submissions + 1,
+    })
+    this.tickRequested = true
+    return { status: "takeover-submitted", attemptID: attempt.id, version: plan.version }
+  }
+
+  /**
+   * `lz-request-handoff`: one blocking call that tells the worker, waits for its handoff within
+   * the window, stops it and returns the handoff. A repeated call with the same requestID joins
+   * the same takeover; the scheduler finishes one whose call was cut short.
+   */
+  takeover(input: unknown, caller: string, signal?: AbortSignal): Promise<TakeoverResult> {
+    return this.takeovers.run(input as never, caller, signal)
+  }
+
+  /** `lz-takeover-handoff`: the worker's slim handoff for an open takeover; never rejected for shape. */
+  takeoverHandoff(input: unknown, sessionID: string) {
+    return this.takeovers.recordWorkerHandoff(input, sessionID)
+  }
+
   private commandCancel(db: Database, ctx: CommandContext, plan: PlanRow) {
     const { command, caller } = ctx
     this.store.cancelAdoptions(plan.id, "Cancellation requested")
+    this.takeovers.cancelForPlan(plan.id, command.reason ?? "Cancellation requested")
     for (const operation of activeRetainedVerifications(db, this.directory, plan.id)) {
       saveRetainedVerification(db, {
         ...operation,
@@ -6084,16 +6178,19 @@ export class TaskRuntime {
         await this.inspectArchitectSourcePage(renewal, fence)
         this.sourceScanFailures.delete(source.session_id)
       } catch (error) {
+        // No live location is the plugin booting or reloading, not a property of the
+        // source: retry on the next tick and record nothing.
+        if (error instanceof NoCapabilityProviderError) continue
         const cause = errorText(error)
         if (this.sourceScanFailures.get(source.session_id) === cause) continue
         this.sourceScanFailures.set(source.session_id, cause)
-        // A persistent failure is one durable fact, not one row per tick: record only
-        // when the cause differs from the newest recorded scan failure for this plan.
+        // A persistent failure is one durable fact, not one row per tick or per process
+        // start: record only when the cause differs from this source's newest failure.
         this.store.fenced(this.owner, fence, () =>
-          this.store.recordOnce(renewal.anchor_plan_id, null, "ARCHITECT_SOURCE_SCAN_FAILED", {
+          this.store.recordSourceScanFailure(renewal.anchor_plan_id, {
             renewalID: renewal.id,
             sourceSessionID: source.session_id,
-            error: errorText(error),
+            error: cause,
           }),
         )
       }
@@ -7148,7 +7245,8 @@ export class TaskRuntime {
     const current = () =>
       waits.filter(
         ({ planID }) =>
-          this.store.plan(planID)?.state === "running" && !this.store.dispatchPause(planID),
+          this.store.plan(planID)?.state === "running" &&
+          !this.store.effectiveDispatchPause(planID),
       )
     const waiting = current()
     const anchor = waiting[0]
@@ -7443,6 +7541,7 @@ export class TaskRuntime {
       // Stale failed or held work is handed to an Architect as one bundle, then delivered below.
       await sectionAsync("tick:recoveryBundle", async () => {
         try {
+          this.recoveryDetector.evaluate(this.owner, fence)
           await this.recoveryBundles.reconcile(fence)
         } catch (error) {
           if (errorText(error).includes("Stale scheduler fence")) throw error
@@ -7745,12 +7844,26 @@ export class TaskRuntime {
       await this.timed("step:reconcileEffect", () => this.reconcileEffect(pending, fence))
       return
     }
+    // A takeover in progress owns its worker attempt: advance it, and leave that worker alone.
+    for (const takeover of this.takeovers.open(plan.id))
+      await this.timed("step:takeover", () => this.takeovers.advance(takeover, true))
+    plan = this.store.plan(plan.id)!
+    const heldByTakeover = this.takeovers.heldAttempts(plan.id)
     const active = this.store
       .attempts(plan.id)
       .filter((a) => ["preparing", "running", "verifying"].includes(a.state))
+      .filter((a) => !heldByTakeover.has(a.id))
     if (active.length) {
       await Promise.all(
         active.map((attempt) => {
+          // The Architect works its own attempt; it is verified once submitted.
+          if (isTakeoverAttempt(attempt.policy)) {
+            if (attempt.state !== "verifying") return
+            const task = this.store.repository.get(attempt.task_id)!
+            return this.timed("step:verifyTakeover", () =>
+              this.verify(this.store.plan(plan!.id)!, attempt, task.proposal, fence),
+            )
+          }
           const promptCompleted = this.store
             .effects(plan!.id)
             .some(
@@ -7804,7 +7917,7 @@ export class TaskRuntime {
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
       if (
-        !this.store.dispatchPause(plan.id) &&
+        !this.store.effectiveDispatchPause(plan.id) &&
         this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
       )
         return { planID: plan.id, prerequisitePlanIDs: prerequisites }
@@ -7846,10 +7959,12 @@ export class TaskRuntime {
       )
       pause = undefined
     }
+    // A project or global pause holds new dispatch whatever the plan's own pause says.
+    const held = this.store.effectiveDispatchPause(plan.id)
     const ready: NodeRow[] = []
     for (const node of nodes) {
       if (
-        pause ||
+        held ||
         !["queued", "ready"].includes(node.state) ||
         this.store.execution(node.task_id)!.waitingOn.length > 0
       )
@@ -7895,7 +8010,7 @@ export class TaskRuntime {
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
     if (outstanding.length) {
-      if (!pause && nodes.some((node) => ["queued", "ready"].includes(node.state)))
+      if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
         return {
           planID: plan.id,
           reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
@@ -9055,7 +9170,7 @@ export class TaskRuntime {
       if (
         !current ||
         current.state !== "running" ||
-        this.store.dispatchPause(plan.id) !== undefined ||
+        this.store.effectiveDispatchPause(plan.id) !== undefined ||
         current.revision !== plan.revision ||
         current.body !== plan.body ||
         currentNode?.state !== node.state
@@ -9624,6 +9739,60 @@ export class TaskRuntime {
     )
   }
 
+  /**
+   * A resume reserves a fresh input, but the interruption it answers may have been a stale
+   * observation: the worker is still inside its previous turn. Prompting it again would queue a
+   * second input behind a live turn and the retained-repair fence rightly refuses a busy worker,
+   * leaving the attempt in `preparing` while the worker works. When the session is busy on exactly
+   * the input the attempt had before the resume, the attempt takes that input back and runs.
+   */
+  private async adoptRunningWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
+    const resumed = this.store
+      .activity(plan.id, attempt.task_id)
+      .filter((event) => event.event === "ATTEMPT_RESUMED")
+      .map((event) =>
+        this.parseTransitionPayload<{
+          attemptID?: unknown
+          messageID?: unknown
+          previousMessageID?: unknown
+        }>(event),
+      )
+      .filter((payload) => payload?.attemptID === attempt.id)
+      .at(-1)
+    const previousMessageID = resumed?.previousMessageID
+    if (resumed?.messageID !== attempt.message_id || typeof previousMessageID !== "string")
+      return false
+    const observed = await this.host.session(attempt.session_id, { messages: true })
+    if (
+      !observed ||
+      observed.archived ||
+      !observed.busy ||
+      observed.directory !== attempt.workspace ||
+      observed.turn?.state !== "pending" ||
+      observed.turn.inputID !== previousMessageID ||
+      observed.messages.some((message) => message.id === attempt.message_id)
+    )
+      return false
+    const adopted = this.store.fenced(this.owner, fence, (db) => {
+      if (this.store.plan(plan.id)?.state !== "running") return false
+      const changed =
+        db
+          .query(
+            "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),message_id=? WHERE id=? AND state='preparing' AND message_id=?",
+          )
+          .run(previousMessageID, attempt.id, attempt.message_id).changes === 1
+      if (changed)
+        this.store.record(plan.id, attempt.task_id, "WORKER_RESUME_ADOPTED", {
+          attemptID: attempt.id,
+          sessionID: attempt.session_id,
+          inputID: previousMessageID,
+          reservedMessageID: attempt.message_id,
+        })
+      return changed
+    })
+    return adopted
+  }
+
   private async prepareWorker(plan: PlanRow, attempt: AttemptRow, fence: number) {
     const admissionPlan = this.store.plan(plan.id)
     if (!admissionPlan || admissionPlan.state !== "running") return
@@ -9638,6 +9807,7 @@ export class TaskRuntime {
       this.hold(plan, "Retained repair is missing a valid owner/control authorization fence")
       return
     }
+    if (retainedRepair && (await this.adoptRunningWorker(plan, attempt, fence))) return
     const existing = this.store.effects(plan.id)
     if (
       retainedRepair &&
@@ -9870,6 +10040,8 @@ export class TaskRuntime {
         .filter((item) => item.task_id === attempt.task_id)
         .at(-1)
       if (latest?.id !== attempt.id) continue
+      // The Architect is finishing this task itself; only its submit or a cancel settles it.
+      if (isTakeoverAttempt(attempt.policy) && attempt.state === "running") continue
       if (
         this.store
           .effects(plan.id)
@@ -11652,6 +11824,8 @@ export class TaskRuntime {
     reason: string,
     workerObservation?: TerminalWorkerHold,
   ) {
+    if (isTakeoverAttempt(attempt.policy))
+      return this.returnTakeoverToArchitect(plan, attempt, reason)
     const task = this.store.repository.get(attempt.task_id)!
     this.store.atomic((db) => {
       db.query(
@@ -11668,6 +11842,38 @@ export class TaskRuntime {
     if (this.store.execution(task.id)?.state === "failed")
       this.hold(plan, reason, ["audit", "reconcile", "cancel"], workerObservation)
   }
+  /**
+   * The Architect's own result failed verification. It is not a worker to repair or retry: the
+   * same attempt goes back to the Architect (attempt and task back to running through their
+   * machines) and the plan holds with the failing checks and Fallow findings in its reason,
+   * advertising takeover-submit and cancel. The hold reaches the recovery bundle if unanswered.
+   */
+  private returnTakeoverToArchitect(plan: PlanRow, attempt: AttemptRow, reason: string) {
+    this.store.atomic((db) => {
+      const current = this.store.attempts(plan.id).find((item) => item.id === attempt.id)!
+      if (current.state === "verifying") {
+        db.query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'preparing') WHERE id=?",
+        ).run(attempt.id)
+        db.query(
+          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'running'),artifact=NULL WHERE id=?",
+        ).run(attempt.id)
+      }
+      const node = this.store.nodes(plan.id).find((item) => item.task_id === attempt.task_id)!
+      if (node.state === "verifying") this.store.move(plan.id, attempt.task_id, "RESUME", reason)
+      this.store.record(plan.id, attempt.task_id, "TAKEOVER_VERIFY_FAILED", {
+        attemptID: attempt.id,
+        reason,
+      })
+    })
+    try {
+      this.progress.recordAttemptOutcome(attempt.id, "failed", reason)
+    } catch {
+      // Runtime transitions remain authoritative if annotation storage is unavailable.
+    }
+    this.hold(plan, `Takeover verification failed: ${reason}`, ["takeover-submit", "cancel"])
+  }
+
   private async finish(plan: PlanRow, fence: number) {
     if (this.store.plan(plan.id)?.state !== "running") return
     const verificationPlanVersion = this.store.plan(plan.id)!.version

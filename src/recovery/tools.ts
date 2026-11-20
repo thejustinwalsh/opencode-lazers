@@ -15,7 +15,6 @@ import {
   HandoffDraftSubmissionInput,
   HandoffEvidence,
   HandoffFinalizeInput,
-  HandoffRequestInput,
   RecoveryCheckpointInput,
   RecoveryConcernInput,
   RecoveryDispositionInput,
@@ -322,33 +321,6 @@ export function registerRecoveryTools(ctx: RecoveryContext, repository: TaskRepo
                 },
                 catch: (error) => new Tool.Error({ message: String(error) }),
               }),
-            ),
-          ),
-    })
-
-    editor.add({
-      name: "lz-request-handoff",
-      description:
-        "Persist an Architect's structured request for a handoff attached to the exact source attempt. The request ID is the durable reference; it does not grant another writer, prove stopped activity, or mark task completion.",
-      input: z.strictObject({
-        ...HandoffRequestInput.shape,
-        requestID: z.string().min(1).max(200).optional(),
-      }),
-      output: z.unknown(),
-      options: { codemode: true, permission: "lz-request-handoff" },
-      execute: (input, call) =>
-        ctx.permission
-          .assert({
-            sessionID: call.sessionID,
-            agent: call.agent,
-            action: "lz-request-handoff",
-            resources: ["*"],
-          })
-          .pipe(
-            Effect.map(() =>
-              output(
-                store.request({ ...input, requestID: input.requestID ?? call.id }, actor(call)),
-              ),
             ),
           ),
     })

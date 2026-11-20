@@ -3,6 +3,8 @@ import { Schema } from "effect"
 import { captureTrajectoryHistory, inspectTrajectory, inspectTrajectoryStatus } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
+import { DETECTOR_ACTOR } from "../recovery/detector.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { projectProgressFact } from "../progress/projection.ts"
 import { openReadOnlyTrajectoryStore } from "./store.ts"
@@ -1772,6 +1774,126 @@ test("the task report carries the Tasks reference when one exists and omits it o
     fixture.store.atomic((db) => db.query("DELETE FROM task_references").run())
     const bare = await read()
     expect(Object.hasOwn(bare.task, "reference")).toBe(false)
+  } finally {
+    fixture.close()
+  }
+})
+
+test("trajectory marks an attempt with an open concern and an Architect takeover attempt", async () => {
+  const fixture = makeFixture()
+  try {
+    const read = async () =>
+      (
+        (await inspectTrajectory(
+          fixture.store,
+          fixture.host,
+          "project",
+          parse({ taskID }),
+          cursorSecret,
+        )) as { attempts: Array<Record<string, unknown>> }
+      ).attempts
+    // Nothing recorded: no attempt carries either field.
+    for (const attempt of await read()) {
+      expect(attempt).not.toHaveProperty("concern")
+      expect(attempt).not.toHaveProperty("takeover")
+    }
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_nodes SET state='running'").run()
+    })
+    new HandoffStore(fixture.store.repository).recordConcern(
+      {
+        requestID: "concern-request",
+        concernID: crypto.randomUUID(),
+        sourceAttemptID: firstAttemptID,
+        ruleID: "verify-rounds-repeated",
+        reason: "3 verification rounds",
+        evidenceBoundary: { fromSequence: 0, throughSequence: 1 },
+        evidence: [
+          {
+            kind: "trajectory",
+            reference: "runner:1",
+            note: "n; magnitude=3; action=takeover; because=Rounds keep failing",
+          },
+        ],
+      },
+      DETECTOR_ACTOR,
+    )
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET policy=? WHERE id<>?").run(
+        JSON.stringify({
+          agent: "architect",
+          takeover: {
+            takeoverID: crypto.randomUUID(),
+            architectSessionID: "architect",
+            fromAttemptID: firstAttemptID,
+          },
+        }),
+        firstAttemptID,
+      )
+    })
+    const attempts = await read()
+    const first = attempts.find((attempt) => attempt.id === firstAttemptID)!
+    expect(first.concern).toEqual({
+      line: "3 verification rounds",
+      action: "takeover",
+      because: "Rounds keep failing",
+    })
+    expect(first).not.toHaveProperty("takeover")
+    const others = attempts.filter((attempt) => attempt.id !== firstAttemptID)
+    expect(others.length).toBeGreaterThan(0)
+    for (const attempt of others) {
+      expect(attempt.takeover).toEqual({ agent: "architect" })
+      expect(attempt).not.toHaveProperty("concern")
+    }
+  } finally {
+    fixture.close()
+  }
+})
+
+test("an Architect takeover attempt is not read as a missing worker session and adds no unknown usage", async () => {
+  const fixture = makeFixture()
+  try {
+    fixture.store.atomic((db) => {
+      db.query(
+        "UPDATE runner_attempts SET policy=?,session_id='lazers-takeover:request',token_count=NULL,cost=NULL WHERE id<>?",
+      ).run(
+        JSON.stringify({
+          agent: "architect",
+          takeover: { takeoverID: "t", architectSessionID: "a", fromAttemptID: firstAttemptID },
+        }),
+        firstAttemptID,
+      )
+    })
+    const asked: string[] = []
+    const host = {
+      ...fixture.host,
+      session: (id: string, ...rest: unknown[]) => {
+        asked.push(id)
+        return (fixture.host.session as (...args: unknown[]) => unknown)(id, ...rest)
+      },
+    } as typeof fixture.host
+    const report = (await inspectTrajectory(
+      fixture.store,
+      host,
+      "project",
+      parse({ taskID }),
+      cursorSecret,
+    )) as {
+      attempts: Array<{ id: string; takeover?: unknown }>
+      effort: { tokenUsage: { unknownAttempts: string[]; legacyAttemptScalarsNotAdded: unknown[] } }
+      coverage: { attemptsWithoutRecordedSessions: number; unavailableSessionContexts: number }
+    }
+    const takeovers = report.attempts.filter((attempt) => attempt.takeover)
+    expect(takeovers.length).toBeGreaterThan(0)
+    expect(asked.some((id) => id.startsWith("lazers-takeover:"))).toBe(false)
+    for (const attempt of takeovers) {
+      expect(report.effort.tokenUsage.unknownAttempts).not.toContain(attempt.id)
+      expect(JSON.stringify(report.effort.tokenUsage.legacyAttemptScalarsNotAdded)).not.toContain(
+        attempt.id,
+      )
+    }
+    expect(report.coverage.unavailableSessionContexts).toBe(0)
+    expect(report.coverage.attemptsWithoutRecordedSessions).toBe(0)
   } finally {
     fixture.close()
   }

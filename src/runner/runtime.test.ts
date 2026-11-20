@@ -19,8 +19,13 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { NoCapabilityProviderError } from "../core/capabilities.ts"
 import { validProposal } from "../../test/proposal.ts"
 import { TaskRepository } from "../storage.ts"
+import { registerProject } from "../project-key.ts"
+import { effectivePause, setPause } from "../projects/pause.ts"
+import { inspectPlan } from "./inspection.ts"
+import type { CompactPlanDetail } from "./inspection.ts"
 import { checkResourcesSettled, combineArtifacts, git } from "./artifacts.ts"
 import type { CheckReceipt } from "./artifacts.ts"
 import type { ArchitectSourceResult, HostSession, RunnerHost } from "./host.ts"
@@ -55,6 +60,7 @@ import {
 } from "./verification-activities.ts"
 import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
 
 const cleanPackage: FallowPackage = {
   verdict: "pass",
@@ -130,6 +136,8 @@ function fixture(
     fallowReviewRun?: FallowReview
     fallowPlanReviewRun?: FallowReview
     auditorReportRun?: AuditorReport
+    takeover?: { handoffWindowMs: number; stopWaitMs: number; pollMs: number }
+    workerSpendCeilingTokens?: number
   } = {},
 ) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "lazers-runner-")))
@@ -481,6 +489,16 @@ function fixture(
     ...(options.cancelIdleWaitMs === undefined
       ? {}
       : { cancelIdleWaitMs: options.cancelIdleWaitMs }),
+    ...(options.workerSpendCeilingTokens === undefined
+      ? {}
+      : { workerSpendCeilingTokens: options.workerSpendCeilingTokens }),
+    ...(options.takeover
+      ? {
+          takeoverHandoffWindowMs: options.takeover.handoffWindowMs,
+          takeoverStopWaitMs: options.takeover.stopWaitMs,
+          takeoverPollMs: options.takeover.pollMs,
+        }
+      : {}),
     requestTick: () =>
       verificationActivitiesForDatabase(repository.path).length
         ? Promise.resolve()
@@ -11748,6 +11766,65 @@ test("the registered scheduler reuses recent/busy Architects and renews at the d
   expect(committed.wakeContext.bytes).toBeGreaterThan(0)
 })
 
+test("a cold Architect with a small context is reused on every tick, never renewed", async () => {
+  const now = 2_000_000_200_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 12_000
+  const count = (event: string) =>
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) AS n FROM runner_transitions WHERE event=?",
+          )
+          .get(event)!.n,
+    )
+  const watched = [
+    "ARCHITECT_RENEWAL_STARTED",
+    "ARCHITECT_RENEWAL_COMMITTED",
+    "OWNER_CONTINUED",
+    "ARCHITECT_ROUTED",
+  ]
+  const before = watched.map(count)
+  for (let tick = 0; tick < 12; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(0)
+  expect(f.store.architectRenewalForPlan(f.receipt.planID)).toBeFalsy()
+  expect(owner.archived).toBe(false)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe("owner")
+  const after = watched.map(count)
+  expect(after[0]).toBe(before[0]!)
+  expect(after[1]).toBe(before[1]!)
+  expect(after[2]).toBe(before[2]!)
+  // The routing decision is recorded once per change, not once per tick.
+  expect(after[3]! - before[3]!).toBeLessThanOrEqual(1)
+})
+
+test("a cold Architect with a large context is renewed exactly once", async () => {
+  const now = 2_000_000_300_000
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+  })
+  await prepareIdleArchitect(f, now, DEFAULT_ARCHITECT_CACHE_WINDOW_MS * 4)
+  const owner = f.sessions.get("owner")!
+  owner.contextTokens = 180_000
+  for (let tick = 0; tick < 12; tick++) await f.runtime.tick()
+  expect(f.events.filter((event) => event.startsWith("create-architect:"))).toHaveLength(1)
+  const renewal = f.store.architectRenewalForPlan(f.receipt.planID)!
+  expect(renewal.state).toBe("committed")
+  expect(owner.archived).toBe(true)
+  expect(f.store.plan(f.receipt.planID)?.owner).toBe(renewal.successor_session_id)
+})
+
 test("idle-window overrides, busy sessions, unsupported hooks, and pre-create input fail closed", async () => {
   const now = 2_000_000_100_000
   expect(architectIdleWindowMs(5_000)).toBe(5_000)
@@ -14942,6 +15019,58 @@ test("a persistent Architect source scan failure records once per distinct cause
   expect(failures().at(-1)?.error).toBe("a different cause")
 })
 
+test("a missing live location is not an Architect source scan failure", async () => {
+  const now = 2_000_000_519_700
+  const f = fixture({
+    delayed: true,
+    architectPromptHook: true,
+    architectIdleWindowMs: 1_000,
+    now: () => now,
+    taskFiles: [{ name: "a", path: "source-scan-no-location.txt" }],
+  })
+  await prepareIdleArchitect(f, now, 1_000)
+  await f.runtime.tick()
+  await f.runtime.tick()
+  let reads = 0
+  f.host.architectInputPage = async () => {
+    reads++
+    throw new NoCapabilityProviderError("native")
+  }
+  const failures = () =>
+    f.repository.read(
+      (db) =>
+        db
+          .query<{ n: number }, []>(
+            "SELECT count(*) AS n FROM runner_transitions WHERE event='ARCHITECT_SOURCE_SCAN_FAILED'",
+          )
+          .get()!.n,
+    )
+  const baseline = failures()
+  f.runtime.observeArchitectSourceEvent("owner")
+  f.runtime.flushSourceInvalidations()
+  for (let tick = 0; tick < 5; tick++) await f.runtime.tick()
+  expect(reads).toBeGreaterThanOrEqual(2)
+  expect(failures()).toBe(baseline)
+})
+
+test("source scan failures are recorded once per source even when sources interleave on one plan", () => {
+  const f = fixture({ taskFiles: [{ name: "a", path: "a.txt" }] })
+  const plan = f.receipt.planID
+  const fail = (source: string, error: string) =>
+    f.store.recordSourceScanFailure(plan, {
+      renewalID: `r-${source}`,
+      sourceSessionID: source,
+      error,
+    })
+  expect(fail("s1", "boom")).toBe(true)
+  expect(fail("s2", "boom")).toBe(true)
+  // A process restart replays both sources; neither is a new fact.
+  expect(fail("s1", "boom")).toBe(false)
+  expect(fail("s2", "boom")).toBe(false)
+  expect(fail("s1", "other")).toBe(true)
+  expect(transitions(f, plan, "ARCHITECT_SOURCE_SCAN_FAILED")).toHaveLength(3)
+})
+
 async function cancelRunningPlan(f: ReturnType<typeof fixture>, requestID: string) {
   await f.runtime.command(
     {
@@ -15355,4 +15484,432 @@ test("Start of a task in a project with no Fallow config is refused with the typ
   })
   expect(refusalMessage(refusal)).toContain("Nothing was queued.")
   expect(f.store.plans()).toHaveLength(0)
+})
+
+// ---------------------------------------------------------------------------------------------
+// Architect takeover: one blocking lz-request-handoff call, then the Architect finishes the task.
+
+const known = (value: string) => ({ status: "known" as const, value })
+function workerHandoffDraft() {
+  return {
+    target: {
+      outcome: known("a.txt holds the task name"),
+      originalUserIntent: { status: "unknown" as const },
+      workerInterpretation: known("write a.txt"),
+      contractReferences: [],
+    },
+    completedWork: [{ summary: "Committed a first version of a.txt", evidence: [] }],
+    partialWork: [],
+    workspaceState: known("a.txt committed with the wrong content"),
+    approaches: [{ approach: "wrote a.txt", result: known("content check fails"), evidence: [] }],
+    failure: {
+      status: "observed" as const,
+      behavior: known("the content check fails"),
+      cause: "implementation" as const,
+      evidence: [],
+    },
+    assumptions: [],
+    evidence: [],
+    preservedObligations: [],
+    remainingWork: known("write the right content"),
+    remainingDecisions: { status: "not-applicable" as const },
+    reportedOwnership: {
+      writerActivity: known("stopping"),
+      backgroundActivity: known("none"),
+      unresolvedNativeEffects: known("none"),
+      reportedQuiescence: "idle" as const,
+    },
+  }
+}
+
+const fastTakeover = { handoffWindowMs: 200, stopWaitMs: 50, pollMs: 5 }
+
+async function takeoverFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const f = fixture({
+    delayed: true,
+    wrongFirstA: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    takeover: fastTakeover,
+    ...options,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const worker = f.store.attempts(f.receipt.planID)[0]!
+  expect(f.sessions.get(worker.session_id)!.busy).toBe(true)
+  const steered: string[] = []
+  return { f, worker, steered }
+}
+
+function commitWorkInProgress(worker: AttemptRow) {
+  git(worker.workspace, ["add", "-A"])
+  git(worker.workspace, [
+    "-c",
+    "user.name=fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-m",
+    "WIP before takeover",
+  ])
+}
+
+/** A worker that still uses the full reviewed handoff draft is read as the worker's account. */
+function workerWritesHandoff(f: ReturnType<typeof fixture>, worker: AttemptRow, requestID: string) {
+  commitWorkInProgress(worker)
+  new HandoffStore(f.repository).saveDraft(
+    { requestID, draftID: crypto.randomUUID(), draft: workerHandoffDraft() },
+    {
+      sessionID: worker.session_id,
+      agent: String(JSON.parse(worker.policy).agent),
+      role: "worker",
+    },
+  )
+}
+
+test("takeover: the worker writes its handoff in time, stops, and the Architect's result is verified and accepted", async () => {
+  const { f, worker, steered } = await takeoverFixture()
+  f.host.steerWorker = async (input) => {
+    steered.push(input.id)
+    expect(input.text).toContain("lz-takeover-handoff")
+    commitWorkInProgress(worker)
+    f.runtime.takeoverHandoff(
+      {
+        done: "a first a.txt",
+        remaining: "the right content",
+        workspaceState: "committed",
+        struggledWith: "the content check",
+        tried: "writing a.txt",
+      },
+      worker.session_id,
+    )
+  }
+  const result = await f.runtime.takeover(
+    { attemptID: worker.id, reason: "Not converging", requestID: "take-1" },
+    "owner",
+  )
+  expect(result.status).toBe("taken-over")
+  expect(result.handoff).toMatchObject({ author: "worker", struggledWith: "the content check" })
+  // Recorded facts accompany the worker's own account.
+  expect(result.facts).toMatchObject({ attempts: 1 })
+  expect(steered).toHaveLength(1)
+  expect(result.commits?.some((line) => line.includes("WIP before takeover"))).toBe(true)
+  expect(f.events).toContain(`stop:${worker.session_id}`)
+  const attempts = f.store.attempts(f.receipt.planID)
+  expect(attempts.find((a) => a.id === worker.id)!.state).toBe("cancelled")
+  const mine = attempts.find((a) => a.id === result.attemptID)!
+  expect(mine.state).toBe("running")
+  expect(mine.workspace).toBe(worker.workspace)
+  expect(JSON.parse(mine.policy).takeover.architectSessionID).toBe("owner")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
+  // A repeated call joins the same takeover and sends nothing again.
+  const again = await f.runtime.takeover(
+    { attemptID: worker.id, reason: "Not converging", requestID: "take-1" },
+    "owner",
+  )
+  expect(again.takeoverID).toBe(result.takeoverID)
+  expect(steered).toHaveLength(1)
+
+  // The scheduler leaves the Architect's attempt alone until it is submitted.
+  await drive(f.runtime, 3)
+  expect(f.store.attempts(f.receipt.planID).find((a) => a.id === mine.id)!.state).toBe("running")
+
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await f.runtime.command(
+    {
+      requestID: "submit-1",
+      planID: f.receipt.planID,
+      action: "takeover-submit",
+      taskID: worker.task_id,
+      reason: "Finished by the Architect",
+    },
+    "owner",
+  )
+  await drive(f.runtime, 10)
+  const accepted = f.store.attempts(f.receipt.planID).find((a) => a.id === mine.id)!
+  expect(accepted.state).toBe("accepted")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  // The worker's commits are kept under the Architect's result.
+  expect(
+    git(worker.workspace, ["merge-base", "--is-ancestor", result.head!, accepted.artifact!]),
+  ).toBe("")
+  expect(f.store.plan(f.receipt.planID)!.state).toBe("accepted")
+})
+
+test("takeover: a worker that writes nothing is stopped when the window passes; uncommitted work is kept", async () => {
+  const { f, worker, steered } = await takeoverFixture()
+  f.host.steerWorker = async (input) => void steered.push(input.id)
+  writeFileSync(join(worker.workspace, "notes.txt"), "half done")
+  const result = await f.runtime.takeover({ attemptID: worker.id, reason: "Stalled" }, "owner")
+  expect(result.status).toBe("taken-over")
+  expect(steered).toHaveLength(1)
+  expect(result.handoff?.author).toBe("runtime")
+  expect(result.uncommitted?.some((line) => line.endsWith("notes.txt"))).toBe(true)
+  expect(result.wipRef).toStartWith("refs/lazers/takeover/")
+  expect(readFileSync(join(worker.workspace, "notes.txt"), "utf8")).toBe("half done")
+  expect(git(worker.workspace, ["cat-file", "-t", result.wipRef!])).toBe("tree")
+  expect(f.events).toContain(`stop:${worker.session_id}`)
+})
+
+test("takeover: a worker that already stopped is not notified", async () => {
+  const { f, worker, steered } = await takeoverFixture()
+  f.host.steerWorker = async (input) => void steered.push(input.id)
+  f.completeWorker(worker.session_id, "interrupted")
+  const result = await f.runtime.takeover({ attemptID: worker.id, reason: "Dead worker" }, "owner")
+  expect(result.status).toBe("taken-over")
+  expect(steered).toHaveLength(0)
+  expect(result.handoff?.author).toBe("runtime")
+})
+
+test("takeover: a call cut short by a reload is finished by the scheduler, notified once, and a repeated call returns it", async () => {
+  const { f, worker, steered } = await takeoverFixture({
+    takeover: { handoffWindowMs: 60_000, stopWaitMs: 50, pollMs: 5 },
+  })
+  f.host.steerWorker = async (input) => void steered.push(input.id)
+  const cut = new AbortController()
+  setTimeout(() => cut.abort(), 40)
+  const first = await f.runtime.takeover(
+    { attemptID: worker.id, reason: "Reload mid-call", requestID: "take-reload" },
+    "owner",
+    cut.signal,
+  )
+  expect(first.status).toBe("in-progress")
+  expect(steered).toHaveLength(1)
+  // While the window is open the worker keeps running and the scheduler does not verify it.
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+
+  // A reload: the old process is gone and its scheduler lease has lapsed.
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("DELETE FROM runner_leases").run())
+  const reloaded = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+    takeoverHandoffWindowMs: 60_000,
+    takeoverStopWaitMs: 50,
+    takeoverPollMs: 5,
+  })
+  cleanup.push(() => reloaded.stop())
+  workerWritesHandoff(f, worker, `takeover:${first.takeoverID}`)
+  await drive(reloaded, 4)
+  const notices = f.notifications.filter((n) => n.text.includes("takeover-ready"))
+  expect(notices).toHaveLength(1)
+  const repeated = await reloaded.takeover(
+    { attemptID: worker.id, reason: "Reload mid-call", requestID: "take-reload" },
+    "owner",
+  )
+  expect(repeated).toMatchObject({ status: "taken-over", takeoverID: first.takeoverID })
+  expect(repeated.handoff?.author).toBe("worker")
+  expect(steered).toHaveLength(1)
+  await drive(reloaded, 3)
+  expect(f.notifications.filter((n) => n.text.includes("takeover-ready"))).toHaveLength(1)
+})
+
+test("takeover: cancelling the plan cancels an open takeover", async () => {
+  const { f, worker } = await takeoverFixture({
+    takeover: { handoffWindowMs: 60_000, stopWaitMs: 50, pollMs: 5 },
+  })
+  f.host.steerWorker = async () => {}
+  const cut = new AbortController()
+  setTimeout(() => cut.abort(), 30)
+  const open = await f.runtime.takeover(
+    { attemptID: worker.id, reason: "Then cancel" },
+    "owner",
+    cut.signal,
+  )
+  expect(open.status).toBe("in-progress")
+  await f.runtime.command(
+    { requestID: "cancel-takeover", planID: f.receipt.planID, action: "cancel", reason: "stop" },
+    "owner",
+  )
+  const latest = f.store.latestTransition<{ takeoverID: string }>(
+    f.receipt.planID,
+    worker.task_id,
+    "TAKEOVER_CANCELLED",
+  )
+  expect(latest?.takeoverID).toBe(open.takeoverID)
+})
+
+test("a worker concern reaches the live Architect while the worker runs, waits out a contact pause, and is sent once", async () => {
+  const f = fixture({
+    delayed: true,
+    taskFiles: [{ name: "a", path: "a.txt" }],
+    workerSpendCeilingTokens: 1_000_000,
+  })
+  await runPlan(f)
+  await f.runtime.tick()
+  const worker = f.store.attempts(f.receipt.planID)[0]!
+  f.sessions.get(worker.session_id)!.tokens = 5_000_000
+  f.store.setArchitectContact("paused", "operator")
+  await drive(f.runtime, 4)
+  const bundles = () => f.notifications.filter((n) => n.text.includes("LAZERS recovery bundle"))
+  // The concern is recorded, but nothing reaches an Architect while contact is paused.
+  expect(
+    f.store.latestTransition(f.receipt.planID, worker.task_id, "WORKER_CONCERN_RAISED"),
+  ).toBeDefined()
+  expect(bundles()).toHaveLength(0)
+  f.store.setArchitectContact("enabled", "")
+  await drive(f.runtime, 4)
+  expect(bundles()).toHaveLength(1)
+  expect(bundles()[0]!.sessionID).toBe("owner")
+  expect(bundles()[0]!.text).toContain("worker-concern")
+  expect(bundles()[0]!.text).toContain("lz-request-handoff")
+  // The worker was never held, interrupted or stopped by the concern.
+  expect(f.store.attempts(f.receipt.planID)[0]!.state).toBe("running")
+  expect(f.sessions.get(worker.session_id)!.busy).toBe(true)
+  expect(f.events).not.toContain(`stop:${worker.session_id}`)
+  await drive(f.runtime, 4)
+  expect(bundles()).toHaveLength(1)
+  // A reload neither raises the concern again nor sends it twice.
+  await f.runtime.stop()
+  f.store.atomic((db) => db.query("DELETE FROM runner_leases").run())
+  const reloaded = new TaskRuntime(f.store, f.host, "project", undefined, {
+    autoResumeInterrupted: false,
+    workerSpendCeilingTokens: 1_000_000,
+  })
+  cleanup.push(() => reloaded.stop())
+  await drive(reloaded, 4)
+  expect(bundles()).toHaveLength(1)
+  expect(
+    f.store
+      .activity(f.receipt.planID, worker.task_id)
+      .filter((event) => event.event === "WORKER_CONCERN_RAISED"),
+  ).toHaveLength(1)
+})
+
+test("takeover: a worker handoff that does not fit the fields is kept verbatim as the worker's", async () => {
+  const { f, worker } = await takeoverFixture()
+  f.host.steerWorker = async () => {
+    f.runtime.takeoverHandoff(
+      { summary: ["fixed half", "tests still red"], done: 3 },
+      worker.session_id,
+    )
+  }
+  const result = await f.runtime.takeover({ attemptID: worker.id, reason: "Odd handoff" }, "owner")
+  expect(result.handoff).toMatchObject({ author: "worker", done: "3" })
+  expect((result.handoff as { raw?: string }).raw).toContain("tests still red")
+  expect(() => f.runtime.takeoverHandoff({ done: "late" }, worker.session_id)).toThrow(
+    "No takeover is waiting",
+  )
+})
+
+test("takeover: a failed verification goes back to the Architect on the same attempt, advertised and bundled, and a resubmission is accepted", async () => {
+  let offset = 0
+  const { f, worker } = await takeoverFixture({ now: () => Date.now() + offset })
+  f.host.steerWorker = async () => {}
+  const taken = await f.runtime.takeover({ attemptID: worker.id, reason: "Finish it" }, "owner")
+  expect(taken.status).toBe("taken-over")
+  const submit = (requestID: string) =>
+    f.runtime.command(
+      {
+        requestID,
+        planID: f.receipt.planID,
+        action: "takeover-submit",
+        taskID: worker.task_id,
+        reason: "Architect result",
+      },
+      "owner",
+    )
+  // The worker left "wrong" in a.txt; the first submission fails its check.
+  await submit("submit-wrong")
+  await drive(f.runtime, 8)
+  const plan = f.store.plan(f.receipt.planID)!
+  expect(plan.state).toBe("blocked")
+  expect(plan.reason).toStartWith("Takeover verification failed:")
+  const mine = f.store.attempts(f.receipt.planID).find((a) => a.id === taken.attemptID)!
+  expect(mine.state).toBe("running")
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("running")
+  const notice = f.notifications.findLast((n) => n.text.includes("Takeover verification failed"))
+  expect(notice?.text).toContain("takeover-submit")
+  // Left unanswered, the hold reaches the recovery bundle with its actions.
+  offset += RECOVERY_STALE_MS + 60_000
+  await drive(f.runtime, 3)
+  const bundle = f.notifications.findLast((n) => n.text.includes("LAZERS recovery bundle"))
+  expect(bundle?.text).toContain("takeover-submit")
+  // Fixed and submitted again on the same attempt: accepted.
+  writeFileSync(join(worker.workspace, "a.txt"), "a")
+  await submit("submit-fixed")
+  await drive(f.runtime, 10)
+  expect(f.store.attempts(f.receipt.planID).find((a) => a.id === mine.id)!.state).toBe("accepted")
+  expect(
+    f.store
+      .activity(f.receipt.planID, worker.task_id)
+      .filter((event) => event.event === "TAKEOVER_SUBMITTED"),
+  ).toHaveLength(2)
+})
+
+async function registeredKey(f: ReturnType<typeof fixture>) {
+  return (await registerProject(f.repository, { directory: f.root, opencodeProjectID: "project" }))
+    .key
+}
+
+test("a project pause holds new dispatch only there; running work is verified; unpause dispatches again", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  // Another project's pause does not touch this one.
+  setPause(
+    f.repository,
+    { kind: "project", key: "github.com/other/project" },
+    {
+      paused: true,
+      reason: "Elsewhere",
+      by: "owner",
+    },
+  )
+  await runPlan(f)
+  await f.runtime.tick()
+  const first = f.store.attempts(f.receipt.planID)[0]!
+  expect(first).toBeDefined()
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  expect(f.sessions.get(first.session_id)!.busy).toBe(true)
+  f.completeWorker(first.session_id)
+  await drive(f.runtime, 5)
+  expect(f.store.nodes(f.receipt.planID)[0]!.state).toBe("accepted")
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(f.events.some((event) => event.startsWith("interrupt:"))).toBe(false)
+  await integrateTaskSource(f, f.receipt.planID, first.task_id)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+  expect(effectivePause(f.repository, f.receipt.planID)).toMatchObject({
+    level: "project",
+    reason: "Rebuild",
+  })
+  setPause(f.repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(2)
+})
+
+test("a global pause holds a project that was never registered, and lifting it dispatches", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  await runPlan(f)
+  await drive(f.runtime, 5)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(0)
+  expect(effectivePause(f.repository, f.receipt.planID)?.level).toBe("global")
+  setPause(f.repository, { kind: "global" }, { paused: false, reason: "", by: "owner" })
+  await drive(f.runtime, 2)
+  expect(f.store.attempts(f.receipt.planID)).toHaveLength(1)
+})
+
+test("a paused project's waiting task names the level in the execution read and the plan inspection", async () => {
+  const f = fixture({ delayed: true, shared: true, commit: true })
+  const key = await registeredKey(f)
+  await runPlan(f)
+  setPause(f.repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
+  await drive(f.runtime, 3)
+  const waiting = f.store.nodes(f.receipt.planID)[0]!
+  expect(f.store.execution(waiting.task_id)?.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  const compact = inspectPlan(f.store, {
+    planID: f.receipt.planID,
+    full: false,
+  }) as CompactPlanDetail
+  expect(compact.plan.schedule.dispatchPause).toEqual({
+    reason: "Project pause: Rebuild",
+    untilPlans: [],
+    level: "project",
+  })
+  setPause(f.repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
+  expect(f.store.execution(waiting.task_id)?.dispatchPause?.reason).toBe("Global pause: Away")
 })

@@ -214,6 +214,20 @@ const Report = z
         planID: z.string(),
         number: z.number().int().positive(),
         state: z.string(),
+        /** Present when the attempt is the Architect finishing the task itself. */
+        takeover: z
+          .object({ agent: z.literal("architect") })
+          .strip()
+          .optional(),
+        /** An open worker concern raised against this attempt, with the rule's advice. */
+        concern: z
+          .object({
+            line: z.string(),
+            action: z.string().optional(),
+            because: z.string().optional(),
+          })
+          .strip()
+          .optional(),
         sessionID: z.string(),
         startedAt: z.number().finite(),
         intervals: z.object({ attempt: Interval, modelActivity: Interval }).strip(),

@@ -27,13 +27,14 @@ import { architectSourceTransition, type ArchitectSourceState } from "./architec
 import { canonical, fingerprint } from "../identity.ts"
 import { sessionAssociations } from "../observability/associations.ts"
 import type { TaskRepository } from "../storage.ts"
+import { outerPause, outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { RecoveryJournal } from "../recovery/journal.ts"
 import { git, scopePatternsConflict } from "./artifacts.ts"
 import { reservationPatterns, type ScopeModel } from "./scope.ts"
 import { initialSnapshot, machineVersion, transition } from "./machine.ts"
 import { PlanInput, PlanSubmissionInput } from "./schema.ts"
-import type { Execution, Finding, TaskState } from "./schema.ts"
+import type { DispatchPause, Execution, Finding, TaskState } from "./schema.ts"
 import type { ArchitectSourceResult, ArchitectSourceObservation } from "./host.ts"
 import { readSourceJournalPage } from "./source-journal.ts"
 import type { SourceJournalPage } from "./source-journal.ts"
@@ -718,6 +719,13 @@ export class RunnerStore {
       );
       CREATE INDEX IF NOT EXISTS runner_adoptions_active
         ON runner_adoptions(plan_id,state,created_at);
+      CREATE TABLE IF NOT EXISTS runner_takeovers (
+        id TEXT PRIMARY KEY, project_directory TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES runner_plans(id),
+        task_id TEXT NOT NULL, attempt_id TEXT NOT NULL REFERENCES runner_attempts(id),
+        architect_session_id TEXT NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS runner_takeovers_open ON runner_takeovers(plan_id,state);
       CREATE TABLE IF NOT EXISTS runner_adoption_checks (
         adoption_id TEXT NOT NULL REFERENCES runner_adoptions(id), phase TEXT NOT NULL,
         check_id TEXT NOT NULL, check_json TEXT NOT NULL, workspace TEXT NOT NULL,
@@ -1161,6 +1169,16 @@ export class RunnerStore {
         ? { reason: row.reason, untilPlans: JSON.parse(row.until_plans) as string[] }
         : undefined
     })
+  }
+  /**
+   * The pause that holds a plan from new dispatch: a project or global pause when one applies
+   * (strictest first), else the plan's own. A project or global pause has no resume condition;
+   * it is lifted by hand. Running work is never affected; only callers that start work ask this.
+   */
+  effectiveDispatchPause(planID: string): DispatchPause | undefined {
+    const outer = outerPause(this.repository, this.repository.projectDirectory)
+    if (outer) return { reason: outerPauseReason(outer), untilPlans: [], level: outer.level }
+    return this.dispatchPause(planID)
   }
   setDispatchPause(
     planID: string,
@@ -2965,8 +2983,8 @@ export class RunnerStore {
         node.reason ??
         (node.plan_state === "blocked" ? node.plan_reason : null),
       waitingOn,
-      ...(["queued", "ready"].includes(node.state) && this.dispatchPause(node.plan_id)
-        ? { dispatchPause: this.dispatchPause(node.plan_id) }
+      ...(["queued", "ready"].includes(node.state) && this.effectiveDispatchPause(node.plan_id)
+        ? { dispatchPause: this.effectiveDispatchPause(node.plan_id) }
         : {}),
     }
   }
@@ -3155,6 +3173,30 @@ export class RunnerStore {
       const previous = this.latestTransition<unknown>(planID, taskID, event)
       if (previous !== undefined && canonical(previous) === canonical(payload)) return false
       this.record(planID, taskID, event, payload)
+      return true
+    })
+  }
+  /**
+   * Record an Architect source scan failure once per (source, cause). The plan-level
+   * `recordOnce` compares only the newest row of the anchor plan, so several sources
+   * sharing one anchor plan alternate and every process start re-recorded all of them.
+   */
+  recordSourceScanFailure(
+    planID: string,
+    payload: { renewalID: string; sourceSessionID: string; error: string },
+  ): boolean {
+    return this.atomic(() => {
+      const previous = this.read((db) =>
+        db
+          .query<{ payload: string }, [string, string]>(
+            `SELECT payload FROM runner_transitions
+             WHERE plan_id=? AND task_id IS NULL AND event='ARCHITECT_SOURCE_SCAN_FAILED'
+               AND json_extract(payload,'$.sourceSessionID')=? ORDER BY id DESC LIMIT 1`,
+          )
+          .get(planID, payload.sourceSessionID),
+      )
+      if (previous && canonical(JSON.parse(previous.payload)) === canonical(payload)) return false
+      this.record(planID, null, "ARCHITECT_SOURCE_SCAN_FAILED", payload)
       return true
     })
   }
@@ -3536,6 +3578,13 @@ export class RunnerStore {
            ORDER BY ${prioritySortSQL("priority")},p.rowid LIMIT ?`,
         )
         .all(directory, maxPlans)
+      // A project or global pause holds every plan, with no resume condition.
+      const outer = outerPauseIn(db, directory)
+      if (outer)
+        for (const plan of plans) {
+          plan.pause_reason = outerPauseReason(outer)
+          plan.pause_until_plans = "[]"
+        }
       const nodes = db
         .query<SchedulingNodeFact, [string, string, number]>(
           `WITH selected_plans AS MATERIALIZED (

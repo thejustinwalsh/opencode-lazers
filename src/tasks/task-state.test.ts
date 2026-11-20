@@ -74,3 +74,14 @@ test("the callout sentence is the translated real reason, with what to do", () =
   ).toBe("The worker needs your approval to continue. Approve it from Radar.")
   expect(taskExplanation(taskStateView(row()), { hold: ["anything"] })).toBeUndefined()
 })
+
+test("a concern reading rides beside the state word without changing it", () => {
+  const concern = {
+    line: "3 verification rounds",
+    reasons: ["verify-rounds"],
+    totals: { attempts: 1, verifyRounds: 3, attemptMs: 0, tokens: 0, toolCalls: 0, costUSD: null },
+  }
+  const view = taskStateView(row({ concern }))
+  expect(view).toMatchObject({ label: "Running", tone: "running", concern })
+  expect(taskStateView(row()).concern).toBeUndefined()
+})

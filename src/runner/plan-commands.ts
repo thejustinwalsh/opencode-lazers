@@ -48,6 +48,7 @@ const PLAN_COMMANDS: Readonly<
   "settle-startup": { from: ["blocked"] },
   "retained-repair": { event: "running", from: ["running", "accepted", "blocked"] },
   "verify-retained": { from: ["blocked", "accepted", "cleanup-blocked"] },
+  "takeover-submit": { from: ["running", "blocked"] },
 }
 
 /** Commands that read or administer the plan; never advertised as a next step. */

@@ -115,7 +115,22 @@ function completedAssistantTail(messages: readonly SessionMessage.Info[]) {
       (part) =>
         part.type === "tool" &&
         (part.state.status === "running" || part.state.status === "streaming"),
-    )
+    ) &&
+    !abortedByLocationShutdown(last)
+  )
+}
+
+/**
+ * A location reboot aborts the step in flight ("Interaction cancelled because the location shut
+ * down", finish "error") and OpenCode resumes the session with a new step moments later. For
+ * that window the aborted step is the newest message, but the turn did not end.
+ */
+function abortedByLocationShutdown(message: Extract<SessionMessage.Info, { type: "assistant" }>) {
+  return message.content.some(
+    (part) =>
+      part.type === "tool" &&
+      part.state.status === "error" &&
+      /location shut down/i.test(String(part.state.error?.message ?? "")),
   )
 }
 
@@ -477,6 +492,16 @@ function sessionUsage(latest: NativeSessionInfo) {
   }
 }
 
+/**
+ * Prompt size of the newest assistant request: what the model was actually sent, not the
+ * session's cumulative token spend. Absent when no assistant message reports tokens.
+ */
+export function latestContextTokens(messages: readonly SessionMessage.Info[]): number | undefined {
+  const last = messages.findLast((message) => message.type === "assistant" && message.tokens)
+  if (last?.type !== "assistant" || !last.tokens) return undefined
+  return last.tokens.input + last.tokens.cache.read + last.tokens.cache.write
+}
+
 function assistantToolCount(messages: readonly SessionMessage.Info[]) {
   return messages.reduce(
     (sum, message) =>
@@ -506,6 +531,7 @@ function hostSessionView(input: {
   outcome: NativeSessionInfo["outcome"] | "interrupted"
   messages: readonly SessionMessage.Info[]
   retainedCurrentInput: HostMessage | undefined
+  contextTokens: number | undefined
 }) {
   const { latest, active, contradicted, observationUnstable, pendingInput } = input
   const { pendingPermissions, pendingForms, turn, idleAt, busyAt } = input
@@ -532,6 +558,7 @@ function hostSessionView(input: {
     outcome: input.outcome,
     model: latest.model,
     ...sessionUsage(latest),
+    ...(input.contextTokens === undefined ? {} : { contextTokens: input.contextTokens }),
     tools: assistantToolCount(input.messages),
     // Subscription billing is not a dated equivalent API estimate.
     cost: null,
@@ -834,8 +861,14 @@ export function nativeHost(
           : interrupted
             ? "interrupted"
             : latest.outcome
+      // An Architect's routing needs its prompt size, which the cumulative usage cannot give.
+      const contextTokens =
+        latest.agent === "architect"
+          ? latestContextTokens(detailed ? messages : await readMessages().catch(() => []))
+          : undefined
       return hostSessionView({
         latest,
+        contextTokens,
         active,
         contradicted,
         observationUnstable,
@@ -1167,6 +1200,31 @@ export function nativeHost(
           resume: input.resume,
           delivery: "queue",
           description: "LAZERS task outcome",
+        }),
+      )
+    },
+    async steerWorker(input) {
+      const sessionID = Session.ID.make(input.sessionID)
+      const session = await Effect.runPromise(ctx.session.get({ sessionID }))
+      if (
+        session.id !== input.sessionID ||
+        !isWorkerAgent(session.agent) ||
+        session.projectID !== ctx.location.project.id ||
+        session.location.directory !== input.directory ||
+        session.metadata?.lazersAttemptID !== input.attemptID ||
+        session.time.archived !== undefined
+      )
+        throw new Error("Takeover notice target is not the owned worker attempt")
+      const client = await connectedClient()
+      await runNative(client, () =>
+        client.session.synthetic({
+          sessionID,
+          id: SessionMessage.ID.make(input.id),
+          text: input.text,
+          metadata: { lazersTakeoverNotice: input.id, lazersAttemptID: input.attemptID },
+          resume: false,
+          delivery: "steer",
+          description: "LAZERS takeover notice",
         }),
       )
     },

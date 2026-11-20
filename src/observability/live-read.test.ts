@@ -6,6 +6,8 @@ import { makeFixture, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { operationalReads } from "../../test/radar/operational.ts"
 import { ObservationReads } from "./read.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
+import { HandoffStore } from "../recovery/handoff/store.ts"
+import { DETECTOR_ACTOR } from "../recovery/detector.ts"
 import { schedulerProjectKey, sharedScheduler } from "../runner/scheduler-coordinator.ts"
 
 function nativeSession(
@@ -246,6 +248,17 @@ test("live sessions carry parent, task labels, attempt number and recorded workl
     })
     expect((await read()).workload).toEqual(tasksCounts())
     expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
+    // A global pause holds the same queued work as Paused, with no plan pause involved.
+    fixture.store.atomic((db) => {
+      db.query("DELETE FROM runner_dispatch_controls").run()
+      db.query(
+        "INSERT INTO lazers_dispatch_pause(scope,state,reason,by,updated_at) VALUES('global','paused','test','owner',1)",
+      ).run()
+    })
+    expect((await read()).workload).toEqual(tasksCounts())
+    expect((await read()).workload).toEqual({ queued: 0, needsYou: 0, failed: 0 })
+    fixture.store.atomic((db) => db.query("DELETE FROM lazers_dispatch_pause").run())
+    expect((await read()).workload).toEqual({ queued: 1, needsYou: 0, failed: 0 })
 
     // A session without a native parent omits the field rather than carrying null.
     const owner = (await read()).sessions.find((item) => item.sessionID !== "ses-failed")
@@ -687,6 +700,74 @@ test("the live attempt read carries the call count, model and tick summary of on
         new AbortController().signal,
       ),
     ).toThrow()
+  } finally {
+    fixture.close()
+  }
+})
+
+test("the live attempt read carries an open concern with its advice and marks a takeover attempt", () => {
+  const fixture = makeFixture()
+  try {
+    const reads = new ObservationReads(fixture.store, fixture.host, "project", new Uint8Array(32))
+    const read = () => {
+      const sessionID = fixture.store.atomic(
+        (db) =>
+          db
+            .query<{ session_id: string }, [string]>(
+              "SELECT session_id FROM runner_attempts WHERE id=?",
+            )
+            .get(firstAttemptID)!.session_id,
+      )
+      return reads.liveAttempt(
+        { scope: { kind: "project", sessionID: "anchor" }, sessionID },
+        new AbortController().signal,
+      ).attempt
+    }
+    // Nothing is recorded: neither signal is present.
+    expect(read()).not.toHaveProperty("concern")
+    expect(read()).not.toHaveProperty("takeover")
+
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_nodes SET state='running'").run()
+    })
+    new HandoffStore(fixture.store.repository).recordConcern(
+      {
+        requestID: "concern-request",
+        concernID: crypto.randomUUID(),
+        sourceAttemptID: firstAttemptID,
+        ruleID: "verify-rounds-repeated",
+        reason: "3 verification rounds",
+        evidenceBoundary: { fromSequence: 0, throughSequence: 1 },
+        evidence: [
+          {
+            kind: "trajectory",
+            reference: "runner:1",
+            note: "n; magnitude=3; action=takeover; because=Rounds keep failing",
+          },
+        ],
+      },
+      DETECTOR_ACTOR,
+    )
+    expect(read()?.concern).toEqual({
+      line: "3 verification rounds",
+      action: "takeover",
+      because: "Rounds keep failing",
+    })
+
+    fixture.store.atomic((db) => {
+      db.query("UPDATE runner_attempts SET policy=? WHERE id=?").run(
+        JSON.stringify({
+          agent: "architect",
+          takeover: {
+            takeoverID: crypto.randomUUID(),
+            architectSessionID: "architect",
+            fromAttemptID: crypto.randomUUID(),
+          },
+        }),
+        firstAttemptID,
+      )
+    })
+    expect(read()?.takeover).toBe(true)
   } finally {
     fixture.close()
   }

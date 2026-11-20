@@ -1,7 +1,7 @@
 # Runner state machines and recovery
 
 `src/runner/lifecycle-machines.ts:lifecycleMachines` is the shared XState registry.
-It contains the existing task, dispatch-control and Architect-source machines and
+It contains the existing task, dispatch-control, project/global dispatch-pause and Architect-source machines and
 the persisted runner lifecycle machines below. State values remain compatible
 with existing records. No task snapshots or attempt history are replaced.
 
@@ -12,6 +12,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Attempt               | `attemptMachine`              | `lz_runner_transition('attempt', state, event)`         | Resume/retry; cancellation preserves the previous attempt and checkout                                                                                                                                     |
 | Effect                | `effectMachine`               | `lz_runner_transition('effect', state, event)`          | Reconcile a native receipt, or record conclusive failure; never replay an unknown prompt, session or worktree effect. A verification effect with no receipt is superseded (`failed`) and its check re-runs |
 | Dispatch              | `dispatchControlMachine`      | `RunnerStore.setDispatchPause()`                        | Explicit unpause or recorded integration conditions                                                                                                                                                        |
+| Project/global pause  | `dispatchPauseMachine`        | `setPause()` (`lazers_dispatch_pause`)                  | Explicit unpause by the owner; a paused scope holds new dispatch only                                                                                                                                      |
 | Architect source      | `architectSourceMachine`      | `architectSourceTransition()`                           | Prepare, activate or retire                                                                                                                                                                                |
 | Architect renewal     | `renewalMachine`              | `lz_runner_transition('renewal', state, event)`         | Continue creation/archive, recover input, roll back or defer; retry deferred creation                                                                                                                      |
 | Outcome delivery      | `outboxMachine`               | `lz_runner_transition('outbox', state, event)`          | Pending until in the Architect inbox, then delivered or superseded; one coalesced notice per session replaces queued ones via inbox cancel                                                                 |
@@ -20,6 +21,7 @@ with existing records. No task snapshots or attempt history are replaced.
 | Verification resource | `verificationResourceMachine` | `lz_runner_transition('resource', state, event)`        | Confirm native creation/removal; re-observe uncertain resources                                                                                                                                            |
 | Verification check    | `verificationCheckMachine`    | `lz_runner_transition('check', state, event)`           | Resolve intended/uncertain execution from its bound receipt                                                                                                                                                |
 | Check cleanup         | `verificationCleanupMachine`  | `lz_runner_transition('cleanup', cleanup_state, event)` | Retry failed cleanup; record confirmed completion separately from check success                                                                                                                            |
+| Architect takeover    | `takeoverMachine`             | `lz_runner_transition('takeover', state, event)`        | Notify the worker, wait for its handoff, stop it, open the Architect's attempt; a plan cancellation cancels an open one                                                                                    |
 
 `lifecycleTransition()` resolves the persisted row state through XState and uses
 `current.can()` and XState's pure `transition()` before returning the next state.
@@ -470,3 +472,78 @@ handover for plans owned by archived or cold sessions.
 
 Observable: the `RECOVERY_BUNDLE_RAISED` event (count, keys, session, replaced
 bundle) and `RecoveryBundles.status()` (items waiting, open bundle state and count).
+
+## Worker concerns and Architect takeover
+
+The recovery detector (`src/recovery/detector.ts`) reads each running task's recorded
+trajectory every tick and records a concern through the handoff store when a rule matches
+(repeated verify/repair cycles, reopened after acceptance, spend without file changes,
+failing tool loops, out-of-scope writes, an optional spend ceiling). It never holds,
+interrupts or stops a worker. Concerns travel in the recovery bundle as `worker-concern`
+items with a recommended action, only while Architect contact is enabled; an unanswered
+concern whose measure doubles is re-raised with escalated wording. Rules and thresholds come
+from `scripts/replay-concerns.ts`, which runs the same rule code over recorded history.
+
+A takeover is the Architect finishing a task itself. `lz-request-handoff {attemptID, reason,
+requestID?}` is one blocking call; its steps are transitions of `takeoverMachine`
+(table `runner_takeovers`, runner schema generation 13):
+
+```
+notifying --notice steered into the busy worker--> awaiting-handoff
+    | worker absent, archived or idle                  | worker draft saved, turn ended,
+    v                                                  | worker gone, 5-minute window passed
+stopping <---------------------------------------------+
+    | worker quiet, or 60 s after interrupt: WIP tree snapshot under
+    v refs/lazers/takeover/<id>, worker attempt -> cancelled, task and plan -> running
+taken-over      (cancelled: plan cancellation)
+```
+
+The notice is claimed in the row before it is sent and never resent. The scheduler advances
+open takeovers each tick and leaves their worker attempts alone, so a call cut short by a
+reload is finished by the next tick, which notifies the Architect (`takeover-ready`); repeating
+the call with the same `requestID` returns that result. The worker answers with `lz-takeover-handoff`: one call,
+plain-text fields (done, remaining, workspaceState, struggledWith, tried, notes), never rejected
+for its shape (anything else is kept verbatim as `raw`) and never reviewed. A full
+`lz-verify-handoff` draft is also read. With no answer the handoff is a note marked
+`author: "runtime"`. Recorded facts (failing checks, open concerns, attempts, tokens) and the
+workspace's commits and uncommitted paths accompany every handoff.
+
+`taken-over` opens a new attempt for the task in the same workspace and base, with
+`policy.takeover = {takeoverID, architectSessionID, fromAttemptID}`, `agent: "architect"` and
+`repairAttempt: true`. Its session id is `lazers-takeover:<id>`, which the runtime's host view
+reads as an absent session, so no worker observation, usage or interrupt touches it; its
+token count stays unknown because the Architect session's spend is not separable. The
+scheduler skips it while `running`. `lz-plan-command takeover-submit` moves it and its task to
+`verifying` through the attempt and task machines, and the ordinary `verify()` runs: mechanical
+fix, authored checks, Fallow audit, scope. A failure returns the same attempt to the Architect: attempt
+`verifying -> preparing -> running`, task `RESUME`, and the plan holds with reason
+"Takeover verification failed: <checks and Fallow findings>" (hold family
+`takeover-verification`, actions `takeover-submit` and `cancel`), which the recovery bundle
+lists if unanswered. Each submission is recorded (`TAKEOVER_SUBMITTED` with its count).
+
+## Project and global dispatch pause
+
+`dispatchPauseMachine` (`src/projects/pause-machine.ts`, key `pause` in `lifecycleMachines`) has two
+states, `enabled` and `paused`. Events `PROJECT_DISPATCH_PAUSED` / `GLOBAL_DISPATCH_PAUSED` enter or
+re-enter `paused` (a repeat updates the reason); `PROJECT_DISPATCH_UNPAUSED` /
+`GLOBAL_DISPATCH_UNPAUSED` leave it. Unpausing an `enabled` scope is rejected by the machine;
+`setPause()` treats it as a no-op. Rows live in `lazers_dispatch_pause(scope, state, reason, by,
+updated_at)`, `scope` being `global` or the project key (`src/projects/pause.ts`).
+
+Pause means: no new dispatch; running work finishes and is verified; nothing is cancelled. The
+effective state of a plan is the strictest of global, project and plan. A project or global pause
+has no resume condition. `RunnerStore.effectiveDispatchPause()` joins the three; the plan's own
+`dispatchPause()` still drives its resume-after-plans logic and the Architect pause tool. The
+Architect-contact pause is a separate switch that stops notices, not work.
+
+| Decision                                                    | Reads                         |
+| ----------------------------------------------------------- | ----------------------------- |
+| Tick: ready tasks of a running plan (`step`)                | `effectiveDispatchPause`      |
+| Tick: queue-review wait list and reservation wait           | `effectiveDispatchPause`      |
+| Dispatch admission (`dispatch`, last check in its txn)      | `effectiveDispatchPause`      |
+| Scheduling facts snapshot (`pause_reason`)                  | project or global overlay     |
+| Tasks reads, Tasks `paused` state filter, `lz-inspect-plan` | effective pause, with `level` |
+
+Active attempts, takeovers in progress, verification, retained repair of an owned attempt and
+reservations are not dispatch and ignore pause. A project not yet registered has no key, so only
+the global pause applies to it until its registration lands.

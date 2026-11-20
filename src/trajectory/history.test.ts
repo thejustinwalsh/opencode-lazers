@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test"
 import type { ObservationScope } from "../observability/contract.ts"
-import { TrajectoryHistoryCache, TrajectoryHistoryUnavailableError } from "./history.ts"
+import {
+  DEFAULT_HISTORY_CACHE_MB,
+  historyCacheBytes,
+  TrajectoryHistoryCache,
+  TrajectoryHistoryUnavailableError,
+} from "./history.ts"
 
 const secret = new Uint8Array(32).fill(6)
 const scope: ObservationScope = { kind: "project", sessionID: "ses-owner" }
@@ -19,6 +24,16 @@ const boundary = {
   eventSequence: 4,
   transitionSequence: 5,
 }
+
+/** Serialised size of one cached `report()` capture, found by probing a large budget. */
+const entryBytes = (() => {
+  const probe = new TrajectoryHistoryCache(secret, { maxBytes: 1 << 30 }) as unknown as {
+    capture: TrajectoryHistoryCache["capture"]
+    bytes: number
+  }
+  probe.capture(identity, report(), boundary, 0)
+  return probe.bytes
+})()
 
 function thrown(action: () => unknown) {
   try {
@@ -50,8 +65,6 @@ function report(count = 5) {
 test("history cache pages an immutable sanitized capture in exact order", () => {
   const cache = new TrajectoryHistoryCache(secret, {
     ttlMs: 100,
-    maxEntries: 2,
-    maxEvents: 10,
     maxBytes: 100_000,
   })
   const rawReport = report()
@@ -104,9 +117,7 @@ test("history cursors reject tampering and every foreign identity dimension", ()
 test("expired and evicted history cursors require explicit recapture", () => {
   const cache = new TrajectoryHistoryCache(secret, {
     ttlMs: 10,
-    maxEntries: 1,
-    maxEvents: 10,
-    maxBytes: 100_000,
+    maxBytes: entryBytes * 1.5,
   })
   const expired = cache.capture(identity, report(), boundary, 100)
   const expiredFailure = thrown(() =>
@@ -125,14 +136,49 @@ test("expired and evicted history cursors require explicit recapture", () => {
   expect(evictedFailure).toMatchObject({ reason: "evicted" })
 })
 
-test("history cache rejects duplicate or oversized projections rather than serving partial pages", () => {
-  const cache = new TrajectoryHistoryCache(secret, {
-    ttlMs: 100,
-    maxEntries: 2,
-    maxEvents: 2,
-    maxBytes: 100_000,
+test("an entry larger than the whole budget is served in one page and not cached", () => {
+  const cache = new TrajectoryHistoryCache(secret, { ttlMs: 1_000, maxBytes: 2_000 })
+  const big = cache.capture(identity, report(300), boundary, 100)
+  expect(big.eventIDs).toHaveLength(300)
+  expect(big.report.trajectory.events).toHaveLength(300)
+  expect(big.report.trajectory.totalEvents).toBe(300)
+  expect(big.report.trajectory.nextCursor).toBeNull()
+  expect(big.report.trajectory.hasMore).toBe(false)
+  // nothing was cached for it, so it evicted nothing
+  const small = cache.capture(
+    { ...identity, taskID: "00000000-0000-4000-8000-000000000002" },
+    report(2),
+    boundary,
+    101,
+  )
+  expect(small.report.trajectory.nextCursor).toBeNull()
+})
+
+test("eviction is least recently used, and a continuation refreshes recency", () => {
+  const cache = new TrajectoryHistoryCache(secret, { ttlMs: 10_000, maxBytes: entryBytes * 2.5 })
+  const id = (n: number) => ({ ...identity, taskID: `00000000-0000-4000-8000-00000000000${n}` })
+  const a = cache.capture(id(1), report(), boundary, 100)
+  const b = cache.capture(id(2), report(), boundary, 101)
+  // reading A makes B the least recently used
+  cache.continue(id(1), a.report.trajectory.nextCursor!, 102)
+  cache.capture(id(3), report(), boundary, 103)
+  expect(
+    cache.continue(id(1), a.report.trajectory.nextCursor!, 104).report.trajectory.events,
+  ).toHaveLength(2)
+  expect(thrown(() => cache.continue(id(2), b.report.trajectory.nextCursor!, 104))).toMatchObject({
+    reason: "evicted",
   })
-  expect(() => cache.capture(identity, report(3), boundary, 100)).toThrow("bounded capture size")
+})
+
+test("the historyCacheMB option sets the budget; anything unusable is the default", () => {
+  expect(historyCacheBytes(64)).toBe(64 * 1024 * 1024)
+  expect(historyCacheBytes(0.5)).toBe(512 * 1024)
+  for (const value of [undefined, 0, -1, "64", Number.NaN])
+    expect(historyCacheBytes(value)).toBe(DEFAULT_HISTORY_CACHE_MB * 1024 * 1024)
+})
+
+test("history cache still rejects duplicate event identities", () => {
+  const cache = new TrajectoryHistoryCache(secret)
   const duplicate = report(2)
   duplicate.trajectory.events[1]!.id = duplicate.trajectory.events[0]!.id
   expect(() => cache.capture(identity, duplicate, boundary, 100)).toThrow(
