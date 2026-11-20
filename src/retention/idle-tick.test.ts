@@ -45,8 +45,13 @@ test("an idle auto-retention tick reads settings rows, no history and no host", 
 
   for (const setting of ["off", "on and ran an hour ago"]) {
     fixture.repository.atomic((db) => {
-      if (setting === "off") setAutoDays(db, null, NOW)
-      else {
+      if (setting === "off") {
+        // With no age set, the superseded-only default pass runs on its interval. A tick is idle
+        // once that pass has run within the interval, so record one an hour ago.
+        setAutoDays(db, null, NOW)
+        const id = startRun(db, { at: NOW - 3_600_000, days: 0, trigger: "auto" })
+        db.query("UPDATE retention_runs SET done=1 WHERE id=?").run(id)
+      } else {
         setAutoDays(db, 30, NOW)
         const id = startRun(db, { at: NOW - 3_600_000, days: 30, trigger: "auto" })
         db.query("UPDATE retention_runs SET done=1 WHERE id=?").run(id)
