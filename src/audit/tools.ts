@@ -8,6 +8,7 @@ import {
   FallowConfigOutput,
   FallowConfigSetOutput,
   FallowConfigGuideOutput,
+  FallowConfigAuditOffOutput,
   FallowConfigSuggestOutput,
   FallowDryRunOutput,
   FallowDeadCodeOutput,
@@ -49,6 +50,7 @@ import { resolvePreviewBaseCommit } from "./review-git.ts"
 import { dryRunFallowConfig, suggestFallowConfig } from "./fallow-config-tools.ts"
 import { missingConfigText } from "./fallow-gate.ts"
 import { Delivery, runbook } from "../guidance/index.ts"
+import { activeProfile } from "../projects/profile-store.ts"
 
 const text = z.string().min(1)
 const paging = { offset: z.int().nonnegative().default(0), limit: z.int().positive().default(50) }
@@ -490,6 +492,7 @@ export function registerAuditTools(
         FallowConfigSuggestOutput,
         FallowDryRunOutput,
         FallowConfigGuideOutput,
+        FallowConfigAuditOffOutput,
       ]),
       options: { codemode: true, permission: "lz-fallow-config" },
       execute: (input, call) =>
@@ -513,6 +516,17 @@ export function registerAuditTools(
                       guidance: runbook(
                         topic === "config" ? "fallow-config" : "fallow-suppressions",
                       ),
+                    }
+                    return { content: JSON.stringify(output), output }
+                  }
+                  if (
+                    (input.mode === "suggest" || input.mode === "dry-run") &&
+                    activeProfile(repository, project)?.profile.audit === "off"
+                  ) {
+                    const output = {
+                      refused: "PROFILE_AUDIT_OFF" as const,
+                      guidance:
+                        "This project's profile turns the audit off; change audit in the profile to use Fallow.",
                     }
                     return { content: JSON.stringify(output), output }
                   }

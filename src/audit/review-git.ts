@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { SourceDefinition } from "../context/repo-map.ts"
 import { runGit } from "./config.ts"
 
 /**
@@ -35,9 +36,19 @@ const CONFIG_FILES = [
   ".fallow.toml",
 ]
 
-function isAuditRelevant(path: string): boolean {
+/**
+ * Without a source definition, today's filter: any file Fallow can read. With a project profile's
+ * `source`, a readable file also has to be inside it, so vendored trees, records and build output
+ * never reach the audit. Config files always count.
+ */
+function isAuditRelevant(path: string, source?: SourceDefinition): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1)
-  return SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext)) || CONFIG_FILES.includes(name)
+  if (CONFIG_FILES.includes(name)) return true
+  if (!SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) return false
+  if (!source) return true
+  const matches = (patterns: readonly string[]) =>
+    patterns.some((pattern) => new Bun.Glob(pattern).match(path))
+  return matches(source.include) && !matches(source.exclude)
 }
 
 /**
@@ -59,13 +70,17 @@ const BASE_TREE_PATHSPECS = [
  * unstaged and untracked, which is what the audit itself compares), restricted to the ones a
  * finding can depend on.
  */
-export async function changedAuditFiles(directory: string, base: string): Promise<string[]> {
+export async function changedAuditFiles(
+  directory: string,
+  base: string,
+  source?: SourceDefinition,
+): Promise<string[]> {
   const tracked = await runGit(directory, "diff", "--name-only", "-z", base)
   const untracked = await runGit(directory, "ls-files", "--others", "--exclude-standard", "-z")
   if (tracked === undefined || untracked === undefined)
     throw new Error("git diff --name-only failed")
   return [...new Set([...tracked.split("\0"), ...untracked.split("\0")])].filter(
-    (line) => line.length > 0 && isAuditRelevant(line),
+    (line) => line.length > 0 && isAuditRelevant(line, source),
   )
 }
 
