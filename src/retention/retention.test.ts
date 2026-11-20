@@ -553,13 +553,19 @@ test("fresh churn events do not make a finished plan look active", () => {
   const db = handle(fixture)
   fixture.store.atomic((write) =>
     write
-      .query("INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,?,?,?)")
+      .query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,?,?,?)",
+      )
       .run(fixture.receipt.planID, 99, "OUTCOME_OWNER_TRANSFER_UNCERTAIN", "{}", NOW),
   )
-  expect(classifyPlans(db, NOW, 30).retired.map((plan) => plan.id)).toEqual([fixture.receipt.planID])
+  expect(classifyPlans(db, NOW, 30).retired.map((plan) => plan.id)).toEqual([
+    fixture.receipt.planID,
+  ])
   fixture.store.atomic((write) =>
     write
-      .query("INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,?,?,?)")
+      .query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,NULL,?,?,?,?)",
+      )
       .run(fixture.receipt.planID, 100, "CLEANUP_BLOCKED", "{}", NOW),
   )
   expect(classifyPlans(db, NOW, 30).retired).toEqual([])
