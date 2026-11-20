@@ -1571,3 +1571,15 @@ type ResolveResult = {
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/webgpu/system-one.ts
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/task.ts
 - /Users/tjw/Documents/ChatGPT/opencode-lazers/src/runner/takeover.ts
+
+## Corrections
+
+Differences found while implementing Tasks 1, 2, 10 and 11 against the code on `main`.
+
+- **Task 1: `starting` is an event.** `defineLifecycle` adds a self edge to every state, so `planningRun` has the event `starting`. The plan's dead-ends classification omitted it; it is listed as observable. `src/runner/lifecycle-machines.test.ts` also has a `goals` table (terminal states reachable from every state); `planning` and `planningRun` are added there. `PlanningState` and `PlanningRunState` are explicit unions, because `keyof typeof machine.config.states` resolves to `never` for machines built by `defineLifecycle`.
+- **Task 2: where the schema installs.** `installPlanningSchema(repository)` is exported from `src/planning/store.ts` and called from `TaskRepository.open()` in `src/storage.ts` under its own `shared.once("planning", …)` key, as repo-map is. The plan only named `src/database-schema.ts`. The store methods take camelCase rows (columns snake_case) and keep JSON columns as strings; `appendRevision` takes `body`, `validation`, `hashes` as values and stringifies them.
+- **Task 10: `z.unknown()` is a required key in zod 4.** `TaskDraft.proposal`, `plan.verification` and `plan.acceptance` are `z.unknown().optional()`, so a draft or plan stored without them is accepted (the plan's intent: store even when incomplete). `validateBody` reports the absence.
+- **Task 10: `validateBody` lists only drafts with problems** (`drafts` has no key for a complete draft). Plan-level problems have paths prefixed `verification.` / `acceptance.`. A cycle is reported once per cycle with `draftID` the entry point and `detail` the path (`a → b → a`).
+- **Task 10: `fieldHashes`** keys per draft: each proposal key, `dependsOn` (sorted), `persona`, and `*`. `@plan` holds `title`, `ask`, `assumptions`, `openDecisions`, each plan-level field, and `*` over the whole body with tasks sorted by `draftID`. `changedFields` also reports `@plan` when a plan-level key changed. A finding with `draftID: null` reads `@plan`.
+- **Task 11: blank lines.** The breakdown is blocks joined by one blank line (tasks, open decisions, link block). With no open decisions the section and its separator go, so one blank line remains between the tasks and the link. The review line is the first line of the link block. Answered decisions are not listed as open. The findings parenthesis lists only blockers and majors, as in the plan's example; singular nouns are used for a count of 1.
+- **Task 11: `encodeProjectID`** in `src/tasks/links.ts` is now exported (no other change there).
