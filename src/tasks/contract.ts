@@ -8,18 +8,33 @@ import { TaskClassificationRevision } from "../task-classification.ts"
 import { TaskAdviceSnapshot } from "./advice.ts"
 import { TaskStateFilter } from "./state-filter.ts"
 import { AttemptModel, AttemptSummary } from "./attempt-summary.ts"
+import { ProjectRef } from "../projects/scope.ts"
 
-export const QueryInput = z.strictObject({
-  sort: z.enum(["recent", "schedule"]).default("recent"),
-  search: z.string().max(200).default(""),
-  scopePath: z.string().min(1).max(1_024).optional(),
-  sessionID: z.string().min(1).max(200).optional(),
-  limit: z.int().min(1).max(100).default(30),
-  cursor: z.string().min(1).max(2_048).optional(),
-  state: TaskStateFilter.optional(),
-  includeCompleted: z.boolean().default(false),
-  includeRetired: z.boolean().default(false),
-})
+export const QueryInput = z
+  .strictObject({
+    /**
+     * Read every project the caller may see, a page per checkout. `sessionID` then names the caller
+     * for authorisation and does not filter; `cursor` is a project cursor.
+     */
+    allProjects: z.literal(true).optional(),
+    sort: z.enum(["recent", "schedule"]).default("recent"),
+    search: z.string().max(200).default(""),
+    scopePath: z.string().min(1).max(1_024).optional(),
+    sessionID: z.string().min(1).max(200).optional(),
+    limit: z.int().min(1).max(100).default(30),
+    cursor: z.string().min(1).max(2_048).optional(),
+    state: TaskStateFilter.optional(),
+    includeCompleted: z.boolean().default(false),
+    includeRetired: z.boolean().default(false),
+  })
+  .superRefine((input, ctx) => {
+    if (input.allProjects && !input.sessionID)
+      ctx.addIssue({
+        code: "custom",
+        path: ["sessionID"],
+        message: "An all-projects query names the calling session",
+      })
+  })
 export type TaskQuery = z.input<typeof QueryInput>
 export const GetInput = z.strictObject({
   taskID: z.union([z.uuid(), TaskReferenceSchema]),
@@ -46,6 +61,8 @@ export const TaskConcern = z.strictObject({
 export type TaskConcern = z.infer<typeof TaskConcern>
 
 const TaskSummary = z.strictObject({
+  /** Present in an all-projects page only. */
+  project: ProjectRef.optional(),
   taskID: z.uuid(),
   sourcePlan: TaskSourcePlanSchema.optional(),
   dispatchPause: DispatchPause.optional(),
@@ -73,6 +90,8 @@ const TaskSummary = z.strictObject({
 })
 export type TaskSummary = z.infer<typeof TaskSummary>
 export const QueryOutput = z.strictObject({
+  /** An all-projects page: the project of every task on it. */
+  project: ProjectRef.optional(),
   projectDirectory: z.string(),
   snapshot: z.int().nonnegative(),
   count: z.int().nonnegative(),

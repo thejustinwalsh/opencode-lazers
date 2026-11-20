@@ -2,16 +2,20 @@ import { AttemptModel, AttemptSummary } from "../tasks/attempt-summary.ts"
 import { TaskSourcePlanSchema } from "../task.ts"
 import { Rpc } from "@opencode/plugin/rpc"
 import { TaskState, DispatchPause } from "../runner/schema.ts"
+import { ProjectRef } from "../projects/scope.ts"
 import { z } from "zod"
 
 const ObservationScope = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
   z.strictObject({ kind: z.literal("project"), sessionID: z.string().min(1).max(200) }),
+  /** Every project the caller may read, a page per checkout. `sessionID` is the caller. */
+  z.strictObject({ kind: z.literal("all"), sessionID: z.string().min(1).max(200) }),
 ])
 
 const ObservationScopeView = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("session"), sessionID: z.string().min(1).max(200) }),
   z.strictObject({ kind: z.literal("project") }),
+  z.strictObject({ kind: z.literal("all") }),
 ])
 
 const Boundary = z.strictObject({
@@ -53,6 +57,8 @@ const ObservationNode = z.strictObject({
 })
 
 const ObservationPlan = z.strictObject({
+  /** Present in the all-projects scope only. */
+  project: ProjectRef.optional(),
   dispatchPause: DispatchPause.optional(),
   priority: z.int().optional(),
   queuePosition: z.int().nonnegative().optional(),
@@ -68,6 +74,8 @@ const ObservationPlan = z.strictObject({
 })
 
 const UnplannedTask = z.strictObject({
+  /** Present in the all-projects scope only. */
+  project: ProjectRef.optional(),
   taskID: z.uuid(),
   revision: z.literal(1),
   status: z.literal("submitted"),
@@ -151,11 +159,23 @@ export const SnapshotOutput = z.strictObject({
 })
 
 // Complete current recorded topology, independent of execution-history volume.
-const TopologyInput = z.strictObject({ scope: ObservationScope })
+const TopologyInput = z
+  .strictObject({ scope: ObservationScope, cursor: z.string().min(1).max(2048).optional() })
+  .superRefine((input, ctx) => {
+    if (input.cursor && input.scope.kind !== "all")
+      ctx.addIssue({
+        code: "custom",
+        path: ["cursor"],
+        message: "A cursor applies to the all-projects scope only",
+      })
+  })
 export const TopologyOutput = z.strictObject({
   schemaVersion: z.literal(1),
   projectID: z.string().min(1),
   scope: ObservationScopeView,
+  /** All-projects scope: the project this page reads, and where the next page starts. */
+  project: ProjectRef.optional(),
+  nextCursor: z.string().nullable().optional(),
   observedAt: z.iso.datetime(),
   boundary: Boundary.omit({ transitionSequence: true }),
   plans: z.array(ObservationPlan).max(1000),
@@ -904,6 +924,13 @@ export const Observability = Rpc.define({
 })
 
 export type ObservationScope = z.infer<typeof ObservationScope>
+/** The scopes that read one project; every read except the all-projects ones takes this. */
+export type SingleScope = Exclude<ObservationScope, { kind: "all" }>
+export const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
+export function singleScope(scope: ObservationScope): SingleScope {
+  if (scope.kind === "all") throw new Error(ALL_PROJECTS_UNAVAILABLE)
+  return scope
+}
 export type ObservationScopeView = z.infer<typeof ObservationScopeView>
 export type TopologyResponse = z.infer<typeof TopologyOutput>
 export type SnapshotResponse = z.infer<typeof SnapshotOutput>

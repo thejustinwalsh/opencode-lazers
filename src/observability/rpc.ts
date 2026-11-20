@@ -7,7 +7,9 @@ import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
-import { Observability, type ObservationChange } from "./contract.ts"
+import { Observability, singleScope, type ObservationChange } from "./contract.ts"
+import { allowedUnitsFor, callerSession } from "../projects/read-access.ts"
+import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
 import { ObservationReadChangedError } from "./read.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -50,12 +52,6 @@ const NATIVE_EVENT_TYPES = [
   "session.status",
 ] as const
 
-const isNotFound = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "_tag" in error &&
-  error._tag === "SessionNotFoundError"
-
 async function authorize(
   ctx: ObservationContext,
   scope: { sessionID: string },
@@ -63,20 +59,8 @@ async function authorize(
   projectDirectory: string,
   action: "read" | "lz-inspect-trajectory",
 ) {
-  const session = await Effect.runPromise(
-    ctx.session
-      .get({ sessionID: Session.ID.make(scope.sessionID) })
-      .pipe(
-        Effect.catch((error) => (isNotFound(error) ? Effect.succeed(null) : Effect.fail(error))),
-      ),
-  )
-  if (
-    !session ||
-    session.id !== scope.sessionID ||
-    session.projectID !== projectID ||
-    !session.agent
-  )
-    throw new Error("Observation scope is unavailable")
+  const session = await callerSession(ctx, scope.sessionID, projectID)
+  if (!session) throw new Error("Observation scope is unavailable")
   await Effect.runPromise(
     ctx.permission.assert({
       sessionID: Session.ID.make(session.id),
@@ -92,13 +76,28 @@ export function registerObservability(
   ctx: ObservationContext,
   reads: ObservationReads,
   projectID: string,
+  options: {
+    /** Project roots with a live location in this server; decides `loaded` on all-projects rows. */
+    loaded?: () => Iterable<string>
+  } = {},
 ) {
+  const loaded = options.loaded ?? loadedProjectDirectories
+  /** The checkouts an all-projects read may show this caller; see `readableUnits`. */
+  const allowedUnits = (scope: { sessionID: string }) =>
+    allowedUnitsFor(ctx, {
+      sessionID: scope.sessionID,
+      projectID,
+      repository: reads.store.repository,
+      loaded,
+      unavailable: "Observation scope is unavailable",
+    })
   return Effect.gen(function* () {
     const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
     const rpc = yield* timedRpc(ctx.rpc).register(Observability, {
       snapshot: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -113,6 +112,12 @@ export function registerObservability(
       topology: (input) =>
         Effect.tryPromise({
           try: async () => {
+            if (input.scope.kind === "all")
+              return reads.topologyAll(
+                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
+                tracker,
+                await allowedUnits(input.scope),
+              )
             await authorize(
               ctx,
               input.scope,
@@ -127,6 +132,7 @@ export function registerObservability(
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             const agent = await authorize(
               ctx,
               input.scope,
@@ -161,6 +167,7 @@ export function registerObservability(
       radar: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -193,6 +200,7 @@ export function registerObservability(
       liveRadar: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -207,6 +215,7 @@ export function registerObservability(
       liveGroup: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -221,6 +230,7 @@ export function registerObservability(
       liveAttempt: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -246,6 +256,7 @@ export function registerObservability(
       liveHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -271,6 +282,7 @@ export function registerObservability(
       trajectory: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -286,6 +298,7 @@ export function registerObservability(
       trajectoryHistory: (input, context) =>
         Effect.tryPromise({
           try: async (signal) => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,
@@ -312,6 +325,7 @@ export function registerObservability(
       trajectoryStatus: (input) =>
         Effect.tryPromise({
           try: async () => {
+            singleScope(input.scope)
             await authorize(
               ctx,
               input.scope,

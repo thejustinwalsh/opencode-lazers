@@ -561,6 +561,21 @@ export class ObservationChangeTracker {
     }
   }
 
+  /**
+   * The boundary of a read of a stamp from another checkout. It reports this tracker's current
+   * revisions and never observes the stamp, so a foreign project cannot move this one's state.
+   */
+  boundaryFor(stamp: SourceStamp, transitionSequence: number) {
+    return {
+      repositoryVersion: stamp.repositoryVersion,
+      sourceRevision: this.state.sourceRevision,
+      sourceFingerprint: stamp.sourceFingerprint,
+      nativeRevision: this.state.nativeRevision,
+      eventSequence: this.state.sequence,
+      transitionSequence,
+    }
+  }
+
   refreshSource() {
     section("changes:refreshSource", () => this.refreshSourceNow())
   }

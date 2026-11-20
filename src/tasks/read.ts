@@ -3,10 +3,12 @@ import { PlanInput } from "../runner/schema.ts"
 import { taskAuditHistory } from "../audit/history.ts"
 import { createHash } from "node:crypto"
 import { z } from "zod"
-import type { TaskRepository } from "../storage.ts"
+import { TaskRepository } from "../storage.ts"
 import type { TaskSpec } from "../task.ts"
 import { GetInput, GetOutput, QueryInput, QueryOutput } from "./contract.ts"
 import type { TaskPage, TaskConcern, TaskSummary } from "./contract.ts"
+import { decodeUnitCursor, encodeUnitCursor, unitIndex } from "../projects/scope.ts"
+import type { ProjectUnit } from "../projects/scope.ts"
 import { canStruggle, readTrajectoryFacts } from "../recovery/trajectory-facts.ts"
 import { isTakeoverAttempt, openConcerns } from "../recovery/detector.ts"
 import { taskTitle } from "./presentation.ts"
@@ -106,8 +108,55 @@ export class TaskReads {
     this.runner = new RunnerStore(repository)
   }
 
+  /**
+   * One page of every project's tasks. Reads the checkout the cursor names (the first allowed
+   * one without a cursor) through that checkout's own paged query, so a long project continues
+   * across pages; a checkout with no matching task is skipped. `units` are the checkouts the
+   * caller may read and `sessionID` is the caller, not a filter.
+   */
+  queryAll(input: unknown, units: readonly ProjectUnit[]): TaskPage {
+    const { allProjects, sessionID: _caller, cursor, ...rest } = QueryInput.parse(input)
+    if (!allProjects) throw new Error("Not an all-projects query")
+    const position = cursor ? decodeUnitCursor(cursor) : undefined
+    let inner = position?.inner
+    for (let index = unitIndex(units, position); index < units.length; index++) {
+      const unit = units[index]!
+      const repository = new TaskRepository(this.repository.path, unit.directory)
+      try {
+        const page = new TaskReads(repository).query({
+          ...rest,
+          ...(inner ? { cursor: inner } : {}),
+        })
+        inner = undefined
+        if (page.tasks.length === 0 && !page.nextCursor) continue
+        const next = units[index + 1]
+        return {
+          ...page,
+          project: unit.project,
+          tasks: page.tasks.map((task) => ({ ...task, project: unit.project })),
+          nextCursor: page.nextCursor
+            ? encodeUnitCursor({ directory: unit.directory, inner: page.nextCursor })
+            : next
+              ? encodeUnitCursor({ directory: next.directory })
+              : null,
+        }
+      } finally {
+        repository.close()
+      }
+    }
+    return {
+      projectDirectory: this.repository.projectDirectory,
+      snapshot: this.repository.version(),
+      count: 0,
+      tasks: [],
+      nextCursor: null,
+      serverTime: new Date().toISOString(),
+    }
+  }
+
   query(input: unknown): TaskPage {
     const query = QueryInput.parse(input)
+    if (query.allProjects) throw new Error("An all-projects query is read with queryAll")
     const filter = createHash("sha256")
       .update(
         JSON.stringify([

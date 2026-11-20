@@ -18,6 +18,8 @@ import { revisionPublishers } from "../database-events.ts"
 import { TaskAdviceToolInput, recordTaskAdvice } from "./advice.ts"
 import { tolerantJsonSchema } from "../legacy-fields.ts"
 import { guardedWrite } from "./observed-revisions.ts"
+import { allowedUnitsFor } from "../projects/read-access.ts"
+import { loadedProjectDirectories } from "../core/registry.ts"
 
 function nonnegativeInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null
@@ -66,21 +68,42 @@ export function registerTaskReads(
     Partial<Pick<Plugin.Context, "tool" | "session">>,
   reads: TaskReads,
   runtime: TaskRuntime,
+  options: { loaded?: () => Iterable<string> } = {},
 ) {
+  const loaded = options.loaded ?? loadedProjectDirectories
   return Effect.gen(function* () {
     const rpc = yield* timedRpc(ctx.rpc).register(Tasks, {
       query: (input) =>
-        Effect.sync(() => {
-          const page = reads.query(input)
-          return {
-            ...page,
-            tasks: page.tasks.map((task) => {
-              if (task.recordedState !== undefined) return task
-              const recordedState = reads.recordedStateForTask(task.taskID)
-              return recordedState ? { ...task, recordedState } : task
+        input.allProjects
+          ? Effect.tryPromise({
+              try: async () => {
+                const sessionService = ctx.session
+                if (!sessionService) throw new Error("Task scope is unavailable")
+                const units = await allowedUnitsFor(
+                  { permission: ctx.permission, session: sessionService },
+                  {
+                    sessionID: input.sessionID!,
+                    projectID: runtime.projectID,
+                    repository: reads.repository,
+                    loaded,
+                    unavailable: "Task scope is unavailable",
+                  },
+                )
+                return reads.queryAll(input, units)
+              },
+              catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+            }).pipe(Effect.orDie)
+          : Effect.sync(() => {
+              const page = reads.query(input)
+              return {
+                ...page,
+                tasks: page.tasks.map((task) => {
+                  if (task.recordedState !== undefined) return task
+                  const recordedState = reads.recordedStateForTask(task.taskID)
+                  return recordedState ? { ...task, recordedState } : task
+                }),
+              }
             }),
-          }
-        }),
       get: (input) => Effect.sync(() => reads.get(input)),
       currentActivity: (input) =>
         Effect.tryPromise({

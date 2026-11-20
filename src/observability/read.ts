@@ -30,6 +30,7 @@ import type {
   LiveHistoryRequestInput,
   LiveRadarRequestInput,
   ObservationScope,
+  SingleScope,
   ObservationScopeView,
   RadarRequestInput,
   RadarResponse,
@@ -41,6 +42,9 @@ import type {
   TrajectoryHistoryResponse,
   TrajectoryStatusRequest,
 } from "./contract.ts"
+import { singleScope } from "./contract.ts"
+import { decodeUnitCursor, encodeUnitCursor, unitIndex } from "../projects/scope.ts"
+import type { ProjectUnit } from "../projects/scope.ts"
 import { RadarInput, RadarOutput } from "./contract.ts"
 import { outerPauseIn, outerPauseReason } from "../projects/pause.ts"
 import type { RadarNativeSession, RadarSessionHost } from "./native.ts"
@@ -198,7 +202,7 @@ function planInput(plan: Pick<PlanRecord, "body">) {
   }
 }
 
-function initialAssociations(db: Database, projectDirectory: string, scope: ObservationScope) {
+function initialAssociations(db: Database, projectDirectory: string, scope: SingleScope) {
   return scope.kind === "project"
     ? projectAssociations(db, projectDirectory)
     : sessionAssociations(db, projectDirectory, scope.sessionID)
@@ -207,7 +211,7 @@ function initialAssociations(db: Database, projectDirectory: string, scope: Obse
 function loadTopologyAssociations(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -287,7 +291,7 @@ function loadTopologyAssociations(
 function loadTopologySource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -336,7 +340,7 @@ function loadTopologySource(
 function loadProjectionSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
   signal?: AbortSignal,
@@ -393,7 +397,7 @@ function loadProjectionSource(
 function loadTaskObservationSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   target: { taskID?: string; attemptID?: string },
 ) {
@@ -500,7 +504,7 @@ function projectTopology(source: ReturnType<typeof loadTopologySource>) {
 function loadRadarSource(
   db: Database,
   projectDirectory: string,
-  scope: ObservationScope,
+  scope: SingleScope,
   secret: Uint8Array,
   extraSessionIDs: Iterable<string> = [],
 ) {
@@ -794,7 +798,7 @@ function reachableSessionIDs(nativeByID: Map<string, RadarNativeSession>, rootID
 
 async function readNativeInventory(
   reader: RadarNativeReader,
-  scope: ObservationScope,
+  scope: SingleScope,
   native: RadarNativeResolution,
   context: RadarSessionContext,
 ) {
@@ -926,7 +930,7 @@ function recordSourceSessionContext(source: RadarSource, context: RadarSessionCo
 }
 
 function selectRadarSessionIDs(
-  scope: ObservationScope,
+  scope: SingleScope,
   source: RadarSource,
   native: RadarNativeResolution,
 ) {
@@ -1942,18 +1946,22 @@ export class ObservationReads {
     signal: AbortSignal,
     streamEpoch: string,
   ) {
+    singleScope(input.scope)
     return this.liveRadarReader.radar(input, tracker, signal, streamEpoch)
   }
 
   liveGroup(input: LiveGroupRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.group(input, signal)
   }
 
   liveAttempt(input: LiveAttemptRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.attempt(input, signal)
   }
 
   liveHistory(input: LiveHistoryRequestInput, signal: AbortSignal) {
+    singleScope(input.scope)
     return this.liveRadarReader.history(input, signal)
   }
 
@@ -1964,7 +1972,7 @@ export class ObservationReads {
   ): Promise<RadarResponse> {
     if (!this.nativeSessions) throw new Error("Native session inventory is unavailable")
     const request = RadarInput.parse(input)
-    const scope = request.scope
+    const scope = singleScope(request.scope)
     const includeUnmanagedSessions = request.includeUnmanagedSessions
     signal.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
@@ -2105,7 +2113,7 @@ export class ObservationReads {
     }
   }
 
-  topology(scope: ObservationScope, tracker: ObservationChangeTracker): TopologyResponse {
+  topology(scope: SingleScope, tracker: ObservationChangeTracker): TopologyResponse {
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
@@ -2139,11 +2147,85 @@ export class ObservationReads {
     }
   }
 
+  /**
+   * One page of the all-projects topology: the plans of one checkout of one project, each marked
+   * with its project, and the cursor of the next checkout. `units` are the checkouts the caller
+   * may read; the page never reads another.
+   */
+  topologyAll(
+    input: { scope: Extract<ObservationScope, { kind: "all" }>; cursor?: string },
+    tracker: ObservationChangeTracker,
+    units: readonly ProjectUnit[],
+  ): TopologyResponse {
+    const index = unitIndex(units, input.cursor ? decodeUnitCursor(input.cursor) : undefined)
+    const unit = units[index]
+    const next = units[index + 1]
+    const nextCursor = next ? encodeUnitCursor({ directory: next.directory }) : null
+    if (!unit)
+      return {
+        schemaVersion: 1,
+        projectID: this.projectID,
+        scope: { kind: "all" },
+        observedAt: new Date().toISOString(),
+        boundary: {
+          repositoryVersion: 0,
+          sourceRevision: 0,
+          sourceFingerprint: "0".repeat(64),
+          nativeRevision: 0,
+          eventSequence: 0,
+        },
+        nextCursor: null,
+        plans: [],
+        unplannedTasks: [],
+      }
+    const connection = openReadOnlyTrajectoryStore(
+      this.store.repository.path,
+      this.store.repository.projectDirectory,
+    )
+    try {
+      const source = connection.store.read((db) =>
+        loadTopologySource(
+          db,
+          unit.directory,
+          { kind: "project", sessionID: input.scope.sessionID },
+          this.secret,
+        ),
+      )
+      const topology = projectTopology(source)
+      const latest = connection.store.read((db) =>
+        sourceStampFromDatabase(db, unit.directory, this.secret),
+      )
+      if (
+        source.stamp.repositoryVersion !== latest.repositoryVersion ||
+        source.stamp.sourceFingerprint !== latest.sourceFingerprint
+      )
+        throw new Error("Observation changed while reading; restart from a fresh snapshot")
+      const { transitionSequence: _transitionSequence, ...boundary } = tracker.boundaryFor(
+        latest,
+        0,
+      )
+      return {
+        schemaVersion: 1,
+        projectID: this.projectID,
+        scope: { kind: "all" },
+        project: unit.project,
+        nextCursor,
+        observedAt: new Date().toISOString(),
+        boundary,
+        plans: topology.plans.map((plan) => ({ ...plan, project: unit.project })),
+        unplannedTasks: topology.unplannedTasks.map((task) => ({ ...task, project: unit.project })),
+      }
+    } finally {
+      connection.close()
+    }
+  }
+
   snapshot(
-    scope: ObservationScope,
+    requested: ObservationScope,
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): SnapshotResponse {
+    const scope = singleScope(requested)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2262,6 +2344,7 @@ export class ObservationReads {
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): Promise<TrajectoryResponse> {
+    const scope = singleScope(input.scope)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2269,13 +2352,10 @@ export class ObservationReads {
     )
     try {
       const before = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID, attemptID: input.attemptID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+          attemptID: input.attemptID,
+        }),
       )
       tracker.observeStamp(before.stamp)
       const nativeRevision = tracker.nativeRevision
@@ -2306,7 +2386,7 @@ export class ObservationReads {
       return {
         schemaVersion: 1,
         projectID: this.projectID,
-        scope: scopeView(input.scope),
+        scope: scopeView(scope),
         boundary: tracker.boundary(after, before.transitionSequence),
         report,
       }
@@ -2320,6 +2400,7 @@ export class ObservationReads {
     tracker: ObservationChangeTracker,
     signal?: AbortSignal,
   ): Promise<TrajectoryHistoryResponse> {
+    const scope = singleScope(input.scope)
     signal?.throwIfAborted()
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
@@ -2327,19 +2408,15 @@ export class ObservationReads {
     )
     try {
       const source = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+        }),
       )
 
       const identity = {
         projectID: this.projectID,
         projectDirectory: this.store.repository.projectDirectory,
-        scope: input.scope,
+        scope: scope,
         taskID: input.taskID,
         limit: input.limit,
       }
@@ -2379,19 +2456,16 @@ export class ObservationReads {
     input: TrajectoryStatusRequest,
     tracker: ObservationChangeTracker,
   ): Promise<TrajectoryResponse> {
+    const scope = singleScope(input.scope)
     const connection = openReadOnlyTrajectoryStore(
       this.store.repository.path,
       this.store.repository.projectDirectory,
     )
     try {
       const source = connection.store.read((db) =>
-        loadTaskObservationSource(
-          db,
-          this.store.repository.projectDirectory,
-          input.scope,
-          this.secret,
-          { taskID: input.taskID },
-        ),
+        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
+          taskID: input.taskID,
+        }),
       )
       tracker.observeStamp(source.stamp)
       const nativeRevision = tracker.nativeRevision
@@ -2418,8 +2492,8 @@ export class ObservationReads {
             JSON.stringify([
               this.projectID,
               this.store.repository.projectDirectory,
-              input.scope.kind,
-              input.scope.sessionID,
+              scope.kind,
+              scope.sessionID,
               input.taskID,
             ]),
             report.trajectory.events,
@@ -2429,7 +2503,7 @@ export class ObservationReads {
       return {
         schemaVersion: 1,
         projectID: this.projectID,
-        scope: scopeView(input.scope),
+        scope: scopeView(scope),
         boundary: tracker.boundary(after, source.transitionSequence),
         report: delta
           ? { ...report, trajectory: { ...report.trajectory, events: delta.events } }

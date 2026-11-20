@@ -74,6 +74,7 @@ export class AssociationTaskReads extends TaskReads {
 
   override query(input: unknown): TaskPage {
     const query = QueryInput.parse(input)
+    if (query.allProjects) throw new Error("An all-projects query is read with queryAll")
     if (!query.sessionID) return super.query(input)
     const sessionID = query.sessionID
 
