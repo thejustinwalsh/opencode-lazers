@@ -278,7 +278,8 @@ export type TaskRuntimeOptions = {
    * Total tokens of a task past which the recovery detector raises a takeover concern, with
    * stronger wording as the spend doubles. Off when undefined. It never stops the worker.
    */
-  workerSpendCeilingTokens?: number
+  /** A token ceiling, or a read of it taken at each evaluation. */
+  workerSpendCeilingTokens?: number | (() => number | undefined)
   /** Takeover timing; tests shorten it. Defaults in `takeover.ts`. */
   takeoverHandoffWindowMs?: number
   takeoverStopWaitMs?: number
@@ -7244,7 +7245,8 @@ export class TaskRuntime {
     const current = () =>
       waits.filter(
         ({ planID }) =>
-          this.store.plan(planID)?.state === "running" && !this.store.dispatchPause(planID),
+          this.store.plan(planID)?.state === "running" &&
+          !this.store.effectiveDispatchPause(planID),
       )
     const waiting = current()
     const anchor = waiting[0]
@@ -7915,7 +7917,7 @@ export class TaskRuntime {
       : undefined
     if (prerequisites.length && !prerequisiteBaseline) {
       if (
-        !this.store.dispatchPause(plan.id) &&
+        !this.store.effectiveDispatchPause(plan.id) &&
         this.store.nodes(plan.id).some((node) => ["queued", "ready"].includes(node.state))
       )
         return { planID: plan.id, prerequisitePlanIDs: prerequisites }
@@ -7957,10 +7959,12 @@ export class TaskRuntime {
       )
       pause = undefined
     }
+    // A project or global pause holds new dispatch whatever the plan's own pause says.
+    const held = this.store.effectiveDispatchPause(plan.id)
     const ready: NodeRow[] = []
     for (const node of nodes) {
       if (
-        pause ||
+        held ||
         !["queued", "ready"].includes(node.state) ||
         this.store.execution(node.task_id)!.waitingOn.length > 0
       )
@@ -8006,7 +8010,7 @@ export class TaskRuntime {
       .attempts(plan.id)
       .filter((attempt) => ["preparing", "running", "verifying"].includes(attempt.state))
     if (outstanding.length) {
-      if (!pause && nodes.some((node) => ["queued", "ready"].includes(node.state)))
+      if (!held && nodes.some((node) => ["queued", "ready"].includes(node.state)))
         return {
           planID: plan.id,
           reservationTaskIDs: [...new Set(outstanding.map((attempt) => attempt.task_id))].sort(),
@@ -9166,7 +9170,7 @@ export class TaskRuntime {
       if (
         !current ||
         current.state !== "running" ||
-        this.store.dispatchPause(plan.id) !== undefined ||
+        this.store.effectiveDispatchPause(plan.id) !== undefined ||
         current.revision !== plan.revision ||
         current.body !== plan.body ||
         currentNode?.state !== node.state

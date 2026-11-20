@@ -29,6 +29,11 @@ export const schemaModules = {
     source: "src/project-key.ts",
     tables: ["lazers_projects", "lazers_project_aliases", "lazers_project_paths"],
   },
+  "project-controls": {
+    generation: 1,
+    source: "src/projects/settings.ts",
+    tables: ["lazers_settings", "lazers_dispatch_pause"],
+  },
   runner: {
     generation: 13,
     source: "src/runner/store.ts",
