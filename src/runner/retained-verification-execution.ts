@@ -1078,7 +1078,12 @@ export class RetainedVerificationExecution {
         procedurePlan: run.procedurePlan,
         signal: runSignal,
         dependencyInstaller: this.runtime.retainedDependencyInstaller,
-        ...retainedProfileInput(this.runtime.store.repository, this.runtime.directory, workspace),
+        ...retainedProfileInput(
+          this.runtime.store.repository,
+          this.runtime.directory,
+          workspace,
+          initial.id,
+        ),
         onSetupPathReserved: (path) => {
           setup.resource = { path, realPath: path, device: -1, inode: -1 }
           this.reserveRetainedSetupResource(run, "setup-root", path, -1, -1)
