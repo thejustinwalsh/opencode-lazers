@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { Glob } from "bun"
+import { discoverRecordedTransitions } from "./event-discovery/recorded-transitions.ts"
 import {
   eventFilters,
   eventGroup,
@@ -45,46 +46,13 @@ async function recordedKinds() {
   return [...kinds].sort()
 }
 
-/** Upper-case names the runner records as transitions, found where the runner writes them. */
+/** Exact transition names passed to runner persistence producers. */
 async function recordedTransitions() {
-  const names = new Set<string>()
-  const ignore = new Set([
-    "INSERT",
-    "UPDATE",
-    "DELETE",
-    "NULL",
-    "HOME",
-    "PATH",
-    "LANG",
-    "TMPDIR",
-    "USER",
-    "LOGNAME",
-    "EEXIST",
-    "ENOENT",
-    "EPERM",
-    "ESRCH",
-    "SIGTERM",
-    "SIGKILL",
-    "HEAD",
-    "LC_ALL",
-    "LC_CTYPE",
-  ])
-  for (const file of [
-    ...(await sourceFiles("src/runner/**/*.{ts,tsx}")),
-    "src/tasks/instructions.ts",
-  ])
-    for (const match of (await Bun.file(file).text()).matchAll(
-      /["'`]([A-Z][A-Z0-9]{3,}(?:_[A-Z0-9]+)*)["'`]/g,
-    )) {
-      const name = match[1]!
-      if (
-        ignore.has(name) ||
-        /CANARY|API_KEY|^GIT_|^SSH_|^OPENCODE_|^LAZERS_|PRIVATE|SECRET|MUST_NOT|^FULL_/.test(name)
-      )
-        continue
-      names.add(name)
-    }
-  return [...names].sort()
+  const files = await sourceFiles("src/**/*.{ts,tsx}")
+  const sources = await Promise.all(
+    files.map(async (path) => ({ path, source: await Bun.file(path).text() })),
+  )
+  return discoverRecordedTransitions(sources)
 }
 
 test("every recorded event kind has a display name and a filter group", async () => {
@@ -101,6 +69,16 @@ test("every recorded event kind has a display name and a filter group", async ()
 test("every runner transition has a display name", async () => {
   const found = await recordedTransitions()
   expect(found.length).toBeGreaterThan(100)
+  expect(found).toEqual(
+    expect.arrayContaining([
+      "RECOVERY_BUNDLE_RAISED",
+      "WORKER_CONCERN_RAISED",
+      "OUTCOME_HOST_DELIVERED",
+      "ARCHITECT_RENEWAL_NATIVE_INPUT_OBSERVED",
+      "WORKER_STARTED",
+      "TAKEOVER_HANDOFF_RECEIVED",
+    ]),
+  )
   const missing = found.filter((name) => !(name in runnerTransitions))
   expect(missing).toEqual([])
   for (const [name, text] of Object.entries(runnerTransitions)) {
