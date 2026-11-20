@@ -193,6 +193,30 @@ const takeoverMachine = defineLifecycle("runner-takeover", "notifying", {
   cancelled: [],
 })
 
+/**
+ * A stored plan of task drafts. Every state exits to `tasked` ("just task it") and `abandoned`;
+ * an edit in `ready` returns to `drafted`. `in-review` moves to `questions-open` only when every
+ * run is terminal, which the review executor enforces, not the machine.
+ */
+const planningMachine = defineLifecycle("lazers-planning", "drafted", {
+  drafted: ["in-review", "tasked", "abandoned"],
+  "in-review": ["questions-open", "tasked", "abandoned"],
+  "questions-open": ["in-review", "final-review", "tasked", "abandoned"],
+  "final-review": ["ready", "tasked", "abandoned"],
+  ready: ["drafted", "tasked", "abandoned"],
+  tasked: [],
+  abandoned: [],
+})
+/** One planning agent's attempt. A retry is a new run row, so `stuck` has no exit. */
+const planningRunMachine = defineLifecycle("lazers-planning-run", "starting", {
+  starting: ["running", "failed", "cancelled"],
+  running: ["reviewed", "failed", "stuck", "cancelled"],
+  reviewed: [],
+  failed: [],
+  stuck: [],
+  cancelled: [],
+})
+
 const workspaceMachine = defineLifecycle("runner-verification-workspace", "unallocated", {
   unallocated: ["reserved", "owned", "uncertain", "removed"],
   reserved: ["owned", "uncertain", "removed"],
@@ -224,6 +248,8 @@ export const lifecycleMachines = {
   cleanup: verificationCleanupMachine,
   workspace: workspaceMachine,
   takeover: takeoverMachine,
+  planning: planningMachine,
+  planningRun: planningRunMachine,
   capacity: capacityMachine,
 } as const
 
@@ -250,6 +276,10 @@ export function registerLifecycleTransitions(db: Database) {
   registered.add(db)
 }
 
+export type PlanningState =
+  "drafted" | "in-review" | "questions-open" | "final-review" | "ready" | "tasked" | "abandoned"
+export type PlanningRunState =
+  "starting" | "running" | "reviewed" | "failed" | "stuck" | "cancelled"
 export type PlanLifecycleState = keyof typeof planStates
 export type AttemptLifecycleState = keyof typeof attemptStates
 export type EffectLifecycleState = keyof typeof effectStates

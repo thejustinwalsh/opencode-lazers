@@ -5,6 +5,7 @@ import { schemaModules } from "./database-schema.ts"
 import { installTaskAdviceSchema } from "./tasks/advice.ts"
 import { installObservedRevisionsSchema } from "./tasks/observed-revisions.ts"
 import { installRepoMapSchema } from "./context/repo-map-store.ts"
+import { installPlanningSchema } from "./planning/store.ts"
 import { mkdirSync, realpathSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join } from "node:path"
@@ -427,6 +428,7 @@ export class TaskRepository {
       shared.once("task-observations", () => installObservedRevisionsSchema(this))
       shared.once("project-controls", () => installProjectControlsSchema(this))
       shared.once("repo-map", () => installRepoMapSchema(this))
+      shared.once("planning", () => installPlanningSchema(this))
       return shared
     } catch (error) {
       this.shared = undefined
