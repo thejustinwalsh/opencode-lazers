@@ -508,7 +508,7 @@ test("captured history pages stay fixed while ten live status reads use no nativ
     expect(latest.effort.tokenUsage.totalSessions).toBe(2)
     expect(latest.effort.toolCalls.count).toBe(5)
     expect(latest.plans[0]?.checks.length).toBeGreaterThan(0)
-    expect(latest.coverage.sessionRead).toContain("session.context was not read")
+    expect(latest.coverage.sessionRead).toContain("native message list was not read")
     expect(latest.coverage.fullSessionHistory).toBe(
       "not guaranteed; use explicit warnings and do not infer omitted history",
     )
