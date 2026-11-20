@@ -163,3 +163,28 @@ over a whole attempt, `models/observation-ledger-read.ts` full reads of
 Fastest safe wins, in order: delete `runner_conflict_scans` rows; collapse
 `task_changes`; stop or window `recovery_progress_facts`; drop unused indexes. Together
 about 1 GB of the 2.58 GB, with no reader affected.
+
+## Integer identity: measured, not merged (2026-11-20)
+
+Branch `fix/integer-keys` (not merged) built steps 1 and 2 (key tables for plans and attempts;
+nullable integer columns on `runner_transitions` and `runner_progress`, backfilled in pages of
+1,000 rows) and moved 2 of about 32 reader files. Measured on a fixture of 440,000 transitions and
+117,000 progress rows (915.4 MB):
+
+| Phase                                               | File     |
+| --------------------------------------------------- | -------- |
+| Before                                              | 915.4 MB |
+| Integer columns backfilled                          | 916.0 MB |
+| Integer indexes beside the text ones (until step 4) | 990.4 MB |
+| Text indexes and columns dropped, then `VACUUM`     | 826.8 MB |
+
+The saving is 88.7 MB (9.7%), all of it in indexes. The table pages do not shrink: a transitions
+row is about 540 bytes, so dropping a 36-byte id still leaves 7 rows per 4 KiB page, and a progress
+row is one page plus overflow either way. The earlier estimate of about 150 bytes per row was
+wrong. Getting there means converting about 30 more reader files, a period in which the file is
+74 MB larger, write triggers on both tables, and a 15 s offline `DROP COLUMN` plus `VACUUM`.
+
+What would shrink the tables themselves: the payload columns (`runner_progress.payload` is most of
+its 480 MB), not the ids. That is retention and payload shape, covered above.
+
+Recommendation recorded for the owner: do not continue integer identity for these two tables.
