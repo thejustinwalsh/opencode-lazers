@@ -16359,3 +16359,30 @@ test("7abe4acd-2: a handoff saved while a host read is in flight survives the tr
   )
   expect(saved.workerHandoff?.remaining).toBe("the final warning")
 }, 10_000)
+
+test("8c276019-1: a queued task of another plan is named as a scope owner", () => {
+  const f = fixture()
+  const plans = [
+    { id: "plan-a", state: "running" },
+    { id: "plan-b", state: "running" },
+    { id: "plan-c", state: "integrated" },
+  ]
+  const nodes: Record<string, Array<{ task_id: string; state: string }>> = {
+    "plan-a": [{ task_id: "task-a", state: "running" }],
+    "plan-b": [
+      { task_id: "task-b", state: "queued" },
+      { task_id: "task-done", state: "accepted" },
+    ],
+    "plan-c": [{ task_id: "task-old", state: "queued" }],
+  }
+  const fake = {
+    store: {
+      plans: () => plans,
+      nodes: (id: string) => nodes[id] ?? [],
+      activeProjectAttempts: () => [],
+      effectiveReservationScope: (id: string) => [`src/${id}.ts`],
+    },
+  }
+  const owners = (f.runtime as any).scopeOwners.call(fake, plans[0], "task-a")
+  expect(owners).toEqual([{ taskID: "task-b", patterns: ["src/task-b.ts"] }])
+})

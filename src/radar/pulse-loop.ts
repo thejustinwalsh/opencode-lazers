@@ -20,6 +20,8 @@ export type PulseHost = {
   visible(): boolean
   /** True when the person asked for reduced motion; pulses then stay static. */
   reducedMotion(): boolean
+  /** Calls `listener` when the reduced-motion preference changes; returns its unsubscribe. */
+  onReducedMotionChange?(listener: () => void): () => void
   /**
    * Moves `dot` through `points` (x/y pairs, evenly spaced in time) linearly, `iterations` times
    * (`Infinity` allowed), each taking `durationMs`, after `delayMs` (negative starts part way
@@ -40,6 +42,15 @@ export const browserHost = (): PulseHost => ({
       return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
     } catch {
       return false
+    }
+  },
+  onReducedMotionChange(listener) {
+    try {
+      const query = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")
+      query?.addEventListener?.("change", listener)
+      return () => query?.removeEventListener?.("change", listener)
+    } catch {
+      return () => {}
     }
   },
   animate(dot, points, timing, onFinish) {
@@ -242,11 +253,29 @@ export function createPulseLoop(layer: Element, host: PulseHost = browserHost())
       }
   }
   globalThis.document?.addEventListener?.("visibilitychange", onVisibility)
+  let lastInputs: readonly WireInput[] = []
+  // A preference change acts at once: reduced motion cancels every pulse, opting out restores them.
+  const stopReducedWatch = host.onReducedMotionChange?.(() => {
+    if (disposed) return
+    if (host.reducedMotion()) {
+      for (const wire of wires.values()) {
+        for (const pulse of wire.pulses) {
+          pulse.animation.cancel()
+          free.push(pulse.dot)
+          live--
+        }
+        wire.pulses = []
+        wire.running = false
+      }
+      wires.clear()
+    } else api.update(lastInputs)
+  })
 
-  return {
+  const api = {
     /** Current layout's wires. Safe on every render: pulses in flight are never reset. */
     update(inputs: readonly WireInput[]) {
       if (disposed) return
+      lastInputs = inputs
       if (host.visible() === paused) onVisibility()
       const reduced = host.reducedMotion()
       const present = new Set<string>()
@@ -309,7 +338,9 @@ export function createPulseLoop(layer: Element, host: PulseHost = browserHost())
       for (const wire of wires.values()) for (const pulse of wire.pulses) pulse.animation.cancel()
       wires.clear()
       globalThis.document?.removeEventListener?.("visibilitychange", onVisibility)
+      stopReducedWatch?.()
       for (const dot of all) dot.remove()
     },
   }
+  return api
 }

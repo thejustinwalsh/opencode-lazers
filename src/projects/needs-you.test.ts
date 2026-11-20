@@ -162,3 +162,23 @@ test("lz.projects needsYou pages every project and asserts no permission", async
   expect(seen).toEqual(["AAA", "BBB", "CCC"])
   expect(asserted).toEqual([])
 })
+
+test("a963208e-1: a page says whether native questions were read for its checkout", async () => {
+  const { three } = await fixture()
+  const own = async (directory: string, units = [three.projects[0]!.directory]) =>
+    needsYouPage({
+      repository: three.projects[0]!.repository,
+      units: projectUnits(three.projects[0]!.repository, () => units),
+      ownDirectory: directory,
+      sessionOf: async () => null,
+    })
+  const result = await pages(three, { sessionOf: async () => null })
+  expect(result.map((page) => [page.project.code, page.questionsRead])).toEqual([
+    ["AAA", true],
+    ["BBB", false],
+    ["CCC", false],
+  ])
+  expect((await own(three.projects[0]!.directory))!.questionsRead).toBe(true)
+  // Without any session reader nothing is read, and the page says so.
+  expect((await pages(three))[0]!.questionsRead).toBe(false)
+})
