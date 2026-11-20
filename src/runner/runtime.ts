@@ -25,6 +25,8 @@ import { ArchitectOwnership } from "./architect-ownership.ts"
 import { ArchitectSources } from "./architect-sources.ts"
 import { ArchitectRenewal } from "./architect-renewal.ts"
 import { Dispatch } from "./dispatch.ts"
+import { WorkerObservation } from "./worker-observation.ts"
+import { CleanupAudit, type CleanupAuditDiagnostics } from "./cleanup-audit.ts"
 import { AdoptionExecution } from "./adoption-execution.ts"
 import { WorktreeCleanup } from "./worktree-cleanup.ts"
 import { OutcomeDelivery } from "./outcome-delivery.ts"
@@ -367,57 +369,6 @@ type RunnerTransitionRecord = {
 
 type RetainedVerificationSeed = RetainedVerification
 
-const cleanupObservationStages = [
-  "session-read",
-  "session-id",
-  "project-id",
-  "directory",
-  "agent",
-  "attempt-id",
-  "foreground",
-  "pending-input",
-  "observation-stability",
-  "pending-permissions",
-  "pending-forms",
-  "running-shells",
-  "active-children",
-] as const
-type CleanupObservationStage = (typeof cleanupObservationStages)[number]
-type CleanupObservationCheck = {
-  stage: CleanupObservationStage
-  status: "passed" | "blocked" | "not-evaluated"
-  code?: string
-}
-type CleanupSessionObservation =
-  | { kind: "unavailable"; error: unknown }
-  | { kind: "absent" }
-  | { kind: "observed"; session: HostSession }
-type CleanupWorkerClassification = {
-  binding: {
-    projectID: string
-    planID: string
-    attemptID: string
-    sessionID: string
-    workspace: string
-    assignedMessageID: string
-  }
-  firstBlocker: { stage: CleanupObservationStage; code: string } | null
-  stages: CleanupObservationCheck[]
-}
-type CleanupAuditDiagnostics = {
-  diagnosticOnly: true
-  planID: string
-  planVersion: number
-  sampledAt: number
-  workspace: string
-  workers: Array<
-    CleanupWorkerClassification & {
-      planVersion: number
-      sampledAt: number
-    }
-  >
-}
-
 type PlanFallowContext = {
   workspace: string
   artifact: string
@@ -653,6 +604,8 @@ export class TaskRuntime {
   private readonly sources: ArchitectSources
   private readonly renewal: ArchitectRenewal
   private readonly dispatchModule: Dispatch
+  private readonly workerObservation: WorkerObservation
+  private readonly cleanupAudit: CleanupAudit
   private running = false
   private stopped = false
   private tickRequested = false
@@ -887,6 +840,11 @@ export class TaskRuntime {
       startupRecoveryAuthorityCurrent: (...args) => this.startupRecoveryAuthorityCurrent(...args),
       journal: this.journal,
     })
+    this.workerObservation = new WorkerObservation(this.core, {
+      sameModel: (...args) => this.sameModel(...args),
+      journal: this.journal,
+    })
+    this.cleanupAudit = new CleanupAudit(this.core)
     this.sources = new ArchitectSources(this.core, {
       isStopped: () => this.stopped,
       ownership: this.ownership,
@@ -7241,518 +7199,60 @@ export class TaskRuntime {
     if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
   }
 
-  private workerEvent(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    event: "WORKER_STARTED" | "WORKER_STOPPED",
-    fence: number,
-    outcome?: HostSession["outcome"] | "cancelled",
-    inputID?: string | null,
+  private workerEvent(...args: Parameters<WorkerObservation["workerEvent"]>) {
+    return this.workerObservation.workerEvent(...args)
+  }
+
+  private matchesWorkerInput(...args: Parameters<WorkerObservation["matchesWorkerInput"]>) {
+    return this.workerObservation.matchesWorkerInput(...args)
+  }
+
+  private isPriorContinuationInput(
+    ...args: Parameters<WorkerObservation["isPriorContinuationInput"]>
   ) {
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      outcome?: HostSession["outcome"] | "cancelled"
-      inputID?: string
-    }>(plan.id, attempt.task_id, event)
-    if (
-      previous?.attemptID === attempt.id &&
-      (event === "WORKER_STARTED" || (previous.outcome === outcome && previous.inputID === inputID))
-    )
-      return
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, event, {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        observedAt: Date.now(),
-        ...(outcome ? { outcome } : {}),
-        ...(inputID ? { inputID } : {}),
-      }),
-    )
+    return this.workerObservation.isPriorContinuationInput(...args)
   }
 
-  private matchesWorkerInput(attempt: AttemptRow, inputID: string | null | undefined): boolean {
-    if (
-      this.progress.matchesAssignedInput(
-        attempt.id,
-        attempt.session_id,
-        attempt.message_id,
-        inputID,
-      )
-    )
-      return true
-    if (!inputID) return false
-
-    const plan = this.store.plan(attempt.plan_id)
-    const latest = this.store
-      .attempts(attempt.plan_id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-      .at(-1)
-    if (
-      !plan ||
-      !latest ||
-      latest.id !== attempt.id ||
-      latest.session_id !== attempt.session_id ||
-      latest.workspace !== attempt.workspace ||
-      latest.message_id !== attempt.message_id
-    )
-      return false
-
-    const aliases = this.store.atomic((db) =>
-      db
-        .query<{ id: number; payload: string }, [string, string]>(
-          `SELECT id,payload FROM runner_transitions
-           WHERE plan_id=? AND task_id=? AND event='WORKER_REVIEW_INPUT_RECONCILED'
-           ORDER BY id DESC`,
-        )
-        .all(attempt.plan_id, attempt.task_id),
-    )
-    for (const row of aliases) {
-      let alias: ReturnType<typeof parseReviewInputAlias>
-      try {
-        alias = parseReviewInputAlias(JSON.parse(row.payload))
-      } catch {
-        alias = undefined
-      }
-      if (
-        !alias ||
-        !matchesReviewInputAlias(alias, {
-          projectDirectory: this.directory,
-          projectID: this.projectID,
-          planID: attempt.plan_id,
-          taskID: attempt.task_id,
-          attemptID: attempt.id,
-          sessionID: attempt.session_id,
-          workspace: attempt.workspace,
-          assignedMessageID: attempt.message_id,
-          reviewInputID: inputID,
-        })
-      )
-        continue
-      return true
-    }
-    return false
-  }
-
-  private isPriorContinuationInput(attempt: AttemptRow, inputID: string | null | undefined) {
-    if (!inputID) return false
-    return this.store.activity(attempt.plan_id, attempt.task_id).some((entry) => {
-      if (entry.event !== "ATTEMPT_RESUMED") return false
-      try {
-        const resumed = JSON.parse(entry.payload) as {
-          attemptID?: unknown
-          previousMessageID?: unknown
-          interruptedInputID?: unknown
-          terminalInputID?: unknown
-        }
-        return (
-          resumed.attemptID === attempt.id &&
-          (resumed.previousMessageID === inputID ||
-            resumed.interruptedInputID === inputID ||
-            resumed.terminalInputID === inputID)
-        )
-      } catch {
-        return false
-      }
-    })
-  }
-
-  private async observeCleanupSession(attempt: AttemptRow): Promise<CleanupSessionObservation> {
-    try {
-      const session = await this.host.session(attempt.session_id, { messages: true })
-      return session ? { kind: "observed", session } : { kind: "absent" }
-    } catch (error) {
-      return { kind: "unavailable", error }
-    }
-  }
-
-  private classifyCleanupWorker(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    observation: CleanupSessionObservation,
-  ): CleanupWorkerClassification {
-    const binding = {
-      projectID: this.projectID,
-      planID: plan.id,
-      attemptID: attempt.id,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      assignedMessageID: attempt.message_id,
-    }
-    const stages: CleanupObservationCheck[] = []
-    const fail = (stage: CleanupObservationStage, code: string) => {
-      stages.push({ stage, status: "blocked", code })
-      const index = cleanupObservationStages.indexOf(stage)
-      for (const later of cleanupObservationStages.slice(index + 1))
-        stages.push({ stage: later, status: "not-evaluated" })
-      return { binding, firstBlocker: { stage, code }, stages }
-    }
-    const pass = (stage: CleanupObservationStage) => stages.push({ stage, status: "passed" })
-
-    if (observation.kind === "unavailable") return fail("session-read", "read-unavailable")
-    if (observation.kind === "absent") {
-      // Current cleanup permits authoritative native absence, not a failed read.
-      stages.push({ stage: "session-read", status: "passed", code: "session-absent" })
-      for (const stage of cleanupObservationStages.slice(1))
-        stages.push({ stage, status: "not-evaluated" })
-      return { binding, firstBlocker: null, stages }
-    }
-    pass("session-read")
-
-    const session = observation.session
-    if (session.id !== attempt.session_id) return fail("session-id", "session-id-mismatch")
-    pass("session-id")
-    if (session.projectID !== this.projectID) return fail("project-id", "project-id-mismatch")
-    pass("project-id")
-    if (session.directory !== attempt.workspace) return fail("directory", "directory-mismatch")
-    pass("directory")
-    if (!isWorkerAgent(session.agent)) return fail("agent", "agent-mismatch")
-    pass("agent")
-    if (session.metadata?.lazersAttemptID !== attempt.id)
-      return fail("attempt-id", "attempt-id-mismatch")
-    pass("attempt-id")
-    if (session.busy !== false) return fail("foreground", "foreground-busy")
-    pass("foreground")
-    if (session.pendingInput === true) return fail("pending-input", "pending-input")
-    pass("pending-input")
-    if (session.observationUnstable) return fail("observation-stability", "observation-unstable")
-    pass("observation-stability")
-    if ((session.pendingPermissions ?? 0) !== 0)
-      return fail("pending-permissions", "pending-permissions")
-    pass("pending-permissions")
-    if ((session.pendingForms ?? 0) !== 0) return fail("pending-forms", "pending-forms")
-    pass("pending-forms")
-    if ((session.runningShells ?? 0) !== 0) return fail("running-shells", "running-shells")
-    pass("running-shells")
-    if ((session.activeChildren ?? 0) !== 0) return fail("active-children", "active-children")
-    pass("active-children")
-    return { binding, firstBlocker: null, stages }
-  }
-
-  private async cleanupAuditDiagnostics(
-    plan: PlanRow,
-  ): Promise<CleanupAuditDiagnostics | undefined> {
-    if (plan.state !== "cleanup-blocked") return undefined
-    const effects = this.store.effects(plan.id)
-    let workspace: string | undefined
-    for (const effect of [...effects].reverse()) {
-      if (effect.kind !== "worktree-remove" || !["held", "uncertain"].includes(effect.state))
-        continue
-      try {
-        const payload = JSON.parse(effect.payload) as { workspace?: unknown }
-        if (typeof payload.workspace === "string") {
-          workspace = payload.workspace
-          break
-        }
-      } catch {
-        // Malformed cleanup receipts cannot establish a worker binding.
-      }
-    }
-    if (!workspace) return undefined
-    const source = effects.find((effect) => {
-      if (!["worktree", "worktree-recovery"].includes(effect.kind) || effect.state !== "completed")
-        return false
-      try {
-        return JSON.parse(effect.receipt ?? "{}").workspace === workspace
-      } catch {
-        return false
-      }
-    })
-    if (!source) return undefined
-    const attempts = this.store
-      .attempts(plan.id)
-      .filter((attempt) => attempt.workspace === workspace)
-    if (!attempts.length) return undefined
-
-    const sampledAt = this.now()
-    const workers: CleanupAuditDiagnostics["workers"] = []
-    for (const attempt of attempts) {
-      const observation = await this.observeCleanupSession(attempt)
-      const workerSampledAt = this.now()
-      const classification = this.classifyCleanupWorker(plan, attempt, observation)
-      workers.push({
-        ...classification,
-        planVersion: plan.version,
-        sampledAt: workerSampledAt,
-      })
-      // Cleanup stops at the first worker that is not conclusively quiescent.
-      if (classification.firstBlocker) break
-    }
-    return {
-      diagnosticOnly: true,
-      planID: plan.id,
-      planVersion: plan.version,
-      sampledAt,
-      workspace,
-      workers,
-    }
-  }
-
-  /**
-   * Live idle check: a worker with a running shell in its worktree or an
-   * active child session is not idle. The counts are read from the host at
-   * observation time; there is no report to wait for.
-   */
-  backgroundBlockReason(session: HostSession): string | undefined {
-    const shells = session.runningShells ?? 0
-    const children = session.activeChildren ?? 0
-    if (shells === 0 && children === 0) return undefined
-    return `Worker has ${shells} running shell(s) and ${children} active child session(s)`
-  }
-
-  private approvalWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    fence: number,
-    observation?: WorkerObservationFence,
-  ) {
-    const pendingPermissions = session.pendingPermissions ?? 0
-    const pendingForms = session.pendingForms ?? 0
-    return this.store.fenced(this.owner, fence, () => {
-      if (observation && !this.workerObservationCurrent(observation)) return false
-      const previous = this.store.latestTransition<{
-        attemptID?: string
-        pendingPermissions?: number
-        pendingForms?: number
-      }>(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT")
-      if (
-        previous?.attemptID === attempt.id &&
-        previous.pendingPermissions === pendingPermissions &&
-        previous.pendingForms === pendingForms
-      )
-        return false
-      this.store.record(plan.id, attempt.task_id, "WORKER_APPROVAL_WAIT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        directory: session.directory,
-        pendingPermissions,
-        pendingForms,
-        observedAt: Date.now(),
-      })
-      return true
-    })
+  private approvalWait(...args: Parameters<WorkerObservation["approvalWait"]>) {
+    return this.workerObservation.approvalWait(...args)
   }
 
   private holdApprovalObservation(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-    fence: number,
+    ...args: Parameters<WorkerObservation["holdApprovalObservation"]>
   ) {
-    return this.store.fenced(this.owner, fence, () => {
-      if (!this.workerObservationCurrent(observation)) return false
-      this.approvalWait(plan, attempt, session, fence, observation)
-      this.hold(
-        plan,
-        `Worker at ${session.directory} has ${session.pendingPermissions ?? 0} pending permission request(s) and ${session.pendingForms ?? 0} pending form(s)`,
-        ["audit", "reconcile", "cancel"],
-        undefined,
-        observation,
-      )
-      return true
-    })
+    return this.workerObservation.holdApprovalObservation(...args)
   }
 
-  private reconcileRequestID(planID: string) {
-    return this.store.atomic(
-      (db) =>
-        db
-          .query<{ id: number }, [string]>(
-            `SELECT COALESCE(MAX(id),0) AS id FROM runner_transitions
-             WHERE plan_id=? AND task_id IS NULL AND event='RECONCILE_REQUESTED'`,
-          )
-          .get(planID)!.id,
-    )
+  private workerObservationFence(...args: Parameters<WorkerObservation["workerObservationFence"]>) {
+    return this.workerObservation.workerObservationFence(...args)
   }
 
-  private workerObservationFence(
-    plan: PlanRow,
-    attempt: AttemptRow,
-  ): WorkerObservationFence | undefined {
-    const currentPlan = this.store.plan(plan.id)
-    const currentAttempt = this.store
-      .attempts(plan.id)
-      .filter((candidate) => candidate.task_id === attempt.task_id)
-      .at(-1)
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)
-    if (
-      !currentPlan ||
-      currentPlan.version !== plan.version ||
-      currentPlan.state !== plan.state ||
-      !currentAttempt ||
-      currentAttempt.id !== attempt.id ||
-      currentAttempt.state !== attempt.state ||
-      currentAttempt.session_id !== attempt.session_id ||
-      currentAttempt.workspace !== attempt.workspace ||
-      currentAttempt.message_id !== attempt.message_id ||
-      currentAttempt.policy !== attempt.policy ||
-      !node
-    )
-      return undefined
-    return {
-      planID: plan.id,
-      planVersion: plan.version,
-      planState: plan.state,
-      owner: plan.owner,
-      reconcileRequestID: this.reconcileRequestID(plan.id),
-      taskID: attempt.task_id,
-      attemptID: attempt.id,
-      attemptState: attempt.state,
-      sessionID: attempt.session_id,
-      workspace: attempt.workspace,
-      messageID: attempt.message_id,
-      policy: attempt.policy,
-      nodeState: node.state,
-      nodeVersion: node.version,
-    }
+  private workerObservationCurrent(
+    ...args: Parameters<WorkerObservation["workerObservationCurrent"]>
+  ) {
+    return this.workerObservation.workerObservationCurrent(...args)
   }
 
-  private workerObservationCurrent(observation: WorkerObservationFence) {
-    const plan = this.store.plan(observation.planID)
-    const attempt = this.store
-      .attempts(observation.planID)
-      .filter((candidate) => candidate.task_id === observation.taskID)
-      .at(-1)
-    const node = this.store
-      .nodes(observation.planID)
-      .find((candidate) => candidate.task_id === observation.taskID)
-    return Boolean(
-      plan &&
-      plan.version === observation.planVersion &&
-      plan.state === observation.planState &&
-      this.reconcileRequestID(observation.planID) === observation.reconcileRequestID &&
-      attempt?.id === observation.attemptID &&
-      attempt.state === observation.attemptState &&
-      attempt.session_id === observation.sessionID &&
-      attempt.workspace === observation.workspace &&
-      attempt.message_id === observation.messageID &&
-      attempt.policy === observation.policy &&
-      node?.state === observation.nodeState &&
-      node.version === observation.nodeVersion,
-    )
-  }
-
-  private approvalWaitReason(reason: string | null | undefined) {
-    return Boolean(
-      reason?.startsWith("Worker at ") &&
-      reason.includes("pending permission request(s)") &&
-      reason.includes("pending form(s)"),
-    )
-  }
-
-  private conclusiveApprovalClear(attempt: AttemptRow, session: HostSession) {
-    if (
-      session.id !== attempt.session_id ||
-      session.projectID !== this.projectID ||
-      session.directory !== attempt.workspace ||
-      !isWorkerAgent(session.agent) ||
-      session.archived ||
-      session.metadata?.lazersAttemptID !== attempt.id ||
-      session.pendingInput !== false ||
-      session.pendingPermissions !== 0 ||
-      session.pendingForms !== 0 ||
-      session.observationUnstable ||
-      !session.turn ||
-      !this.matchesWorkerInput(attempt, session.turn.inputID)
-    )
-      return false
-    try {
-      const policy = ModelPolicy.safeParse(JSON.parse(attempt.policy).model)
-      return policy.success && this.sameModel(session.model, policy.data)
-    } catch {
-      return false
-    }
+  private approvalWaitReason(...args: Parameters<WorkerObservation["approvalWaitReason"]>) {
+    return this.workerObservation.approvalWaitReason(...args)
   }
 
   private resumeTransientObservationWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    observation: WorkerObservationFence,
-    fence: number,
-    allowNonterminal = false,
+    ...args: Parameters<WorkerObservation["resumeTransientObservationWait"]>
   ) {
-    const current = this.store.plan(plan.id)
-    const reason = current?.reason
-    const observationReason = reason?.replace(/^Worker execution (?:failed|completed); /, "")
-    // Legacy holds named the retired experimental.idle report; they clear the same way.
-    const backgroundWait =
-      observationReason?.startsWith("Native idle background observation") ||
-      /^Worker has \d+ known background job\(s\)/.test(observationReason ?? "") ||
-      /^Worker has \d+ running shell\(s\) and \d+ active child session\(s\)/.test(
-        observationReason ?? "",
-      )
-    const approvalWait = this.approvalWaitReason(reason)
-    if (current?.state !== "blocked" || !reason || (!backgroundWait && !approvalWait)) return
-    if (approvalWait && !this.conclusiveApprovalClear(attempt, session)) return false
-    if (
-      allowNonterminal
-        ? !approvalWait || session.outcome !== undefined
-        : session.busy || session.pendingInput || session.observationUnstable || !session.outcome
-    )
-      return false
-    return this.store.fenced(this.owner, fence, (db) => {
-      if (!this.workerObservationCurrent(observation)) return false
-      const current = db
-        .query<{ state: string; reason: string | null; version: number; owner: string }, [string]>(
-          "SELECT state,reason,version,owner FROM runner_plans WHERE id=?",
-        )
-        .get(plan.id)
-      if (
-        current?.state !== "blocked" ||
-        current.reason !== reason ||
-        current.version !== observation.planVersion
-      )
-        return false
-      const changed =
-        db
-          .query(
-            "UPDATE runner_plans SET state=lz_runner_transition('plan',state,'running'),reason=NULL,version=version+1 WHERE id=? AND state='blocked' AND reason=? AND version=? AND owner=?",
-          )
-          .run(plan.id, reason, observation.planVersion, observation.owner).changes === 1
-      if (changed)
-        this.store.record(plan.id, null, "WORKER_OBSERVATION_SETTLED", {
-          previousReason: reason,
-          observation: approvalWait ? "worker-approvals" : "live-idle-check",
-        })
-      return changed
-    })
+    return this.workerObservation.resumeTransientObservationWait(...args)
   }
 
-  private backgroundWait(
-    plan: PlanRow,
-    attempt: AttemptRow,
-    session: HostSession,
-    reason: string,
-    fence: number,
-  ) {
-    const background = {
-      runningShells: session.runningShells ?? 0,
-      activeChildren: session.activeChildren ?? 0,
-    }
-    const previous = this.store.latestTransition<{
-      attemptID?: string
-      background?: typeof background
-    }>(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT")
-    if (
-      previous?.attemptID === attempt.id &&
-      JSON.stringify(previous.background) === JSON.stringify(background)
-    )
-      return
-    this.store.fenced(this.owner, fence, () =>
-      this.store.record(plan.id, attempt.task_id, "WORKER_BACKGROUND_WAIT", {
-        attemptID: attempt.id,
-        sessionID: attempt.session_id,
-        workspace: attempt.workspace,
-        reason,
-        background,
-      }),
-    )
+  private backgroundWait(...args: Parameters<WorkerObservation["backgroundWait"]>) {
+    return this.workerObservation.backgroundWait(...args)
+  }
+
+  backgroundBlockReason(session: HostSession): string | undefined {
+    return this.workerObservation.backgroundBlockReason(session)
+  }
+
+  private cleanupAuditDiagnostics(...args: Parameters<CleanupAudit["cleanupAuditDiagnostics"]>) {
+    return this.cleanupAudit.cleanupAuditDiagnostics(...args)
   }
 
   private async dispatch(...args: Parameters<Dispatch["dispatch"]>) {
