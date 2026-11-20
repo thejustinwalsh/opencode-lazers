@@ -276,7 +276,7 @@ export function Demo({
     const seen = new IntersectionObserver(
       (entries) => {
         const entry = entries[entries.length - 1]
-        live.current.visible = Boolean(entry?.isIntersecting)
+        live.current.visible = Boolean(entry?.isIntersecting && entry.intersectionRatio >= 0.35)
         sync()
       },
       { threshold: 0.35 },

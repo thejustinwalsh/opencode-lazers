@@ -793,10 +793,11 @@ export function Checked() {
                 the suite and captures the receipt.
               </p>
               <p {...stylex.props(s.body)}>
-                LAZERS gates every task on executable verification commands and Fallow static
-                analysis for dead code, duplication, and complexity. Only after mechanical checks
-                pass does Architect review the diff and integrate it into your branch&mdash;under
-                your normal OpenCode permissions.
+                LAZERS runs your executable verification commands and a Fallow static-analysis audit
+                (dead code, duplication, complexity) on every task. A failing command stops the task
+                before review. Fallow findings go back to the worker once for a repair, and what
+                remains is reported to the Architect, who reviews the diff and integrates it into
+                your branch&mdash;under your normal OpenCode permissions.
               </p>
             </div>
           </div>
