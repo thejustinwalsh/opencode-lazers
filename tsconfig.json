@@ -17,6 +17,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "scripts/**/*.ts",
+    "website/demo/**/*.ts",
+    "website/demo/**/*.tsx",
     "vite.config.ts",
     "test/**/*.ts",
     ".opencode/plugins/**/*.ts"

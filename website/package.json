@@ -5,9 +5,10 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "bun check && vite build",
+    "build": "bun check && bun run demo && vite build",
     "preview": "vite preview",
-    "verify": "bun fmt && bun lint --fix && bun fmt && bun check"
+    "verify": "bun fmt && bun lint --fix && bun fmt && bun check",
+    "demo": "bun ../scripts/build-website-demo.ts"
   },
   "dependencies": {
     "@chenglou/pretext": "^1.0.0",
