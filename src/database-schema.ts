@@ -194,12 +194,14 @@ export const schemaModules = {
     ],
   },
   "model-decision-projection": {
-    generation: 1,
+    generation: 2,
     source: "src/models/decision-projection.ts",
     tables: [
       "model_decision_progress",
       "model_decision_progress_state",
       "model_decision_progress_dirty",
+      "model_decision_task",
+      "model_decision_task_dirty",
     ],
   },
   "model-mappings": {

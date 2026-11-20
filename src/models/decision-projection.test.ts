@@ -8,11 +8,13 @@ import { acquireSharedConnection } from "../storage.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import {
   DecisionProjectionOwner,
-  decisionProjectionStats,
+  PROJECTION_IDLE_DROP_MS,
+  dropIdleProjections,
   ensureDecisionProjectionSchema,
   foldDecisionProgress,
   installDecisionProjectionSchema,
 } from "./decision-projection.ts"
+import { decisionProjectionStats } from "./decision-projection-tables.ts"
 import { createModelDecisionReader } from "./decision-read.ts"
 import { projectTaskEffortBasis } from "../trajectory/accounting.ts"
 import { projectTaskValuation, taskValuationPerCallUsage } from "./valuation.ts"
@@ -514,7 +516,7 @@ test("installing the schema again keeps the stored rows and re-creates the trigg
         "SELECT generation FROM schema_modules WHERE module='model-decision-projection'",
       )
       .get(),
-  ).toEqual({ generation: 1 })
+  ).toEqual({ generation: 2 })
 })
 
 test("a folded decision read parses fewer bytes than the full read", async () => {
@@ -576,4 +578,193 @@ test("a valuation and a per-call read given the snapshot's effort basis equal th
     expect(taskValuationPerCallUsage({ ...request, effort }, route)).toEqual(
       taskValuationPerCallUsage(request, route),
     )
+})
+
+const taskCount = (fixture: Fixture) =>
+  new Database(fixture.path, { strict: true, readonly: true })
+    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM tasks WHERE project_directory=?")
+    .get(fixture.projectDirectory)!.n
+
+test("stored tasks equal tasks derived live through attempt, plan, classification and transition changes", async () => {
+  const fixture = fixtureWithHistory(60)
+  const connection = writeConnection(fixture)
+  ensureDecisionProjectionSchema(connection)
+  await foldDecisionProgress(connection.db, fixture.projectDirectory, { batch: 2 })
+  const total = taskCount(fixture)
+  expect(
+    connection.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM model_decision_task").get()!
+      .n,
+  ).toBe(total)
+
+  sql(
+    fixture,
+    "UPDATE runner_attempts SET token_count=token_count+7,retry_count=retry_count+1 WHERE id=?",
+    fixture.attempts.failed.id,
+  )
+  fixture.addClassification(fixture.tasks.legacy!.id, 0, "testing")
+  sql(
+    fixture,
+    "UPDATE runner_plans SET model=? WHERE id=?",
+    '{"providerID":"openrouter","id":"other","variant":null}',
+    fixture.plans.adoption!,
+  )
+  sql(
+    fixture,
+    "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
+    fixture.plans.adoption!,
+    fixture.tasks.adoption!.id,
+    99,
+    "NOTE",
+    "{}",
+    1,
+  )
+
+  const legacy = comparable(capture(withoutProjection(fixture), fixture.projectDirectory))
+  // Queued tasks are derived live; the rest come from the stored rows.
+  decisionProjectionStats.reset()
+  expect(comparable(capture(fixture.path, fixture.projectDirectory))).toEqual(legacy)
+  expect(decisionProjectionStats.readLiveTasks).toBeGreaterThan(0)
+  expect(decisionProjectionStats.readLiveTasks).toBeLessThan(total)
+
+  decisionProjectionStats.reset()
+  await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  expect(decisionProjectionStats.foldTasks).toBeGreaterThan(0)
+  decisionProjectionStats.reset()
+  expect(comparable(capture(fixture.path, fixture.projectDirectory))).toEqual(legacy)
+  expect(decisionProjectionStats.readLiveTasks).toBe(0)
+  expect(decisionProjectionStats.readStoredTasks).toBe(total)
+  const sources = connection.db
+    .query<{ rows: number; bytes: number }, []>(
+      `SELECT (SELECT COUNT(*) FROM tasks)+(SELECT COUNT(*) FROM task_references)
+              +(SELECT COUNT(*) FROM task_classifications)+(SELECT COUNT(*) FROM runner_plans)
+              +(SELECT COUNT(*) FROM runner_nodes)+(SELECT COUNT(*) FROM runner_attempts)
+              +(SELECT COUNT(*) FROM runner_transitions)+(SELECT COUNT(*) FROM runner_adoptions) AS rows,
+              (SELECT SUM(LENGTH(body)) FROM tasks)+(SELECT SUM(LENGTH(body)) FROM runner_plans)
+              +(SELECT SUM(LENGTH(payload)) FROM runner_transitions) AS bytes`,
+    )
+    .get()!
+  const stored = connection.db
+    .query<{ rows: number; bytes: number }, []>(
+      "SELECT COUNT(*) AS rows, SUM(LENGTH(task)+LENGTH(notes)) AS bytes FROM model_decision_task",
+    )
+    .get()!
+  console.log(
+    `task tables per decision read: before ${sources.rows} rows / ${sources.bytes} B, after ${stored.rows} stored tasks / ${stored.bytes} B`,
+  )
+})
+
+test("a change to one task re-derives that task and no other", async () => {
+  const fixture = fixtureWithHistory(20)
+  const connection = writeConnection(fixture)
+  ensureDecisionProjectionSchema(connection)
+  await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  sql(
+    fixture,
+    "UPDATE runner_attempts SET token_count=token_count+1 WHERE id=?",
+    fixture.attempts.accepted.id,
+  )
+  decisionProjectionStats.reset()
+  const fold = await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  expect(fold.tasks).toBe(1)
+  expect(decisionProjectionStats.foldTasks).toBe(1)
+  // A plan change re-derives only the tasks that hang from the plan.
+  sql(
+    fixture,
+    "UPDATE runner_plans SET model=? WHERE id=?",
+    '{"providerID":"x","id":"y","variant":null}',
+    fixture.plans.adoption!,
+  )
+  const queued = connection.db
+    .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM model_decision_task_dirty")
+    .get()!.n
+  expect(queued).toBeGreaterThan(0)
+  expect(queued).toBeLessThan(taskCount(fixture))
+})
+
+test("the task watermark resumes after a restart and no task is derived twice", async () => {
+  const fixture = fixtureWithHistory(20)
+  const connection = writeConnection(fixture)
+  ensureDecisionProjectionSchema(connection)
+  decisionProjectionStats.reset()
+  const stop = new AbortController()
+  const interrupted = foldDecisionProgress(connection.db, fixture.projectDirectory, {
+    batch: 2,
+    signal: stop.signal,
+  })
+  queueMicrotask(() => stop.abort())
+  await expect(interrupted).rejects.toThrow()
+  expect(decisionProjectionStats.foldTasks).toBe(2)
+  const owner = new DecisionProjectionOwner(fixture.path)
+  try {
+    await owner.foldWhenMoved(fixture.projectDirectory)
+  } finally {
+    owner.close()
+  }
+  expect(decisionProjectionStats.foldTasks).toBe(taskCount(fixture))
+})
+
+test("a projection idle past the drop period is removed, stops queueing, and rebuilds on the next fold", async () => {
+  const fixture = fixtureWithHistory(40)
+  const connection = writeConnection(fixture)
+  ensureDecisionProjectionSchema(connection)
+  await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  const legacy = comparable(capture(withoutProjection(fixture), fixture.projectDirectory))
+  const counts = () =>
+    connection.db
+      .query<{ facts: number; tasks: number; state: number; dirty: number }, []>(
+        `SELECT (SELECT COUNT(*) FROM model_decision_progress) AS facts,
+                (SELECT COUNT(*) FROM model_decision_task) AS tasks,
+                (SELECT COUNT(*) FROM model_decision_progress_state) AS state,
+                (SELECT COUNT(*) FROM model_decision_progress_dirty)
+                 + (SELECT COUNT(*) FROM model_decision_task_dirty) AS dirty`,
+      )
+      .get()!
+  sql(fixture, "UPDATE runner_attempts SET token_count=token_count+1")
+  expect(counts().dirty).toBeGreaterThan(0)
+
+  // Recently read: kept.
+  const now = Date.now()
+  expect(
+    await dropIdleProjections(connection.db, { now, idleMs: PROJECTION_IDLE_DROP_MS }),
+  ).toEqual([])
+  // Not read for the period: dropped, with its queues.
+  expect(
+    await dropIdleProjections(connection.db, {
+      now: now + PROJECTION_IDLE_DROP_MS + 60_000,
+      idleMs: PROJECTION_IDLE_DROP_MS,
+    }),
+  ).toEqual([fixture.projectDirectory])
+  expect(counts()).toEqual({ facts: 0, tasks: 0, state: 0, dirty: 0 })
+  // Nothing queues for a dropped project, and a read is still correct (every row derived live).
+  sql(fixture, "UPDATE runner_attempts SET token_count=token_count+1")
+  expect(counts().dirty).toBe(0)
+  const live = comparable(capture(fixture.path, fixture.projectDirectory))
+  expect(live.facts).toEqual(legacy.facts)
+  // The next fold rebuilds it, paged.
+  await foldDecisionProgress(connection.db, fixture.projectDirectory, { batch: 16 })
+  expect(counts().facts).toBe(matchingRows(fixture))
+  expect(counts().tasks).toBe(taskCount(fixture))
+})
+
+test("a generation 1 projection upgrades in place and is read correctly before and after", async () => {
+  const fixture = fixtureWithHistory(30)
+  const connection = writeConnection(fixture)
+  // The generation 1 shape: no task tables or columns, only progress.
+  connection.db.exec(`
+    CREATE TABLE model_decision_progress (project_directory TEXT NOT NULL, seq INTEGER NOT NULL,
+      plan_id TEXT NOT NULL, task_id TEXT NOT NULL, flags INTEGER NOT NULL, fact TEXT,
+      PRIMARY KEY(project_directory, seq)) WITHOUT ROWID;
+    CREATE TABLE model_decision_progress_state (project_directory TEXT PRIMARY KEY,
+      folded_seq INTEGER NOT NULL, folded_at INTEGER NOT NULL) WITHOUT ROWID;
+    CREATE TABLE model_decision_progress_dirty (project_directory TEXT NOT NULL,
+      seq INTEGER NOT NULL, PRIMARY KEY(project_directory, seq)) WITHOUT ROWID;`)
+  const legacy = comparable(capture(withoutProjection(fixture), fixture.projectDirectory))
+  expect(comparable(capture(fixture.path, fixture.projectDirectory))).toEqual(legacy)
+  expect(installDecisionProjectionSchema(connection.db)).toBe(true)
+  await foldDecisionProgress(connection.db, fixture.projectDirectory)
+  expect(comparable(capture(fixture.path, fixture.projectDirectory))).toEqual(legacy)
+  expect(
+    connection.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM model_decision_task").get()!
+      .n,
+  ).toBe(taskCount(fixture))
 })

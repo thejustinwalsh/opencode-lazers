@@ -24,7 +24,10 @@ import {
   safeRoute,
   stringList,
 } from "./decision-progress-fact.ts"
-import { DECISION_PROJECTION_TABLES, decisionProjectionStats } from "./decision-projection.ts"
+import {
+  DECISION_PROJECTION_TABLES,
+  decisionProjectionStats,
+} from "./decision-projection-tables.ts"
 import {
   FACT_MALFORMED_PAYLOAD,
   FACT_UNREADABLE_EVENTS,
@@ -116,8 +119,6 @@ type RawCapture = {
   transitions: RawTransition[]
   adoptions: AdoptionRow[]
   progress: RawProgress[]
-  decisionProgressFacts: Record<string, unknown>[]
-  decisionProgressFingerprint: string | null
   sourceStatuses: SourceStatus[]
   notes: string[]
   fingerprint: string
@@ -406,29 +407,51 @@ const STORED_PROGRESS_SQL = `
   ORDER BY f.seq LIMIT ?`
 
 /** The stored projection of this project: its watermark and the rows queued for a re-read. */
-function readProjectionState(db: Database, projectDirectory: string) {
+/**
+ * The state row of this project's projection, or null when it has none or is being dropped. A
+ * database upgraded from an older generation may lack the task columns until the owner installs
+ * the current schema; their absence reads as "no task projection".
+ */
+function readStateRow(db: Database, projectDirectory: string) {
   const present = db
     .query<{ n: number }, []>(
       `SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN
        ('${DECISION_PROJECTION_TABLES.facts}','${DECISION_PROJECTION_TABLES.state}','${DECISION_PROJECTION_TABLES.dirty}')`,
     )
     .get()
-  if (present?.n !== 3) return { foldedSeq: 0, dirty: new Set<number>() }
-  const state = db
-    .query<{ folded_seq: number }, [string]>(
-      `SELECT folded_seq FROM ${DECISION_PROJECTION_TABLES.state} WHERE project_directory=?`,
+  if (present?.n !== 3) return null
+  const columns = new Set(
+    db
+      .query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('${DECISION_PROJECTION_TABLES.state}')`,
+      )
+      .all()
+      .map((column) => column.name),
+  )
+  const row = db
+    .query<{ folded_seq: number; tasks: number | null; dropping: number }, [string]>(
+      `SELECT folded_seq,
+              ${columns.has("tasks_folded_rowid") ? "tasks_folded_rowid" : "NULL"} AS tasks,
+              ${columns.has("dropping") ? "dropping" : "0"} AS dropping
+       FROM ${DECISION_PROJECTION_TABLES.state} WHERE project_directory=?`,
     )
     .get(projectDirectory)
-  if (!state) return { foldedSeq: 0, dirty: new Set<number>() }
-  const dirty = new Set(
-    db
-      .query<{ seq: number }, [string]>(
-        `SELECT seq FROM ${DECISION_PROJECTION_TABLES.dirty} WHERE project_directory=?`,
-      )
-      .all(projectDirectory)
-      .map((row) => row.seq),
-  )
-  return { foldedSeq: state.folded_seq, dirty }
+  if (!row || row.dropping) return null
+  return { foldedSeq: row.folded_seq, tasksFoldedRowid: row.tasks }
+}
+
+/** The stored projection of this project: its watermark and the rows queued for a re-read. */
+function readProjectionState(db: Database, projectDirectory: string) {
+  const state = readStateRow(db, projectDirectory)
+  const dirty = new Set<number>()
+  if (!state) return { foldedSeq: 0, dirty }
+  for (const row of db
+    .query<{ seq: number }, [string]>(
+      `SELECT seq FROM ${DECISION_PROJECTION_TABLES.dirty} WHERE project_directory=?`,
+    )
+    .iterate(projectDirectory))
+    dirty.add(row.seq)
+  return { foldedSeq: state.foldedSeq, dirty }
 }
 
 /**
@@ -632,7 +655,7 @@ function readRunnerRows(
   db: Database,
   projectDirectory: string,
   statuses: SourceStatus[],
-  options: { decision?: boolean; signal?: AbortSignal },
+  options: { signal?: AbortSignal },
   notes: string[],
 ) {
   let plans: PlanRow[] = []
@@ -641,8 +664,6 @@ function readRunnerRows(
   let transitions: RawTransition[] = []
   let adoptions: AdoptionRow[] = []
   let progress: RawProgress[] = []
-  let decisionProgressFacts: Record<string, unknown>[] = []
-  let decisionProgressFingerprint: string | null = null
 
   const plansAvailable = sourceAvailable(statuses, "runner_plans")
   if (plansAvailable) {
@@ -709,16 +730,7 @@ function readRunnerRows(
   } else notes.push("Descendant-adoption history is unavailable in this database schema.")
 
   if (plansAvailable && sourceAvailable(statuses, "runner_progress")) {
-    if (options.decision) {
-      const retained = readDecisionProgress(db, projectDirectory, options.signal)
-      decisionProgressFacts = retained.facts
-      decisionProgressFingerprint = retained.fingerprint
-      notes.push(...retained.notes)
-      if (retained.invalidCount)
-        notes.push(
-          `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
-        )
-    } else {
+    {
       progress = queryAll<RawProgress>(
         db,
         `SELECT r.seq,r.project_directory,r.project_id,r.dedupe_key,r.plan_id,r.task_id,r.attempt_id,r.session_id,r.at,r.recorded_at,
@@ -740,8 +752,6 @@ function readRunnerRows(
     transitions,
     adoptions,
     progress,
-    decisionProgressFacts,
-    decisionProgressFingerprint,
   }
 }
 
@@ -800,11 +810,11 @@ function readClassificationSnapshots(
   return snapshots
 }
 
-function noteProgressProblems(progress: RawProgress[], decision: boolean, notes: string[]) {
+function noteProgressProblems(progress: RawProgress[], notes: string[]) {
   for (const row of progress) {
     const payload = parseObject(row.payload)
     if (!payload) notes.push(`Progress fact progress:${row.seq} has an unreadable payload.`)
-    if (!decision) noteObservationProjection(row, payload, notes)
+    noteObservationProjection(row, payload, notes)
     if (!parseArray(row.sources_json))
       notes.push(`Progress fact progress:${row.seq} has unreadable source lineage.`)
     if (!parseArray(row.event_ids_json))
@@ -847,7 +857,7 @@ function noteDispositionProblems(dispositions: RawDisposition[], notes: string[]
 function readCapture(
   db: Database,
   projectDirectory: string,
-  options: { decision?: boolean; signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal } = {},
 ): CaptureResult {
   options.signal?.throwIfAborted()
   const notes: string[] = []
@@ -858,7 +868,7 @@ function readCapture(
 function readCaptureRows(
   db: Database,
   projectDirectory: string,
-  options: { decision?: boolean; signal?: AbortSignal },
+  options: { signal?: AbortSignal },
   tableInfo: Record<string, TableInfo>,
   statuses: SourceStatus[],
   notes: string[],
@@ -879,7 +889,7 @@ function readCaptureRows(
     notes,
   )
   const runner = readRunnerRows(db, projectDirectory, statuses, options, notes)
-  const { decisionProgressFacts, decisionProgressFingerprint, ...runnerRows } = runner
+  const runnerRows = runner
   options.signal?.throwIfAborted()
 
   const sourceData = {
@@ -895,12 +905,6 @@ function readCaptureRows(
     transitions: runnerRows.transitions,
     adoptions: runnerRows.adoptions,
     progress: runnerRows.progress,
-    ...(options.decision
-      ? {
-          decisionProgressFingerprint,
-          decisionProgressCount: decisionProgressFacts.length,
-        }
-      : {}),
   }
 
   const snapshots = readClassificationSnapshots(
@@ -917,7 +921,7 @@ function readCaptureRows(
     effectiveClassifications: [...snapshots.entries()],
   })
 
-  noteProgressProblems(runnerRows.progress, Boolean(options.decision), notes)
+  noteProgressProblems(runnerRows.progress, notes)
   noteDispositionProblems(dispositions, notes)
 
   return {
@@ -925,8 +929,6 @@ function readCaptureRows(
     capture: {
       ...sourceData,
       sourceStatuses: statuses,
-      decisionProgressFacts,
-      decisionProgressFingerprint,
       notes: uniqueNotes(notes),
       fingerprint,
       effectiveClassifications: snapshots,
@@ -1868,11 +1870,23 @@ function taskAccountingAttempt(
   }
 }
 
-function decisionProjection(
-  capture: RawCapture,
+/** The rows one decision task is derived from; a batch of tasks carries only theirs. */
+type DecisionTaskInputs = Pick<
+  RawCapture,
+  | "tasks"
+  | "references"
+  | "plans"
+  | "nodes"
+  | "attempts"
+  | "transitions"
+  | "adoptions"
+  | "effectiveClassifications"
+>
+
+function projectDecisionTasks(
+  capture: DecisionTaskInputs,
   projectDirectory: string,
-  sourceRevision: number,
-): ObservationLedgerDecisionCapture {
+): ObservationLedgerDecisionTask[] {
   const stats = privacyStats()
   const references = new Map(capture.references.map((item) => [item.task_id, item.reference]))
   const plansByID = new Map(capture.plans.map((plan) => [plan.id, plan]))
@@ -1914,7 +1928,7 @@ function decisionProjection(
       taskAccountingAttempt(attempt, plansByID.get(attempt.plan_id), attempt.task_id, stats),
     ]),
   )
-  const tasks = capture.tasks.map((row): ObservationLedgerDecisionTask => {
+  return capture.tasks.map((row): ObservationLedgerDecisionTask => {
     const classification = capture.effectiveClassifications.get(row.id) ?? null
     const taskAttempts = attemptsByTask.get(row.id) ?? []
     let submittedStatus: string | null = null
@@ -1966,7 +1980,376 @@ function decisionProjection(
       terminal,
     }
   })
-  const progressFacts = capture.decisionProgressFacts
+}
+
+/**
+ * Tasks derived per statement. A unit of work, not a ceiling: the caller keeps batching until it
+ * has covered every id. 100 ids keeps each IN list short; it is not measured.
+ */
+const TASK_BATCH_SIZE = 100
+
+export type DecisionSources = { tableInfo: Record<string, TableInfo>; statuses: SourceStatus[] }
+
+/** Which source tables exist with the columns the ledger reads. */
+export function inspectDecisionSources(db: Database): DecisionSources {
+  return captureStatuses(db)
+}
+
+export type ComputedDecisionTask = {
+  taskID: string
+  createdAt: string
+  task: ObservationLedgerDecisionTask
+  /** What the ledger notes about this task's own rows (a foreign body, unreadable lineage). */
+  notes: string[]
+}
+
+const marks = (count: number) => Array.from({ length: count }, () => "?").join(",")
+
+/**
+ * The decision view of the named tasks, derived from their own rows only: one statement per
+ * table for the whole batch, never one per task. Tasks missing from the project are absent from
+ * the result.
+ */
+export function computeDecisionTasks(
+  db: Database,
+  projectDirectory: string,
+  ids: readonly string[],
+  sources: DecisionSources,
+): ComputedDecisionTask[] {
+  if (!ids.length) return []
+  const { tableInfo, statuses } = sources
+  const inIDs = marks(ids.length)
+  const tasks = queryAll<RawTask>(
+    db,
+    `SELECT id,created_at,body FROM tasks WHERE project_directory=? AND id IN (${inIDs}) ORDER BY created_at,id`,
+    [projectDirectory, ...ids],
+  )
+  if (!tasks.length) return []
+  const taskIDs = tasks.map((task) => task.id)
+  const inTasks = marks(taskIDs.length)
+  const params = [projectDirectory, ...taskIDs]
+  const referencesAvailable = tableInfo.task_references!.status === "available"
+  const references = referencesAvailable
+    ? queryAll<RawReference>(
+        db,
+        `SELECT task_id,reference FROM task_references WHERE project_directory=? AND task_id IN (${inTasks}) ORDER BY task_id`,
+        params,
+      )
+    : []
+  const dispositions =
+    tableInfo.task_dispositions!.status === "available"
+      ? queryAll<RawDisposition>(
+          db,
+          `SELECT id,task_id,request_id,disposition,reason,evidence,related_task_ids,
+                  session_id,agent,created_at
+           FROM task_dispositions WHERE project_directory=? AND task_id IN (${inTasks}) ORDER BY id`,
+          params,
+        )
+      : []
+  const classificationsAvailable = tableInfo.task_classifications!.status === "available"
+  const classifications = classificationsAvailable
+    ? queryAll<Record<string, unknown>>(
+        db,
+        `SELECT id,task_id,request_id,revision,classification,reason,session_id,agent,created_at
+         FROM task_classifications WHERE project_directory=? AND task_id IN (${inTasks}) ORDER BY task_id,revision`,
+        params,
+      )
+    : []
+
+  const plansAvailable = sourceAvailable(statuses, "runner_plans")
+  const nodes =
+    plansAvailable && sourceAvailable(statuses, "runner_nodes")
+      ? queryAll<RawNode>(
+          db,
+          `SELECT n.plan_id,n.task_id,n.state,n.artifact
+           FROM runner_nodes n
+           JOIN runner_plans p ON p.id=n.plan_id
+           JOIN tasks t ON t.id=n.task_id AND t.project_directory=p.project_directory
+           WHERE p.project_directory=? AND n.task_id IN (${inTasks}) ORDER BY p.rowid,n.ordinal`,
+          params,
+        )
+      : []
+  const attempts =
+    plansAvailable && sourceAvailable(statuses, "runner_attempts")
+      ? queryAll<AttemptRow>(
+          db,
+          `SELECT a.id,a.plan_id,a.task_id,a.number,a.session_id,a.message_id,a.workspace,a.base_commit,
+                  a.artifact,a.policy,a.state,a.started_at,a.token_count,a.tool_count,a.retry_count,a.cost
+           FROM runner_attempts a
+           JOIN runner_plans p ON p.id=a.plan_id
+           JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
+           WHERE p.project_directory=? AND a.task_id IN (${inTasks}) ORDER BY a.started_at,a.number,a.id`,
+          params,
+        )
+      : []
+  const transitions =
+    plansAvailable && sourceAvailable(statuses, "runner_transitions")
+      ? queryAll<RawTransition>(
+          db,
+          `SELECT r.id,r.plan_id,r.task_id,r.version,r.event,r.payload,r.created_at
+           FROM runner_transitions r
+           JOIN runner_plans p ON p.id=r.plan_id
+           JOIN tasks t ON t.id=r.task_id AND t.project_directory=p.project_directory
+           WHERE p.project_directory=? AND r.task_id IN (${inTasks}) ORDER BY r.id`,
+          params,
+        )
+      : []
+  const adoptions =
+    plansAvailable && sourceAvailable(statuses, "runner_adoptions")
+      ? queryAll<AdoptionRow>(
+          db,
+          `SELECT a.id,a.plan_id,a.task_id,a.attempt_id,a.attempt_state,a.old_artifact,a.descendant_commit,
+                  a.combined_artifact,a.reason,a.state,a.created_at,a.updated_at
+           FROM runner_adoptions a
+           JOIN runner_plans p ON p.id=a.plan_id
+           JOIN tasks t ON t.id=a.task_id AND t.project_directory=p.project_directory
+           WHERE p.project_directory=? AND a.task_id IN (${inTasks}) ORDER BY a.created_at,a.id`,
+          params,
+        )
+      : []
+  const planIDs = [
+    ...new Set([
+      ...attempts.map((attempt) => attempt.plan_id),
+      ...nodes.map((node) => node.plan_id),
+    ]),
+  ]
+  const plans =
+    plansAvailable && planIDs.length
+      ? queryAll<PlanRow>(
+          db,
+          `SELECT id,owner,revision,version,state,body,model,reason,artifact
+           FROM runner_plans WHERE project_directory=? AND id IN (${marks(planIDs.length)}) ORDER BY rowid`,
+          [projectDirectory, ...planIDs],
+        )
+      : []
+
+  // Classification history and the notes about a task's own rows are kept per task.
+  const annotationsByTask = new Map<string, Array<Record<string, unknown>>>()
+  for (const row of classifications) {
+    const group = annotationsByTask.get(row.task_id as string) ?? []
+    group.push(row)
+    annotationsByTask.set(row.task_id as string, group)
+  }
+  const dispositionsByTask = new Map<string, RawDisposition[]>()
+  for (const row of dispositions) {
+    const group = dispositionsByTask.get(row.task_id) ?? []
+    group.push(row)
+    dispositionsByTask.set(row.task_id, group)
+  }
+  const effectiveClassifications = new Map<string, TaskClassificationSnapshot | null>()
+  const notesByTask = new Map<string, string[]>()
+  for (const task of tasks) {
+    const notes: string[] = []
+    const snapshot = readClassificationSnapshots(
+      projectDirectory,
+      [task],
+      annotationsByTask.get(task.id) ?? [],
+      classificationsAvailable,
+      notes,
+    )
+    effectiveClassifications.set(task.id, snapshot.get(task.id) ?? null)
+    noteDispositionProblems(dispositionsByTask.get(task.id) ?? [], notes)
+    notesByTask.set(task.id, notes)
+  }
+  const projected = projectDecisionTasks(
+    { tasks, references, plans, nodes, attempts, transitions, adoptions, effectiveClassifications },
+    projectDirectory,
+  )
+  return projected.map((task, index) => ({
+    taskID: task.taskID,
+    createdAt: tasks[index]!.created_at,
+    task,
+    notes: notesByTask.get(task.taskID) ?? [],
+  }))
+}
+
+/** What the capture says about source tables that are absent or lack columns, in a fixed order. */
+function sourceNotes({ tableInfo, statuses }: DecisionSources) {
+  const notes: string[] = []
+  const absent = (name: string) =>
+    tableInfo[name]!.status === "legacy-absent" || tableInfo[name]!.status === "missing-table"
+  if (tableInfo.task_references!.status !== "available" && absent("task_references"))
+    notes.push("Task references are unavailable because the task_references table is absent.")
+  if (tableInfo.task_dispositions!.status !== "available")
+    notes.push("Disposition history is unavailable in this database schema.")
+  if (tableInfo.task_classifications!.status !== "available" && absent("task_classifications"))
+    notes.push(
+      "Classification corrections are unavailable; only explicit embedded or legacy classification is used.",
+    )
+  const plans = sourceAvailable(statuses, "runner_plans")
+  if (!plans)
+    notes.push(
+      "Execution plans are unavailable; task outcomes and routes cannot be inferred from current plan state.",
+    )
+  if (!(plans && sourceAvailable(statuses, "runner_nodes")))
+    notes.push("Task execution-node history is unavailable in this database schema.")
+  if (!(plans && sourceAvailable(statuses, "runner_attempts")))
+    notes.push("Worker attempts are unavailable in this database schema.")
+  if (!(plans && sourceAvailable(statuses, "runner_transitions")))
+    notes.push("Task transition history is unavailable in this database schema.")
+  if (!(plans && sourceAvailable(statuses, "runner_adoptions")))
+    notes.push("Descendant-adoption history is unavailable in this database schema.")
+  if (!(plans && sourceAvailable(statuses, "runner_progress")))
+    notes.push("Retained progress observations are unavailable in this database schema.")
+  return notes
+}
+
+/** The stored task projection of this project: its watermark and the tasks queued for a re-derive. */
+function readTaskProjectionState(db: Database, projectDirectory: string) {
+  const none = { usable: false, foldedRowid: 0, dirty: new Set<string>() }
+  const present = db
+    .query<{ n: number }, []>(
+      `SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN
+       ('${DECISION_PROJECTION_TABLES.tasks}','${DECISION_PROJECTION_TABLES.taskDirty}')`,
+    )
+    .get()
+  if (present?.n !== 2) return none
+  const state = readStateRow(db, projectDirectory)
+  if (!state || state.tasksFoldedRowid === null) return none
+  const dirty = new Set<string>()
+  for (const row of db
+    .query<{ task_id: string }, [string]>(
+      `SELECT task_id FROM ${DECISION_PROJECTION_TABLES.taskDirty} WHERE project_directory=?`,
+    )
+    .iterate(projectDirectory))
+    dirty.add(row.task_id)
+  return { usable: true, foldedRowid: state.tasksFoldedRowid, dirty }
+}
+
+type DecisionTaskEntry = {
+  taskID: string
+  createdAt: string
+  task: ObservationLedgerDecisionTask
+  text: string
+  notes: string[]
+}
+
+/**
+ * The decision tasks of a project in (created, id) order, in one read transaction: stored rows up
+ * to the tasks watermark except the queued ones, then the queued tasks and every task above the
+ * watermark derived from their source rows. Folded, the live part is empty; with no projection
+ * every task is live, as before the projection existed.
+ */
+function readDecisionTasks(
+  db: Database,
+  projectDirectory: string,
+  sources: DecisionSources,
+  signal?: AbortSignal,
+) {
+  const all: DecisionTaskEntry[] = []
+  const usable = sources.statuses.every((source) => source.status === "available")
+  const state = usable
+    ? readTaskProjectionState(db, projectDirectory)
+    : { usable: false, foldedRowid: 0, dirty: new Set<string>() }
+  if (state.usable) {
+    let afterCreated = ""
+    let afterID = ""
+    for (;;) {
+      signal?.throwIfAborted()
+      const page = db
+        .query<
+          { task_id: string; created_at: string; task: string; notes: string },
+          [string, string, string, number]
+        >(
+          `SELECT task_id,created_at,task,notes FROM ${DECISION_PROJECTION_TABLES.tasks}
+           WHERE project_directory=? AND (created_at,task_id) > (?,?)
+           ORDER BY created_at,task_id LIMIT ?`,
+        )
+        .all(projectDirectory, afterCreated, afterID, DECISION_PROGRESS_BATCH_SIZE)
+      for (const row of page) {
+        afterCreated = row.created_at
+        afterID = row.task_id
+        decisionProjectionStats.readStoredTasks++
+        if (state.dirty.has(row.task_id)) continue
+        all.push({
+          taskID: row.task_id,
+          createdAt: row.created_at,
+          task: JSON.parse(row.task) as ObservationLedgerDecisionTask,
+          text: row.task,
+          notes: JSON.parse(row.notes) as string[],
+        })
+      }
+      if (page.length < DECISION_PROGRESS_BATCH_SIZE) break
+    }
+  }
+  const liveIDs = new Set(state.dirty)
+  for (const row of db
+    .query<{ id: string }, [string, number]>(
+      "SELECT id FROM tasks WHERE project_directory=? AND rowid>? ORDER BY rowid",
+    )
+    .iterate(projectDirectory, state.foldedRowid))
+    liveIDs.add(row.id)
+  const pending = [...liveIDs]
+  for (let at = 0; at < pending.length; at += TASK_BATCH_SIZE) {
+    signal?.throwIfAborted()
+    for (const computed of computeDecisionTasks(
+      db,
+      projectDirectory,
+      pending.slice(at, at + TASK_BATCH_SIZE),
+      sources,
+    )) {
+      decisionProjectionStats.readLiveTasks++
+      all.push({ ...computed, text: JSON.stringify(computed.task) })
+    }
+  }
+  if (liveIDs.size)
+    all.sort((left, right) =>
+      left.createdAt === right.createdAt
+        ? left.taskID < right.taskID
+          ? -1
+          : 1
+        : left.createdAt < right.createdAt
+          ? -1
+          : 1,
+    )
+  return all
+}
+
+/** The decision capture of one project: its tasks, retained facts and what the ledger notes. */
+function readDecisionCapture(db: Database, projectDirectory: string, signal?: AbortSignal) {
+  const sources = captureStatuses(db)
+  if (sources.tableInfo.tasks!.status !== "available")
+    return { status: "unavailable" as const, sources: sources.statuses }
+  const notes = sourceNotes(sources)
+  let facts: Record<string, unknown>[] = []
+  let progressFingerprint = ""
+  if (
+    sourceAvailable(sources.statuses, "runner_plans") &&
+    sourceAvailable(sources.statuses, "runner_progress")
+  ) {
+    const retained = readDecisionProgress(db, projectDirectory, signal)
+    facts = retained.facts
+    progressFingerprint = retained.fingerprint
+    notes.push(...retained.notes)
+    if (retained.invalidCount)
+      notes.push(
+        `${retained.invalidCount} retained decision progress facts have malformed JSON and were excluded.`,
+      )
+  }
+  const entries = readDecisionTasks(db, projectDirectory, sources, signal)
+  for (const entry of entries) notes.push(...entry.notes)
+  const digest = createHash("sha256")
+  digest.update(JSON.stringify([sources.statuses, progressFingerprint]))
+  for (const entry of entries) {
+    digest.update(`${entry.text.length}:`)
+    digest.update(entry.text)
+  }
+  return {
+    status: "captured" as const,
+    sources: sources.statuses,
+    notes: uniqueNotes(notes),
+    tasks: entries.map((entry) => entry.task),
+    progressFacts: facts,
+    fingerprint: digest.digest("hex"),
+  }
+}
+
+function decisionCapture(
+  capture: Extract<ReturnType<typeof readDecisionCapture>, { status: "captured" }>,
+  projectDirectory: string,
+  sourceRevision: number,
+): ObservationLedgerDecisionCapture {
+  const tasks = capture.tasks
   const classifiedTaskCount = tasks.filter(
     (task) => task.classification.status === "available" && task.classification.kind !== null,
   ).length
@@ -1983,13 +2366,13 @@ function decisionProjection(
     sourceFingerprint: hash({
       capture: capture.fingerprint,
       sourceRevision,
-      projectedProgressCount: progressFacts.length,
+      projectedProgressCount: capture.progressFacts.length,
     }),
     sourceRevision,
-    sources: capture.sourceStatuses,
-    notes: uniqueNotes(capture.notes),
+    sources: capture.sources,
+    notes: capture.notes,
     tasks,
-    progressFacts,
+    progressFacts: capture.progressFacts,
     classificationCoverage: {
       classifiedTaskCount,
       unclassifiedTaskCount,
@@ -2404,7 +2787,7 @@ export function openReadOnlyObservationLedger(
             throw new Error("Project-scoped observation revision tracking is unavailable")
           return {
             sourceRevision,
-            capture: readCapture(db!, projectDirectory, { decision: true, signal }),
+            capture: readDecisionCapture(db!, projectDirectory, signal),
           }
         })
         .deferred()
@@ -2414,14 +2797,10 @@ export function openReadOnlyObservationLedger(
           status: "unavailable",
           projectDirectory,
           sourceRevision: result.sourceRevision,
-          reason: result.capture.reason,
+          reason: "task-table-missing",
           sources: result.capture.sources,
         }
-      const projection = decisionProjection(
-        result.capture.capture,
-        projectDirectory,
-        result.sourceRevision,
-      )
+      const projection = decisionCapture(result.capture, projectDirectory, result.sourceRevision)
       signal?.throwIfAborted()
       return projection
     },
