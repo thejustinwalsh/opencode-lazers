@@ -1,0 +1,104 @@
+{
+  "agent": "zoom-out",
+  "status": "reviewed",
+  "checked": [
+    "Problem in one sentence: the runtime and the Architect assume Bun and TypeScript, so LAZERS cannot verify, auto-fix, recheck or audit a project on another toolchain. The plan's cause-level answer (one stored profile read by every assumption site) is the right framing, not a symptom patch.",
+    "Searched `bun fmt|bun lint|bun install|bun run verify|bun test` in src: hits in src/runner/runtime.ts:9487, src/runner/checks.ts:11, src/runner/retained-verification/isolation.ts:419, src/runner/test-hang-guard.ts:20, plus the two recognizers reported in findings; the plan's readers cover the first four.",
+    "Searched `toolchain`, `lookupTool`, `Bun.which`, `projectProfile`, `verifyCommand` for an existing profile or toolchain model: none beyond Bun-only lookup in src/runner/checks.ts:11-22; no existing profile concept to reuse.",
+    "Searched `toast`, `notice` for an in-OpenCode notice surface: only src/webgpu/dictation.tsx and read-aloud.tsx match, so the init notice is new work; src/projects/needs-you.ts offers a possible existing surface (see question).",
+    "Fallow config demand (src/audit/fallow-gate.ts:44-55) already takes an `enabled` input; `audit: off` can feed it with no new gate.",
+    "Build order step dependencies on the runtime.ts split are consistent with the plan's own text; step order 1..5 is sound.",
+    "Test-hang-guard folded into a Bun profile's commands (src/runner/test-hang-guard.ts:20-23) removes a special case; sound.",
+    "Nothing in the init flow's proof step (run each command once, map file count and tokens) duplicates existing code: no existing profile prover found."
+  ],
+  "findings": [
+    {
+      "id": "Z1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers", "field": "design-decision" },
+      "what": "A per-project source definition store already exists: `repo_map_sources` with `repoMapSource` and `setRepoMapSource`. The plan adds `profile.source` in a new store and says it replaces `deriveSourceDefinition`, so two stores would hold include/exclude.",
+      "failureScenario": "A builder adds `source` to the profile blob and leaves `repo_map_sources` (keyed by directory, not project key) in place. The map then reads two sources of truth, or the existing store and its test (src/context/repo-map.test.ts:259-264) are orphaned. Deleting `deriveSourceDefinition` also removes the default the plan itself needs for 'no profile: work runs as today'.",
+      "evidence": [
+        "src/context/repo-map-store.ts:38-85 (repoMapSource, setRepoMapSource, currentRepoMap falls back to deriveSourceDefinition)",
+        "src/context/repo-map.ts:575 doc comment already says 'The per-project profile replaces this function'",
+        "plan: 'Repository map ... `source` (replaces `deriveSourceDefinition`)' and 'Not a gate: with no profile, work runs ... as today'"
+      ],
+      "suggestion": "State that profile.source is stored through (or migrates) repo_map_sources, and that deriveSourceDefinition stays as the no-profile default and as the Architect's starting proposal."
+    },
+    {
+      "id": "Z2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers", "field": "design-decision" },
+      "what": "The readers table lists the assumption sites but omits two Bun-only command recognizers that classify whether a verification command sequence is acceptable. A profile with `cargo test` or `npm run lint` would be unrecognized there.",
+      "failureScenario": "Steps 2 and 4 are built; a cargo project's declared verify commands pass the profile but `recognizedStep` / the retained procedure reject them, so quality-failure handling and retained reverification still treat the project as Bun. Redone work in the verification modules the split moves first.",
+      "evidence": [
+        "src/runner/quality-failure.ts:1-21 (qualitySteps and `bun run`, `bun fmt`, `bun test` regexes)",
+        "src/runner/retained-verification/procedure.ts:56-60 and :116-158 (same bun grammar)",
+        "plan: 'the runtime assumes Bun and TypeScript in eight places' while the table names fewer"
+      ],
+      "suggestion": "Add both modules to the readers table: the recognizers derive the accepted step set from `verify`/`fix` instead of a fixed bun grammar."
+    },
+    {
+      "id": "Z3",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "Storage and revision precedent is not reused. `lazers_settings` already stores JSON text per (scope,name) with a per-name zod schema, so 'must take structured values' is one schema entry, not a store rewrite. `lazers_fallow_config` is the existing per-project, Architect-set config with revision history, session, agent and reason.",
+      "failureScenario": "A builder reworks the settings store to accept structured values, or adds an unversioned blob, then 'Run setup again' and Settings edits overwrite the proven profile with no history to compare against.",
+      "evidence": [
+        "src/projects/settings.ts:45-49 (lazers_settings value TEXT, JSON.parse per schema at :75-79)",
+        "src/audit/config.ts:205-221 (revisioned per-project config with sessionID, agent, reason)"
+      ],
+      "suggestion": "Store the profile as revisions like the Fallow config (who set it, why), and say the settings change is a schema entry."
+    },
+    {
+      "id": "Z4",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "The Architect-proposes-then-proves-then-stores flow already exists for Fallow config (suggest, dry-run, set tools with a refusal that points the Architect at them). Init builds a second parallel flow beside it.",
+      "failureScenario": "Two separate setup experiences for one project: init stores a profile, then the first submission is refused for a missing Fallow config and sends the Architect through a different tool set.",
+      "evidence": [
+        "src/audit/fallow-gate.ts:11-15,35-44 (FALLOW_CONFIG_TOOLS, configRequired guidance)",
+        "src/audit/fallow-config-tools.ts (suggestFallowConfig, dryRunFallowConfig)"
+      ],
+      "suggestion": "Make the Fallow config step part of the init session when `audit` is `fallow`, reusing those tools, rather than a separate trigger."
+    },
+    {
+      "id": "Z5",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "Detail fixed before a consumer exists: `source.exports` (free-text 'how exported names are found, per language'), `fix[].files`, and `install` as one string. The plan itself says languages without a scan get paths only, so `exports` has no reader, and the existing install runs as argv with `--frozen-lockfile --ignore-scripts --no-save` plus process-group cleanup.",
+      "failureScenario": "A builder invents an exports grammar with no scanner to test it against, and runs Architect-proposed `install` strings as free-text commands, losing the script-safe flags the Bun install applies today.",
+      "evidence": [
+        "plan: 'exports?: string // how exported names are found, per language' and 'a language without a scan gets paths only'",
+        "src/runner/retained-verification/isolation.ts:414-438 (argv install with --ignore-scripts, lockfile detection)"
+      ],
+      "suggestion": "Drop `exports` until a second scanner exists; define `install` as argv or a named installer per toolchain (flags owned by the runtime), not free text."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Should the 'Set up LAZERS for this project' prompt reuse the existing needs-you page instead of a new OpenCode notice surface?",
+      "why": "No notice surface exists in src; needs-you (src/projects/needs-you.ts) already lists items per project, so reuse removes the runtime check at project load as a separate trigger and keeps only the session-start hook.",
+      "options": ["Reuse needs-you item plus session-start hook", "Build the new OpenCode notice"],
+      "relatedFinding": "Z4",
+      "weight": "changes-scope"
+    },
+    {
+      "id": "Q2",
+      "question": "Does init also own the Fallow config, so one setup session ends with both profile and audit config stored?",
+      "why": "Yes merges two setup flows and removes the later refusal detour; no keeps two separate tasks and tool sets.",
+      "options": [
+        "Init covers Fallow config when audit is fallow",
+        "Keep Fallow config setup separate"
+      ],
+      "relatedFinding": "Z4",
+      "weight": "changes-scope"
+    }
+  ]
+}

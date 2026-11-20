@@ -1,0 +1,99 @@
+{
+  "agent": "zoom-out",
+  "status": "reviewed",
+  "checked": [
+    "Problem in one sentence: a wrong plan gets built and redone, so the plan must be challenged by fresh reviewers and the owner's questions answered before tasks exist.",
+    "Searched 'self-review|selfReview', 'verify-task|verifyTask', 'plan_review|reviewPlan' in src: lz-verify-task (src/architect.md:84-86, src/webgpu/review-tool.ts) is the existing pre-submission self-review; src/audit/review-plan.ts is a Fallow audit, unrelated.",
+    "Searched 'decision model|decisionModel|D1' and read src/webgpu/decisions.ts:1-60: forced boolean/choice/score decisions with timeouts exist; no ranking, piece splitting or threshold exists. Searched 'splitAsk|forced choice|pieces': nothing.",
+    "Searched 'brainstorm' in src: only src/architect.md-level mentions, no runbook; src/guidance/index.ts runbook mechanism exists and the plan reuses it (sound).",
+    "src/planning/ already holds contract.ts, five agent prompts under agents/ and an index; the plan's agents and typed findings are not reinvented (sound).",
+    "Reuse of lifecycleMachines (src/runner/lifecycle-machines.ts) and the existing task tools for tasking is sound.",
+    "Units whose removal breaks the plan: plan draft store, chat breakdown, Architect-first hardening, Zoom out/Grounding/Comprehension reviewers, final pass.",
+    "Did not read .agents/research files; the research claims are not assessed."
+  ],
+  "findings": [
+    {
+      "id": "z1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Planning agents (no-model overlap check)", "field": "design-decision" },
+      "what": "The overlap check 'two tasks writing the same files with no dependency' targets a state the runtime already resolves: overlapping scopes serialize.",
+      "failureScenario": "A builder writes a second overlap detector that flags plans the scheduler would run correctly, producing false findings and a duplicate of the conflict logic.",
+      "evidence": [
+        "src/runner/artifacts.ts:144 scopePatternsConflict",
+        "src/runner/tools.ts:23 'Overlapping scopes serialize'",
+        "src/runner/scope.ts:326 overlap risk text"
+      ],
+      "suggestion": "Drop the overlap half, or reuse scopePatternsConflict only to report serialization the owner may not expect; keep the 'path not in the repository map' half."
+    },
+    {
+      "id": "z2",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "The ranking, threshold, piece splitting and backtest machinery exists to choose which of five cheap read-only reviewers run. One reviewer (overlap check) already always runs and Zoom out/Grounding/Comprehension are named in build order as all being built; running all five on every complex-and-clear plan may cost less than the decision model, the setting, the backtest and the derived-none path.",
+      "failureScenario": "Build step 1 (largest unit) ships before anyone measures whether selection saves anything over always running all five, and the size pick alone (needed for the simple/complex split) could be a single forced choice.",
+      "evidence": [
+        "plan: 'Each gets the stored plan, the repository map and read access'; 'mid-price model (about half the cost of the Architect's)'",
+        "plan: 'Build order 1. Decision model setting and the decision step, with the backtest script.'",
+        "src/webgpu/decisions.ts:28 only choice/score forced decisions exist"
+      ],
+      "suggestion": "Make step 1 the size pick only; add agent ranking later if measured per-plan agent cost justifies it."
+    },
+    {
+      "id": "z3",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Architect tools", "field": "design-decision" },
+      "what": "A new 'review the plan' tool and 'resolve a finding' tool sit beside lz-verify-task, the existing Architect self-review, and its refusal limits.",
+      "failureScenario": "Two overlapping review tools with different limits and vocabularies; the Architect's prompt must explain when to use each.",
+      "evidence": [
+        "src/architect.md:84-86",
+        "plan: 'The self-review tool's limits on checks, evidence and rounds are deliberate'"
+      ],
+      "suggestion": "State how the new tool relates to lz-verify-task (per task versus per plan) or fold plan-level review into it."
+    },
+    {
+      "id": "z4",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": {
+        "unit": "Structure (planning machine and two tables)",
+        "field": "design-decision"
+      },
+      "what": "A six-state planning machine plus two tables is fixed before the flow is proven; saving a draft plan already exists (draft true on the plan tool).",
+      "failureScenario": "States and tables are built in step 2 and reshaped once the agent-session and plan-link checks (stated as unconfirmed) land.",
+      "evidence": [
+        "src/runner/tools.ts:23 'set draft true only to save it without admitting'",
+        "plan: 'Before building: confirm in OpenCode that one tool call can start an agent session'"
+      ],
+      "suggestion": "Defer the machine states and table columns until after the pre-build confirmations; store the first plan draft as plain text."
+    },
+    {
+      "id": "z5",
+      "severity": "nit",
+      "confidence": "suspicion",
+      "target": { "unit": "Decision step", "field": "design-decision" },
+      "what": "Splitting rule (about four sentences, one-sentence overlap) and 'twice' forced choice are fixed before the backtest that the plan says measures them.",
+      "failureScenario": "Constants change after the backtest, redoing the piece splitter.",
+      "evidence": [
+        "plan: 'a long paragraph splits at about four sentences with a one-sentence overlap'"
+      ],
+      "suggestion": "Mark the split size and repeat count as backtest outputs."
+    }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "Should every complex-and-clear plan run all five planning agents, with ranking added only if cost data justifies it?",
+      "why": "Decides whether build step 1 includes ranking, threshold, backtest and derived-none, or only the size pick.",
+      "options": [
+        "Always all five; size pick only",
+        "Rank and threshold as designed",
+        "All five by default, ranking added later"
+      ],
+      "relatedFinding": "z2",
+      "weight": "changes-scope"
+    }
+  ]
+}

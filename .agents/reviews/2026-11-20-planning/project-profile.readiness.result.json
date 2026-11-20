@@ -1,0 +1,163 @@
+{
+  "agent": "readiness",
+  "status": "reviewed",
+  "checked": [
+    "Build order dependencies (store before readers, init after store) are consistent",
+    "Intent and reader table cover every Bun assumption the plan lists",
+    "Init flow: no-profile-is-not-a-gate and notice-stays-until-dismissed are stated",
+    "Profile type fields are individually typed and have per-reader owners"
+  ],
+  "findings": [
+    {
+      "id": "R1",
+      "severity": "blocker",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers / Build order step 4", "field": "design-decision" },
+      "what": "The isolated recheck currently only runs commands from a fixed allowlist and a safe-name check; the plan makes profile commands free text but never says whether the allowlist, scoped-command parsing and script-name checks stay, are replaced, or are bypassed.",
+      "failureScenario": "Builder either keeps the Bun-only allowlist (cargo/npm profiles are rejected as unsupported in recheck) or deletes it so any stored string runs in the isolated recheck, widening what a stored profile can execute.",
+      "evidence": [
+        "src/runner/retained-verification/procedure.ts:55-62 qualityCommands = bun fmt, bun lint --fix, ...",
+        "src/runner/retained-verification/procedure.ts:116 scopedFormat regex on `bun fmt`",
+        "plan: \"verify: { id: string; command: string }[]\""
+      ],
+      "suggestion": "State how recheck validates profile commands (profile membership as the allowlist, exact-match or arg templates) and how a scoped format on changed files is derived for non-Bun fixes."
+    },
+    {
+      "id": "R2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "The plan says source replaces deriveSourceDefinition, but a stored per-directory repo_map_sources table (include/exclude) with setRepoMapSource already exists and takes precedence; the profile does not say whether it migrates, is superseded, or which wins when both exist, and keys differ (project directory vs project key).",
+      "failureScenario": "Two stores of source filters diverge: the map reads the old table while Settings edits the profile, so the owner's confirmed filter has no effect on the map or audit.",
+      "evidence": [
+        "src/context/repo-map-store.ts:44-67 repo_map_sources by project_directory",
+        "src/context/repo-map-store.ts:85 repoMapSource(...) ?? deriveSourceDefinition",
+        "plan: \"source ... (replaces `deriveSourceDefinition`)\""
+      ],
+      "suggestion": "Say that existing repo_map_sources rows migrate into profiles (or are read as fallback), and that the stored profile has one owner."
+    },
+    {
+      "id": "R3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "Profile storage is a single record per project key but edits and the init write have no versioning, validation or partial-write rules: nothing says what is validated on save (empty verify, empty source.include, unknown audit value), whether history is kept, or what a malformed stored value does at read.",
+      "failureScenario": "A profile with empty verify is stored; guidance tells workers there are no checks and tasks complete unverified. Or a corrupt value makes every reader throw.",
+      "evidence": [
+        "plan: \"Stored in the shared database per project key (the settings store accepts numbers only today and must take structured values)\"",
+        "src/projects/rpc.ts:128 setSetting(scope, name, value: number | null)"
+      ],
+      "suggestion": "Define the schema as validated at write, minimum fields required, and read fallback to no-profile on invalid."
+    },
+    {
+      "id": "R4",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Init", "field": "acceptance" },
+      "what": "The plan has no acceptance criteria or verification commands at all; the only judge is `First profiles to test: Bun, npm and cargo`, with no pass condition. Init correctness (\"a failing command is not stored as working\") is only a prose claim.",
+      "failureScenario": "A builder stores every proposed command as working with a recorded result field set to success regardless of exit code, or the init notice is raised only for LAZERS, and the build is declared done.",
+      "evidence": [
+        "plan: \"The Architect proves the profile: a command that fails is not stored as working\"",
+        "plan: \"First profiles to test: Bun, npm and cargo.\""
+      ],
+      "suggestion": "Add per-step checks: a fixture project for each toolchain, init test where one command fails and is stored flagged, notice appears once and clears on dismiss, readers fall back when profile absent."
+    },
+    {
+      "id": "R5",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "Behaviour on profile change and on a failed command at store time is open: the type has no field recording per-command result, yet the flow says results are recorded and failed commands are not stored as working.",
+      "failureScenario": "Builder invents a result field or drops results; later readers cannot tell proven from unproven commands, and cannot be re-verified at Run setup again.",
+      "evidence": [
+        "plan: \"runs each command once and records the result\"",
+        "plan type ProjectProfile has no result/status field"
+      ],
+      "suggestion": "Add per-command state (proven, failed with text, unverified) to the type and define whether unproven commands still run in guidance."
+    },
+    {
+      "id": "R6",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Readers", "field": "design-decision" },
+      "what": "Two toolchains in one profile: ordering and scope of verify and fix commands, and tool lookup for each, are undefined. fix has optional files globs but no rule for when a fix runs (all changed files vs matching globs, order, stop on error).",
+      "failureScenario": "Auto-fix runs `cargo fmt` and `npx prettier --write` on every change including unmatched files, or in a nondeterministic order, producing different diffs per run.",
+      "evidence": [
+        "plan type: \"fix: { command: string; files?: string[] }[]\"",
+        "plan: \"A project with two toolchains carries both in one profile.\""
+      ],
+      "suggestion": "Define order as array order, files as globs against changed files, and failure semantics for a fix step."
+    },
+    {
+      "id": "R7",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Readers", "field": "design-decision" },
+      "what": "env is a list of variable names to keep, but how values are obtained, whether names are validated against secrets, and whether it replaces or adds to the default environment in the isolated recheck is not stated.",
+      "failureScenario": "Builder passes everything in env through, leaking a secret-bearing variable name the Architect proposed.",
+      "evidence": ["plan: \"env: string[] // variables to keep: CARGO_HOME, RUSTUP_HOME\""],
+      "suggestion": "State it is an allowlist added to a fixed base set and values come from the process environment."
+    },
+    {
+      "id": "R8",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Readers", "field": "design-decision" },
+      "what": "Isolated recheck uses the project's lockfile but does not say what happens when install is absent or lockfile is missing, nor whether install runs per recheck or is cached.",
+      "failureScenario": "Recheck runs with no install on a fresh worktree and every cargo/npm check fails, or runs a slow install each time.",
+      "evidence": [
+        "plan: \"install?: string\"",
+        "plan reader row: \"Isolated recheck | install, env, the project's lockfile\""
+      ],
+      "suggestion": "Say that missing install means none runs and name the lockfile detection source (profile or manifest)."
+    },
+    {
+      "id": "R9",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "Notice dismissal scope and persistence are unspecified: per project, per user, permanent or until next project load; and Run setup again overwriting vs proposing a diff.",
+      "failureScenario": "Notice reappears every load after dismiss, or dismissal is global across projects.",
+      "evidence": ["plan: \"The notice stays until the owner sets up or dismisses it.\""],
+      "suggestion": "State dismissal is stored per project key and Run setup again shows a diff before overwrite."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "May profile verify and fix commands be any free text, or only commands the owner confirmed at init?",
+      "why": "Decides the recheck allowlist and what a stored profile can execute.",
+      "options": [
+        "Any text stored in a confirmed profile runs",
+        "Only commands proven at init run; edits require rerun",
+        "Free text but run through a fixed shell-less argv parser"
+      ],
+      "relatedFinding": "R1",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "Should existing repo_map_sources rows migrate into profiles or stay as a fallback?",
+      "why": "Decides whether one or two source filters exist.",
+      "options": [
+        "Migrate once into profiles",
+        "Keep as read fallback when no profile",
+        "Drop and re-derive"
+      ],
+      "relatedFinding": "R2",
+      "weight": "changes-detail"
+    },
+    {
+      "id": "Q3",
+      "question": "Are unproven (failed) commands kept in the profile with a flag, or rejected?",
+      "why": "Decides the type and what guidance tells workers.",
+      "options": [
+        "Stored flagged as failed, excluded from guidance",
+        "Rejected until they pass",
+        "Stored and still used"
+      ],
+      "relatedFinding": "R5",
+      "weight": "changes-detail"
+    }
+  ]
+}

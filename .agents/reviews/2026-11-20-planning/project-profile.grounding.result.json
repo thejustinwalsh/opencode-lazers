@@ -1,0 +1,145 @@
+{
+  "agent": "grounding",
+  "status": "reviewed",
+  "checked": [
+    "Intro: Architect and workers told `bun run verify` holds: src/tasks/instructions.ts:116, src/tool-input.ts:405, src/task.ts:130",
+    "Intro: auto-fix knows only bun fmt / bun lint --fix holds: src/runner/runtime.ts:9487-9488 (mechanical-preparation), src/runner/quality-failure.ts:2-5, src/runner/retained-verification/procedure.ts:56-59",
+    "Intro: only Bun is located on PATH holds: src/runner/checks.ts:11-19 (checkEnvironment), isolation.ts:419",
+    "Intro: isolated recheck runs `bun install` holds: src/runner/retained-verification/isolation.ts:419-436, lockfile names hardcoded at isolation.ts:225",
+    "Intro: Fallow reads only JS/TS and its config is demanded everywhere: src/audit/fallow-gate.ts:11-50, src/runner/runtime.ts:5767, 7920; audit extension list src/audit/review-git.ts:11-26",
+    "Profile: settings store accepts numbers only holds: src/projects/settings.ts:22-35 (zod schemas count/amount), value column is TEXT JSON (settings.ts:46) so structured values need a schema change, not a table change; per project key scope holds (projectSettings keyed by key, settings.ts:~125)",
+    "Readers: Bun test hang guard is a single module: src/runner/test-hang-guard.ts (its header already says a per-project profile will supply other runners' equivalents)",
+    "Readers: repository map replaces deriveSourceDefinition: it exists at src/context/repo-map.ts:581 and is called from src/context/repo-map-store.ts:85",
+    "Readers: map export scan reads TypeScript only holds: src/context/repo-map.ts:542 globs **/*.{ts,tsx,mts,cts}",
+    "Init: a hook at Architect session start has precedent: src/index.ts:113-120 (prompt hook already runs ensureArchitectMap on the Architect's first prompt)",
+    "Build order: runtime-split plan names the verification modules the plan refers to (check-activities.ts, verification-candidate.ts, effect-reconciliation.ts): .agents/plans/runtime-split.md:180-187; runtime.ts is still monolithic (mechanical preparation at runtime.ts:9487 is inside it), so the split has not landed",
+    "Settings UI: LAZERS settings page has per-feature sections (src/projects/gui.tsx:26 Projects section, src/retention/gui.tsx, src/budget/gui.tsx), so a Verification group has a pattern to follow"
+  ],
+  "findings": [
+    {
+      "id": "G1",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": {
+        "unit": "The profile / Readers (repository map row)",
+        "field": "design-decision"
+      },
+      "what": "A per-project stored source definition already exists (table repo_map_sources, repoMapSource/setRepoMapSource, keyed by project_directory with include/exclude JSON) and currentRepoMap prefers it over deriveSourceDefinition. The plan says profile.source 'replaces deriveSourceDefinition' and never mentions the existing store, its key (directory vs project key), or migrating it.",
+      "failureScenario": "A builder adds profile.source beside repo_map_sources, giving two stored definitions for one purpose with different keys; or deletes deriveSourceDefinition although it remains the fallback for projects with no profile (the plan says no profile means work runs as today).",
+      "evidence": [
+        "src/context/repo-map-store.ts:39-96",
+        "src/context/repo-map.ts:581",
+        "src/context/repo-map.test.ts:259-264",
+        "plan: \"`source` (replaces `deriveSourceDefinition`)\""
+      ],
+      "suggestion": "State whether profile.source supersedes repo_map_sources (migrate or read-through) and that deriveSourceDefinition stays as the no-profile default."
+    },
+    {
+      "id": "G2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers table", "field": "write-scope" },
+      "what": "The table omits several Bun-assuming readers that the auto-fix, tool-lookup and recheck rows imply: the allow-list of quality commands in retained-verification/procedure.ts (qualityCommands set of 'bun fmt', 'bun lint --fix', 'bun check', and scoped-format regex at procedure.ts:116), the phase recognizer in src/runner/quality-failure.ts (recognizedVerificationPhases, 'bun run verify', needsMechanicalQualityPreparation), and the hard-coded formatter/lint extension sets and commands in mechanical preparation (runtime.ts:~9460-9490).",
+      "failureScenario": "Step 2 changes guidance and fix to read the profile, but a cargo or npm project's fix and verify commands are not recognized as quality commands: retained verification rejects the procedure as unsupported and quality failures are not routed to mechanical preparation.",
+      "evidence": [
+        "src/runner/retained-verification/procedure.ts:56-64,116",
+        "src/runner/quality-failure.ts:2-5,17,45-46",
+        "src/runner/runtime.ts:9465-9491"
+      ],
+      "suggestion": "Name procedure.ts and quality-failure.ts as readers of verify/fix, and list them in build steps 2 and 4."
+    },
+    {
+      "id": "G3",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Build order step 4 (Isolated recheck)", "field": "write-scope" },
+      "what": "The recheck is more Node-shaped than 'install command, variables, lockfiles'. isolation.ts builds around a node_modules symlink and tree ownership checks (assertOwnedDependencyTree, node_modules paths at 565, 713, 910, 1027, 1047) and passes Bun-specific flags (--frozen-lockfile, --ignore-scripts, --no-save, --no-progress). Cargo has no node_modules, and `cargo fetch` populates a registry in CARGO_HOME, not the workspace.",
+      "failureScenario": "A builder swaps in profile.install and the lockfile list, then finds isolation still demands a node_modules tree and a Bun on PATH, so a cargo recheck cannot pass or silently runs without isolated dependencies.",
+      "evidence": [
+        "src/runner/retained-verification/isolation.ts:225,419-436,565,574,713-720,910,1027",
+        "plan: \"Isolated recheck | `install`, `env`, the project's lockfile\""
+      ],
+      "suggestion": "Add to step 4 what dependency isolation means for a toolchain with no node_modules (what is linked or owned), and that the Bun flags move into the Bun profile's install string."
+    },
+    {
+      "id": "G4",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "design-decision" },
+      "what": "`verify` items carry only id and command, but the code that runs checks attaches per-check timing (inactivity and hard timeout defaults, amendments) and the test hang guard is a rewrite of command text. The profile has no field for timeouts, and the table says the hang guard 'becomes part of a Bun profile's commands' while test-hang-guard.ts rewrites commands at run time for any author-written `bun test`.",
+      "failureScenario": "Builder bakes `--timeout 120000` into the stored command, then withTestHangGuard and the profile disagree about who owns the flag; non-Bun profiles get no hang protection with no stated reason.",
+      "evidence": [
+        "src/runner/test-hang-guard.ts:1-40",
+        "src/runner/verification-timeout.ts (DEFAULT_VERIFICATION_INACTIVITY_TIMEOUT_MS, verificationCheckWithDefaults)",
+        "plan: \"Bun test hang guard | becomes part of a Bun profile's commands\""
+      ],
+      "suggestion": "Decide whether withTestHangGuard is deleted or stays, and say verify timing stays on the existing defaults."
+    },
+    {
+      "id": "G5",
+      "severity": "minor",
+      "confidence": "confirmed",
+      "target": {
+        "unit": "Readers table (Fallow row) / Build order step 5",
+        "field": "write-scope"
+      },
+      "what": "Fallow already has a per-project stored config and entry-point/ignore settings (getLatestFallowConfig, setFallowConfig, hasStoredFallowConfig) that the config gate reads. The plan's `audit: off` and `source` must interact with it, but the plan names neither this store nor review-git.ts's hardcoded SOURCE_EXTENSIONS/CONFIG_FILES/BASE_TREE_PATHSPECS (the 'does this change matter' check) as what changes. runtime.ts:5767 and 7920 are the gate call sites.",
+      "failureScenario": "Builder gates only fallowConfigGate on audit; the review-git extension list still marks .rs-only changes irrelevant or relevant by JS rules, and base-tree materialisation still fetches only JS/CSS/JSON pathspecs.",
+      "evidence": [
+        "src/audit/review-git.ts:11-60",
+        "src/audit/fallow-gate.ts:38-49",
+        "src/runner/runtime.ts:5767,7920,10366,10495"
+      ],
+      "suggestion": "List review-git.ts and fallow-gate.ts call sites in step 5; say whether source.include replaces SOURCE_EXTENSIONS."
+    },
+    {
+      "id": "G6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": {
+        "unit": "Build order (intro sentence on runtime-split)",
+        "field": "dependencies"
+      },
+      "what": "The plan says the runtime split moves verification modules first so steps 2 and 4 build on them, but gives no edge or status: the split plan lives in .agents/plans/runtime-split.md and, per runtime.ts still holding mechanical preparation (R21) at runtime.ts:9465+, has not landed. Steps 2 and 4 would otherwise edit the 12k-line runtime.ts concurrently with the split.",
+      "failureScenario": "Steps 2 and 4 are built against runtime.ts while the split moves the same ranges (R21 verification candidate, R24 effect reconciliation), producing conflicting edits or edits to code that has moved.",
+      "evidence": [".agents/plans/runtime-split.md:64,67,186-187", "src/runner/runtime.ts:9487"],
+      "suggestion": "Make steps 2 and 4 depend on the split's verification-candidate and effect-reconciliation units, and link the split plan."
+    },
+    {
+      "id": "G7",
+      "severity": "nit",
+      "confidence": "confirmed",
+      "target": { "unit": "Init", "field": "other" },
+      "what": "The plan says a 'notice in OpenCode' with a [Set up] button raised by a runtime check at project load, but does not say which existing surface carries it. The repo has panel-status and a task-panel UI but no project-load notice with an action; notice-marker.ts is a transcript marker for the Architect, not a GUI notice.",
+      "failureScenario": "Builder invents a new notice channel.",
+      "evidence": ["src/runner/notice-marker.ts", "src/projects/gui.tsx", "src/panel-status.tsx"],
+      "suggestion": "Name the surface (Projects settings section, a panel banner, or Needs-you item)."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Should a project with a stored repo_map_sources row keep it when a profile is created, or should the profile's source supersede it?",
+      "why": "Decides whether repo_map_sources is migrated and dropped or left as a second source of truth.",
+      "options": [
+        "profile.source supersedes; migrate existing rows into the profile on first setup",
+        "repo_map_sources stays and profile.source is read only when no row exists",
+        "drop repo_map_sources and keep only the derived default plus profile"
+      ],
+      "relatedFinding": "G1",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "For a toolchain without node_modules (cargo), should the isolated recheck still provide an isolated dependency directory, and if so which one?",
+      "why": "Determines whether step 4 reworks isolation.ts's dependency-tree model or only swaps the install command.",
+      "options": [
+        "Isolation owns a per-toolchain dependency directory declared in the profile (node_modules, target)",
+        "Isolation covers node_modules only; non-Node profiles run install in the candidate workspace with CARGO_HOME from env",
+        "Non-Node profiles skip dependency isolation and rely on a clean workspace"
+      ],
+      "relatedFinding": "G3",
+      "weight": "changes-design"
+    }
+  ]
+}

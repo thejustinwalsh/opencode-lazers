@@ -1,0 +1,129 @@
+{
+  "agent": "critic",
+  "status": "reviewed",
+  "reason": "",
+  "checked": [
+    "Shared database per project key: src/projects/settings.ts:58 projectKeyOfDirectory and lazers_settings (scope,name,value TEXT) exist, so a per-project store is feasible; the plan itself says the settings store takes numbers only (settings.ts:30-38 schema is numeric) and must change - answered in the Profile section.",
+    "No-profile fallback: plan says 'Not a gate: with no profile, work runs with the Architect's own commands as today' - answers the stuck-project failure class for existing projects.",
+    "Fallow demand: dispatch holds plans with FALLOW_CONFIG_REQUIRED only when fallowReviewEnabled and no stored config (src/runner/runtime.ts:7917-7926); audit:off can plausibly bypass it, so the reader-table row is coherent.",
+    "Existing repo map: currentRepoMap already falls back to deriveSourceDefinition when no stored source (src/context/repo-map-store.ts:83-86), so 'no profile' keeps working for the map.",
+    "Detection by Architect with manifests as input, proof by running each command once, owner confirms: plan lines 'The Architect proves the profile' and 'the owner confirms -> stored' answer wrong-profile risk for the initial setup.",
+    "Build order dependency on the runtime.ts split: plan names it; not judged here (zoom-out/readiness)."
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocker",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers", "field": "assumption" },
+      "what": "The plan assumes free-text profile commands (cargo test, npm run lint) will flow through verification, but the retained-verification procedure and quality-failure classifier accept only an allowlist of Bun command strings and mark anything else unsupported. Neither is in the Readers table.",
+      "failureScenario": "A cargo or npm profile is stored and proven by the Architect, yet retained verification returns status 'unsupported' and quality-failure does not recognise the phases, so every non-Bun project still fails or is misclassified at the recheck and failure-handling stage. Steps 2 and 4 finish with Bun still hard-coded in these two files.",
+      "evidence": [
+        "src/runner/retained-verification/procedure.ts:55-61 qualityCommands = bun fmt / bun lint --fix / bun check ...",
+        "src/runner/quality-failure.ts:1-27 qualitySteps and recognizedStep only accept 'bun ...' forms",
+        "plan line 'The runtime assumes Bun and TypeScript in eight places' vs the Readers table which omits both files"
+      ],
+      "suggestion": "Add procedure.ts and quality-failure.ts to Readers and say how profile commands are recognised (match against the stored profile entries rather than a bun allowlist) and what the safety bounds are."
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "Readers (Isolated recheck: install)", "field": "design-decision" },
+      "what": "The isolated install today is hardened: --frozen-lockfile when a lock file exists, --ignore-scripts, --no-save, a 120s timeout, and a process-group exit check. The profile's install is one free-text string ('npm ci', 'cargo fetch') with none of these guarantees.",
+      "failureScenario": "npm ci runs lifecycle scripts from the candidate's dependencies, and cargo fetch/build runs build.rs, inside the verification environment that is meant to be isolated from untrusted candidate content. A profile install command can also mutate lockfiles or the checkout, silently changing what is verified.",
+      "evidence": [
+        "src/runner/retained-verification/isolation.ts:419-436 installCandidateDependencies: --frozen-lockfile, --ignore-scripts, --no-save, timeoutMs 120_000"
+      ],
+      "suggestion": "State which hardening carries over per toolchain (e.g. npm ci --ignore-scripts, cargo fetch --locked) and that the runtime enforces the timeout and process-group check regardless of the string."
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "The profile", "field": "assumption" },
+      "what": "The runtime executes the stored profile commands itself (auto-fix, install, verify) without a model in the loop, yet the profile is authored by an Architect session that reads repository files (AGENTS.md, manifests, CI files) and is only confirmed by the owner. Nothing says what the owner sees at confirmation, or how later edits and 'Run setup again' are re-confirmed.",
+      "failureScenario": "A repo file with injected instructions makes the Architect propose a command such as 'curl ... | sh' as 'install' or an 'env' entry holding a secret; an owner skimming a long profile confirms it, and the runtime then runs it on every task and recheck, outside a model's judgement. env: string[] also decides which variables pass into candidate checks, so a wrong entry leaks credentials to untrusted code.",
+      "evidence": [
+        "plan: 'the owner confirms -> stored'; 'reads manifests, lockfiles, CI files, AGENTS.md, the folder tree'",
+        "src/runner/checks.ts:5-9 checkEnvironment currently forwards the entire process.env, so 'env: keep' semantics are undefined in the plan"
+      ],
+      "suggestion": "Say the confirmation shows every command and env name verbatim, edits after storing re-require owner confirmation, and whether env is an allowlist added to a base or the whole forwarded set."
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "confidence": "confirmed",
+      "target": { "unit": "The profile", "field": "assumption" },
+      "what": "A stored per-project source definition already exists (repo_map_sources, keyed by project_directory, not project key). The plan says the profile 'replaces deriveSourceDefinition' and is stored per project key, with no migration for existing stored rows or for projects checked out at several directories.",
+      "failureScenario": "Existing stored source definitions are ignored or contradicted by the new profile, so the repo map for already-configured projects changes silently (tokens, files) and frozen plan maps no longer match what a fresh build yields; a project with several checkouts could carry a different source in each.",
+      "evidence": [
+        "src/context/repo-map-store.ts:20 and 39-56 repo_map_sources keyed by project_directory",
+        "src/context/repo-map-store.ts:83-86 stored definition wins over derived",
+        "plan: 'Repository map ... source (replaces deriveSourceDefinition)'"
+      ],
+      "suggestion": "State precedence and migration: profile.source wins; existing repo_map_sources rows seed or are deleted; key by project key."
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "design-decision" },
+      "what": "Mechanical auto-fix today builds one command per changed file set by quoting paths and appending them to 'bun fmt'/'bun lint --fix' (src/runner/runtime.ts:9486-9492). Profile fix is {command, files?} with no stated way paths are passed or what happens for tools that cannot take paths (cargo fmt, cargo clippy --fix).",
+      "failureScenario": "A cargo profile's fix runs project-wide on a worker checkout and rewrites files outside the task's write scope, which the scope review then flags or, worse, accepts as part of the change.",
+      "evidence": [
+        "src/runner/runtime.ts:9486-9492 per-path quoting",
+        "plan type: fix: { command: string; files?: string[] }"
+      ],
+      "suggestion": "Define the path-passing contract (append quoted paths / no paths) and that changes outside write scope after a fix fail the step."
+    },
+    {
+      "id": "F6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Init", "field": "assumption" },
+      "what": "Init has the Architect run each proposed command once, including tests, with no stated bound on time, cost, side effects or state when it half completes (some commands pass, some fail, owner leaves).",
+      "failureScenario": "A test command with side effects (database, network, writes) runs on the owner's checkout during setup; a long Architect session consumes model spend; an abandoned session leaves no stored profile and the notice reappears, or a partial profile is stored as 'working'.",
+      "evidence": [
+        "plan: 'runs each command once and records the result'; 'The notice stays until the owner sets up or dismisses it.'"
+      ],
+      "suggestion": "State the run location (isolated worktree), per-command timeout, and that abandoned or failed proposals store nothing."
+    },
+    {
+      "id": "F7",
+      "severity": "minor",
+      "confidence": "suspicion",
+      "target": { "unit": "Init", "field": "assumption" },
+      "what": "The plan relies on an in-OpenCode notice with a [Set up] button raised at project load and a session-start hook, and on a dismissal state, without saying how many times per load or per project, or where 'dismissed' is stored.",
+      "failureScenario": "Multiple windows or checkouts of one project each raise the notice, or a dismissal does not persist across restarts and nags the owner.",
+      "evidence": [],
+      "suggestion": "Say where dismissal is stored (per project key) and that the check is idempotent per project, not per checkout."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "Should the profile be locked to commands the owner has seen verbatim (any later edit, including by a Re-run of setup, needs a fresh owner confirmation), or may the Architect store updates itself?",
+      "why": "Decides whether the runtime can run stored commands unattended and whether a confirmation UI with a full diff is needed.",
+      "options": [
+        "Owner confirms every store and edit",
+        "Owner confirms first store only; Architect may update verify/fix",
+        "Architect stores, owner reviews after"
+      ],
+      "relatedFinding": "F3",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "Should the isolated install keep today's hardening (no lifecycle scripts, locked lockfile) for every toolchain, even when that makes some projects unable to install?",
+      "why": "Decides whether install is a free-text string or a structured per-toolchain recipe the runtime constrains.",
+      "options": [
+        "Always hardened; project must opt out explicitly",
+        "Free text, owner accepts the risk",
+        "Structured per toolchain with hardened defaults"
+      ],
+      "relatedFinding": "F2",
+      "weight": "changes-design"
+    }
+  ]
+}

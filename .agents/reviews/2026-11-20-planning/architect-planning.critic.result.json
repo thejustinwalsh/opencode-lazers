@@ -1,0 +1,123 @@
+{
+  "agent": "critic",
+  "status": "reviewed",
+  "checked": [
+    "lifecycleMachines exists at src/runner/lifecycle-machines.ts; a planning machine fits the stated XState rule",
+    "guidance runbooks are delivered by topic via src/guidance/index.ts:15,29; step runbooks fit that mechanism",
+    "plan answers the 'no model' failure path: local inference off and no external model leaves the Architect picking itself (Decision step)",
+    "plan answers reviewer failure: recorded as not run, never clean (Planning agents)",
+    "plan answers owner escape: 'just task it' exits from every state (Structure, Runtime row)",
+    "cost of threshold is addressed by a measured backtest written beside the constant",
+    "review was whole-plan; the map was read to line 381 of 669 only, and grep covered the rest"
+  ],
+  "findings": [
+    {
+      "id": "C1",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Decision step", "field": "assumption" },
+      "what": "The backtest and size ground truth assume recorded asks exist as text, linkable to the number of tasks each became. The recorded-data research counts 390 Architect sessions, 27 with a submitted task, and says some content is not recorded. A grep for stored prompt text found only a userPrompt flag in src/runner/store.ts, not the text.",
+      "failureScenario": "Build step 1 ships a threshold tuned on a tiny or nonexistent labelled set (27 sessions with tasks), or the backtest script cannot run. The threshold is then a guess, which the plan forbids.",
+      "evidence": [
+        "plan: 'Size has ground truth: recorded asks and the number of tasks each became.'",
+        ".agents/research/rediscovery-measurements.md:5",
+        "src/runner/store.ts:2221"
+      ],
+      "suggestion": "Add a first step that confirms the ask text is stored and counts usable labelled asks, or records asks going forward before the backtest."
+    },
+    {
+      "id": "C2",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Planning agents", "field": "assumption" },
+      "what": "Reviews depend on the stored plan, which is always rewritten by the Architect. Plan versions and findings are tied only by the two tables. Nothing says how a finding is matched to the plan revision it reviewed, or what happens to open findings and questions when the owner steers during or after step 9, or when the single update in step 11 changes tasks.",
+      "failureScenario": "Findings cite tasks or fields that no longer exist. A resolved finding is applied to the wrong revision, or the final pass reviews a plan different from the one the owner answered about. Questions the owner already answered get asked again.",
+      "evidence": [
+        "plan: 'two tables (plan draft, findings)'",
+        "plan: 'the Architect updates the plan once'"
+      ],
+      "suggestion": "Version the plan draft, key findings to a revision, and say which findings carry across a revision."
+    },
+    {
+      "id": "C3",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Flow", "field": "assumption" },
+      "what": "The flow has no answer for partial completion: a stuck planning state, agents that all fail, or the owner leaving mid-flow. Only 'not run' recording and the 'just task it' exit are stated. There is no timeout, retry bound, or rule that a plan with every reviewer not run may proceed.",
+      "failureScenario": "A plan sits in 'in review' or 'questions open' with no exit but the owner's phrase. All five agents fail and the plan appears reviewed. Combined with the project rule that every non-terminal state has an exit, this is a defect.",
+      "evidence": [
+        "plan: 'A reviewer that fails is recorded as `not run`, never as clean.'",
+        "plan: 'just task it exits from every state'"
+      ],
+      "suggestion": "State what each state's exit is when agents fail or the owner is silent, and what the Architect tells the owner when all reviewers are not run."
+    },
+    {
+      "id": "C4",
+      "severity": "major",
+      "confidence": "likely",
+      "target": { "unit": "Planning agents", "field": "assumption" },
+      "what": "Cost is not bounded. Five agents with fresh context each get the stored plan plus the repository map and read access, then a final pass repeats. The plan sets no token or call budget per agent, and the default model is 'about half the cost of the Architect', with no figure. The reviewed-project baseline measures plan outcomes, not planning spend.",
+      "failureScenario": "Each complex ask costs five or more full-context agent runs plus a final pass with no ceiling. A grep-heavy reviewer can run long, and the cost is then unknown until bills arrive. The project rule says product costs need provenance.",
+      "evidence": [
+        "plan: 'Default model route: a mid-price model (about half the cost of the Architect's)'",
+        "plan: 'one final planning agent pass'"
+      ],
+      "suggestion": "Add a per-agent step and token limit, and record planning-agent cost in the judged metrics."
+    },
+    {
+      "id": "C5",
+      "severity": "minor",
+      "confidence": "suspicion",
+      "target": { "unit": "Decision step", "field": "assumption" },
+      "what": "The plan assumes a one-model forced choice twice over each piece is stable, but does not say what happens when the two runs disagree, or when the local model (D1) or OpenRouter is unavailable or times out mid-ask.",
+      "failureScenario": "Disagreeing runs combine arbitrarily into the ranked list. A timeout stalls the Architect's first reply to the ask, since the decision runs on every prompt.",
+      "evidence": ["plan: 'Runs the decision model on each piece, forced choice, twice'"],
+      "suggestion": "State the combine rule for two runs and a timeout that falls to the Architect-picks path."
+    },
+    {
+      "id": "C6",
+      "severity": "minor",
+      "confidence": "likely",
+      "target": { "unit": "Planning agents", "field": "assumption" },
+      "what": "Prompt-injection and data exposure: planning agents read the stored plan and repository with read, grep and glob and return text that the Architect and owner act on. The plan treats agent output as findings but states no rule that agent text is data, and an external OpenRouter route sends plan and repository content off the machine.",
+      "failureScenario": "A reviewed file or plan quote contains instructions that bend a finding. Or private repository content goes to an external model without the owner noting it in Settings.",
+      "evidence": [
+        "plan: 'read, grep and glob only; no edit, shell, web, delegation or submit tools'",
+        "plan: 'Decision model: the built-in local D1, or an external model on OpenRouter'"
+      ],
+      "suggestion": "Say findings are typed data validated against the contract, and that an external route is stated in Settings as sending repository content."
+    },
+    {
+      "id": "C7",
+      "severity": "minor",
+      "confidence": "suspicion",
+      "target": { "unit": "Structure", "field": "assumption" },
+      "what": "Stored data and compatibility: adding a planning machine and two tables to the runtime has no stated migration, version-skew or rollback note. The server bundle reload model means old and new generations can overlap.",
+      "failureScenario": "A reload during a planning state leaves a state the old bundle cannot read.",
+      "evidence": ["plan: 'two tables (plan draft, findings)'"],
+      "suggestion": "One line: tables are additive, and the machine's states are restorable after reload."
+    }
+  ],
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "If every planning agent fails or the owner does not answer, should the plan proceed to tasking after a bounded wait, or stay open until the owner says so?",
+      "why": "Decides whether the planning machine needs timed exits or stays owner-driven only.",
+      "options": [
+        "Stay open until the owner acts",
+        "Proceed to tasking with a not-reviewed notice after a time limit",
+        "Retry once, then stay open"
+      ],
+      "relatedFinding": "C3",
+      "weight": "changes-design"
+    },
+    {
+      "id": "Q2",
+      "question": "Is a hard per-ask ceiling on planning-agent spend wanted, given the rule against caps that refuse work?",
+      "why": "Decides between a tunable budget with measurement and no limit at all.",
+      "options": ["Tunable default with measurement beside it", "Report cost only, no limit"],
+      "relatedFinding": "C4",
+      "weight": "changes-detail"
+    }
+  ]
+}

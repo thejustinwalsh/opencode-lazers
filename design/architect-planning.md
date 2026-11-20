@@ -132,3 +132,48 @@ session and wait for it, and what the plan link opens (an artifact or a LAZERS p
 Per plan, before and after: repairs, scope amendments, scope stops, takeovers, failed combined
 verification (baseline over 219 plans: 23% repaired, 20% scope-amended). Per finding: whether the
 thing it predicted happened. How many agent findings remain after the Architect hardens first.
+
+## Review outcomes, 2026-11-20
+
+The five planning agents were written first and run on this design and on the project profile
+design, ten fresh-context runs on a mid-price model (about 95,000 tokens and under 80 seconds
+each). Results are in `.agents/reviews/2026-11-20-planning/`. Decisions taken from them:
+
+- **Terms.** "Simple" is a size pick of `one task`; "complex" is `a few tasks` or `a large effort`.
+  "Unclear" is derived: no planning-agent score clears the threshold. Clarity is not a separate
+  score.
+- **Selection is built, permissive, and measured from day one** (owner). The decision model picks
+  simple or complex, then ranks the planning agents. The threshold sits just above "unsure", so in
+  practice all five run and only an agent that clearly cannot help is cut. Every decision is
+  recorded (pieces, scores, which agents ran, what each found, cost) so the threshold can be moved
+  on evidence. Below the threshold the Architect chooses the agents; whether the flow runs at all
+  is decided by size.
+- **The overlap check is dropped.** The runtime already runs tasks with overlapping scopes in
+  sequence. The path-not-in-map check stays as a deterministic check.
+- **No spend ceiling.** Cost per plan is shown; nothing is refused.
+- **A stalled plan stays open** (lead's default, unanswered by the owner): it waits until the owner
+  answers or says "just task it". A failed agent is retried once, then recorded as `not run` and
+  shown. Nothing proceeds on a timer.
+- **Findings carry the plan revision they reviewed.** A finding on an older revision is shown as
+  stale after the Architect edits the part it concerns; it is never silently dropped.
+- **The machine is named `planning`**, not `plan` (a `plan` machine already exists for runner
+  plans). Its transitions are written out in the build, including: owner leaves (state persists),
+  restart mid-review (child sessions persist; the wait is rebuilt from stored state, as takeover
+  does), plan edited after `ready` (returns to `drafted`).
+- **Each build step states its own acceptance check** before it starts.
+- **The backtest has less ground truth than assumed**: 390 Architect sessions, 27 with a submitted
+  task, and ask text is only partly recorded. The first threshold is therefore a starting value
+  chosen by hand and labelled as such; production records are the real data.
+- **Final pass:** one agent. Lead's default: Readiness, because its question is "can a builder act
+  on this".
+
+Host facts confirmed for the build (source read, not run): one tool call can create a child
+session with a given agent and model, prompt it and wait, by polling; nothing times a tool call
+out, and the tool must cancel its own children; a restart loses the in-memory wait. Planning
+agents are registered (hidden, read-only, one shared model route `lazers-planning`). A plan link is
+a markdown link routed by a link handler to a LAZERS panel, as task links are today; artifacts
+have no Desktop view. A ranking over N choices in one call uses the `systemOne` RPC (up to 16
+questions, 20 choices, probabilities per choice); `decide` returns one answer. The local model
+needs a Desktop window; headless, the call fails at its timeout and the Architect decides. An
+external decision model works only if the catalogue lists it as a decision model. Planning agents'
+context budget is 256,000 tokens; prompts are capped at 1,500 tokens (measured: about 1,100).
