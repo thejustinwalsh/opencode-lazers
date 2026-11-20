@@ -1,3 +1,4 @@
+import { setProjectSetting } from "../projects/settings.ts"
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
 import { classifyPlans } from "../retention/retention.ts"
 import { runbook } from "../guidance/index.ts"
@@ -2844,6 +2845,50 @@ test("retained repair carries an owned captured synthetic terminal input through
   expect(worker.messages.some((message) => message.id === nativeInputID)).toBe(true)
 })
 
+test("retained repair waits for a project-capacity slot before reusing its worker", async () => {
+  const { f, planID, task, original, artifact } = await acceptedAttemptFixture()
+  setProjectSetting(f.store.repository, await f.runtime.delegatedAgentCapacity.key(), "limit", 1)
+  const blocker = await f.runtime.delegatedAgentCapacity.ensureNativeQueued({
+    parentSessionID: "lazers-parent",
+    toolCallID: "retained-repair-capacity-blocker",
+    agent: "research",
+    description: "Hold the only project slot",
+  })
+  await f.runtime.delegatedAgentCapacity.waitForNative(blocker, new AbortController().signal)
+  const promptsBeforeRepair = f.events.filter((event) => event.startsWith("prompt:")).length
+
+  await f.runtime.command(
+    {
+      requestID: "retained-repair-capacity-queue",
+      planID,
+      action: "retained-repair",
+      taskID: task.id,
+      attemptID: original.id,
+      artifact,
+      reason: "Wait for the canonical-project slot before resuming this retained worker.",
+    },
+    "owner",
+  )
+  await f.runtime.tick()
+
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: original.id, state: "preparing" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(promptsBeforeRepair)
+  const waitingStatus = await f.runtime.delegatedAgentCapacity.settings()
+  expect(waitingStatus).toMatchObject({
+    active: 1,
+    queued: 1,
+    limit: 1,
+  })
+
+  await f.runtime.delegatedAgentCapacity.releaseNativeRequest(blocker)
+  await f.runtime.tick()
+
+  expect(f.store.attempts(planID)[0]).toMatchObject({ id: original.id, state: "running" })
+  expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(
+    promptsBeforeRepair + 1,
+  )
+})
+
 test.each(["uncaptured-synthetic", "foreign-user", "running-shell"] as const)(
   "retained repair rejects %s input evidence before reserving the attempt",
   async (invalidInput) => {
@@ -4842,8 +4887,14 @@ test("a retry that asks for an isolated workspace leaves the shared checkout", a
   expect(attempts[1]!.workspace).toContain(".worktrees")
 })
 
-test("shared resume waits for another plan's worker and cancellation retains final usage", async () => {
+test.each([1, 3])("shared resume waits for scope, not spare capacity (limit %i)", async (limit) => {
   const f = fixture({ shared: true, delayed: true, taskFiles: [{ name: "a", path: "a.txt" }] })
+  setProjectSetting(
+    f.store.repository,
+    await f.runtime.delegatedAgentCapacity.key(),
+    "limit",
+    limit,
+  )
   await runPlan(f)
   await f.runtime.tick()
   const a = f.store.attempts(f.receipt.planID)[0]!
@@ -4881,10 +4932,30 @@ test("shared resume waits for another plan's worker and cancellation retains fin
     },
     "owner",
   )
+  expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+    active: 1,
+    queued: 1,
+    limit,
+  })
   const prompts = f.events.filter((event) => event.startsWith("prompt:")).length
   await f.runtime.tick()
   expect(f.events.filter((event) => event.startsWith("prompt:"))).toHaveLength(prompts)
   expect(f.store.attempts(f.receipt.planID)[0]?.state).toBe("preparing")
+  if (limit === 3) {
+    const helper = await f.runtime.delegatedAgentCapacity.ensureNativeQueued({
+      parentSessionID: "scope-independent-helper",
+      toolCallID: "spare-slot",
+      agent: "research",
+      description: "Eligible work must pass a scope-blocked resumed request",
+    })
+    await f.runtime.delegatedAgentCapacity.waitForNative(helper, AbortSignal.timeout(1000))
+    expect(await f.runtime.delegatedAgentCapacity.settings()).toMatchObject({
+      active: 2,
+      queued: 0,
+      limit: 3,
+    })
+    await f.runtime.delegatedAgentCapacity.releaseNativeRequest(helper)
+  }
   f.completeWorker(other.session_id)
   await settleVerification(f.runtime)
   await f.runtime.tick()
@@ -8372,7 +8443,8 @@ test("afterPlans dispatches from combined integration while prerequisite cleanup
       recordedState: "queued",
       execution: {
         state: "blocked",
-        reason: `Waiting for prerequisite integration: ${f.repository.referenceFor(accepted.attempt.task_id)} (accepted)`,
+        reason: expect.stringContaining(`[${parentID}] is accepted`),
+        waitingOnPlans: [expect.objectContaining({ planID: parentID, state: "accepted" })],
       },
     })
     const sentinel = join(accepted.attempt.workspace, "keep-owned-worktree.txt")

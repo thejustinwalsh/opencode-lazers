@@ -378,6 +378,15 @@ export type Finding = {
   evidence: string
   actions: string[]
 }
+export const MAX_EXECUTION_PLAN_WAIT_REFERENCES = 100
+export const ExecutionPlanWait = z.strictObject({
+  planID: z.uuid(),
+  title: z.string().max(120).nullable(),
+  state: z.string().max(80).nullable(),
+  version: z.int().positive().nullable(),
+  reason: z.string().max(400).nullable(),
+})
+export type ExecutionPlanWait = z.infer<typeof ExecutionPlanWait>
 export type Execution = {
   planID: string
   taskID: string
@@ -385,5 +394,8 @@ export type Execution = {
   version: number
   reason: string | null
   waitingOn: string[]
+  waitingOnPlans?: ExecutionPlanWait[]
+  waitingOnPlansCount?: number
+  waitingOnPlansComplete?: boolean
   dispatchPause?: DispatchPause
 }

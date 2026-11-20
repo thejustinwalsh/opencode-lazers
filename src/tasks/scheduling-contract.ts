@@ -84,6 +84,7 @@ const SchedulingCandidate = z.strictObject({
 
 const SchedulingNext = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("known"), candidate: SchedulingCandidate }),
+  z.strictObject({ status: z.literal("waiting"), reason: z.string().max(400) }),
   z.strictObject({ status: z.literal("none") }),
   z.strictObject({ status: z.literal("unknown"), reason: z.string().max(400) }),
 ])
@@ -97,6 +98,13 @@ export const SchedulingSnapshot = z.strictObject({
   observedAt: z.int().nonnegative(),
   coverage: SchedulingCoverage,
   next: SchedulingNext,
+  delegatedAgents: z
+    .strictObject({
+      limit: z.int().positive(),
+      active: z.int().nonnegative(),
+      queued: z.int().nonnegative(),
+    })
+    .optional(),
   selectedTaskIDs: z.array(z.uuid()).max(5_000),
   selectionComplete: z.boolean(),
   plans: z.array(SchedulingPlan).max(1_000),

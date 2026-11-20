@@ -774,6 +774,19 @@ test("registered selected full inspection reads retained verification without ru
     const runtime = {
       store,
       command: () => (runtimeCalls++, Promise.reject(new Error("unexpected control call"))),
+      delegatedAgentCapacity: {
+        inspectionSnapshot: async () => ({
+          projectDirectory,
+          revision: 0,
+          limit: 3,
+          active: 0,
+          queued: 0,
+          reason: null,
+          queuedNative: 0,
+          queuedRunnerTasks: [],
+          queuedRunnerTasksComplete: true,
+        }),
+      },
       inspectArchitectSourceMessages: () => (
         nativeCalls++,
         Promise.reject(new Error("unexpected native-context call"))

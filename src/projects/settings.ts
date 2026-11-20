@@ -125,6 +125,21 @@ export function projectSettings(
   )
 }
 
+/**
+ * `projectSettings` inside an open transaction (dispatch admission reads it there). A database
+ * without the settings table yet reads as never set.
+ */
+export function projectSettingsIn(
+  db: Database,
+  key: string,
+  defaults: Partial<ProjectSettings> = {},
+): ProjectSettings {
+  const table = db
+    .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='lazers_settings'")
+    .get()
+  return resolve(projectSchema, builtInProject, defaults, table ? storedValues(db, key) : new Map())
+}
+
 function write(
   repository: Controls,
   scope: string,
