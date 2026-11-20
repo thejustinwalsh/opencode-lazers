@@ -3,6 +3,7 @@ import { dispatchControlMachine } from "./dispatch-control-machine.ts"
 import { architectSourceMachine } from "./architect-source-machine.ts"
 import { architectContactMachine } from "./architect-contact-machine.ts"
 import { dispatchPauseMachine } from "../projects/pause-machine.ts"
+import { profileRevisionMachine } from "../projects/profile-machine.ts"
 import type { Database } from "bun:sqlite"
 import { createMachine, transition } from "xstate"
 
@@ -236,6 +237,7 @@ export const lifecycleMachines = {
   source: architectSourceMachine,
   contact: architectContactMachine,
   pause: dispatchPauseMachine,
+  profile: profileRevisionMachine,
   plan: planMachine,
   attempt: attemptMachine,
   effect: effectMachine,

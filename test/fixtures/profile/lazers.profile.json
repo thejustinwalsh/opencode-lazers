@@ -1,0 +1,83 @@
+{
+  "toolchains": [
+    "bun"
+  ],
+  "verify": [
+    {
+      "id": "format",
+      "command": "bun fmt --check"
+    },
+    {
+      "id": "lint",
+      "command": "bun lint"
+    },
+    {
+      "id": "types",
+      "command": "bun check"
+    },
+    {
+      "id": "tests",
+      "command": "bun test --timeout 120000"
+    }
+  ],
+  "fix": [
+    {
+      "command": "bun fmt",
+      "files": [
+        "**/*.{css,htm,html,js,jsx,json,json5,jsonc,md,mdx,mjs,mts,ts,tsx,yaml,yml}"
+      ]
+    },
+    {
+      "command": "bun lint --fix",
+      "files": [
+        "**/*.{cjs,js,jsx,mjs,mts,ts,tsx,cts}"
+      ]
+    },
+    {
+      "command": "bun fmt",
+      "files": [
+        "**/*.{css,htm,html,js,jsx,json,json5,jsonc,md,mdx,mjs,mts,ts,tsx,yaml,yml}"
+      ]
+    }
+  ],
+  "env": [],
+  "audit": "fallow",
+  "source": {
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ],
+    "exclude": [
+      "**/*.d.ts",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/__tests__/**",
+      "**/__mocks__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/*.fixture.ts",
+      "**/*.fixture.tsx",
+      "**/*.fixtures.ts",
+      "**/*-fixture.ts",
+      "**/*-fixtures.ts",
+      "**/node_modules/**",
+      "**/vendor/**",
+      "**/third_party/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/.cache/**",
+      "design/**",
+      ".cache/**",
+      ".claude/**",
+      "contributions/**",
+      "vendor/**",
+      "crates/**",
+      ".agents/**",
+      "dist/**",
+      "website/public/**",
+      "test/fixtures/profile/**"
+    ]
+  }
+}

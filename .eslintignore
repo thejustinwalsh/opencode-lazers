@@ -1,0 +1,2 @@
+# Fixture projects carry their own eslint config and are linted only by their own toolchain.
+test/fixtures/profile/
