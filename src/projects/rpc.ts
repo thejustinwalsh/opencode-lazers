@@ -1,5 +1,3 @@
-import { realpathSync } from "node:fs"
-import { resolve } from "node:path"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { timedRpc } from "../diagnostics/stall-probe.ts"
@@ -9,6 +7,10 @@ import type { ProjectScope, ProjectsListing, ProjectsOutcome } from "./contract.
 import { pauseRecords, setPause } from "./pause.ts"
 import type { PauseScope } from "./pause.ts"
 import { ProjectCodeError, projects, setProjectCode } from "./registry.ts"
+import { isLoaded, liveDirectories } from "./scope.ts"
+import { needsYouPage } from "./needs-you.ts"
+import type { NeedsYouSession } from "./needs-you.ts"
+import { allProjectsAccess } from "./read-access.ts"
 import { globalSettings, projectSettings, setGlobalSetting, setProjectSetting } from "./settings.ts"
 import type { GlobalSettings, ProjectSettings } from "./settings.ts"
 
@@ -19,14 +21,6 @@ export type ProjectsDefaults = {
   project?: Partial<ProjectSettings>
 }
 type Controls = TaskRepository
-
-const canonical = (path: string) => {
-  try {
-    return realpathSync(path)
-  } catch {
-    return resolve(path)
-  }
-}
 
 const refuse = (
   refusal: Extract<ProjectsOutcome, { ok: false }>["refusal"],
@@ -55,7 +49,7 @@ export function listProjects(
   loaded: () => Iterable<string>,
   defaults: ProjectsDefaults = {},
 ): ProjectsListing {
-  const live = new Set([...loaded()].map(canonical))
+  const live = liveDirectories(loaded)
   const pauses = pauseRecords(repository)
   const pauseOf = (scope: PauseScope) => {
     const record = pauses.find((candidate) =>
@@ -71,7 +65,7 @@ export function listProjects(
       code: project.code,
       name: project.name,
       checkouts: project.paths,
-      loaded: project.paths.some((path) => live.has(canonical(path))),
+      loaded: isLoaded(project.paths, live),
       pause: pauseOf({ kind: "project", key: project.key }),
       architectContact: architectContactReason(repository, project.paths),
       settings: projectSettings(repository, project.key, defaults.project),
@@ -148,12 +142,38 @@ export function projectsOperations(
 }
 
 export function registerProjects(
-  ctx: Pick<Plugin.Context, "rpc">,
+  ctx: Pick<Plugin.Context, "rpc" | "permission" | "session">,
   repository: Controls,
-  options: Parameters<typeof projectsOperations>[1],
+  options: Parameters<typeof projectsOperations>[1] & {
+    /** This location's OpenCode project id, for the caller's session check. */
+    projectID: string
+    /** Reads a session of this location's project; native questions come only from these. */
+    sessionOf?: (sessionID: string) => Promise<NeedsYouSession | null>
+  },
 ) {
   const operations = projectsOperations(repository, options)
   return timedRpc(ctx.rpc).register(Projects, {
+    needsYou: (input) =>
+      Effect.tryPromise({
+        try: async () => {
+          const access = await allProjectsAccess(ctx, {
+            sessionID: input.sessionID,
+            projectID: options.projectID,
+            repository,
+            loaded: options.loaded,
+            unavailable: "Needs you scope is unavailable",
+          })
+          const page = await needsYouPage({
+            repository,
+            units: access.units,
+            ownDirectory: repository.projectDirectory,
+            ...(input.cursor ? { cursor: input.cursor } : {}),
+            ...(options.sessionOf ? { sessionOf: options.sessionOf } : {}),
+          })
+          return page ?? { items: [], nextCursor: null }
+        },
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(Effect.orDie),
     list: () => Effect.sync(() => operations.list()),
     setCode: (input) => Effect.sync(() => operations.setCode(input.key, input.code)),
     setPause: (input) =>
