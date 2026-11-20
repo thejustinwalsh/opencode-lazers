@@ -87,7 +87,10 @@ the project's LAZERS core (`core/registry.ts`, `acquireCore`), which is already 
 project per process and generation-keyed. Module scope and per-plugin-copy instances
 hold nothing that grows.
 
-- One host event subscription per process fans out to the project cores.
+- Two host event subscriptions per process (from two different locations) fan out to the
+  project cores; one event reaches each listener once. If the pair ever shows a stream scoped
+  to one location (`singleSourceEvents`), every copy subscribes for the rest of the process
+  (`core/event-hub.ts`).
 - A cache has one byte budget per process, a measurement beside its constant, and
   evicts least recently used entries. It never refuses work.
 - Worker threads are per process (or per database), not per location, and receive ids

@@ -1,24 +1,42 @@
 import { Effect, Stream } from "effect"
 
 /**
- * One process-wide fan-out of host events, correct whether or not a plugin copy's stream is
- * server-wide.
+ * One process-wide fan-out of host events, with two live host subscriptions instead of one per
+ * plugin copy, and a proven way back to one per copy.
  *
  * OpenCode loads one plugin copy per location. The server protocol says the event stream spans
  * "all server locations" and each event carries its own `location`
  * (node_modules/@opencode/protocol/dist/groups/event.js:51, :9, :16), but the plugin runtime
- * that backs `ctx.event.subscribe` is not readable here, so the hub does not rely on it:
+ * that backs `ctx.event.subscribe` is not readable here. Live evidence from one process (10
+ * copies, about 300 events per type over 70 minutes): 87% of events arrived from all 10
+ * subscribing locations and the rest from 2, none from only 1, none without an id. So the stream
+ * is server-wide, and every copy that subscribes makes the host deliver each event once more.
  *
- * - Every copy keeps its own subscription. A subscription is cheap; processing each event once
- *   per copy is the cost.
+ * - Two subscriptions, from two different locations, are kept while at least two copies are
+ *   joined (one when only one is). The other copies are standby members: they hear every event
+ *   through the fan-out and subscribe only when promoted.
+ * - Why two and not one: if a stream were scoped to its own location, a single subscription would
+ *   silently hide every other location's events. With two, a scoped stream shows up as events
+ *   seen by only one of the two. Two is the smallest number that can show it.
  * - Events are de-duplicated by their own id (`id: Event.ID`, event.js:7 for native events and
  *   :12 for plugin RPC events; one id names one event across every stream that carries it). The
- *   first delivery of an id fans out to every listener; later deliveries of it are dropped. If
- *   the streams are server-wide, each event is processed once instead of once per copy; if each
- *   stream is scoped to its own location, every event is still delivered once to every listener,
- *   so no listener goes blind to another location's events.
- * - An event with no id is never de-duplicated (a key built from type, time and entity could
- *   merge two distinct events), so it is delivered by every stream that carries it.
+ *   first delivery of an id fans out to every listener; later deliveries of it are dropped. An
+ *   event with no id is never de-duplicated (a key built from type, time and entity could merge
+ *   two distinct events), so it is delivered by every subscription that carries it.
+ * - Safety check. An event is "single source" when, with both subscriptions attached and both
+ *   attached for at least the grace period before the event, only one of the two delivered it
+ *   within the grace period after it. One single-source event means a stream is not server-wide.
+ *   `singleSourceEvents` counts them, the hub falls back to every copy subscribing, for the rest
+ *   of the process (the decision outlives the hub, so a reload of copies does not retry it),
+ *   signals a gap to every listener (`failed`, so each resynchronizes) and logs a warning.
+ *   What is lost before the fallback: only in a scoped world, events of locations that have no
+ *   subscription, from the moment the pair attached until the fallback (at most the grace period
+ *   after the first event that only one of the two carried). The gap covers exactly that span.
+ *   A scoped world in which neither subscribed location ever emits is not detectable and stays
+ *   blind to the other locations; the evidence above says that world is not the one running.
+ * - When a subscribed copy leaves, another copy is promoted at once, from a different location
+ *   than the remaining subscriber when there is one. The remaining subscription covers the
+ *   hand-over, so a server-wide stream loses nothing; a leave is not a gap.
  *
  * The registry lives on globalThis because every plugin copy loads its own module instance.
  */
@@ -30,7 +48,7 @@ export type NativeEventListener = {
   /** A subscription attached (also called again after every reattach). */
   attached?(): void
   event(event: unknown): void
-  /** A subscription ended or failed: events of its location may have been missed. */
+  /** A subscription ended or failed, or the hub fell back: events may have been missed. */
   gap?(reason?: "failed" | "ended"): void
 }
 
@@ -41,6 +59,8 @@ type Member = {
   ctx: EventStreamContext
   listener: NativeEventListener
   fiber?: { interruptUnsafe(): void }
+  /** When this member's live subscription attached; unset while it has none. */
+  attachedAt?: number
 }
 
 type Seen = { locations: Set<string>; bytes: number }
@@ -62,8 +82,52 @@ export const EVENT_ID_BUDGET_BYTES = 4 * 1024 * 1024
 const ENTRY_BASE_BYTES = 418
 const ENTRY_LOCATION_BYTES = 64
 
+/**
+ * How long both subscriptions must have been attached before an event counts as evidence, and how
+ * long the other subscription has to deliver it. It must exceed the worst delivery skew between
+ * two streams of one process, which the id budget above puts at seconds (one copy's event loop
+ * reaching the next, bounded by the host failing a slow consumer). 10 s is that bound with margin:
+ * a false alarm costs only a return to one subscription per copy (today's behavior), while a long
+ * period lengthens the span in which a scoped world would go unnoticed, so it is not longer.
+ */
+export const SINGLE_SOURCE_GRACE_MS = 10_000
+
+/** Hub options applied to hubs created after this call; tests shorten the grace period. */
+let defaults: { maxBytes?: number; graceMs?: number } = {}
+export function setNativeEventHubDefaults(options: { maxBytes?: number; graceMs?: number }) {
+  const previous = defaults
+  defaults = options
+  return () => {
+    defaults = previous
+  }
+}
+
+/** Forget that these type sets fell back (tests only: the decision is permanent in a process). */
+export function resetNativeEventFallback() {
+  fellBack().clear()
+}
+
+/** Live subscriptions kept while at least two copies are joined. */
+const SUBSCRIPTIONS = 2
+
+type Pending = { id: string; at: number; epoch: number }
+
 type Hub = {
+  key: string
+  types: readonly string[]
   members: Map<symbol, Member>
+  /** Members with a live subscription (at most SUBSCRIPTIONS until the fallback). */
+  subscribed: Set<symbol>
+  /** Fallen back: every member subscribes. Permanent for the process. */
+  all: boolean
+  /** Moves whenever a subscription attaches, drops, joins or leaves. */
+  epoch: number
+  /** Events first seen while the pair was eligible, awaiting the end of their grace period. */
+  pending: Pending[]
+  pendingHead: number
+  timer?: ReturnType<typeof setTimeout>
+  graceMs: number
+  now: () => number
   seen: Map<string, Seen>
   seenBytes: number
   maxBytes: number
@@ -78,12 +142,24 @@ type Hub = {
     unidentified: number
     /** Among retained ids: how many distinct locations delivered it, by that number. */
     deliveredByLocations: Record<number, number>
+    /** Events only one of the two subscriptions delivered, both attached; evidence of scoping. */
+    singleSourceEvents: number
+    /** Times the hub fell back to every copy subscribing (0 or 1 per process and type set). */
+    fallbacks: number
+    /** Standby copies promoted to a subscription after a subscribed copy left. */
+    promotions: number
   }
 }
 
-const hubsKey = Symbol.for("lazers.native-event-hubs.v2")
-const host = globalThis as typeof globalThis & { [hubsKey]?: Map<string, Hub> }
+const hubsKey = Symbol.for("lazers.native-event-hubs.v3")
+const fallbackKey = Symbol.for("lazers.native-event-fallback.v1")
+const host = globalThis as typeof globalThis & {
+  [hubsKey]?: Map<string, Hub>
+  [fallbackKey]?: Set<string>
+}
 const hubs = () => (host[hubsKey] ??= new Map<string, Hub>())
+/** Type sets that fell back; outlives the hub so the decision holds for the whole process. */
+const fellBack = () => (host[fallbackKey] ??= new Set<string>())
 
 const each = (hub: Hub, call: (listener: NativeEventListener) => void) => {
   for (const member of [...hub.members.values()]) {
@@ -99,6 +175,68 @@ const eventID = (event: unknown) => {
   const id =
     typeof event === "object" && event !== null ? (event as { id?: unknown }).id : undefined
   return typeof id === "string" && id.length > 0 ? id : undefined
+}
+
+/** Both subscriptions attached, from different locations, each for at least the grace period. */
+function pairEligible(hub: Hub) {
+  if (hub.all || hub.subscribed.size !== SUBSCRIPTIONS) return false
+  const pair = [...hub.subscribed].map((id) => hub.members.get(id)!)
+  if (pair.some((member) => member.attachedAt === undefined)) return false
+  if (new Set(pair.map((member) => member.location)).size !== SUBSCRIPTIONS) return false
+  const now = hub.now()
+  return pair.every((member) => now - member.attachedAt! >= hub.graceMs)
+}
+
+function schedule(hub: Hub, ms: number) {
+  if (hub.timer !== undefined) return
+  hub.timer = setTimeout(() => sweep(hub), Math.max(1, ms))
+  ;(hub.timer as { unref?: () => void }).unref?.()
+}
+
+/** Judge every pending event whose grace period has ended. */
+function sweep(hub: Hub) {
+  hub.timer = undefined
+  const now = hub.now()
+  while (hub.pendingHead < hub.pending.length) {
+    const pending = hub.pending[hub.pendingHead]!
+    if (pending.at + hub.graceMs > now) {
+      schedule(hub, pending.at + hub.graceMs - now)
+      break
+    }
+    hub.pendingHead++
+    // The pair changed since this event arrived: it proves nothing about either stream.
+    if (hub.all || pending.epoch !== hub.epoch) continue
+    const known = hub.seen.get(pending.id)
+    if (!known || known.locations.size >= SUBSCRIPTIONS) continue
+    hub.counts.singleSourceEvents++
+    fallBack(hub)
+    return
+  }
+  if (hub.pendingHead > 0 && hub.pendingHead === hub.pending.length) {
+    hub.pending = []
+    hub.pendingHead = 0
+  }
+}
+
+function fallBack(hub: Hub) {
+  if (hub.all) return
+  hub.all = true
+  hub.counts.fallbacks++
+  fellBack().add(hub.key)
+  hub.pending = []
+  hub.pendingHead = 0
+  if (hub.timer !== undefined) clearTimeout(hub.timer)
+  hub.timer = undefined
+  void Effect.runFork(
+    Effect.logWarning(
+      "LAZERS host event stream is scoped to a location: every plugin copy now subscribes",
+      { types: hub.key, singleSourceEvents: hub.counts.singleSourceEvents },
+    ),
+  )
+  // Events of locations without a subscription may have been missed until now.
+  each(hub, (listener) => listener.gap?.("failed"))
+  for (const member of hub.members.values())
+    if (!hub.subscribed.has(member.id)) subscribe(hub, member)
 }
 
 function deliver(hub: Hub, member: Member, event: unknown) {
@@ -134,28 +272,43 @@ function deliver(hub: Hub, member: Member, event: unknown) {
     const k = oldest[1].locations.size
     hub.counts.deliveredByLocations[k] = (hub.counts.deliveredByLocations[k] ?? 1) - 1
   }
+  if (pairEligible(hub)) {
+    const at = hub.now()
+    hub.pending.push({ id, at, epoch: hub.epoch })
+    schedule(hub, hub.graceMs)
+  }
   each(hub, (listener) => listener.event(event))
 }
 
-function run(hub: Hub, member: Member, types: readonly string[]) {
+function run(hub: Hub, member: Member) {
   const loop = Effect.forever(
     Effect.sync(() => {
       hub.counts.opened++
+      member.attachedAt = hub.now()
+      hub.epoch++
       each(hub, (listener) => listener.attached?.())
     }).pipe(
       Effect.andThen(
         // Suspended so every reattach asks the host for a fresh stream instead of rerunning the
         // first stream value.
         Effect.suspend(() =>
-          Stream.runForEach(member.ctx.event.subscribe({ types: types as never[] }), (event) =>
+          Stream.runForEach(member.ctx.event.subscribe({ types: hub.types as never[] }), (event) =>
             Effect.sync(() => deliver(hub, member, event)),
           ),
         ),
       ),
       Effect.match({
         // This copy's stream is gone: whatever only it carried is missed.
-        onFailure: () => each(hub, (listener) => listener.gap?.("failed")),
-        onSuccess: () => each(hub, (listener) => listener.gap?.("ended")),
+        onFailure: () => {
+          member.attachedAt = undefined
+          hub.epoch++
+          each(hub, (listener) => listener.gap?.("failed"))
+        },
+        onSuccess: () => {
+          member.attachedAt = undefined
+          hub.epoch++
+          each(hub, (listener) => listener.gap?.("ended"))
+        },
       }),
       Effect.andThen(Effect.sleep(1_000)),
     ),
@@ -163,42 +316,101 @@ function run(hub: Hub, member: Member, types: readonly string[]) {
   member.fiber = Effect.runFork(Effect.sleep(0).pipe(Effect.andThen(loop)))
 }
 
+function subscribe(hub: Hub, member: Member) {
+  hub.subscribed.add(member.id)
+  hub.epoch++
+  run(hub, member)
+}
+
+/** Whether a copy that just joined, or is next in line, should hold a subscription. */
+function wantsSubscription(hub: Hub, member: Member) {
+  if (hub.all) return true
+  if (hub.subscribed.size >= SUBSCRIPTIONS) return false
+  if (hub.subscribed.size === 0) return true
+  // The second subscription comes from a different location, or the pair proves nothing.
+  return ![...hub.subscribed].some((id) => hub.members.get(id)!.location === member.location)
+}
+
+/** Fill the subscriptions a leave freed, at once; a standby copy's stream starts in this call. */
+function promote(hub: Hub) {
+  for (const member of hub.members.values()) {
+    if (hub.subscribed.has(member.id) || !wantsSubscription(hub, member)) continue
+    hub.counts.promotions++
+    subscribe(hub, member)
+  }
+}
+
 /**
- * Joins the process-wide fan-out for `types` with this copy's own subscription; the returned
- * function leaves it. `location` names the subscribing location for the delivery diagnostics.
+ * Joins the process-wide fan-out for `types`; the returned function leaves it. The copy hears
+ * every event whether or not it holds one of the live subscriptions. `location` names the
+ * subscribing location for the delivery diagnostics and for choosing two different ones.
+ * `options` apply to the first copy that creates the hub for these types.
  */
 export function joinNativeEvents(
   ctx: EventStreamContext,
   types: readonly string[],
   listener: NativeEventListener,
   location?: string,
-  options: { maxBytes?: number } = {},
+  options: { maxBytes?: number; graceMs?: number; now?: () => number } = {},
 ): () => void {
   const key = [...types].sort().join("|")
   const all = hubs()
   let hub = all.get(key)
   if (!hub) {
     hub = {
+      key,
+      types,
       members: new Map(),
+      subscribed: new Set(),
+      all: fellBack().has(key),
+      epoch: 0,
+      pending: [],
+      pendingHead: 0,
+      graceMs: options.graceMs ?? defaults.graceMs ?? SINGLE_SOURCE_GRACE_MS,
+      now: options.now ?? Date.now,
       seen: new Map(),
       seenBytes: 0,
-      maxBytes: options.maxBytes ?? EVENT_ID_BUDGET_BYTES,
-      counts: { opened: 0, firstSeen: 0, duplicates: 0, unidentified: 0, deliveredByLocations: {} },
+      maxBytes: options.maxBytes ?? defaults.maxBytes ?? EVENT_ID_BUDGET_BYTES,
+      counts: {
+        opened: 0,
+        firstSeen: 0,
+        duplicates: 0,
+        unidentified: 0,
+        deliveredByLocations: {},
+        singleSourceEvents: 0,
+        fallbacks: 0,
+        promotions: 0,
+      },
     }
     all.set(key, hub)
   }
   const joined = hub
   const id = Symbol("native-event-listener")
-  const member: Member = { id, location: location ?? id.toString(), ctx, listener }
+  // A copy that cannot name its location is its own location: never grouped with another copy
+  // (a random name, because every copy's module instance has its own counters).
+  const member: Member = {
+    id,
+    location: location ?? `unnamed-${crypto.randomUUID()}`,
+    ctx,
+    listener,
+  }
   joined.members.set(id, member)
-  run(joined, member, types)
+  if (wantsSubscription(joined, member)) subscribe(joined, member)
   let left = false
   return () => {
     if (left) return
     left = true
     member.fiber?.interruptUnsafe()
     joined.members.delete(id)
-    if (joined.members.size === 0 && all.get(key) === joined) all.delete(key)
+    if (joined.subscribed.delete(id)) {
+      joined.epoch++
+      promote(joined)
+    }
+    if (joined.members.size === 0) {
+      if (joined.timer !== undefined) clearTimeout(joined.timer)
+      joined.timer = undefined
+      if (all.get(key) === joined) all.delete(key)
+    }
   }
 }
 
@@ -207,6 +419,8 @@ export function nativeEventSubscriptions() {
   return [...hubs().entries()].map(([key, hub]) => ({
     types: key,
     listeners: hub.members.size,
+    subscriptions: hub.subscribed.size,
+    mode: hub.all ? ("every-copy" as const) : ("two-locations" as const),
     ...hub.counts,
     deliveredByLocations: { ...hub.counts.deliveredByLocations },
     retainedIDs: hub.seen.size,

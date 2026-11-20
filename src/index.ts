@@ -86,9 +86,9 @@ export default Plugin.define({
         context: () => ({
           locations: probe.locations,
           cores: coreSnapshot().length,
-          // Per event-type set: subscriptions opened, first-seen vs duplicate deliveries, and how
-          // many distinct locations delivered each retained event (evidence for whether one
-          // subscription per process would be enough; nothing acts on it).
+          // Per event-type set: live subscriptions and mode, first-seen vs duplicate deliveries,
+          // how many distinct locations delivered each retained event, and `singleSourceEvents`
+          // (nonzero means a stream is location-scoped and the hub fell back to every copy).
           events: nativeEventSubscriptions(),
         }),
       })
