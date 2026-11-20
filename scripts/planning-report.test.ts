@@ -6,7 +6,14 @@ import { TaskRepository } from "../src/storage.ts"
 import { PlanningStore, type DecisionRow } from "../src/planning/store.ts"
 import { AGENT_ORDER } from "../src/planning/decision/tree.ts"
 import type { Answers, Decider } from "../src/planning/decision/procedure.ts"
-import { decisionReport, replayDecisions } from "./planning-report.ts"
+import { RunnerStore } from "../src/runner/store.ts"
+import {
+  decisionReport,
+  outcomesReport,
+  questionsReport,
+  replayDecisions,
+  reviewsReport,
+} from "./planning-report.ts"
 
 const cleanup: (() => void)[] = []
 afterEach(() => {
@@ -154,4 +161,203 @@ test("replay compares a strategy with the recorded decisions on the same asks an
   expect(
     repository.read((db) => db.query("SELECT COUNT(*) n FROM planning_decisions").get()),
   ).toEqual(before)
+})
+
+function runs() {
+  const { repository, store } = database()
+  new RunnerStore(repository)
+  store.createPlanning({
+    id: "pl",
+    projectKey: "proj",
+    projectDirectory: "/p",
+    sessionId: "s",
+    title: "t",
+    createdAt: 100,
+    updatedAt: 100,
+  })
+  const run = (
+    id: string,
+    review: string,
+    attempt: number,
+    state: "reviewed" | "failed",
+    over: Record<string, unknown> = {},
+  ) =>
+    store.createRun({
+      id,
+      reviewId: review,
+      agent: "grounding",
+      attempt,
+      state,
+      startedAt: 1,
+      reason: null,
+      maxGapMs: 1_000,
+      durationMs: 10_000,
+      inputTokens: 900,
+      outputTokens: 100,
+      ...over,
+    } as never)
+  for (const n of [1, 2, 3, 4])
+    store.createReview({
+      id: `rv${n}`,
+      planningId: "pl",
+      revision: 1,
+      stage: "review",
+      selectionJson: "{}",
+      createdAt: 1,
+    })
+  run("a1", "rv1", 1, "reviewed")
+  run("a2", "rv2", 1, "reviewed")
+  run("a3", "rv3", 1, "reviewed")
+  run("a4", "rv4", 1, "failed", { reason: "malformed: bad json", durationMs: 1_000 })
+  run("a5", "rv4", 2, "failed", { reason: "malformed: bad json again", durationMs: 1_000 })
+  return { repository, store }
+}
+
+test("reviews: per-agent not-run rate and reasons, and too few runs for the inactivity span", () => {
+  const { repository } = runs()
+  const report = repository.read((db) => reviewsReport(db))
+  expect(report.agents.grounding).toMatchObject({
+    reviews: 4,
+    notRun: 1,
+    notRunRate: 1 / 4,
+    reasons: { malformed: 1 },
+    tokens: { p50: 1000, p95: 1000 },
+  })
+  expect(report.inactivity).toEqual({
+    enough: false,
+    runs: 3,
+    message: "inactivity span: not enough runs (n=3)",
+  })
+})
+
+test("reviews: with enough runs the span is three times the p99 gap, rounded up to a minute", () => {
+  const { repository, store } = runs()
+  store.createReview({
+    id: "many",
+    planningId: "pl",
+    revision: 1,
+    stage: "review",
+    selectionJson: "{}",
+    createdAt: 1,
+  })
+  for (let n = 1; n <= 60; n++)
+    store.createRun({
+      id: `m${n}`,
+      reviewId: "many",
+      agent: "critic",
+      attempt: 1,
+      state: "reviewed",
+      startedAt: 1,
+      maxGapMs: n * 1_000,
+    })
+  const { inactivity } = repository.read((db) => reviewsReport(db))
+  expect(inactivity).toMatchObject({ enough: true, maxGapP99Ms: 60_000, suggestedMs: 180_000 })
+})
+
+test("questions: counts by route", () => {
+  const { repository, store } = runs()
+  const routes = [
+    "conversation",
+    "conversation",
+    "owner",
+    "owner",
+    "owner",
+    "owner-answered",
+    "owner-answered",
+    "merged",
+    "merged",
+  ]
+  routes.forEach((route, i) =>
+    store.addQuestion({
+      id: `q${i}`,
+      planningId: "pl",
+      reviewId: "rv1",
+      source: "critic",
+      revision: 1,
+      body: "{}",
+      route: route as never,
+    }),
+  )
+  expect(repository.read((db) => questionsReport(db))).toEqual({
+    raised: 9,
+    conversation: 2,
+    owner: 5,
+    merged: 2,
+  })
+})
+
+test("outcomes: a tasked plan's repairs and scope changes, the baseline, and the finding's prediction", () => {
+  const { repository, store } = runs()
+  const task = "11111111-1111-4111-8111-111111111111"
+  repository.atomic((db) => {
+    const plan = db.query(
+      "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body) VALUES(?,?,?,?,?,?,?)",
+    )
+    plan.run("P", "/p", "o", 1, 1, "integrated", "{}")
+    plan.run("Q", "/p", "o", 1, 1, "integrated", "{}")
+    const transition = db.query(
+      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,?,?,?,?)",
+    )
+    transition.run("P", task, 1, "REPAIR", "{}", 1)
+    transition.run("P", task, 2, "SCOPE_AMENDED", "{}", 2)
+    transition.run(
+      "P",
+      null,
+      3,
+      "BLOCKED",
+      JSON.stringify({ reason: "Combined verification bun test failed" }),
+      3,
+    )
+    transition.run("Q", null, 1, "REPAIR", "{}", 1)
+    transition.run("Q", null, 2, "REPAIR", "{}", 2)
+  })
+  store.recordTasked({
+    planningId: "pl",
+    draftId: "plan-link",
+    revision: 1,
+    taskId: task,
+    reference: "LZ-1",
+    planId: "P",
+  })
+  store.setTaskedPlan("pl", "P")
+  store.addFinding({
+    id: "f1",
+    planningId: "pl",
+    reviewId: "rv1",
+    runId: "a1",
+    source: "critic",
+    revision: 1,
+    draftId: "plan-link",
+    field: "write-scope",
+    body: "{}",
+  })
+  const report = repository.read((db) => outcomesReport(db))
+  expect(report.planned).toMatchObject({
+    plans: 1,
+    repairs: 1,
+    scopeAmended: 1,
+    failedCombinedChecks: 1,
+  })
+  expect(report.baseline).toMatchObject({ plans: 1, repairs: 2 })
+  expect(report.findings.list).toEqual([
+    { findingID: "f1", draftID: "plan-link", field: "write-scope", predicted: true },
+  ])
+})
+
+test("reviews: cost appears only when every run of the agent is priced", () => {
+  const { repository } = runs()
+  repository.atomic((db) =>
+    db
+      .query("UPDATE planning_runs SET model_json=?")
+      .run(JSON.stringify({ providerID: "p", id: "m" })),
+  )
+  const priced = repository.read((db) =>
+    reviewsReport(db, {}, () => ({ input: 1_000_000, output: 2_000_000 })),
+  )
+  // Five attempts of 900 in and 100 out, the failed ones too: spent tokens are cost.
+  expect(priced.agents.grounding!.costUSD).toBeCloseTo(5 * (900 + 200))
+  expect(
+    repository.read((db) => reviewsReport(db, {}, () => undefined)).agents.grounding!.costUSD,
+  ).toBeUndefined()
+  expect(repository.read((db) => reviewsReport(db)).agents.grounding!.costUSD).toBeUndefined()
 })

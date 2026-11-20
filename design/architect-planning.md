@@ -1,6 +1,6 @@
 # Architect planning flow
 
-Status: design approved by the owner in conversation on 2026-11-20. Not built.
+Status: design approved by the owner in conversation on 2026-11-20. Built (Tasks 1 to 24 of `.agents/plans/architect-planning.md`); the live walkthrough (Task 25) is not yet recorded. Measurements: `bun scripts/planning-report.ts`.
 Related: [project profile and init](project-profile.md), [runtime state machines](runtime-state-machines.md).
 Research behind it: `.agents/research/elephant-goldfish-review.md`, `rediscovery-measurements.md`.
 

@@ -70,6 +70,7 @@ export type RetentionKindID =
   | "audit-receipts"
   | "change-log"
   | "model-snapshots"
+  | "planning-detail"
 
 type Spec = {
   table: string
@@ -80,6 +81,8 @@ type Spec = {
   bytes: string
   /** The table may be absent in a database that never installed its module. */
   optional?: boolean
+  /** Retire by setting this column to NULL instead of deleting the row. `where` must exclude NULLs. */
+  clear?: string
 }
 
 type Kind = {
@@ -325,6 +328,40 @@ export const KINDS: Kind[] = [
     ],
   },
 ]
+
+/**
+ * Plans of the planning flow that are finished: tasked or abandoned, untouched since the cutoff,
+ * and (when tasked) whose runner plan is in a terminal state. Bound: cutoff, then the terminal states.
+ */
+const FINISHED_PLANNINGS = `(SELECT id FROM planning_plannings WHERE state IN ('tasked','abandoned') AND updated_at < ? AND (tasked_plan_id IS NULL OR tasked_plan_id IN (SELECT id FROM runner_plans WHERE state IN (${TERMINAL_PLAN_STATES.map((s) => `'${s}'`).join(",")}))))`
+
+KINDS.push({
+  id: "planning-detail",
+  label: "Plan drafts",
+  detail:
+    "intermediate revisions of finished plans (the first, every reviewed one and the last stay) and the raw replies of their planning agents",
+  ageIndependent: false,
+  specs: (ctx) => [
+    {
+      table: "planning_revisions",
+      where: `planning_id IN ${FINISHED_PLANNINGS}
+        AND revision > (SELECT MIN(r.revision) FROM planning_revisions r WHERE r.planning_id=planning_revisions.planning_id)
+        AND revision < (SELECT MAX(r.revision) FROM planning_revisions r WHERE r.planning_id=planning_revisions.planning_id)
+        AND revision NOT IN (SELECT v.revision FROM planning_reviews v WHERE v.planning_id=planning_revisions.planning_id)`,
+      bind: [ctx.cutoff],
+      bytes: "length(body)+length(validation)+length(field_hashes)+length(planning_id)+64",
+      optional: true,
+    },
+    {
+      table: "planning_runs",
+      clear: "raw_reply",
+      where: `raw_reply IS NOT NULL AND review_id IN (SELECT id FROM planning_reviews WHERE planning_id IN ${FINISHED_PLANNINGS})`,
+      bind: [ctx.cutoff],
+      bytes: "length(raw_reply)",
+      optional: true,
+    },
+  ],
+})
 
 export const RETENTION_KINDS = KINDS.map(({ id, label, detail, ageIndependent }) => ({
   id,
@@ -621,7 +658,9 @@ export async function retireSlice(
         const sample = spec ? measureBatch(db, spec, input.batch) : { rows: 0, bytes: 0 }
         if (!spec || !sample.rows) return sample
         db.query(
-          `DELETE FROM ${spec.table} WHERE rowid IN (SELECT rowid FROM ${spec.table} WHERE ${spec.where} LIMIT ?)`,
+          spec.clear
+            ? `UPDATE ${spec.table} SET ${spec.clear}=NULL WHERE rowid IN (SELECT rowid FROM ${spec.table} WHERE ${spec.where} LIMIT ?)`
+            : `DELETE FROM ${spec.table} WHERE rowid IN (SELECT rowid FROM ${spec.table} WHERE ${spec.where} LIMIT ?)`,
         ).run(...spec.bind, input.batch)
         return sample
       })

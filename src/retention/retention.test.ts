@@ -5,6 +5,7 @@ import { ObservationReads } from "../observability/read.ts"
 import { AssociationTaskReads } from "../observability/task-reads.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { ModelEvidenceStore } from "../models/source-store.ts"
+import { PlanningStore } from "../planning/store.ts"
 import { validProposal } from "../../test/proposal.ts"
 import {
   makeFixture,
@@ -597,4 +598,91 @@ test("81b1d6ba-1: a plan that stops being finished between batches loses nothing
   })
   // Only the first batch, taken while the plan was finished, may have gone.
   expect(before - count(db, detail)).toBeLessThanOrEqual(3)
+})
+
+function planning(
+  fixture: ReturnType<typeof makeFixture>,
+  id: string,
+  state: string,
+  plan: string | null,
+  updatedAt: number,
+) {
+  const store = new PlanningStore(fixture.repository)
+  store.createPlanning({
+    id,
+    projectKey: "proj",
+    projectDirectory: fixture.directory,
+    sessionId: "s",
+    title: id,
+    createdAt: 1,
+    updatedAt,
+  })
+  for (let n = 1; n <= 5; n++)
+    store.appendRevision(id, undefined, { n }, {}, {}, undefined, updatedAt)
+  for (const revision of [2, 4])
+    store.createReview({
+      id: `${id}-r${revision}`,
+      planningId: id,
+      revision,
+      stage: "review",
+      selectionJson: "{}",
+      createdAt: 1,
+    })
+  store.createRun({
+    id: `${id}-run`,
+    reviewId: `${id}-r2`,
+    agent: "critic",
+    attempt: 1,
+    state: "starting",
+    startedAt: 1,
+    rawReply: "x".repeat(500),
+    inputTokens: 7,
+  })
+  fixture.store.atomic((db) =>
+    db
+      .query("UPDATE planning_plannings SET state=?, tasked_plan_id=?, updated_at=? WHERE id=?")
+      .run(state, plan, updatedAt, id),
+  )
+}
+
+const revisions = (db: Database, id: string) =>
+  db
+    .query<{ revision: number }, [string]>(
+      "SELECT revision FROM planning_revisions WHERE planning_id=? ORDER BY revision",
+    )
+    .all(id)
+    .map((row) => row.revision)
+
+test("finished planning detail loses intermediate revisions and raw replies, nothing else", async () => {
+  const fixture = setup()
+  const db = handle(fixture)
+  const old = NOW - 40 * DAY
+  planning(fixture, "done", "tasked", fixture.receipt.planID, old)
+  planning(fixture, "open", "in-review", null, old)
+  const preview = await previewRetention(db, { now: NOW, days: 30 })
+  const detail = preview.kinds.find((kind) => kind.id === "planning-detail")!
+  // Revision 3 of "done", and the raw reply of its one run.
+  expect(detail.rows).toBe(2)
+  await purge(fixture, 30)
+  expect(revisions(db, "done")).toEqual([1, 2, 4, 5])
+  expect(revisions(db, "open")).toEqual([1, 2, 3, 4, 5])
+  const run = db
+    .query<{ raw_reply: string | null; input_tokens: number }, []>(
+      "SELECT raw_reply, input_tokens FROM planning_runs WHERE id='done-run'",
+    )
+    .get()!
+  expect(run).toEqual({ raw_reply: null, input_tokens: 7 })
+  expect(db.query("SELECT COUNT(*) AS n FROM planning_reviews").get()).toEqual({ n: 4 })
+  const again = await previewRetention(db, { now: NOW, days: 30 })
+  expect(again.kinds.find((kind) => kind.id === "planning-detail")!.rows).toBe(0)
+})
+
+test("an abandoned plan older than the age is retirable; a recent one is not", async () => {
+  const fixture = setup()
+  const db = handle(fixture)
+  planning(fixture, "dropped", "abandoned", null, NOW - 40 * DAY)
+  planning(fixture, "fresh", "abandoned", null, NOW - 2 * DAY)
+  await purge(fixture, 30)
+  expect(revisions(db, "dropped")).toEqual([1, 2, 4, 5])
+  expect(revisions(db, "fresh")).toEqual([1, 2, 3, 4, 5])
 })

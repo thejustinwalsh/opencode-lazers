@@ -7,6 +7,12 @@ import { SettingLabel, settingLabelStyles } from "../settings-label.tsx"
 import { Projects } from "./contract.ts"
 import type { ProjectScope, ProjectsListing, ProjectsOutcome, ProjectView } from "./contract.ts"
 import { VerificationGroup, verificationStyles } from "./profile-gui.tsx"
+import {
+  MODEL_CHOICES,
+  SLICER_CHOICES,
+  chooseDecisionModel,
+  planningSettingsView,
+} from "../planning/settings-view.ts"
 
 type Ctx = Parameters<Plugin.Setup>[0]
 const REFRESH_MS = 3_000
@@ -82,7 +88,7 @@ export function setupProjects(ctx: Ctx) {
       write(scopeKey(scope), () =>
         ctx.client.rpc(Projects).setPause({ scope, paused, reason }, { signal: signal() }),
       )
-    const setSetting = (scope: ProjectScope, name: string, value: number | null) =>
+    const setSetting = (scope: ProjectScope, name: string, value: boolean | number | null) =>
       write(scopeKey(scope), () =>
         ctx.client.rpc(Projects).setSetting({ scope, name, value }, { signal: signal() }),
       )
@@ -263,6 +269,147 @@ export function setupProjects(ctx: Ctx) {
       )
     }
 
+    /** Decision model and slicing. Wide controls sit under the title; the trailing slot holds one select. */
+    const PlanningRows = (props: { settings: ProjectsListing["globalSettings"] }) => {
+      const view = () =>
+        planningSettingsView({
+          decisionModel: props.settings.decisionModel,
+          decisionSlicer: props.settings.decisionSlicer,
+        })
+      const [choosingExternal, setChoosingExternal] = createSignal(false)
+      const providerID = () => drafts()["planning:provider"] ?? view().external?.providerID ?? ""
+      const modelID = () => drafts()["planning:model"] ?? view().external?.modelID ?? ""
+      const showExternal = () => choosingExternal() || view().model.value === "external"
+      const saveModel = (kind: "local" | "external" | "architect") => {
+        const chosen = chooseDecisionModel(kind, { providerID: providerID(), modelID: modelID() })
+        if (!chosen.ok) return refuse("planning", chosen.message)
+        setChoosingExternal(false)
+        void write("planning", () =>
+          ctx.client
+            .rpc(Projects)
+            .setSetting(
+              { scope: { kind: "global" }, name: "decisionModel", value: chosen.value },
+              { signal: signal() },
+            ),
+        )
+      }
+      return (
+        <>
+          <Ui.SettingsRow
+            title={
+              <SettingLabel
+                name="Decision model"
+                hint="sizes each ask, as context for the Architect"
+              />
+            }
+            description={
+              <span class="lazers-projects-detail">
+                <Show when={showExternal()}>
+                  <span class="lazers-projects-fields">
+                    <label class="lazers-projects-field">
+                      <span>Provider</span>
+                      <Ui.TextInput
+                        label="Decision model provider"
+                        class="lazers-planning-input"
+                        value={providerID()}
+                        onInput={(text) => setDraft("planning:provider", text)}
+                        onSubmit={() => saveModel("external")}
+                      />
+                    </label>
+                    <label class="lazers-projects-field">
+                      <span>Model</span>
+                      <Ui.TextInput
+                        label="Decision model"
+                        class="lazers-planning-input"
+                        value={modelID()}
+                        onInput={(text) => setDraft("planning:model", text)}
+                        onSubmit={() => saveModel("external")}
+                      />
+                    </label>
+                    <Ui.Button size="small" onClick={() => saveModel("external")}>
+                      Use
+                    </Ui.Button>
+                  </span>
+                  <span class="lazers-projects-note">
+                    {view().external?.notice ?? "Sends the ask text to the provider you name."}
+                  </span>
+                </Show>
+                <Show when={refusals().planning}>
+                  {(message) => (
+                    <span class="lazers-projects-refusal" role="alert">
+                      {message()}
+                    </span>
+                  )}
+                </Show>
+              </span>
+            }
+          >
+            <Ui.Select
+              label="Decision model"
+              value={showExternal() ? "external" : view().model.value}
+              options={MODEL_CHOICES.map((choice) => ({
+                value: choice.value,
+                label: choice.label,
+              }))}
+              onChange={(value) => {
+                if (value === "external") {
+                  setChoosingExternal(true)
+                  if (view().model.value === "external") return
+                  return refuse("planning", undefined)
+                }
+                saveModel(value as "local" | "architect")
+              }}
+            />
+          </Ui.SettingsRow>
+          <Ui.SettingsRow
+            title={
+              <SettingLabel name="Slicing" hint="how a long ask is cut for the decision model" />
+            }
+          >
+            <Ui.Select
+              label="Slicing"
+              value={view().slicer.value}
+              options={SLICER_CHOICES.map((choice) => ({
+                value: choice.value,
+                label: choice.label,
+              }))}
+              onChange={(value) =>
+                void write("planning", () =>
+                  ctx.client
+                    .rpc(Projects)
+                    .setSetting(
+                      { scope: { kind: "global" }, name: "decisionSlicer", value },
+                      { signal: signal() },
+                    ),
+                )
+              }
+            />
+          </Ui.SettingsRow>
+        </>
+      )
+    }
+
+    const PlanningSwitch = (props: { project: ProjectView }) => (
+      <Ui.SettingsRow
+        title={
+          <SettingLabel
+            child
+            name="Planning agents run automatically"
+            hint={`in ${props.project.name}`}
+          />
+        }
+      >
+        <Ui.Switch
+          label={`Planning agents run automatically in ${props.project.name}`}
+          hideLabel
+          checked={props.project.settings.planningAutoDispatch}
+          onChange={(on) =>
+            void setSetting({ kind: "project", key: props.project.key }, "planningAutoDispatch", on)
+          }
+        />
+      </Ui.SettingsRow>
+    )
+
     return (
       <Ui.SettingsSection
         title="Projects"
@@ -304,11 +451,15 @@ export function setupProjects(ctx: Ctx) {
             onResume={() => void setPause({ kind: "global" }, false)}
           />
         </Ui.SettingsRow>
+        <Show when={listing.value}>
+          {(current) => <PlanningRows settings={current().globalSettings} />}
+        </Show>
         <For each={listing.value?.projects ?? []}>
           {(project) => (
             <>
               <Row project={project} />
               <VerificationGroup ctx={ctx} project={project} refresh={() => void refresh()} />
+              <PlanningSwitch project={project} />
             </>
           )}
         </For>
@@ -324,6 +475,7 @@ const projectsStyles = `
 .lazers-projects-name { color:var(--text-strong); }
 .lazers-projects-detail { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .lazers-projects-fields { display:flex; align-items:center; flex-wrap:wrap; gap:6px 14px; margin-top:4px; }
+.lazers-planning-input { width:140px; min-width:0; }
 .lazers-projects-number { display:inline-flex; width:96px; min-width:0; }
 .lazers-projects-number > * { width:100%; min-width:0; }
 .lazers-projects-path { color:var(--text-weak); font-family:var(--font-family-mono, ui-monospace, monospace); font-size:12px; overflow-wrap:anywhere; }
