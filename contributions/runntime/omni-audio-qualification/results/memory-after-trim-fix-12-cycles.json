@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "finishedAt": "2026-11-20T06:31:07.934Z",
+  "commit": "f26a16b4cac07fd4da2e63844aa2c0c4655cc6a5",
+  "branch": "upstream/10-audio-qualification",
+  "dirty": true,
+  "node": "v26.9.0",
+  "weights": {
+    "model": {
+      "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
+    },
+    "projector": {
+      "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+      "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+    },
+    "tokenizer": {
+      "file": "lfm3-tokenizer.json",
+      "sha256": "41927bd314d17d7d7fadb44e10cd0919f7b71528d7741596d8cbd15c6945ec44"
+    }
+  },
+  "selection": {
+    "voices": "all",
+    "seeds": "1234"
+  },
+  "ok": true,
+  "modes": [
+    {
+      "mode": "audio-memory",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 68346,
+      "tests": [
+        {
+          "name": "GPU memory across repeated audio runs settles after the first cycle and releases everything on dispose",
+          "status": "passed",
+          "durationMs": 29298.800000071526
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-memory",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": ["core-features-and-limits", "shader-f16", "subgroups"],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 34854.2,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "memory",
+          "loadedGpuBytes": 1825200512,
+          "rows": [
+            {
+              "cycle": 0,
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "gpuBytes": 1859677156,
+              "buffers": 1804,
+              "heapBytes": 237862648
+            },
+            {
+              "cycle": 1,
+              "sentence": "Please turn left at the next street.",
+              "gpuBytes": 1842983548,
+              "buffers": 1830,
+              "heapBytes": 267880364
+            },
+            {
+              "cycle": 2,
+              "sentence": "She sells seashells by the seashore.",
+              "gpuBytes": 1853364076,
+              "buffers": 1962,
+              "heapBytes": 294347624
+            },
+            {
+              "cycle": 3,
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "gpuBytes": 1856435480,
+              "buffers": 1937,
+              "heapBytes": 302481082
+            },
+            {
+              "cycle": 4,
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "gpuBytes": 1885884772,
+              "buffers": 2126,
+              "heapBytes": 356856172
+            },
+            {
+              "cycle": 5,
+              "sentence": "Remember to save your work before closing the window.",
+              "gpuBytes": 1862618112,
+              "buffers": 2120,
+              "heapBytes": 372027296
+            },
+            {
+              "cycle": 6,
+              "sentence": "The library opens early and closes late in the evening.",
+              "gpuBytes": 1871508428,
+              "buffers": 2174,
+              "heapBytes": 404343222
+            },
+            {
+              "cycle": 7,
+              "sentence": "Our train to the coast leaves from the old station.",
+              "gpuBytes": 1867240600,
+              "buffers": 2222,
+              "heapBytes": 250092724
+            },
+            {
+              "cycle": 8,
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "gpuBytes": 1859682968,
+              "buffers": 2200,
+              "heapBytes": 282398016
+            },
+            {
+              "cycle": 9,
+              "sentence": "Please turn left at the next street.",
+              "gpuBytes": 1842988312,
+              "buffers": 2156,
+              "heapBytes": 224281489
+            },
+            {
+              "cycle": 10,
+              "sentence": "She sells seashells by the seashore.",
+              "gpuBytes": 1853367832,
+              "buffers": 2222,
+              "heapBytes": 245963297
+            },
+            {
+              "cycle": 11,
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "gpuBytes": 1856438936,
+              "buffers": 2178,
+              "heapBytes": 223443850
+            }
+          ],
+          "storageBuffersAfterDispose": 0,
+          "rootCacheBytesAfterDispose": 522744
+        },
+        {
+          "name": "network",
+          "mode": "audio-memory",
+          "sameOriginRequests": 2186,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    }
+  ]
+}

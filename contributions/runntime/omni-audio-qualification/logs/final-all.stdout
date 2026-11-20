@@ -1,0 +1,1363 @@
+{
+  "schemaVersion": 1,
+  "finishedAt": "2026-11-20T07:25:08.260Z",
+  "commit": "ddb0a88892f9eaef058b3a2489f011577f0d7c78",
+  "branch": "upstream/10-audio-qualification",
+  "dirty": false,
+  "node": "v26.9.0",
+  "weights": {
+    "model": {
+      "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
+    },
+    "projector": {
+      "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+      "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+    },
+    "tokenizer": {
+      "file": "lfm3-tokenizer.json",
+      "sha256": "41927bd314d17d7d7fadb44e10cd0919f7b71528d7741596d8cbd15c6945ec44"
+    }
+  },
+  "liquid": {
+    "engine": {
+      "file": "lfm3-engine.js",
+      "sha256": "77821949412f5dd6d60e37f22415f0e71454e65f6a73928529c6fbec0f2cf2cb",
+      "instrumentation": "get reference(){return this.#e}",
+      "instrumentationSha256": "8dbbedffbe2558579ec2577b47b57acfe9af1b01983dcbe5d548544c6086dcfe"
+    },
+    "clips": [
+      {
+        "file": "quick-brown-fox.wav",
+        "text": "The quick brown fox jumps over the lazy dog.",
+        "sha256": "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880"
+      },
+      {
+        "file": "turn-left-next-street.wav",
+        "text": "Please turn left at the next street.",
+        "sha256": "f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054"
+      }
+    ]
+  },
+  "selection": {
+    "voices": "all",
+    "seeds": "1234"
+  },
+  "ok": true,
+  "modes": [
+    {
+      "mode": "audio-roundtrip",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 118687,
+      "tests": [
+        {
+          "name": "audio round trip: text to speech to text speaks every sentence in every voice and transcribes it back within the measured word error rate",
+          "status": "passed",
+          "durationMs": 83233.69999992847
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-roundtrip",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": [
+              "core-features-and-limits",
+              "shader-f16",
+              "subgroups"
+            ],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 31916.6,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "roundtrip",
+          "seeds": [
+            1234
+          ],
+          "summary": {
+            "items": 32,
+            "meanWer": 0,
+            "maxWer": 0,
+            "exact": 32,
+            "byVoice": {
+              "american-female": 0,
+              "american-male": 0,
+              "british-female": 0,
+              "british-male": 0
+            }
+          },
+          "rows": [
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0,
+              "frames": 40,
+              "samples": 76800,
+              "seconds": 3.2,
+              "chunks": 41,
+              "peak": 0.4629,
+              "rms": 0.0609,
+              "clipped": 0,
+              "speakMs": 2051,
+              "transcribeMs": 482.8
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "Please turn left at the next street.",
+              "transcript": "Please turn left at the next street.",
+              "wer": 0,
+              "frames": 29,
+              "samples": 55680,
+              "seconds": 2.32,
+              "chunks": 30,
+              "peak": 0.4117,
+              "rms": 0.0591,
+              "clipped": 0,
+              "speakMs": 1556.3,
+              "transcribeMs": 376.9
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "She sells seashells by the seashore.",
+              "transcript": "She sells seashells by the seashore.",
+              "wer": 0,
+              "frames": 31,
+              "samples": 59520,
+              "seconds": 2.48,
+              "chunks": 32,
+              "peak": 0.5921,
+              "rms": 0.0647,
+              "clipped": 0,
+              "speakMs": 1615,
+              "transcribeMs": 472
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "transcript": "The meeting has been moved to Thursday afternoon.",
+              "wer": 0,
+              "frames": 40,
+              "samples": 76800,
+              "seconds": 3.2,
+              "chunks": 41,
+              "peak": 0.384,
+              "rms": 0.0709,
+              "clipped": 0,
+              "speakMs": 2119.2,
+              "transcribeMs": 462.2
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "transcript": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "wer": 0,
+              "frames": 54,
+              "samples": 103680,
+              "seconds": 4.32,
+              "chunks": 55,
+              "peak": 0.5805,
+              "rms": 0.0532,
+              "clipped": 0,
+              "speakMs": 2807.4,
+              "transcribeMs": 609
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "Remember to save your work before closing the window.",
+              "transcript": "Remember to save your work before closing the window.",
+              "wer": 0,
+              "frames": 38,
+              "samples": 72960,
+              "seconds": 3.04,
+              "chunks": 39,
+              "peak": 0.4474,
+              "rms": 0.0735,
+              "clipped": 0,
+              "speakMs": 2009.2,
+              "transcribeMs": 436.7
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "The library opens early and closes late in the evening.",
+              "transcript": "The library opens early and closes late in the evening.",
+              "wer": 0,
+              "frames": 48,
+              "samples": 92160,
+              "seconds": 3.84,
+              "chunks": 49,
+              "peak": 0.5335,
+              "rms": 0.0676,
+              "clipped": 0,
+              "speakMs": 2394.3,
+              "transcribeMs": 520.3
+            },
+            {
+              "seed": 1234,
+              "voice": "american-female",
+              "sentence": "Our train to the coast leaves from the old station.",
+              "transcript": "Our train to the coast leaves from the old station.",
+              "wer": 0,
+              "frames": 44,
+              "samples": 84480,
+              "seconds": 3.52,
+              "chunks": 45,
+              "peak": 0.6395,
+              "rms": 0.0622,
+              "clipped": 0,
+              "speakMs": 2282.8,
+              "transcribeMs": 514.2
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0,
+              "frames": 39,
+              "samples": 74880,
+              "seconds": 3.12,
+              "chunks": 40,
+              "peak": 0.4425,
+              "rms": 0.06,
+              "clipped": 0,
+              "speakMs": 1973.8,
+              "transcribeMs": 447.8
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "Please turn left at the next street.",
+              "transcript": "Please turn left at the next street.",
+              "wer": 0,
+              "frames": 30,
+              "samples": 57600,
+              "seconds": 2.4,
+              "chunks": 31,
+              "peak": 0.3643,
+              "rms": 0.0605,
+              "clipped": 0,
+              "speakMs": 1657.6,
+              "transcribeMs": 388.6
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "She sells seashells by the seashore.",
+              "transcript": "She sells seashells by the seashore.",
+              "wer": 0,
+              "frames": 34,
+              "samples": 65280,
+              "seconds": 2.72,
+              "chunks": 35,
+              "peak": 0.3725,
+              "rms": 0.0567,
+              "clipped": 0,
+              "speakMs": 1873.7,
+              "transcribeMs": 442.8
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "transcript": "The meeting has been moved to Thursday afternoon.",
+              "wer": 0,
+              "frames": 38,
+              "samples": 72960,
+              "seconds": 3.04,
+              "chunks": 39,
+              "peak": 0.4386,
+              "rms": 0.0941,
+              "clipped": 0,
+              "speakMs": 1979.8,
+              "transcribeMs": 400.1
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "transcript": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "wer": 0,
+              "frames": 56,
+              "samples": 107520,
+              "seconds": 4.48,
+              "chunks": 57,
+              "peak": 0.4006,
+              "rms": 0.0534,
+              "clipped": 0,
+              "speakMs": 2846.4,
+              "transcribeMs": 603.6
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "Remember to save your work before closing the window.",
+              "transcript": "Remember to save your work before closing the window.",
+              "wer": 0,
+              "frames": 42,
+              "samples": 80640,
+              "seconds": 3.36,
+              "chunks": 43,
+              "peak": 0.4536,
+              "rms": 0.0718,
+              "clipped": 0,
+              "speakMs": 2584.3,
+              "transcribeMs": 551.8
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "The library opens early and closes late in the evening.",
+              "transcript": "The library opens early and closes late in the evening.",
+              "wer": 0,
+              "frames": 50,
+              "samples": 96000,
+              "seconds": 4,
+              "chunks": 51,
+              "peak": 0.3577,
+              "rms": 0.0575,
+              "clipped": 0,
+              "speakMs": 3055.4,
+              "transcribeMs": 626.3
+            },
+            {
+              "seed": 1234,
+              "voice": "american-male",
+              "sentence": "Our train to the coast leaves from the old station.",
+              "transcript": "Our train to the coast leaves from the old station.",
+              "wer": 0,
+              "frames": 46,
+              "samples": 88320,
+              "seconds": 3.68,
+              "chunks": 47,
+              "peak": 0.3715,
+              "rms": 0.0544,
+              "clipped": 0,
+              "speakMs": 2444.3,
+              "transcribeMs": 603.6
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0,
+              "frames": 37,
+              "samples": 71040,
+              "seconds": 2.96,
+              "chunks": 38,
+              "peak": 0.398,
+              "rms": 0.0487,
+              "clipped": 0,
+              "speakMs": 2033.6,
+              "transcribeMs": 468.4
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "Please turn left at the next street.",
+              "transcript": "Please turn left at the next street.",
+              "wer": 0,
+              "frames": 28,
+              "samples": 53760,
+              "seconds": 2.24,
+              "chunks": 29,
+              "peak": 0.3502,
+              "rms": 0.0558,
+              "clipped": 0,
+              "speakMs": 1618.1,
+              "transcribeMs": 396.1
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "She sells seashells by the seashore.",
+              "transcript": "She sells seashells by the seashore.",
+              "wer": 0,
+              "frames": 30,
+              "samples": 57600,
+              "seconds": 2.4,
+              "chunks": 31,
+              "peak": 0.3362,
+              "rms": 0.0587,
+              "clipped": 0,
+              "speakMs": 1608.5,
+              "transcribeMs": 458.5
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "transcript": "The meeting has been moved to Thursday afternoon.",
+              "wer": 0,
+              "frames": 36,
+              "samples": 69120,
+              "seconds": 2.88,
+              "chunks": 37,
+              "peak": 0.3906,
+              "rms": 0.077,
+              "clipped": 0,
+              "speakMs": 1786.1,
+              "transcribeMs": 416.7
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "transcript": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "wer": 0,
+              "frames": 48,
+              "samples": 92160,
+              "seconds": 3.84,
+              "chunks": 49,
+              "peak": 0.5222,
+              "rms": 0.0579,
+              "clipped": 0,
+              "speakMs": 2572,
+              "transcribeMs": 665.6
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "Remember to save your work before closing the window.",
+              "transcript": "Remember to save your work before closing the window.",
+              "wer": 0,
+              "frames": 38,
+              "samples": 72960,
+              "seconds": 3.04,
+              "chunks": 39,
+              "peak": 0.4136,
+              "rms": 0.0701,
+              "clipped": 0,
+              "speakMs": 2173.6,
+              "transcribeMs": 465.4
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "The library opens early and closes late in the evening.",
+              "transcript": "The library opens early and closes late in the evening.",
+              "wer": 0,
+              "frames": 42,
+              "samples": 80640,
+              "seconds": 3.36,
+              "chunks": 43,
+              "peak": 0.5356,
+              "rms": 0.0615,
+              "clipped": 0,
+              "speakMs": 2169.5,
+              "transcribeMs": 542.7
+            },
+            {
+              "seed": 1234,
+              "voice": "british-female",
+              "sentence": "Our train to the coast leaves from the old station.",
+              "transcript": "Our train to the coast leaves from the old station.",
+              "wer": 0,
+              "frames": 38,
+              "samples": 72960,
+              "seconds": 3.04,
+              "chunks": 39,
+              "peak": 0.4292,
+              "rms": 0.0576,
+              "clipped": 0,
+              "speakMs": 1971.5,
+              "transcribeMs": 466
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0,
+              "frames": 40,
+              "samples": 76800,
+              "seconds": 3.2,
+              "chunks": 41,
+              "peak": 0.5075,
+              "rms": 0.0595,
+              "clipped": 0,
+              "speakMs": 2068.5,
+              "transcribeMs": 437.5
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "Please turn left at the next street.",
+              "transcript": "Please turn left at the next street.",
+              "wer": 0,
+              "frames": 28,
+              "samples": 53760,
+              "seconds": 2.24,
+              "chunks": 29,
+              "peak": 0.37,
+              "rms": 0.0666,
+              "clipped": 0,
+              "speakMs": 1486.1,
+              "transcribeMs": 375.7
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "She sells seashells by the seashore.",
+              "transcript": "She sells seashells by the seashore.",
+              "wer": 0,
+              "frames": 32,
+              "samples": 61440,
+              "seconds": 2.56,
+              "chunks": 33,
+              "peak": 0.3675,
+              "rms": 0.0645,
+              "clipped": 0,
+              "speakMs": 1703.5,
+              "transcribeMs": 447.4
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "transcript": "The meeting has been moved to Thursday afternoon.",
+              "wer": 0,
+              "frames": 36,
+              "samples": 69120,
+              "seconds": 2.88,
+              "chunks": 37,
+              "peak": 0.448,
+              "rms": 0.0867,
+              "clipped": 0,
+              "speakMs": 1931.5,
+              "transcribeMs": 464.6
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "transcript": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "wer": 0,
+              "frames": 50,
+              "samples": 96000,
+              "seconds": 4,
+              "chunks": 51,
+              "peak": 0.4142,
+              "rms": 0.0657,
+              "clipped": 0,
+              "speakMs": 2538.1,
+              "transcribeMs": 563.6
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "Remember to save your work before closing the window.",
+              "transcript": "Remember to save your work before closing the window.",
+              "wer": 0,
+              "frames": 40,
+              "samples": 76800,
+              "seconds": 3.2,
+              "chunks": 41,
+              "peak": 0.3644,
+              "rms": 0.0746,
+              "clipped": 0,
+              "speakMs": 2050.2,
+              "transcribeMs": 430.8
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "The library opens early and closes late in the evening.",
+              "transcript": "The library opens early and closes late in the evening.",
+              "wer": 0,
+              "frames": 46,
+              "samples": 88320,
+              "seconds": 3.68,
+              "chunks": 47,
+              "peak": 0.3717,
+              "rms": 0.079,
+              "clipped": 0,
+              "speakMs": 2292.7,
+              "transcribeMs": 511.7
+            },
+            {
+              "seed": 1234,
+              "voice": "british-male",
+              "sentence": "Our train to the coast leaves from the old station.",
+              "transcript": "Our train to the coast leaves from the old station.",
+              "wer": 0,
+              "frames": 48,
+              "samples": 92160,
+              "seconds": 3.84,
+              "chunks": 49,
+              "peak": 0.3625,
+              "rms": 0.0634,
+              "clipped": 0,
+              "speakMs": 2381.1,
+              "transcribeMs": 512.1
+            }
+          ]
+        },
+        {
+          "name": "network",
+          "mode": "audio-roundtrip",
+          "sameOriginRequests": 3359,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-streaming",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 72358,
+      "tests": [
+        {
+          "name": "speech streaming, cancellation and recovery streams chunks that concatenate to the result and repeat exactly for one seed",
+          "status": "passed",
+          "durationMs": 4066.399999976158
+        },
+        {
+          "name": "speech streaming, cancellation and recovery stops at maxAudioFrames with finishReason length",
+          "status": "passed",
+          "durationMs": 272.2000000476837
+        },
+        {
+          "name": "speech streaming, cancellation and recovery reports a text longer than the frame budget as length, not as a finished utterance",
+          "status": "passed",
+          "durationMs": 15655.5
+        },
+        {
+          "name": "speech streaming, cancellation and recovery speaks very short and unusual text or fails with a typed error, and keeps working",
+          "status": "passed",
+          "durationMs": 7752.399999976158
+        },
+        {
+          "name": "speech streaming, cancellation and recovery cancels on an early break, frees its buffers and the next speech is unchanged",
+          "status": "passed",
+          "durationMs": 4328.700000047684
+        },
+        {
+          "name": "speech streaming, cancellation and recovery cancels in flight with cancel() and with an AbortSignal, then recovers",
+          "status": "passed",
+          "durationMs": 2509.100000023842
+        },
+        {
+          "name": "speech streaming, cancellation and recovery keeps later queued work running when a queued request fails",
+          "status": "passed",
+          "durationMs": 4486.100000023842
+        },
+        {
+          "name": "speech streaming, cancellation and recovery rejects invalid requests before queueing them and leaves the runner usable",
+          "status": "passed",
+          "durationMs": 1501.3999999761581
+        },
+        {
+          "name": "speech streaming, cancellation and recovery rejects in-flight work on dispose and refuses later calls",
+          "status": "passed",
+          "durationMs": 188.10000002384186
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-streaming",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": [
+              "core-features-and-limits",
+              "shader-f16",
+              "subgroups"
+            ],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 27698.5,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "streaming-determinism",
+          "chunks": 41,
+          "samples": 76800,
+          "sameSeedIdenticalSamples": true
+        },
+        {
+          "name": "streaming-frame-budget",
+          "finishReason": "length",
+          "audioFrames": 256,
+          "seconds": 20.48,
+          "wordsSpoken": 61,
+          "wordsRequested": 71
+        },
+        {
+          "name": "streaming-unusual-text",
+          "rows": [
+            {
+              "text": "Hi.",
+              "finishReason": "stop",
+              "frames": 10,
+              "heard": "Hi."
+            },
+            {
+              "text": "Yes",
+              "finishReason": "stop",
+              "frames": 12,
+              "heard": "Yes."
+            },
+            {
+              "text": "12345",
+              "finishReason": "stop",
+              "frames": 20,
+              "heard": "184 thief."
+            },
+            {
+              "text": "...",
+              "finishReason": "stop",
+              "frames": 2,
+              "heard": "Yeah."
+            },
+            {
+              "text": "Un café très tranquille.",
+              "finishReason": "stop",
+              "frames": 26,
+              "heard": "Un café très tranquille."
+            }
+          ]
+        },
+        {
+          "name": "streaming-early-break",
+          "bytesAfterSuccess": 1935760468,
+          "bytesAfterRecovery": 1935760468,
+          "recoveredIdentical": true
+        },
+        {
+          "name": "streaming-queued-failure",
+          "runningIdentical": true,
+          "transcript": "The quick brown fox jumps over the lazy dog."
+        },
+        {
+          "name": "streaming-dispose",
+          "storageBuffersAfterDispose": 0
+        },
+        {
+          "name": "network",
+          "mode": "audio-streaming",
+          "sameOriginRequests": 2333,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-input",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 66942,
+      "tests": [
+        {
+          "name": "audio input: boundaries, short clips, sample rates keeps the transcript through every padded-graph boundary",
+          "status": "passed",
+          "durationMs": 4691.400000095367
+        },
+        {
+          "name": "audio input: boundaries, short clips, sample rates transcribes a clip of the maximum 32 seconds and rejects one sample more",
+          "status": "passed",
+          "durationMs": 19442.800000071526
+        },
+        {
+          "name": "audio input: boundaries, short clips, sample rates answers silence and very short clips without failing",
+          "status": "passed",
+          "durationMs": 1364.6000000238419
+        },
+        {
+          "name": "audio input: boundaries, short clips, sample rates handles sample rates: resampling and decoding keep the tone and the words",
+          "status": "passed",
+          "durationMs": 3407.4000000953674
+        },
+        {
+          "name": "audio input: boundaries, short clips, sample rates answers a spoken question through speech, transcription and the language backbone",
+          "status": "passed",
+          "durationMs": 1790.7000000476837
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-input",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": [
+              "core-features-and-limits",
+              "shader-f16",
+              "subgroups"
+            ],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 33653.7,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "input-boundaries",
+          "rows": [
+            {
+              "samples": 51200,
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0
+            },
+            {
+              "samples": 64000,
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0
+            },
+            {
+              "samples": 64001,
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0
+            },
+            {
+              "samples": 128000,
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0
+            },
+            {
+              "samples": 128001,
+              "transcript": "The quick brown fox jumps over the lazy dog.",
+              "wer": 0
+            }
+          ]
+        },
+        {
+          "name": "input-maximum-length",
+          "sentences": 8,
+          "speechSamples": 470720,
+          "samples": 512000,
+          "transcript": "The quick brown fox jumps over the lazy dog. Please turn left at the next street. She sells seashells by the seashore. The meeting has been moved to Thursday afternoon. A gentle breeze carried the scent of rain across the quiet valley. Remember to save your work before closing the window. The library opens early and closes late in the evening. Our train to the coast leaves from the old station.",
+          "wer": 0,
+          "transcribeMs": 3427.9
+        },
+        {
+          "name": "input-silence-and-short",
+          "rows": [
+            {
+              "name": "1 sample",
+              "samples": 1,
+              "transcript": "Okay.",
+              "ms": 192.3
+            },
+            {
+              "name": "25 ms of silence",
+              "samples": 400,
+              "transcript": "Okay.",
+              "ms": 138.9
+            },
+            {
+              "name": "50 ms tone",
+              "samples": 800,
+              "transcript": "You",
+              "ms": 119.2
+            },
+            {
+              "name": "1 s of silence",
+              "samples": 16000,
+              "transcript": "you",
+              "ms": 175.8
+            },
+            {
+              "name": "3 s of silence",
+              "samples": 48000,
+              "transcript": "Okay, so I'm going to go ahead and.",
+              "ms": 466.4
+            },
+            {
+              "name": "2 s chirp",
+              "samples": 32000,
+              "transcript": "Okay, okay.",
+              "ms": 268.9
+            }
+          ]
+        },
+        {
+          "name": "input-sample-rates",
+          "resampled": {
+            "transcript": "The quick brown fox jumps over the lazy dog.",
+            "wer": 0
+          },
+          "decoded": {
+            "transcript": "The quick brown fox jumps over the lazy dog.",
+            "wer": 0
+          },
+          "unresampled": {
+            "transcript": "The quick brown fox jumps over the lazy dog.",
+            "wer": 0
+          }
+        },
+        {
+          "name": "input-spoken-question",
+          "heard": "What is the capital of France?",
+          "wer": 0,
+          "reply": "Paris"
+        },
+        {
+          "name": "network",
+          "mode": "audio-input",
+          "sameOriginRequests": 2320,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-memory",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 60295,
+      "tests": [
+        {
+          "name": "GPU memory across repeated audio runs returns to the same size when the same inputs repeat and releases everything on dispose",
+          "status": "passed",
+          "durationMs": 29169.199999928474
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-memory",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": [
+              "core-features-and-limits",
+              "shader-f16",
+              "subgroups"
+            ],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 28529.8,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "memory",
+          "loadedGpuBytes": 1825200512,
+          "rows": [
+            {
+              "cycle": 0,
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "gpuBytes": 1859677156,
+              "buffers": 1804,
+              "heapBytes": 253884002
+            },
+            {
+              "cycle": 1,
+              "sentence": "Please turn left at the next street.",
+              "gpuBytes": 1842983548,
+              "buffers": 1830,
+              "heapBytes": 258374002
+            },
+            {
+              "cycle": 2,
+              "sentence": "She sells seashells by the seashore.",
+              "gpuBytes": 1853364076,
+              "buffers": 1962,
+              "heapBytes": 286460754
+            },
+            {
+              "cycle": 3,
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "gpuBytes": 1856435480,
+              "buffers": 1937,
+              "heapBytes": 234225260
+            },
+            {
+              "cycle": 4,
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "gpuBytes": 1885884772,
+              "buffers": 2126,
+              "heapBytes": 233825128
+            },
+            {
+              "cycle": 5,
+              "sentence": "Remember to save your work before closing the window.",
+              "gpuBytes": 1862618112,
+              "buffers": 2120,
+              "heapBytes": 255560016
+            },
+            {
+              "cycle": 6,
+              "sentence": "The library opens early and closes late in the evening.",
+              "gpuBytes": 1871508428,
+              "buffers": 2174,
+              "heapBytes": 255517114
+            },
+            {
+              "cycle": 7,
+              "sentence": "Our train to the coast leaves from the old station.",
+              "gpuBytes": 1867240600,
+              "buffers": 2222,
+              "heapBytes": 225401723
+            },
+            {
+              "cycle": 8,
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "gpuBytes": 1859682968,
+              "buffers": 2200,
+              "heapBytes": 238329335
+            },
+            {
+              "cycle": 9,
+              "sentence": "Please turn left at the next street.",
+              "gpuBytes": 1842988312,
+              "buffers": 2156,
+              "heapBytes": 227956843
+            },
+            {
+              "cycle": 10,
+              "sentence": "She sells seashells by the seashore.",
+              "gpuBytes": 1853367832,
+              "buffers": 2222,
+              "heapBytes": 254974335
+            },
+            {
+              "cycle": 11,
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "gpuBytes": 1856438936,
+              "buffers": 2178,
+              "heapBytes": 283352797
+            }
+          ],
+          "storageBuffersAfterDispose": 0,
+          "rootCacheBytesAfterDispose": 522744
+        },
+        {
+          "name": "network",
+          "mode": "audio-memory",
+          "sameOriginRequests": 2186,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-public",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 41225,
+      "tests": [
+        {
+          "name": "loads the exact published pair and transcribes and streams speech through the public zoo entry",
+          "status": "passed",
+          "durationMs": 38192.39999997616
+        }
+      ],
+      "reports": [
+        {
+          "name": "network",
+          "mode": "public-audio",
+          "sameOriginRequests": 1677,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-liquid-reference",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 145102,
+      "tests": [
+        {
+          "name": "matches native audio encoder, depth codes and codec PCM against pinned Liquid",
+          "status": "passed",
+          "durationMs": 140771.89999997616
+        }
+      ],
+      "reports": [
+        {
+          "name": "operator-reference",
+          "projector": {
+            "repository": "LiquidAI/LFM3-Omni-2B-GGUF",
+            "revision": "3d29af2ad166f8299c2d820937e47dc0add20ffc",
+            "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+            "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+          },
+          "audioEncoder": {
+            "values": 69632,
+            "rmsError": 0.000054928358241443305,
+            "maxAbsoluteError": 0.0007898807525634766,
+            "cosineSimilarity": 0.9999996265678008
+          },
+          "depthDecoder": {
+            "order": [
+              2,
+              3,
+              5,
+              7,
+              6,
+              4,
+              1,
+              11,
+              0,
+              10,
+              9,
+              8
+            ],
+            "codes": [
+              927,
+              603,
+              1912,
+              689,
+              1200,
+              399,
+              91,
+              1621,
+              736,
+              1100,
+              1467,
+              1745
+            ],
+            "matches": true
+          },
+          "codec": {
+            "values": 1920,
+            "rmsError": 0.000023194202667954754,
+            "maxAbsoluteError": 0.00009446777403354645,
+            "cosineSimilarity": 0.9999889872961298
+          }
+        },
+        {
+          "name": "network",
+          "mode": "audio-reference",
+          "sameOriginRequests": 488,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    },
+    {
+      "mode": "audio-liquid-roundtrip",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 144724,
+      "tests": [
+        {
+          "name": "records pinned Liquid Q4_K_M teacher-forced vectors and deterministic chat answers",
+          "status": "passed",
+          "durationMs": 141260.69999992847
+        }
+      ],
+      "reports": [
+        {
+          "name": "liquid-round-trip",
+          "cases": [
+            {
+              "id": "quick-brown-fox",
+              "input": {
+                "file": "quick-brown-fox.wav",
+                "transcript": "The quick brown fox jumps over the lazy dog.",
+                "sampleRate": 16000,
+                "samples": 42732,
+                "bytes": 89560,
+                "sha256": "0497e70d431e9d827c10bbaff120c9cbabf0834a747107f83cb161dc1f759880"
+              },
+              "liquidTranscription": {
+                "text": "The quick brown fox jumps over the lazy dog.",
+                "normalizedText": "the quick brown fox jumps over the lazy dog",
+                "promptTokens": 56,
+                "generatedTokens": 10,
+                "matchesExpected": true
+              },
+              "liquidSpeech": {
+                "file": "liquid-speech-quick-brown-fox.wav",
+                "sampleRate": 24000,
+                "samples": 76800,
+                "seconds": 3.2,
+                "bytes": 307244,
+                "sha256": "9d2656622e96daf1a68a36405d6f4ca1ec83c1cbb5d4ec446630c5e969ceb5ad",
+                "seed": 1234,
+                "promptTokenIds": [
+                  124894,
+                  124899,
+                  23630,
+                  207,
+                  116068,
+                  336,
+                  9754,
+                  296,
+                  1972,
+                  3478,
+                  1492,
+                  267,
+                  6672,
+                  7902,
+                  22,
+                  124900,
+                  207,
+                  124899,
+                  5922,
+                  207,
+                  597,
+                  4104,
+                  10299,
+                  35886,
+                  56085,
+                  890,
+                  278,
+                  45698,
+                  4448,
+                  22,
+                  124900,
+                  207,
+                  124899,
+                  63514,
+                  207,
+                  124901,
+                  124902,
+                  125012
+                ],
+                "depthDecoderTemperature": 0.4,
+                "depthDecoderRepetitionPenalty": 1.2,
+                "depthDecoderRepetitionWindow": 64,
+                "maskgitRevealSchedule": [
+                  4,
+                  4,
+                  4
+                ],
+                "speechFrames": 41,
+                "streamChunks": 5,
+                "generatedTokens": 41,
+                "finiteNonempty": true
+              },
+              "speechTranscription": {
+                "text": "The quick brown fox jumps over the lazy dog.",
+                "normalizedText": "the quick brown fox jumps over the lazy dog",
+                "sampleRate": 16000,
+                "samples": 51200,
+                "promptTokens": 62,
+                "generatedTokens": 10,
+                "recoversRequestedText": true
+              }
+            },
+            {
+              "id": "turn-left-next-street",
+              "input": {
+                "file": "turn-left-next-street.wav",
+                "transcript": "Please turn left at the next street.",
+                "sampleRate": 16000,
+                "samples": 33034,
+                "bytes": 70164,
+                "sha256": "f9ce57f4e548e339e944ba87860cd35a545db46e5eafd69f3692ede19f6cb054"
+              },
+              "liquidTranscription": {
+                "text": "Please turn left at the next street.",
+                "normalizedText": "please turn left at the next street",
+                "promptTokens": 48,
+                "generatedTokens": 8,
+                "matchesExpected": true
+              },
+              "liquidSpeech": {
+                "file": "liquid-speech-turn-left-next-street.wav",
+                "sampleRate": 24000,
+                "samples": 55680,
+                "seconds": 2.32,
+                "bytes": 222764,
+                "sha256": "751feb32d16b26e1b3abd21ff1cb89bc1df7a9811ed4c24fd146aed9943476a6",
+                "seed": 1234,
+                "promptTokenIds": [
+                  124894,
+                  124899,
+                  23630,
+                  207,
+                  116068,
+                  336,
+                  9754,
+                  296,
+                  1972,
+                  3478,
+                  1492,
+                  267,
+                  6672,
+                  7902,
+                  22,
+                  124900,
+                  207,
+                  124899,
+                  5922,
+                  207,
+                  16308,
+                  2371,
+                  2690,
+                  462,
+                  278,
+                  2779,
+                  11012,
+                  22,
+                  124900,
+                  207,
+                  124899,
+                  63514,
+                  207,
+                  124901,
+                  124902,
+                  125012
+                ],
+                "depthDecoderTemperature": 0.4,
+                "depthDecoderRepetitionPenalty": 1.2,
+                "depthDecoderRepetitionWindow": 64,
+                "maskgitRevealSchedule": [
+                  4,
+                  4,
+                  4
+                ],
+                "speechFrames": 30,
+                "streamChunks": 4,
+                "generatedTokens": 30,
+                "finiteNonempty": true
+              },
+              "speechTranscription": {
+                "text": "Please turn left at the next street.",
+                "normalizedText": "please turn left at the next street",
+                "sampleRate": 16000,
+                "samples": 37120,
+                "promptTokens": 51,
+                "generatedTokens": 8,
+                "recoversRequestedText": true
+              }
+            }
+          ]
+        },
+        {
+          "name": "network",
+          "mode": "liquid-reference",
+          "sameOriginRequests": 89,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    }
+  ]
+}

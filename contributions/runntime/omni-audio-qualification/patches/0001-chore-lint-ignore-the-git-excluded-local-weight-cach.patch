@@ -1,0 +1,29 @@
+From 35276b5106a86119eba3b158f1e3ceb6fa28fb5d Mon Sep 17 00:00:00 2001
+From: Justin Walsh <contact.me@thejustinwalsh.com>
+Date: Fri, 20 Nov 2026 01:07:18 -0500
+Subject: [PATCH 01/10] chore(lint): ignore the git-excluded local weight cache
+
+---
+ eslint.config.js | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/eslint.config.js b/eslint.config.js
+index 444a85d..313c78f 100644
+--- a/eslint.config.js
++++ b/eslint.config.js
+@@ -6,7 +6,14 @@ import globals from 'globals';
+ export default tseslint.config(
+   {
+     // `ignores` must be the only key here, otherwise it stops applying globally
+-    ignores: ['**/dist/**', '**/node_modules/**', '**/.astro/**', '**/.bench/**', '.claude/**'],
++    ignores: [
++      '**/dist/**',
++      '**/node_modules/**',
++      '**/.astro/**',
++      '**/.bench/**',
++      '**/.weights/**',
++      '.claude/**',
++    ],
+   },
+   js.configs.recommended,
+   ...tseslint.configs.recommended,

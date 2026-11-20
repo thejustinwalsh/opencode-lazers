@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "finishedAt": "2026-11-20T06:28:23.980Z",
+  "commit": "f26a16b4cac07fd4da2e63844aa2c0c4655cc6a5",
+  "branch": "upstream/10-audio-qualification",
+  "dirty": true,
+  "node": "v26.9.0",
+  "weights": {
+    "model": {
+      "file": "LFM3-Omni-2B-Q4_K_M.gguf",
+      "sha256": "9f8d30e9d4fd7a9349d586e077988229b3ca0a0e4ad730897563d1eccc9893e2"
+    },
+    "projector": {
+      "file": "mmproj-LFM3-Omni-2B-Q8_0.gguf",
+      "sha256": "8a25f9d1931244429de404fccacfb7fb933970a36aa5688d2f5069f29c6b27b1"
+    },
+    "tokenizer": {
+      "file": "lfm3-tokenizer.json",
+      "sha256": "41927bd314d17d7d7fadb44e10cd0919f7b71528d7741596d8cbd15c6945ec44"
+    }
+  },
+  "selection": {
+    "voices": "all",
+    "seeds": "1234"
+  },
+  "ok": true,
+  "modes": [
+    {
+      "mode": "audio-memory",
+      "passed": true,
+      "exitCode": 0,
+      "durationMs": 54357,
+      "tests": [
+        {
+          "name": "GPU memory across repeated audio runs settles after the first cycle and releases everything on dispose",
+          "status": "passed",
+          "durationMs": 15412.100000023842
+        }
+      ],
+      "reports": [
+        {
+          "name": "load",
+          "mode": "audio-memory",
+          "adapter": {
+            "label": "",
+            "vendor": "apple",
+            "architecture": "metal-3",
+            "device": "",
+            "description": "",
+            "features": ["core-features-and-limits", "shader-f16", "subgroups"],
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+          },
+          "loadMs": 35894.2,
+          "sourceBytes": 3386794504,
+          "loadedGpuBytes": 1825200512
+        },
+        {
+          "name": "memory",
+          "loadedGpuBytes": 1825200512,
+          "rows": [
+            {
+              "cycle": 0,
+              "sentence": "The quick brown fox jumps over the lazy dog.",
+              "gpuBytes": 1967372140,
+              "buffers": 2710,
+              "heapBytes": 239497415
+            },
+            {
+              "cycle": 1,
+              "sentence": "Please turn left at the next street.",
+              "gpuBytes": 2000907012,
+              "buffers": 2889,
+              "heapBytes": 245386524
+            },
+            {
+              "cycle": 2,
+              "sentence": "She sells seashells by the seashore.",
+              "gpuBytes": 2032974068,
+              "buffers": 3020,
+              "heapBytes": 264548416
+            },
+            {
+              "cycle": 3,
+              "sentence": "The meeting has been moved to Thursday afternoon.",
+              "gpuBytes": 2042451104,
+              "buffers": 3061,
+              "heapBytes": 252706633
+            },
+            {
+              "cycle": 4,
+              "sentence": "A gentle breeze carried the scent of rain across the quiet valley.",
+              "gpuBytes": 2151442540,
+              "buffers": 3600,
+              "heapBytes": 271617451
+            },
+            {
+              "cycle": 5,
+              "sentence": "Remember to save your work before closing the window.",
+              "gpuBytes": 2174616840,
+              "buffers": 3684,
+              "heapBytes": 262499057
+            }
+          ],
+          "storageBuffersAfterDispose": 0,
+          "rootCacheBytesAfterDispose": 521312
+        },
+        {
+          "name": "network",
+          "mode": "audio-memory",
+          "sameOriginRequests": 1840,
+          "blocked": []
+        }
+      ],
+      "blockedRequests": []
+    }
+  ]
+}

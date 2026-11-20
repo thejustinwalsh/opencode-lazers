@@ -1,0 +1,50 @@
+=== 35276b5106a86119eba3b158f1e3ceb6fa28fb5d chore(lint): ignore the git-excluded local weight cache
+typecheck ok
+lint ok
+format FAIL
+unit ok
+=== f26a16b4cac07fd4da2e63844aa2c0c4655cc6a5 test(zoo): check the LFM3 audio frontend on synthesised signals against a direct-DFT reference
+typecheck ok
+lint ok
+format FAIL
+unit ok
+=== ad8d26a757e0014598c3690622394b0b9bc17f87 test(zoo): resolve the Liquid audio reference URLs against the page
+typecheck ok
+lint ok
+format FAIL
+unit ok
+=== 06a064c19e1ece9003e7a8c3cc9637f9e884ee8a test(zoo): add a local-only audio qualification harness with round trip, streaming, input and memory modes
+typecheck ok
+lint ok
+format FAIL
+unit ok
+=== bff786d94529c949f20f33a1195486d64f062f23 fix(zoo): trim the executor pool after each LFM3 audio call
+typecheck ok
+lint ok
+format FAIL
+unit ok
+=== 1bd6774e35fbc74fb460e71ae8f86f7b66802b97 chore(format): ignore the git-excluded local weight cache
+typecheck ok
+lint ok
+format ok
+unit ok
+=== 0af7337087ec9bcf21fef1d9d6a5c7b27da74f26 test(zoo): add Liquid's own speech round trip as a qualification baseline
+typecheck ok
+lint ok
+format ok
+unit ok
+=== 7cc5b828e565e5ed34ec8684d156613f2b231cce test(zoo): run the public audio qualification on the frozen clips offline
+typecheck ok
+lint ok
+format ok
+unit ok
+=== deb7692cf862cc44cd71299877e0b9bde8071df5 test(zoo): let the Liquid round trip skip retaining speech without a capture server
+typecheck ok
+lint ok
+format ok
+unit ok
+=== ddb0a88892f9eaef058b3a2489f011577f0d7c78 test(zoo): speak very short and unusual text in the streaming qualification
+typecheck ok
+lint ok
+format ok
+unit ok
