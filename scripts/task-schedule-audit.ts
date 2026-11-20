@@ -11,11 +11,22 @@ import { compareReads } from "../src/tasks/schedule/parity.ts"
  * Compare the old Tasks read with the schedule projection for every project of a database.
  *
  *   bun scripts/task-schedule-audit.ts <path to a COPY of tasks.sqlite>
+ *   bun scripts/task-schedule-audit.ts --readonly-live [path]   (opens mode=ro, writes nothing)
  *
  * It opens the copy for writing (the projection is installed and backfilled in it), so it refuses
  * the live database. Copy the file somewhere under a temp directory first.
  */
-const path = process.argv[2]
+import { auditLive } from "../src/tasks/schedule/live-audit.ts"
+
+const readonlyLive = process.argv.includes("--readonly-live")
+const path =
+  process.argv.slice(2).find((arg) => !arg.startsWith("--")) ??
+  (readonlyLive ? join(homedir(), ".local/share/opencode/plugins/lazers/tasks.sqlite") : undefined)
+if (readonlyLive) {
+  // The file is opened mode=ro and never written; the projection is built in an attached memory database.
+  for (const report of auditLive(path!)) console.log(JSON.stringify(report, null, 2))
+  process.exit(0)
+}
 if (!path) throw new Error("usage: bun scripts/task-schedule-audit.ts <copy of tasks.sqlite>")
 const live = join(homedir(), ".local/share/opencode/plugins/lazers/tasks.sqlite")
 if (realpathSync(path) === realpathSync(live))

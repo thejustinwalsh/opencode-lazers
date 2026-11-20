@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
-import { drainTaskSchedule } from "./drain.ts"
+import { drainTaskSchedule, retryParked } from "./drain.ts"
 import { BACKFILL_PAGE, backfillPage } from "./backfill.ts"
 import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
 import { compareReads } from "./parity.ts"
@@ -285,26 +285,79 @@ test("sort key fields hold at the extremes and rank and bucket follow the old ru
 
 // ---- Task 5: drain --------------------------------------------------------------------------
 
-test("a refresh that throws leaves its entry queued, the write commits, and a later drain recovers", () => {
+const breakScopes = (f: Fixture) =>
+  f.repository.atomic((db) =>
+    db.exec("ALTER TABLE task_schedule_scopes RENAME TO task_schedule_scopes_off"),
+  )
+const fixScopes = (f: Fixture) =>
+  f.repository.atomic((db) =>
+    db.exec("ALTER TABLE task_schedule_scopes_off RENAME TO task_schedule_scopes"),
+  )
+const parked = (f: Fixture) =>
+  rows<{ kind: string; ref: string; attempts: number }>(
+    f,
+    "SELECT kind,ref,attempts FROM task_schedule_failed",
+  )
+
+test("a refresh that throws is parked, the write commits, and the entry has an exit", () => {
   const f = open()
   const a = insertTask(f.repository, "alpha")
-  f.repository.atomic((db) => {
-    db.exec("DROP TABLE task_schedule_scopes")
-    db.query("INSERT OR IGNORE INTO task_schedule_dirty(kind,ref) VALUES('task',?)").run(a)
-  })
-  expect(dirty(f)).toEqual([{ kind: "task", ref: a }])
-  expect(
-    rows<{ last_error: string }>(
-      f,
-      "SELECT last_error FROM task_schedule_state WHERE last_error IS NOT NULL",
-    ).length,
-  ).toBe(1)
-  f.repository.atomic((db) => {
-    db.exec(
-      "CREATE TABLE task_schedule_scopes (task_id TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(task_id,path)) WITHOUT ROWID",
-    )
-  })
+  expect(rows<{ stale: number }>(f, "SELECT stale FROM task_schedule WHERE task_id=?", a)).toEqual([
+    { stale: 0 },
+  ])
+  breakScopes(f)
+  // A real change to the task's plan: the write commits although its refresh throws.
+  const planID = submitPlan(f, "p", [a])
+  expect(rows(f, "SELECT 1 FROM runner_plans WHERE id=?", planID).length).toBe(1)
   expect(dirty(f)).toEqual([])
+  expect(parked(f).length).toBeGreaterThan(0)
+  expect(rows<{ stale: number }>(f, "SELECT stale FROM task_schedule WHERE task_id=?", a)).toEqual([
+    { stale: 1 },
+  ])
+  // Not due yet: the owner's retry leaves it parked.
+  f.repository.atomic((db) => expect(retryParked(db)).toBe(0))
+  // Once the cause is fixed, a due retry succeeds, clears the parked set and the stale mark.
+  fixScopes(f)
+  f.repository.atomic((db) => retryParked(db, Date.now() + 10 * 60_000))
+  expect(parked(f)).toEqual([])
+  expect(
+    rows<{ stale: number; plan_id: string }>(
+      f,
+      "SELECT stale,plan_id FROM task_schedule WHERE task_id=?",
+      a,
+    ),
+  ).toEqual([{ stale: 0, plan_id: planID }])
+})
+
+test("a real change re-queues a parked entry, and a refresh that always throws costs unrelated writes nothing", () => {
+  const f = open()
+  const a = insertTask(f.repository, "alpha")
+  const b = insertTask(f.repository, "beta")
+  const planA = submitPlan(f, "pa", [a])
+  breakScopes(f)
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET reason='one' WHERE id=?").run(planA),
+  )
+  f.repository.atomic((db) =>
+    db.query("UPDATE runner_plans SET reason='two' WHERE id=?").run(planA),
+  )
+  expect(parked(f).filter((row) => row.kind === "plan")[0]?.attempts).toBe(2)
+  // An unrelated write: the hot queue is empty, so the drain hook prepares and runs nothing else.
+  const seen: string[] = []
+  f.repository.atomic((db) => {
+    const original = db.query.bind(db)
+    ;(db as unknown as { query: typeof db.query }).query = ((sql: string) => {
+      seen.push(sql)
+      return original(sql)
+    }) as typeof db.query
+    db.exec("CREATE TABLE IF NOT EXISTS unrelated_probe(x)")
+    f.repository.atomic((inner) => inner.exec("INSERT INTO unrelated_probe VALUES(1)"))
+    ;(db as unknown as { query: typeof db.query }).query = original
+  })
+  expect(seen.filter((sql) => /task_schedule/.test(sql))).toEqual([])
+  expect(dirty(f)).toEqual([])
+  fixScopes(f)
+  expect(b).toBeTruthy()
 })
 
 test("a drain budget leaves the rest queued and a later drain finishes it", () => {

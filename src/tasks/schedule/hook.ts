@@ -8,12 +8,14 @@ import type { Database } from "bun:sqlite"
  */
 const key = Symbol.for("lazers.taskSchedule.hook.v1")
 type Hook = {
+  /** Entries parked after a failed refresh, last seen by a drain; for the heap sample. */
+  parked: number
   drain?: (db: Database) => void
   connections: WeakSet<Database>
   probe: WeakMap<Database, { get(): unknown }>
 }
 const host = globalThis as typeof globalThis & { [key]?: Hook }
-const hook = (host[key] ??= { connections: new WeakSet(), probe: new WeakMap() })
+const hook = (host[key] ??= { parked: 0, connections: new WeakSet(), probe: new WeakMap() })
 
 export function registerScheduleDrain(drain: (db: Database) => void) {
   hook.drain = drain
@@ -29,5 +31,15 @@ export function enrollScheduleConnection(db: Database) {
 export function drainScheduleHook(db: Database) {
   const probe = hook.probe.get(db)
   if (probe === undefined || probe.get() === null) return
-  hook.drain?.(db)
+  try {
+    hook.drain?.(db)
+  } catch {
+    // A projection failure never fails a workflow write; the queued entries stay for the owner.
+  }
 }
+
+export const setScheduleParked = (count: number) => {
+  hook.parked = count
+}
+/** Parked refreshes of this process, as last counted by a drain. */
+export const scheduleParkedCount = () => hook.parked

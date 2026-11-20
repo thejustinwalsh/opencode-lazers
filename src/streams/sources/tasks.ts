@@ -69,6 +69,8 @@ export const taskScheduleColumns = {
   decision_reason: "text",
   disposition: "json",
   retired: "bool",
+  /** The last refresh of this row failed: the values are the last good ones. */
+  stale: "bool",
   source_plan: "json",
   revision: "int",
   session_id: "text",
@@ -186,7 +188,6 @@ export const taskPlansSource = defineSource({
     after_plans: "json",
     after_plans_count: "int",
     pause: "json",
-    plan_version: "int",
     plan_revision: "int",
     node_count: "int",
     open_count: "int",

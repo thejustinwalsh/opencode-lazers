@@ -11,6 +11,7 @@ import { existsSync } from "node:fs"
 import { appendFile, mkdir, rename, stat } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { readerPoolSnapshot } from "../streams/pool.ts"
+import { scheduleParkedCount } from "../tasks/schedule/hook.ts"
 import { drainStorageReport, setStorageTiming, type StorageTiming } from "./storage-timing.ts"
 
 export type HeapContext = { locations: number; cores: number }
@@ -66,6 +67,8 @@ export type HeapRecord = {
   storageSyncMs: number
   /** Stream reader pools of this process; absent when none exists. Worker counters lag one sample. */
   readerPools?: ReturnType<typeof readerPoolSnapshot>
+  /** Schedule projection refreshes parked after throwing; absent when none. */
+  scheduleParked?: number
 }
 
 const INTERVAL_MS = 60_000
@@ -148,6 +151,7 @@ export class HeapSampler {
           drainStorageReport(20),
         ),
         ...(pools.length > 0 ? { readerPools: pools } : {}),
+        ...(scheduleParkedCount() > 0 ? { scheduleParked: scheduleParkedCount() } : {}),
       }
       line = `${JSON.stringify(record)}\n`
     } catch {

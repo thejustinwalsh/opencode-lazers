@@ -1,7 +1,7 @@
 import { databaseChanges } from "../../database-events.ts"
 import type { TaskRepository } from "../../storage.ts"
 import { backfillPage, backfillState } from "./backfill.ts"
-import { drainTaskSchedule, hasScheduleWork } from "./drain.ts"
+import { drainTaskSchedule, hasScheduleWork, nextRetryAt, retryParked } from "./drain.ts"
 
 /**
  * The project core's owner of the projection: pages the backfill until the project is ready, and
@@ -13,6 +13,7 @@ export class TaskScheduleOwner {
   private running: Promise<void> | undefined
   private again = false
   private unsubscribe: (() => void) | undefined
+  private retry: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly repository: TaskRepository) {}
 
@@ -44,16 +45,17 @@ export class TaskScheduleOwner {
         }
         while (!this.closed) {
           const result = await this.repository.retryBusy(() =>
-            this.repository.atomic((db) =>
-              hasScheduleWork(db)
+            this.repository.atomic((db) => {
+              retryParked(db)
+              return hasScheduleWork(db)
                 ? drainTaskSchedule(db)
-                : { handled: 0, remaining: 0, failed: [] },
-            ),
+                : { handled: 0, remaining: 0, failed: [] }
+            }),
           )
-          // A failing entry stays queued and is retried by the next write's drain.
-          if (!result.remaining || result.failed.length) break
+          if (!result.remaining) break
           await Bun.sleep(0)
         }
+        this.scheduleRetry()
       }
     })().finally(() => {
       this.running = undefined
@@ -61,8 +63,23 @@ export class TaskScheduleOwner {
     return this.running
   }
 
+  /** One timer, only while an entry is parked; it fires at the earliest backoff. */
+  private scheduleRetry() {
+    if (this.retry || this.closed) return
+    const at = this.repository.read((db) => nextRetryAt(db))
+    if (at === undefined) return
+    this.retry = setTimeout(
+      () => {
+        this.retry = undefined
+        void this.settle()
+      },
+      Math.max(0, at - Date.now()),
+    )
+  }
+
   close(): void {
     this.closed = true
+    if (this.retry) clearTimeout(this.retry)
     this.unsubscribe?.()
   }
 }

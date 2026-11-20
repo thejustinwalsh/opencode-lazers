@@ -599,6 +599,7 @@ export function refreshTask(db: Database, ctx: RefreshContext, taskID: string): 
     classification: JSON.stringify(taskClassificationFor(db, project, task).current),
     source_plan: json(task.proposal.sourcePlan),
     search_text: searchText,
+    stale: 0,
     retired: disposition ? 1 : 0,
     disposition: disposition
       ? JSON.stringify({
@@ -679,7 +680,6 @@ export function refreshPlan(db: Database, ctx: RefreshContext, planID: string): 
     after_plans_count: plan.afterPlans.length,
     // The plan's own pause; a project or global pause shows on each queued row (`dispatch_pause`).
     pause: json(plan.own),
-    plan_version: plan.version,
     plan_revision: plan.revision,
     node_count: nodes.length,
     open_count: nodes.filter((node) => !TERMINAL.has(node.state)).length,

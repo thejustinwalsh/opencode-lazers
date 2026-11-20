@@ -24,7 +24,7 @@ const MODULE = schemaModules["task-schedule"]
 export const TASK_SCHEDULE_TABLES = MODULE.tables
 
 /** Rows of each projection table, dropped together on a generation change. */
-const TABLES_SQL = `
+export const TABLES_SQL = `
   CREATE TABLE task_schedule (
     seq INTEGER PRIMARY KEY,
     task_id TEXT NOT NULL UNIQUE,
@@ -38,6 +38,7 @@ const TABLES_SQL = `
     classification TEXT NOT NULL,
     source_plan TEXT,
     search_text TEXT NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
     retired INTEGER NOT NULL DEFAULT 0,
     disposition TEXT,
     plan_id TEXT,
@@ -88,7 +89,6 @@ const TABLES_SQL = `
     after_plans TEXT NOT NULL,
     after_plans_count INTEGER NOT NULL,
     pause TEXT,
-    plan_version INTEGER NOT NULL,
     plan_revision INTEGER NOT NULL,
     node_count INTEGER NOT NULL,
     open_count INTEGER NOT NULL
@@ -150,10 +150,21 @@ const TABLES_SQL = `
     WHERE t.retired=0 GROUP BY s.session_id, t.project_directory, t.bucket;
 `
 
-const SUPPORT_SQL = `
+/** `task_schedule_failed` parks entries whose refresh threw, out of the hot queue. */
+export const SUPPORT_SQL = `
   CREATE TABLE IF NOT EXISTS task_schedule_dirty (
     kind TEXT NOT NULL,
     ref TEXT NOT NULL,
+    PRIMARY KEY(kind, ref)
+  ) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS task_schedule_failed (
+    kind TEXT NOT NULL,
+    ref TEXT NOT NULL,
+    error TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    first_at INTEGER NOT NULL,
+    last_at INTEGER NOT NULL,
+    next_at INTEGER NOT NULL,
     PRIMARY KEY(kind, ref)
   ) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS task_schedule_state (
@@ -210,7 +221,8 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
   {
     table: "runner_nodes",
     event: "UPDATE",
-    columns: ["state", "reason", "ordinal"],
+    // `artifact`: a prerequisite's recorded artifact decides whether its successors still wait.
+    columns: ["state", "reason", "ordinal", "artifact"],
     queues: [["plan", "NEW.plan_id"]],
   },
   { table: "runner_dependencies", event: "INSERT", queues: [["plan", "NEW.plan_id"]] },
@@ -237,6 +249,7 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
     event: "INSERT",
     queues: [
       ["task", "NEW.task_id"],
+      ["plan", "NEW.plan_id"],
       ["reservations", projectOfPlan("NEW.plan_id")],
     ],
   },
@@ -246,16 +259,18 @@ export const SCHEDULE_TRIGGERS: readonly TriggerSpec[] = [
     columns: ["state", "hold_reason"],
     queues: [
       ["task", "NEW.task_id"],
+      ["plan", "NEW.plan_id"],
       ["reservations", projectOfPlan("NEW.plan_id")],
     ],
   },
   {
     table: "runner_transitions",
     event: "INSERT",
-    when: "NEW.event IN ('SCOPE_AMENDED','PREREQUISITE_OBSERVED')",
+    // A recorded landing releases the successors of the task, which a plan refresh re-derives.
+    when: "NEW.event IN ('SCOPE_AMENDED','PREREQUISITE_OBSERVED','TASK_INTEGRATION_RECORDED')",
     queues: [
       ["task", "NEW.task_id", "NEW.task_id IS NOT NULL"],
-      ["plan", "NEW.plan_id", "NEW.task_id IS NULL"],
+      ["plan", "NEW.plan_id", "NEW.task_id IS NULL OR NEW.event='TASK_INTEGRATION_RECORDED'"],
       ["reservations", projectOfPlan("NEW.plan_id"), "NEW.event='SCOPE_AMENDED'"],
     ],
   },
@@ -326,7 +341,7 @@ export function installTaskScheduleSchema(db: Database) {
   const drops = db
     .query<{ name: string; type: string }, []>(
       `SELECT name,type FROM sqlite_master WHERE (type IN ('table','view') AND name LIKE 'task_schedule%'
-         AND name NOT IN ('task_schedule_dirty','task_schedule_state'))`,
+         AND name NOT IN ('task_schedule_dirty','task_schedule_state','task_schedule_failed'))`,
     )
     .all()
   for (const { name } of drops.filter((row) => row.type === "view")) db.exec(`DROP VIEW ${name}`)

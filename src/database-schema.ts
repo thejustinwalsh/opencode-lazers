@@ -228,6 +228,7 @@ export const schemaModules = {
       "task_schedule_scopes",
       "task_schedule_counts",
       "task_schedule_dirty",
+      "task_schedule_failed",
       "task_schedule_state",
     ],
   },
