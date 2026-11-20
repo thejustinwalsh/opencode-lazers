@@ -155,7 +155,17 @@ export function withExtraFindings(
   extra: readonly FallowFinding[],
 ): FallowPackage {
   const seen = new Set(pkg.findings.map((f) => `${f.rule}\0${f.file}\0${f.line}`))
-  const fresh = extra.filter((f) => !seen.has(`${f.rule}\0${f.file}\0${f.line}`))
+  // Two comments of one kind and reason in one file share a base id; number the later ones, as the
+  // package's own findings are, so a disposition can tell which one was fixed.
+  const counts = new Map<string, number>()
+  for (const f of pkg.findings) counts.set(f.id, 1)
+  const fresh = extra
+    .filter((f) => !seen.has(`${f.rule}\0${f.file}\0${f.line}`))
+    .map((f) => {
+      const count = (counts.get(f.id) ?? 0) + 1
+      counts.set(f.id, count)
+      return count === 1 ? f : { ...f, id: `${f.id}#${count}` }
+    })
   if (fresh.length === 0) return pkg
   const warnings = pkg.summary.warnings + fresh.filter((f) => f.severity === "warn").length
   const errors = pkg.summary.errors + fresh.filter((f) => f.severity === "error").length
