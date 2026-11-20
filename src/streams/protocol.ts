@@ -25,7 +25,8 @@ export type ToReader =
     }
   | { type: "slide"; stream: number; delta: number; op?: number }
   | { type: "seek"; stream: number; anchor: Anchor; op?: number }
-  | { type: "revision"; revision: number } // main thread committed; refresh affected streams
+  /** The main thread committed; streams of sources reading `tables` refresh (all when omitted). */
+  | { type: "revision"; revision: number; tables?: readonly string[] }
   | { type: "return"; buffer: ArrayBuffer } // transfer tier: buffer goes home
   | { type: "close"; stream: number }
   | { type: "stats"; id: number }

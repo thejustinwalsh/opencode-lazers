@@ -7,6 +7,11 @@ type Group = {
   listeners: Set<Listener>
   pending?: ReturnType<typeof setImmediate>
 }
+type TableFeed = {
+  listeners: Set<(tables: ReadonlySet<string>) => void>
+  changed: Set<string>
+  pending?: ReturnType<typeof setImmediate>
+}
 type RevisionPublisher = { read(): number; emit(version: number): Promise<void> }
 type PublisherGroup = {
   members: Set<RevisionPublisher>
@@ -21,10 +26,13 @@ type PublisherGroup = {
 /** Share native SQLite invalidations across this OpenCode service's locations. */
 export class DatabaseChangeHub {
   private readonly groups = new Map<string, Group>()
+  private readonly tableFeeds = new Map<string, TableFeed>()
   /** SQLite hooks run before commit; defer reads until the synchronous statement ends. */
   track(db: Database, path: string) {
     const key = realpathSync(path)
     const hook = (_db: Database, table: string) => {
+      const feed = this.tableFeeds.get(key)
+      if (feed) this.noteTable(feed, table)
       if (table !== "task_changes" && table !== "observation_revisions") return
       const group = this.groups.get(key)
       if (group) this.invalidate(group)
@@ -32,6 +40,45 @@ export class DatabaseChangeHub {
     db.onInsert = hook
     db.onUpdate = hook
     db.onDelete = hook
+  }
+
+  /** Collect the tables written in this event-loop turn; listeners hear them once, after it. */
+  private noteTable(feed: TableFeed, table: string) {
+    feed.changed.add(table)
+    if (feed.pending) return
+    feed.pending = setImmediate(() => {
+      feed.pending = undefined
+      const tables = feed.changed
+      feed.changed = new Set()
+      for (const listener of [...feed.listeners]) {
+        try {
+          section("dbchanges:tables", () => listener(tables))
+        } catch {
+          /* Other listeners still receive the tables. */
+        }
+      }
+    })
+  }
+
+  /**
+   * The names of the tables written through tracked connections of this database, coalesced to
+   * one call per event-loop turn. Writes from other processes are not seen (as with `subscribe`).
+   */
+  subscribeTables(path: string, listener: (tables: ReadonlySet<string>) => void) {
+    const key = realpathSync(path)
+    let feed = this.tableFeeds.get(key)
+    if (!feed) {
+      feed = { listeners: new Set(), changed: new Set() }
+      this.tableFeeds.set(key, feed)
+    }
+    const target = feed
+    target.listeners.add(listener)
+    return () => {
+      target.listeners.delete(listener)
+      if (target.listeners.size) return
+      this.tableFeeds.delete(key)
+      if (target.pending) clearImmediate(target.pending)
+    }
   }
 
   private invalidate(group: Group) {

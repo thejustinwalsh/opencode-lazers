@@ -15,6 +15,8 @@ export type OrderTerm = { column: string; direction: "asc" | "desc" }
 export type SourceDefinition<F, C extends Columns> = {
   name: string // "tasks.list"
   table: string // FROM clause (table or view)
+  /** Every table the FROM clause reads. Defaults to `[table]`; required when `table` is a join. */
+  tables?: readonly string[]
   key: readonly (keyof C & string)[] // stable row key
   /** Each order is total: it ends with the key columns. Every order column is a list column. */
   orders: Readonly<Record<string, readonly OrderTerm[]>>
@@ -26,6 +28,8 @@ export type SourceDefinition<F, C extends Columns> = {
 
 export type Source<F, C extends Columns> = SourceDefinition<F, C> & {
   readonly keyColumns: readonly string[]
+  /** The tables whose writes can change this source's rows. */
+  readonly readsTables: readonly string[]
 }
 
 /**
@@ -65,7 +69,14 @@ export function defineSource<F, C extends Columns>(
     if (terms.length < key.length || [...tail].sort().join() !== [...key].sort().join())
       fail(`order ${order} must end with the key ${key.join(",")}`)
   }
-  const source: Source<F, C> = { ...definition, keyColumns: key }
+  const tables = definition.tables ?? [definition.table]
+  if (tables.length === 0) fail("names no tables")
+  for (const table of tables)
+    if (!identifier.test(table))
+      fail(
+        `table ${table} is not a plain identifier; name the tables the FROM clause reads in \`tables\``,
+      )
+  const source: Source<F, C> = { ...definition, keyColumns: key, readsTables: tables }
   registry.set(name, source as unknown as Source<never, Columns>)
   return source
 }
