@@ -6,4 +6,5 @@ export const unrelatedConfig = {
 }
 
 const runtimePrefix = `WORKER_${"STARTED"}`
-void [unrelatedConfig, runtimePrefix, "CONFIG_ONLY_VALUE"]
+const event = "PRIVATE_API_KEY"
+void [unrelatedConfig, runtimePrefix, event, "CONFIG_ONLY_VALUE"]

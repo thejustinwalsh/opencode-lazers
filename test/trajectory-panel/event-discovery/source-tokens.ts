@@ -1,130 +1,186 @@
-export type TokenKind = "identifier" | "string" | "template" | "punctuation"
+import { createScanner, LanguageVariant, SyntaxKind } from "typescript/unstable/ast"
+
+export type TokenKind =
+  | "identifier"
+  | "string"
+  | "template"
+  | "template-head"
+  | "template-middle"
+  | "template-tail"
+  | "regex"
+  | "literal"
+  | "punctuation"
 
 export interface Token {
   kind: TokenKind
   text: string
   value?: string
+  scope: number
 }
 
-function quotedEnd(source: string, start: number) {
-  const quote = source[start]!
-  let index = start + 1
-  while (index < source.length) {
-    if (source[index] === "\\") index += 2
-    else if (source[index++] === quote) break
+export interface TokenizedSource {
+  tokens: Token[]
+  scopeParents: Map<number, number | undefined>
+  braceScopes: Map<number, number>
+}
+
+const REGEX_PREFIX_KEYWORDS = new Set([
+  "await",
+  "case",
+  "delete",
+  "do",
+  "else",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "throw",
+  "typeof",
+  "void",
+  "yield",
+])
+
+const EXPRESSION_KEYWORDS = new Set(["false", "null", "super", "this", "true"])
+const TOKEN_KIND_BY_SYNTAX_KIND = new Map<SyntaxKind, TokenKind>([
+  [SyntaxKind.StringLiteral, "string"],
+  [SyntaxKind.NoSubstitutionTemplateLiteral, "template"],
+  [SyntaxKind.TemplateHead, "template-head"],
+  [SyntaxKind.TemplateMiddle, "template-middle"],
+  [SyntaxKind.TemplateTail, "template-tail"],
+  [SyntaxKind.RegularExpressionLiteral, "regex"],
+  [SyntaxKind.NumericLiteral, "literal"],
+  [SyntaxKind.BigIntLiteral, "literal"],
+])
+
+function canStartRegex(previous: Token | undefined) {
+  if (!previous) return true
+  if (REGEX_PREFIX_KEYWORDS.has(previous.text)) return true
+  if (
+    ["identifier", "literal", "regex", "string", "template", "template-tail"].includes(
+      previous.kind,
+    )
+  )
+    return previous.kind === "identifier" && REGEX_PREFIX_KEYWORDS.has(previous.text)
+  if ([")", "]", "}", "++", "--"].includes(previous.text)) return false
+  return true
+}
+
+function tokenKind(kind: SyntaxKind, scanner: ReturnType<typeof createScanner>): TokenKind {
+  if (scanner.isIdentifier() && !EXPRESSION_KEYWORDS.has(scanner.getTokenText()))
+    return "identifier"
+  return (
+    TOKEN_KIND_BY_SYNTAX_KIND.get(kind) ??
+    (EXPRESSION_KEYWORDS.has(scanner.getTokenText()) ? "literal" : "punctuation")
+  )
+}
+
+function scopeToken(
+  kind: SyntaxKind,
+  scanner: ReturnType<typeof createScanner>,
+  tokens: Token[],
+  scopeParents: Map<number, number | undefined>,
+  braceScopes: Map<number, number>,
+  scopes: number[],
+  nextScope: { value: number },
+) {
+  const text = scanner.getTokenText()
+  const token: Token = {
+    kind: tokenKind(kind, scanner),
+    text,
+    value: scanner.getTokenValue(),
+    scope: scopes.at(-1)!,
   }
-  return index
+  const index = tokens.push(token) - 1
+  if (kind === SyntaxKind.OpenBraceToken) {
+    const scope = nextScope.value++
+    scopeParents.set(scope, scopes.at(-1))
+    braceScopes.set(index, scope)
+    scopes.push(scope)
+  } else if (kind === SyntaxKind.CloseBraceToken && scopes.length > 1) scopes.pop()
+  return token
 }
 
-function commentEnd(source: string, start: number) {
-  if (source[start + 1] === "/") {
-    let index = start + 2
-    while (index < source.length && source[index] !== "\n") index++
-    return index
+function nextScannerToken(scanner: ReturnType<typeof createScanner>, previous: Token | undefined) {
+  const kind = scanner.scan()
+  return kind === SyntaxKind.SlashToken && canStartRegex(previous)
+    ? scanner.reScanSlashToken()
+    : kind
+}
+
+function templateContinuation(
+  kind: SyntaxKind,
+  scanner: ReturnType<typeof createScanner>,
+  tokens: Token[],
+  scopeParents: Map<number, number | undefined>,
+  braceScopes: Map<number, number>,
+  scopes: number[],
+  nextScope: { value: number },
+  templateExpressions: Array<{ braceDepth: number }>,
+) {
+  if (kind !== SyntaxKind.CloseBraceToken || !templateExpressions.length) return
+  const expression = templateExpressions.at(-1)!
+  if (expression.braceDepth > 0) {
+    expression.braceDepth--
+    return
   }
-  const end = source.indexOf("*/", start + 2)
-  return end < 0 ? source.length : end + 2
+
+  const templateKind = scanner.reScanTemplateToken(false)
+  const token = scopeToken(
+    templateKind,
+    scanner,
+    tokens,
+    scopeParents,
+    braceScopes,
+    scopes,
+    nextScope,
+  )
+  if (templateKind === SyntaxKind.TemplateTail) templateExpressions.pop()
+  return token
 }
 
-function embeddedTokenEnd(source: string, index: number) {
-  const character = source[index]!
-  if (character === "'" || character === '"') return quotedEnd(source, index)
-  if (character === "`") return templateEnd(source, index).end
-  if (character === "/" && ["/", "*"].includes(source[index + 1] ?? ""))
-    return commentEnd(source, index)
-  return index + 1
+function updateTemplateExpressions(kind: SyntaxKind, expressions: Array<{ braceDepth: number }>) {
+  if (kind === SyntaxKind.TemplateHead) expressions.push({ braceDepth: 0 })
+  else if (kind === SyntaxKind.OpenBraceToken && expressions.length)
+    expressions.at(-1)!.braceDepth++
 }
 
-function templateExpressionEnd(source: string, start: number) {
-  let depth = 1
-  let index = start
-  while (index < source.length && depth > 0) {
-    const character = source[index]!
-    if (character === "{") depth++
-    else if (character === "}") depth--
-    index = embeddedTokenEnd(source, index)
-  }
-  return index
-}
-
-function templateEnd(source: string, start: number): { end: number; value?: string } {
-  let index = start + 1
-  let value = ""
-  let interpolated = false
-  while (index < source.length) {
-    const character = source[index]!
-    if (character === "\\") {
-      value += source[index + 1] ?? ""
-      index += 2
-    } else if (character === "`") {
-      return { end: index + 1, ...(interpolated ? {} : { value }) }
-    } else if (character === "$" && source[index + 1] === "{") {
-      interpolated = true
-      index = templateExpressionEnd(source, index + 2)
-    } else {
-      value += character
-      index++
-    }
-  }
-  return { end: index }
-}
-
-function triviaEnd(source: string, start: number) {
-  let index = start
-  while (index < source.length) {
-    if (/\s/.test(source[index]!)) index++
-    else if (source[index] === "/" && ["/", "*"].includes(source[index + 1] ?? ""))
-      index = commentEnd(source, index)
-    else break
-  }
-  return index
-}
-
-function punctuation(source: string, index: number): Token {
-  const operator = source.slice(index, index + 3)
-  if (operator === "...") return { kind: "punctuation", text: operator }
-  const pair = source.slice(index, index + 2)
-  if (["?.", "=>", "??"].includes(pair)) return { kind: "punctuation", text: pair }
-  return { kind: "punctuation", text: source[index]! }
-}
-
-function punctuationLength(token: Token) {
-  return token.text.length
-}
-
-export function tokensOf(source: string): Token[] {
+/** Tokenizes TypeScript using its scanner, including regular-expression and template literals. */
+export function tokensOf(source: string): TokenizedSource {
+  const scanner = createScanner(true, LanguageVariant.JSX, source)
   const tokens: Token[] = []
-  let index = 0
-  while ((index = triviaEnd(source, index)) < source.length) {
-    const character = source[index]!
-    if (character === "'" || character === '"') {
-      const end = quotedEnd(source, index)
-      tokens.push({
-        kind: "string",
-        text: source.slice(index, end),
-        value: source.slice(index + 1, Math.max(index + 1, end - 1)),
-      })
-      index = end
-    } else if (character === "`") {
-      const template = templateEnd(source, index)
-      tokens.push({
-        kind: "template",
-        text: source.slice(index, template.end),
-        ...(template.value === undefined ? {} : { value: template.value }),
-      })
-      index = template.end
-    } else if (/[A-Za-z_$]/.test(character)) {
-      const start = index++
-      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index]!)) index++
-      const text = source.slice(start, index)
-      tokens.push({ kind: "identifier", text })
-    } else {
-      const token = punctuation(source, index)
-      tokens.push(token)
-      index += punctuationLength(token)
+  const scopeParents = new Map<number, number | undefined>([[0, undefined]])
+  const braceScopes = new Map<number, number>()
+  const scopes = [0]
+  const nextScope = { value: 1 }
+  const templateExpressions: Array<{ braceDepth: number }> = []
+  let previous: Token | undefined
+  let kind = nextScannerToken(scanner, previous)
+
+  while (kind !== SyntaxKind.EndOfFile) {
+    const continuation = templateContinuation(
+      kind,
+      scanner,
+      tokens,
+      scopeParents,
+      braceScopes,
+      scopes,
+      nextScope,
+      templateExpressions,
+    )
+    if (continuation) {
+      previous = continuation
+      kind = nextScannerToken(scanner, previous)
+      continue
     }
+
+    const token = scopeToken(kind, scanner, tokens, scopeParents, braceScopes, scopes, nextScope)
+    updateTemplateExpressions(kind, templateExpressions)
+    previous = token
+    kind = nextScannerToken(scanner, previous)
   }
-  return tokens
+
+  return { tokens, scopeParents, braceScopes }
 }
 
 function closingToken(open: string) {
