@@ -1,4 +1,4 @@
-import type { ProgressRow } from "../runner/store.ts"
+import type { ProgressReportRow as ProgressRow } from "../runner/store.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { publicProgressError, visibleProgressText } from "./privacy.ts"
 

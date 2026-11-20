@@ -6,7 +6,7 @@ import type {
   RetainedVerificationInspection,
   RetainedVerificationProjection,
 } from "./retained-verification/store.ts"
-import type { RunnerStore } from "./store.ts"
+import { decodePlanCursor, encodePlanCursor, type RunnerStore } from "./store.ts"
 import type { VerificationTimeoutAmendment } from "./verification-timeout.ts"
 import type { DelegatedAgentStatus } from "./delegated-agent-capacity.ts"
 import { PlanInput, type ExecutionPlanWait } from "./schema.ts"
@@ -23,7 +23,7 @@ const CompactInspectPlanInput = z.strictObject({
    * the project-wide full view (no planID), plans per page.
    */
   limit: z.number().int().min(1).max(1000).optional(),
-  /** Project-wide full view only: `paging.plans.next` from a prior result, for the next plans. */
+  /** Project-wide views: `paging.plans.next` from a prior result, for the next plans. */
   plansAfter: z.string().min(1).max(200).optional(),
   /** Full view only: `paging.<list>.next` from a prior result, to read the next older page. */
   activityBefore: z.number().int().min(0).optional(),
@@ -132,6 +132,8 @@ export type CompactInspectionSummary = {
     waitingOnPlansComplete: boolean
     counts: { nodes: number; nodesByState: Record<string, number> }
   }>
+  /** `more` is true when plans follow: pass `next` back as `plansAfter`. Never a silent cut. */
+  paging: { plans: { next: string | null; returned: number; more: boolean } }
 }
 
 type PlanRow = {
@@ -143,7 +145,8 @@ type PlanRow = {
   reason: string | null
   model: string | null
   artifact: string | null
-  body: string
+  /** 1 when the stored body is JSON; the body itself is never read for the compact views. */
+  bodyValid: number
   title: string | null
   objective: string
   priority: number | null
@@ -205,7 +208,7 @@ const model = (value: string | null): unknown => {
   return parsed && typeof parsed === "object" ? parsed : null
 }
 
-function waitingOnPlans(store: RunnerStore, plan: Pick<PlanRow, "body">) {
+function waitingOnPlans(store: RunnerStore, plan: { body: string }) {
   let prerequisites: string[] | undefined
   try {
     const parsed = PlanInput.safeParse(JSON.parse(plan.body))
@@ -216,23 +219,70 @@ function waitingOnPlans(store: RunnerStore, plan: Pick<PlanRow, "body">) {
   return store.waitingOnPlanFacts(prerequisites)
 }
 
-function planRows(store: RunnerStore, planID?: string): PlanRow[] {
-  return store.atomic((db) =>
+/**
+ * The prerequisites a compact row waits on, from the `afterPlans` the row query already
+ * extracted. The full view parses the whole body against the plan schema; plans are validated when
+ * they are stored, so the extracted list is the same one. A body that is not JSON, or an
+ * `afterPlans` that is not a list of strings, reads as unknown, as a failed parse does there.
+ */
+function waitingOnCompact(store: RunnerStore, plan: Pick<PlanRow, "bodyValid" | "afterPlans">) {
+  let prerequisites: string[] | undefined
+  if (plan.bodyValid) {
+    if (plan.afterPlans === null) prerequisites = []
+    else {
+      const parsed = json(plan.afterPlans)
+      if (Array.isArray(parsed) && parsed.every((id) => typeof id === "string"))
+        prerequisites = parsed as string[]
+    }
+  }
+  return store.waitingOnPlanFacts(prerequisites)
+}
+
+/**
+ * Compact plan rows in display order. A page of `limit` rows after `after` reads `limit + 1` rows
+ * so the caller knows whether more plans follow; `next` is then the cursor of the last row kept.
+ * Only the columns and body fields a compact row shows are read, never the whole body.
+ */
+function planRows(
+  store: RunnerStore,
+  planID?: string,
+  page?: { limit: number; after?: string },
+): { rows: PlanRow[]; next: string | null } {
+  const cursor = decodePlanCursor(page?.after)
+  const priority = planPrioritySortSQL("body")
+  const size = page ? page.limit : undefined
+  const read = store.atomic((db) =>
     db
-      .query<PlanRow, (string | null)[]>(
-        `SELECT id,owner,revision,version,state,reason,model,artifact,body,
+      .query<PlanRow & { plan_key: number; plan_rowid: number }, (string | number | null)[]>(
+        `SELECT id,owner,revision,version,state,reason,model,artifact,json_valid(body) AS bodyValid,
           json_extract(body,'$.title') AS title,
           json_extract(body,'$.objective') AS objective,
           json_extract(body,'$.priority') AS priority,
           COALESCE(json_extract(body,'$.workspaceMode'),'shared') AS workspaceMode,
           json_extract(body,'$.afterPlans') AS afterPlans,
-          json_extract(body,'$.integrationOrder') AS integrationOrder
+          json_extract(body,'$.integrationOrder') AS integrationOrder,
+          ${priority} AS plan_key,rowid AS plan_rowid
          FROM runner_plans
          WHERE project_directory=? AND (? IS NULL OR id=?)
-         ORDER BY ${planPrioritySortSQL("body")},rowid`,
+         ${cursor ? `AND (${priority}>? OR (${priority}=? AND rowid>?))` : ""}
+         ORDER BY ${priority},rowid${size ? ` LIMIT ${size + 1}` : ""}`,
       )
-      .all(store.repository.projectDirectory, planID ?? null, planID ?? null),
+      .all(
+        store.repository.projectDirectory,
+        planID ?? null,
+        planID ?? null,
+        ...(cursor ? [cursor.key, cursor.key, cursor.rowid] : []),
+      ),
   )
+  const kept = size ? read.slice(0, size) : read
+  const last = kept.at(-1)
+  return {
+    rows: kept.map(({ plan_key: _key, plan_rowid: _rowid, ...row }) => row as PlanRow),
+    next:
+      size && read.length > size && last
+        ? encodePlanCursor({ key: last.plan_key, rowid: last.plan_rowid })
+        : null,
+  }
 }
 
 function nodeLatestTransitions(db: Database, planID: string) {
@@ -370,7 +420,7 @@ function compactPlan(store: RunnerStore, plan: PlanRow, capacity?: DelegatedAgen
         : null,
     },
   }
-  const prerequisiteFacts = waitingOnPlans(store, plan)
+  const prerequisiteFacts = waitingOnCompact(store, plan)
   return {
     mode: "compact" as const,
     plan: planDetail,
@@ -449,7 +499,7 @@ function compactPlanSummary(
       )
       .all(plan.id),
   )
-  const prerequisiteFacts = waitingOnPlans(store, plan)
+  const prerequisiteFacts = waitingOnCompact(store, plan)
   return {
     id: plan.id,
     owner: plan.owner,
@@ -562,6 +612,14 @@ function retainedInspection(store: RunnerStore, plan: InspectablePlan) {
  */
 export const FULL_VIEW_PLANS_PER_PAGE = 25
 
+/**
+ * Compact plans per page of the project-wide list when `limit` is not given. A compact row is
+ * about 1 KB (identity, title, objective, schedule, node-state counts), so 200 rows stay near
+ * 200 KB: estimated, not measured on live data. The list is never cut silently: a page that
+ * stops early says `paging.plans.more: true` and carries the cursor to pass as `plansAfter`.
+ */
+export const COMPACT_PLANS_PER_PAGE = 200
+
 export function inspectPlan(
   store: RunnerStore,
   input: InspectPlanInput,
@@ -611,7 +669,10 @@ export function inspectPlan(
       ),
     }
   }
-  const plans = planRows(store, input.planID)
+  const page = input.planID
+    ? undefined
+    : { limit: input.limit ?? COMPACT_PLANS_PER_PAGE, after: input.plansAfter }
+  const { rows: plans, next } = planRows(store, input.planID, page)
   if (input.planID && !plans.length) throw new Error("Plan not found")
   return input.planID
     ? compactPlan(store, plans[0]!, capacity)
@@ -619,5 +680,6 @@ export function inspectPlan(
         mode: "compact",
         delegatedAgentCapacity: capacity ?? null,
         plans: plans.map((plan) => compactPlanSummary(store, plan, capacity)),
+        paging: { plans: { next, returned: plans.length, more: next !== null } },
       }
 }

@@ -1412,11 +1412,40 @@ function taskView(
   }
 }
 
+type ProgressCounts = {
+  facts: number
+  commentary: number
+  gaps: number
+  steps: number
+  usageSnapshots: number
+}
+
+/**
+ * Folds the newest progress rows a page at a time: each row is projected and counted, then
+ * dropped, so the raw payloads of the window are never held together. The projected facts are
+ * what the report keeps.
+ */
+function foldProgress(store: RunnerStore, attemptIDs: readonly string[]) {
+  const window = store.progressReportWindow(attemptIDs)
+  const counts: ProgressCounts = { facts: 0, commentary: 0, gaps: 0, steps: 0, usageSnapshots: 0 }
+  const facts: Record<string, unknown>[] = []
+  for (const page of window.pages)
+    for (const row of page) {
+      facts.push(projectProgressFact(row))
+      counts.facts++
+      if (row.kind === "commentary") counts.commentary++
+      else if (row.kind === "gap") counts.gaps++
+      else if (row.kind === "step") counts.steps++
+      else if (row.kind === "usage-snapshot") counts.usageSnapshots++
+    }
+  return { facts, counts, truncated: window.truncated }
+}
+
 function coverageView(
   allAttempts: AttemptEntry[],
   reads: SessionReads,
   attemptViews: ReturnType<typeof attemptView>[],
-  progressRows: ProgressRow[],
+  progress: ProgressCounts,
   progressTruncated: boolean,
   busy: boolean,
   options: InspectOptions,
@@ -1443,13 +1472,13 @@ function coverageView(
       (attempt) => attempt.sessionStatus !== "available" && !attempt.takeover,
     ).length,
     workerProgress: {
-      facts: progressRows.length,
+      facts: progress.facts,
       truncated: progressTruncated,
-      commentary: progressRows.filter((row) => row.kind === "commentary").length,
-      automaticFacts: progressRows.filter((row) => row.kind !== "commentary").length,
-      recoveryGaps: progressRows.filter((row) => row.kind === "gap").length,
-      additiveStepMeasurements: progressRows.filter((row) => row.kind === "step").length,
-      cumulativeUsageSnapshots: progressRows.filter((row) => row.kind === "usage-snapshot").length,
+      commentary: progress.commentary,
+      automaticFacts: progress.facts - progress.commentary,
+      recoveryGaps: progress.gaps,
+      additiveStepMeasurements: progress.steps,
+      cumulativeUsageSnapshots: progress.usageSnapshots,
     },
   }
 }
@@ -1578,12 +1607,14 @@ export async function inspectTrajectory(
   )
   if (options.includeMessages === false && !host.status)
     throw new Error("Metadata-only trajectory status is unavailable")
-  const progressRows = store.progressFacts(allAttempts.map(({ attempt }) => attempt.id))
-  const progressTruncated = progressRows.length > 10_000
-  const visibleProgressRows = progressTruncated ? progressRows.slice(-10_000) : progressRows
+  const folded = foldProgress(
+    store,
+    allAttempts.map(({ attempt }) => attempt.id),
+  )
+  const progressTruncated = folded.truncated
   const reads = await readAttemptSessions(host, projectID, allAttempts, options, stats)
 
-  const projectedProgressFacts = visibleProgressRows.map(projectProgressFact)
+  const projectedProgressFacts = folded.facts
   const { rawEvents, allChecks, checksByPlan } = collectTrajectoryEvents(
     rawPlans,
     allAttempts,
@@ -1665,7 +1696,7 @@ export async function inspectTrajectory(
       allAttempts,
       reads,
       attemptViews,
-      visibleProgressRows,
+      folded.counts,
       progressTruncated,
       busy,
       options,
