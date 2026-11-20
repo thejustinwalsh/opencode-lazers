@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { makeFixture, taskID } from "../../test/trajectory/fixture.ts"
 import { RetentionService } from "./service.ts"
+import { AUDIT_RECEIPTS_KEPT } from "./retention.ts"
 import type { WorktreeProbe } from "./worktrees.ts"
 
 const fixtures: Array<ReturnType<typeof makeFixture>> = []
@@ -119,14 +120,8 @@ test("a purge removes only the clean merged worktree, through the native API, an
   expect(fixture.repository.get(taskID)).toBeDefined()
 })
 
-test("automatic retention is off by default, runs only at a quiet point and then waits its interval", async () => {
+test("by default only superseded rows are purged, at a quiet point and then after the interval", async () => {
   const { service, fixture, advance } = setup()
-  await service.autoTick()
-  expect((await service.status()).lastRun).toBeNull()
-  expect(service.settings()).toEqual({ autoDays: null })
-  service.setAuto(30)
-  expect(service.settings()).toEqual({ autoDays: 30 })
-
   fixture.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET state='running' WHERE id=?").run(fixture.attempts[0]!.id),
   )
@@ -136,14 +131,43 @@ test("automatic retention is off by default, runs only at a quiet point and then
   fixture.store.atomic((db) =>
     db.query("UPDATE runner_attempts SET state='failed' WHERE id=?").run(fixture.attempts[0]!.id),
   )
+  // Bulky audit receipts beyond the newest few: dead once newer audits exist.
+  const audit = (n: number) => JSON.stringify({ status: "audited", pad: "x".repeat(70_000), n })
+  fixture.store.atomic((db) => {
+    for (let n = 0; n < 8; n++)
+      db.query("INSERT INTO runner_commands VALUES(?,?,?,?)").run(
+        fixture.directory,
+        `audit-${n}`,
+        `f${n}`,
+        audit(n),
+      )
+  })
+  const planDetail = () =>
+    fixture.store.atomic(
+      (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM runner_progress").get()!.n,
+    )
+  const detailBefore = planDetail()
   await service.autoTick()
   const first = (await service.status()).lastRun
-  expect(first).toMatchObject({ trigger: "auto", done: true })
+  expect(first).toMatchObject({ trigger: "auto", days: 0, done: true })
+  expect(first?.removed["audit-receipts"]?.rows).toBe(8 - AUDIT_RECEIPTS_KEPT)
+  expect(first?.removed["audit-receipts"]?.bytes).toBeGreaterThan(70_000)
+  expect(first?.worktrees).toEqual([])
+  // Nothing that depends on an age is touched without the owner's choice.
+  expect(planDetail()).toBe(detailBefore)
   await service.autoTick()
   expect((await service.status()).lastRun?.id).toBe(first!.id)
   advance(7 * 3_600_000)
   await service.autoTick()
-  expect((await service.status()).lastRun?.id).toBeGreaterThan(first!.id)
+  const second = (await service.status()).lastRun
+  expect(second?.id).toBeGreaterThan(first!.id)
+  expect(second?.removed).toEqual({})
+
+  service.setAuto(30)
+  expect(service.settings()).toEqual({ autoDays: 30 })
+  advance(7 * 3_600_000)
+  await service.autoTick()
+  expect((await service.status()).lastRun).toMatchObject({ trigger: "auto", days: 30, done: true })
   service.setAuto(null)
   expect(service.settings()).toEqual({ autoDays: null })
 })

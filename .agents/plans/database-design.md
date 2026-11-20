@@ -66,11 +66,72 @@ retention of settled history.
 
 ## Order
 
-1. Trace readers and writers for every table above (finish the interrupted search).
+1. Trace readers and writers for every table above. **Done** (see "Traced facts" and
+   "Corrections to the trace").
 2. Dimension tables and integer keys, with migrations that keep old rows readable.
-3. Per-table compaction in the order of the table, each as its own change with
-   before and after sizes.
-4. Retention rules in `src/retention`, then incremental vacuum.
+   **Not started: design below.**
+3. Per-table compaction. **Done:** `task_changes` (counter rows), `recovery_progress_facts`
+   (bounded window), `runner_conflict_scans` (dropped), outbox receipts (child rows), the four
+   unused indexes. **Left:** `native_tool_calls` / `runner_progress` payloads, check receipts,
+   `runner_transitions` payloads (see below).
+4. Retention rules in `src/retention`, then incremental vacuum. **Done:** superseded rows are
+   purged by default; the retention pass returns free pages in 2000-page steps; the one-time
+   `VACUUM` is `scripts/compact-database.ts`.
+
+### Corrections to the trace
+
+| Claim in the trace                                                                            | Found                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Every tool fact is written to `native_tool_calls` and `runner_progress` with the same payload | The payloads differ. `native_tool_calls.payload` merges every observation of a call (hook before, hook after, native events) and applies `targetOnlyTool` and status provenance; `runner_progress.payload` of kind `tool` is merged separately by `appendIn` and, on a fixture run, lacked the `before` observation. A shared copy would need a semantic delta, and `runner_progress.payload` has 52 statements in 16 files (observability, models, trajectory, recovery, tasks) that read it. Left. |
+| Same check receipt in `runner_effects.receipt`, `runner_evidence.body` and a progress row     | The progress verification row (`recorder.ts` `recordVerification`) is a summary (check id, result, exit code, timing), not the receipt. The full receipt is in effects (inside a history entry) and evidence. The duplicated part is bounded by `runner_evidence` (11 MB live); not worth the risk to the readers of `receipt.check`. Left.                                                                                                                                                          |
+| `runner_commands` receipts need a hash and outcome for replay                                 | Replay returns the whole receipt (`store.command`, `store.priorCommand`), so the receipt stays. The bytes are audit receipts. On a fixture of 2200 receipts (every eleventh a 690 KB audit receipt, the rest 2 KB; 142 MB), the pass removed 195 rows and 134.6 MB, and the file went from 36122 to 3122 pages. They are superseded by newer audits, which the age-independent kind `audit-receipts` already removes. It now runs by default.                                                        |
+| One of `runner_transitions_lookup` / `_task_latest` is redundant                              | All four are used by distinct statements (EXPLAIN QUERY PLAN with and without each).                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `task_changes` readers take only `MAX(id)`                                                    | Per project and per `kind`, and `tasks.created_version` takes the id from the insert trigger.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Stop the facts triggers                                                                       | The live radar diagnostic reads the newest 257 facts, so a window of 1024 per project stays.                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+### Lifecycle of each growing table
+
+| Table                                                              | Read by                                       | A row is dead when                                                | Removed by                                                                                |
+| ------------------------------------------------------------------ | --------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `runner_commands` (audit receipts)                                 | idempotent replay of the same request id      | a newer audit receipt exists for the project (newest 5 stay)      | kind `audit-receipts`, **by default** (age-independent)                                   |
+| `task_changes`                                                     | `MAX(id)` readers                             | never grows (one row per project and kind)                        | n/a                                                                                       |
+| `recovery_progress_facts`                                          | live radar diagnostic (newest 257), consumers | outside the newest 1024 per project and behind every consumer     | trigger prune (64 per write) and kind `recovery-fact-window`, **by default**              |
+| `runner_progress`, `native_tool_calls`, `runner_transitions` noise | trajectory, radar, models ledger, recovery    | the plan is finished and untouched for the owner's chosen age     | kinds `progress`, `tool-calls`, `transitions`, only with an age (automatic when set)      |
+| `runner_outbox` (+ receipts)                                       | delivery, inspection                          | delivered or superseded for a retired plan                        | kind `notices`, with an age                                                               |
+| `runner_effects`, `runner_evidence`, `runner_attempts`             | integration proofs, inspection, takeover      | never: retained by contract (the preview lists them as protected) | none                                                                                      |
+| `audit_sections`, `audit_runs`                                     | audit tools                                   | not decided: whole Fallow reports; needs the audit owner          | none yet                                                                                  |
+| `model_evidence_snapshots`                                         | Models price history                          | superseded and older than the age                                 | kind `model-snapshots`, with an age; lane D decides whether older generations need an age |
+
+An age is the owner's choice, never a default: it decides how long finished work stays
+inspectable. Only rows with a superseding successor are removed without one.
+
+### Integer identity: design (not built)
+
+Counts of statements outside tests: `runner_transitions` 70 in 26 files, `runner_progress` 52
+in 16 files, `recovery_progress_facts` 10 in 5 files. The last is now bounded to 1024 rows
+per project (about 1 MB), so integer keys there save nothing and are dropped from the plan.
+
+For the other two, converting readers together with writers in one branch would touch the
+observability, models and trajectory read paths that other work is changing. The exact
+sequence that keeps every reader working at each step:
+
+1. Add `lazers_plan_keys(n INTEGER PRIMARY KEY, plan_id TEXT UNIQUE)` (and the same for
+   attempts) in the `runner` module. A write path takes the key with
+   `INSERT ... ON CONFLICT DO NOTHING RETURNING n`.
+2. Add nullable `plan_n` (and `attempt_n`) columns to `runner_transitions` and
+   `runner_progress`; new rows fill them. Existing rows are filled in pages of 1000 by an
+   idle step in the retention pass (`UPDATE ... WHERE plan_n IS NULL LIMIT`), reporting rows.
+3. Add the integer indexes next to the text ones, run EXPLAIN over all 122 statements
+   (script kept in the review notes), and move one reader file per commit from
+   `plan_id=?` to `plan_n=(SELECT n FROM lazers_plan_keys WHERE plan_id=?)`.
+4. When no statement names the text column, drop the text indexes, then the text column with
+   `ALTER TABLE DROP COLUMN`, followed by a `VACUUM` window (the table rewrite is the one big
+   step, so it belongs to `scripts/compact-database.ts`).
+
+Saving estimate: `plan_id`, `task_id`, `attempt_id` and `session_id` are 36 to 44 bytes
+each and repeat on every row (117 k progress rows, 440 k transitions): about 150 bytes a
+row, 80 MB for progress and 60 MB for transitions plus their text indexes, before the
+retention of old plans.
 
 ## Traced facts (read-only search, HEAD d1cb7900)
 

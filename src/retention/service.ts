@@ -174,7 +174,7 @@ export class RetentionService {
    * interrupt: nothing is held between slices, and a repeated purge finds nothing left to remove.
    */
   retire(input: {
-    days: number
+    days: number | null
     asOf?: number
     runID?: number
     trigger?: "manual" | "auto"
@@ -186,7 +186,8 @@ export class RetentionService {
   }
 
   private async slice(input: {
-    days: number
+    /** Null: the superseded-only pass, recorded with days 0 and no worktree removal. */
+    days: number | null
     asOf?: number
     runID?: number
     trigger?: "manual" | "auto"
@@ -194,24 +195,34 @@ export class RetentionService {
     const { repository } = this.deps
     const asOf = this.asOf(input.asOf)
     const trigger = input.trigger ?? "manual"
+    const supersededOnly = input.days === null
+    const days = input.days ?? RETENTION_PRESET_DAYS[0]
     const runID =
       input.runID ??
       repository.atomic((db) =>
         trigger === "auto"
-          ? (openAutoRun(db) ?? startRun(db, { at: asOf, days: input.days, trigger }))
-          : startRun(db, { at: asOf, days: input.days, trigger }),
+          ? (openAutoRun(db) ??
+            startRun(db, { at: asOf, days: supersededOnly ? 0 : days, trigger }))
+          : startRun(db, { at: asOf, days: supersededOnly ? 0 : days, trigger }),
       )
     const started = Date.now()
     const slice: SliceResult = await retireSlice(
       (run) => repository.atomic(run),
       (run) => repository.read(run),
-      { now: asOf, days: input.days, budgetMs: SLICE_MS, batch: BATCH_ROWS },
+      {
+        now: asOf,
+        days,
+        budgetMs: SLICE_MS,
+        batch: BATCH_ROWS,
+        ageDependent: !supersededOnly,
+      },
     )
     const reclaimedBytes = await this.reclaim(started)
     const worktrees: WorktreeRemoval[] = []
     const skipped: WorktreeSkip[] = []
     let done = slice.done
-    if (slice.done) done = await this.removeWorktrees(asOf, input.days, started, worktrees, skipped)
+    if (slice.done && !supersededOnly)
+      done = await this.removeWorktrees(asOf, days, started, worktrees, skipped)
     const removed = slice.removed
     repository.atomic((db) =>
       addToRun(db, runID, { kinds: removed, worktrees, skipped }, done, this.now()),
@@ -311,6 +322,6 @@ export class RetentionService {
       workIsActive(db) ? null : autoRetentionDue(db, this.now()),
     )
     if (due === null) return
-    await this.retire({ days: due, trigger: "auto" })
+    await this.retire({ days: due.days, trigger: "auto" })
   }
 }

@@ -663,7 +663,14 @@ export type SliceResult = {
 export async function retireSlice(
   atomic: <T>(run: (db: Database) => T) => T,
   read: <T>(run: (db: Database) => T) => T,
-  input: { now: number; days: number; budgetMs: number; batch: number },
+  input: {
+    now: number
+    days: number
+    budgetMs: number
+    batch: number
+    /** False: only the kinds that age does not apply to (superseded rows), whatever `days` says. */
+    ageDependent?: boolean
+  },
 ): Promise<SliceResult> {
   const started = Date.now()
   const removed: SliceResult["removed"] = {}
@@ -678,8 +685,8 @@ export async function retireSlice(
       input.days,
       retired.map((plan) => plan.id),
     )
-    return KINDS.flatMap((kind) =>
-      selectSpecs(db, ctx, kind).map((spec) => ({ kind, table: spec.table })),
+    return KINDS.filter((kind) => kind.ageIndependent || input.ageDependent !== false).flatMap(
+      (kind) => selectSpecs(db, ctx, kind).map((spec) => ({ kind, table: spec.table })),
     )
   })
   for (const { kind, table } of targets) {

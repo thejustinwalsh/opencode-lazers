@@ -155,18 +155,20 @@ export function setAutoDays(db: Database, days: number | null, now: number) {
 export const AUTO_INTERVAL_MS = 6 * 3_600_000
 
 /**
- * Whether the scheduler should purge now: automatic retention is on and either the previous
- * automatic run did not finish or the interval has elapsed since it did.
+ * Whether the scheduler should purge now, and what. Superseded rows (kinds that age does not
+ * apply to) are always due on the interval: each is dead the moment its successor exists, so no
+ * choice of age is involved. `days` is set only when the owner turned on automatic retention of
+ * old finished plans; null means the superseded-only pass. An unfinished run continues on the next
+ * tick.
  */
-export function autoRetentionDue(db: Database, now: number): number | null {
+export function autoRetentionDue(db: Database, now: number): { days: number | null } | null {
   const days = autoDays(db)
-  if (days === null) return null
   const last = db
     .query<{ at: number; done: number }, []>(
       "SELECT at,done FROM retention_runs WHERE trigger='auto' ORDER BY id DESC LIMIT 1",
     )
     .get()
-  if (!last || last.done === 0 || now - last.at >= AUTO_INTERVAL_MS) return days
+  if (!last || last.done === 0 || now - last.at >= AUTO_INTERVAL_MS) return { days }
   return null
 }
 
