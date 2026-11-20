@@ -1006,10 +1006,10 @@ test("registered verify-retained checks a blocked verifying candidate without se
   const check = "bun test src/runner/retained-check.test.ts"
   let retainedCheckStarts = 0
   const observeRetainedCheckStarts = (runtime: TaskRuntime) => {
-    const internals = runtime as unknown as {
+    const internals = Reflect.get(runtime, "checkActivities") as {
       startCheckActivity(input: { id: string }): unknown
     }
-    const start = internals.startCheckActivity.bind(runtime)
+    const start = internals.startCheckActivity.bind(internals)
     internals.startCheckActivity = (input) => {
       if (input.id.startsWith("retained:")) retainedCheckStarts++
       return start(input)
