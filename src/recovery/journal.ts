@@ -1,7 +1,43 @@
 import type { Database } from "bun:sqlite"
 import type { TaskRepository } from "../storage.ts"
+import { schemaModules } from "../database-schema.ts"
 
 const MAX_PAGE_SIZE = 250
+
+/**
+ * Newest facts kept per project. The only production reader is the live radar diagnostic
+ * (`LIVE_LIMITS.journalFacts` = 257 newest rows of a project in src/observability/live-store.ts:745);
+ * it discards facts whose progress row it already loaded, so older facts add nothing. Four times
+ * that limit leaves margin for concurrent writers between the reader's snapshot and its hydration.
+ */
+export const RECOVERY_FACT_WINDOW = 1024
+
+/**
+ * Oldest facts removed per progress write. Steady state removes one row per write (the one that
+ * fell out of the window); the cap only bounds the one-time backlog on a database that grew
+ * without a window (469 k rows live), which drains at 64 rows per write instead of stalling a
+ * write transaction on a bulk delete. The retention kind `recovery-fact-window` clears it in bulk.
+ */
+const PRUNE_BATCH = 64
+
+/** Marks triggers that prune; install replaces triggers without it. */
+const WINDOW_MARKER = "recovery-fact-window"
+
+/**
+ * Facts beyond the window are dead unless a registered consumer has not reached them yet
+ * (`pageIn`/`advanceIn` stay exact for any consumer that exists).
+ */
+const PRUNE_FACTS = `
+        /* ${WINDOW_MARKER} */
+        DELETE FROM recovery_progress_facts WHERE change_id IN (
+          SELECT change_id FROM recovery_progress_facts
+           WHERE project_directory=NEW.project_directory
+             AND change_id <= COALESCE((SELECT change_id FROM recovery_progress_facts
+                                         WHERE project_directory=NEW.project_directory
+                                         ORDER BY change_id DESC LIMIT 1 OFFSET ${RECOVERY_FACT_WINDOW}), 0)
+             AND change_id <= COALESCE((SELECT MIN(change_id) FROM recovery_progress_consumers
+                                         WHERE project_directory=NEW.project_directory), 9007199254740991)
+           ORDER BY change_id LIMIT ${PRUNE_BATCH});`
 const STATUS_VALUES = [
   "completed",
   "ended",
@@ -238,7 +274,10 @@ function sameCoverage(left: RecoveryCoverage, right: RecoveryCoverage): boolean 
  */
 export class RecoveryJournal {
   constructor(readonly repository: TaskRepository) {
+    // The install is idempotent and runs for every store, so a plugin reload upgrades it as well.
     repository.atomic((db) => this.install(db))
+    const module = schemaModules["recovery-progress"]
+    repository.installSchema("recovery-progress", module.generation, module.tables, () => {})
   }
 
   private install(db: Database) {
@@ -310,17 +349,28 @@ export class RecoveryJournal {
         ${previousStatus},${statusExpression("NEW")},${fields}
       );`
 
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS recovery_progress_inserted
+    // A trigger created before the window existed has no pruning; replace it once.
+    const triggers = db
+      .query<{ name: string; sql: string }, []>(
+        "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('recovery_progress_inserted','recovery_progress_modified')",
+      )
+      .all()
+    if (triggers.length !== 2 || triggers.some((trigger) => !trigger.sql.includes(WINDOW_MARKER)))
+      db.exec(`
+      DROP TRIGGER IF EXISTS recovery_progress_inserted;
+      DROP TRIGGER IF EXISTS recovery_progress_modified;
+      CREATE TRIGGER recovery_progress_inserted
       AFTER INSERT ON runner_progress
       BEGIN
         ${insert("inserted", "NULL", "'insert'")}
+        ${PRUNE_FACTS}
       END;
-      CREATE TRIGGER IF NOT EXISTS recovery_progress_modified
+      CREATE TRIGGER recovery_progress_modified
       AFTER UPDATE ON runner_progress
       WHEN ${progressColumns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}
       BEGIN
         ${insert("modified", statusExpression("OLD"), changedFieldsExpression())}
+        ${PRUNE_FACTS}
       END;
     `)
 

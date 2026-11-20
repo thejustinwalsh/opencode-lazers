@@ -1,4 +1,5 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite"
+import { RECOVERY_FACT_WINDOW } from "../recovery/journal.ts"
 
 /**
  * Retention: retire recorded detail of finished work. A purge is one bounded command, not a
@@ -63,6 +64,7 @@ const AUDIT_RECEIPT_MIN_BYTES = 65_536
 export type RetentionKindID =
   | "progress"
   | "recovery-facts"
+  | "recovery-fact-window"
   | "tool-calls"
   | "transitions"
   | "notices"
@@ -168,6 +170,31 @@ function newestMutations(db: Database): Array<[string, number]> {
   return projects.flatMap(({ project_directory }) => {
     const id = newest.get(project_directory)?.id
     return id === null || id === undefined ? [] : [[project_directory, id] as [string, number]]
+  })
+}
+
+/**
+ * Per project, the newest fact id outside the journal's recent window, held back to the slowest
+ * registered consumer's cursor. Facts at or below it have no reader (see RECOVERY_FACT_WINDOW).
+ */
+function outsideFactWindow(db: Database): Array<[string, number]> {
+  const edge = db.query<{ change_id: number }, [string, number]>(
+    `SELECT change_id FROM recovery_progress_facts WHERE project_directory=?
+      ORDER BY change_id DESC LIMIT 1 OFFSET ?`,
+  )
+  const consumer = db.query<{ id: number | null }, [string]>(
+    "SELECT MIN(change_id) AS id FROM recovery_progress_consumers WHERE project_directory=?",
+  )
+  const projects = db
+    .query<{ project_directory: string }, []>(
+      "SELECT DISTINCT project_directory FROM recovery_progress_coverage",
+    )
+    .all()
+  return projects.flatMap(({ project_directory }) => {
+    const outside = edge.get(project_directory, RECOVERY_FACT_WINDOW)?.change_id
+    if (outside === undefined) return []
+    const slowest = consumer.get(project_directory)?.id
+    return [[project_directory, Math.min(outside, slowest ?? outside)] as [string, number]]
   })
 }
 
@@ -286,6 +313,31 @@ export const KINDS: Kind[] = [
           "length(receipt)+length(request_id)+length(fingerprint)+length(project_directory)+64",
       },
     ],
+  },
+  {
+    id: "recovery-fact-window",
+    label: "Old progress facts",
+    detail:
+      "journal facts older than the newest window per project; only the recent window is ever read",
+    ageIndependent: true,
+    specs: (_ctx, db) => {
+      if (
+        !tableExists(db, "recovery_progress_facts") ||
+        !tableExists(db, "recovery_progress_coverage")
+      )
+        return []
+      const outside = outsideFactWindow(db)
+      if (!outside.length) return []
+      return [
+        {
+          table: "recovery_progress_facts",
+          where: outside.map(() => "(project_directory=? AND change_id<=?)").join(" OR "),
+          bind: outside.flatMap(([project, id]) => [project, id]),
+          bytes:
+            "length(changed_fields)+length(plan_id)+length(task_id)+length(attempt_id)+length(session_id)+length(project_directory)+length(project_id)+length(source)+length(source_kind)+110",
+        },
+      ]
+    },
   },
   {
     id: "change-log",
