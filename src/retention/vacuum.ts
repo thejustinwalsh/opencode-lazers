@@ -114,3 +114,32 @@ export function compactOnce(
     db.close()
   }
 }
+
+/**
+ * Whether another connection, in this or another process, has the database open. A connection in
+ * WAL mode holds a shared lock on the file for its whole life, so leaving WAL (which needs the
+ * exclusive lock) fails with "database is locked" while any other connection exists; a database
+ * in a rollback journal fails the same way on `BEGIN EXCLUSIVE`. The probe waits for nothing
+ * (`busy_timeout = 0`), changes nothing when it succeeds (WAL is restored) and takes no data
+ * lock for longer than the probe itself.
+ */
+export function databaseInUse(path: string): boolean {
+  const db = new Database(path)
+  try {
+    db.exec("PRAGMA busy_timeout = 0")
+    const mode = db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode
+    if (mode === "wal") {
+      db.exec("PRAGMA journal_mode = DELETE")
+      db.exec("PRAGMA journal_mode = WAL")
+    } else {
+      db.exec("BEGIN EXCLUSIVE")
+      db.exec("ROLLBACK")
+    }
+    return false
+  } catch (error) {
+    if (/locked|busy/i.test(String(error))) return true
+    throw error
+  } finally {
+    db.close()
+  }
+}
