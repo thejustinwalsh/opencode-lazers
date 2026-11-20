@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { afterEach, expect, test } from "bun:test"
 import { withFallowConfig } from "../../test/runner/fallow-config.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
@@ -218,8 +219,7 @@ function fixture(options: FixtureOptions = {}) {
       events.push(`prompt:${input.id}`)
       const session = sessions.get(input.sessionID)
       if (!session) throw new Error("worker missing")
-      const attempt = store
-        .plans()
+      const attempt = allPlans(store)
         .flatMap((candidate) => store.attempts(candidate.id))
         .find((candidate) => candidate.session_id === input.sessionID)
       if (!attempt || input.attemptID !== attempt.id || input.directory !== attempt.workspace)

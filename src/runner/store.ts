@@ -964,6 +964,26 @@ function retireUnusedIndexes(db: Database) {
 const DETAIL_PAGE_LIMIT = 200
 /** Plans per read when walking every plan: a page size, not a limit on how many are walked. */
 const PLAN_PAGE = 1_000
+type PlanCursor = { key: number; rowid: number }
+const encodePlanCursor = (cursor: PlanCursor) =>
+  Buffer.from(JSON.stringify([cursor.key, cursor.rowid])).toString("base64url")
+function decodePlanCursor(value: string | undefined): PlanCursor | undefined {
+  if (value === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString())
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === "number" &&
+      Number.isFinite(parsed[0]) &&
+      Number.isInteger(parsed[1])
+    )
+      return { key: parsed[0], rowid: parsed[1] as number }
+  } catch {
+    // Falls through to the error below.
+  }
+  throw new Error("Invalid plan cursor")
+}
 export type DetailPage = {
   limit?: number
   activityBefore?: number
@@ -1597,33 +1617,44 @@ export class RunnerStore {
     })
   }
   /**
+   * One read of plans in display order, after the plan at `cursor` (exclusive). `columns` are the
+   * plan columns the caller uses; `states` filters in SQL.
+   */
+  private readPlanPage<Row extends object>(
+    columns: string,
+    states: readonly string[] | undefined,
+    cursor: PlanCursor | undefined,
+    limit: number,
+  ): Array<Row & { plan_key: number; plan_rowid: number }> {
+    const priority = planPrioritySortSQL("body")
+    const filter = states ? ` AND state IN (${states.map(() => "?").join(",")})` : ""
+    return this.read((db) =>
+      db
+        .query<Row & { plan_key: number; plan_rowid: number }, (string | number)[]>(
+          `SELECT ${columns},${priority} AS plan_key,rowid AS plan_rowid FROM runner_plans
+           WHERE project_directory=?${filter}
+           ${cursor ? `AND (${priority}>? OR (${priority}=? AND rowid>?))` : ""}
+           ORDER BY ${priority},rowid LIMIT ${limit}`,
+        )
+        .all(
+          this.repository.projectDirectory,
+          ...(states ?? []),
+          ...(cursor ? [cursor.key, cursor.key, cursor.rowid] : []),
+        ),
+    )
+  }
+  /**
    * Walk plans in display order, one page per read, resuming from the last row's (priority, rowid)
-   * key. `columns` are the plan columns the caller uses; `states` filters in SQL. No plan is
-   * skipped however many the project holds.
+   * key. No plan is skipped however many the project holds.
    */
   private *planPages<Row extends object>(
     columns: string,
     states?: readonly string[],
   ): Generator<Row> {
     if (states && !states.length) return
-    const priority = planPrioritySortSQL("body")
-    const filter = states ? ` AND state IN (${states.map(() => "?").join(",")})` : ""
-    let cursor: { key: number; rowid: number } | undefined
+    let cursor: PlanCursor | undefined
     for (;;) {
-      const page = this.read((db) =>
-        db
-          .query<Row & { plan_key: number; plan_rowid: number }, (string | number)[]>(
-            `SELECT ${columns},${priority} AS plan_key,rowid AS plan_rowid FROM runner_plans
-             WHERE project_directory=?${filter}
-             ${cursor ? `AND (${priority}>? OR (${priority}=? AND rowid>?))` : ""}
-             ORDER BY ${priority},rowid LIMIT ${PLAN_PAGE}`,
-          )
-          .all(
-            this.repository.projectDirectory,
-            ...(states ?? []),
-            ...(cursor ? [cursor.key, cursor.key, cursor.rowid] : []),
-          ),
-      )
+      const page = this.readPlanPage<Row>(columns, states, cursor, PLAN_PAGE)
       for (const { plan_key, plan_rowid, ...row } of page) yield row as unknown as Row
       if (page.length < PLAN_PAGE) return
       const last = page.at(-1)!
@@ -1634,9 +1665,26 @@ export class RunnerStore {
   eachPlan(): Generator<PlanRow> {
     return this.planPages<PlanRow>("*")
   }
-  /** Every plan of the project; materializes all bodies, so tests and small tools only. */
-  plans(): PlanRow[] {
-    return [...this.eachPlan()]
+  /**
+   * One page of plans with their bodies in display order: at most `limit`, starting after the
+   * plan `after` names (a cursor from a previous page). `next` is the cursor of the following
+   * page, null when this page reached the end. The cursor is a position, not an offset, so plans
+   * added or finished between pages shift nothing.
+   */
+  planPage(limit: number, after?: string): { plans: PlanRow[]; next: string | null } {
+    const size = Math.max(1, Math.min(Math.trunc(limit), PLAN_PAGE))
+    const rows = this.readPlanPage<PlanRow>("*", undefined, decodePlanCursor(after), size + 1)
+    const kept = rows.slice(0, size)
+    const last = kept.at(-1)
+    return {
+      plans: kept.map(
+        ({ plan_key: _key, plan_rowid: _rowid, ...row }) => row as unknown as PlanRow,
+      ),
+      next:
+        rows.length > size && last
+          ? encodePlanCursor({ key: last.plan_key, rowid: last.plan_rowid })
+          : null,
+    }
   }
   /**
    * Ids and states of the project's plans in the given states, in display order, a page at a

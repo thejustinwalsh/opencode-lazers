@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { RECOVERY_STALE_MS } from "./recovery-bundle.ts"
 import { FallowConfigRequiredError, refusalMessage } from "../audit/fallow-refusal.ts"
 import { expect, test } from "bun:test"
@@ -508,5 +509,5 @@ test("Start of a task in a project with no Fallow config is refused with the typ
     nothingQueued: true,
   })
   expect(refusalMessage(refusal)).toContain("Nothing was queued.")
-  expect(f.store.plans()).toHaveLength(0)
+  expect(allPlans(f.store)).toHaveLength(0)
 })

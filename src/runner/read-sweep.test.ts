@@ -1,3 +1,4 @@
+import { allPlans } from "./store-plans.fixture.ts"
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -140,8 +141,7 @@ test("a recovery pass over the running plans reads their ids, not a thousand pla
 
   // Before: every plan with its body, filtered by state in JavaScript.
   const before = meterReads(f.store)
-  const oldIDs = f.store
-    .plans()
+  const oldIDs = allPlans(f.store)
     .filter((plan) => plan.state === "running")
     .map((plan) => plan.id)
   before.stop()
@@ -181,13 +181,13 @@ test("scope owners are the same unfinished plans' tasks, read without plan bodie
   // The old algorithm, spelled out: every plan body, filtered in JavaScript.
   const finished = new Set(["accepted", "incorporated", "cancelled", "failed", "exhausted"])
   const expected = new Set<string>()
-  for (const other of f.store.plans())
+  for (const other of allPlans(f.store))
     if (!["integrated", "cancelled"].includes(other.state))
       for (const node of f.store.nodes(other.id))
         if (node.task_id !== own.taskID && !finished.has(node.state)) expected.add(node.task_id)
 
   const old = meterReads(f.store)
-  f.store.plans().forEach((plan) => f.store.nodes(plan.id))
+  allPlans(f.store).forEach((plan) => f.store.nodes(plan.id))
   old.stop()
   const meter = meterReads(f.store)
   const got = owners(f.store).map((owner) => owner.taskID)
@@ -205,8 +205,7 @@ test("a takeover finds the plan of an attempt with one indexed read", () => {
   for (let index = 0; index < 10; index++) f.plan("blocked")
   const id = f.attempt(target.planID, target.taskID, "running")
   const before = meterReads(f.store)
-  const old = f.store
-    .plans()
+  const old = allPlans(f.store)
     .flatMap((plan) => f.store.attempts(plan.id))
     .find((candidate) => candidate.id === id)
   before.stop()

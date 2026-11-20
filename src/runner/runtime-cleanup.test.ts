@@ -204,7 +204,9 @@ test("location retirement uses active project ownership outside the display plan
   )
   expect(f.store.activeProjectAttempts().map((attempt) => attempt.id)).toContain(attemptID)
 
-  const displayedPlans = spyOn(f.store, "plans").mockReturnValue([])
+  const displayedPlans = spyOn(f.store, "eachPlan").mockImplementation(
+    () => [][Symbol.iterator]() as never,
+  )
   const originalWorktrees = f.host.worktrees
   let inventoryReads = 0
   let retireCalls = 0
