@@ -305,11 +305,7 @@ export function registerTaskTools(
         "Architect-only project-scoped inspection of effective same-goal correction membership and its complete append-only audit. Unlinked tasks remain separate and unreviewed; a retracted link is explicitly independent. The returned identity pins one coherent read snapshot.",
       input: declareInput(TaskCorrectionInspectionInput),
       output: TaskCorrectionInspection,
-      options: {
-        codemode: true,
-        pinned: true,
-        permission: "lz-inspect-task-corrections",
-      },
+      options: { codemode: true, permission: "lz-inspect-task-corrections" },
       execute: (input, context) =>
         ctx.permission
           .assert({

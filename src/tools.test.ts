@@ -442,9 +442,9 @@ test("Architect correction controls record, replay, revise, retract, and inspect
   expect(correction.output).toBeUndefined()
   expect(inspect.options).toMatchObject({
     codemode: true,
-    pinned: true,
     permission: "lz-inspect-task-corrections",
   })
+  expect(inspect.options?.pinned).toBeUndefined()
   expect(inspect.output).toBeDefined()
   const input = {
     taskID: childReceipt.taskID,
