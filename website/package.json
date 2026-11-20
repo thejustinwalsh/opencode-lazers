@@ -15,7 +15,7 @@
     "@fontsource-variable/archivo": "^5.3.0",
     "@stylexjs/stylex": "^0.19.2",
     "preact": "^11.2.0",
-    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-a3718c8/runntime-0.2.0-a3718c8.tgz",
+    "runntime": "https://github.com/thejustinwalsh/runntime/releases/download/lazers-omni-70ab1be/runntime-0.2.0-70ab1be.tgz",
     "typegpu": "0.12.5"
   },
   "devDependencies": {
