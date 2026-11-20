@@ -30,6 +30,8 @@ type ActiveRequest = {
   settled: boolean
 }
 
+type RelayRpcOptions = { location: { directory: string }; signal: AbortSignal }
+
 type MainRelayOptions = {
   now?: () => number
 }
@@ -63,6 +65,23 @@ function adjustedInput(request: RelayRequestEnvelope, remainingMs: number) {
   return request.input
 }
 
+async function boundedRpc<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Desktop inference relay RPC timed out")),
+          RPC_TIMEOUT_MS,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 async function forward(
   client: OpenCodeClient,
   request: RelayRequestEnvelope,
@@ -91,6 +110,10 @@ async function forward(
   }
 }
 
+// All relay instances in the Desktop main-process module coordinate ownership.
+// A separate instance must not mistake another live instance's claim for an orphan.
+const liveRequests = new Map<string, ActiveRequest>()
+
 /** Main-process bridge from location-owned public RPCs to the default renderer mailbox. */
 export class DesktopInferenceRelay {
   private readonly now: () => number
@@ -107,6 +130,7 @@ export class DesktopInferenceRelay {
   private resyncing = false
   private resyncScheduled = false
   private closed = false
+  private closing: Promise<void> | undefined
 
   constructor(
     private readonly getClient: () => OpenCodeClient | undefined,
@@ -167,7 +191,7 @@ export class DesktopInferenceRelay {
     const controller = this.watchController
     try {
       const signal = timeoutSignal(controller?.signal ?? this.signal)
-      const locations = await client.debug.location.list({ signal })
+      const locations = await boundedRpc(client.debug.location.list({ signal }))
       if (this.currentClient() !== client || this.closed) return
       const directories = locations.map((location) => location.directory).filter(Boolean)
       if (!directories.length) return
@@ -186,8 +210,9 @@ export class DesktopInferenceRelay {
     }
   }
 
-  async close() {
-    if (this.closed) return
+  close() {
+    if (this.closing) return this.closing
+    if (this.closed) return Promise.resolve()
     this.closed = true
     clearInterval(this.timer)
     clearInterval(this.scanTimer)
@@ -197,20 +222,21 @@ export class DesktopInferenceRelay {
     this.watchController?.abort()
     this.scanQueue.clear()
     this.rescanRequested.clear()
-    const cleanup = [...this.active.values()].map(async (entry) => {
+    const cleanup = [...this.active.values()].map((entry) => {
       entry.controller.abort(new Error("Desktop inference relay stopped"))
       if (entry.workerStarted) {
-        await this.settle(entry, {
+        return this.settle(entry, {
           status: "error",
           uncertain: true,
           error:
             "Desktop relay stopped after forwarding; inference completion is uncertain and the request was not replayed",
         })
       } else {
-        await this.recover(entry)
+        return this.recover(entry)
       }
     })
-    await Promise.allSettled(cleanup)
+    this.closing = Promise.allSettled(cleanup).then(() => {})
+    return this.closing
   }
 
   private readonly onAbort = () => {
@@ -235,15 +261,20 @@ export class DesktopInferenceRelay {
     this.rescanRequested.clear()
     if (this.closed) return
     for (const entry of this.active.values()) {
-      if (entry.workerStarted && entry.client !== current) {
-        entry.controller.abort(new Error("Desktop connection changed after forwarding"))
-        void this.settle(entry, {
-          status: "error",
-          uncertain: true,
-          error: current
-            ? "Desktop connection changed after forwarding; inference completion is uncertain and the request was not replayed"
-            : "Desktop connection disconnected after forwarding; inference completion is uncertain and the request was not replayed",
-        })
+      if (entry.client !== current) {
+        const reason = current
+          ? "Desktop connection changed after forwarding"
+          : "Desktop connection disconnected after forwarding"
+        entry.controller.abort(new Error(reason))
+        if (entry.workerStarted) {
+          void this.settle(entry, {
+            status: "error",
+            uncertain: true,
+            error: `${reason}; inference completion is uncertain and the request was not replayed`,
+          })
+        } else {
+          void this.recover(entry)
+        }
       }
     }
     if (!current) return
@@ -317,7 +348,7 @@ export class DesktopInferenceRelay {
     try {
       const signal = timeoutSignal(this.watchController?.signal ?? this.signal)
       const relay = actualClient.rpc(InferenceRelay)
-      const result = await relay.discover({}, { location: { directory }, signal })
+      const result = await boundedRpc(relay.discover({}, { location: { directory }, signal }))
       if (this.currentClient() !== actualClient || this.closed) return
       for (const request of result.requests)
         this.observeRequest(directory, request.requestID, request.state)
@@ -340,7 +371,7 @@ export class DesktopInferenceRelay {
     entry.controller.abort(new Error("Inference cancelled by its location"))
     if (!entry.workerStarted) {
       entry.settled = true
-      this.active.delete(key)
+      this.forget(entry)
     }
   }
 
@@ -381,8 +412,9 @@ export class DesktopInferenceRelay {
       workerStarted: false,
       settled: false,
     }
-    if (this.active.size >= MAX_IN_FLIGHT) return undefined
+    if (this.active.size >= MAX_IN_FLIGHT || liveRequests.has(entry.key)) return undefined
     this.active.set(entry.key, entry)
+    liveRequests.set(entry.key, entry)
     return entry
   }
 
@@ -396,105 +428,182 @@ export class DesktopInferenceRelay {
 
   private async run(entry: ActiveRequest) {
     try {
-      const claimClient = this.currentClient()
+      const claimClient = await this.claim(entry)
       if (!claimClient) return
-      const claimSignal = timeoutSignal(this.watchController?.signal ?? this.signal)
-      const relay = claimClient.rpc(InferenceRelay)
-      const request = await relay.claim(
-        { requestID: entry.requestID, claimToken: entry.claimToken },
-        { location: { directory: entry.directory }, signal: claimSignal },
-      )
-      if (entry.settled || this.closed) return
-      if (!request) {
-        this.active.delete(entry.key)
-        return
-      }
-      entry.phase = "claiming"
-      const beginClient = this.currentClient()
-      if (!beginClient) return
-      const begun = await beginClient.rpc(InferenceRelay).begin(
-        { requestID: entry.requestID, claimToken: entry.claimToken },
-        {
-          location: { directory: entry.directory },
-          signal: timeoutSignal(this.watchController?.signal ?? this.signal),
-        },
-      )
-      if (entry.settled || this.closed) return
-      if (!begun) {
-        this.active.delete(entry.key)
-        return
-      }
-
-      const remaining =
-        begun.deadlineAt === null ? Number.POSITIVE_INFINITY : begun.deadlineAt - this.now()
-      if (remaining <= 0) {
-        await this.settle(entry, {
-          status: "error",
-          uncertain: false,
-          error: "Local inference deadline exceeded before delivery",
-        })
-        return
-      }
-
-      const current = this.currentClient()
-      if (!current) {
-        await this.settle(entry, {
-          status: "error",
-          uncertain: false,
-          error: "The authenticated Desktop connection is unavailable before inference delivery",
-        })
-        return
-      }
-      entry.phase = "delivering"
-      entry.client = current
-      const input = adjustedInput(begun, remaining)
-      const signal = AbortSignal.any([
-        this.signal,
-        entry.controller.signal,
-        ...(Number.isFinite(remaining) ? [AbortSignal.timeout(remaining)] : []),
-      ])
-      entry.workerStarted = true
-      const result = await forward(current, begun, input, signal)
-      if (entry.settled) return
-      if (entry.controller.signal.aborted) {
-        await this.acknowledge(entry.directory, entry.requestID)
-        this.active.delete(entry.key)
-        entry.settled = true
-        return
-      }
-      if (signal.aborted) {
-        await this.settle(entry, {
-          status: "error",
-          uncertain: true,
-          error:
-            "Local inference deadline elapsed after forwarding; completion is uncertain and the request was not replayed",
-        })
-        return
-      }
-      if (this.currentClient() !== current) {
-        await this.settle(entry, {
-          status: "error",
-          uncertain: true,
-          error:
-            "Desktop connection changed after forwarding; inference completion is uncertain and the request was not replayed",
-        })
-        return
-      }
-      await this.settle(entry, { status: "result", value: result })
+      const request = await this.begin(entry, claimClient)
+      if (!request) return
+      await this.deliver(entry, claimClient, request)
     } catch (error) {
-      if (entry.settled) return
-      if (entry.controller.signal.aborted && !entry.workerStarted) {
-        await this.recover(entry)
-        return
-      }
-      const replaced = entry.workerStarted && this.currentClient() !== entry.client
-      const uncertain = entry.workerStarted
-      const reason = replaced
-        ? "Desktop connection changed after forwarding; inference completion is uncertain and the request was not replayed"
-        : uncertain
-          ? `Desktop inference transport failed after forwarding; completion is uncertain and the request was not replayed: ${String(error)}`
-          : `Desktop inference relay failed before delivery: ${String(error)}`
-      await this.settle(entry, { status: "error", uncertain, error: reason })
+      await this.fail(entry, error)
+    }
+  }
+
+  private async claim(entry: ActiveRequest) {
+    const client = this.currentClient()
+    if (!client) {
+      await this.recover(entry)
+      return
+    }
+    entry.client = client
+    const request = await boundedRpc(
+      client
+        .rpc(InferenceRelay)
+        .claim(
+          { requestID: entry.requestID, claimToken: entry.claimToken },
+          { location: { directory: entry.directory }, signal: this.requestSignal(entry) },
+        ),
+    )
+    if (entry.settled || this.closed) return
+    if (!request) {
+      entry.settled = true
+      this.forget(entry)
+      return
+    }
+    return client
+  }
+
+  private async begin(entry: ActiveRequest, claimClient: OpenCodeClient) {
+    entry.phase = "claiming"
+    const client = this.currentClient()
+    if (!client || client !== claimClient) {
+      await this.recover(entry)
+      return
+    }
+    const request = await boundedRpc(
+      client
+        .rpc(InferenceRelay)
+        .begin(
+          { requestID: entry.requestID, claimToken: entry.claimToken },
+          { location: { directory: entry.directory }, signal: this.requestSignal(entry) },
+        ),
+    )
+    if (entry.settled || this.closed) return
+    if (!request) {
+      entry.settled = true
+      this.forget(entry)
+      return
+    }
+    if (this.currentClient() !== client) {
+      await this.recover(entry)
+      return
+    }
+    return request
+  }
+
+  private async deliver(
+    entry: ActiveRequest,
+    client: OpenCodeClient,
+    request: RelayRequestEnvelope,
+  ) {
+    const remaining =
+      request.deadlineAt === null ? Number.POSITIVE_INFINITY : request.deadlineAt - this.now()
+    if (remaining <= 0) {
+      await this.settle(entry, {
+        status: "error",
+        uncertain: false,
+        error: "Local inference deadline exceeded before delivery",
+      })
+      return
+    }
+
+    entry.phase = "delivering"
+    entry.client = client
+    const input = adjustedInput(request, remaining)
+    const signal = AbortSignal.any([
+      this.signal,
+      entry.controller.signal,
+      ...(Number.isFinite(remaining) ? [AbortSignal.timeout(remaining)] : []),
+    ])
+    entry.workerStarted = true
+    const result = await forward(client, request, input, signal)
+    await this.finishDelivery(entry, client, signal, request.deadlineAt, result)
+  }
+
+  private async finishDelivery(
+    entry: ActiveRequest,
+    client: OpenCodeClient,
+    signal: AbortSignal,
+    deadlineAt: number | null,
+    result: unknown,
+  ) {
+    if (entry.settled) return
+    if (entry.controller.signal.aborted) {
+      await this.acknowledge(entry.directory, entry.requestID)
+      entry.settled = true
+      this.forget(entry)
+      return
+    }
+    if (signal.aborted || (deadlineAt !== null && this.now() >= deadlineAt)) {
+      await this.settle(entry, {
+        status: "error",
+        uncertain: true,
+        error:
+          "Local inference deadline elapsed after forwarding; completion is uncertain and the request was not replayed",
+      })
+      return
+    }
+    if (this.currentClient() !== client) {
+      await this.settle(entry, {
+        status: "error",
+        uncertain: true,
+        error:
+          "Desktop connection changed after forwarding; inference completion is uncertain and the request was not replayed",
+      })
+      return
+    }
+    await this.settle(entry, { status: "result", value: result })
+  }
+
+  private async fail(entry: ActiveRequest, error: unknown) {
+    if (entry.settled) return
+    if (entry.controller.signal.aborted && !entry.workerStarted) {
+      await this.recover(entry)
+      return
+    }
+    const replaced = entry.workerStarted && this.currentClient() !== entry.client
+    const uncertain = entry.workerStarted
+    const reason = replaced
+      ? "Desktop connection changed after forwarding; inference completion is uncertain and the request was not replayed"
+      : uncertain
+        ? `Desktop inference transport failed after forwarding; completion is uncertain and the request was not replayed: ${String(error)}`
+        : `Desktop inference relay failed before delivery: ${String(error)}`
+    await this.settle(entry, { status: "error", uncertain, error: reason })
+  }
+
+  private requestSignal(entry: ActiveRequest) {
+    const watchSignal = this.watchController?.signal
+    return AbortSignal.any([
+      this.signal,
+      entry.controller.signal,
+      ...(watchSignal ? [watchSignal] : []),
+      AbortSignal.timeout(RPC_TIMEOUT_MS),
+    ])
+  }
+
+  private releaseLocal(entry: ActiveRequest) {
+    if (this.active.get(entry.key) === entry) this.active.delete(entry.key)
+  }
+
+  private forget(entry: ActiveRequest) {
+    this.releaseLocal(entry)
+    if (liveRequests.get(entry.key) === entry) liveRequests.delete(entry.key)
+  }
+
+  private async sourceRpc<T>(
+    directory: string,
+    invoke: (client: OpenCodeClient, options: RelayRpcOptions) => Promise<T>,
+  ) {
+    const client = this.currentClient()
+    if (!client) return
+    try {
+      return await boundedRpc(
+        invoke(client, {
+          location: { directory },
+          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+        }),
+      )
+    } catch {
+      // The source keeps its deadline and never replays delivered work.
     }
   }
 
@@ -502,19 +611,18 @@ export class DesktopInferenceRelay {
     if (entry.settled) return
     entry.settled = true
     entry.controller.abort()
-    this.active.delete(entry.key)
-    const client = this.currentClient()
-    if (!client) return
+    this.releaseLocal(entry)
     try {
-      await client.rpc(InferenceRelay).complete(
-        { requestID: entry.requestID, claimToken: entry.claimToken, completion },
-        {
-          location: { directory: entry.directory },
-          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-        },
+      await this.sourceRpc(entry.directory, (client, options) =>
+        client
+          .rpc(InferenceRelay)
+          .complete(
+            { requestID: entry.requestID, claimToken: entry.claimToken, completion },
+            options,
+          ),
       )
-    } catch {
-      // The caller's existing deadline remains authoritative; this request is never replayed.
+    } finally {
+      this.forget(entry)
     }
   }
 
@@ -522,51 +630,27 @@ export class DesktopInferenceRelay {
     if (entry.settled) return
     entry.settled = true
     entry.controller.abort()
-    this.active.delete(entry.key)
-    const client = this.currentClient()
-    if (!client) return
+    this.releaseLocal(entry)
     try {
-      await client.rpc(InferenceRelay).recover(
-        { requestID: entry.requestID },
-        {
-          location: { directory: entry.directory },
-          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-        },
+      await this.sourceRpc(entry.directory, (client, options) =>
+        client.rpc(InferenceRelay).recover({ requestID: entry.requestID }, options),
       )
-    } catch {
-      // An unreachable source will settle its own pending request at its deadline.
+    } finally {
+      this.forget(entry)
     }
   }
 
   private async recoverOrphan(directory: string, requestID: string) {
     const key = requestKey(directory, requestID)
-    if (this.active.has(key) || this.closed) return
-    const client = this.currentClient()
-    if (!client) return
-    try {
-      await client
-        .rpc(InferenceRelay)
-        .recover(
-          { requestID },
-          { location: { directory }, signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
-        )
-    } catch {
-      // Retain explicit source-side deadlines when the authenticated connection is unavailable.
-    }
+    if (this.active.has(key) || liveRequests.has(key) || this.closed) return
+    await this.sourceRpc(directory, (client, options) =>
+      client.rpc(InferenceRelay).recover({ requestID }, options),
+    )
   }
 
   private async acknowledge(directory: string, requestID: string) {
-    const client = this.currentClient()
-    if (!client) return
-    try {
-      await client
-        .rpc(InferenceRelay)
-        .acknowledge(
-          { requestID },
-          { location: { directory }, signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
-        )
-    } catch {
-      // Cancellation tombstones are bounded and contain no inference payload.
-    }
+    await this.sourceRpc(directory, (client, options) =>
+      client.rpc(InferenceRelay).acknowledge({ requestID }, options),
+    )
   }
 }

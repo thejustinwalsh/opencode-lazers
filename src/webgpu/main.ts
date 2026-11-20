@@ -47,7 +47,6 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
   const configured = ctx.options.dataDirectory
   if (configured !== undefined && typeof configured !== "string")
     throw new Error("dataDirectory must be a string")
-  inferenceRelay.start()
   const cache = new ModelCache(modelCacheDirectory(configured))
   const decisions = new ModelCache(
     join(dirname(cache.directory), DECISION_REVISION),
@@ -373,6 +372,9 @@ export const setupMain: Plugin.MainSetup = (ctx) => {
     rendererArmedSamplingIntervalUs: RENDERER_ARMED_SAMPLING_INTERVAL_US,
     rendererArmedStopMs: RENDERER_ARMED_STOP_MS,
   })
+  // Start owned relay timers and event subscriptions only after all fallible
+  // setup work has completed, so failed initialization cannot leak resources.
+  inferenceRelay.start()
   let stopping: Promise<void> | undefined
   return () => {
     if (stopping) return stopping

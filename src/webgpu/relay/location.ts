@@ -43,6 +43,7 @@ export class LocationInferenceRelay {
   forward(method: RelayRequestMethod, input: unknown, signal: AbortSignal): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error("Local inference location is unavailable"))
     if (signal.aborted) return Promise.reject(new Error("Inference cancelled before delivery"))
+    this.expireDue()
     const active = [...this.entries.values()].filter((entry) => entry.state !== "cancelled").length
     if (active >= MAX_LOCATION_REQUESTS || this.entries.size >= MAX_RELAY_RECORDS)
       return Promise.reject(
@@ -103,6 +104,7 @@ export class LocationInferenceRelay {
   }
 
   discover() {
+    this.expireDue()
     return {
       requests: [...this.entries.entries()].map(([requestID, entry]) => ({
         requestID,
@@ -113,7 +115,7 @@ export class LocationInferenceRelay {
 
   claim(requestID: string, claimToken: string) {
     const entry = this.entries.get(requestID)
-    if (!entry?.request) return null
+    if (!entry || this.expireIfDue(entry) || !entry.request) return null
     if (entry.state === "pending") {
       entry.state = "claimed"
       entry.claimToken = claimToken
@@ -127,7 +129,8 @@ export class LocationInferenceRelay {
 
   begin(requestID: string, claimToken: string) {
     const entry = this.entries.get(requestID)
-    if (!entry?.request || entry.claimToken !== claimToken) return null
+    if (!entry || this.expireIfDue(entry) || !entry.request || entry.claimToken !== claimToken)
+      return null
     if (entry.state === "claimed") entry.state = "delivered"
     else if (entry.state !== "delivered") return null
     return entry.request
@@ -142,6 +145,7 @@ export class LocationInferenceRelay {
     }
     if (entry.claimToken !== claimToken) return false
     if (entry.state !== "claimed" && entry.state !== "delivered") return false
+    if (this.expireIfDue(entry)) return false
     this.remove(requestID, entry)
     entry.finish(completion)
     return true
@@ -196,5 +200,16 @@ export class LocationInferenceRelay {
     if (entry.retention) clearTimeout(entry.retention)
     entry.removeAbort()
     this.entries.delete(id)
+  }
+
+  private expireDue() {
+    for (const entry of this.entries.values()) this.expireIfDue(entry)
+  }
+
+  private expireIfDue(entry: Entry) {
+    const deadlineAt = entry.request?.deadlineAt
+    if (deadlineAt === null || deadlineAt === undefined || deadlineAt > this.now()) return false
+    entry.cancel("Local inference deadline exceeded")
+    return true
   }
 }
