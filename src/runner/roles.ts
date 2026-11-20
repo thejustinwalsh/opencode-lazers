@@ -151,6 +151,8 @@ export function registerArchitectContextStubs(
   ctx: Pick<Plugin.Context, "session">,
   options: {
     cacheWindowMs?: number
+    /** `"results"` stubs notices and tool results; `"all"` also rewrites submission inputs. */
+    mode?: "results" | "all"
     horizons?: StubHorizons
     log?: (message: string, fields: Record<string, unknown>) => void
   } = {},
@@ -169,7 +171,10 @@ export function registerArchitectContextStubs(
           context.sessionID,
           context.messages as readonly ContextMessage[],
         )
-        const stubbed = stubSuperseded(context.messages as readonly ContextMessage[], { horizon })
+        const stubbed = stubSuperseded(context.messages as readonly ContextMessage[], {
+          horizon,
+          inputs: options.mode === "all",
+        })
         if (stubbed.stubbed > 0)
           context.messages.splice(0, context.messages.length, ...(stubbed.messages as never[]))
       } catch (error) {
@@ -181,4 +186,13 @@ export function registerArchitectContextStubs(
       }
     }),
   )
+}
+
+/** The `architectContextStubs` plugin option: `"off"`, `"results"` (default) or `"all"`. */
+export type ContextStubsMode = "off" | "results" | "all"
+
+export function architectContextStubsMode(value: unknown): ContextStubsMode {
+  if (value === undefined) return "results"
+  if (value === "off" || value === "results" || value === "all") return value
+  throw new Error('architectContextStubs must be "off", "results" or "all"')
 }

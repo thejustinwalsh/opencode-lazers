@@ -37,6 +37,12 @@ export type ContextMessage = {
 export type StubFacts = {
   /** The id of the last message that may be stubbed; undefined or unknown stubs nothing. */
   horizon: string | undefined
+  /**
+   * Also replace the input of a successful submission (a prior assistant tool call's `input`, or a
+   * Code Mode program's `code`). Off by default: the result-side stubs only touch text the model
+   * is sent as user or tool-result content, while this rewrites an assistant turn.
+   */
+  inputs?: boolean
   /** Runbook texts to protect; defaults to every guidance runbook. */
   runbooks?: Readonly<Record<string, string>>
 }
@@ -75,6 +81,18 @@ type SubmitTool = keyof typeof SUBMIT_TOOLS
 const CODE_MODE_TOOL = "execute"
 
 const HELD_KINDS = new Set(["architect-handoff", "queue-review", "retained-verification-failed"])
+
+/**
+ * What a failed call looks like once it is plain text. Direct tool errors arrive as `error`
+ * results and are skipped already; a Code Mode program that fails still arrives as a completed
+ * text result whose text is the error message (`formatResult` in OpenCode's `codemode/tool.ts`),
+ * with no marker. These are the shapes visible from here: a JavaScript error name, a parse
+ * failure, LAZERS' usage-text error (`explainInvalidInput`), and the `UPPER_SNAKE:` hold codes
+ * LAZERS tools refuse with. Such a result never stands in as the newer read.
+ */
+const FAILED_TEXT =
+  /^\s*(?:(?:Uncaught\s+)?(?:[A-Z][A-Za-z]*)?Error\b|ParseError\b|[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+:)|do not match its input:|^\s*Tool (?:execution )?(?:failed|error)\b/
+const failedText = (text: string) => FAILED_TEXT.test(text)
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 
@@ -345,6 +363,10 @@ export function stubSuperseded<M extends ContextMessage>(
     }
     const { call } = entry
     if (call.kind === "read") {
+      if (failedText(text)) {
+        held.push({ text })
+        continue
+      }
       const superseded = seenReads.has(call.key)
       seenReads.add(call.key)
       const input = canonical(call.input)
@@ -366,6 +388,7 @@ export function stubSuperseded<M extends ContextMessage>(
     }
     // A successful submission: the input is stored, and the result names the reference.
     held.push({ text })
+    if (!facts.inputs) continue
     const receipt = submitReceipt(call.tool, text)
     if (!receipt) continue
     const sent = entry.sent

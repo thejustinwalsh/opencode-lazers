@@ -6,7 +6,7 @@ import { FallowAcceptance } from "../audit/contract.ts"
 import { divergenceReason } from "./scope.ts"
 import { StubHorizons } from "./context-horizon.ts"
 import { stubSuperseded } from "./context-stubs.ts"
-import { registerArchitectContextStubs } from "./roles.ts"
+import { architectContextStubsMode, registerArchitectContextStubs } from "./roles.ts"
 import { Effect } from "effect"
 import {
   bundle,
@@ -25,7 +25,8 @@ import {
   type Msg,
 } from "./context-stubs.fixtures.ts"
 
-const run = (messages: Msg[], horizon: string | undefined) => stubSuperseded(messages, { horizon })
+const run = (messages: Msg[], horizon: string | undefined, inputs = true) =>
+  stubSuperseded(messages, { horizon, inputs })
 const isStub = (message: Msg) => textOf(message).startsWith("[lz-stub notice")
 
 test("an older notice of a plan is stubbed once a newer one is in the window; the newest stays whole", () => {
@@ -272,6 +273,54 @@ test("an error result is never stubbed and does not stand in as the newer read",
   expect(run(messages, "u2").stubbed).toBe(0)
 })
 
+test("submission inputs are left alone unless asked for", () => {
+  const messages: Msg[] = [
+    user("u1", "go"),
+    call("a1", "c1", "lz-submit-task", { idempotencyKey: "k", objective: "y".repeat(3000) }),
+    result(
+      "c1",
+      "lz-submit-task",
+      JSON.stringify({ status: "submitted", taskID: taskID(1), reference: "ONS-9" }),
+    ),
+    user("u2", "next"),
+  ]
+  expect(run(messages, "u2", false).stubbed).toBe(0)
+  expect(run(messages, "u2", true).stubbed).toBe(1)
+})
+
+test("a Code Mode failure that arrives as plain text does not supersede an older good read", () => {
+  const code = `return await tools["lz-inspect-plan"]({ planID: "${planID(1)}" })`
+  const good = JSON.stringify({ planID: planID(1), pad: "z".repeat(900) })
+  const failures = [
+    "TypeError: Cannot read properties of undefined (reading 'state')",
+    "ReferenceError: p is not defined",
+    "ParseError: Unexpected token",
+    `lz-inspect-plan was called with arguments that do not match its input:\n- planID: expected a UUID\n${"u".repeat(900)}`,
+    `FALLOW_CONFIG_REQUIRED: no config. ${"u".repeat(900)}`,
+  ]
+  for (const failure of failures) {
+    const messages: Msg[] = [
+      user("u1", "go"),
+      call("a1", "c1", "execute", { code }),
+      result("c1", "execute", good),
+      call("a2", "c2", "execute", { code }),
+      result("c2", "execute", failure),
+      user("u2", "next"),
+    ]
+    expect(run(messages, "u2").stubbed).toBe(0)
+  }
+  // A good newer read still replaces it.
+  const ok: Msg[] = [
+    user("u1", "go"),
+    call("a1", "c1", "execute", { code }),
+    result("c1", "execute", good),
+    call("a2", "c2", "execute", { code }),
+    result("c2", "execute", good),
+    user("u2", "next"),
+  ]
+  expect(run(ok, "u2").stubbed).toBe(1)
+})
+
 test("Code Mode: a program calling one read tool is keyed by tool, entity and program shape", () => {
   const code = (id: string, extra = "") =>
     `const p = await tools["lz-inspect-plan"]({ planID: "${id}"${extra} });\nreturn p.state`
@@ -423,7 +472,7 @@ test("class-built messages keep their class and fields; tool-call and result ids
     }),
     Message.make({ id: "u3", role: "user", content: "next" }),
   ]
-  const out = stubSuperseded(messages, { horizon: "u3" })
+  const out = stubSuperseded(messages, { horizon: "u3", inputs: true })
   expect(out.stubbed).toBe(2)
   for (const message of out.messages) expect(Schema.is(Message)(message)).toBe(true)
   expect(Object.getPrototypeOf(out.messages[0]!)).toBe(Object.getPrototypeOf(messages[0]!))
@@ -553,4 +602,34 @@ test("synthetic session shaped like the measured one: 551 notices over 75 plans"
   const stubs = out.messages.filter(isStub).length
   expect(stubs).toBeGreaterThan(300)
   expect(sizeOf(out.messages)).toBeLessThan(sizeOf(messages))
+})
+
+test("the architectContextStubs option defaults to results and rejects anything else", () => {
+  expect(architectContextStubsMode(undefined)).toBe("results")
+  for (const mode of ["off", "results", "all"] as const)
+    expect(architectContextStubsMode(mode)).toBe(mode)
+  expect(() => architectContextStubsMode("on")).toThrow("architectContextStubs")
+})
+
+test("the hook rewrites submission inputs only in all mode", () => {
+  const make = (): ContextEvent => ({
+    agent: "architect",
+    sessionID: "s",
+    messages: [
+      user("u0", "go"),
+      call("a1", "c1", "lz-submit-task", { idempotencyKey: "k", objective: "y".repeat(3000) }),
+      result(
+        "c1",
+        "lz-submit-task",
+        JSON.stringify({ status: "submitted", taskID: taskID(1), reference: "R" }),
+      ),
+      user("u1", "next"),
+    ],
+  })
+  const results = make()
+  hooked({ mode: "results" })(results)
+  expect(JSON.stringify(results.messages)).toContain("yyyy")
+  const all = make()
+  hooked({ mode: "all" })(all)
+  expect(JSON.stringify(all.messages)).not.toContain("yyyy")
 })
