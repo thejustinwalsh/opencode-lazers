@@ -1,3 +1,4 @@
+import type { Database } from "bun:sqlite"
 import type { Columns } from "./frame.ts"
 
 /**
@@ -55,6 +56,8 @@ export type StreamContext = {
   projectIds(id: string): string[]
   /** Rejects unless the caller's session may read this project. */
   assertRead(sessionID: string): Promise<void>
+  /** A point read on the service's own repository: for the checks an `authorize` makes on one row. */
+  read?<T>(run: (db: Database) => T): T
 }
 
 export type CountBuilder<F> = (input: { filter: F; edge: readonly unknown[] }) => SQL

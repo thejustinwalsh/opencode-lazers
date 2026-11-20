@@ -36,26 +36,34 @@ export class TaskScheduleOwner {
     this.running ??= (async () => {
       while (this.again && !this.closed) {
         this.again = false
-        for (;;) {
-          const page = await this.repository.retryBusy(() =>
-            this.repository.atomic((db) => backfillPage(db, this.repository.projectDirectory)),
-          )
-          if (page.done || this.closed) break
-          await Bun.sleep(0)
+        try {
+          for (;;) {
+            const page = await this.repository.retryBusy(() =>
+              this.repository.atomic((db) => backfillPage(db, this.repository.projectDirectory)),
+            )
+            if (page.done || this.closed) break
+            await Bun.sleep(0)
+          }
+          while (!this.closed) {
+            const result = await this.repository.retryBusy(() =>
+              this.repository.atomic((db) => {
+                retryParked(db)
+                return hasScheduleWork(db)
+                  ? drainTaskSchedule(db)
+                  : { handled: 0, remaining: 0, failed: [] }
+              }),
+            )
+            if (!result.remaining) break
+            await Bun.sleep(0)
+          }
+        } catch {
+          // A busy or failing database leaves the work queued; the next change or retry resumes it.
         }
-        while (!this.closed) {
-          const result = await this.repository.retryBusy(() =>
-            this.repository.atomic((db) => {
-              retryParked(db)
-              return hasScheduleWork(db)
-                ? drainTaskSchedule(db)
-                : { handled: 0, remaining: 0, failed: [] }
-            }),
-          )
-          if (!result.remaining) break
-          await Bun.sleep(0)
+        try {
+          this.scheduleRetry()
+        } catch {
+          // Closed while settling.
         }
-        this.scheduleRetry()
       }
     })().finally(() => {
       this.running = undefined

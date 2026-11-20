@@ -15,8 +15,8 @@ import {
   taskPlansSource,
   taskScheduleSource,
   taskSessionBucketCountsSource,
-  type TaskScheduleFilter,
 } from "./tasks.ts"
+import type { TaskScheduleFilter } from "./tasks-ref.ts"
 
 const PROJECT = "/project"
 let directory: string
@@ -300,4 +300,96 @@ test("opening and sliding the list runs no statement on the main repository", as
     meter.stop()
   }
   expect(meter.statements).toEqual([])
+})
+
+// ---- authorize: the scope checks of the reads these sources replace -----------------------------
+
+function context(overrides: Partial<import("../source.ts").StreamContext> = {}) {
+  const asserted: string[] = []
+  return {
+    asserted,
+    value: {
+      projectID: "p",
+      projectDirectory: PROJECT,
+      projectIds: (id: string) => [id],
+      read: (run) => repository.read(run),
+      assertRead: async (sessionID: string) => {
+        asserted.push(sessionID)
+        if (sessionID === "stranger") throw new Error("Task scope is unavailable")
+      },
+      ...overrides,
+    } satisfies import("../source.ts").StreamContext,
+  }
+}
+
+test("authorize checks the caller, overwrites the project and forces the session link", async () => {
+  const c = context()
+  const forced = await taskScheduleSource.authorize!(
+    {
+      project: "/elsewhere",
+      scope: { kind: "session", sessionID: "session-b" },
+      session: "session-a",
+      state: "all",
+    },
+    c.value,
+  )
+  expect(c.asserted).toEqual(["session-b"])
+  expect(forced).toMatchObject({ project: PROJECT, session: "session-b" })
+  const project = await taskScheduleSource.authorize!(
+    {
+      project: "/elsewhere",
+      scope: { kind: "project", sessionID: "session-a" },
+      session: "session-b",
+    },
+    c.value,
+  )
+  expect(project.project).toBe(PROJECT)
+  expect(project.session).toBeUndefined()
+  await expect(
+    taskScheduleSource.authorize!(
+      { project: PROJECT, scope: { kind: "project", sessionID: "stranger" } },
+      c.value,
+    ),
+  ).rejects.toThrow("Task scope is unavailable")
+  await expect(taskScheduleSource.authorize!({ project: PROJECT }, c.value)).rejects.toThrow(
+    "names its scope",
+  )
+})
+
+test("a child read of a task outside the session view is refused", async () => {
+  const c = context()
+  // task0-1 is a session-b task; task0-0 is session-a (see the seed above).
+  const inScope = { kind: "session", sessionID: "session-a" } as const
+  await taskDependenciesSource.authorize!({ scope: inScope, parent: ids["task0-0"]! }, c.value)
+  await expect(
+    taskDependenciesSource.authorize!({ scope: inScope, parent: ids["task0-1"]! }, c.value),
+  ).rejects.toThrow("unavailable")
+  await taskDependenciesSource.authorize!(
+    { scope: { kind: "project", sessionID: "session-a" }, parent: ids["task0-1"]! },
+    c.value,
+  )
+  await expect(
+    taskDependenciesSource.authorize!({ scope: inScope, parent: crypto.randomUUID() }, c.value),
+  ).rejects.toThrow("unavailable")
+})
+
+test("plans and counts follow the same scope", async () => {
+  const c = context()
+  const plans = await taskPlansSource.authorize!(
+    { project: "/x", scope: { kind: "session", sessionID: "session-a" } },
+    c.value,
+  )
+  expect(plans).toMatchObject({ project: PROJECT, session: "session-a" })
+  await expect(
+    taskBucketCountsSource.authorize!(
+      { project: PROJECT, scope: { kind: "session", sessionID: "session-a" } },
+      c.value,
+    ),
+  ).rejects.toThrow("session counts")
+  await expect(
+    taskSessionBucketCountsSource.authorize!(
+      { project: PROJECT, scope: { kind: "project", sessionID: "session-a" } },
+      c.value,
+    ),
+  ).rejects.toThrow("project counts")
 })

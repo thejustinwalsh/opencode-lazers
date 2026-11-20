@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Database } from "bun:sqlite"
 import { drainTaskSchedule, retryParked } from "./drain.ts"
+import { TaskScheduleOwner } from "./owner.ts"
 import { BACKFILL_PAGE, backfillPage } from "./backfill.ts"
 import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
 import { compareReads } from "./parity.ts"
@@ -495,4 +496,33 @@ test("a task in two plans shows its newest plan, like currentActivityTargets", (
   )[0]
   expect(row).toEqual({ plan_id: second, node_state: "running" })
   expect(f.reads.currentActivityTargets([a])[0]?.planID).toBe(second)
+})
+
+// ---- Owner ----------------------------------------------------------------------------------
+
+test("the owner backfills a project until ready, drains parked work when due, and closes", async () => {
+  const f = open()
+  for (let i = 0; i < 30; i++) insertTask(f.repository, `t${i}`)
+  f.repository.atomic((db) => installTaskScheduleSchema(db))
+  const owner = new TaskScheduleOwner(f.repository)
+  expect(owner.ready()).toBe(false)
+  owner.start()
+  await owner.settle()
+  expect(owner.ready()).toBe(true)
+  expect(rows<{ n: number }>(f, "SELECT COUNT(*) n FROM task_schedule")[0]!.n).toBe(30)
+  // A parked refresh comes due and the owner's retry clears it.
+  breakScopes(f)
+  f.repository.atomic((db) =>
+    db
+      .query(
+        "INSERT OR IGNORE INTO task_schedule_dirty(kind,ref) SELECT 'task',id FROM tasks LIMIT 1",
+      )
+      .run(),
+  )
+  expect(parked(f).length).toBe(1)
+  fixScopes(f)
+  f.repository.atomic((db) => db.query("UPDATE task_schedule_failed SET next_at=0").run())
+  await owner.settle()
+  expect(parked(f)).toEqual([])
+  owner.close()
 })
