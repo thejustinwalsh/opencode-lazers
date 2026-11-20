@@ -27,8 +27,11 @@ export function harness(
     confirm?: boolean
     /** What `proposeProfile` answers. */
     propose?: ProfileOutcomeView
+    /** Sessions of open tabs, for starting setup from Settings. */
+    sessions?: { id: string; directory: string }[]
   } = {},
 ) {
+  const tabs: { id: string; focus?: boolean }[] = []
   const confirms: { title: string; description?: string }[] = []
   const toasts: { title: string; open: boolean }[] = []
   const projects = structuredClone(seed)
@@ -48,6 +51,7 @@ export function harness(
         refusal: "PROFILE_INVALID",
         message: "verify: A profile needs at least one verify command",
       },
+    startSetup: () => ({ ok: true as const, sessionID: "setup-1" }),
     confirmProfile: (): ProjectsOutcome => ok,
     discardProfile: (): ProjectsOutcome => ok,
     list: (): ProjectsListing => ({
@@ -162,6 +166,18 @@ export function harness(
         </button>
       ),
     },
+    sessions: {
+      list: () =>
+        (options.sessions ?? []).map((session) => ({
+          id: session.id,
+          server: { id: "srv", client: { rpc: () => ctx.client.rpc() } },
+          location: { directory: session.directory },
+        })),
+    },
+    tabs: {
+      open: (session: { id: string }, opts?: { focus?: boolean }) =>
+        void tabs.push({ id: session.id, ...(opts?.focus ? { focus: true } : {}) }),
+    },
     dialogs: {
       confirm: async (dialog: { title: string; description?: string }) => {
         confirms.push(dialog)
@@ -206,6 +222,7 @@ export function harness(
     calls,
     confirms,
     toasts,
+    tabs,
     setReachable: (value: boolean) => {
       reachable = value
     },
