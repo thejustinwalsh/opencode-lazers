@@ -174,21 +174,21 @@ Each is a short positive statement with `true`/`false` criteria; the example sit
 
 ### Per observation (rate over asks of the per-ask maximum; AUC against the label of the agent it feeds)
 
-| Observation | Yes (>=0.7) | Middle | No (<=0.3) | Compared label | AUC |
-|---|---|---|---|---|---|
-| names_code | 8 | 8 | 26 | grounding | 0.85 |
-| existing_behaviour | 12 | 12 | 18 | grounding | 0.77 |
-| open_choice | 20 | 20 | 2 | readiness | **0.56** |
-| states_check | 4 | 11 | 27 | readiness | 0.72 |
-| multi_change | 13 | 15 | 14 | size not one task | 0.63 |
-| stored_data | 2 | 10 | 30 | critic | 0.72 |
-| symptom_only | 10 | 13 | 19 | zoom-out | 0.77 |
-| may_exist | 13 | 10 | 19 | zoom-out | 0.77 |
-| depends_other | 12 | 10 | 20 | critic | 0.72 |
-| undefined_term | 5 | 15 | 22 | comprehension | 0.77 |
-| user_visible | 14 | 18 | 10 | (none) | n/a |
-| wording_only | 19 | 20 | 3 | no agent helpful (5 asks) | **0.62** |
-| adds_new | 5 | 17 | 20 | zoom-out | 0.74 |
+| Observation        | Yes (>=0.7) | Middle | No (<=0.3) | Compared label            | AUC      |
+| ------------------ | ----------- | ------ | ---------- | ------------------------- | -------- |
+| names_code         | 8           | 8      | 26         | grounding                 | 0.85     |
+| existing_behaviour | 12          | 12     | 18         | grounding                 | 0.77     |
+| open_choice        | 20          | 20     | 2          | readiness                 | **0.56** |
+| states_check       | 4           | 11     | 27         | readiness                 | 0.72     |
+| multi_change       | 13          | 15     | 14         | size not one task         | 0.63     |
+| stored_data        | 2           | 10     | 30         | critic                    | 0.72     |
+| symptom_only       | 10          | 13     | 19         | zoom-out                  | 0.77     |
+| may_exist          | 13          | 10     | 19         | zoom-out                  | 0.77     |
+| depends_other      | 12          | 10     | 20         | critic                    | 0.72     |
+| undefined_term     | 5           | 15     | 22         | comprehension             | 0.77     |
+| user_visible       | 14          | 18     | 10         | (none)                    | n/a      |
+| wording_only       | 19          | 20     | 3          | no agent helpful (5 asks) | **0.62** |
+| adds_new           | 5           | 17     | 20         | zoom-out                  | 0.74     |
 
 Each single observation ranks its agent's label better (AUC 0.72 to 0.85, except two) than the previous run's per-agent questions did (0.54 to 0.78 per agent, 0.66 to 0.71 pooled). Three example pieces per observation (high / middle / low, with the score); the wording can be judged by eye:
 
@@ -210,13 +210,13 @@ The middle example in each list is the piece closest to 0.5, so it shows the bou
 
 ### Rule results against the labels (decided before scoring)
 
-| Agent | Hits (yes and helpful) | False (yes, unhelpful) | In middle | Helpful in set | Rule AUC |
-|---|---|---|---|---|---|
-| comprehension | 0 | 0 | 2 | 21 | 0.72 |
-| grounding | 1 | 0 | 4 | 29 | 0.71 |
-| readiness | 0 | 0 | 11 | 29 | 0.67 |
-| critic | 0 | 0 | 4 | 25 | 0.72 |
-| zoom-out | 0 | 0 | 11 | 27 | 0.62 |
+| Agent         | Hits (yes and helpful) | False (yes, unhelpful) | In middle | Helpful in set | Rule AUC |
+| ------------- | ---------------------- | ---------------------- | --------- | -------------- | -------- |
+| comprehension | 0                      | 0                      | 2         | 21             | 0.72     |
+| grounding     | 1                      | 0                      | 4         | 29             | 0.71     |
+| readiness     | 0                      | 0                      | 11        | 29             | 0.67     |
+| critic        | 0                      | 0                      | 4         | 25             | 0.72     |
+| zoom-out      | 0                      | 0                      | 11        | 27             | 0.62     |
 
 Pooled: 1 yes (a hit, no false), 32 middle (24 helpful, 8 unhelpful), 177 no (106 helpful, 71 unhelpful); AUC 0.69. **Under the pre-registered rule, 41 of 42 asks have no agent at yes and 17 of 42 have at least one agent in the middle band.** The cause is the `(1 - wording_only)` guard: `wording_only` is yes on 19 asks and middle on 20, because the maximum over pieces of a weak observation reaches 0.7 somewhere in almost any ask. Asks over 2,000 characters (9 asks) have all 45 helpful pairs at no. That is a defect of the rule (a maximum over pieces suits "does any piece say X"; it does not suit a guard), not of the thresholds. The rule was not changed in the table above.
 
@@ -226,12 +226,12 @@ Cost: 14 requests per piece; requests per ask median 14, maximum 3,682 (the 45 K
 
 ### Comparison with rows A and C
 
-| Row | Size exact | Simple vs complex | Agent AUC | Yes (hits / false) | Requests per ask (median / max) | Seconds per ask (median / worst) |
-|---|---|---|---|---|---|---|
-| A whole, yes/no per agent | 20/42 | 29/42 | 0.66 | at 0.2: 65 / 23 | 2 / 2 | 1.4 / 223 |
-| C sliced, yes/no per agent | 18/42 | 27/42 | 0.71 | at 0.2: 81 / 28 | 18 / 1,841 | 1.4 / 142 |
-| Second run, rule as written | 16/42 | 29/42 | 0.69 | at 0.7: 1 / 0 | 14 / 3,682 | 1.0 / 260 |
-| Second run, guard dropped (post-hoc, see below) | 16/42 | 29/42 | **0.78** | at 0.7: 65 / 9 | same | same |
+| Row                                             | Size exact | Simple vs complex | Agent AUC | Yes (hits / false) | Requests per ask (median / max) | Seconds per ask (median / worst) |
+| ----------------------------------------------- | ---------- | ----------------- | --------- | ------------------ | ------------------------------- | -------------------------------- |
+| A whole, yes/no per agent                       | 20/42      | 29/42             | 0.66      | at 0.2: 65 / 23    | 2 / 2                           | 1.4 / 223                        |
+| C sliced, yes/no per agent                      | 18/42      | 27/42             | 0.71      | at 0.2: 81 / 28    | 18 / 1,841                      | 1.4 / 142                        |
+| Second run, rule as written                     | 16/42      | 29/42             | 0.69      | at 0.7: 1 / 0      | 14 / 3,682                      | 1.0 / 260                        |
+| Second run, guard dropped (post-hoc, see below) | 16/42      | 29/42             | **0.78**  | at 0.7: 65 / 9     | same                            | same                             |
 
 Post-hoc look, **not pre-registered and chosen after seeing the numbers** (thresholds untouched, only the guard removed): with `wording_only` out of the rules, 65 hits and 9 false at 0.7, 41 helpful and 29 unhelpful in the middle, 25 helpful and 41 unhelpful at no; pooled AUC 0.78; 14 of 42 asks have no agent at yes and 32 of 42 have an agent in the middle. Per agent: comprehension AUC 0.78 (10 hits, 0 false), grounding 0.80 (13, 1), readiness 0.56 (14, 6), critic 0.76 (12, 1), zoom-out 0.89 (16, 1). This is the best agent separation of any run so far (precision at yes 0.88, recall at yes 0.50, against the label base rate of 0.62), but the label set is the one I wrote and the rule change was made with the results in view; treat it as a hypothesis for the backtest.
 
@@ -239,12 +239,12 @@ Post-hoc look, **not pre-registered and chosen after seeing the numbers** (thres
 
 The weakest by AUC: `open_choice` (0.56) and `wording_only` (0.62).
 
-| Observation and form | AUC before -> after | Yes / middle / no before -> after |
-|---|---|---|
-| open_choice, reworded Noul ("The text leaves a default, format, limit or error case for the builder to decide.", criteria rewritten) | 0.56 -> 0.60 | 20/20/2 -> 15/25/2 |
-| open_choice, two-option choice (open / settled) | 0.56 -> 0.53 | 20/20/2 -> 38/2/2 |
-| wording_only, reworded Noul ("The change is only a typo, a rename or formatting.", criteria with 'recieve' example) | 0.62 -> 0.71 | 19/20/3 -> 10/20/12 |
-| wording_only, two-option choice (wording or rename only / behaviour change) | 0.62 -> 0.49 | 19/20/3 -> 19/14/9 |
+| Observation and form                                                                                                                 | AUC before -> after | Yes / middle / no before -> after |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | --------------------------------- |
+| open_choice, reworded Noul ("The text leaves a default, format, limit or error case for the builder to decide.", criteria rewritten) | 0.56 -> 0.60        | 20/20/2 -> 15/25/2                |
+| open_choice, two-option choice (open / settled)                                                                                      | 0.56 -> 0.53        | 20/20/2 -> 38/2/2                 |
+| wording_only, reworded Noul ("The change is only a typo, a rename or formatting.", criteria with 'recieve' example)                  | 0.62 -> 0.71        | 19/20/3 -> 10/20/12               |
+| wording_only, two-option choice (wording or rename only / behaviour change)                                                          | 0.62 -> 0.49        | 19/20/3 -> 19/14/9                |
 
 The reworded Nouls help a little; the two-option choice form that the demos use (`mod.ts:48`) did not, and made `open_choice` almost always "open". Rule results with the reworded Nouls swapped in: pooled AUC 0.71, 4 yes (all hits), 54 middle, 39 of 42 asks with no agent at yes, 28 of 42 with an agent in the middle. With the choice forms: AUC 0.51. Both are tuned on the set and only show that wording moves single observations by about 0.05 to 0.1 AUC.
 
