@@ -4,7 +4,7 @@ import { drainTaskSchedule, retryParked } from "./drain.ts"
 import { TaskScheduleOwner } from "./owner.ts"
 import { BACKFILL_PAGE, backfillPage } from "./backfill.ts"
 import { bucketOf, encodeSortKey, priorityKeyOf, rankOf } from "./key.ts"
-import { expectProjection } from "./parity.ts"
+import { expectProjection } from "./parity.fixture.ts"
 import { SCHEDULE_TRIGGERS, installTaskScheduleSchema } from "./schema.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
 import type { Fixture } from "./fixture.ts"
@@ -29,7 +29,7 @@ test("a plan of two tasks with a dependency projects and matches the recorded ol
   const b = insertTask(f.repository, "beta")
   insertTask(f.repository, "loose")
   submitPlan(f, "p", [a, b], { dependencies: [[a, b]] })
-  expectProjection("schedule/two-task plan", f.repository, f.reads)
+  expectProjection("schedule/two-task plan", f.repository)
   expect(rows(f, "SELECT parent_task_id,child_task_id,kind FROM task_schedule_edges")).toEqual([
     { parent_task_id: b, child_task_id: a, kind: "plan" },
   ])

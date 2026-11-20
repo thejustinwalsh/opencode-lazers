@@ -507,9 +507,7 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
     status: "found",
     reference: "LZ-1",
   })
-  expect(
-    fixture.repository.readPage({ search: "", limit: 10, includeCompleted: true }).rows,
-  ).toHaveLength(1)
+  expect(fixture.repository.list(10, true)).toHaveLength(1)
   tracker.close()
 })
 

@@ -13,7 +13,7 @@ import {
 } from "../../runner/runtime.fixture.ts"
 import { TaskReads } from "../read.ts"
 import { backfillPage } from "./backfill.ts"
-import { expectProjection } from "./parity.ts"
+import { expectProjection } from "./parity.fixture.ts"
 import { installTaskScheduleSchema } from "./schema.ts"
 
 useRuntimeFixtureCleanup()
@@ -67,7 +67,7 @@ function check(f: F, label: string) {
     (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM task_schedule_failed").get()!.n,
   )
   expect({ label, queued, parked }).toEqual({ label, queued: 0, parked: 0 })
-  expectProjection(`${scenarioOf(f)}/${label}`, f.repository, new TaskReads(f.repository, f.store))
+  expectProjection(`${scenarioOf(f)}/${label}`, f.repository)
   const before = snapshot(f)
   f.repository.atomic((db) => {
     installTaskScheduleSchema(db)

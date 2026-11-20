@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { validProposal } from "../../../test/proposal.ts"
-import { expectProjection, projectedIDs } from "./parity.ts"
+import { expectProjection, projectedIDs } from "./parity.fixture.ts"
 import { installTaskScheduleSchema } from "./schema.ts"
 import { backfillPage } from "./backfill.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
@@ -89,7 +89,7 @@ test("golden: the stored order is the recorded order of the mixed fixture", () =
   const { f, ids } = seed()
   const names = new Map(Object.entries(ids).map(([name, id]) => [id, name]))
   expect(projectedIDs(f.repository, "all", "schedule").map((id) => names.get(id))).toEqual(GOLDEN)
-  expectProjection("golden", f.repository, f.reads)
+  expectProjection("golden", f.repository)
 })
 
 test("a reservation-blocked task counts under Blocked: the one deliberate chip difference", () => {
@@ -112,7 +112,7 @@ test("a reservation-blocked task counts under Blocked: the one deliberate chip d
   expect(row).toEqual({ status: "blocked", bucket: "blocked", blocker_count: 1 })
   // The old Queued filter listed it; the stored Queued chip does not.
   expect(projectedIDs(f.repository, "queued", "schedule")).not.toContain(ids.openB!)
-  expectProjection("golden/reservation", f.repository, f.reads)
+  expectProjection("golden/reservation", f.repository)
   void validProposal
 })
 

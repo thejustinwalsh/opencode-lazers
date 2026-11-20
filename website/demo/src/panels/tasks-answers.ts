@@ -102,32 +102,6 @@ function summary(data: TasksData, task: DemoTask): TaskSummary {
   }
 }
 
-function query(
-  data: TasksData,
-  input: { state?: string; search?: string; limit?: number },
-): TaskPage {
-  const accept = filters[input.state ?? "open"] ?? filters.open!
-  const needle = (input.search ?? "").toLowerCase()
-  const tasks = data.tasks
-    .filter((task) => accept(task.state))
-    .filter((task) => !needle || `${ref(task.n)} ${task.title}`.toLowerCase().includes(needle))
-  const stateCounts = Object.fromEntries(
-    Object.entries(filters).map(([name, test]) => [
-      name,
-      data.tasks.filter((task) => test(task.state)).length,
-    ]),
-  )
-  return {
-    projectDirectory: PROJECT.canonical,
-    snapshot: 1,
-    count: tasks.length,
-    stateCounts,
-    tasks: tasks.map((task) => summary(data, task)),
-    nextCursor: null,
-    serverTime: new Date(Date.now()).toISOString(),
-  }
-}
-
 function proposal(task: DemoTask) {
   return {
     objective: task.objective ?? task.title,
@@ -386,7 +360,6 @@ function currentActivity(data: TasksData, ids: string[]) {
 export function rpc(data: () => TasksData) {
   return {
     [Tasks.id]: {
-      query: (input: never) => query(data(), input),
       get: (input: { taskID: string }) => detail(data(), input.taskID),
       currentActivity: (input: { taskIDs: string[] }) => currentActivity(data(), input.taskIDs),
     },
@@ -398,12 +371,6 @@ export function rpc(data: () => TasksData) {
 /** Every distinct read this data answers, with the contract schema that must accept it. */
 export function reads(data: TasksData): Read[] {
   const out: Read[] = []
-  for (const filter of Object.keys(filters))
-    out.push({
-      label: `lazers.tasks.query ${filter}`,
-      schema: Tasks.methods.query.output,
-      value: query(data, { state: filter }),
-    })
   for (const task of data.tasks)
     out.push({
       label: `lazers.tasks.get ${ref(task.n)}`,

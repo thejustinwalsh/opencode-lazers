@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { setPause } from "../../projects/pause.ts"
 import { installTaskScheduleSchema } from "./schema.ts"
 import { backfillPage } from "./backfill.ts"
-import { expectProjection } from "./parity.ts"
+import { expectProjection } from "./parity.fixture.ts"
 import { insertTask, openFixture, submitPlan } from "./fixture.ts"
 import type { Fixture } from "./fixture.ts"
 
@@ -242,11 +242,11 @@ function run(seed: number, events: number) {
     } else if (kind === "global")
       setPause(f.repository, { kind: "global" }, { paused: random() < 0.5, reason: "r", by: "o" })
     if (step % 40 === 39) {
-      expectProjection(`seed ${seed}/step ${step}`, f.repository, f.reads)
+      expectProjection(`seed ${seed}/step ${step}`, f.repository)
       rebuildEqual(f)
     }
   }
-  expectProjection(`seed ${seed}/final`, f.repository, f.reads)
+  expectProjection(`seed ${seed}/final`, f.repository)
   rebuildEqual(f)
   return f
 }

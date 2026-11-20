@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { readFileSync, writeFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { validProposal } from "../../test/proposal.ts"
 import { RecoveryDetector } from "../recovery/detector.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
@@ -123,16 +123,6 @@ test("the agent tool page carries what the old read carried, recorded before it 
   for (const [key, query] of Object.entries(QUERIES)) {
     const page = await queryTaskPage(f.repository, { limit: 100, ...query })
     const { nextCursor: _cursor, projectDirectory: _directory, ...shown } = page
-    if (process.env.RECORD_PROJECTION) {
-      const old = f.reads.query({ limit: 100, ...query })
-      // Counters a creating session has no stored counter for are left out.
-      const { snapshot: _snapshot, nextCursor: _next, projectDirectory: _dir, ...kept } = old
-      recorded[key] = named(
-        "sessionID" in query ? { ...kept, count: undefined, stateCounts: undefined } : kept,
-        names,
-      )
-      writeFileSync(RECORDED, `${JSON.stringify(recorded, null, 1)}\n`)
-    }
     // A task held by a reservation or prerequisite plan counts under Blocked, not Queued
     // (`INTENTIONAL_DIFFERENCES`); `blocked` and `queued` differ from the old counts by that.
     const expected = structuredClone(recorded[key]) as { stateCounts?: Record<string, number> }

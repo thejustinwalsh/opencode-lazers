@@ -181,7 +181,7 @@ for (const sort of ["schedule", "recent"] as const)
         for (const column of ["reference", "objective", "created_at", "session_id", "status"])
           expect(row[column]).toBe(task[column])
         expect(row.revision).toBe(task.revision)
-        expect(row.node_state ?? null).toBe(task.node_state)
+        expect(row.node_state ?? null).toBe((task.node_state ?? null) as never)
       })
       compared += expected.length
     }

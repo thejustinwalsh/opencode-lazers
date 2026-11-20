@@ -9,6 +9,8 @@ import {
   profileEntries,
 } from "./needs-you.ts"
 import { projectUnits } from "./scope.ts"
+import { TaskScheduleOwner } from "../tasks/schedule/owner.ts"
+import { ensureTaskScheduleSchema } from "../tasks/schedule/schema.ts"
 import { setProjectSetting } from "./settings.ts"
 import type { NeedsYouItem } from "./needs-you.ts"
 
@@ -17,9 +19,23 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup()
 })
 
+/** Each project's owner indexes its tasks, as its core does while it is loaded. */
+const owners: TaskScheduleOwner[] = []
+async function index(three: Awaited<ReturnType<typeof threeProjects>>) {
+  if (!owners.length)
+    for (const project of three.projects) {
+      ensureTaskScheduleSchema(project.repository)
+      owners.push(new TaskScheduleOwner(project.repository))
+    }
+  await Promise.all(owners.map((owner) => owner.settle()))
+}
+
 async function fixture() {
   const three = await threeProjects()
-  cleanups.push(() => three.close())
+  cleanups.push(() => {
+    for (const owner of owners.splice(0)) owner.close()
+    three.close()
+  })
   const [a, b, c] = three.projects
   // These cases are about holds and bundles; each project's setup notice is dismissed here.
   for (const project of three.projects)
@@ -46,6 +62,7 @@ async function fixture() {
       5_000,
     )
   })
+  await index(three)
   return { three, a: a!, b: b!, c: c!, outboxID }
 }
 
@@ -101,6 +118,7 @@ test("a delivered bundle is not the owner's, and a resolved hold disappears on t
   const { three, b, c } = await fixture()
   c.repository.atomic((db) => db.query("UPDATE runner_outbox SET state='delivered'").run())
   b.repository.atomic((db) => db.query("UPDATE runner_nodes SET state='queued'").run())
+  await index(three)
   expect((await pages(three)).flatMap((page) => page.items)).toEqual([])
   c.repository.read((db) => expect(openRecoveryBundle(db, c.directory)).toBeUndefined())
   b.repository.read((db) => expect(ownerHolds(db, b.directory)).toEqual([]))
@@ -252,4 +270,16 @@ test("the setup item shows until a profile is active, then nothing is asked of t
     proofs: [],
   })
   expect(entries()).toEqual([])
+})
+
+test("a project whose task list is not indexed says its holds were not read instead of listing none", async () => {
+  const three = await threeProjects()
+  cleanups.push(() => three.close())
+  const [, b] = three.projects
+  b!.repository.atomic((db) =>
+    db.query("UPDATE runner_nodes SET state='blocked' WHERE task_id=?").run(b!.taskIDs[0]!),
+  )
+  const page = (await pages(three)).find((item) => item.project.code === "BBB")!
+  expect(page.holdsRead).toBe(false)
+  expect(page.items.filter((item) => item.kind === "owner-hold")).toEqual([])
 })

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { TrajectoryOutput } from "../observability/contract.ts"
-import { GetOutput, QueryOutput } from "../tasks/contract.ts"
+import { GetOutput, AgentQueryOutput } from "../tasks/contract.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
 import type { TrajectoryResponse } from "../observability/contract.ts"
@@ -143,9 +143,8 @@ function comparison(
 }
 
 function tasks(taskIDs: string[], projectDirectory = "/repo"): TaskPage {
-  return QueryOutput.parse({
+  return AgentQueryOutput.parse({
     projectDirectory,
-    snapshot: 1,
     count: taskIDs.length,
     tasks: taskIDs.map((taskID, index) => ({
       taskID,

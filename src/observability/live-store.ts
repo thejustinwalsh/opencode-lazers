@@ -6,7 +6,7 @@ import { AttemptModel, readAttemptSummary } from "../tasks/attempt-summary.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { projectIdsJSON, sameProject } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
-import { taskStatePredicate } from "../tasks/state-filter.ts"
+import { storedBucketCounts, storedBucketHead } from "../tasks/schedule/stored.ts"
 import { openConcerns } from "../recovery/detector.ts"
 
 function safeJSON(text: string): unknown {
@@ -350,32 +350,20 @@ function assignmentFromRow(row: AssignmentRow): LiveAttemptAssignment {
 }
 
 /**
- * Queued, blocked and failed task counts with the Tasks panel's own definition: each count is a
- * sum of `taskStatePredicate` for that filter over the project's non-retired tasks, the same
- * scope `TaskRepository.stateCounts` uses. The repository method is private to a writable store
- * handle, so this read applies the shared predicates itself. One pass; absent when unreadable.
+ * Queued, blocked and failed task counts, read from the stored per-bucket counters the Tasks
+ * panel's chips show (`task_schedule_counts`, one row per bucket); absent while the project is
+ * not indexed or the counters are unreadable.
  */
 function readWorkload(db: Database, metrics: LiveStoreMetrics, projectDirectory: string) {
   try {
-    const filters = ["queued", "blocked", "failed"] as const
-    const sums = filters.map(
-      (state) =>
-        `COALESCE(SUM(CASE WHEN ${taskStatePredicate(state, "tasks")} THEN 1 ELSE 0 END),0) AS "${state}"`,
-    )
     countQuery(metrics)
-    const row = db
-      .query<Record<string, number>, string[]>(
-        `SELECT ${sums.join(",")} FROM tasks
-          WHERE tasks.project_directory=?
-            AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)`,
-      )
-      .get(projectDirectory)
-    if (!row) return undefined
-    countRows(metrics, [row])
+    const counts = storedBucketCounts(db, projectDirectory)
+    if (!counts) return undefined
+    countRows(metrics, [counts])
     return {
-      queued: row.queued ?? 0,
-      needsYou: row.blocked ?? 0,
-      failed: row.failed ?? 0,
+      queued: counts.queued,
+      needsYou: counts.blocked,
+      failed: counts.failed,
     } satisfies LiveWorkload
   } catch {
     return undefined
@@ -861,40 +849,23 @@ export class LiveReadStore {
   }
 
   /**
-   * The tasks behind a Map group: the same state predicates the workload counts use, bounded to
-   * `LIVE_GROUP_TASKS` newest rows plus the total.
+   * The tasks behind a Map group: the first `LIVE_GROUP_TASKS` of the stored bucket the workload
+   * counts, in schedule order, plus the bucket's total. A project that is not indexed yet says so.
    */
   readGroupTasks(group: "needs-you" | "failed" | "queued", signal: AbortSignal) {
-    const predicate = taskStatePredicate(
-      group === "needs-you" ? "blocked" : group === "failed" ? "failed" : "queued",
-      "tasks",
-    )
+    const bucket = group === "needs-you" ? "blocked" : group === "failed" ? "failed" : "queued"
     const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
     try {
       return connection.store.read((db) => {
         signal.throwIfAborted()
-        const where = `tasks.project_directory=?
-            AND NOT EXISTS (SELECT 1 FROM task_dispositions d WHERE d.project_directory=tasks.project_directory AND d.task_id=tasks.id)
-            AND ${predicate}`
-        const total =
-          db
-            .query<{ n: number }, [string]>(`SELECT COUNT(*) AS n FROM tasks WHERE ${where}`)
-            .get(this.projectDirectory)?.n ?? 0
-        const rows = db
-          .query<{ id: string; title: string | null; reference: string | null }, [string, number]>(
-            `SELECT tasks.id AS id,substr(json_extract(tasks.body,'$.proposal.objective'),1,600) AS title,
-                    substr(r.reference,1,40) AS reference
-               FROM tasks
-               LEFT JOIN task_references r ON r.project_directory=tasks.project_directory AND r.task_id=tasks.id
-              WHERE ${where} ORDER BY tasks.rowid DESC LIMIT ?`,
-          )
-          .all(this.projectDirectory, LIVE_GROUP_TASKS)
+        const head = storedBucketHead(db, this.projectDirectory, bucket, LIVE_GROUP_TASKS)
+        if (!head) return { indexing: true as const, total: 0, tasks: [] }
         return {
-          total,
-          tasks: rows.map((row) => ({
-            taskID: row.id,
+          total: head.total,
+          tasks: head.rows.map((row) => ({
+            taskID: row.task_id,
             reference: row.reference,
-            title: taskTitle(row.title ?? ""),
+            title: row.title,
           })),
         }
       })

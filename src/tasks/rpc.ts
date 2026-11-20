@@ -78,37 +78,6 @@ export function registerTaskReads(
   const loaded = options.loaded ?? loadedProjectDirectories
   return Effect.gen(function* () {
     const rpc = yield* timedRpc(ctx.rpc).register(Tasks, {
-      query: (input) =>
-        input.allProjects
-          ? Effect.tryPromise({
-              try: async () => {
-                const sessionService = ctx.session
-                if (!sessionService) throw new Error("Task scope is unavailable")
-                const access = await allProjectsAccess(
-                  { session: sessionService },
-                  {
-                    sessionID: input.sessionID!,
-                    projectID: runtime.projectID,
-                    repository: reads.repository,
-                    loaded,
-                    unavailable: "Task scope is unavailable",
-                  },
-                )
-                return reads.queryAll(input, access)
-              },
-              catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-            }).pipe(Effect.orDie)
-          : Effect.sync(() => {
-              const page = reads.query(input)
-              return {
-                ...page,
-                tasks: page.tasks.map((task) => {
-                  if (task.recordedState !== undefined) return task
-                  const recordedState = reads.recordedStateForTask(task.taskID)
-                  return recordedState ? { ...task, recordedState } : task
-                }),
-              }
-            }),
       get: (input) =>
         input.allProjects
           ? Effect.tryPromise({

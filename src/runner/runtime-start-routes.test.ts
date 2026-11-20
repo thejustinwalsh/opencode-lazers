@@ -151,11 +151,6 @@ test("inspector Start admits one real runtime plan and returns record-backed tas
 
   await drive(f.runtime)
   expect(f.store.execution(task.id)?.state).toBe("accepted")
-  expect(
-    new TaskReads(f.repository)
-      .query({ includeCompleted: true })
-      .tasks.find((item) => item.taskID === task.id),
-  ).toMatchObject({ status: "accepted", reason: null })
   const detail = new TaskReads(f.repository).get({ taskID: task.id })
   expect(detail).toMatchObject({
     status: "found",

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect, Stream } from "effect"
 import { addAttempt, addPlan, addTask, threeProjects } from "../../test/projects/three-projects.ts"
-import { encodeUnitCursor, projectUnits } from "../projects/scope.ts"
+import { projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ObservationChangeTracker } from "./changes.ts"
@@ -213,6 +213,8 @@ test("snapshot, radar, live radar and live groups page by project with the same 
   )
   expect(groups.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
   expect(groups.every((page) => LiveGroupOutput.safeParse(page).success)).toBe(true)
+  // These projects are not indexed: the page says so instead of listing none.
+  expect(groups.every((page) => page.indexing === true && page.total === 0)).toBe(true)
 })
 
 test("a task, an attempt and a worker session of another project resolve under all", async () => {
@@ -303,46 +305,6 @@ test("a cursor names a checkout by hash, and a checkout that is gone is refused"
   await expect(
     reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: without }),
   ).rejects.toThrow("Invalid project cursor")
-})
-
-test("tasks across projects carry the project and a reference with its code, paged by project", async () => {
-  const { three, units } = await fixture((t) => [t.projects[0]!.directory])
-  const [a] = three.projects
-  const reads = new AssociationTaskReads(a!.repository)
-  const collected: { code: string; reference: string; title: string }[] = []
-  let cursor: string | undefined
-  let pageCount = 0
-  do {
-    const page = await reads.queryAll(
-      { allProjects: true, sessionID: "ses-caller", limit: 2, ...(cursor ? { cursor } : {}) },
-      { units: units() },
-    )
-    pageCount++
-    expect(page.tasks.length).toBeLessThanOrEqual(2)
-    for (const task of page.tasks) {
-      expect(task.project).toEqual(page.project!)
-      collected.push({ code: task.project!.code, reference: task.reference, title: task.title })
-    }
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(collected.map((task) => task.code).toSorted()).toEqual(["AAA", "AAA", "AAA", "BBB", "CCC"])
-  for (const task of collected) expect(task.reference.startsWith(`${task.code}-`)).toBe(true)
-  expect(pageCount).toBe(4)
-  const loaded = new Set(
-    (await Promise.resolve(units())).map((unit) => `${unit.project.code}:${unit.project.loaded}`),
-  )
-  expect([...loaded].toSorted()).toEqual(["AAA:true", "BBB:false", "CCC:false"])
-})
-
-test("a task page reports the project's loaded flag and skips a project with no tasks", async () => {
-  const { three, units } = await fixture(() => [])
-  const reads = new AssociationTaskReads(three.projects[0]!.repository)
-  const page = await reads.queryAll(
-    { allProjects: true, sessionID: "ses-caller", limit: 10, state: "all" },
-    { units: units().filter((unit) => unit.project.code !== "AAA") },
-  )
-  expect(page.project).toMatchObject({ code: "BBB", loaded: false })
-  expect(page.projectDirectory).toBe(three.projects[1]!.directory)
 })
 
 type Handlers = Record<string, (input: unknown, context?: unknown) => Effect.Effect<unknown>>
@@ -470,18 +432,6 @@ test("all-projects pages are reads: they take no write lock, so a writer elsewhe
       expect((await f.walk(method, extra)).length).toBe(3)
     await f.call("trajectory", { scope: all, reference, limit: 5 })
     await f.call("liveAttempt", { scope: all, sessionID: "ses-beta-worker" })
-    const pages: unknown[] = []
-    let cursor: string | undefined
-    do {
-      const page = await tasks.query({
-        allProjects: true,
-        sessionID: "ses-caller",
-        ...(cursor ? { cursor } : {}),
-      })
-      pages.push(page)
-      cursor = page.nextCursor ?? undefined
-    } while (cursor)
-    expect(pages.length).toBeGreaterThanOrEqual(3)
     await tasks.get({ allProjects: true, sessionID: "ses-caller", taskID: reference })
     await tasks.currentActivity({ sessionID: "ses-caller", scope: "all", taskIDs: [taskID] })
   } finally {
@@ -534,11 +484,6 @@ async function tasksRpc(
   )
   const call = (name: string) => (input: unknown) => Effect.runPromise(handlers![name]!(input))
   return {
-    query: call("query") as (input: unknown) => Promise<{
-      project?: { code: string; loaded: boolean }
-      tasks: { project?: { code: string } }[]
-      nextCursor: string | null
-    }>,
     get: call("get") as (input: unknown) => Promise<{ status: string; project?: { code: string } }>,
     currentActivity: call("currentActivity") as (input: unknown) => Promise<{
       activities: { taskID: string; project?: { code: string }; foreground: string }[]
@@ -546,22 +491,10 @@ async function tasksRpc(
   }
 }
 
-test("rpc: Tasks query, get and current activity across projects", async () => {
+test("rpc: Tasks get and current activity across projects", async () => {
   const f = await fixture(() => [])
   const asserts: unknown[] = []
   const tasks = await tasksRpc(f, { asserts })
-  const seen: string[] = []
-  let cursor: string | undefined
-  do {
-    const page = await tasks.query({
-      allProjects: true,
-      sessionID: "ses-caller",
-      ...(cursor ? { cursor } : {}),
-    })
-    seen.push(`${page.project?.code}:${page.project?.loaded}`)
-    cursor = page.nextCursor ?? undefined
-  } while (cursor)
-  expect(seen).toEqual(["AAA:false", "BBB:false", "CCC:true"])
   const [, b] = f.three.projects
   const taskID = b!.taskIDs[0]!
   const reference = b!.repository.referenceFor(taskID)!
@@ -580,12 +513,11 @@ test("rpc: Tasks query, get and current activity across projects", async () => {
 test("rpc: Tasks reads in all need a calling session of this project", async () => {
   const f = await fixture(() => [])
   const foreign = await tasksRpc(f, { sessionProjectID: "foreign-project" })
-  await expect(foreign.query({ allProjects: true, sessionID: "ses-caller" })).rejects.toThrow()
   await expect(
     foreign.get({ allProjects: true, sessionID: "ses-caller", taskID: crypto.randomUUID() }),
   ).rejects.toThrow()
   const own = await tasksRpc(f)
-  await expect(own.query({ allProjects: true })).rejects.toThrow()
+  await expect(own.get({ allProjects: true, taskID: crypto.randomUUID() })).rejects.toThrow()
 })
 
 test("agent tools never offer all projects: their schemas have no such field and the reads refuse it", async () => {
@@ -598,9 +530,6 @@ test("agent tools never offer all projects: their schemas have no such field and
   expect(AgentQueryInput.safeParse({ limit: 5 }).success).toBe(true)
   const { three } = await fixture(() => [])
   const reads = new AssociationTaskReads(three.projects[0]!.repository)
-  expect(() => reads.query({ allProjects: true, sessionID: "ses-x" })).toThrow(
-    "An all-projects query is read with queryAll",
-  )
   expect(() =>
     reads.get({ allProjects: true, sessionID: "ses-x", taskID: three.projects[0]!.taskIDs[0] }),
   ).toThrow("An all-projects read is read with getAll")

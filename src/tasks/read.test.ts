@@ -60,74 +60,6 @@ function insert(
   })
 }
 
-test("older records, literal filters, sessions and keyset snapshots stay bounded and isolated", () => {
-  const { open } = fixture()
-  const repository = open()
-  const otherConnection = open()
-  const otherProject = open("/other")
-  const older = insert(repository, "Literal λ_% ' OR 1=1 --")
-  let finalTaskID = ""
-  for (let i = 0; i < 125; i++) {
-    const task = insert(repository, `Task ${i}`, i % 2 ? "session-a" : "session-b")
-    if (i === 124) finalTaskID = task.id
-  }
-  const foreign = insert(otherProject, "Literal λ_% ' OR 1=1 --")
-  const reads = new TaskReads(repository)
-  expect(reads.query({ search: older.id }).tasks.map((task) => task.taskID)).toEqual([older.id])
-  expect(reads.query({ search: "LZ-126" }).tasks[0]).toMatchObject({
-    taskID: finalTaskID,
-    reference: "LZ-126",
-    matches: [{ field: "reference", snippet: "LZ-126" }],
-  })
-  expect(reads.get({ taskID: "LZ-1" })).toMatchObject({
-    status: "found",
-    reference: "LZ-1",
-    task: { id: older.id },
-  })
-  expect(new TaskReads(otherProject).get({ taskID: "LZ-1" })).toMatchObject({
-    status: "found",
-    task: { id: foreign.id },
-  })
-  expect(reads.query({ search: "λ_% ' OR 1=1 --" }).count).toBe(1)
-  expect(reads.query({ search: "Acceptance needle λ_%", scopePath: "tasks/**" }).count).toBe(126)
-  expect(reads.query({ search: "Context needle λ_%" }).count).toBe(126)
-  expect(reads.query({ sessionID: "session-b" }).count).toBe(63)
-  expect(reads.get({ taskID: foreign.id })).toEqual({ status: "not_found" })
-  expect(reads.get({ taskID: older.id, sessionID: "session-b" })).toEqual({ status: "not_found" })
-  expect(reads.get({ taskID: older.id, revision: 2 })).toEqual({
-    status: "revision_unavailable",
-    revision: 1,
-  })
-  const page = reads.query({ limit: 17 })
-  const ids = page.tasks.map((task) => task.taskID)
-  const inserted = insert(otherConnection, "Concurrent insert")
-  let cursor = page.nextCursor
-  while (cursor) {
-    const next = reads.query({ limit: 17, cursor })
-    expect(next.snapshot).toBe(page.snapshot)
-    expect(next.count).toBe(126)
-    ids.push(...next.tasks.map((task) => task.taskID))
-    cursor = next.nextCursor
-  }
-  expect(ids).toHaveLength(126)
-  expect(new Set(ids).size).toBe(126)
-  expect(ids).not.toContain(inserted.id)
-  expect(reads.query({}).count).toBe(127)
-  expect(() => reads.query({ cursor: page.nextCursor!, search: "changed" })).toThrow(
-    "does not match",
-  )
-  expect(() => new TaskReads(otherProject).query({ cursor: page.nextCursor! })).toThrow(
-    "does not match",
-  )
-  for (const input of [
-    { cursor: "bad" },
-    { limit: 101 },
-    { search: "a".repeat(201) },
-    { worker: "fiction" },
-  ])
-    expect(() => reads.query(input)).toThrow()
-})
-
 test("read observers cannot invalidate a committed receipt and a fresh process preserves the watermark", () => {
   const { open, path } = fixture()
   const repository = open()
@@ -156,7 +88,7 @@ test("read observers cannot invalidate a committed receipt and a fresh process p
   )
   expect(worker.status).toBe(0)
   expect(repository.version()).toBeGreaterThan(version)
-  expect(new TaskReads(open()).query({}).count).toBe(2)
+  expect(new TaskReads(open()).repository.list(100)).toHaveLength(2)
   unsubscribe()
   insert(repository)
   expect(called).toBe(1)
@@ -243,19 +175,12 @@ test("task advice is explicit without legacy attachments and shared by planned a
   })
 })
 
-test("get, query, history and exact classification revisions agree and mutations stale cursors", () => {
+test("get, history and exact classification revisions agree", () => {
   const { open } = fixture()
   const repository = open()
   const task = insert(repository, "Classification revision fixture")
   insert(repository, "Second classification fixture")
   const reads = new TaskReads(repository)
-  const firstPage = reads.query({ limit: 1 })
-  expect(firstPage.nextCursor).toBeTruthy()
-  expect(firstPage.tasks[0]?.classification).toMatchObject({
-    revision: 1,
-    classification: { taxonomy: "task-kind/v1", primaryKind: "feature-implementation" },
-    provenance: { kind: "embedded", sessionID: "session-a" },
-  })
 
   let committedView: unknown
   const unsubscribe = repository.subscribe(() => {
@@ -276,7 +201,6 @@ test("get, query, history and exact classification revisions agree and mutations
     revision: 2,
     classification: correction.status === "recorded" ? correction.annotation.classification : null,
   })
-  expect(() => reads.query({ limit: 1, cursor: firstPage.nextCursor! })).toThrow("changed")
 
   const detail = reads.get({ taskID: task.id, classificationRevision: 1 })
   expect(detail).toMatchObject({
@@ -309,7 +233,7 @@ test("get, query, history and exact classification revisions agree and mutations
   unsubscribe()
 })
 
-test("retired tasks disappear from open queries but direct detail preserves disposition", () => {
+test("direct detail preserves the disposition of a retired task", () => {
   const { open } = fixture()
   const repository = open()
   const task = insert(repository, "Legacy task replaced by the runner.")
@@ -324,161 +248,8 @@ test("retired tasks disappear from open queries but direct detail preserves disp
     { sessionID: "architect", agent: "architect" },
   )
   const reads = new TaskReads(repository)
-  expect(reads.query({}).tasks).toEqual([])
-  const history = reads.query({ includeRetired: true })
-  expect(history.count).toBe(1)
-  expect(history.tasks[0]?.disposition?.disposition).toBe("superseded")
-  expect(history.tasks[0]?.reason).toContain("integrated runner")
   const detail = reads.get({ taskID: task.id })
   expect(detail).toMatchObject({ status: "found", disposition: { disposition: "superseded" } })
-})
-
-test("open, failed and cancelled filters separate effective plan and node states", () => {
-  const repository = fixture().open()
-  const reads = new TaskReads(repository)
-  const tasks = ["cancelled", "running", "failed", "exhausted", "cleanup-blocked"].map((state) => {
-    const task = insert(repository, `Failed worker in ${state} plan`)
-    const proposal = validProposal()
-    const plan = reads.runner.submit(
-      {
-        requestID: `plan-${state}`,
-        objective: task.proposal.objective,
-        baseCommit: "a".repeat(40),
-        nodes: [{ taskID: task.id, revision: 1 }],
-        dependencies: [],
-        integrationOrder: [task.id],
-        verification: proposal.verification,
-        acceptance: proposal.acceptance,
-      },
-      "architect",
-    )
-    // Seed the recorded worker-interruption states, without dispatching a worker.
-    repository.atomic((db) => {
-      db.query("UPDATE runner_plans SET state=? WHERE id=?").run(state, plan.planID)
-      db.query(
-        "UPDATE runner_nodes SET state='failed',reason='Worker interrupted' WHERE plan_id=?",
-      ).run(plan.planID)
-    })
-    return task
-  })
-  for (const reader of [reads, new AssociationTaskReads(repository)])
-    for (const sessionID of [undefined, "session-a"]) {
-      const open = reader.query({ sessionID, state: "open" })
-      expect(open.count).toBe(0)
-      const legacyDefault = reader.query({ sessionID, limit: 10 })
-      const legacyFalse = reader.query({ sessionID, includeCompleted: false, limit: 10 })
-      const legacyTaskIDs = new Set(tasks.slice(1).map((task) => task.id))
-      expect(legacyDefault.count).toBe(4)
-      expect(legacyFalse.count).toBe(4)
-      expect(new Set(legacyDefault.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
-      expect(new Set(legacyFalse.tasks.map((task) => task.taskID))).toEqual(legacyTaskIDs)
-      const failed = reader.query({ sessionID, state: "failed" })
-      expect(failed.count).toBe(4)
-      expect(new Set(failed.tasks.map((task) => task.taskID))).toEqual(
-        new Set(tasks.slice(1).map((task) => task.id)),
-      )
-      expect(reader.query({ sessionID, state: "cancelled" }).tasks).toMatchObject([
-        { taskID: tasks[0]!.id, status: "cancelled", reason: "Worker interrupted" },
-      ])
-      const history = reader.query({ sessionID, includeCompleted: true })
-      expect(history.count).toBe(5)
-      expect(history.tasks.find((task) => task.taskID === tasks[0]!.id)).toMatchObject({
-        status: "cancelled",
-        reason: "Worker interrupted",
-      })
-    }
-  expect(reads.get({ taskID: tasks[0]!.id })).toMatchObject({ status: "found" })
-})
-
-test("queued, running and blocked filters use recorded node and plan states across pages", () => {
-  const repository = fixture().open()
-  const reads = new TaskReads(repository)
-  const cases = [
-    // S8: a blocked plan is not an executing or dispatchable task.
-    { name: "queued normally", node: "queued", plan: "running", state: "queued" },
-    { name: "running normally", node: "running", plan: "running", state: "running" },
-    { name: "queued under hold", node: "queued", plan: "blocked", state: "queued" },
-    { name: "running under hold", node: "running", plan: "blocked", state: "running" },
-    { name: "node blocked", node: "blocked", plan: "running", state: "blocked" },
-    { name: "accepted under hold", node: "accepted", plan: "blocked", state: "completed" },
-    { name: "incorporated under hold", node: "incorporated", plan: "blocked", state: "completed" },
-  ] as const
-  const ids = new Map<string, string>()
-  for (const item of cases) {
-    const task = insert(repository, `Filter ${item.name}`)
-    const proposal = validProposal()
-    const plan = reads.runner.submit(
-      {
-        requestID: `filter-${item.name.replaceAll(" ", "-")}`,
-        objective: task.proposal.objective,
-        baseCommit: "a".repeat(40),
-        nodes: [{ taskID: task.id, revision: 1 }],
-        dependencies: [],
-        integrationOrder: [task.id],
-        verification: proposal.verification,
-        acceptance: proposal.acceptance,
-      },
-      "architect",
-    )
-    repository.atomic((db) => {
-      db.query("UPDATE runner_plans SET state=?,reason='reconciliation hold' WHERE id=?").run(
-        item.plan,
-        plan.planID,
-      )
-      db.query("UPDATE runner_nodes SET state=?,reason='node hold' WHERE plan_id=?").run(
-        item.node,
-        plan.planID,
-      )
-    })
-    ids.set(item.name, task.id)
-  }
-
-  const expected = {
-    queued: [ids.get("queued normally")!],
-    running: [ids.get("running normally")!],
-    blocked: [
-      ids.get("queued under hold")!,
-      ids.get("running under hold")!,
-      ids.get("node blocked")!,
-    ],
-    completed: [ids.get("accepted under hold")!, ids.get("incorporated under hold")!],
-  }
-  for (const reader of [reads, new AssociationTaskReads(repository)]) {
-    for (const [state, taskIDs] of Object.entries(expected)) {
-      const first = reader.query({ state: state as "queued", sessionID: "session-a", limit: 1 })
-      expect(first.count).toBe(taskIDs.length)
-      const received = [...first.tasks.map((task) => task.taskID)]
-      let cursor = first.nextCursor
-      while (cursor) {
-        const next = reader.query({
-          state: state as "queued",
-          sessionID: "session-a",
-          limit: 1,
-          cursor,
-        })
-        expect(next.snapshot).toBe(first.snapshot)
-        expect(next.count).toBe(taskIDs.length)
-        received.push(...next.tasks.map((task) => task.taskID))
-        cursor = next.nextCursor
-      }
-      expect(new Set(received)).toEqual(new Set(taskIDs))
-    }
-    expect(reader.query({ state: "blocked", sessionID: "session-a", limit: 1 }).tasks.length).toBe(
-      1,
-    )
-    expect(reader.query({ state: "running", sessionID: "session-a" }).tasks[0]).toMatchObject({
-      taskID: ids.get("running normally"),
-      status: "running",
-      recordedState: "running",
-    })
-    expect(
-      new Set(
-        reader
-          .query({ state: "completed", sessionID: "session-a" })
-          .tasks.map((task) => task.status),
-      ),
-    ).toEqual(new Set(["accepted", "incorporated"]))
-  }
 })
 
 test("current activity candidates are limited to requested, authorized latest attempt rows", () => {
@@ -646,256 +417,8 @@ test("source plan provenance survives storage and task reads without inventing i
     proposal: { ...standalone.proposal, sourcePlan },
   })
   const reads = new TaskReads(repository)
-  expect(reads.query({}).tasks.find((task) => task.taskID === planned.id)?.sourcePlan).toEqual(
-    sourcePlan,
-  )
   const detail = reads.get({ taskID: planned.id })
   expect(detail.status === "found" && detail.task.proposal.sourcePlan).toEqual(sourcePlan)
-  expect(
-    new AssociationTaskReads(repository)
-      .query({ sessionID: "session-a" })
-      .tasks.find((task) => task.taskID === planned.id)?.sourcePlan,
-  ).toEqual(sourcePlan)
-  expect(
-    reads.query({}).tasks.find((task) => task.taskID === standalone.id)?.sourcePlan,
-  ).toBeUndefined()
-})
-
-test("paused dispatch is durable, filterable and distinct from active worker lifecycle", () => {
-  const fixtureState = fixture()
-  const repository = fixtureState.open()
-  const active = insert(repository, "Already running")
-  const waiting = insert(repository, "Wait for dispatch")
-  const reads = new TaskReads(repository)
-  const proposal = validProposal()
-  const plan = reads.runner.submit(
-    {
-      requestID: "pause-reads",
-      objective: "Pause dispatch only",
-      baseCommit: "a".repeat(40),
-      nodes: [active, waiting].map((task) => ({ taskID: task.id, revision: 1 })),
-      dependencies: [],
-      integrationOrder: [active.id, waiting.id],
-      verification: proposal.verification,
-      acceptance: proposal.acceptance,
-    },
-    "session-a",
-  )
-  repository.atomic((db) =>
-    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID),
-  )
-  reads.runner.move(plan.planID, active.id, "READY")
-  reads.runner.move(plan.planID, active.id, "DISPATCH")
-  reads.runner.setDispatchPause(
-    plan.planID,
-    { reason: "Coordinate next wave", untilPlans: [] },
-    { caller: "session-a" },
-  )
-  expect(reads.query({ state: "paused" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
-  expect(reads.query({ state: "queued" }).count).toBe(0)
-  expect(reads.query({ state: "running" }).tasks.map((task) => task.taskID)).toEqual([active.id])
-  expect(reads.query({ state: "paused" }).tasks[0]).toMatchObject({
-    recordedState: "queued",
-    dispatchPause: { reason: "Coordinate next wave", untilPlans: [] },
-    dispatchPausePlanID: plan.planID,
-  })
-  const reopened = new TaskReads(fixtureState.open())
-  expect(reopened.runner.dispatchPause(plan.planID)).toEqual({
-    reason: "Coordinate next wave",
-    untilPlans: [],
-  })
-  reads.runner.setDispatchPause(plan.planID, null, { caller: "session-a" })
-  expect(reopened.query({ state: "paused" }).count).toBe(0)
-  expect(reopened.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
-})
-
-test("a project or global pause lists the waiting task as paused and names the level", async () => {
-  const repository = fixture().open()
-  const key = (
-    await registerProject(repository, {
-      directory: repository.projectDirectory,
-      opencodeProjectID: "project",
-    })
-  ).key
-  const active = insert(repository, "Already running")
-  const waiting = insert(repository, "Wait for dispatch")
-  const reads = new TaskReads(repository)
-  const proposal = validProposal()
-  const plan = reads.runner.submit(
-    {
-      requestID: "project-pause-reads",
-      objective: "Pause by project",
-      baseCommit: "a".repeat(40),
-      nodes: [active, waiting].map((task) => ({ taskID: task.id, revision: 1 })),
-      dependencies: [],
-      integrationOrder: [active.id, waiting.id],
-      verification: proposal.verification,
-      acceptance: proposal.acceptance,
-    },
-    "session-a",
-  )
-  repository.atomic((db) =>
-    db.query("UPDATE runner_plans SET state='running' WHERE id=?").run(plan.planID),
-  )
-  reads.runner.move(plan.planID, active.id, "READY")
-  reads.runner.move(plan.planID, active.id, "DISPATCH")
-  expect(reads.query({ state: "paused" }).count).toBe(0)
-  setPause(repository, { kind: "project", key }, { paused: true, reason: "Rebuild", by: "owner" })
-  expect(reads.query({ state: "paused" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
-  expect(reads.query({ state: "paused" }).tasks[0]).toMatchObject({
-    recordedState: "queued",
-    dispatchPause: { reason: "Project pause: Rebuild", untilPlans: [], level: "project" },
-  })
-  expect(reads.query({ state: "running" }).tasks.map((task) => task.taskID)).toEqual([active.id])
-  setPause(repository, { kind: "project", key }, { paused: false, reason: "", by: "owner" })
-  setPause(repository, { kind: "global" }, { paused: true, reason: "Away", by: "owner" })
-  expect(reads.query({ state: "paused" }).tasks[0]?.dispatchPause?.reason).toBe(
-    "Global pause: Away",
-  )
-  setPause(repository, { kind: "global" }, { paused: false, reason: "", by: "owner" })
-  expect(reads.query({ state: "paused" }).count).toBe(0)
-  expect(reads.query({ state: "queued" }).tasks.map((task) => task.taskID)).toEqual([waiting.id])
-})
-
-test("a running task that trips a detector rule shows its open concern with totals across attempts", () => {
-  const repository = fixture().open()
-  const reads = new TaskReads(repository)
-  const calm = insert(repository, "Calm task")
-  const grind = insert(repository, "Grinding task")
-  const proposal = validProposal()
-  const plan = reads.runner.submit(
-    {
-      requestID: "concern-plan",
-      objective: grind.proposal.objective,
-      baseCommit: "a".repeat(40),
-      nodes: [
-        { taskID: calm.id, revision: 1 },
-        { taskID: grind.id, revision: 1 },
-      ],
-      dependencies: [],
-      integrationOrder: [calm.id, grind.id],
-      verification: proposal.verification,
-      acceptance: proposal.acceptance,
-    },
-    "architect",
-  )
-  repository.atomic((db) => {
-    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(plan.planID)
-    db.query("UPDATE runner_nodes SET state='running',reason=NULL WHERE plan_id=?").run(plan.planID)
-    const addAttempt = (taskID: string, number: number, tokens: number, state: string) =>
-      db
-        .query(
-          `INSERT INTO runner_attempts
-          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        )
-        .run(
-          crypto.randomUUID(),
-          plan.planID,
-          taskID,
-          number,
-          `session-${taskID}-${number}`,
-          `message-${taskID}-${number}`,
-          "/worktree",
-          "a".repeat(40),
-          null,
-          "{}",
-          state,
-          Date.now() - 60_000,
-          tokens,
-          100,
-        )
-    addAttempt(calm.id, 1, 1_000_000, "running")
-    addAttempt(grind.id, 1, 40_000_000, "failed")
-    addAttempt(grind.id, 2, 50_000_000, "running")
-    for (let round = 0; round < 3; round++)
-      db.query(
-        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'VERIFY','{}',?)",
-      ).run(plan.planID, grind.id, round + 1)
-    db.query(
-      "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,1,'REPAIR',?,4)",
-    ).run(plan.planID, grind.id, JSON.stringify({ from: "verifying", to: "ready" }))
-  })
-
-  // Nothing is shown until the detector records a concern.
-  expect(reads.query({ state: "all" }).tasks.some((task) => task.concern)).toBe(false)
-  new RecoveryDetector({
-    store: reads.runner,
-    handoff: new HandoffStore(repository),
-    now: Date.now,
-  }).evaluate("owner", reads.runner.claim("owner", Date.now())!)
-  const tasks = reads.query({ state: "all" }).tasks
-  expect(tasks.find((task) => task.taskID === calm.id)?.concern).toBeUndefined()
-  const found = tasks.find((task) => task.taskID === grind.id)?.concern
-  expect(found?.reasons).toEqual(["verify-rounds-repeated"])
-  expect(found?.line).toContain("after 90M tokens")
-  expect(found?.totals).toMatchObject({ attempts: 2, verifyRounds: 3, toolCalls: 200 })
-})
-
-test("a task whose latest attempt is an Architect takeover is marked; an ordinary attempt is not", () => {
-  const repository = fixture().open()
-  const reads = new TaskReads(repository)
-  const worker = insert(repository, "Worker task")
-  const taken = insert(repository, "Taken over task")
-  const proposal = validProposal()
-  const plan = reads.runner.submit(
-    {
-      requestID: "takeover-plan",
-      objective: taken.proposal.objective,
-      baseCommit: "a".repeat(40),
-      nodes: [
-        { taskID: worker.id, revision: 1 },
-        { taskID: taken.id, revision: 1 },
-      ],
-      dependencies: [],
-      integrationOrder: [worker.id, taken.id],
-      verification: proposal.verification,
-      acceptance: proposal.acceptance,
-    },
-    "architect",
-  )
-  repository.atomic((db) => {
-    db.query("UPDATE runner_plans SET state='running',reason=NULL WHERE id=?").run(plan.planID)
-    db.query("UPDATE runner_nodes SET state='running',reason=NULL WHERE plan_id=?").run(plan.planID)
-    const addAttempt = (taskID: string, number: number, policy: string) =>
-      db
-        .query(
-          `INSERT INTO runner_attempts
-          (id,plan_id,task_id,number,session_id,message_id,workspace,base_commit,artifact,policy,state,started_at,token_count,tool_count)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        )
-        .run(
-          crypto.randomUUID(),
-          plan.planID,
-          taskID,
-          number,
-          `session-${taskID}-${number}`,
-          `message-${taskID}-${number}`,
-          "/worktree",
-          "a".repeat(40),
-          null,
-          policy,
-          "running",
-          Date.now() - 60_000 + number,
-          0,
-          0,
-        )
-    addAttempt(worker.id, 1, "{}")
-    addAttempt(taken.id, 1, "{}")
-    addAttempt(
-      taken.id,
-      2,
-      JSON.stringify({
-        agent: "architect",
-        takeover: {
-          takeoverID: crypto.randomUUID(),
-          architectSessionID: "architect-session",
-          fromAttemptID: crypto.randomUUID(),
-        },
-      }),
-    )
-  })
-  const tasks = reads.query({ state: "all" }).tasks
-  expect(tasks.find((task) => task.taskID === taken.id)?.takeover).toBe(true)
-  expect(tasks.find((task) => task.taskID === worker.id)?.takeover).toBeUndefined()
+  const plain = reads.get({ taskID: standalone.id })
+  expect(plain.status === "found" && plain.task.proposal.sourcePlan).toBeUndefined()
 })

@@ -1,54 +1,24 @@
-import { Database } from "bun:sqlite"
 import { homedir } from "node:os"
-import { realpathSync } from "node:fs"
 import { join } from "node:path"
-import { TaskRepository } from "../src/storage.ts"
-import { TaskReads } from "../src/tasks/read.ts"
-import { backfillPage } from "../src/tasks/schedule/backfill.ts"
-import { compareReads } from "../src/tasks/schedule/parity.ts"
-
-/**
- * Compare the old Tasks read with the schedule projection for every project of a database.
- *
- *   bun scripts/task-schedule-audit.ts <path to a COPY of tasks.sqlite>
- *   bun scripts/task-schedule-audit.ts --readonly-live [path]   (opens mode=ro, writes nothing)
- *
- * It opens the copy for writing (the projection is installed and backfilled in it), so it refuses
- * the live database. Copy the file somewhere under a temp directory first.
- */
 import { auditLive } from "../src/tasks/schedule/live-audit.ts"
 
-const readonlyLive = process.argv.includes("--readonly-live")
+/**
+ * Compare the old Tasks list's order and chip membership with the stored list for every project of
+ * a database, writing nothing.
+ *
+ *   bun scripts/task-schedule-audit.ts [path to tasks.sqlite]
+ *
+ * The file is opened `mode=ro`; the projection is built in an attached memory database and the
+ * old order is the SQL kept in `src/tasks/schedule/live-audit.ts`. Exit 1 when the order differs
+ * or a chip differs for a reason other than the intentional one.
+ */
 const path =
   process.argv.slice(2).find((arg) => !arg.startsWith("--")) ??
-  (readonlyLive ? join(homedir(), ".local/share/opencode/plugins/lazers/tasks.sqlite") : undefined)
-if (readonlyLive) {
-  // The file is opened mode=ro and never written; the projection is built in an attached memory database.
-  for (const report of auditLive(path!)) console.log(JSON.stringify(report, null, 2))
-  process.exit(0)
-}
-if (!path) throw new Error("usage: bun scripts/task-schedule-audit.ts <copy of tasks.sqlite>")
-const live = join(homedir(), ".local/share/opencode/plugins/lazers/tasks.sqlite")
-if (realpathSync(path) === realpathSync(live))
-  throw new Error("Refusing the live database: audit a copy under a temp directory")
-
-const projects = new Database(path, { readonly: true })
-  .query<{ project_directory: string }, []>("SELECT DISTINCT project_directory FROM tasks")
-  .all()
-  .map((row) => row.project_directory)
-
+  join(homedir(), ".local/share/opencode/plugins/lazers/tasks.sqlite")
 let divergent = 0
-for (const project of projects) {
-  const repository = new TaskRepository(path, project)
-  const reads = new TaskReads(repository)
-  for (let pages = 0; ; pages++) {
-    if (repository.atomic((db) => backfillPage(db, project)).done) break
-    if (pages > 1_000_000) throw new Error("Backfill did not finish")
-  }
-  const found = compareReads(repository, reads)
-  console.log(`${project}: ${found.length === 0 ? "equal" : `${found.length} divergences`}`)
-  for (const item of found.slice(0, 5)) console.log("  ", JSON.stringify(item))
-  divergent += found.length
-  repository.close()
+for (const report of auditLive(path)) {
+  console.log(JSON.stringify(report, null, 2))
+  const unexplained = Object.keys(report.kinds).filter((kind) => !kind.includes("(intentional)"))
+  if (!report.scheduleOrder.equal || unexplained.length) divergent++
 }
 process.exit(divergent ? 1 : 0)
