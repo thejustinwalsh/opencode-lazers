@@ -51,7 +51,6 @@ test("history cache pages an immutable sanitized capture in exact order", () => 
   const cache = new TrajectoryHistoryCache(secret, {
     ttlMs: 100,
     maxEntries: 2,
-    maxEvents: 10,
     maxBytes: 100_000,
   })
   const rawReport = report()
@@ -105,7 +104,6 @@ test("expired and evicted history cursors require explicit recapture", () => {
   const cache = new TrajectoryHistoryCache(secret, {
     ttlMs: 10,
     maxEntries: 1,
-    maxEvents: 10,
     maxBytes: 100_000,
   })
   const expired = cache.capture(identity, report(), boundary, 100)
@@ -125,14 +123,39 @@ test("expired and evicted history cursors require explicit recapture", () => {
   expect(evictedFailure).toMatchObject({ reason: "evicted" })
 })
 
-test("history cache rejects duplicate or oversized projections rather than serving partial pages", () => {
+test("an over-limit capture is served and pages every event; only older captures are evicted", () => {
   const cache = new TrajectoryHistoryCache(secret, {
-    ttlMs: 100,
-    maxEntries: 2,
-    maxEvents: 2,
-    maxBytes: 100_000,
+    ttlMs: 1_000,
+    maxEntries: 4,
+    maxBytes: 2_000,
   })
-  expect(() => cache.capture(identity, report(3), boundary, 100)).toThrow("bounded capture size")
+  const other = { ...identity, taskID: "00000000-0000-4000-8000-000000000002" }
+  const small = cache.capture(other, report(2), boundary, 100)
+  const big = cache.capture(identity, report(300), boundary, 101)
+  expect(big.eventIDs).toHaveLength(300)
+  expect(big.report.trajectory.totalEvents).toBe(300)
+  // the older capture made room; the oversize one is still reachable
+  expect(small.report.trajectory.nextCursor).toBeNull()
+  const seen: string[] = big.report.trajectory.events.map((e) => (e as { id: string }).id)
+  let cursor = big.report.trajectory.nextCursor
+  while (cursor) {
+    const page = cache.continue(identity, cursor, 102)
+    seen.push(...page.report.trajectory.events.map((e) => (e as { id: string }).id))
+    cursor = page.report.trajectory.nextCursor
+  }
+  expect(seen).toEqual(big.eventIDs!)
+  // a second oversize capture evicts the first instead of failing
+  const second = cache.capture(other, report(300), boundary, 103)
+  expect(second.eventIDs).toHaveLength(300)
+  expect(
+    thrown(() => cache.continue(identity, big.report.trajectory.nextCursor!, 104)),
+  ).toMatchObject({
+    reason: "evicted",
+  })
+})
+
+test("history cache still rejects duplicate event identities", () => {
+  const cache = new TrajectoryHistoryCache(secret)
   const duplicate = report(2)
   duplicate.trajectory.events[1]!.id = duplicate.trajectory.events[0]!.id
   expect(() => cache.capture(identity, duplicate, boundary, 100)).toThrow(

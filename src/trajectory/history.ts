@@ -5,10 +5,19 @@ import type {
   TrajectoryHistoryErrorReason,
 } from "../observability/contract.ts"
 
+/**
+ * The cache never refuses a capture. These only decide what it forgets, and a forgotten capture
+ * is recaptured on demand ("evicted" / "expired"). None was measured; each is a product choice:
+ * - TTL_MS: how long a cursor stays valid (a person reading one panel).
+ * - MAX_ENTRIES: captures kept at once (one per open Trajectory panel, with headroom).
+ * - RETAIN_BYTES: the serialised size the cache keeps warm beyond the newest capture. LZ-200
+ *   (3 attempts, ~92M tokens) projects to roughly 22 MB (1,856 progress facts at 5.6 MB in
+ *   tasks.sqlite plus 768 native messages at 16.5 MB), so this holds about three such tasks.
+ *   A single capture larger than this is still served; it only evicts every other entry.
+ */
 const TTL_MS = 5 * 60_000
 const MAX_ENTRIES = 16
-const MAX_EVENTS = 10_000
-const MAX_BYTES = 8 * 1024 * 1024
+const RETAIN_BYTES = 64 * 1024 * 1024
 
 type Boundary = {
   repositoryVersion: number
@@ -118,8 +127,7 @@ export class TrajectoryHistoryCache {
     private readonly limits = {
       ttlMs: TTL_MS,
       maxEntries: MAX_ENTRIES,
-      maxEvents: MAX_EVENTS,
-      maxBytes: MAX_BYTES,
+      maxBytes: RETAIN_BYTES,
     },
   ) {}
 
@@ -132,8 +140,7 @@ export class TrajectoryHistoryCache {
     this.sweep(now)
     const trajectory = object(report.trajectory)
     const events = trajectory?.events
-    if (!Array.isArray(events) || events.length > this.limits.maxEvents)
-      throw new Error("Trajectory history exceeds the bounded capture size")
+    if (!Array.isArray(events)) throw new Error("Trajectory history has no event list")
     const eventIDs = events.flatMap((event) => {
       const id = object(event)?.id
       return typeof id === "string" ? [id] : []
@@ -147,8 +154,6 @@ export class TrajectoryHistoryCache {
       JSON.stringify({ report: safeReport, boundary: safeBoundary, eventIDs }),
       "utf8",
     )
-    if (bytes > this.limits.maxBytes)
-      throw new Error("Trajectory history exceeds the bounded capture size")
 
     const entry: HistoryEntry = {
       id: randomUUID(),
@@ -160,9 +165,11 @@ export class TrajectoryHistoryCache {
       expiresAt: now + this.limits.ttlMs,
       bytes,
     }
+    // Eviction only: a capture of any size is admitted, older ones make room for it.
     while (
-      this.entries.size >= this.limits.maxEntries ||
-      this.bytes + entry.bytes > this.limits.maxBytes
+      this.entries.size > 0 &&
+      (this.entries.size >= this.limits.maxEntries ||
+        this.bytes + entry.bytes > this.limits.maxBytes)
     )
       this.evictOldest()
     this.entries.set(entry.id, entry)
