@@ -1,5 +1,5 @@
 import tgpu, { type TgpuRoot } from "typegpu"
-import { adapterBufferLimits } from "./device-limits"
+import { adapterBufferLimits, D1_MAX_BUFFER_BYTES } from "./device-limits"
 import { createD1Decider, createLfm3Omni, initRunntime, models } from "runntime/zoo"
 import type { Lfm3Omni, RangeSource, WeightCache } from "runntime/zoo"
 import { cachedRange } from "./files-fetch.ts"
@@ -127,9 +127,9 @@ function destroyAfterFailedLoad(root: TgpuRoot, cause: unknown): never {
   throw cause
 }
 
-async function initializeRoot(signal: AbortSignal): Promise<TgpuRoot> {
+async function initializeRoot(signal: AbortSignal, maxBufferBytes?: number): Promise<TgpuRoot> {
   signal.throwIfAborted()
-  const requiredLimits = await adapterBufferLimits()
+  const requiredLimits = await adapterBufferLimits(maxBufferBytes)
   signal.throwIfAborted()
   const root = await tgpu.init({ device: { optionalFeatures: ["shader-f16"], requiredLimits } })
   try {
@@ -193,7 +193,7 @@ export async function loadRunntimeOmni({ read, signal, onProgress }: LoadOptions
 }
 
 export async function loadRunntimeDecision({ read, signal, onProgress }: LoadOptions) {
-  const root = await initializeRoot(signal)
+  const root = await initializeRoot(signal, D1_MAX_BUFFER_BYTES)
   let tokenizerURL: string | undefined
   try {
     const tokenizer = await cachedModelRangeSource("tokenizer", read, signal).read(
