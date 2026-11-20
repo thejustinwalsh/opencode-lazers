@@ -20,7 +20,11 @@ const paths = {
       <path d="M12.6 12.6L16 16M7 9h4" />
     </>
   ),
-  fit: <path d="M4 8V4.5h3.5M16 8V4.5h-3.5M4 12v3.5h3.5M16 12v3.5h-3.5" />,
+  // Two end bars with arrows pointing at them: the timeline's whole span, stretched to the panel.
+  fit: <path d="M3.5 4v12M16.5 4v12M6.5 10h7M9 7.5L6.5 10 9 12.5M11 7.5l2.5 2.5-2.5 2.5" />,
+  // The conventional expand glyph: two opposing corner arrows.
+  expand: <path d="M11.5 4.5h4v4M15.5 4.5l-4.5 4.5M8.5 15.5h-4v-4M4.5 15.5L9 11" />,
+  close: <path d="M5.5 5.5l9 9M14.5 5.5l-9 9" />,
 } satisfies Record<string, JSX.Element>
 
 export type PanelIconName = keyof typeof paths
