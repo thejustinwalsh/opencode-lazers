@@ -6,6 +6,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Tool } from "@opencode/schema/tool"
 import { DateTime, Effect, Exit, Fiber, Queue, Scope, Stream } from "effect"
+import { hostPageOf } from "../../test/host-list-fake.ts"
 import { firstAttemptID, makeFixture, secondAttemptID } from "../../test/trajectory/fixture.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { TaskRepository } from "../storage.ts"
@@ -200,13 +201,7 @@ function makeContext(
         const all = (await Effect.runPromise(
           options.readContext?.(input.sessionID) ?? Effect.succeed(messages),
         )) as { id: string }[]
-        const limit = input.limit ?? 50
-        if (input.order === "desc")
-          return { data: all.slice(-limit).reverse(), cursor: {} } as never
-        const start = input.cursor ? Number(input.cursor) : 0
-        const data = all.slice(start, start + limit)
-        const next = start + limit < all.length ? String(start + limit) : undefined
-        return { data, cursor: { ...(next ? { next } : {}) } } as never
+        return hostPageOf(all, input) as never
       },
     },
   })

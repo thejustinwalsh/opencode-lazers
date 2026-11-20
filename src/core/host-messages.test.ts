@@ -5,9 +5,12 @@ import {
   installHostMessageSchema,
   latestTurn,
   newMessages,
+  precedesInSession,
+  trailingAssistants,
   sessionToolCount,
   type HostMessageClient,
 } from "./host-messages.ts"
+import { hostPageOf } from "../../test/host-list-fake.ts"
 
 /** Opaque cursors: the cursor is the offset of the first message of the page it selects. */
 function fakeHost(messages: { id: string }[]) {
@@ -16,12 +19,7 @@ function fakeHost(messages: { id: string }[]) {
     message: {
       list: async (input: { cursor?: string; order?: string; limit?: number }) => {
         calls.push({ cursor: input.cursor, order: input.order, limit: input.limit })
-        const limit = input.limit ?? 50
-        if (input.order === "desc") return { data: messages.slice(-limit).reverse(), cursor: {} }
-        const start = input.cursor ? Number(input.cursor) : 0
-        const data = messages.slice(start, start + limit)
-        const next = start + limit < messages.length ? String(start + limit) : undefined
-        return { data, cursor: { ...(next ? { next } : {}) } }
+        return hostPageOf(messages, input)
       },
     },
   } as unknown as HostMessageClient
@@ -123,4 +121,31 @@ test("a generation 1 cursor table gains the tool tally column and keeps its rows
   } finally {
     fixture.close()
   }
+})
+
+test("trailingAssistants pages past the first page by cursor alone", async () => {
+  const messages = [
+    { id: "u", type: "user" },
+    ...Array.from({ length: 5 }, (_, index) => ({ id: `a${index}`, type: "assistant" })),
+  ]
+  const host = fakeHost(messages)
+  const found = await trailingAssistants(host.client, "ses", 2)
+  expect(found.map((message) => message.id)).toEqual(["a0", "a1", "a2", "a3", "a4"])
+  expect(host.calls.map((call) => [call.order, call.cursor])).toEqual([
+    ["desc", undefined],
+    [undefined, "d:2"],
+    [undefined, "d:4"],
+  ])
+})
+
+test("precedesInSession pages past the first page by cursor alone", async () => {
+  const messages = [
+    { id: "early", type: "user" },
+    ...Array.from({ length: 4 }, (_, index) => ({ id: `x${index}`, type: "assistant" })),
+    { id: "late", type: "assistant" },
+  ]
+  const host = fakeHost(messages)
+  const early = (message: { id: string }) => message.id === "early"
+  expect(await precedesInSession(host.client, "ses", early, "late", 2)).toBe(true)
+  expect(host.calls.length).toBe(3)
 })

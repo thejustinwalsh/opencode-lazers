@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { hostPageOf } from "../host-list-fake.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import {
   nativeHost,
@@ -174,17 +175,7 @@ export function nativeLivenessFixture(options: NativeLivenessFixtureOptions = {}
             const durable = [...(options.history ?? []), ...(options.messages ?? [])] as {
               type?: string
             }[]
-            const filtered = input.type
-              ? durable.filter((entry) => entry.type === input.type)
-              : durable
-            const ordered = input.order === "desc" ? [...filtered].reverse() : filtered
-            const limit = input.limit ?? 50
-            const start = input.cursor ? Number(input.cursor) : 0
-            const next = start + limit < ordered.length ? String(start + limit) : undefined
-            return {
-              data: ordered.slice(start, start + limit),
-              cursor: { ...(next ? { next } : {}) },
-            }
+            return hostPageOf(durable, input)
           }
           const history = options.history ?? []
           const boundary = input.cursor

@@ -1,6 +1,7 @@
 import type { OpenCode } from "@opencode/client"
 import { schemaModules } from "../database-schema.ts"
 import type { TaskRepository } from "../storage.ts"
+import { hostPage } from "./host-page.ts"
 
 /**
  * Host cursor mirror: read a session's messages by cursor instead of `session.context`.
@@ -127,7 +128,7 @@ export async function* newMessages(
     const page = await client.message.list({
       sessionID: sessionID as never,
       limit: pageSize,
-      ...(cursor ? { cursor } : { order: "asc" as const }),
+      ...hostPage("asc", cursor),
     })
     if (page.data.length > 0) yield page.data
     const here = toolsIn(page.data)
@@ -204,9 +205,8 @@ export async function trailingAssistants(
   for (;;) {
     const page = await client.message.list({
       sessionID: sessionID as never,
-      order: "desc",
       limit: pageSize,
-      ...(cursor ? { cursor } : {}),
+      ...hostPage("desc", cursor),
     })
     for (const message of page.data) {
       if (message.type !== "assistant") return newestFirst.reverse()
@@ -237,9 +237,8 @@ export async function precedesInSession(
   for (;;) {
     const page = await client.message.list({
       sessionID: sessionID as never,
-      order: "desc",
       limit: pageSize,
-      ...(cursor ? { cursor } : {}),
+      ...hostPage("desc", cursor),
     })
     for (const message of page.data) {
       if (message.id === laterID) seenLater = true
@@ -271,7 +270,7 @@ export async function eachMessagePage(
     const page = await client.message.list({
       sessionID: sessionID as never,
       limit: Math.min(pageSize, limit - visited),
-      ...(cursor ? { cursor } : { order: "asc" as const }),
+      ...hostPage("asc", cursor),
     })
     visit(page.data)
     visited += page.data.length

@@ -25,6 +25,7 @@ import {
   sessionToolCount,
   type HostMessageClient,
 } from "../core/host-messages.ts"
+import { hostPage } from "../core/host-page.ts"
 import { ensureArchitectMap } from "../context/architect-map.ts"
 import { ensureArchitectProfileGuidance } from "../projects/profile-guidance.ts"
 import { basename, dirname, resolve } from "node:path"
@@ -499,9 +500,8 @@ async function currentTurn(client: NativeInboxClient, sessionID: string) {
   for (;;) {
     const page = await client.message.list({
       sessionID,
-      order: "desc",
       limit: HOST_MESSAGE_PAGE_SIZE,
-      ...(cursor ? { cursor } : {}),
+      ...hostPage("desc", cursor),
     })
     for (const message of page.data) {
       newestFirst.push(message)
@@ -1045,7 +1045,7 @@ export function nativeHost(
         client.message.list({
           sessionID,
           limit: 100,
-          ...(cursor ? { cursor } : { order: "asc" }),
+          ...hostPage("asc", cursor),
         }),
       )
       return {
