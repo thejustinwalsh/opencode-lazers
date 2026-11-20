@@ -1,3 +1,4 @@
+import { sharedInFlight, sharedSessionSet } from "../core/process-shared.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
@@ -11,8 +12,8 @@ import type { ActiveProfile, ProofRecord } from "./profile-store.ts"
 export const architectProfileKey = "lazers-project-profile"
 
 type SessionApi = Pick<Plugin.Context["session"], "get" | "instructions">
-const inFlight = new Map<string, Promise<boolean>>()
-const installed = new Set<string>()
+const inFlight = sharedInFlight<boolean>("profile-guidance.inFlight")
+const installed = sharedSessionSet("profile-guidance.installed")
 
 /** Why a command is unproven, in a few words: its exit code, its reason, or that it never ran. */
 function unprovenReason(proof: ProofRecord | undefined): string {
@@ -102,8 +103,8 @@ export function ensureArchitectProfileGuidance(
 
 /** Key of the keyed session instruction that points an Architect at project setup. */
 export const setupPointerKey = "lazers-project-setup"
-const pointerInFlight = new Map<string, Promise<boolean>>()
-const pointerInstalled = new Set<string>()
+const pointerInFlight = sharedInFlight<boolean>("profile-guidance.pointerInFlight")
+const pointerInstalled = sharedSessionSet("profile-guidance.pointerInstalled")
 
 const SETUP_POINTER =
   "This project has no LAZERS profile, so the runtime uses the commands you write in tasks.\n`lz-project-profile` (mode `guide`) explains how to set one up."

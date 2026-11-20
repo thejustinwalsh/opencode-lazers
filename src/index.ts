@@ -171,7 +171,7 @@ export default Plugin.define({
         core.inferenceBroker,
         projectID,
       )
-      const sessionAgents = new Map<string, string>()
+      const sessionAgents = core.sessionAgents
       yield* timedHooks(ctx.session, "session").hook("prompt", (prompt) =>
         Effect.promise(async () => {
           // Recorded and delivered without ever delaying the prompt; a failure here is invisible.
