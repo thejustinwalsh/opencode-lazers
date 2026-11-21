@@ -19,6 +19,8 @@ import {
 import type { ModelMappingRecord } from "../../../../src/models/mapping-schema.ts"
 import type { ModelMappingSubject } from "../../../../src/models/agent-ids.ts"
 import { Observability } from "../../../../src/observability/contract.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
+import { combinedStreams, modelStreams } from "./models-streams.ts"
 import { TaskEffortBasisSchema } from "../../../../src/models/comparison-presentation.ts"
 import { TrajectoryOutput } from "../../../../src/observability/contract.ts"
 import type { Read } from "../adapter.ts"
@@ -490,35 +492,6 @@ function sourceStatus(data: ModelsData): ModelEvidenceOutput {
   }
 }
 
-function catalog(data: ModelsData) {
-  return {
-    source: "Live native OpenCode model catalog" as const,
-    observedAt: iso(Date.now()),
-    advisoryOnly: true as const,
-    note: "Models the connected providers list. Prices are USD per million tokens.",
-    configuredImplementor: null,
-    options: data.models.map((model) => ({
-      providerID: model.providerID,
-      id: model.id,
-      name: model.name,
-      enabled: true,
-      type: "chat",
-      capabilities: { tools: true, input: ["text"], output: ["text"] },
-      contextTokens: model.context,
-      pricesUSDPerMillionTokens: [
-        {
-          contextTierTokens: null,
-          input: model.priceIn,
-          output: model.priceOut,
-          cacheRead: model.priceCache,
-          cacheWrite: 0,
-        },
-      ],
-      variants: model.variants,
-    })),
-  }
-}
-
 /* ------------------------------------------------------------------- settings */
 
 const SUBJECTS: { subject: ModelMappingSubject; label: string }[] = [
@@ -752,6 +725,23 @@ export function rpc(data: () => ModelsData): Handlers {
   const mappings = new Mappings(data)
   const tasks = tasksRpc(() => tasksOf(data()))
   return {
+    ...tasks,
+    // One streams answer: the Models sources here, the Tasks sources (the task picker) there.
+    [Streams.id]: combinedStreams(
+      modelStreams(
+        () => ({
+          overview: (filters) => overview(data(), filters),
+          inspect: (filters, id) =>
+            inspect(data(), { filters, configurationID: id, selectedTaskID: null } as never),
+          comparison: () => comparison(data()),
+          settings: (taskID) => settings(mappings, data(), taskID),
+          priceSources: POLICY.sources,
+          pricesRetrievedAt: data().pricesRetrievedAt,
+        }),
+        data,
+      ),
+      tasks[Streams.id] as never,
+    ),
     [Models.id]: {
       refreshSources: () => sourceStatus(data()),
       sourceEvidence: () => sourceStatus(data()),
@@ -761,11 +751,6 @@ export function rpc(data: () => ModelsData): Handlers {
         access: { openrouter: "configured", opencode: "configured" },
       }),
     },
-    [ModelsDecision.id]: {
-      overview: (input: { filters: ModelDecisionFilters }) => overview(data(), input.filters),
-      inspect: (input: never) => inspect(data(), input),
-    },
-    ...tasks,
     [Observability.id]: {
       ...tasks[Observability.id],
       trajectoryStatus: (input: { taskID: string }) => trajectory(input.taskID),
@@ -780,7 +765,6 @@ export function reads(data: ModelsData): Read[] {
     taskKind: null,
     period: { from: null, to: null },
   }
-  const mappings = new Mappings(() => data)
   const out: Read[] = [
     {
       label: "lazers.models.refreshSources",
