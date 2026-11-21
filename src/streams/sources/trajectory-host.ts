@@ -189,12 +189,17 @@ function messagePager(
     }
   }
 
-  /** Up to `need` rows before `from`, oldest first. */
-  const backward = async (from: Position, need: number, signal: AbortSignal): Promise<Chunk> => {
+  /** Up to `need` rows before `from`, oldest first; `read` is the page at `from.c` if in hand. */
+  const backward = async (
+    from: Position,
+    need: number,
+    signal: AbortSignal,
+    read?: Page,
+  ): Promise<Chunk> => {
     const reversed: unknown[][][] = []
     let taken = 0
     let { c, i, k } = from
-    let page: Page = await list(c, signal)
+    let page: Page = read ?? (await list(c, signal))
     for (;;) {
       for (let at = Math.min(k > 0 ? i : i - 1, page.messages.length - 1); at >= 0; at--) {
         const events = messageRows(page.messages[at]!, at)
@@ -230,8 +235,11 @@ function messagePager(
     }
   }
 
-  /** The boundary after the last message, found from the fold's stored cursor (else the start). */
-  const tailPosition = async (signal: AbortSignal): Promise<Position> => {
+  /**
+   * The boundary after the last message, found from the fold's stored cursor (else the start),
+   * with the page it lies in. A page shorter than the limit is the list's last: no read follows it.
+   */
+  const tailPosition = async (signal: AbortSignal): Promise<{ end: Position; page: Page }> => {
     let c =
       runtime.read(
         (db) =>
@@ -248,8 +256,11 @@ function messagePager(
       page = await list(c, signal)
     }
     for (;;) {
-      const following = await follow(page.next, c, signal)
-      if (!following) return { c, i: page.messages.length, k: 0 }
+      const following =
+        page.messages.length < HOST_MESSAGE_PAGE_SIZE
+          ? undefined
+          : await follow(page.next, c, signal)
+      if (!following) return { end: { c, i: page.messages.length, k: 0 }, page }
       c = page.next
       page = following
     }
@@ -281,8 +292,8 @@ function messagePager(
   return {
     async page({ from, direction, limit, signal }: HostPageRequest) {
       if (from === "tail") {
-        const end = await tailPosition(signal)
-        return done({ ...(await backward(end, limit, signal)), after: false })
+        const { end, page } = await tailPosition(signal)
+        return done({ ...(await backward(end, limit, signal, page)), after: false })
       }
       const origin: Position =
         from === "head"

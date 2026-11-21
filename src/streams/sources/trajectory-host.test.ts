@@ -305,6 +305,28 @@ test("the real host's list ends: a stored end cursor and the first page's previo
   }
 })
 
+test("a tail open of a transcript shorter than one host page is one host read", async () => {
+  const short = new Map([["ses-short", messages().slice(0, 10)]])
+  const shortHost = fakeHost(short)
+  db.run("INSERT INTO runner_attempts VALUES(?,?,?)", [project, taskID, "ses-short"])
+  const stream = openHostStream(trajectoryTranscriptSource, {
+    filter: { projectDirectory: project, scope: owner, taskID, sessionID: "ses-short" },
+    window: 6,
+    anchor: "tail",
+    runtime: { ...runtime, messages: shortHost.client },
+  })
+  await stream.ready()
+  expect(idsOf(stream)).toEqual(
+    messageRowsOf(short.get("ses-short")!)
+      .slice(-6)
+      .map((row) => row[0]),
+  )
+  // The page holds fewer messages than the limit: the empty page past the end is never read,
+  // and the window is cut from the same page.
+  expect(shortHost.state.lists).toBe(1)
+  stream.close()
+})
+
 test("a hint after a new message updates a tail window; close stops the host reads", async () => {
   const live = new Map([["ses-live", messages().slice(0, 10)]])
   const liveHost = fakeHost(live)
