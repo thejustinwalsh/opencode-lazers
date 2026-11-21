@@ -58,7 +58,7 @@ export function setStorageTiming(on: boolean) {
 }
 
 /** Storage entry points whose own frame may sit between `timeStorage` and the caller. */
-const WRAPPERS = new Set(["read", "atomic", "atomicAsync", "retryBusy"])
+const WRAPPERS = /^(read|atomic|atomicAsync|retryBusy)\d*$/
 const FRAME = /^at (?:async )?(?:(.*?) \()?([^()]+?):(\d+):\d+\)?$/
 
 /**
@@ -73,14 +73,12 @@ function callSite(): string {
     .map((line) => line.trim())
     .filter((line) => line.startsWith("at "))
     .map((line) => FRAME.exec(line))
-  let index = 0
-  while (
-    index < frames.length &&
-    ["callSite", "sample", "timeStorage"].includes(frames[index]?.[1] ?? "")
-  )
-    index++
+  // Frame 0 is this function. The capture runs directly in `timeStorage`'s own body (never in
+  // a helper), so frame 1 is `timeStorage` under whatever name the bundler gave it; skip both
+  // by position. The wrapper frame after it is optional and matched with its bundler suffix.
+  let index = 2
   const method = frames[index]?.[1]?.split(".").pop()
-  if (method !== undefined && WRAPPERS.has(method)) index++
+  if (method !== undefined && WRAPPERS.test(method)) index++
   const match = frames[index]
   if (!match) return "(unknown)"
   const [, name, file, line] = match
@@ -109,9 +107,8 @@ function record(kind: "read" | "atomic", site: string, ms: number) {
   state.sites.set(id, { site, kind, count: 1, totalMs: ms, maxMs: ms })
 }
 
-function sample(kind: "read" | "atomic", ms: number) {
+function sample(kind: "read" | "atomic", site: string, ms: number) {
   const sampled = state.sampled!
-  const site = callSite()
   const id = `${kind} ${site}`
   const entry = sampled.get(id)
   if (entry) {
@@ -148,7 +145,7 @@ export function timeStorage<T>(kind: "read" | "atomic", run: () => T): T {
       record(kind, FAST_SITE, ms)
       if (++state.tick! >= SAMPLE_RATE) {
         state.tick = 0
-        sample(kind, ms)
+        sample(kind, callSite(), ms)
       }
     }
   }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, onTestFinished, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -100,13 +100,28 @@ test("the site names the calling function", () => {
 })
 
 test("the site names the caller when everything is one bundled file", async () => {
-  const out = join(directory, "bundle")
+  // Inside the repository so the bundle resolves its external packages from node_modules.
+  const out = join(import.meta.dir, "../../dist", `storage-timing-${process.pid}`)
   const entry = join(directory, "entry.ts")
+  onTestFinished(() => rmSync(out, { recursive: true, force: true }))
   await Bun.write(
     entry,
     `import { TaskRepository } from ${JSON.stringify(join(import.meta.dir, "../storage.ts"))}
+export function openRepository(path: string, project: string) {
+  return new TaskRepository(path, project)
+}
 export function bundledCaller(repo: TaskRepository) {
   repo.read(() => { const end = performance.now() + 5; while (performance.now() < end); })
+  return 1
+}
+function sample() {
+  return performance.now()
+}
+export function bundledSample() {
+  return sample()
+}
+export function bundledFast(repo: TaskRepository) {
+  for (let i = 0; i < 3200; i++) repo.read((db) => db.query("SELECT 1").get())
   return 1
 }
 export function bundledWriter(repo: TaskRepository) {
@@ -126,13 +141,35 @@ export function bundledWriter(repo: TaskRepository) {
   })
   expect(result.success).toBe(true)
   const built = (await import(join(out, "bundle.js"))) as {
+    openRepository(path: string, project: string): TaskRepository
     bundledCaller(repo: TaskRepository): number
     bundledWriter(repo: TaskRepository): number
+    bundledFast(repo: TaskRepository): number
+    bundledSample(): number
   }
-  setStorageTiming(true)
-  built.bundledCaller(repository)
-  built.bundledWriter(repository)
-  const sites = drainStorageTiming(20).map((row) => row.site)
+  built.bundledSample()
+  const bundled = built.openRepository(
+    join(directory, "bundled.sqlite"),
+    join(directory, "project"),
+  )
+  try {
+    setStorageTiming(true)
+    built.bundledCaller(bundled)
+    built.bundledWriter(bundled)
+    built.bundledFast(bundled)
+  } finally {
+    bundled.close()
+  }
+  const report = drainStorageReport(20)
+  const sites = report.storage.map((row) => row.site)
+  const sampledSites = report.sampled.map((row) => row.site)
+  expect(sampledSites.some((site) => /^bundledFast \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
+  const text = await Bun.file(join(out, "bundle.js")).text()
+  // The bundle really contains the storage layer, and its `sample` collided and was renamed.
+  expect(text).toMatch(/function timeStorage\w*\(/)
+  expect(text).toMatch(/function sample\d+\(/)
+  for (const site of [...sites, ...sampledSites])
+    expect(site).not.toMatch(/^(callSite|sample|timeStorage|record)\d* /)
   expect(sites.some((site) => /^bundledCaller \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
   expect(sites.some((site) => /^bundledWriter \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
 })
