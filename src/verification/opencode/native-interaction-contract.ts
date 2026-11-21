@@ -202,9 +202,26 @@ const NativeCommand = Schema.Struct({
 })
 
 const NativeState = Schema.Literals(["queued", "delivered", "completed", "unknown"])
+export const NativeAdmissionRefusal = Schema.Struct({
+  requestID: shortText,
+  operation: NativeOperation,
+  delivery: Schema.Literals(["not-delivered"]),
+  message: Schema.String.check(Schema.isBetweenLength(1, 256)),
+})
+export type NativeAdmissionRefusal = typeof NativeAdmissionRefusal.Type
+
+export const NativeEnqueueResult = Schema.Union([
+  Schema.Struct({ state: Schema.Literals(["queued", "existing", "completed"]) }),
+  Schema.Struct({
+    state: Schema.Literals(["refused"]),
+    refusal: NativeAdmissionRefusal,
+  }),
+])
+
 const NativeResultState = Schema.Struct({
   state: NativeState,
   result: Schema.optionalKey(NativeActionResult),
+  refusal: Schema.optionalKey(NativeAdmissionRefusal),
 })
 
 export const NativeInteraction = Rpc.define({
@@ -242,9 +259,7 @@ export const NativeInteraction = Rpc.define({
           operation: NativeOperation,
         }),
       ),
-      output: portable(
-        Schema.Struct({ state: Schema.Literals(["queued", "existing", "completed"]) }),
-      ),
+      output: portable(NativeEnqueueResult),
     },
     poll: {
       input: portable(
