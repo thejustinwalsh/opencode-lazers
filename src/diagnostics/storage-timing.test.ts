@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { TaskRepository } from "../storage.ts"
 import {
   FAST_SITE,
+  SAMPLE_RATE,
   drainStorageReport,
   drainStorageTiming,
   setStorageTiming,
@@ -134,4 +135,31 @@ export function bundledWriter(repo: TaskRepository) {
   const sites = drainStorageTiming(20).map((row) => row.site)
   expect(sites.some((site) => /^bundledCaller \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
   expect(sites.some((site) => /^bundledWriter \(.*bundle\.js:\d+\)$/.test(site))).toBe(true)
+})
+
+function fastCaller(repo: TaskRepository, n: number) {
+  for (let i = 0; i < n; i++) repo.read((db) => db.query("SELECT 1").get())
+  return 1
+}
+
+test("fast calls are sampled by caller, one in SAMPLE_RATE, and totals stay exact", () => {
+  setStorageTiming(true)
+  fastCaller(repository, 3200)
+  const report = drainStorageReport(20)
+  expect(report.sampleRate).toBe(SAMPLE_RATE)
+  const mine = report.sampled.find((row) => row.site.startsWith("fastCaller ("))
+  expect(mine?.kind).toBe("read")
+  expect(mine!.samples).toBeGreaterThanOrEqual(80)
+  expect(mine!.samples).toBeLessThanOrEqual(120)
+  expect(mine!.sampledMs).toBeGreaterThan(0)
+  const fast = report.storage.find((row) => row.site === FAST_SITE)
+  expect(fast?.count).toBeGreaterThanOrEqual(3200 - 5)
+})
+
+test("slow calls are not sampled", () => {
+  setStorageTiming(true)
+  repository.read(() => spin(3))
+  const report = drainStorageReport(20)
+  expect(report.sampled).toEqual([])
+  expect(report.storage[0]?.site).toMatch(/\.test\.ts:\d+/)
 })

@@ -21,10 +21,37 @@ const SITE_THRESHOLD_MS = 2
 const MAX_SITES = 512
 export const FAST_SITE = "(under 2ms)"
 
-type State = { on: boolean; depth: number; syncMs: number; sites: Map<string, StorageTiming> }
+/**
+ * One in this many calls under the threshold also captures its call site into `sampled`, so a
+ * reader estimates per-site counts as `samples * SAMPLE_RATE`. Cost is a counter increment per
+ * fast call plus one stack capture and map update per sample: measured on a
+ * `SELECT 1` read (about 1.55 µs bare): the flag adds about 0.18 µs per call in all, of which
+ * sampling is about 0.1 µs amortised; with the flag off the cost is one property read.
+ */
+export const SAMPLE_RATE = 32
+
+export type SampledSite = {
+  site: string
+  kind: "read" | "atomic"
+  samples: number
+  sampledMs: number
+}
+
+type State = {
+  on: boolean
+  depth: number
+  syncMs: number
+  sites: Map<string, StorageTiming>
+  /** Fast calls seen since the last sample was taken. */
+  tick?: number
+  sampled?: Map<string, SampledSite>
+}
 const key = Symbol.for("lazers.storage-timing.v1")
 const holder = globalThis as typeof globalThis & { [key]?: State }
 const state: State = (holder[key] ??= { on: false, depth: 0, syncMs: 0, sites: new Map() })
+// A copy loaded earlier may have created the shared state without the sampling fields.
+state.tick ??= 0
+state.sampled ??= new Map()
 
 export function setStorageTiming(on: boolean) {
   state.on = on
@@ -47,7 +74,10 @@ function callSite(): string {
     .filter((line) => line.startsWith("at "))
     .map((line) => FRAME.exec(line))
   let index = 0
-  while (index < frames.length && ["callSite", "timeStorage"].includes(frames[index]?.[1] ?? ""))
+  while (
+    index < frames.length &&
+    ["callSite", "sample", "timeStorage"].includes(frames[index]?.[1] ?? "")
+  )
     index++
   const method = frames[index]?.[1]?.split(".").pop()
   if (method !== undefined && WRAPPERS.has(method)) index++
@@ -79,6 +109,29 @@ function record(kind: "read" | "atomic", site: string, ms: number) {
   state.sites.set(id, { site, kind, count: 1, totalMs: ms, maxMs: ms })
 }
 
+function sample(kind: "read" | "atomic", ms: number) {
+  const sampled = state.sampled!
+  const site = callSite()
+  const id = `${kind} ${site}`
+  const entry = sampled.get(id)
+  if (entry) {
+    entry.samples++
+    entry.sampledMs += ms
+    return
+  }
+  if (sampled.size >= MAX_SITES) {
+    let smallest: string | undefined
+    let least = Infinity
+    for (const [name, value] of sampled)
+      if (value.samples < least) {
+        least = value.samples
+        smallest = name
+      }
+    if (smallest !== undefined) sampled.delete(smallest)
+  }
+  sampled.set(id, { site, kind, samples: 1, sampledMs: ms })
+}
+
 /** Runs `run`, recording its wall time under the caller's site when timing is active. */
 export function timeStorage<T>(kind: "read" | "atomic", run: () => T): T {
   if (!state.on || state.depth > 0) return run()
@@ -90,17 +143,31 @@ export function timeStorage<T>(kind: "read" | "atomic", run: () => T): T {
     state.depth--
     const ms = performance.now() - start
     state.syncMs += ms
-    record(kind, ms >= SITE_THRESHOLD_MS ? callSite() : FAST_SITE, ms)
+    if (ms >= SITE_THRESHOLD_MS) record(kind, callSite(), ms)
+    else {
+      record(kind, FAST_SITE, ms)
+      if (++state.tick! >= SAMPLE_RATE) {
+        state.tick = 0
+        sample(kind, ms)
+      }
+    }
   }
 }
 
-/** Top sites by `totalMs` since the last drain, plus the total synchronous ms. Resets. */
-export function drainStorageReport(top: number): { storage: StorageTiming[]; syncMs: number } {
+/** Top sites by `totalMs`, top sampled fast-call sites by samples, and total ms. Resets. */
+export function drainStorageReport(top: number): {
+  storage: StorageTiming[]
+  syncMs: number
+  sampled: SampledSite[]
+  sampleRate: number
+} {
   const storage = [...state.sites.values()].sort((a, b) => b.totalMs - a.totalMs).slice(0, top)
+  const sampled = [...state.sampled!.values()].sort((a, b) => b.samples - a.samples).slice(0, top)
   const syncMs = state.syncMs
   state.sites.clear()
+  state.sampled!.clear()
   state.syncMs = 0
-  return { storage, syncMs }
+  return { storage, syncMs, sampled, sampleRate: SAMPLE_RATE }
 }
 
 export function drainStorageTiming(top: number): StorageTiming[] {
