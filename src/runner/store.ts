@@ -1549,7 +1549,11 @@ export class RunnerStore {
     )
   }
   /** Throws unless the project holds this plan; an existence read, so no plan body is loaded. */
+  private readonly knownPlans = new Set<string>()
   private requirePlan(planID: string) {
+    // Plan rows are never deleted and belong to one project, so a plan found once stays found:
+    // the per-call existence read becomes one read per plan for the life of the store.
+    if (this.knownPlans.has(planID)) return
     const found = this.read((db) =>
       db
         .query<{ present: number }, [string, string]>(
@@ -1558,6 +1562,7 @@ export class RunnerStore {
         .get(planID, this.repository.projectDirectory),
     )
     if (!found) throw new Error("Plan not found")
+    this.knownPlans.add(planID)
   }
   nodes(planID: string) {
     this.requirePlan(planID)

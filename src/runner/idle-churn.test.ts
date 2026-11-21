@@ -90,6 +90,8 @@ test("idle ticks write nothing and read a constant amount, however many run", as
   expect(few.atomics).toBe(0)
   expect(many.atomics).toBe(0)
   expect(many.reads).toBe(few.reads * 5)
+  // Idle tick cost, reads per tick: was 77 before plan existence was remembered.
+  expect(few.reads / 5).toBeLessThan(70)
   expect(many.host).toBe(few.host * 5)
   // Nothing changed, so the source's history is not read again.
   expect(scanned).toBe(0)
