@@ -537,7 +537,13 @@ export function createModelsController(props: ModelsProps) {
    */
   const held = <T>(read: () => T, empty: T) =>
     createMemo<T>((previous) =>
-      viewRow()?.state === "ready" ? read() : live() ? (previous ?? empty) : empty,
+      // The view row is the new selection's own only once its first frame has landed; before that
+      // it is still the last selection's, and the other streams may already answer empty.
+      viewRow()?.state === "ready" && live()?.view.loaded()
+        ? read()
+        : live()
+          ? (previous ?? empty)
+          : empty,
     )
   const viewDetail = held(() => viewRow(), undefined)
   type PointRow = {
