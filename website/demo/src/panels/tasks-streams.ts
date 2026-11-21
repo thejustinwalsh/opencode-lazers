@@ -20,7 +20,7 @@ import {
 } from "../../../../src/streams/sources/tasks-ref.ts"
 import type { CurrentActivityOutput, TaskDetail } from "../../../../src/tasks/contract.ts"
 import { BUCKETS, type Bucket } from "../../../../src/tasks/schedule/buckets.ts"
-import { bucketsFor } from "../../../../src/tasks/schedule/key.ts"
+import { bucketsForSelection } from "../../../../src/tasks/schedule/key.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
 import type { DemoTask, TasksData } from "./tasks-answers.ts"
 
@@ -296,7 +296,10 @@ function rowsOf(data: TasksData, open: Open, project: string, answers?: DetailAn
     }))
   }
   if (open.source !== TASK_SOURCES.schedule) return []
-  const buckets = bucketsFor(filter.state as string | undefined)
+  const buckets = bucketsForSelection(
+    filter.states as Parameters<typeof bucketsForSelection>[0],
+    filter.state as Parameters<typeof bucketsForSelection>[1],
+  )
   const needle = String(filter.search ?? "").toLowerCase()
   const rows = scheduleRows(data, project).filter(
     (row) =>
