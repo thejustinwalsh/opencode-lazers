@@ -1,9 +1,19 @@
 import { expect, test } from "bun:test"
-import { captureTrajectoryHistory, inspectTrajectory } from "./read.ts"
+import { inspectTrajectory } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { HOST_MESSAGE_PAGE_SIZE } from "../core/host-messages.ts"
 import type { MessageSink, TrajectoryHost, TrajectorySession } from "./native.ts"
 import { makeFixture, cursorSecret, taskID } from "../../test/trajectory/fixture.ts"
+
+/** The whole event projection in one read: `inspectTrajectory` with every event (the old capture). */
+const captureTrajectoryHistory = (
+  store: Parameters<typeof inspectTrajectory>[0],
+  host: Parameters<typeof inspectTrajectory>[1],
+  projectID: string,
+  input: Parameters<typeof inspectTrajectory>[3],
+  cursorSecret: Uint8Array,
+  options: NonNullable<Parameters<typeof inspectTrajectory>[5]> = {},
+) => inspectTrajectory(store, host, projectID, input, cursorSecret, { ...options, allEvents: true })
 
 /** 500 messages per session: the fixture's own, then numbered clones with varied models. */
 function expand(sessions: Iterable<TrajectorySession>, count: number) {

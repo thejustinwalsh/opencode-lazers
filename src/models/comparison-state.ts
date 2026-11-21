@@ -1,7 +1,6 @@
 import { sameProject } from "../project-key.ts"
 import { panelErrorMessage as errorMessage } from "../panel-error.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
-import type { TrajectoryResponse } from "../observability/contract.ts"
 import { readTaskEffortBasis, type ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelEvidenceOutput } from "./source-schema.ts"
 import type { ModelComparisonOutput } from "./comparison-schema.ts"
@@ -44,6 +43,13 @@ export type ModelAssignmentWrite = {
   expectedRevision: number
   revision: number | null
   message: string
+}
+
+/** One task's effort read: the part of the trajectory a comparison uses (`trajectory.effort`). */
+export type TrajectoryResponse = {
+  projectID: string
+  scope: { kind: string }
+  report: Record<string, unknown>
 }
 
 export type ModelComparisonTransport = {

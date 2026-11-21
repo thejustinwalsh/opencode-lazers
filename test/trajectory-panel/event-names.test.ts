@@ -27,7 +27,10 @@ async function sourceFiles(pattern: string) {
 /** Every `kind` a trajectory event can carry, read from the code that records it. */
 async function recordedKinds() {
   const kinds = new Set<string>()
-  const read = await Bun.file("src/trajectory/read.ts").text()
+  // The message events moved out of the report read into their own module.
+  const read =
+    (await Bun.file("src/trajectory/read.ts").text()) +
+    (await Bun.file("src/trajectory/message-events.ts").text())
   for (const match of read.matchAll(/kind: "([a-z][a-z-]*)"/g)) kinds.add(match[1]!)
   for (const match of read.matchAll(/base\((?:[^()]|\([^()]*\))*?,\s*"([a-z][a-z-]*)"\)/g))
     kinds.add(match[1]!)

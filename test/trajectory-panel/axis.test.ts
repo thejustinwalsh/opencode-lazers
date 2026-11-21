@@ -62,34 +62,24 @@ test("idle breaks and every mark are placed by the same transform", () => {
       tool: "bash",
     },
   ] as unknown as TrajectoryEvent[]
-  const report = {
-    task: { id: "task" },
-    plans: [],
+  const recorded = {
     attempts: [
       {
         id: "attempt-1",
         planID: "plan",
+        taskID: "task",
         number: 1,
         state: "completed",
         startedAt: origin,
-        intervals: {
-          attempt: { startedAt: origin, endedAt: origin + 6 * MIN + 30_000, basis: "test" },
-          modelActivity: { startedAt: null, endedAt: null, basis: "test" },
-        },
-        checks: [],
+        endedAt: origin + 6 * MIN + 30_000,
+        timingBasis: "test",
         executions: [],
       },
     ],
-    effort: { firstAttemptAt: origin },
-  } as never
-  const timeline = buildTimeline(
-    undefined,
-    "task",
-    report,
-    null,
-    [origin + 10_000, origin + 6 * MIN],
-    true,
-  )
+    checks: [],
+    firstAttemptAt: origin,
+  }
+  const timeline = buildTimeline(recorded, null, [origin + 10_000, origin + 6 * MIN], true)
   expect(timeline.breaks).toHaveLength(1)
   const idle = timeline.breaks![0]!
   expect(idle.label).toBe("5m50s idle")
@@ -102,6 +92,6 @@ test("idle breaks and every mark are placed by the same transform", () => {
   const segment = timeline.attempts[0]!.segments[0]!
   expect(timeline.axis!.place(6 * MIN + 30_000)).toBeCloseTo(segment.left + segment.width, 6)
   // Without compression the same marks are placed linearly.
-  const linear = buildTimeline(undefined, "task", report, null, [origin + 6 * MIN], false)
+  const linear = buildTimeline(recorded, null, [origin + 6 * MIN], false)
   expect(linear.breaks).toEqual([])
 })

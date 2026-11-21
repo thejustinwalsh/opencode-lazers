@@ -56,8 +56,8 @@ export type AttemptPaneProps = {
   events: readonly TrajectoryEvent[]
   notes: readonly string[]
   identifiers: ReadonlyArray<{ label: string; value?: string | null }>
-  capture: { at: number | null; expiresAt: number | null; error: string; busy: boolean }
-  onRecapture: () => void
+  /** The selected attempt's message text is still arriving. */
+  loadingTranscript: boolean
   onSelectEvent: (id: string) => void
   /** Bumps when "Show" on the Errors row asks for the filtered events. */
   eventsRequest: { open: boolean; filter: EventFilter }
@@ -240,28 +240,9 @@ export function AttemptPane(props: AttemptPaneProps) {
                 )}
               </For>
             </div>
-            <div class="lazers-trajectory-capture-note" role="status">
-              <span>
-                {props.capture.at
-                  ? `Captured ${new Date(props.capture.at).toLocaleString()}${
-                      props.capture.expiresAt
-                        ? ` · expires ${new Date(props.capture.expiresAt).toLocaleTimeString()}`
-                        : ""
-                    }`
-                  : ""}
-              </span>
-              <props.ui.Button
-                variant="ghost"
-                size="small"
-                busy={props.capture.busy}
-                onClick={() => props.onRecapture()}
-              >
-                Recapture history
-              </props.ui.Button>
-            </div>
-            <Show when={props.capture.error}>
-              <div class="lazers-trajectory-error" role="alert">
-                {props.capture.error}
+            <Show when={props.loadingTranscript}>
+              <div class="lazers-trajectory-capture-note" role="status">
+                Loading messages
               </div>
             </Show>
             <For each={shown()}>

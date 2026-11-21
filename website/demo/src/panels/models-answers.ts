@@ -18,9 +18,15 @@ import {
 } from "../../../../src/models/source-schema.ts"
 import type { ModelMappingRecord } from "../../../../src/models/mapping-schema.ts"
 import type { ModelMappingSubject } from "../../../../src/models/agent-ids.ts"
+import { Streams } from "../../../../src/streams/contract.ts"
 import { Observability } from "../../../../src/observability/contract.ts"
 import { TaskEffortBasisSchema } from "../../../../src/models/comparison-presentation.ts"
-import { TrajectoryOutput } from "../../../../src/observability/contract.ts"
+import {
+  TRAJECTORY_SOURCES,
+  trajectoryEffortColumns,
+  trajectoryEffortDetail,
+} from "../../../../src/streams/sources/trajectory-ref.ts"
+import { streamAnswers } from "./stream-answers.ts"
 import type { Read } from "../adapter.ts"
 import { PROJECT, rpc as tasksRpc, reads as tasksReads } from "./tasks-answers.ts"
 import type { DemoTask } from "./tasks-answers.ts"
@@ -659,7 +665,8 @@ function settings(
 
 /* ------------------------------------------------------------------ trajectory */
 
-function trajectory(taskID: string) {
+/** The composed effort of a task: what the `trajectory.effort` detail carries for the comparison. */
+function taskEffort() {
   const at = Date.now() - 2 * 60 * MIN
   const category = {
     value: 480_000,
@@ -719,20 +726,7 @@ function trajectory(taskID: string) {
     },
     quality: { status: "not-recorded", value: null, meaning: "Not recorded" },
   })
-  return TrajectoryOutput.parse({
-    schemaVersion: 1,
-    projectID: PROJECT.id,
-    scope: { kind: "project" },
-    boundary: {
-      repositoryVersion: 1,
-      sourceRevision: 1,
-      sourceFingerprint: "a".repeat(64),
-      nativeRevision: 1,
-      eventSequence: 1,
-      transitionSequence: 1,
-    },
-    report: { task: { id: taskID }, effort: { taskEffortBasis: effort } },
-  })
+  return { taskEffortBasis: effort }
 }
 
 /* ------------------------------------------------------------------- the host */
@@ -747,6 +741,40 @@ const tasksOf = (data: ModelsData) => ({
 })
 
 type Handlers = Record<string, Record<string, (input: never) => unknown>>
+
+/** The tasks' stream answers, plus the one effort row the comparison reads for its selected task. */
+function withEffortStream(base: Handlers[string]): Handlers[string] {
+  const effort = streamAnswers(
+    {
+      [TRAJECTORY_SOURCES.effort]: {
+        columns: trajectoryEffortColumns,
+        detail: trajectoryEffortDetail,
+        key: ["id"],
+      },
+    },
+    () => [{ id: 1, busy: false, effort: taskEffort() }],
+  )
+  const mine = new Set<string>()
+  type Call = (input: never) => unknown
+  const route = (name: "slide" | "seek" | "read" | "close"): Call => {
+    const answer = effort[name] as Call
+    return (input) =>
+      mine.has((input as { stream: string }).stream) ? answer(input) : base[name]!(input)
+  }
+  return {
+    ...base,
+    open: (input: never) => {
+      const call = input as { stream: string; source: string }
+      if (call.source !== TRAJECTORY_SOURCES.effort) return base.open!(input)
+      mine.add(call.stream)
+      return effort.open(input)
+    },
+    slide: route("slide"),
+    seek: route("seek"),
+    read: route("read"),
+    close: route("close"),
+  }
+}
 
 export function rpc(data: () => ModelsData): Handlers {
   const mappings = new Mappings(data)
@@ -793,10 +821,7 @@ export function rpc(data: () => ModelsData): Handlers {
       inspect: (input: never) => inspect(data(), input),
     },
     ...tasks,
-    [Observability.id]: {
-      ...tasks[Observability.id],
-      trajectoryStatus: (input: { taskID: string }) => trajectory(input.taskID),
-    },
+    [Streams.id]: withEffortStream(tasks[Streams.id]!),
   }
 }
 
@@ -872,11 +897,6 @@ export function reads(data: ModelsData): Read[] {
       read.label.startsWith("lazers.tasks.query") || read.label.startsWith("lazers.tasks.get"),
   )
   out.push(...taskOut)
-  out.push({
-    label: "lazers.observability.trajectoryStatus",
-    schema: Observability.methods.trajectoryStatus.output,
-    value: trajectory(uid(1, data.tasks[0]?.n ?? 1)),
-  })
   return out
 }
 

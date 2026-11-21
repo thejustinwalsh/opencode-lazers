@@ -13,7 +13,9 @@ import {
   on,
   onCleanup,
 } from "solid-js"
-import { Observability } from "../observability/contract.ts"
+import { Streams } from "../streams/contract.ts"
+import { rpcStreamsTransport } from "../streams/gui.ts"
+import type { StreamsRpc } from "../streams/gui.ts"
 import { endPadding, rulerLabels, slowSeconds } from "./panel-layout.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
@@ -44,13 +46,9 @@ import { Label } from "../details/index.ts"
 import { TaskRing } from "../tasks/state-glyph.tsx"
 import { isRingGlyph } from "../tasks/row-presentation.ts"
 import type { TaskGlyph } from "../tasks/row-presentation.ts"
-import type { PanelData, PanelPreferences, Selection } from "./panel-state.ts"
-import {
-  selectedAttemptFor,
-  selectedEventFor,
-  TrajectoryPanelState,
-  trajectoryViewCache,
-} from "./panel-state.ts"
+import type { PanelPreferences, Selection, TaskTrajectoryTarget } from "./panel-state.ts"
+import { createTrajectoryModel, selectedAttemptFor, selectedEventFor } from "./panel-state.ts"
+import type { TrajectoryModel } from "./panel-state.ts"
 import {
   buildTimeline,
   checkTiming,
@@ -60,7 +58,6 @@ import {
   durationText,
   elapsedDurationLabel,
   eventPayload,
-  settledHistory,
   currentTaskState,
   sourceReferences,
 } from "./projection.ts"
@@ -70,7 +67,6 @@ import type {
   TrajectoryAttempt,
   TrajectoryEvent,
 } from "./projection.ts"
-import { createTrajectoryTransport } from "./projection.ts"
 import { createPanelStatus, PanelStatus } from "../panel-status.tsx"
 import { registerTrajectoryPanel } from "./registration.ts"
 import {
@@ -163,41 +159,6 @@ function timingHint(check: { startedAt: number | null; endedAt: number | null })
   return timing.status === "known" ? `duration ${durationText(timing.durationMs)}` : ""
 }
 
-type ScrollAnchor = { key: string; offset: number; scrollTop: number } | undefined
-
-function captureScrollAnchor(element: HTMLElement | undefined): ScrollAnchor {
-  if (!element) return undefined
-  const bounds = element.getBoundingClientRect()
-  const anchor = [...element.querySelectorAll<HTMLElement>("[data-scroll-anchor]")].find((item) => {
-    const rect = item.getBoundingClientRect()
-    return rect.bottom > bounds.top && rect.top < bounds.bottom
-  })
-  return anchor?.dataset.scrollAnchor
-    ? {
-        key: anchor.dataset.scrollAnchor,
-        offset: anchor.getBoundingClientRect().top - bounds.top,
-        scrollTop: element.scrollTop,
-      }
-    : { key: "", offset: 0, scrollTop: element.scrollTop }
-}
-
-function restoreScrollAnchor(element: HTMLElement | undefined, anchor: ScrollAnchor) {
-  if (!element || !anchor) return
-  if (!anchor.key) {
-    element.scrollTop = anchor.scrollTop
-    return
-  }
-  const target = [...element.querySelectorAll<HTMLElement>("[data-scroll-anchor]")].find(
-    (item) => item.dataset.scrollAnchor === anchor.key,
-  )
-  if (!target) {
-    element.scrollTop = anchor.scrollTop
-    return
-  }
-  element.scrollTop +=
-    target.getBoundingClientRect().top - element.getBoundingClientRect().top - anchor.offset
-}
-
 function attemptModel(attempt: TrajectoryAttempt | undefined) {
   return attempt?.observedCurrentModel ?? attempt?.admittedModel ?? null
 }
@@ -242,29 +203,7 @@ function PanelView(
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
-  const [data, setData] = createSignal<PanelData>({
-    key: "",
-    tasks: [],
-    taskID: null,
-    taskReference: null,
-    selection: null,
-    events: [],
-    liveEvents: [],
-    capturedEventIDs: [],
-    eventCursor: null,
-    totalEvents: 0,
-    historyCapturedAt: null,
-    historyExpiresAt: null,
-    historyError: "",
-    pageRecaptureRequired: false,
-    statusReadAt: null,
-    recapturingHistory: false,
-    loading: true,
-    loadingActivity: false,
-    stale: false,
-    error: "",
-    asOf: null,
-  })
+  const [model, setModel] = createSignal<TrajectoryModel>()
   const [zoom, setZoom] = createSignal(1)
   /** Left edge of the visible time, as a fraction of the zoomed track; survives resize and remount. */
   const [pan, setPan] = createSignal(0)
@@ -274,45 +213,19 @@ function PanelView(
   const [dragging, setDragging] = createSignal(false)
   const [axisWidth, setAxisWidth] = createSignal(0)
   let axisObserver: ResizeObserver | undefined
-  let topPane: HTMLDivElement | undefined
   let inspectorPane: HTMLDivElement | undefined
   let timelineScroll: HTMLDivElement | undefined
   let timelineDialog: HTMLDialogElement | undefined
   let expandButton: HTMLButtonElement | undefined
   let scrollObserver: ResizeObserver | undefined
-  const state = new TrajectoryPanelState(
-    (next) => {
-      const previous = data()
-      const sameSelection =
-        previous.selection?.kind === next.selection?.kind &&
-        previous.selection?.id === next.selection?.id
-      const preserve = previous.key === next.key && previous.taskID === next.taskID && sameSelection
-      const topAnchor = preserve ? captureScrollAnchor(topPane) : undefined
-      const inspectorAnchor = preserve ? captureScrollAnchor(inspectorPane) : undefined
-      const scrollLeft = preserve ? timelineScroll?.scrollLeft : undefined
-      setData(next)
-      // A new selection starts at the top of the pane.
-      if (!sameSelection)
-        queueMicrotask(() => {
-          if (inspectorPane) inspectorPane.scrollTop = 0
-        })
-      if (preserve)
-        queueMicrotask(() => {
-          restoreScrollAnchor(topPane, topAnchor)
-          restoreScrollAnchor(inspectorPane, inspectorAnchor)
-          if (timelineScroll && scrollLeft !== undefined) timelineScroll.scrollLeft = scrollLeft
-        })
-    },
-    (preferences: PanelPreferences) => {
-      save({
-        selectedTaskID: preferences.taskID,
-        selectedKind: preferences.selection?.kind ?? "",
-        selectedRecordID: preferences.selection?.id ?? "",
-      })
-    },
-    undefined,
-    { cache: trajectoryViewCache },
-  )
+  /** Calls before the model exists (no connection yet) do nothing. */
+  const state = {
+    selectTask: (taskID: string) => model()?.selectTask(taskID),
+    selectTarget: (target: TaskTrajectoryTarget) => model()?.selectTarget(target),
+    selectAttempt: (id: string) => model()?.selectAttempt(id),
+    selectCheck: (id: string) => model()?.selectCheck(id),
+    selectEvent: (id: string) => model()?.selectEvent(id),
+  }
   let handledTargetRequestID = ""
 
   const source = createLatest(
@@ -372,16 +285,14 @@ function PanelView(
     })
   }
 
-  const expectedKey = () => {
-    const value = current()
-    const view = prefs()
-    return value
-      ? JSON.stringify([value.server, value.project, value.projectID, value.session, view.scope])
-      : ""
-  }
-  const visible = () => (data().key === expectedKey() ? data() : undefined)
+  /** The time in view, epoch ms; the stream windows follow it. */
+  const [viewRange, setViewRange] = createSignal<{ from: number; to: number }>()
+  const [connection, setConnection] = createSignal<AbortController>()
+  /** Bumped by Retry: the connection is made again. */
+  const [attempt, setAttempt] = createSignal(0)
+  const retry = () => setAttempt((count) => count + 1)
   onCleanup(() => {
-    state.close()
+    connection()?.abort()
     axisObserver?.disconnect()
     scrollObserver?.disconnect()
   })
@@ -400,6 +311,7 @@ function PanelView(
           value.projectID,
           value.session,
           view.scope,
+          attempt(),
         ]),
       }
     },
@@ -409,36 +321,47 @@ function PanelView(
       setPan(0)
       setExpanded(false)
       const scope = { kind: view.scope, sessionID: value.session } as const
-      const rpc = value.client.rpc(Observability)
-      const transport = createTrajectoryTransport(
-        rpc,
-        value.directory,
-        () => props.session.server.connected,
-        value.client.event,
-        value.projectID,
-      )
       handledTargetRequestID = view.target?.requestID ?? ""
-      state.connect(key, value.projectID, value.project, scope, transport, {
-        target: view.target,
-        taskID: view.selectedTaskID,
-        selection: selectionFrom(view),
+      const streams = new AbortController()
+      setConnection(streams)
+      const transport = rpcStreamsTransport(
+        () => value.client.rpc(Streams) as unknown as StreamsRpc,
+        streams.signal,
+        { location: { directory: value.directory } },
+      )
+      setModel(
+        createTrajectoryModel({
+          key,
+          transport,
+          project: value.project,
+          projectID: value.projectID,
+          projectDirectory: value.project,
+          scope,
+          preferences: {
+            target: view.target,
+            taskID: view.selectedTaskID,
+            selection: selectionFrom(view),
+          },
+          selected: (preferences: PanelPreferences) => {
+            save({
+              selectedTaskID: preferences.taskID,
+              selectedKind: preferences.selection?.kind ?? "",
+              selectedRecordID: preferences.selection?.id ?? "",
+            })
+          },
+          visibleRange: viewRange,
+        }),
+      )
+      onCleanup(() => {
+        streams.abort()
+        setModel(undefined)
       })
-      onCleanup(() => state.close())
     },
     {
       equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
-      otherwise: () => state.close(),
+      otherwise: () => setModel(undefined),
     },
   )
-
-  // Connecting the view already reads; only a reconnect forces a status read.
-  let wasConnected = props.session.server.connected
-  createEffect(() => {
-    const connected = props.session.server.connected
-    const value = current()
-    if (value && connected && !wasConnected) void state.refresh({ force: true })
-    wasConnected = connected
-  })
 
   createEffect(() => {
     const value = current()
@@ -448,7 +371,17 @@ function PanelView(
     state.selectTarget(target)
   })
 
-  const currentData = () => visible()
+  const currentData = () => model()?.data()
+  // A new selection starts at the top of the pane.
+  createEffect(
+    on(
+      () => `${currentData()?.selection?.kind}:${currentData()?.selection?.id}`,
+      () => {
+        if (inspectorPane) inspectorPane.scrollTop = 0
+      },
+      { defer: true },
+    ),
+  )
   const report = () => currentData()?.report
   const selection = () => currentData()?.selection ?? null
   const allTaskChecks = () => (report() ? detailedChecks(report()!) : [])
@@ -468,21 +401,31 @@ function PanelView(
   }
   const loadedEvents = createMemo(() => {
     const value = currentData()
-    return value ? [...value.events, ...value.liveEvents] : []
+    return value?.events ?? []
   })
-  const capturedAt = () => currentData()?.historyCapturedAt ?? null
-  const settled = () => settledHistory(report())
+  /** When the last frame arrived: the end of an attempt that is still open. */
+  const capturedAt = () => currentData()?.asOf ?? null
+  /** Recorded once the task is no longer working; live while it is. */
+  const settled = () => !taskView()?.working
   const timeline = createMemo(() => {
     const value = currentData()
-    if (!value?.taskID || (!value.snapshot && !value.report)) return undefined
+    if (!value?.taskID || !value.report) return undefined
     return buildTimeline(
-      value.snapshot,
-      value.taskID,
-      value.report,
+      {
+        ...value.recorded,
+        firstAttemptAt: value.report.effort.firstAttemptAt,
+      },
       capturedAt(),
       trackTimes(loadedEvents()),
-      !value.eventCursor && !value.loadingActivity,
+      !value.partial && !value.loadingTranscript,
     )
+  })
+  // The time in view: the stream windows move to it.
+  createEffect(() => {
+    const line = timeline()
+    if (!line || line.origin === null) return setViewRange(undefined)
+    const from = line.origin + pan() * line.durationMs
+    setViewRange({ from, to: from + line.durationMs / zoom() })
   })
   const attemptStates = createMemo(
     () => new Map((report()?.attempts ?? []).map((attempt) => [attempt.id, attempt.state])),
@@ -491,7 +434,7 @@ function PanelView(
     const line = timeline()
     if (!line) return undefined
     const value = currentData()
-    const pendingAfter = value?.eventCursor ? loadedEventHorizon(value.events) : null
+    const pendingAfter = value?.partial ? loadedEventHorizon(value.events) : null
     return buildTracks(line, loadedEvents(), attemptStates(), pendingAfter)
   })
   const laneMarks = createMemo((): LaneMark[] => {
@@ -1012,19 +955,12 @@ function PanelView(
     hasContent: Boolean(report()),
     loading: !currentData() || Boolean(currentData()?.loading),
     disconnected: !props.session.server.connected,
-    error: currentData()?.error || (report() ? "" : (currentData()?.historyError ?? "")),
+    error: currentData()?.error ?? "",
     ...(currentData()?.asOf ? { asOf: currentData()!.asOf! } : {}),
   }))
-  const retry = () => {
-    const value = currentData()
-    if (value && !value.report && value.historyError) void state.recaptureActivity()
-    else void state.refresh({ force: true })
-  }
-  const streaming = () => Boolean(currentData()?.eventCursor)
+  const streaming = () => Boolean(currentData()?.partial)
   const eventsLoaded = () => currentData()?.events.length ?? 0
   const eventsTotal = () => Math.max(currentData()?.totalEvents ?? 0, eventsLoaded())
-  const progress = () =>
-    eventsTotal() > 0 ? Math.min(100, (eventsLoaded() / eventsTotal()) * 100) : 0
   const lastEnded = () => {
     const ends = (report()?.attempts ?? []).flatMap((attempt) =>
       attempt.intervals.attempt.endedAt === null ? [] : [attempt.intervals.attempt.endedAt],
@@ -1046,11 +982,6 @@ function PanelView(
     if (!streaming() && value.untimedTools)
       notes.push(`${value.untimedTools.toLocaleString()} calls have no time and are not placed`)
     if (value.omittedFileTargets) notes.push(`${value.omittedFileTargets} file calls have no paths`)
-    const unreadable = line.coverage.unavailableSessionContexts
-    if (unreadable)
-      notes.push(
-        `${unreadable} worker ${unreadable === 1 ? "session" : "sessions"} could not be read`,
-      )
     const usage = line.effort.tokenUsage
     if (usage.knownSessions !== usage.totalSessions)
       notes.push(
@@ -1167,7 +1098,9 @@ function PanelView(
         : []),
     ]
     const tasks = (currentData()?.tasks ?? []).map((task) => ({
-      label: `${[task.reference, task.title ? displayTitle(task.title) : "Task"].filter(Boolean).join(" · ")} · ${task.status}`,
+      label: [task.reference, task.title ? displayTitle(task.title) : "Task", task.status]
+        .filter(Boolean)
+        .join(" · "),
       onSelect: () => selectTask(task.taskID),
     }))
     return [
@@ -1659,13 +1592,7 @@ function PanelView(
         }}
         dimmed={status.dimmed()}
         top={
-          <div
-            class="lazers-trajectory-top"
-            id="lazers-trajectory-top"
-            ref={(element) => {
-              topPane = element
-            }}
-          >
+          <div class="lazers-trajectory-top" id="lazers-trajectory-top">
             <header class="lazers-trajectory-header">
               <Show
                 when={report() || hasTask()}
@@ -2111,7 +2038,7 @@ function PanelView(
                           <span
                             class="lazers-trajectory-unloaded"
                             style={{ left: `${tracks()!.loadedThrough}%` }}
-                            title="Later captured activity is not loaded"
+                            title="Activity after this point is not loaded; pan or zoom to load it"
                           />
                         </Show>
                       </div>
@@ -2442,54 +2369,11 @@ function PanelView(
                       <span>
                         {eventsLoaded().toLocaleString()} of {eventsTotal().toLocaleString()} events
                       </span>
-                      <Show
-                        when={!currentData()?.historyError}
-                        fallback={
-                          <span class="lazers-trajectory-coverage-end">
-                            <Show
-                              when={currentData()?.pageRecaptureRequired}
-                              fallback={
-                                <button
-                                  type="button"
-                                  class="lazers-panel-retry"
-                                  onClick={() => void state.resumeActivity()}
-                                >
-                                  Retry
-                                </button>
-                              }
-                            >
-                              <button
-                                type="button"
-                                class="lazers-panel-retry"
-                                onClick={() => void state.recaptureActivity()}
-                              >
-                                Recapture history
-                              </button>
-                            </Show>
-                          </span>
-                        }
-                      >
-                        <span class="lazers-trajectory-coverage-end">loading the rest</span>
-                      </Show>
-                    </Show>
-                    <Show when={currentData()?.historyError}>
-                      <div class="lazers-trajectory-error" role="alert">
-                        <span>{currentData()?.historyError}</span>
-                      </div>
+                      <span class="lazers-trajectory-coverage-end">
+                        pan or zoom to load the rest
+                      </span>
                     </Show>
                   </div>
-                  <Show when={streaming()}>
-                    <div
-                      class="lazers-trajectory-progress"
-                      role="progressbar"
-                      aria-label="Loading events"
-                      aria-valuemin={0}
-                      aria-valuemax={eventsTotal()}
-                      aria-valuenow={eventsLoaded()}
-                    >
-                      <i style={{ width: `${progress()}%` }} />
-                    </div>
-                  </Show>
                 </Show>
               </dialog>
             </Show>
@@ -2513,13 +2397,7 @@ function PanelView(
                 events={view().events}
                 notes={dataGaps()}
                 identifiers={view().identifiers}
-                capture={{
-                  at: currentData()?.historyCapturedAt ?? null,
-                  expiresAt: currentData()?.historyExpiresAt ?? null,
-                  error: currentData()?.historyError ?? "",
-                  busy: Boolean(currentData()?.recapturingHistory),
-                }}
-                onRecapture={() => void state.recaptureActivity()}
+                loadingTranscript={Boolean(currentData()?.loadingTranscript)}
                 onSelectEvent={chooseEvent}
                 eventsRequest={{ open: eventsOpen(), filter: eventFilter() }}
                 onEventsOpen={setEventsOpen}

@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test"
-import { TrajectoryOutput } from "../observability/contract.ts"
 import { GetOutput, AgentQueryOutput } from "../tasks/contract.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TaskDetail, TaskPage } from "../tasks/contract.ts"
-import type { TrajectoryResponse } from "../observability/contract.ts"
+import type { TrajectoryResponse } from "./comparison-state.ts"
 import {
   MODEL_EVIDENCE_QUERIES,
   MODEL_EVIDENCE_SOURCE_URLS,
@@ -397,6 +396,9 @@ function effortBasis(inputTokens: number) {
     quality: { status: "not-recorded", value: null, meaning: "Not recorded" },
   })
 }
+
+/** The effort response is a plain shape now; the shim keeps the literals below as they were. */
+const TrajectoryOutput = { parse: (value: unknown) => value as TrajectoryResponse }
 
 function trajectory(taskID: string, inputTokens = 10, projectID = "project-a"): TrajectoryResponse {
   return TrajectoryOutput.parse({
