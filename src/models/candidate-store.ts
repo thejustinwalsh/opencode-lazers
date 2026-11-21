@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
 import { ensureProjectionStateSchema, resetProjectionState } from "../projections/lifecycle.ts"
-import type { ProjectionSpec } from "../projections/owner.ts"
-import { drainQueue, queueRef, queueTableSQL, type QueueDrain } from "../projections/queue.ts"
+import { queueRef, queueTableSQL } from "../projections/queue.ts"
 import type { TaskRepository } from "../storage.ts"
 import { buildComparisonCandidates } from "./comparison-read.ts"
 import { installModelEvidenceTables, readComparisonSourcesFrom } from "./source-store.ts"
@@ -14,17 +13,16 @@ import { installModelEvidenceTables, readComparisonSourcesFrom } from "./source-
  *
  * ```
  * saveSnapshot ─► model_evidence_refreshes.latest_snapshot_id ─trigger─► model_candidates_dirty(project)
- *                                                                              │ owner drain (next turn)
- *   stamps of the project's latest snapshots ─ same set as stored? ─ yes ─► nothing written
- *                                              └ no ─► parse the five bodies, build every candidate,
- *                                                      compare digests, write only changed rows,
- *                                                      delete vanished ones, stamp the set
+ *                                                       │ CandidateBuilds (main thread, next turn)
+ *   decision worker: stamps of the latest snapshots ─ same set as stored? ─ yes ─► null
+ *                    └ no ─► parse the five bodies, build every candidate, compare digests
+ *   main thread: changed rows, a page per transaction ─► deletions and the set stamp
  * ```
  *
- * The queue is drained only by the projection owner, never in a writer's transaction: a build parses
- * the five bodies (measured on the live copy: about 100 ms with 1,466 candidates), and that must not
- * land inside an unrelated runner write. The five saves of one refresh commit in one event-loop
- * turn, so the owner hears the queue once and builds once.
+ * The queue is drained only by `CandidateBuilds` (`candidate-builds.ts`), never in a writer's
+ * transaction, and the parse and build run on the decision worker's read-only connection: the
+ * main thread receives only changed rows and writes them in pages. The five saves of one refresh
+ * commit in one event-loop turn, so one build follows.
  *
  * `detail` is the whole candidate as the comparison read returns it (cold, `window: 1`); the list
  * columns are the fields a picker filters, sorts and shows. `price_input`/`price_output` are the
@@ -33,8 +31,8 @@ import { installModelEvidenceTables, readComparisonSourcesFrom } from "./source-
  * model's own entry, which sorts first as in the comparison read.
  */
 const MODULE = schemaModules["model-candidates"]
-const MODEL_CANDIDATES = "model-candidates"
-const MODEL_CANDIDATES_GENERATION = 1
+export const MODEL_CANDIDATES = "model-candidates"
+export const MODEL_CANDIDATES_GENERATION = 1
 export const MODEL_CANDIDATES_QUEUE = "model_candidates_dirty"
 
 const TABLES_SQL = `
@@ -143,6 +141,151 @@ function nativeBaseRates(candidate: Candidate) {
 
 const digestOf = (text: string) => Bun.hash(text).toString(36)
 
+/** A candidate row as stored: the list columns in table order, then digest and detail. */
+export type CandidateRow = {
+  candidateID: string
+  values: [
+    providerID: string,
+    modelID: string,
+    variant: string | null,
+    name: string | null,
+    enabled: number | null,
+    contextTokens: number | null,
+    priceInput: number | null,
+    priceOutput: number | null,
+    correspondence: string,
+    benchmarkCorrespondence: string,
+    digest: string,
+    detail: string,
+  ]
+}
+
+/** One build of a project's candidates: only rows whose digest moved, and the ids that remain. */
+export type CandidateChanges = {
+  snapshotSet: string
+  candidateIDs: string[]
+  changed: CandidateRow[]
+  publicCoverage: string
+  publicCatalog: string
+}
+
+/** The project's snapshot set, from refresh rows and snapshot metadata only (no body). */
+function candidateSnapshotSet(db: Database, projectDirectory: string) {
+  const stamps = readComparisonSourcesFrom(db, projectDirectory, undefined, { stampOnly: true })
+  return JSON.stringify(stamps.map((read) => [read.source, read.snapshotState, read.snapshotID]))
+}
+
+const storedSet = (db: Database, projectDirectory: string) =>
+  db
+    .query<{ snapshot_set: string }, [string]>(
+      "SELECT snapshot_set FROM model_candidate_sets WHERE project_directory=?",
+    )
+    .get(projectDirectory)?.snapshot_set
+
+/**
+ * Build a project's candidates and compare them with the stored digests; null when the stored set
+ * is already the latest. Reads only: the decision worker runs it on its read-only connection
+ * (parsing the five bodies there), and the main thread writes what it returns.
+ */
+export function computeCandidateChanges(
+  db: Database,
+  projectDirectory: string,
+): CandidateChanges | null {
+  const snapshotSet = candidateSnapshotSet(db, projectDirectory)
+  if (storedSet(db, projectDirectory) === snapshotSet) return null
+  const built = buildComparisonCandidates(readComparisonSourcesFrom(db, projectDirectory))
+  const existing = db.query<{ digest: string }, [string, string]>(
+    "SELECT digest FROM model_candidates WHERE project_directory=? AND candidate_id=?",
+  )
+  const changed: CandidateRow[] = []
+  for (const candidate of built.candidates) {
+    const detail = JSON.stringify(candidate)
+    const digest = digestOf(detail)
+    if (existing.get(projectDirectory, candidate.candidateID)?.digest === digest) continue
+    const rates = nativeBaseRates(candidate)
+    const enabled = candidate.native.enabled
+    changed.push({
+      candidateID: candidate.candidateID,
+      values: [
+        candidate.identity.providerID,
+        candidate.identity.modelID,
+        candidate.identity.variant,
+        candidate.native.name,
+        enabled === null ? null : enabled ? 1 : 0,
+        candidate.native.contextTokens,
+        rates?.input ?? null,
+        rates?.output ?? null,
+        candidate.correspondence.status,
+        candidate.benchmarkCorrespondence.status,
+        digest,
+        detail,
+      ],
+    })
+  }
+  return {
+    snapshotSet,
+    candidateIDs: built.candidates.map((candidate) => candidate.candidateID),
+    changed,
+    publicCoverage: JSON.stringify(built.publicCoverage),
+    publicCatalog: JSON.stringify(built.publicCatalog),
+  }
+}
+
+/** Upsert a page of changed rows, in the caller's write transaction. Returns rows inserted. */
+export function writeCandidatePage(
+  db: Database,
+  projectDirectory: string,
+  rows: readonly CandidateRow[],
+) {
+  const upsert = db.query(
+    `INSERT INTO model_candidates(project_directory,candidate_id,provider_id,model_id,variant,name,
+       enabled,context_tokens,price_input,price_output,correspondence,benchmark_correspondence,
+       digest,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(project_directory,candidate_id) DO UPDATE SET provider_id=excluded.provider_id,
+       model_id=excluded.model_id,variant=excluded.variant,name=excluded.name,
+       enabled=excluded.enabled,context_tokens=excluded.context_tokens,
+       price_input=excluded.price_input,price_output=excluded.price_output,
+       correspondence=excluded.correspondence,benchmark_correspondence=excluded.benchmark_correspondence,
+       digest=excluded.digest,detail=excluded.detail`,
+  )
+  for (const row of rows) upsert.run(projectDirectory, row.candidateID, ...row.values)
+  return rows.length
+}
+
+/**
+ * The last transaction of a build: remove vanished candidates and stamp the set. The queue entry
+ * goes only when the latest set is the one built (a refresh during the build queues it again).
+ */
+export function finishCandidateBuild(
+  db: Database,
+  projectDirectory: string,
+  changes: CandidateChanges,
+) {
+  const deleted = db
+    .query(
+      `DELETE FROM model_candidates WHERE project_directory=?
+         AND candidate_id NOT IN (SELECT value FROM json_each(?))`,
+    )
+    .run(projectDirectory, JSON.stringify(changes.candidateIDs)).changes
+  db.query(
+    `INSERT INTO model_candidate_sets(project_directory,snapshot_set,candidate_count,public_coverage,
+       public_catalog,built_at) VALUES(?,?,?,?,?,?)
+     ON CONFLICT(project_directory) DO UPDATE SET snapshot_set=excluded.snapshot_set,
+       candidate_count=excluded.candidate_count,public_coverage=excluded.public_coverage,
+       public_catalog=excluded.public_catalog,built_at=excluded.built_at`,
+  ).run(
+    projectDirectory,
+    changes.snapshotSet,
+    changes.candidateIDs.length,
+    changes.publicCoverage,
+    changes.publicCatalog,
+    Date.now(),
+  )
+  const current = candidateSnapshotSet(db, projectDirectory) === changes.snapshotSet
+  if (current) db.query(`DELETE FROM ${MODEL_CANDIDATES_QUEUE} WHERE ref=?`).run(projectDirectory)
+  return { deleted, current }
+}
+
 export type CandidateRefresh = {
   /** False when the stored set already matched the latest snapshots: nothing was read or written. */
   built: boolean
@@ -153,121 +296,36 @@ export type CandidateRefresh = {
 }
 
 /**
- * Bring one project's candidates to its latest snapshot set, in the caller's write transaction.
- * The stamp check reads refresh rows and snapshot metadata only; bodies are parsed only when the
- * set moved. Rows whose candidate is unchanged (same digest) are not written.
+ * The whole build in one caller transaction, in process: tests, and tools that must wait. The
+ * service builds through `CandidateBuilds` (compute in the decision worker, paged writes here).
  */
 export function refreshModelCandidates(db: Database, projectDirectory: string): CandidateRefresh {
-  const none = { built: false, candidates: 0, inserted: 0, updated: 0, deleted: 0 }
-  const stamps = readComparisonSourcesFrom(db, projectDirectory, undefined, { stampOnly: true })
-  const snapshotSet = JSON.stringify(
-    stamps.map((read) => [read.source, read.snapshotState, read.snapshotID]),
-  )
-  const stored = db
-    .query<{ snapshot_set: string; candidate_count: number }, [string]>(
-      "SELECT snapshot_set,candidate_count FROM model_candidate_sets WHERE project_directory=?",
-    )
-    .get(projectDirectory)
-  if (stored?.snapshot_set === snapshotSet) return { ...none, candidates: stored.candidate_count }
-
-  const built = buildComparisonCandidates(readComparisonSourcesFrom(db, projectDirectory))
-  const existing = db.query<{ id: number; digest: string }, [string, string]>(
-    "SELECT id,digest FROM model_candidates WHERE project_directory=? AND candidate_id=?",
-  )
-  const insert = db.query(
-    `INSERT INTO model_candidates(project_directory,candidate_id,provider_id,model_id,variant,name,
-       enabled,context_tokens,price_input,price_output,correspondence,benchmark_correspondence,
-       digest,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-  )
-  const update = db.query(
-    `UPDATE model_candidates SET provider_id=?,model_id=?,variant=?,name=?,enabled=?,
-       context_tokens=?,price_input=?,price_output=?,correspondence=?,benchmark_correspondence=?,
-       digest=?,detail=? WHERE id=?`,
-  )
-  const result: CandidateRefresh = {
-    built: true,
-    candidates: built.candidates.length,
-    inserted: 0,
-    updated: 0,
-    deleted: 0,
-  }
-  for (const candidate of built.candidates) {
-    const detail = JSON.stringify(candidate)
-    const digest = digestOf(detail)
-    const row = existing.get(projectDirectory, candidate.candidateID)
-    if (row?.digest === digest) continue
-    const rates = nativeBaseRates(candidate)
-    const enabled = candidate.native.enabled
-    const values = [
-      candidate.identity.providerID,
-      candidate.identity.modelID,
-      candidate.identity.variant,
-      candidate.native.name,
-      enabled === null ? null : enabled ? 1 : 0,
-      candidate.native.contextTokens,
-      rates?.input ?? null,
-      rates?.output ?? null,
-      candidate.correspondence.status,
-      candidate.benchmarkCorrespondence.status,
-      digest,
-      detail,
-    ] as const
-    if (row) {
-      update.run(...values, row.id)
-      result.updated++
-    } else {
-      insert.run(projectDirectory, candidate.candidateID, ...values)
-      result.inserted++
+  const changes = computeCandidateChanges(db, projectDirectory)
+  if (!changes)
+    return {
+      built: false,
+      candidates:
+        db
+          .query<{ n: number }, [string]>(
+            "SELECT candidate_count AS n FROM model_candidate_sets WHERE project_directory=?",
+          )
+          .get(projectDirectory)?.n ?? 0,
+      inserted: 0,
+      updated: 0,
+      deleted: 0,
     }
+  const exists = db.query<{ one: number }, [string, string]>(
+    "SELECT 1 AS one FROM model_candidates WHERE project_directory=? AND candidate_id=?",
+  )
+  let updated = 0
+  for (const row of changes.changed) if (exists.get(projectDirectory, row.candidateID)) updated++
+  writeCandidatePage(db, projectDirectory, changes.changed)
+  const { deleted } = finishCandidateBuild(db, projectDirectory, changes)
+  return {
+    built: true,
+    candidates: changes.candidateIDs.length,
+    inserted: changes.changed.length - updated,
+    updated,
+    deleted,
   }
-  result.deleted = db
-    .query(
-      `DELETE FROM model_candidates WHERE project_directory=?
-         AND candidate_id NOT IN (SELECT value FROM json_each(?))`,
-    )
-    .run(projectDirectory, JSON.stringify(built.candidates.map((c) => c.candidateID))).changes
-  db.query(
-    `INSERT INTO model_candidate_sets(project_directory,snapshot_set,candidate_count,public_coverage,
-       public_catalog,built_at) VALUES(?,?,?,?,?,?)
-     ON CONFLICT(project_directory) DO UPDATE SET snapshot_set=excluded.snapshot_set,
-       candidate_count=excluded.candidate_count,public_coverage=excluded.public_coverage,
-       public_catalog=excluded.public_catalog,built_at=excluded.built_at`,
-  ).run(
-    projectDirectory,
-    snapshotSet,
-    built.candidates.length,
-    JSON.stringify(built.publicCoverage),
-    JSON.stringify(built.publicCatalog),
-    Date.now(),
-  )
-  return result
-}
-
-/** One project per transaction: a build is the unit of work (see the module comment). */
-function drainModelCandidates(db: Database): QueueDrain {
-  return drainQueue(
-    db,
-    MODEL_CANDIDATES_QUEUE,
-    (inner, ref) => void refreshModelCandidates(inner, ref),
-    { budget: 1 },
-  )
-}
-
-/**
- * Scoped to one project: the backfill is that project's first build (one page); the queue
- * catches every later snapshot change, for any project, whichever owner hears it first.
- */
-export const modelCandidatesProjection: ProjectionSpec = {
-  name: MODEL_CANDIDATES,
-  generation: MODEL_CANDIDATES_GENERATION,
-  backfill: [
-    {
-      name: "build",
-      page(db, scope) {
-        refreshModelCandidates(db, scope)
-        return { next: 1, done: true }
-      },
-    },
-  ],
-  queue: { table: MODEL_CANDIDATES_QUEUE, drain: drainModelCandidates },
 }

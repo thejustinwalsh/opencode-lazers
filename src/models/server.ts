@@ -353,6 +353,9 @@ export function registerModelsServer(
     // One decision worker per database per process, shared by every location's registration.
     const lease = acquireDecisionWorker({ path, readPriceInputs })
     yield* Effect.addFinalizer(() => Effect.sync(() => lease.release()))
+    // The comparison candidates (schema installed by the project core): built in the decision
+    // worker, written here a page at a time.
+    lease.ensureCandidates(projectDirectory)
     // Stored decision views: the routes the panel counts as routed come from this location's
     // settings read, and a Models stream opens a view through the registered opener.
     lease.provideRouted(projectDirectory, async (taskID, signal) =>

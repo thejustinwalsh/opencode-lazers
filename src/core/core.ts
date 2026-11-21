@@ -2,6 +2,7 @@ import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
 import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { startProjection } from "../projections/owner.ts"
 import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
+import { ensureModelCandidatesSchema } from "../models/candidate-store.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
@@ -195,6 +196,8 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
+  // The comparison candidates' tables and triggers; the Models server's decision worker builds them.
+  ensureModelCandidatesSchema(repository)
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>

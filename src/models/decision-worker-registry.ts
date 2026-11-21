@@ -9,6 +9,7 @@ import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import type { DecisionViewRequest } from "./decision-view.ts"
 import { DecisionViews } from "./decision-views.ts"
+import { CandidateBuilds } from "./candidate-builds.ts"
 
 /**
  * The decision worker of a database, one per process and code generation. OpenCode loads about
@@ -33,6 +34,8 @@ type Entry = {
   prewarmed: Set<string>
   /** The stored decision views of this database; the main thread writes them. */
   views: DecisionViews
+  /** The candidate projection's writes; the worker builds. */
+  candidates: CandidateBuilds
   /** Per project, the locations that read its routed models (host settings); newest answers. */
   routed: Map<string, RoutedProvider[]>
 }
@@ -52,6 +55,8 @@ export type DecisionWorkerLease = {
   claimPrewarm(projectDirectory: string): boolean
   /** The stored view of `request` in `projectDirectory`, created when missing; it builds now. */
   openView(projectDirectory: string, request: DecisionViewRequest): number
+  /** This process serves the project's candidates: build them now and on every snapshot change. */
+  ensureCandidates(projectDirectory: string): void
   /** A stream that opened a view no longer holds it. */
   releaseView(viewID: number): void
   /** This location answers a project's routed models for its views until release. */
@@ -90,6 +95,7 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       owner: new DecisionProjectionOwner(options.path),
       worker,
       routed,
+      candidates: new CandidateBuilds(options.path, worker),
       views: new DecisionViews(options.path, worker, async (project, taskID, signal) => {
         const list = routed.get(project) ?? []
         let failure: unknown
@@ -147,6 +153,9 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       current.owner.touch(projectDirectory)
       return current.views.open(projectDirectory, request)
     },
+    ensureCandidates(projectDirectory) {
+      current.candidates.ensure(projectDirectory)
+    },
     releaseView(viewID) {
       current.views.release(viewID)
     },
@@ -175,6 +184,7 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       if (--current.refs > 0) return
       if (entries.get(current.key) === current) entries.delete(current.key)
       current.views.close()
+      current.candidates.close()
       current.worker.close()
       current.owner.close()
     },

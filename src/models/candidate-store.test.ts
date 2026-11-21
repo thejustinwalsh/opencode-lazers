@@ -2,20 +2,22 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { startProjection } from "../projections/owner.ts"
 import { openStream } from "../streams/client.ts"
 import { readerPool } from "../streams/pool.ts"
 import type { StreamContext } from "../streams/source.ts"
 import { modelCandidatesSource } from "../streams/sources/models.ts"
 import type { ModelCandidatesFilter } from "../streams/sources/models-ref.ts"
-import { TaskRepository } from "../storage.ts"
+import { acquireSharedConnection, TaskRepository } from "../storage.ts"
 import { evidenceSnapshot, seedEvidenceCorpus } from "./candidate.fixture.ts"
 import {
+  computeCandidateChanges,
   ensureModelCandidatesSchema,
   MODEL_CANDIDATES_QUEUE,
-  modelCandidatesProjection,
   refreshModelCandidates,
 } from "./candidate-store.ts"
+import { CandidateBuilds } from "./candidate-builds.ts"
+import { createThreadedDecisionWorker } from "./decision-worker-client.ts"
+import { projectionStatus } from "../projections/lifecycle.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
 
@@ -189,25 +191,89 @@ test("missing price: a candidate no source prices has NULL price columns", () =>
   expect(priced).toMatchObject({ price_input: 1.25, price_output: 2.5 })
 })
 
-test("a saved snapshot queues its project and the owner builds it; no writer drains it", async () => {
-  const { path, repository, writer } = setup()
-  const lease = startProjection(path, project, modelCandidatesProjection, { scope: project })
-  cleanups.push(() => lease.release())
-  await lease.owner.settle()
-  // Nothing stored yet: the backfill's build found no snapshots.
+test("a saved snapshot queues its project; the worker builds it and the main thread writes it in pages", async () => {
+  const { path, repository, writer, reader } = setup()
+  const worker = createThreadedDecisionWorker({
+    path,
+    readPriceInputs: async () => {
+      throw new Error("a candidate build reads no prices")
+    },
+  })
+  const builds = new CandidateBuilds(path, worker)
+  cleanups.push(() => {
+    builds.close()
+    worker.close()
+  })
+  const state = () =>
+    repository.read((db) => projectionStatus(db, "model-candidates", project))?.state
+  builds.ensure(project)
+  await builds.settle()
+  // Nothing stored yet: the first build found no snapshots, and the projection is ready.
   expect(storedRows(repository)).toEqual([])
+  expect(state()).toBe("ready")
   seedEvidenceCorpus(writer, project)
   const queued = repository.read((db) =>
     db.query<{ ref: string }, []>(`SELECT ref FROM ${MODEL_CANDIDATES_QUEUE}`).all(),
   )
   expect(queued).toEqual([{ ref: project }])
-  // An unrelated write transaction does not build the candidates (the build is the owner's).
+  // An unrelated write transaction does not build the candidates (the build is the worker's).
   repository.atomic((db) => db.query("SELECT 1").get())
   expect(storedRows(repository)).toEqual([])
-  await lease.owner.drain()
+  await Bun.sleep(20)
+  await builds.settle()
+  const old = oldCandidates(reader)
+  expect(storedRows(repository).map((row) => row.detail)).toEqual(
+    old.map((candidate) => JSON.stringify(candidate)),
+  )
+  expect(builds.writes.get(project)!.rows).toBe(old.length)
+  expect(
+    repository.read((db) =>
+      db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM ${MODEL_CANDIDATES_QUEUE}`).get(),
+    )!.n,
+  ).toBe(0)
+  // Unchanged: the worker answers null and nothing is written.
+  builds.writes.clear()
+  await builds.build(project)
+  expect(builds.writes.size).toBe(0)
+})
+
+test("a failing build stays queued with its error and a backoff, and a later build recovers", async () => {
+  const { path, repository, writer } = setup()
+  seedEvidenceCorpus(writer, project)
+  let fail = true
+  const builds = new CandidateBuilds(path, {
+    async candidates(projectDirectory) {
+      if (fail) throw new Error("worker gone")
+      const shared = acquireSharedConnection(path, "readonly")
+      try {
+        return computeCandidateChanges(shared.db, projectDirectory)
+      } finally {
+        shared.release()
+      }
+    },
+  })
+  cleanups.push(() => builds.close())
+  builds.ensure(project)
+  await builds.settle()
+  const parked = repository.read((db) =>
+    db
+      .query<{ attempts: number; error: string; next_at: number }, []>(
+        `SELECT attempts,error,next_at FROM ${MODEL_CANDIDATES_QUEUE}`,
+      )
+      .get(),
+  )!
+  expect(parked.error).toBe("worker gone")
+  expect(parked.next_at).toBeGreaterThan(Date.now())
+  expect(repository.read((db) => projectionStatus(db, "model-candidates", project))).toMatchObject({
+    state: "backfilling",
+    last_error: "worker gone",
+  })
+  fail = false
+  await builds.build(project)
   expect(storedRows(repository).length).toBeGreaterThan(8)
-  expect(lease.owner.status()).toMatchObject({ state: "ready" })
-  expect(lease.owner.idle()).toBe(true)
+  expect(repository.read((db) => projectionStatus(db, "model-candidates", project))?.state).toBe(
+    "ready",
+  )
 })
 
 test("models.candidates walks the stored rows in the comparison order; enabled and provider filter", async () => {

@@ -3,6 +3,7 @@ import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { PriceInputs } from "./price-state.ts"
 import type { DecisionViewCall, DecisionViewResult } from "./decision-view.ts"
+import type { CandidateChanges } from "./candidate-store.ts"
 import type {
   DecisionWorkerMethod,
   WorkerRequest,
@@ -27,6 +28,8 @@ export type ThreadedDecisionWorker = {
     call: DecisionViewCall,
     signal?: AbortSignal,
   ): Promise<DecisionViewResult>
+  /** A project's candidate build (`candidate-store.ts`), parsed and built on the worker. */
+  candidates(projectDirectory: string, signal?: AbortSignal): Promise<CandidateChanges | null>
   close(): void
 }
 
@@ -147,6 +150,7 @@ export function createThreadedDecisionWorker(
       inspect: (input, opts) => call(projectDirectory, "inspect", input, opts?.signal),
     }),
     view: (projectDirectory, input, signal) => call(projectDirectory, "view", input, signal),
+    candidates: (projectDirectory, signal) => call(projectDirectory, "candidates", null, signal),
     close() {
       if (closed) return
       closed = true
