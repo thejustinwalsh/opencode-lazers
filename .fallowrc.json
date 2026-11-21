@@ -4,6 +4,20 @@
     "src/context/repo-worker.ts",
     "src/models/decision-worker.ts",
     "src/runner/transition-indexes-worker.ts",
+    // Threads and processes started by URL string or spawned by tests, not imported.
+    "src/audit/fallow-thread.ts",
+    "src/audit/wasm/*-probe.ts",
+    "src/streams/reader-worker.ts",
+    "src/streams/test-flipper.ts",
+    // Command-line tools run by hand with `bun scripts/<name>.ts`, and the website's own.
+    "scripts/*.ts",
+    "website/scripts/*.ts",
+    "website/test/e2e/*.mjs",
+    // The demo page's module entry, loaded by its HTML.
+    "website/demo/src/main.tsx",
+    // Browser bundle entries that the DOM tests build with Bun.build and load into happy-dom.
+    "test/**/dom-entry.tsx",
+    "website/demo/test/entry.ts",
     "src/**/*.fixture.ts",
     "src/**/cli.ts",
     "test/**/*.fixture.ts",
