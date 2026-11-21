@@ -204,7 +204,7 @@ export const schemaModules = {
     tables: ["model_candidates", "model_candidate_sets", "model_candidates_dirty"],
   },
   "model-decision-views": {
-    generation: 2,
+    generation: 1,
     source: "src/models/decision-store.ts",
     tables: [
       "model_decision_views",
