@@ -10,6 +10,7 @@ import { acquireReaderPool } from "../../src/streams/pool.ts"
 import "../../src/streams/sources/index.ts"
 import { taskScheduleSource } from "../../src/streams/sources/tasks.ts"
 import { registerTaskReads } from "../../src/tasks/rpc.ts"
+import { getTaskDetail } from "../../src/tasks/stream-query.ts"
 import type { TaskRuntime } from "../../src/runner/runtime.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import { validProposal } from "../proposal.ts"
@@ -36,7 +37,7 @@ test("registered Tasks reads discover durable worker links without widening proj
   })
   let handlers:
     | {
-        get(input: unknown): Effect.Effect<unknown>
+        start(input: unknown): Effect.Effect<unknown>
       }
     | undefined
   const ctx = {
@@ -94,14 +95,16 @@ test("registered Tasks reads discover durable worker links without widening proj
     } finally {
       lease.release()
     }
+    // The detail read (`getTaskDetail`, which the Tasks.get RPC served before the streams) keeps
+    // the same session and project scope.
     expect(
-      await Effect.runPromise(handlers!.get({ taskID, sessionID: "ses-failed" })),
+      await getTaskDetail(fixture.repository, { taskID, session: "ses-failed" }),
     ).toMatchObject({ status: "found", task: { id: taskID } })
-    expect(await Effect.runPromise(handlers!.get({ taskID, sessionID: "ses-unrelated" }))).toEqual({
+    expect(await getTaskDetail(fixture.repository, { taskID, session: "ses-unrelated" })).toEqual({
       status: "not_found",
     })
     expect(
-      await Effect.runPromise(handlers!.get({ taskID: foreignTaskID, sessionID: "ses-failed" })),
+      await getTaskDetail(fixture.repository, { taskID: foreignTaskID, session: "ses-failed" }),
     ).toEqual({ status: "not_found" })
   } finally {
     foreignRepository.close()
