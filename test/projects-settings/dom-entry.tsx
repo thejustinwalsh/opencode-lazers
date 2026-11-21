@@ -3,6 +3,12 @@ import type { JSX } from "solid-js"
 import { render } from "solid-js/web"
 import { PluginContext } from "../../node_modules/@opencode/plugin/dist/gui/internal.js"
 import { setupProjects } from "../../src/projects/gui.tsx"
+import { frameSize, writeFrame, type Columns } from "../../src/streams/frame.ts"
+import {
+  PROJECTS_SOURCES,
+  projectGlobalColumns,
+  projectListColumns,
+} from "../../src/streams/sources/projects-ref.ts"
 import type {
   ProfileOutcomeView,
   ProfileView,
@@ -105,6 +111,96 @@ export function harness(
       return ok
     },
   }
+  /**
+   * The Projects section reads `projects.list` and `projects.global` streams: frames written with
+   * the real codec from the in-memory projects. Opening or re-reading the list counts as a `list`
+   * call; a write pushes a change to every open stream, as the server's revision feed does.
+   */
+  const streams = new Map<string, string>()
+  const listeners = new Set<(event: { data: { stream: string; seq: number } }) => void>()
+  let seq = 0
+  const encode = (columns: Columns, rows: Record<string, unknown>[]) => {
+    const names = Object.keys(columns)
+    const cells = rows.map((row) => names.map((name) => row[name] ?? null))
+    const bytes = new Uint8Array(frameSize(columns, cells))
+    writeFrame(
+      bytes.buffer,
+      0,
+      columns,
+      { revision: ++seq, count: cells.length, before: 0, after: 0 },
+      cells,
+    )
+    let binary = ""
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    return { seq, data: btoa(binary) }
+  }
+  const pauseColumns = (pause: ProjectsListing["globalPause"]) => ({
+    paused: pause !== null,
+    pause_reason: pause?.reason ?? null,
+    pause_by: pause?.by ?? null,
+    pause_at: pause?.at ?? null,
+  })
+  const frameOf = (id: string) => {
+    const source = streams.get(id)
+    if (source === PROJECTS_SOURCES.global)
+      return encode(projectGlobalColumns, [{ id: 1, ...pauseColumns(globalPause), settings }])
+    calls.push({ method: "list", input: {} })
+    return encode(
+      projectListColumns,
+      projects.map((project, index) => ({
+        id: index + 1,
+        key: project.key,
+        code: project.code,
+        name: project.name,
+        created_at: "",
+        checkouts: project.checkouts,
+        loaded: project.loaded,
+        ...pauseColumns(project.pause),
+        architect_contact: project.architectContact !== null,
+        architect_contact_reason: project.architectContact?.reason ?? null,
+        settings: project.settings,
+        profile_state: project.profile.state,
+        profile_revision: project.profile.revision ?? null,
+      })),
+    )
+  }
+  const changed = () => {
+    for (const stream of streams.keys())
+      for (const listener of [...listeners]) listener({ data: { stream, seq: seq + 1 } })
+  }
+  const streamMethods: Record<string, (input: Record<string, unknown>) => unknown> = {
+    open: (input) => {
+      streams.set(String(input.stream), String(input.source))
+      return frameOf(String(input.stream))
+    },
+    read: (input) => frameOf(String(input.stream)),
+    slide: (input) => frameOf(String(input.stream)),
+    seek: (input) => frameOf(String(input.stream)),
+    touch: (input) => ({ alive: streams.has(String(input.stream)) }),
+    close: (input) => ({ closed: streams.delete(String(input.stream)) }),
+  }
+  const events = {
+    subscribe: (_name: string, opts: { signal: AbortSignal }) => ({
+      async *[Symbol.asyncIterator]() {
+        if (!reachable) throw new Error("offline")
+        const queue: { data: { stream: string; seq: number } }[] = []
+        let wake: (() => void) | undefined
+        const listener = (event: { data: { stream: string; seq: number } }) => {
+          queue.push(event)
+          wake?.()
+        }
+        listeners.add(listener)
+        try {
+          while (!opts.signal.aborted) {
+            while (queue.length) yield queue.shift()!
+            await new Promise<void>((resolve) => (wake = resolve))
+          }
+        } finally {
+          listeners.delete(listener)
+        }
+      },
+    }),
+  }
   const ctx = {
     id: "lazers",
     signal: new AbortController().signal,
@@ -113,11 +209,19 @@ export function harness(
         new Proxy(
           {},
           {
-            get: (_, method: string) => async (input: Record<string, unknown>) => {
-              if (!reachable) throw new Error("offline")
-              calls.push({ method, input })
-              return (methods as Record<string, (i: never) => unknown>)[method]!(input as never)
-            },
+            get: (_, method: string) =>
+              method === "events"
+                ? events
+                : async (input: Record<string, unknown>) => {
+                    if (!reachable) throw new Error("offline")
+                    if (method in streamMethods) return streamMethods[method]!(input)
+                    calls.push({ method, input })
+                    const result = (methods as Record<string, (i: never) => unknown>)[method]!(
+                      input as never,
+                    )
+                    if (method.startsWith("set")) queueMicrotask(changed)
+                    return result
+                  },
           },
         ),
     },
@@ -242,6 +346,8 @@ export function harness(
   )
   return {
     calls,
+    /** A change the server pushed with nothing changed (a revision on a table it reads). */
+    push: changed,
     confirms,
     toasts,
     tabs,

@@ -93,11 +93,6 @@ const Project = z.strictObject({
     revision: z.int().optional(),
   }),
 })
-const Listing = z.strictObject({
-  projects: z.array(Project),
-  globalPause: Pause.nullable(),
-  globalSettings: GlobalSettingsView,
-})
 /** A refused write is data, so the form can show it beside the field and keep the old value. */
 const Refusal = z.enum([
   "PROJECT_CODE_INVALID",
@@ -165,20 +160,24 @@ export type SetupStartedView = z.infer<typeof SetupStarted>
 export type ProfileView = z.infer<typeof ProfileView>
 export type ProfileRevisionView = z.infer<typeof RevisionView>
 export type ProfileOutcomeView = z.infer<typeof ProfileOutcome>
-export type ProjectsListing = z.infer<typeof Listing>
+/** What the Projects section shows: the `projects.list` and `projects.global` rows as views. */
+export type ProjectsListing = {
+  projects: ProjectView[]
+  globalPause: z.infer<typeof Pause> | null
+  globalSettings: z.infer<typeof GlobalSettingsView>
+}
 export type ProjectView = z.infer<typeof Project>
 export type ProjectsOutcome = z.infer<typeof Outcome>
 export type ProjectScope = z.infer<typeof Scope>
 
 /**
- * Owner controls for the project registry: codes, dispatch pause and per-project limits.
- * Call: `client.rpc(Projects).list({})`, then re-read after every write.
+ * Owner controls for the project registry: codes, dispatch pause and per-project limits. The
+ * section reads the stored rows through the `projects.list` and `projects.global` streams.
  */
 export const Projects = Rpc.define({
   id: "lz.projects",
   events: {},
   methods: {
-    list: { input: z.strictObject({}), output: Listing },
     /**
      * Everything waiting on the owner in the projects the caller may read, a page per checkout.
      * `sessionID` is the calling session; continue with `nextCursor` until it is null.

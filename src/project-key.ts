@@ -117,6 +117,8 @@ export function installProjectSchema(repository: TaskRepository): void {
     if (!columns.has("name")) db.exec("ALTER TABLE lazers_projects ADD COLUMN name TEXT")
     db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS lazers_projects_code ON lazers_projects(code);
+      -- Generation 3: a project's checkouts by key, read per project (was a scan per project).
+      CREATE INDEX IF NOT EXISTS lazers_project_paths_key ON lazers_project_paths(key);
       CREATE TABLE IF NOT EXISTS task_reference_aliases (
         project_key TEXT NOT NULL REFERENCES lazers_projects(key),
         alias TEXT NOT NULL,
