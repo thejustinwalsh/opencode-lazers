@@ -73,7 +73,14 @@ function delay(signal: AbortSignal) {
 
 /**
  * Live event synchronization: the live read follows the event stream. The selected worker's
- * history is not read here; the view opens it as a stream.
+ * history, attempt and the Map groups are not read here; the view opens them as streams
+ * (`radar-streams.ts`).
+ *
+ * SEAM (Task 3): this class and its `liveRadar` read are what remains of the old monitor. They
+ * carry the sessions (and the calls and flow derived from them), which move to
+ * `radarRefs.sessions` (`src/streams/sources/radar-ref.ts`) over `host_session_state`; then this
+ * class, `kept.ts`, `monitor-transport.ts`, the `liveRadar` RPC and its 512 KB response cap are
+ * deleted together.
  */
 export class RadarMonitorState {
   data = blank()

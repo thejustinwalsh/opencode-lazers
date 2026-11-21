@@ -18,6 +18,13 @@ export const RADAR_SOURCES = {
   journal: "radar.journal",
   scheduler: "radar.scheduler",
   planEvents: "radar.planEvents",
+  nodes: "radar.nodes",
+  /**
+   * SEAM (Task 3): no server source answers this name yet. It reads `host_session_state` once
+   * Task 3 lands; until then the monitor's sessions come from the `liveRadar` read
+   * (`src/radar/monitor-state.ts`), the one read of the old monitor that remains.
+   */
+  sessions: "radar.sessions",
 } as const
 
 /** The view the caller reads from: a session view reads only what that session may see. */
@@ -36,6 +43,8 @@ export type RadarGroup = "needs-you" | "failed" | "queued"
 export type RadarGroupFilter = Scoped & { group: RadarGroup }
 export type RadarProjectFilter = Scoped
 export type RadarJournalFilter = Scoped & { attemptID?: string }
+/** The nodes of one plan, with their persisted machine snapshot. */
+export type RadarNodesFilter = Scoped & { planID: string }
 /** The latest recorded transition per lifecycle edge of one plan node. */
 export type RadarPlanEventsFilter = Scoped & { planID: string; taskID: string }
 
@@ -133,6 +142,41 @@ export const radarPlanEventColumns = {
 /** The trajectory event of the transition (`reason`, `version`), for the selected edge. */
 export const radarPlanEventDetail = { detail: "json" } as const satisfies Columns
 
+export const radarNodeColumns = {
+  plan_id: "text",
+  task_id: "text",
+  ordinal: "int",
+  state: "text",
+  version: "int",
+  reason: "text",
+  machine_version: "text",
+  /** The persisted XState snapshot (`{ status, value }`); the statechart highlights its value. */
+  snapshot: "json",
+} as const satisfies Columns
+
+/** `host_session_state` as `.agents/plans/panel-streams.md` 1.2 specifies it (Task 3 owns the table). */
+const radarSessionColumns = {
+  id: "int",
+  session_id: "text",
+  role: "text",
+  attempt_id: "text",
+  task_id: "text",
+  parent_session_id: "text",
+  busy: "bool",
+  pending_input: "int",
+  pending_permissions: "int",
+  pending_forms: "int",
+  outcome: "text",
+  archived: "bool",
+  route_provider: "text",
+  route_model: "text",
+  route_variant: "text",
+  tokens_in: "int",
+  tokens_out: "int",
+  updated_at: "int",
+  host_updated_at: "int",
+} as const satisfies Columns
+
 export const radarRefs = {
   assignments: sourceRef({ name: RADAR_SOURCES.assignments, columns: assignmentColumns }),
   attempt: sourceRef({
@@ -150,4 +194,6 @@ export const radarRefs = {
     columns: radarPlanEventColumns,
     detail: radarPlanEventDetail,
   }),
+  nodes: sourceRef({ name: RADAR_SOURCES.nodes, columns: radarNodeColumns }),
+  sessions: sourceRef({ name: RADAR_SOURCES.sessions, columns: radarSessionColumns }),
 } satisfies Record<keyof typeof RADAR_SOURCES, SourceRef<never, Columns>>

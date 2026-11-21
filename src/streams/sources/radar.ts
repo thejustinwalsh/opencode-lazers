@@ -5,6 +5,7 @@ import {
   radarAttemptDetail,
   radarGroupColumns,
   radarJournalColumns,
+  radarNodeColumns,
   radarNativeCallColumns,
   radarPlanEventColumns,
   radarPlanEventDetail,
@@ -15,6 +16,7 @@ import {
   type RadarGroupFilter,
   type RadarJournalFilter,
   type RadarNativeCallsFilter,
+  type RadarNodesFilter,
   type RadarPlanEventsFilter,
   type RadarProjectFilter,
   type RadarScope,
@@ -267,5 +269,31 @@ export const radarPlanEventsSource = defineSource({
   }),
   columns: radarPlanEventColumns,
   detail: radarPlanEventDetail,
+  count: { exact: "scan" },
+})
+
+/**
+ * The nodes of one plan in plan order, with what the lifecycle statechart needs: the recorded state
+ * and the persisted machine snapshot whose value it highlights. `runner_nodes` holds a few rows per
+ * plan (251 live); its primary key `(plan_id, task_id)` serves the filter.
+ */
+export const radarNodesSource = defineSource({
+  name: RADAR_SOURCES.nodes,
+  table: "runner_nodes",
+  tables: ["runner_nodes", "runner_plans"],
+  key: ["task_id"],
+  orders: {
+    plan: [
+      { column: "ordinal", direction: "asc" },
+      { column: "task_id", direction: "asc" },
+    ],
+  },
+  authorize: (input: RadarNodesFilter, context) => scoped(input, context),
+  filter: (input: RadarNodesFilter) => ({
+    where:
+      "plan_id = ? AND EXISTS (SELECT 1 FROM runner_plans p WHERE p.id = runner_nodes.plan_id AND p.project_directory = ?)",
+    params: [input.planID, input.projectDirectory],
+  }),
+  columns: radarNodeColumns,
   count: { exact: "scan" },
 })

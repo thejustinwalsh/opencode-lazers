@@ -6,21 +6,11 @@ import { Observability } from "../observability/contract.ts"
 import { Streams } from "../streams/contract.ts"
 import { rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
 import type { HistorySource } from "./history-list.tsx"
-import {
-  activeState,
-  machineSupported,
-  observedTransition,
-  planTransitions,
-  selectedNode,
-  selectedPlan,
-  transitionForSequence,
-} from "./projection.ts"
+import { activeState, machineSupported, observedTransition } from "./projection.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { detailsChange, storedDetails } from "./details-state.ts"
 import { flowStateInspector } from "./presentation.ts"
-import { RadarPanelState } from "./state.ts"
-import type { RadarPanelData } from "./state.ts"
-import { createRadarTransport } from "./transport.ts"
+import { createLifecycle, type Lifecycle } from "./radar-streams.ts"
 import { statechartLayout } from "./statechart.ts"
 import type { ObservationScope } from "../observability/contract.ts"
 import { registerRadarPanel } from "./registration.ts"
@@ -225,15 +215,6 @@ function RadarDiagnosticsPanel(
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
-  const [data, setData] = createSignal<RadarPanelData>({
-    key: "",
-    loading: true,
-    stale: true,
-    resynchronizing: true,
-    error: "",
-  })
-  const state = new RadarPanelState(setData)
-
   const { location, current } = props.radarLocation
   const projectKey = radarProjectKey(current)
   const prefs = () => {
@@ -251,9 +232,9 @@ function RadarDiagnosticsPanel(
   }
   const save = (change: Partial<typeof initial>) =>
     saveRadarView(ctx, props.session, projectKey(), change)
-  onCleanup(() => {
-    state.close()
-  })
+  /** The open lifecycle streams of the shown location and scope; a refresh opens them again. */
+  const [lifecycle, setLifecycle] = createSignal<{ key: string; read: Lifecycle } | undefined>()
+  const [reopen, setReopen] = createSignal(0)
 
   createKeyed(
     radarKeyedSource(
@@ -262,69 +243,58 @@ function RadarDiagnosticsPanel(
       prefs,
     ),
     ({ value, key, view }) => {
-      const observationScope: ObservationScope = {
-        kind: view.scope,
-        sessionID: value.session,
-      }
-      const transport = createRadarTransport(
-        () => props.session.server.client.rpc(Observability),
-        value.directory,
-        () => props.session.server.connected,
-        undefined,
-        radarLocationGuard(value.client, value.directory, () => props.session.directory),
+      void reopen()
+      const streams = new AbortController()
+      const read = createLifecycle(
+        {
+          transport: rpcStreamsTransport(
+            () => props.session.server.client.rpc(Streams) as unknown as StreamsRpc,
+            streams.signal,
+            {
+              location: { directory: value.directory },
+              ready: radarLocationGuard(
+                value.client,
+                value.directory,
+                () => props.session.directory,
+              ),
+            },
+          ),
+          projectDirectory: value.directory,
+          scope: { kind: view.scope, sessionID: value.session },
+        },
+        () => ({
+          planID: prefs().planID,
+          taskID: prefs().taskID,
+          transition: prefs().selectedTransition,
+        }),
       )
-      state.connect(
-        key,
-        value.projectID,
-        observationScope,
-        transport,
-        view.includeUnmanagedSessions,
-      )
-      onCleanup(() => state.close())
+      setLifecycle({ key: `${key}\u0000${reopen()}`, read })
+      onCleanup(() => {
+        streams.abort()
+        setLifecycle(undefined)
+      })
     },
     {
       equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
-      otherwise: () => state.close(),
+      otherwise: () => setLifecycle(undefined),
     },
   )
 
-  const expectedKey = radarExpectedKey(current, prefs)
-  const visible = () => (data().key === expectedKey() ? data() : undefined)
-  const snapshot = () => visible()?.snapshot
-  const radar = () => visible()?.radar
-  const plan = () => {
-    const currentSnapshot = snapshot()
-    return currentSnapshot ? selectedPlan(currentSnapshot, prefs().planID) : undefined
-  }
-  const node = () => {
-    const currentPlan = plan()
-    return currentPlan ? selectedNode(currentPlan, prefs().taskID) : undefined
-  }
-  const transitions = () => {
-    const currentSnapshot = snapshot()
-    const currentPlan = plan()
-    return currentSnapshot && currentPlan ? planTransitions(currentSnapshot, currentPlan) : []
-  }
-  const chosenTransition = () => {
-    const currentSnapshot = snapshot()
-    const currentPlan = plan()
-    const stored = prefs().selectedTransition
-    if (!currentSnapshot || !currentPlan) return undefined
-    if (stored !== null) {
-      const found = transitionForSequence(currentSnapshot, stored)
-      return found?.planID === currentPlan.id ? found : undefined
-    }
-    if (prefs().selectedState) return undefined
-    return undefined
-  }
+  const read = () => lifecycle()?.read
+  /** The lifecycle once its first frames arrived: plans, and the selected plan's nodes and edges. */
+  const view = () => (read()?.loaded() ? read() : undefined)
+  const machine = () => read()?.machine
+  const plan = () => read()?.plan()
+  const node = () => read()?.node()
+  const transitions = () => read()?.transitions() ?? []
+  const chosenTransition = () =>
+    prefs().selectedTransition !== null ? read()?.chosen() : undefined
   const chosenState = () => {
-    const currentSnapshot = snapshot()
+    const currentMachine = machine()
     const currentNode = node()
-    if (!currentSnapshot || !currentNode || prefs().selectedTransition !== null) return undefined
-    const stateID = prefs().selectedState ?? activeState(currentNode, currentSnapshot)
-    return stateID
-      ? currentSnapshot.machine.states.find((state) => state.id === stateID)
-      : undefined
+    if (!currentMachine || !currentNode || prefs().selectedTransition !== null) return undefined
+    const stateID = prefs().selectedState ?? activeState(currentNode, currentMachine)
+    return stateID ? currentMachine.states.find((state) => state.id === stateID) : undefined
   }
   const missingSelection = () =>
     (prefs().selectedTransition !== null && !chosenTransition()) ||
@@ -337,11 +307,9 @@ function RadarDiagnosticsPanel(
       detailScroll: 0,
     })
   const chooseTransition = (transition: NonNullable<ReturnType<typeof chosenTransition>>) => {
-    const currentPlan = plan()
-    const taskID =
-      transition.taskID && currentPlan?.nodes.some((item) => item.taskID === transition.taskID)
-        ? transition.taskID
-        : prefs().taskID
+    const taskID = (read()?.nodes() ?? []).some((item) => item.taskID === transition.taskID)
+      ? transition.taskID
+      : prefs().taskID
     save({
       ...detailsChange(prefs(), "lifecycle", { open: true }),
       ...(taskID ? { taskID } : {}),
@@ -352,13 +320,21 @@ function RadarDiagnosticsPanel(
   }
   const planMissing = () =>
     Boolean(
-      prefs().planID && snapshot() && !snapshot()!.plans.some((item) => item.id === prefs().planID),
+      prefs().planID &&
+      view() &&
+      !view()!
+        .plans()
+        .some((item) => item.id === prefs().planID),
     )
   const taskMissing = () =>
     Boolean(
-      prefs().taskID && plan() && !plan()!.nodes.some((item) => item.taskID === prefs().taskID),
+      prefs().taskID &&
+      plan() &&
+      !view()!
+        .nodes()
+        .some((item) => item.taskID === prefs().taskID),
     )
-  const stale = () => Boolean(visible()?.stale || !props.session.server.connected)
+  const stale = () => !props.session.server.connected
   const scopeChoice = (): RadarScopeChoice =>
     prefs().scope === "session"
       ? "session"
@@ -371,30 +347,32 @@ function RadarDiagnosticsPanel(
         ? { scope: "session" }
         : { scope: "project", includeUnmanagedSessions: choice === "project-all" },
     )
-  const asOf = () => {
-    const observed = snapshot()?.observedAt ?? radar()?.observedAt
-    const time = observed === undefined ? Number.NaN : Date.parse(observed)
-    return Number.isFinite(time) ? time : undefined
+  // Streams push every change of their rows, so there is no "as of" time to show: a shown
+  // lifecycle is current while the server is connected.
+  const failure = () => {
+    const error = read()?.error()
+    return error
+      ? panelErrorMessage(error)
+      : location.error
+        ? panelErrorMessage(location.error)
+        : ""
   }
-  const failure = () =>
-    visible()?.error || (location.error ? panelErrorMessage(location.error) : "")
   const status = createPanelStatus(() => ({
     subject: "Radar",
-    hasContent: Boolean(radar() || snapshot()),
-    loading: !location.error && (visible()?.loading ?? true),
+    hasContent: Boolean(view()),
+    loading: !location.error && !view(),
     disconnected: !props.session.server.connected,
     ...(failure() ? { error: failure() } : {}),
-    ...(asOf() !== undefined ? { asOf: asOf()! } : {}),
   }))
   const connection = () =>
     connectionChip(
-      !props.session.server.connected || (failure() && !radar() && !snapshot())
+      !props.session.server.connected || (failure() && !view())
         ? "offline"
         : stale()
           ? "reconnecting"
           : "live",
-      asOf(),
     )
+  const refresh = () => setReopen((count) => count + 1)
   const details = () => storedDetails(prefs(), "lifecycle")
   const saveDetails = (change: { open?: boolean; size?: number }) =>
     save(detailsChange(prefs(), "lifecycle", change))
@@ -417,19 +395,15 @@ function RadarDiagnosticsPanel(
     return undefined
   }
   const flowActiveState = () => {
-    const currentSnapshot = snapshot()
+    const currentMachine = machine()
     const currentNode = flowNode()
-    return currentSnapshot && currentNode ? activeState(currentNode, currentSnapshot) : undefined
+    return currentMachine && currentNode ? activeState(currentNode, currentMachine) : undefined
   }
   const flowGraph = createMemo(() => {
-    const currentSnapshot = snapshot()
-    const currentPlan = plan()
+    const currentMachine = machine()
     const currentNode = flowNode()
-    return currentSnapshot &&
-      currentPlan &&
-      currentNode &&
-      machineSupported(currentNode, currentSnapshot)
-      ? statechartLayout(currentSnapshot, currentPlan, currentNode)
+    return currentMachine && plan() && currentNode && machineSupported(currentNode, currentMachine)
+      ? statechartLayout(currentMachine, currentNode, transitions())
       : undefined
   })
   return (
@@ -445,7 +419,7 @@ function RadarDiagnosticsPanel(
         scope={scopeChoice()}
         onScope={changeScope}
         connection={connection()}
-        onRefresh={() => state.refreshNow()}
+        onRefresh={refresh}
       />
       <DetailsPane
         ui={Ui}
@@ -464,35 +438,32 @@ function RadarDiagnosticsPanel(
             <button type="button" class="lazers-radar-text-button" onClick={props.onBack}>
               Back to Flow
             </button>
-            <PanelStatus
-              ui={Ui}
-              status={status}
-              onRetry={() => state.refreshNow()}
-              skeleton="chart"
-            />
-            <Show when={prefs().view !== "map" && snapshot()}>
+            <PanelStatus ui={Ui} status={status} onRetry={refresh} skeleton="chart" />
+            <Show when={prefs().view !== "map" && view()}>
               {(value) => (
-                <Show when={value().plans.length > 0}>
+                <Show when={value().plans().length > 0}>
                   <div class="lazers-radar-pickers">
                     <span class="lazers-radar-picker">
                       <Ui.Menu
                         label={plan()?.title ?? plan()?.id.slice(0, 8) ?? "Select plan"}
                         trigger="button"
-                        items={value().plans.map((item) => ({
-                          label: item.title ?? item.id,
-                          onSelect: () =>
-                            save({
-                              planID: item.id,
-                              taskID: null,
-                              selectedTransition: null,
-                              selectedState: null,
-                              visualScroll: 0,
-                              detailScroll: 0,
-                            }),
-                        }))}
+                        items={value()
+                          .plans()
+                          .map((item) => ({
+                            label: item.title ?? item.id,
+                            onSelect: () =>
+                              save({
+                                planID: item.id,
+                                taskID: null,
+                                selectedTransition: null,
+                                selectedState: null,
+                                visualScroll: 0,
+                                detailScroll: 0,
+                              }),
+                          }))}
                       />
                     </span>
-                    <Show when={(plan()?.nodes.length ?? 0) > 1}>
+                    <Show when={value().nodes().length > 1}>
                       <span class="lazers-radar-picker">
                         <Ui.Menu
                           label={
@@ -501,17 +472,19 @@ function RadarDiagnosticsPanel(
                               : "Select task"
                           }
                           trigger="button"
-                          items={(plan()?.nodes ?? []).map((item) => ({
-                            label: `${item.state} · ${item.taskID.slice(0, 8)}`,
-                            onSelect: () =>
-                              save({
-                                taskID: item.taskID,
-                                selectedTransition: null,
-                                selectedState: null,
-                                visualScroll: 0,
-                                detailScroll: 0,
-                              }),
-                          }))}
+                          items={value()
+                            .nodes()
+                            .map((item) => ({
+                              label: `${item.state} · ${item.taskID.slice(0, 8)}`,
+                              onSelect: () =>
+                                save({
+                                  taskID: item.taskID,
+                                  selectedTransition: null,
+                                  selectedState: null,
+                                  visualScroll: 0,
+                                  detailScroll: 0,
+                                }),
+                            }))}
                         />
                       </span>
                     </Show>
@@ -521,7 +494,7 @@ function RadarDiagnosticsPanel(
             </Show>
             <Show when={prefs().view !== "map"}>
               <Show
-                when={snapshot()}
+                when={view()}
                 fallback={
                   <Show when={status.view().kind === "ready"}>
                     <div class="lazers-radar-note">No observation is available.</div>
@@ -531,12 +504,10 @@ function RadarDiagnosticsPanel(
                 {(value) => (
                   <>
                     <Show
-                      when={value().plans.length > 0}
+                      when={value().plans().length > 0}
                       fallback={
                         <div class="lazers-radar-note">
-                          {value().unplannedTasks.length
-                            ? "No runner plan is recorded for the submitted tasks in this scope."
-                            : "No recorded runner activity in this scope."}
+                          No recorded runner activity in this scope.
                         </div>
                       }
                     >
@@ -561,7 +532,7 @@ function RadarDiagnosticsPanel(
                             }
                           >
                             <Show
-                              when={flowNode() && machineSupported(flowNode()!, value())}
+                              when={flowNode() && machineSupported(flowNode()!, value().machine)}
                               fallback={
                                 <div class="lazers-radar-note">
                                   {flowNode()
@@ -815,11 +786,7 @@ function RadarDiagnosticsPanel(
                 </Show>
                 <Show when={chosenState()}>
                   {(machineState) => {
-                    const inspector = flowStateInspector(
-                      flowNode,
-                      snapshot,
-                      () => machineState().id,
-                    )
+                    const inspector = flowStateInspector(flowNode, machine, () => machineState().id)
                     return (
                       <>
                         <StatRow
@@ -916,7 +883,6 @@ function RadarLiveMonitorPanel(
     saveRadarView(ctx, props.session, projectKey(), change)
   onCleanup(() => state.close())
 
-  let transportRef: ReturnType<typeof createRadarMonitorTransport> | undefined
   // The selected worker's older calls are a stream of the project's service, one per viewed location.
   const [historySource, setHistorySource] = createSignal<HistorySource>()
   createKeyed(
@@ -934,7 +900,6 @@ function RadarLiveMonitorPanel(
         value.projectID,
         radarLocationGuard(value.client, value.directory, () => props.session.directory),
       )
-      transportRef = transport
       const streams = new AbortController()
       setHistorySource({
         transport: rpcStreamsTransport(
@@ -1032,8 +997,6 @@ function RadarLiveMonitorPanel(
         }}
         onRefresh={() => state.refreshNow()}
         history={historySource()}
-        readAttempt={(sessionID, signal) => transportRef!.liveAttempt!(scope(), sessionID, signal)}
-        readGroup={(group, signal) => transportRef!.liveGroup!(scope(), group, signal)}
         showIdle={prefs().showIdle === true}
         onShowIdleChange={(showIdle) => save({ showIdle })}
         onView={props.onView}
