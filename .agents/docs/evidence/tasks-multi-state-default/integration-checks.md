@@ -19,11 +19,11 @@ selects their union, while legacy Completed preferences retain main's fallback.
   Current main instead filters the stored projection with one bucket IN clause.
 - `bun run verify` passed on the composition (existing repository lint warnings).
 - `bun test --timeout 120000 src/tasks src/storage.test.ts test/task-panel
-  test/observation-panels/tasks-streams.test.ts`: 230 passed across 39 files under
+test/observation-panels/tasks-streams.test.ts`: 230 passed across 39 files under
   an independent 240-second process-group watchdog.
 - Following review fixes and test refinements, `bun test --timeout 120000
-  test/observation-panels/tasks-streams.test.ts src/tasks/stream-query.test.ts
-  src/tasks/state-selection.test.ts`: 20 passed, 128 assertions.
+test/observation-panels/tasks-streams.test.ts src/tasks/stream-query.test.ts
+src/tasks/state-selection.test.ts`: 20 passed, 128 assertions.
 - `bun run build:gui` and `git diff --check` passed.
 
 The real database/stream fixture covers bucket-union counts and rows, normalized
