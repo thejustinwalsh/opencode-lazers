@@ -103,13 +103,14 @@ export function evidenceSnapshot(
   project: string,
   generation: number,
   records: unknown[],
+  retrievedAt?: string,
 ): ModelEvidenceSnapshot {
   return ModelEvidenceSnapshotSchema.parse({
     snapshotID: crypto.randomUUID(),
     projectDirectory: project,
     source,
     generation,
-    retrievedAt: "2026-11-03T12:00:00.000Z",
+    retrievedAt: retrievedAt ?? "2026-11-03T12:00:00.000Z",
     asOf: source === "openrouter-benchmarks" ? "2026-11-02T12:00:00.000Z" : null,
     version: source === "openrouter-benchmarks" ? "v1" : null,
     citation: "Published source",
@@ -143,11 +144,15 @@ export const corpusNativeRecords = () => [
 ]
 
 /** Every source of the corpus, saved through the writer as a refresh does. */
-export function seedEvidenceCorpus(writer: ModelEvidenceStore, project: string) {
+export function seedEvidenceCorpus(
+  writer: ModelEvidenceStore,
+  project: string,
+  retrievedAt?: string,
+) {
   const generations = writer.beginRefresh()
   const saved: Record<string, ModelEvidenceSnapshot> = {}
   const save = (source: ModelEvidenceSource, records: unknown[]) => {
-    const snapshot = evidenceSnapshot(source, project, generations[source], records)
+    const snapshot = evidenceSnapshot(source, project, generations[source], records, retrievedAt)
     writer.saveSnapshot(snapshot)
     saved[source] = snapshot
   }

@@ -1,9 +1,19 @@
 import { defineSource, type StreamContext } from "../source.ts"
+import { openDecisionViewFor } from "../../models/decision-view-registry.ts"
 import {
   MODELS_SOURCES,
   modelCandidateColumns,
   modelCandidateDetail,
+  modelCatalogColumns,
+  modelContributorColumns,
+  modelPointColumns,
+  modelViewColumns,
+  modelViewDetail,
   type ModelCandidatesFilter,
+  type ModelCatalogFilter,
+  type ModelContributorsFilter,
+  type ModelPointsFilter,
+  type ModelViewFilter,
 } from "./models-ref.ts"
 
 /**
@@ -59,4 +69,106 @@ export const modelCandidatesSource = defineSource({
   },
   columns: modelCandidateColumns,
   detail: modelCandidateDetail,
+})
+
+/**
+ * The view-backed sources: `authorize` checks the session, then opens the view of the selection
+ * (a point write on the main thread that starts its build) and sets `viewID`; `filter` reads only
+ * that view's rows. A view nobody opened for 7 days is dropped, and the next open builds it again.
+ */
+async function viewScoped<F extends ModelViewFilter>(
+  input: F,
+  context: StreamContext,
+  action: string,
+): Promise<F> {
+  const checked = await scoped(input, context, action)
+  const viewID = openDecisionViewFor(context.projectDirectory, input.view)
+  return { ...checked, viewID }
+}
+
+const viewID = (input: { viewID?: number }) => {
+  if (input.viewID === undefined) throw new Error("Models scope is unavailable")
+  return input.viewID
+}
+
+/** The view row: its building or ready state, counts and, at `window: 1`, the decision context. */
+export const modelViewSource = defineSource({
+  name: MODELS_SOURCES.view,
+  table: "model_decision_views",
+  key: ["id"],
+  orders: { key: [{ column: "id", direction: "asc" }] },
+  authorize(input: ModelViewFilter, context) {
+    return viewScoped(input, context, "lz-read-model-decision")
+  },
+  filter(input: ModelViewFilter) {
+    return { where: "model_decision_views.id = ?", params: [viewID(input)] }
+  },
+  columns: modelViewColumns,
+  detail: modelViewDetail,
+})
+
+/** The "All models" table, best trade-off first (`rankCatalog`). A view holds about 100 rows. */
+export const modelCatalogSource = defineSource({
+  name: MODELS_SOURCES.catalog,
+  table: "model_catalog_entries",
+  key: ["id"],
+  orders: {
+    rank: [
+      { column: "rank", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  count: { exact: "scan" },
+  authorize(input: ModelCatalogFilter, context) {
+    return viewScoped(input, context, "lz-read-model-comparison")
+  },
+  filter(input: ModelCatalogFilter) {
+    return { where: "model_catalog_entries.view_id = ?", params: [viewID(input)] }
+  },
+  columns: modelCatalogColumns,
+})
+
+/** The chart's configurations in the overview's point order, reference-only ones after. */
+export const modelPointsSource = defineSource({
+  name: MODELS_SOURCES.points,
+  table: "model_decision_points",
+  key: ["id"],
+  orders: {
+    chart: [
+      { column: "ord", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  count: { exact: "scan" },
+  authorize(input: ModelPointsFilter, context) {
+    return viewScoped(input, context, "lz-read-model-decision")
+  },
+  filter(input: ModelPointsFilter) {
+    return { where: "model_decision_points.view_id = ?", params: [viewID(input)] }
+  },
+  columns: modelPointColumns,
+})
+
+/** One configuration's contributors (the pane), in the inspection's order. */
+export const modelContributorsSource = defineSource({
+  name: MODELS_SOURCES.contributors,
+  table: "model_decision_contributors",
+  key: ["id"],
+  orders: {
+    inspection: [
+      { column: "ord", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  authorize(input: ModelContributorsFilter, context) {
+    return viewScoped(input, context, "lz-read-model-decision")
+  },
+  filter(input: ModelContributorsFilter) {
+    return {
+      where:
+        "model_decision_contributors.view_id = ? AND model_decision_contributors.configuration_id = ?",
+      params: [viewID(input), input.configurationID],
+    }
+  },
+  columns: modelContributorColumns,
 })

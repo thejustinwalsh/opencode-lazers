@@ -1667,6 +1667,32 @@ function configurationPage(
   })
 }
 
+/** A configuration's contributors in the inspection's order: the selected task's first. */
+function contributorsInOrder(
+  snapshot: DecisionSnapshot,
+  configKey: string,
+  selectedTaskID: string | null,
+) {
+  return [...(snapshot.contributors.get(configKey) ?? [])].sort(
+    (left, right) =>
+      Number(right.taskID === selectedTaskID) - Number(left.taskID === selectedTaskID) ||
+      left.taskReference.localeCompare(right.taskReference) ||
+      (left.observedAt ?? "").localeCompare(right.observedAt ?? "") ||
+      left.sessionID.localeCompare(right.sessionID),
+  )
+}
+
+/**
+ * What a stored decision view is built from (`decision-view.ts`): the overview, and every
+ * configuration's contributors in the inspection's order with no task selected, whole.
+ */
+export type DecisionViewParts = {
+  overview: ModelDecisionOverview
+  sourceRevision: number | null
+  priceIdentity: string
+  contributors: Array<{ configurationID: string; contributors: ModelDecisionContributor[] }>
+}
+
 function inspection(
   snapshot: DecisionSnapshot,
   input: ReturnType<typeof ModelDecisionInspectInputSchema.parse>,
@@ -1683,14 +1709,7 @@ function inspection(
       configurationID: input.configurationID,
     })
   const configKey = routeID(row.configuration.route)!
-  const contributors = [...(snapshot.contributors.get(configKey) ?? [])].sort(
-    (left, right) =>
-      Number(right.taskID === input.selectedTaskID) -
-        Number(left.taskID === input.selectedTaskID) ||
-      left.taskReference.localeCompare(right.taskReference) ||
-      (left.observedAt ?? "").localeCompare(right.observedAt ?? "") ||
-      left.sessionID.localeCompare(right.sessionID),
-  )
+  const contributors = contributorsInOrder(snapshot, configKey, input.selectedTaskID)
   const nextOffset = offset + input.contributorLimit
   const nextCursor =
     nextOffset < contributors.length
@@ -1748,6 +1767,8 @@ export function createModelDecisionReader(
    * the rebuild off the path of the next open.
    */
   warm(input: ModelDecisionReadInput, signal?: AbortSignal): Promise<ModelDecisionWarmOutcome>
+  /** The current snapshot of these inputs (built when stale), as a stored view's parts. */
+  viewParts(input: ModelDecisionReadInput, signal?: AbortSignal): Promise<DecisionViewParts>
   close(): void
 } {
   const secret = randomBytes(32)
@@ -1918,6 +1939,23 @@ export function createModelDecisionReader(
         return "current"
       await freshForInput(parsed, signal)
       return "refreshed"
+    },
+    async viewParts(input, signal) {
+      const parsed = ModelDecisionReadInputSchema.parse(input)
+      if (parsed.scope.projectDirectory !== dependencies.projectDirectory)
+        throw new Error("Model decision scope is unavailable")
+      const snapshot = await freshForInput(parsed, signal)
+      signal?.throwIfAborted()
+      return {
+        overview: snapshotOverview(snapshot),
+        sourceRevision: snapshot.sourceRevision,
+        priceIdentity: snapshot.priceIdentity,
+        // The objects an inspection with no selected task pages through, whole.
+        contributors: snapshot.rows.map((row) => ({
+          configurationID: row.configuration.configurationID,
+          contributors: contributorsInOrder(snapshot, routeID(row.configuration.route)!, null),
+        })),
+      }
     },
     async overview(input, options) {
       const parsed = ModelDecisionReadInputSchema.parse(input)

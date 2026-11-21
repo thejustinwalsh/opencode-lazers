@@ -1,3 +1,6 @@
+import { routedModels } from "./catalog-inputs.ts"
+import { registerDecisionViewOpener } from "./decision-view-registry.ts"
+import { DecisionViewRequestSchema } from "./decision-view.ts"
 import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
@@ -329,10 +332,36 @@ export function registerModelsServer(
     return { policy, openrouter }
   }
 
+  /** The saved model settings of the project (or one task), with the agents' host routes. */
+  const readSettings = async (taskID: string | undefined, signal: AbortSignal) => {
+    const output = withService((service) => service.settings({ taskID }))
+    // The agents' LAZERS routes: the effective model is read back from the host (after the
+    // transform applied it), and the source word says whose route it is.
+    const set = new Map(
+      withService((service) =>
+        LAZERS_AGENTS.map((agent) => agent.agentID).flatMap((id) => {
+          const route = service.mappings.agentRoute(id)
+          return route ? [[id, route] as const] : []
+        }),
+      ),
+    )
+    const agents = await readAgentRoutes(ctx, signal, (id: string) => set.get(id as never) ?? null)
+    return ModelSettingsOutputSchema.parse({ ...output, agents })
+  }
+
   return Effect.gen(function* () {
     // One decision worker per database per process, shared by every location's registration.
     const lease = acquireDecisionWorker({ path, readPriceInputs })
     yield* Effect.addFinalizer(() => Effect.sync(() => lease.release()))
+    // Stored decision views: the routes the panel counts as routed come from this location's
+    // settings read, and a Models stream opens a view through the registered opener.
+    lease.provideRouted(projectDirectory, async (taskID, signal) =>
+      routedModels(await readSettings(taskID ?? undefined, signal ?? new AbortController().signal)),
+    )
+    const releaseOpener = registerDecisionViewOpener(projectDirectory, (request) =>
+      lease.openView(projectDirectory, DecisionViewRequestSchema.parse(request)),
+    )
+    yield* Effect.addFinalizer(() => Effect.sync(releaseOpener))
     const decisionReader = lease.reader(projectDirectory)
     const readerFor = (unit: ProjectUnit) => {
       if (canonicalPath(unit.directory) === canonicalPath(projectDirectory))
@@ -382,23 +411,7 @@ export function registerModelsServer(
               signal,
             )
             signal.throwIfAborted()
-            const output = withService((service) => service.settings({ taskID: request.taskID }))
-            // The agents' LAZERS routes: the effective model is read back from the host (after the
-            // transform applied it), and the source word says whose route it is.
-            const set = new Map(
-              withService((service) =>
-                LAZERS_AGENTS.map((agent) => agent.agentID).flatMap((id) => {
-                  const route = service.mappings.agentRoute(id)
-                  return route ? [[id, route] as const] : []
-                }),
-              ),
-            )
-            const agents = await readAgentRoutes(
-              ctx,
-              signal,
-              (id: string) => set.get(id as never) ?? null,
-            )
-            return ModelSettingsOutputSchema.parse({ ...output, agents })
+            return await readSettings(request.taskID, signal)
           },
           catch: failure,
         }).pipe(Effect.orDie),
