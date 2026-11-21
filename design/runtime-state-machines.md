@@ -227,7 +227,9 @@ every authorization bound to it are deleted; legacy rows that carry an
 `ownerEpoch` still parse and it binds nothing.
 
 When work needs judgement (a hold, outcome, question or review) the scheduler
-routes it with `routeArchitect()`:
+routes it with `routeArchitect()` at delivery, when a new notice waits for the
+Architect. An idle Architect that already has the news is never routed or
+renewed; a plan step does not route:
 
 | Owner state                                                | Decision                 | Reason          |
 | ---------------------------------------------------------- | ------------------------ | --------------- |
@@ -244,7 +246,9 @@ OpenRouter passes the provider's caching through). `architectReuseMaxContextToke
 decision is recorded once per change as `ARCHITECT_ROUTED` with its reason. The
 fresh session is created by the existing renewal machine (`renewalMachine`), so
 the checkpoint from `lz-record-architect-continuity` seeds it; the old session is
-left alone. `ensureArchitectOwner` runs before any early return in a plan step,
+left alone. The waiting notices move to the successor with its handoff. A
+closeout reminder is keyed on its status and artifact, so the version bump of a
+renewal transfer does not re-send it. `ensureArchitectOwner` runs before any early return in a plan step,
 so routing always reaches a live Architect. `architectIdleWindowMs` remains only
 as a deprecated alias of `architectCacheWindowMs`.
 

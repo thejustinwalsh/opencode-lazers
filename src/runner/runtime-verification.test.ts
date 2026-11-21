@@ -708,8 +708,12 @@ test("whole-plan cancellation interrupts busy siblings while retaining uncertain
     })
     await f.runtime.tick()
     expect(interrupted.toSorted()).toEqual(siblings.map((attempt) => attempt.session_id).toSorted())
+    // The finished check's uncertain tree settlement does not fence the cancel: its effect
+    // stays uncertain for the bounded effect wait, then the plan settles.
     expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
-    expect(f.store.plan(f.receipt.planID)?.reason).toContain("settlement is uncertain")
+    expect(
+      f.store.latestTransition(f.receipt.planID, null, "VERIFICATION_CANCELLATION_UNCERTAIN"),
+    ).toBeUndefined()
     await f.runtime.tick()
     expect(f.store.plan(f.receipt.planID)?.state).toBe("cancelling")
     expect(
