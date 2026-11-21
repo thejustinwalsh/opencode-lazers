@@ -845,7 +845,7 @@ const TrajectoryStatusInput = z.strictObject({
   live: z.strictObject({ cursor: z.uuid().optional() }).optional(),
 })
 
-export const Changed = z.strictObject({
+export const ObservabilityChanged = z.strictObject({
   projectID: z.string().min(1),
   sequence: z.int().positive(),
   repositoryVersion: z.int().nonnegative(),
@@ -889,7 +889,7 @@ export const Observability = Rpc.define({
     },
     trajectoryStatus: { input: TrajectoryStatusInput, output: TrajectoryOutput },
   },
-  events: { changed: { schema: Changed } },
+  events: { changed: { schema: ObservabilityChanged } },
 })
 
 export type ObservationScope = z.infer<typeof ObservationScope>
@@ -917,4 +917,4 @@ export type TrajectoryHistoryRequest = z.infer<typeof TrajectoryHistoryInput>
 export type TrajectoryHistoryResponse = z.infer<typeof TrajectoryHistoryOutput>
 export type TrajectoryHistoryErrorReason = z.infer<typeof TrajectoryHistoryErrorData>["reason"]
 export type TrajectoryStatusRequest = z.infer<typeof TrajectoryStatusInput>
-export type ObservationChange = z.infer<typeof Changed>
+export type ObservationChange = z.infer<typeof ObservabilityChanged>

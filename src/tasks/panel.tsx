@@ -38,7 +38,7 @@ import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
 import { TaskPanelState } from "./panel-state.ts"
 import { createSelectedFacts, createTaskList, type TaskList } from "./panel-streams.ts"
 import { taskChanges } from "./events.ts"
-import type { PanelData } from "./panel-state.ts"
+import type { TasksPanelData } from "./panel-state.ts"
 import { DetailsPane } from "../details-pane.tsx"
 import { sizeFromLegacySplit, storedState } from "../details-pane.ts"
 import { createPanelStatus, PanelSkeleton, PanelStatus } from "../panel-status.tsx"
@@ -284,7 +284,7 @@ function TaskPanel(
   const ctx = props.ctx
   const Ui = ctx.ui
   const frame = usePanel()
-  const [data, setData] = createSignal<PanelData>({
+  const [data, setData] = createSignal<TasksPanelData>({
     key: "",
     currentActivity: {},
     activityError: "",

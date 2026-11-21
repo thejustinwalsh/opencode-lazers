@@ -9,7 +9,7 @@ import {
 import type { VerificationDeadline, VerificationTimeoutTarget } from "./verification-timeout.ts"
 import { type TaskProposal } from "../task.ts"
 import { checkResourcesSettled, runDeclaredCheck, writeCheckReceipt } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { PlanRow } from "./store.ts"
 import {
   markRetainedVerificationCheckUncertain,
@@ -122,8 +122,8 @@ export class CheckActivities {
     identity: unknown
     metadata: Record<string, unknown>
     signal?: AbortSignal
-    run(signal: AbortSignal): Promise<CheckReceipt>
-  }): { activity: VerificationActivity<CheckReceipt>; created: boolean } {
+    run(signal: AbortSignal): Promise<RunnerCheckReceipt>
+  }): { activity: VerificationActivity<RunnerCheckReceipt>; created: boolean } {
     return startVerificationActivity({
       databasePath: this.store.repository.path,
       key: verificationActivityKey(this.store.repository.path, input.id),
@@ -138,7 +138,10 @@ export class CheckActivities {
       },
     })
   }
-  checkActivity(id: string, identity: unknown): VerificationActivity<CheckReceipt> | undefined {
+  checkActivity(
+    id: string,
+    identity: unknown,
+  ): VerificationActivity<RunnerCheckReceipt> | undefined {
     return verificationActivity(
       verificationActivityKey(this.store.repository.path, id),
       fingerprint(identity),
@@ -202,7 +205,7 @@ export class CheckActivities {
     deadline: VerificationDeadline,
     receiptPath: string,
     options?: Parameters<typeof runDeclaredCheck>[4] & { profileRevisionID?: number },
-  ): Promise<CheckReceipt> {
+  ): Promise<RunnerCheckReceipt> {
     // A verify effect pins the revision it started with; every other run reads the active one.
     const { profileRevisionID, ...runOptions } = options ?? {}
     const profile = runOptions.profile ?? this.checkProfile(profileRevisionID)
@@ -237,7 +240,7 @@ export class CheckActivities {
         if (check.state !== "completed" || !check.receipt)
           return "Retained check has no conclusive final receipt"
         try {
-          const receipt = JSON.parse(check.receipt) as CheckReceipt
+          const receipt = JSON.parse(check.receipt) as RunnerCheckReceipt
           if (!checkResourcesSettled(receipt))
             return `Command exited ${receipt.exitCode ?? "unknown"} with timedOut=${receipt.timedOut}; subprocess cleanup remains uncertain`
         } catch {
@@ -274,10 +277,10 @@ export class CheckActivities {
           .adoptionChecks(adoptionID, phase)
           .find((candidate) => candidate.check_id === checkID)
         if (!row) continue
-        let receipt: CheckReceipt | undefined
+        let receipt: RunnerCheckReceipt | undefined
         try {
           if (existsSync(row.receipt_path))
-            receipt = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
+            receipt = JSON.parse(readFileSync(row.receipt_path, "utf8")) as RunnerCheckReceipt
         } catch {
           receipt = undefined
         }
@@ -379,10 +382,10 @@ export class CheckActivities {
       artifact: row.artifact,
       contextPath: row.contextPath,
     }
-    let receipt: CheckReceipt | undefined
+    let receipt: RunnerCheckReceipt | undefined
     try {
       if (existsSync(row.receiptPath))
-        receipt = JSON.parse(readFileSync(row.receiptPath, "utf8")) as CheckReceipt
+        receipt = JSON.parse(readFileSync(row.receiptPath, "utf8")) as RunnerCheckReceipt
     } catch {
       receipt = undefined
     }

@@ -3,7 +3,7 @@ import type { FallowAcceptance, FallowDisposition, FallowPackage } from "../audi
 import { renderRepair } from "../audit/fallow-render.ts"
 import type { FallowReviewInput, FallowReviewResult } from "../audit/review.ts"
 import { FALLOW_CHECK_ID } from "../task.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 
 /** Reserved verification ID: authored checks cannot use it. */
 export { FALLOW_CHECK_ID } from "../task.ts"
@@ -59,7 +59,7 @@ export function fallowCheckReceipt(input: {
   result: FallowReviewResult
   /** The plan-level review reports but never fails: exit 0 whatever it found. */
   advisory?: boolean
-}): CheckReceipt {
+}): RunnerCheckReceipt {
   const pkg = packageOf(input.result)
   const failing = !input.advisory && needsRepair(pkg)
   return {

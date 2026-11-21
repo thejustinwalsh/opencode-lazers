@@ -1,6 +1,6 @@
 import { join, dirname, isAbsolute, basename, delimiter } from "node:path"
 import { toolchainFacts } from "../projects/toolchains.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 
 /** Desktop services may start without the user's package-manager directory on PATH. */
 export function checkEnvironment(
@@ -55,8 +55,8 @@ function locateTool(
 
 /** Command outcomes establish checks. Workspace and environment metadata are diagnostics. */
 export function checkSucceeded(
-  receipt: Pick<CheckReceipt, "exitCode" | "timedOut"> &
-    Partial<Pick<CheckReceipt, "phasesComplete" | "aborted">>,
+  receipt: Pick<RunnerCheckReceipt, "exitCode" | "timedOut"> &
+    Partial<Pick<RunnerCheckReceipt, "phasesComplete" | "aborted">>,
 ) {
   return (
     receipt.exitCode === 0 &&
@@ -67,8 +67,8 @@ export function checkSucceeded(
 }
 
 /** A retryable interruption is distinct from a completed test failure or timeout. */
-export function isConclusiveNonTimeoutInterruption(receipt: CheckReceipt): boolean {
-  const processSettled = (cleanup: CheckReceipt["processCleanup"] | undefined) =>
+export function isConclusiveNonTimeoutInterruption(receipt: RunnerCheckReceipt): boolean {
+  const processSettled = (cleanup: RunnerCheckReceipt["processCleanup"] | undefined) =>
     Boolean(
       cleanup &&
       cleanup.state !== "uncertain" &&
@@ -102,7 +102,7 @@ export function isConclusiveNonTimeoutInterruption(receipt: CheckReceipt): boole
   )
 }
 
-export function checkFailureReason(receipt: CheckReceipt) {
+export function checkFailureReason(receipt: RunnerCheckReceipt) {
   if (receipt.aborted) return `Verification ${receipt.id} was interrupted before completion`
   if (receipt.phasesComplete === false && receipt.exitCode === 0 && !receipt.timedOut)
     return `Verification ${receipt.id} did not complete every declared phase`

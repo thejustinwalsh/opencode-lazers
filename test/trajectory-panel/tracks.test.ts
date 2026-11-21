@@ -3,7 +3,7 @@ import {
   buildTimeline,
   displayTitle,
   durationText,
-  elapsedLabel,
+  elapsedDurationLabel,
   eventPayload,
   parseTrajectoryReport,
   tickStep,
@@ -167,7 +167,7 @@ test("elapsed axis uses readable second, minute and hour steps", () => {
   expect(tickStep(38 * 60_000)).toBe(10 * 60_000)
   expect(tickStep(45_000)).toBe(10_000)
   expect(tickStep(5 * 3_600_000)).toBe(3_600_000)
-  expect([0, 45_000, 90_000, 720_000, 3_600_000, 5_400_000].map(elapsedLabel)).toEqual([
+  expect([0, 45_000, 90_000, 720_000, 3_600_000, 5_400_000].map(elapsedDurationLabel)).toEqual([
     "0",
     "45s",
     "1m30s",

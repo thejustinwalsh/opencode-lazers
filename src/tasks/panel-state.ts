@@ -26,7 +26,7 @@ export interface TaskTransport {
   changes(signal: AbortSignal): AsyncIterable<TaskPanelChange>
   online(): boolean
 }
-export interface PanelData {
+export interface TasksPanelData {
   key: string
   currentActivity: Record<string, CurrentTaskActivity>
   activityError: string
@@ -36,7 +36,7 @@ export interface PanelData {
   error: string
 }
 
-const blank = (key = ""): PanelData => ({
+const blank = (key = ""): TasksPanelData => ({
   key,
   currentActivity: {},
   activityError: "",
@@ -70,11 +70,11 @@ export class TaskPanelState {
   private starts = new Map<string, Promise<StartTaskReply>>()
 
   constructor(
-    private readonly changed: (data: PanelData) => void,
+    private readonly changed: (data: TasksPanelData) => void,
     private readonly selected: (id: string) => void = () => {},
   ) {}
 
-  private update(change: Partial<PanelData>) {
+  private update(change: Partial<TasksPanelData>) {
     this.data = { ...this.data, ...change }
     this.changed(this.data)
   }

@@ -4,7 +4,7 @@ import { existsSync, lstatSync } from "node:fs"
 import { resolve } from "node:path"
 import { fingerprint } from "../identity.ts"
 import { gitAsync, registeredWorktreePaths } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import type { WorktreeLocationRetirement } from "./host.ts"
 import { PlanInput } from "./schema.ts"
 import { containmentReason, headContained, proofForArtifact } from "./integration-proof.ts"
@@ -102,9 +102,9 @@ export class WorktreeCleanup {
     const artifact = phase === "task" ? adoption.descendant_commit : adoption.combined_artifact
     for (const check of checks) {
       const row = rows.find((item) => item.check_id === check.id)
-      let receipt: CheckReceipt | undefined
+      let receipt: RunnerCheckReceipt | undefined
       try {
-        if (row?.receipt) receipt = JSON.parse(row.receipt) as CheckReceipt
+        if (row?.receipt) receipt = JSON.parse(row.receipt) as RunnerCheckReceipt
       } catch {
         receipt = undefined
       }
@@ -152,12 +152,12 @@ export class WorktreeCleanup {
         }
       })
       const effect = matches.at(-1)
-      let receipt: CheckReceipt | undefined
+      let receipt: RunnerCheckReceipt | undefined
       let payload: { check?: unknown } | undefined
       try {
         if (effect) {
           payload = JSON.parse(effect.payload) as typeof payload
-          const body = JSON.parse(effect.receipt ?? "{}") as { check?: CheckReceipt }
+          const body = JSON.parse(effect.receipt ?? "{}") as { check?: RunnerCheckReceipt }
           receipt = body.check
         }
       } catch {
