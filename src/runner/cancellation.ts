@@ -366,17 +366,7 @@ export class Cancellation {
           retainedWorkPreserved: true,
         }),
       )
-    this.store.fenced(this.owner, fence, (db) =>
-      db
-        .query(
-          "UPDATE runner_attempts SET state=lz_runner_transition('attempt',state,'cancelled') WHERE id=?",
-        )
-        .run(attempt.id),
-    )
-    const node = this.store
-      .nodes(plan.id)
-      .find((candidate) => candidate.task_id === attempt.task_id)!
-    if (!terminal.has(node.state)) this.store.move(plan.id, node.task_id, "CANCEL")
+    this.cancelReservedAttempt(plan, attempt, fence)
     return true
   }
 

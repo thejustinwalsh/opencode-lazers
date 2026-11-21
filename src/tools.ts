@@ -44,6 +44,12 @@ import { openReadOnlyTaskCorrections } from "./tasks/corrections.ts"
 import { verificationTimeoutDefaults } from "./runner/verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./runner/verification-timeout.ts"
 
+/** A failure of a tool body as the tool's own error: a `Tool.Error` passes through unchanged. */
+const toolError = (error: unknown): Tool.Error =>
+  error instanceof Tool.Error
+    ? error
+    : new Tool.Error({ message: error instanceof Error ? error.message : String(error) })
+
 const listInput = z.strictObject({ limit: z.int().min(1).max(100) })
 
 function result<T>(
@@ -248,12 +254,7 @@ export function registerTaskTools(
                   )
                   return { content: JSON.stringify(receipt) }
                 },
-                catch: (error) =>
-                  error instanceof Tool.Error
-                    ? error
-                    : new Tool.Error({
-                        message: error instanceof Error ? error.message : String(error),
-                      }),
+                catch: toolError,
               }),
             ),
           ),
@@ -301,12 +302,7 @@ export function registerTaskTools(
                   )
                   return { content: JSON.stringify(receipt) }
                 },
-                catch: (error) =>
-                  error instanceof Tool.Error
-                    ? error
-                    : new Tool.Error({
-                        message: error instanceof Error ? error.message : String(error),
-                      }),
+                catch: toolError,
               }),
             ),
           ),
@@ -350,12 +346,7 @@ export function registerTaskTools(
                   )
                   return { content: JSON.stringify(receipt) }
                 },
-                catch: (error) =>
-                  error instanceof Tool.Error
-                    ? error
-                    : new Tool.Error({
-                        message: error instanceof Error ? error.message : String(error),
-                      }),
+                catch: toolError,
               }),
             ),
           ),
@@ -402,12 +393,7 @@ export function registerTaskTools(
                     reader.close()
                   }
                 },
-                catch: (error) =>
-                  error instanceof Tool.Error
-                    ? error
-                    : new Tool.Error({
-                        message: error instanceof Error ? error.message : String(error),
-                      }),
+                catch: toolError,
               }),
             ),
           ),
