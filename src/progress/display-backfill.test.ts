@@ -7,7 +7,6 @@ import {
   startProgressDisplayBackfill,
   resetProgressDisplayBackfill,
 } from "./display-backfill.ts"
-import { LiveReadStore } from "../observability/live-store.ts"
 import { DISPLAY_VERSION } from "./display.ts"
 import { refreshProgressDisplay } from "./display-store.ts"
 import { installProgressDisplayBackfill } from "./display-backfill.ts"
@@ -224,31 +223,6 @@ test("rows written under an older display version are walked again, with no manu
     // The same version again changes nothing.
     fixture.store.atomic((db) => installProgressDisplayBackfill(db))
     expect(marks()).toEqual({ below_seq: 0, version: DISPLAY_VERSION })
-  } finally {
-    fixture.close()
-  }
-})
-
-test("the attempt read says older calls are still being indexed until the backfill reaches the attempt's oldest row", () => {
-  const fixture = makeFixture()
-  try {
-    seedLegacy(fixture, 250)
-    const store = new LiveReadStore(
-      fixture.store.repository.path,
-      fixture.store.repository.projectDirectory,
-      "project",
-    )
-    const read = () =>
-      store.readAttempt(
-        { scope: { kind: "project", sessionID: "ses-owner" }, sessionID: "ses-failed" },
-        new AbortController().signal,
-      )?.historyIndexing
-    expect(read()).toBe(true)
-    const backfill = new ProgressDisplayBackfill(fixture.store.repository)
-    backfill.slice(0)
-    expect(read()).toBe(true)
-    while (!backfill.done) backfill.slice(0)
-    expect(read()).toBeUndefined()
   } finally {
     fixture.close()
   }

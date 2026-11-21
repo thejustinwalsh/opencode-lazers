@@ -438,19 +438,6 @@ function snapshot(data: TrajectoryData, scope: ObservationScope): SnapshotRespon
       }
     }),
     unplannedTasks: [],
-    transitions: steps.map((step, index) => ({
-      sequence: index + 1,
-      planID: featuredPlan,
-      taskID: taskID(data.task.n),
-      attemptID: step.attempt ? attemptID(step.attempt) : null,
-      planVersion: 1,
-      kind: "machine" as const,
-      event: step.event,
-      from: step.from,
-      to: step.to,
-      reason: step.reason,
-      recordedAt: when(step.at),
-    })),
     attempts: data.attempts.map((attempt) => ({
       id: attemptID(attempt.number),
       planID: featuredPlan,
