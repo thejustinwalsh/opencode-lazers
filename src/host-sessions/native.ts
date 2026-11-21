@@ -49,6 +49,9 @@ function sessionRecord(info: SessionInfo): HostSessionRecord {
       : null,
     tokensIn: info.tokens.input,
     tokensOut: info.tokens.output,
+    tokensReasoning: info.tokens.reasoning,
+    tokensCacheRead: info.tokens.cache.read,
+    tokensCacheWrite: info.tokens.cache.write,
     createdAt: millis(info.time.created),
     updatedAt: DateTime.toEpochMillis(info.time.updated),
   }

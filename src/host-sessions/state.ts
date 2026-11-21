@@ -20,7 +20,8 @@ import { privacyStats } from "../trajectory/privacy.ts"
  *                         compare, then write ─► host_session_state
  * ```
  *
- * Only what a panel shows is stored: status, counts, ids, routes, token totals, times and the
+ * Only what a panel shows is stored: status, counts, ids, routes, token totals (all five
+ * categories of the cumulative snapshot: the effort store prices them), times and the
  * session's own title (the host's short label on its session record, a session attribute like
  * `agent`, redacted and cut to 200 characters as the live monitor showed it). No transcript text
  * (owner decision, 2026-11-21: OpenCode holds transcripts); nothing is derived from messages.
@@ -47,6 +48,7 @@ const TABLES_SQL = `
     outcome TEXT, archived INTEGER NOT NULL,
     route_provider TEXT, route_model TEXT, route_variant TEXT,
     tokens_in INTEGER, tokens_out INTEGER,
+    tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER,
     created_at INTEGER, updated_at INTEGER NOT NULL, host_updated_at INTEGER NOT NULL,
     UNIQUE(project_directory, session_id)
   );
@@ -87,6 +89,10 @@ export type HostSessionRecord = {
   model: { providerID: string; id: string; variant: string | null } | null
   tokensIn: number | null
   tokensOut: number | null
+  /** Reasoning and cache tokens of the same cumulative snapshot: the effort store reads all five. */
+  tokensReasoning: number | null
+  tokensCacheRead: number | null
+  tokensCacheWrite: number | null
   createdAt: number | null
   /** The host's `time.updated`: the stamp. */
   updatedAt: number
@@ -150,6 +156,9 @@ type Row = {
   route_variant: string | null
   tokens_in: number | null
   tokens_out: number | null
+  tokens_reasoning: number | null
+  tokens_cache_read: number | null
+  tokens_cache_write: number | null
   created_at: number | null
   host_updated_at: number
 }
@@ -172,6 +181,9 @@ const SHOWN = [
   "route_variant",
   "tokens_in",
   "tokens_out",
+  "tokens_reasoning",
+  "tokens_cache_read",
+  "tokens_cache_write",
   "created_at",
 ] as const satisfies readonly (keyof Row)[]
 
@@ -242,6 +254,9 @@ export function writeHostSession(
     route_variant: idText(record.model?.variant),
     tokens_in: record.tokensIn,
     tokens_out: record.tokensOut,
+    tokens_reasoning: record.tokensReasoning,
+    tokens_cache_read: record.tokensCacheRead,
+    tokens_cache_write: record.tokensCacheWrite,
     created_at: record.createdAt,
     host_updated_at: record.updatedAt,
   }
