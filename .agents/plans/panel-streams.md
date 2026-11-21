@@ -805,6 +805,42 @@ Task 6 deletes that part of the old read.
 
 ### Task 6: Radar GUI on streams and deletions (L) — 1.4; demo `radar-streams.ts`.
 
+Built, except the sessions part (below):
+
+- Worker pane: `radar.attempt` (window 1, detail) plus `observability.liveHistory` (tools whole
+  for the lane, newest row for the last activity) in `src/radar/radar-streams.ts`; the 10 s
+  re-read effect and the old 1,000-tick lane cap are gone (the lane window starts at 256 calls and
+  doubles while rows remain). ★ The stored concern (`task_schedule.concern`) carries the line
+  only; the rule's recommended action and reason were read from `openConcerns` and are not shown
+  until `task_schedule` stores them (Task 12). ★ "older calls still indexing" (`historyIndexing`)
+  is not shown: it read the display backfill watermark on the main thread.
+- Map group pane: `radar.group` (window 50 = the old 25-row head plus 25 of slop) and
+  `radar.workload` (window 1) for the total. `ready = false` renders "still being indexed",
+  never an empty group or a zero.
+- Lifecycle view: `tasks.plans` (whole, first window 64: 221 plans live), ★ new `radar.nodes`
+  (`runner_nodes` with the persisted machine snapshot; whole, first window 16) and
+  `radar.planEvents` (whole, first window 64: at most one row per machine edge), plus a
+  window-1 detail stream anchored at the selected edge for its reason. ★ The machine definition
+  is plain data (`src/runner/task-machine-config.ts`), shared by the runner and the GUI, so the
+  GUI bundles no XState. Deleted: `RadarPanelState` (`src/radar/state.ts`),
+  `createRadarTransport` (`src/radar/transport.ts`), `ObservationSyncState`
+  (`src/observability/state.ts`), `planTransitions`, `transitionForSequence`.
+- Server deletions: RPCs `radar`, `topology`, `liveAttempt`, `liveGroup` and their all-projects
+  variants; `loadRadarSource` and the Radar edge, route and session builders (about 1,300 lines
+  of `src/observability/read.ts`); `LiveReadStore.readAttempt`/`readGroupTasks`;
+  `LIVE_GROUP_TASKS` (25); snapshot `transitions` and the plan-level transition read (the
+  snapshot now reads only a task's `WORKER_STARTED`/`WORKER_STOPPED`, which Trajectory's attempt
+  executions use). ★ Kept, with their owner: the snapshot read itself and its 1,000-plan and
+  10,001-row limits are Trajectory's (task choices, attempts, checks) until Task 13/14.
+- SEAM (Task 3): `radar.sessions` is declared in `radar-ref.ts` (name and the 1.2 columns) with
+  no server source. The monitor's sessions, calls and flow still come from `liveRadar`
+  (`RadarMonitorState`, `kept.ts`, `monitor-transport.ts`, the 512 KB response cap); they are
+  deleted together when Task 3's table lands.
+- Demo: `website/demo/src/panels/radar-streams.ts` answers `radar.attempt`,
+  `observability.liveHistory`, `radar.group` and `radar.workload` with real frames over the mock
+  world (a shared engine in `stream-answers.ts` serves Tasks and Radar); the `Streams` stub and
+  the `liveAttempt`/`liveGroup` answers are gone.
+
 ### Task 7: Host transcript fold and `trajectory_task_effort` (XL)
 
 `src/events/host-transcript-fold.ts`, `src/trajectory/effort-store.ts`; module

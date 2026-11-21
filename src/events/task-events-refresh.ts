@@ -19,7 +19,7 @@ import {
  */
 export const TASK_EVENTS = "task-events"
 /** The derivation's generation: raise it when a row's content changes, and the backfill rewrites. */
-export const TASK_EVENTS_GENERATION = 1
+const TASK_EVENTS_GENERATION = 1
 const QUEUE = "task_events_dirty"
 
 /**
@@ -134,7 +134,7 @@ function attemptOf(db: Database, id: string, task: string, project: string) {
   )
 }
 
-export function refreshTransition(db: Database, id: number) {
+function refreshTransition(db: Database, id: number) {
   const origin = `tr:${id}`
   const row = db
     .query<TransitionRow, [number]>(
@@ -197,7 +197,7 @@ function planTasks(db: Database, plan: string): string[] {
 /** Origins of one effect's rows: `ef:<id>` for a task's effect, `ef:<id>@<task>` per plan task. */
 const fanOrigin = (id: string, task: string) => `ef:${id}@${task}`
 
-export function refreshEffect(db: Database, id: string) {
+function refreshEffect(db: Database, id: string) {
   const effect = db
     .query<EffectRow, [string]>(
       "SELECT id,plan_id,task_id,attempt_id,kind,state,payload,receipt,fence FROM runner_effects WHERE id=?",
@@ -268,7 +268,7 @@ type DisplayColumns = {
  * error, file targets, observations) stays in the display row, which `pg:<seq>` names and
  * `observability.liveHistory` reads (19.6 MB not duplicated on the live-sized copy).
  */
-export function refreshProgress(db: Database, seq: number) {
+function refreshProgress(db: Database, seq: number) {
   const origin = `pg:${seq}`
   const display = db
     .query<DisplayColumns, [number]>(
@@ -311,7 +311,7 @@ export function refreshProgress(db: Database, seq: number) {
 }
 
 /** Refresh the rows of one queued source key. Unknown refs (a newer copy's kind) are dropped. */
-export function refreshTaskEvent(db: Database, ref: string) {
+function refreshTaskEvent(db: Database, ref: string) {
   if (ref.startsWith("tr:")) refreshTransition(db, Number(ref.slice(3)))
   else if (ref.startsWith("ef:")) refreshEffect(db, ref.slice(3))
   else if (ref.startsWith("pg:")) refreshProgress(db, Number(ref.slice(3)))
@@ -327,14 +327,14 @@ export function drainTaskEvents(db: Database, budget = DRAIN_BUDGET): QueueDrain
  * ids). Measured on the live-sized copy (418,709 ids, 9,510 task-scoped): 222 pages, median
  * 1.9 ms, slowest 32 ms.
  */
-export const TRANSITION_PAGE_IDS = 2_000
+const TRANSITION_PAGE_IDS = 2_000
 /**
  * Effects per backfill page; each may fan out to its plan's tasks. A check's receipt (stdout,
  * stderr) is sanitized at write: measured 0.21 ms per effect on the live-sized copy (2,628
  * effects); pages of 100 measured median 13 ms, slowest 34 to 58 ms (receipts vary in size), so a
  * page holds 50.
  */
-export const EFFECT_PAGE_ROWS = 50
+const EFFECT_PAGE_ROWS = 50
 
 const transitions: BackfillPhase = {
   name: "transitions",

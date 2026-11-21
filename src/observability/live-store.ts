@@ -1,22 +1,9 @@
 import type { Database } from "bun:sqlite"
-import { z } from "zod"
-import { LIVE_GROUP_TASKS } from "./contract.ts"
-import type { ObservationScope } from "./contract.ts"
-import { AttemptModel, readAttemptSummary } from "../tasks/attempt-summary.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
-import { projectIdsJSON, sameProject } from "../project-key.ts"
+import { projectIdsJSON } from "../project-key.ts"
 import { taskTitle } from "../tasks/presentation.ts"
-import { storedGroupHead, storedWorkload } from "../tasks/schedule/stored.ts"
-import { openConcerns } from "../recovery/detector.ts"
+import { storedWorkload } from "../tasks/schedule/stored.ts"
 import { attemptIs, planIs } from "../runner/identity-read.ts"
-
-function safeJSON(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return undefined
-  }
-}
 
 /** Recent native calls read per session that has no runner assignment. */
 const NATIVE_CALLS_PER_SESSION = 17
@@ -146,13 +133,6 @@ type JournalFactRow = {
 }
 
 type ProgressRow = LiveProgressRow
-
-export class LiveHistoryUnavailableError extends Error {
-  constructor(readonly reason: "session-unavailable") {
-    super("Selected session history is unavailable in this project scope")
-    this.name = "LiveHistoryUnavailableError"
-  }
-}
 
 const textEncoder = new TextEncoder()
 
@@ -739,132 +719,6 @@ export class LiveReadStore {
 
       signal.throwIfAborted()
       return { ...source, ...metrics }
-    } finally {
-      connection.close()
-    }
-  }
-
-  /**
-   * One session's latest-attempt summary: the attempt row and the compact `runner_progress` read
-   * Tasks uses, so the worker pane and the task pane draw the same lane. Null without an attempt.
-   */
-  readAttempt(input: { scope: ObservationScope; sessionID: string }, signal: AbortSignal) {
-    if (input.scope.kind === "session" && input.sessionID !== input.scope.sessionID)
-      throw new LiveHistoryUnavailableError("session-unavailable")
-    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    try {
-      return connection.store.read((db) => {
-        signal.throwIfAborted()
-        const row = db
-          .query<
-            {
-              id: string
-              task_id: string
-              number: number
-              state: string
-              started_at: number
-              tool_count: number
-              model: string | null
-              takeover: number
-              node_state: string | null
-              node_reason: string | null
-              plan_state: string
-              plan_reason: string | null
-            },
-            [string, string]
-          >(
-            `SELECT a.id,a.task_id,a.number,a.state,a.started_at,a.tool_count,
-                    json_extract(a.policy,'$.model') AS model,
-                    json_extract(a.policy,'$.takeover') IS NOT NULL AS takeover,
-                    n.state AS node_state,substr(n.reason,1,600) AS node_reason,
-                    p.state AS plan_state,substr(p.reason,1,600) AS plan_reason
-               FROM runner_attempts a JOIN runner_plans p ON p.id=a.plan_id
-               LEFT JOIN runner_nodes n ON n.plan_id=a.plan_id AND n.task_id=a.task_id
-              WHERE a.session_id=? AND p.project_directory=? LIMIT 1`,
-          )
-          .get(input.sessionID, this.projectDirectory)
-        if (!row) return null
-        const model = AttemptModel.safeParse(row.model ? safeJSON(row.model) : undefined)
-        // One indexed read of this task's open concerns; an unsettled node only.
-        const concern = row.node_state
-          ? openConcerns(db, this.projectDirectory, { taskID: row.task_id })
-          : []
-        // One point read: the backfill's watermark above the attempt's oldest row.
-        let indexing = false
-        try {
-          indexing =
-            db
-              .query<{ one: number }, [string, string]>(
-                `SELECT 1 AS one FROM runner_progress_display_backfill b
-                  WHERE b.below_seq > (SELECT MIN(seq) FROM runner_progress WHERE project_directory=? AND ${attemptIs(db)})`,
-              )
-              .get(this.projectDirectory, row.id) !== null
-        } catch {
-          // A database older than the display table has nothing to index.
-        }
-        return {
-          id: row.id,
-          number: row.number,
-          state: row.state,
-          startedAt: row.started_at,
-          toolCount: row.tool_count,
-          ...(indexing ? { historyIndexing: true as const } : {}),
-          ...(model.success ? { model: model.data } : {}),
-          summary: readAttemptSummary(db, this.projectDirectory, row.id),
-          ...(concern.length
-            ? {
-                concern: {
-                  line: concern
-                    .map((item) => item.reason)
-                    .join("; ")
-                    .slice(0, 600),
-                  ...(concern[0]!.advice
-                    ? {
-                        action: concern[0]!.advice.action,
-                        because: concern[0]!.advice.because.slice(0, 600),
-                      }
-                    : {}),
-                },
-              }
-            : {}),
-          ...(row.takeover ? { takeover: true as const } : {}),
-          ...(row.node_state
-            ? {
-                task: {
-                  state: row.node_state,
-                  reason: row.node_reason,
-                  planState: row.plan_state,
-                  planReason: row.plan_reason,
-                },
-              }
-            : {}),
-        }
-      })
-    } finally {
-      connection.close()
-    }
-  }
-
-  /**
-   * The tasks behind a Map group: the first `LIVE_GROUP_TASKS` of the stored bucket the workload
-   * counts, in schedule order, plus the bucket's total. A project that is not indexed yet says so.
-   */
-  readGroupTasks(group: "needs-you" | "failed" | "queued", signal: AbortSignal) {
-    const connection = openReadOnlyTrajectoryStore(this.path, this.projectDirectory)
-    try {
-      return connection.store.read((db) => {
-        signal.throwIfAborted()
-        const head = storedGroupHead(db, this.projectDirectory, group, LIVE_GROUP_TASKS)
-        if (!head) return { indexing: true as const, total: 0, tasks: [] }
-        return {
-          total: head.total,
-          tasks: head.rows.map((row) => ({
-            taskID: row.task_id,
-            reference: row.reference,
-            title: row.title,
-          })),
-        }
-      })
     } finally {
       connection.close()
     }

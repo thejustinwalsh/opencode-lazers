@@ -496,12 +496,6 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
   )
   expect(before.report).toBeDefined()
   expect(after.report).toBeDefined()
-  const radar = await reads.radar(
-    { scope: { kind: "session", sessionID: "ses-failed" }, includeUnmanagedSessions: false },
-    tracker,
-    new AbortController().signal,
-  )
-  expect(radar).toBeDefined()
   const tasks = new AssociationTaskReads(fixture.repository)
   expect(tasks.get({ taskID: "LZ-1", sessionID: "ses-failed" })).toMatchObject({
     status: "found",

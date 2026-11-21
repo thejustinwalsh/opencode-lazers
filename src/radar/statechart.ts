@@ -1,6 +1,6 @@
-import type { SnapshotResponse } from "../observability/contract.ts"
+import type { TaskMachineDefinition } from "../runner/task-machine-config.ts"
 import { activeState, observedTransition } from "./projection.ts"
-import type { ObservationNode, ObservationPlan, RecordedTransition } from "./projection.ts"
+import type { ObservationNode, RecordedTransition } from "./projection.ts"
 
 const WIDTH = 360
 const CENTER = WIDTH / 2
@@ -40,14 +40,14 @@ export type StatechartLayout = {
   edges: StatechartEdge[]
 }
 
-/** Stable ordered SVG layout of the server-projected machine; layout adds no states or edges. */
+/** Stable ordered SVG layout of the task machine; layout adds no states or edges. */
 export function statechartLayout(
-  snapshot: SnapshotResponse,
-  plan: ObservationPlan,
+  machine: TaskMachineDefinition,
   node: ObservationNode,
+  recordedTransitions: readonly RecordedTransition[],
 ): StatechartLayout {
-  const active = activeState(node, snapshot)
-  const definitions = snapshot.machine.states
+  const active = activeState(node, machine)
+  const definitions = machine.states
   const rowByID = new Map(definitions.map((state, index) => [state.id, index]))
   const nodes = definitions.map((state, index) => ({
     id: state.id,
@@ -56,7 +56,7 @@ export function statechartLayout(
     width: NODE_WIDTH,
     height: NODE_HEIGHT,
     active: state.id === active,
-    initial: state.id === snapshot.machine.initialState,
+    initial: state.id === machine.initialState,
     final: state.type === "final",
   }))
   const transitions = definitions.flatMap((state) =>
@@ -135,12 +135,7 @@ export function statechartLayout(
       labelAnchor = side < 0 ? "start" : "end"
       arrow = `M ${endX - 4} ${endY - 7} L ${endX} ${endY} L ${endX + 4} ${endY - 7}`
     }
-    const recorded = observedTransition(
-      snapshot.transitions.filter((item) => item.planID === plan.id),
-      node,
-      transition,
-      state.id,
-    )
+    const recorded = observedTransition(recordedTransitions, node, transition, state.id)
     return [
       {
         id: `${state.id}:${transition.event}:${transition.target}:${globalIndex}`,

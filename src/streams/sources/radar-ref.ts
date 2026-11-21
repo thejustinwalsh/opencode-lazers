@@ -1,5 +1,6 @@
 import type { Columns } from "../frame.ts"
 import { sourceRef, type SourceRef } from "../source.ts"
+import { RADAR_SESSIONS_SOURCE, radarSessionColumns } from "./host-sessions-ref.ts"
 
 /**
  * The Radar sources, the part a consumer without a database needs: names, columns and filters.
@@ -18,6 +19,7 @@ export const RADAR_SOURCES = {
   journal: "radar.journal",
   scheduler: "radar.scheduler",
   planEvents: "radar.planEvents",
+  nodes: "radar.nodes",
 } as const
 
 /** The view the caller reads from: a session view reads only what that session may see. */
@@ -36,6 +38,8 @@ export type RadarGroup = "needs-you" | "failed" | "queued"
 export type RadarGroupFilter = Scoped & { group: RadarGroup }
 export type RadarProjectFilter = Scoped
 export type RadarJournalFilter = Scoped & { attemptID?: string }
+/** The nodes of one plan, with their persisted machine snapshot. */
+export type RadarNodesFilter = Scoped & { planID: string }
 /** The latest recorded transition per lifecycle edge of one plan node. */
 export type RadarPlanEventsFilter = Scoped & { planID: string; taskID: string }
 
@@ -133,6 +137,18 @@ export const radarPlanEventColumns = {
 /** The trajectory event of the transition (`reason`, `version`), for the selected edge. */
 export const radarPlanEventDetail = { detail: "json" } as const satisfies Columns
 
+export const radarNodeColumns = {
+  plan_id: "text",
+  task_id: "text",
+  ordinal: "int",
+  state: "text",
+  version: "int",
+  reason: "text",
+  machine_version: "text",
+  /** The persisted XState snapshot (`{ status, value }`); the statechart highlights its value. */
+  snapshot: "json",
+} as const satisfies Columns
+
 export const radarRefs = {
   assignments: sourceRef({ name: RADAR_SOURCES.assignments, columns: assignmentColumns }),
   attempt: sourceRef({
@@ -150,4 +166,7 @@ export const radarRefs = {
     columns: radarPlanEventColumns,
     detail: radarPlanEventDetail,
   }),
-} satisfies Record<keyof typeof RADAR_SOURCES, SourceRef<never, Columns>>
+  nodes: sourceRef({ name: RADAR_SOURCES.nodes, columns: radarNodeColumns }),
+  /** `radar.sessions` over `host_session_state` (`host-sessions.ts`, Task 3). */
+  sessions: sourceRef({ name: RADAR_SESSIONS_SOURCE, columns: radarSessionColumns }),
+} satisfies Record<keyof typeof RADAR_SOURCES | "sessions", SourceRef<never, Columns>>

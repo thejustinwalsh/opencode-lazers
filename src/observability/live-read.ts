@@ -15,16 +15,8 @@ import {
 } from "../progress/display.ts"
 import { privacyStats } from "../trajectory/privacy.ts"
 import {
-  LiveAttemptInput,
-  LiveGroupInput,
-  LiveGroupOutput,
-  LiveAttemptOutput,
   LiveRadarInput,
   LiveRadarOutput,
-  type LiveAttemptRequestInput,
-  type LiveGroupRequestInput,
-  type LiveGroupResponse,
-  type LiveAttemptResponse,
   type LiveRadarRequestInput,
   type LiveRadarResponse,
 } from "./contract.ts"
@@ -1677,27 +1669,5 @@ export class LiveRadarReader {
     if (parsed.coverage.responseBytes > LIVE_LIMITS.responseBytes)
       throw new Error("Bounded live response exceeded its declared byte limit")
     return parsed
-  }
-
-  group(input: LiveGroupRequestInput, signal: AbortSignal): LiveGroupResponse {
-    const request = LiveGroupInput.parse(input)
-    signal.throwIfAborted()
-    return LiveGroupOutput.parse({
-      schemaVersion: 1,
-      projectID: this.projectID,
-      group: request.group,
-      ...this.source.readGroupTasks(request.group, signal),
-    })
-  }
-
-  attempt(input: LiveAttemptRequestInput, signal: AbortSignal): LiveAttemptResponse {
-    const request = LiveAttemptInput.parse(input)
-    signal.throwIfAborted()
-    return LiveAttemptOutput.parse({
-      schemaVersion: 1,
-      projectID: this.projectID,
-      sessionID: request.sessionID,
-      attempt: this.source.readAttempt(request, signal),
-    })
   }
 }

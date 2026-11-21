@@ -1,4 +1,5 @@
-import { frameSize, writeFrame, type Columns } from "../../../../src/streams/frame.ts"
+import type { Columns } from "../../../../src/streams/frame.ts"
+import { streamAnswers, type Open, type DemoRow } from "./stream-answers.ts"
 import {
   TASK_SOURCES,
   taskBucketCountColumns,
@@ -20,15 +21,6 @@ import type { DemoTask, TasksData } from "./tasks-answers.ts"
  * writes (the real codec), over rows built from the demo's mock tasks. Windows slide and seek
  * over the sorted rows, so the list scrolls, anchors and counts the way it does live.
  */
-type Row = Record<string, unknown>
-type Anchor = "head" | "tail" | { key: (string | number | null)[]; place?: "center" | "start" }
-type Open = {
-  source: string
-  filter: Record<string, unknown>
-  order: string
-  window: number
-  position: number
-}
 
 const SESSION = "ses-demo"
 const CREATED = "2026-11-19T13:56:00.000Z"
@@ -65,7 +57,7 @@ const rankOfBucket = (bucket: Bucket) =>
 
 const pad = (value: number) => String(value).padStart(6, "0")
 
-function scheduleRows(data: TasksData, project: string): Row[] {
+function scheduleRows(data: TasksData, project: string): DemoRow[] {
   const plans = new Map(
     [...new Set(data.tasks.map((task) => task.plan))].map((title, index) => [title, index + 1]),
   )
@@ -141,7 +133,7 @@ const SOURCES: Record<string, { columns: Columns; key: string[] }> = {
   [TASK_SOURCES.waits]: { columns: taskWaitColumns, key: ["task_id", "ord"] },
 }
 
-function rowsOf(data: TasksData, open: Open, project: string): Row[] {
+function rowsOf(data: TasksData, open: Open, project: string): DemoRow[] {
   const filter = open.filter
   if (open.source === TASK_SOURCES.index) return [{ project_directory: project, ready: true }]
   if (
@@ -174,80 +166,5 @@ function rowsOf(data: TasksData, open: Open, project: string): Row[] {
   )
 }
 
-export function taskStreams(data: () => TasksData, project: string) {
-  const streams = new Map<string, Open>()
-  let sequence = 0
-
-  const frame = (id: string) => {
-    const open = streams.get(id)
-    if (!open) throw new Error(`Unknown stream ${id}`)
-    const { columns } = SOURCES[open.source] ?? { columns: {} as Columns }
-    const all = rowsOf(data(), open, project)
-    const top = Math.max(0, all.length - open.window)
-    open.position = Math.min(top, Math.max(0, open.position))
-    const names = Object.keys(columns)
-    const rows = all
-      .slice(open.position, open.position + open.window)
-      .map((row) => names.map((name) => row[name] ?? null))
-    const bytes = new Uint8Array(frameSize(columns, rows))
-    writeFrame(
-      bytes.buffer,
-      0,
-      columns,
-      {
-        revision: ++sequence,
-        count: rows.length,
-        before: open.position,
-        after: Math.max(0, all.length - open.position - rows.length),
-      },
-      rows,
-    )
-    let binary = ""
-    for (const byte of bytes) binary += String.fromCharCode(byte)
-    return { seq: sequence, data: btoa(binary) }
-  }
-
-  const place = (open: Open, anchor: Anchor | undefined) => {
-    const all = rowsOf(data(), open, project)
-    if (anchor === "tail") open.position = Math.max(0, all.length - open.window)
-    else if (anchor && anchor !== "head") {
-      const key = SOURCES[open.source]?.key ?? []
-      const index = all.findIndex((row) => key.every((name, i) => row[name] === anchor.key[i]))
-      open.position =
-        index < 0 ? 0 : anchor.place === "start" ? index : index - Math.floor(open.window / 2)
-    } else open.position = 0
-  }
-
-  return {
-    open: (input: {
-      stream: string
-      source: string
-      filter: Record<string, unknown>
-      order: string
-      window: number
-      anchor?: Anchor
-    }) => {
-      const open: Open = {
-        source: input.source,
-        filter: (input.filter ?? {}) as Record<string, unknown>,
-        order: input.order,
-        window: input.window,
-        position: 0,
-      }
-      streams.set(input.stream, open)
-      place(open, input.anchor)
-      return frame(input.stream)
-    },
-    slide: (input: { stream: string; delta: number }) => {
-      streams.get(input.stream)!.position += input.delta
-      return frame(input.stream)
-    },
-    seek: (input: { stream: string; anchor: Anchor }) => {
-      place(streams.get(input.stream)!, input.anchor)
-      return frame(input.stream)
-    },
-    read: (input: { stream: string }) => frame(input.stream),
-    touch: () => ({ alive: true }),
-    close: (input: { stream: string }) => ({ closed: streams.delete(input.stream) }),
-  }
-}
+export const taskStreams = (data: () => TasksData, project: string) =>
+  streamAnswers(SOURCES, (open) => rowsOf(data(), open, project))

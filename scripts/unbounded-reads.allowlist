@@ -37,7 +37,6 @@ src/observability/read.ts:338 | all | runner_nodes | plan-id list; the scope thr
 src/observability/read.ts:382 | all | tasks | task-id list from a scope of at most 1000 plans | SELECT t.id,t.body,r.reference FROM tasks t LEFT JOIN task_references r ON r.project_direc
 src/observability/read.ts:397 | all | runner_nodes | plan-id list; the scope throws past 1000 plans | SELECT plan_id,task_id,ordinal,state,version,reason,snapshot,machine_version FROM runner_n
 src/observability/read.ts:405 | all | runner_dependencies | plan-id list; the scope throws past 1000 plans | SELECT plan_id,prerequisite,successor FROM runner_dependencies WHERE plan_id IN (${placeho
-src/observability/read.ts:664 | all | runner_progress | LIMIT 5001 inside the recent CTE | WITH recent AS MATERIALIZED (${recentProgress}) SELECT g.seq,g.project_directory,g.project
 src/planning/store.ts:314 | star | planning_decisions | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_decisions WHERE session_id=? AND message_id=?
 src/planning/store.ts:346 | star | planning_decisions | plannings and decisions are created by explicit planning requests, at human rate | SELECT * FROM planning_decisions WHERE session_id=? ORDER BY created_at, id
 src/planning/store.ts:356 | star | planning_decisions | one row by primary key | SELECT * FROM planning_decisions WHERE id=?

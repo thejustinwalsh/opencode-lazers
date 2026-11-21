@@ -22,6 +22,7 @@ import {
   radarGroupSource,
   radarJournalSource,
   radarNativeCallsSource,
+  radarNodesSource,
   radarPlanEventsSource,
   radarSchedulerSource,
   radarWorkloadSource,
@@ -147,9 +148,7 @@ test("radar.assignments parity: equals readCurrent's active assignments for proj
   }
 })
 
-test("radar.attempt parity: equals liveAttempt's attempt fields for the worker session", async () => {
-  const live = new LiveReadStore(fixture.repository.path, project, "project")
-  const old = live.readAttempt({ scope: owner, sessionID: "ses-accepted" }, signal)!
+test("radar.attempt: the worker session's attempt with its task's stored states (the fields liveAttempt returned)", async () => {
   const [row] = await rows(
     radarAttemptSource,
     { projectDirectory: project, scope: owner, sessionID: "ses-accepted" },
@@ -170,14 +169,15 @@ test("radar.attempt parity: equals liveAttempt's attempt fields for the worker s
       planReason: row!.plan_reason,
     },
   }).toEqual({
-    id: old.id,
-    number: old.number,
-    state: old.state,
-    startedAt: old.startedAt,
-    toolCount: old.toolCount,
-    model: old.model,
-    task: old.task!,
+    id: secondAttemptID,
+    number: 2,
+    state: "verifying",
+    startedAt: 2000,
+    toolCount: 3,
+    model: { providerID: "openai", id: "gpt-6-luna", variant: "max" },
+    task: { state: "accepted", reason: null, planState: "accepted", planReason: null },
   })
+
   // The detail window carries the cold fields.
   expect(row!.workspace).toBe(fixture.directory)
 })
@@ -260,6 +260,32 @@ test("radar.planEvents parity: the latest machine transition of each edge of the
     1,
   )
   expect((one!.detail as { event: { kind: string } }).event.kind).toBe("runner-transition")
+})
+
+test("radar.nodes: a plan's nodes in plan order with the persisted machine snapshot", async () => {
+  const planID = fixture.receipt.planID
+  const shown = await rows(
+    radarNodesSource,
+    { projectDirectory: project, scope: owner, planID },
+    "plan",
+  )
+  const stored = fixture.repository.read((db) =>
+    db
+      .query<
+        { task_id: string; state: string; snapshot: string; machine_version: string },
+        [string]
+      >(
+        "SELECT task_id,state,snapshot,machine_version FROM runner_nodes WHERE plan_id=? ORDER BY ordinal LIMIT 100",
+      )
+      .all(planID),
+  )
+  expect(shown.map((row) => [row.task_id, row.state, row.snapshot, row.machine_version])).toEqual(
+    stored.map((row) => [row.task_id, row.state, JSON.parse(row.snapshot), row.machine_version]),
+  )
+  // Another project's directory reads nothing.
+  expect(
+    await rows(radarNodesSource, { projectDirectory: "/elsewhere", scope: owner, planID }, "plan"),
+  ).toEqual([])
 })
 
 test("radar.nativeCalls, radar.journal and radar.scheduler read their stored rows", async () => {

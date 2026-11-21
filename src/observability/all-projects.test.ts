@@ -6,13 +6,7 @@ import { projectUnits } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { RunnerStore } from "../runner/store.ts"
 import { ObservationChangeTracker } from "./changes.ts"
-import {
-  LiveGroupOutput,
-  LiveRadarOutput,
-  RadarOutput,
-  SnapshotOutput,
-  TopologyOutput,
-} from "./contract.ts"
+import { LiveRadarOutput, SnapshotOutput } from "./contract.ts"
 import { ObservationReads } from "./read.ts"
 import { registerObservability } from "./rpc.ts"
 import { AssociationTaskReads } from "./task-reads.ts"
@@ -57,10 +51,10 @@ async function pages(
   tracker: ObservationChangeTracker,
   units: () => ProjectUnit[],
 ) {
-  const result: Awaited<ReturnType<ObservationReads["topologyAll"]>>[] = []
+  const result: Awaited<ReturnType<ObservationReads["snapshotAll"]>>[] = []
   let cursor: string | undefined
   do {
-    const page = await reads.topologyAll({ scope: all, ...(cursor ? { cursor } : {}) }, tracker, {
+    const page = await reads.snapshotAll({ scope: all, ...(cursor ? { cursor } : {}) }, tracker, {
       units: units(),
     })
     result.push(page)
@@ -81,7 +75,7 @@ test("all returns each project's plans on its own page with the right code and l
     ["CCC", false],
   ])
   for (const [index, page] of result.entries()) {
-    expect(TopologyOutput.safeParse(page).success).toBe(true)
+    expect(SnapshotOutput.safeParse(page).success).toBe(true)
     expect(page.scope).toEqual({ kind: "all" })
     expect(page.plans.map((plan) => plan.id)).toEqual(three.projects[index]!.planIDs)
     for (const plan of page.plans) expect(plan.project).toEqual(page.project)
@@ -94,11 +88,11 @@ test("all returns each project's plans on its own page with the right code and l
 test("a project that is not loaded is still readable, and later pages see a location that loads", async () => {
   let live: string[] = []
   const { three, reads, tracker, units } = await fixture(() => live)
-  const first = await reads.topologyAll({ scope: all }, tracker, { units: units() })
+  const first = await reads.snapshotAll({ scope: all }, tracker, { units: units() })
   expect(first.project?.loaded).toBe(false)
   expect(first.plans).toHaveLength(1)
   live = [three.projects[1]!.directory]
-  const second = await reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, {
+  const second = await reads.snapshotAll({ scope: all, cursor: first.nextCursor! }, tracker, {
     units: units(),
   })
   expect(second.project).toMatchObject({ code: "BBB", loaded: true })
@@ -132,12 +126,12 @@ test("a second checkout of one project is its own page under the same project", 
 
 test("session and project scopes read exactly as before and carry no project", async () => {
   const { reads, tracker } = await fixture(() => [])
-  const project = reads.topology({ kind: "project", sessionID: "ses-caller" }, tracker)
+  const project = reads.snapshot({ kind: "project", sessionID: "ses-caller" }, tracker)
   expect(project.scope).toEqual({ kind: "project" })
   expect(project.project).toBeUndefined()
   expect("nextCursor" in project).toBe(false)
   for (const plan of project.plans) expect("project" in plan).toBe(false)
-  const session = reads.topology({ kind: "session", sessionID: "session-a" }, tracker)
+  const session = reads.snapshot({ kind: "session", sessionID: "session-a" }, tracker)
   expect(session.scope).toEqual({ kind: "session", sessionID: "session-a" })
   for (const plan of session.plans) expect("project" in plan).toBe(false)
 })
@@ -155,7 +149,7 @@ async function walk<
   return result
 }
 
-test("snapshot, radar, live radar and live groups page by project with the same stamp", async () => {
+test("snapshot and live radar page by project with the same stamp", async () => {
   const { reads, tracker, units } = await fixture((t) => [t.projects[1]!.directory])
   const signal = new AbortController().signal
   const access = () => ({ units: units() })
@@ -166,29 +160,6 @@ test("snapshot, radar, live radar and live groups page by project with the same 
   expect(snapshots.every((page) => SnapshotOutput.safeParse(page).success)).toBe(true)
   for (const page of snapshots)
     for (const plan of page.plans) expect(plan.project).toEqual(page.project)
-
-  const radar = await walk((cursor) =>
-    reads.radarAll(
-      { scope: all, includeUnmanagedSessions: true, ...(cursor ? { cursor } : {}) },
-      tracker,
-      signal,
-      access(),
-    ),
-  )
-  expect(radar.map((page) => [page.project?.code, page.project?.loaded])).toEqual([
-    ["AAA", false],
-    ["BBB", true],
-    ["CCC", false],
-  ])
-  expect(radar.every((page) => RadarOutput.safeParse(page).success)).toBe(true)
-  // Another location's native sessions are not readable here: unavailable, never invented.
-  for (const page of radar.slice(1)) {
-    expect(page.freshness.nativeInventory).toBe("unavailable")
-    for (const session of page.sessions) {
-      expect(session.availability).toBe("unavailable")
-      expect(session.state).toBe("unknown")
-    }
-  }
 
   const live = await walk((cursor) =>
     reads.liveRadarAll(
@@ -202,22 +173,9 @@ test("snapshot, radar, live radar and live groups page by project with the same 
   expect(live.every((page) => LiveRadarOutput.safeParse(page).success)).toBe(true)
   for (const page of live.slice(1))
     for (const session of page.sessions) expect(session.state).toBe("unknown")
-
-  const groups = await walk((cursor) =>
-    reads.liveGroupAll(
-      { scope: all, group: "queued", ...(cursor ? { cursor } : {}) },
-      tracker,
-      signal,
-      access(),
-    ),
-  )
-  expect(groups.map((page) => page.project?.code)).toEqual(["AAA", "BBB", "CCC"])
-  expect(groups.every((page) => LiveGroupOutput.safeParse(page).success)).toBe(true)
-  // These projects are not indexed: the page says so instead of listing none.
-  expect(groups.every((page) => page.indexing === true && page.total === 0)).toBe(true)
 })
 
-test("a task, an attempt and a worker session of another project resolve under all", async () => {
+test("a task and an attempt of another project resolve under all", async () => {
   const { three, reads, tracker, units } = await fixture(() => [])
   const signal = new AbortController().signal
   const [, b] = three.projects
@@ -239,22 +197,10 @@ test("a task, an attempt and a worker session of another project resolve under a
   }
   const status = await reads.trajectoryStatusAll({ scope: all, taskID }, tracker, access)
   expect(status.project?.code).toBe("BBB")
-  const attempt = await reads.liveAttemptAll(
-    { scope: all, sessionID: "ses-beta-worker" },
-    tracker,
-    signal,
-    access,
-  )
-  expect(attempt.project?.code).toBe("BBB")
-  expect(attempt.attempt?.id).toBe(attemptID)
-
   // An unknown task or worker session is refused plainly.
   await expect(
     reads.trajectoryAll({ scope: all, limit: 5, reference: "BBB-9999" }, tracker, signal, access),
   ).rejects.toThrow("No observation in this scope")
-  await expect(
-    reads.liveAttemptAll({ scope: all, sessionID: "ses-nobody" }, tracker, signal, access),
-  ).rejects.toThrow("Observation scope is unavailable")
 })
 
 test("a reference resolves in its own project, and an old code resolves only where it was", async () => {
@@ -299,11 +245,11 @@ test("Tasks get and current activity for another project's task", async () => {
 
 test("a cursor names a checkout by hash, and a checkout that is gone is refused", async () => {
   const { reads, tracker, units } = await fixture(() => [])
-  const first = await reads.topologyAll({ scope: all }, tracker, { units: units() })
+  const first = await reads.snapshotAll({ scope: all }, tracker, { units: units() })
   expect(Buffer.from(first.nextCursor!, "base64url").toString()).not.toContain("/")
   const without = units().filter((unit) => unit.project.code !== "BBB")
   await expect(
-    reads.topologyAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: without }),
+    reads.snapshotAll({ scope: all, cursor: first.nextCursor! }, tracker, { units: without }),
   ).rejects.toThrow("Invalid project cursor")
 })
 
