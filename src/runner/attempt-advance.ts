@@ -243,8 +243,9 @@ export class AttemptAdvance {
   /**
    * When the worker last showed progress, from durable facts only: the attempt start, the
    * session's last request start or completion, and the attempt's newest progress row (step,
-   * tool and message events, including in-place updates). A running shell or child session is
-   * not progress by itself: a hung command keeps a shell running forever.
+   * tool and message events, including in-place updates) and the last growth of a running
+   * shell's output file. A running shell or child session is not progress by itself: a hung
+   * command keeps a shell running forever, silent.
    */
   private lastWorkerProgressAt(attempt: AttemptRow, session: HostSession) {
     const row = this.store.read((db) =>
@@ -255,7 +256,12 @@ export class AttemptAdvance {
         )
         .get(this.core.directory, attempt.id),
     )
-    return Math.max(attempt.started_at, session.activityAt ?? 0, row?.at ?? 0)
+    return Math.max(
+      attempt.started_at,
+      session.activityAt ?? 0,
+      session.shellOutputAt ?? 0,
+      row?.at ?? 0,
+    )
   }
 
   /**

@@ -608,6 +608,34 @@ test("a turn held open only by a shell that never ends is interrupted after the 
   expect(countTransitions(f, f.receipt.planID, "WORKER_NO_PROGRESS_INTERRUPT")).toBe(1)
 })
 
+test("a shell whose output keeps advancing is progress past the window", async () => {
+  const { f, clock, interrupts, worker } = await stallFixture(60_000)
+  // A long gate that prints a line now and then: its output file keeps growing.
+  worker.runningShells = 1
+  for (let minute = 0; minute < 5; minute++) {
+    clock.now += 40_000
+    worker.shellOutputAt = clock.now - 5_000
+    await f.runtime.tick()
+  }
+  expect(interrupts).toEqual([])
+  expect(f.store.plan(f.receipt.planID)?.state).toBe("running")
+})
+
+test("output that stops restarts the window from its last advance", async () => {
+  const { f, clock, interrupts, attempt, worker } = await stallFixture(60_000)
+  worker.runningShells = 1
+  clock.now += 50_000
+  const lastOutput = clock.now
+  worker.shellOutputAt = lastOutput
+  await f.runtime.tick()
+  clock.now = lastOutput + 59_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([])
+  clock.now = lastOutput + 61_000
+  await f.runtime.tick()
+  expect(interrupts).toEqual([attempt.session_id])
+})
+
 test("the stall window runs from durable facts, so a fresh runtime interrupts a worker already past it", async () => {
   const { f, clock, interrupts, attempt } = await stallFixture(60_000)
   clock.now += 61_000

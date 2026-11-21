@@ -75,6 +75,12 @@ export type HostSession = {
    */
   runningShells?: number
   activeChildren?: number
+  /**
+   * Last time a running shell's output grew: the newest modification time of the output files
+   * of this worker's running shells (their start when the file cannot be read). A shell that
+   * keeps printing is alive; a silent one is not progress. Absent when no shell runs.
+   */
+  shellOutputAt?: number
   idleAt?: number
   /** Last model activity: assistant completion or request start. Preferred over `idleAt` for cache warmth. */
   activityAt?: number
