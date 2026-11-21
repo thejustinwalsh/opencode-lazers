@@ -6,6 +6,10 @@ import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Schema } from "effect"
 import { frameSize, writeFrame } from "../../src/streams/frame.ts"
 import { taskScheduleColumns } from "../../src/streams/sources/tasks-ref.ts"
+import {
+  trajectoryEffortColumns,
+  trajectoryEffortDetail,
+} from "../../src/streams/sources/trajectory-ref.ts"
 import solid from "vite-plugin-solid"
 import { build } from "vite"
 import { mkdir, rm } from "node:fs/promises"
@@ -26,7 +30,7 @@ import {
   sourceEvidence,
   taskDetail,
   taskPage,
-  trajectory,
+  taskEffort,
 } from "../models-panel/fixtures/data.ts"
 import {
   CONFIG_ONE,
@@ -1045,9 +1049,9 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       { service: "lazers.models", method: "comparison", count: 3 },
       { service: "lazers.models", method: "refreshSources", count: 1 },
       { service: "lazers.models", method: "settings", count: 1 },
-      { service: "lazers.streams", method: "open", count: 1 },
+      // The task list and the selected task's effort are one window each.
+      { service: "lazers.streams", method: "open", count: 2 },
       { service: "lazers.tasks", method: "get", count: 1 },
-      { service: "lazers.observability", method: "trajectoryStatus", count: 1 },
     ] as const
     const connectionCounts = (directory: string) =>
       connectionRPCs.map(
@@ -1610,12 +1614,36 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
           return {
             // The task list is one window of the stored list, served here as one frame.
             open: async (
-              input: { stream: string },
+              input: { stream: string; source?: string },
               options: { location: { directory: string }; signal: AbortSignal },
             ) => {
               const directory = options.location.directory
-              const count = nextCount(`${directory}:queryTasks`)
               record(directory, "lazers.streams", "open", input, options.signal)
+              if (input.source === "trajectory.effort") {
+                const effortCount = nextCount(`${directory}:trajectoryEffort`)
+                const columns = { ...trajectoryEffortColumns, ...trajectoryEffortDetail }
+                const cells = [
+                  Object.keys(columns).map((name) =>
+                    name === "id"
+                      ? 1
+                      : name === "effort"
+                        ? taskEffort(effortCount > 1 ? 42 : 10)
+                        : name === "busy"
+                          ? false
+                          : null,
+                  ),
+                ]
+                const effortBuffer = new ArrayBuffer(frameSize(columns, cells))
+                writeFrame(
+                  effortBuffer,
+                  0,
+                  columns,
+                  { revision: 1, count: 1, before: 0 as const, after: 0 as const },
+                  cells,
+                )
+                return { seq: 1, data: Buffer.from(effortBuffer).toString("base64") }
+              }
+              const count = nextCount(`${directory}:queryTasks`)
               const page =
                 directory === DIRECTORY_A
                   ? taskPage(
@@ -1680,22 +1708,6 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
                     count > 1 ? "Objective A refreshed" : "Objective A initial",
                   )
                 : taskDetail(TASK_B, PROJECT_B, directory, "LZ-42", "Objective B project only")
-            },
-          }
-        if (definition.id === "lazers.observability")
-          return {
-            trajectoryStatus: async (
-              input: { scope: { kind: "project"; sessionID: string }; taskID: string },
-              options: { location: { directory: string }; signal: AbortSignal },
-            ) => {
-              const directory = options.location.directory
-              const count = nextCount(`${directory}:trajectoryStatus`)
-              record(directory, "lazers.observability", "trajectoryStatus", input, options.signal)
-              return trajectory(
-                directory === DIRECTORY_A ? PROJECT_A : PROJECT_B,
-                input.taskID,
-                count > 1 ? 42 : 10,
-              )
             },
           }
         throw new Error(`Unexpected RPC contract ${definition.id}`)
@@ -3106,8 +3118,8 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       calls.some(
         (call) =>
           call.directory === DIRECTORY_A &&
-          call.service === "lazers.observability" &&
-          call.method === "trajectoryStatus",
+          call.service === "lazers.streams" &&
+          (call.input as { source?: string }).source === "trajectory.effort",
       ),
     ).toBe(true)
     expect(
@@ -3137,10 +3149,15 @@ test("gui.setup registers and mounts the real Models panel render with isolated,
       calls.some(
         (call) =>
           call.directory === DIRECTORY_A &&
-          call.service === "lazers.observability" &&
-          call.method === "trajectoryStatus" &&
-          JSON.stringify(call.input) ===
-            JSON.stringify({ scope: { kind: "project", sessionID: sessionA.id }, taskID: TASK_A }),
+          call.service === "lazers.streams" &&
+          (call.input as { source?: string }).source === "trajectory.effort" &&
+          (call.input as { window: number }).window === 1 &&
+          JSON.stringify((call.input as { filter: unknown }).filter) ===
+            JSON.stringify({
+              projectDirectory: DIRECTORY_A,
+              scope: { kind: "project", sessionID: sessionA.id },
+              taskID: TASK_A,
+            }),
       ),
     ).toBe(true)
 

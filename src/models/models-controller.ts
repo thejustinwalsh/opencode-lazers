@@ -1,6 +1,7 @@
 import { Streams } from "../streams/contract.ts"
 import { readWindow, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
 import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import { trajectoryEffortRef } from "../trajectory-panel/streams.ts"
 import { summaryOf } from "../tasks/summary-row.ts"
 import { createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import { createPanelStatus } from "../panel-status.tsx"
@@ -40,7 +41,6 @@ import type { ModelPriceSource } from "./price-source-settings.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { emptyModelDecisionFilters } from "./comparison-state.ts"
 import { Tasks } from "../tasks/contract.ts"
-import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"
 import { ModelComparisonPanelState, isConnectionSeedable } from "./comparison-state.ts"
 import type {
@@ -305,7 +305,6 @@ export function createModelsController(props: ModelsProps) {
       const models = value.client.rpc(Models)
       const decisions = value.client.rpc(ModelsDecision)
       const tasks = value.client.rpc(Tasks)
-      const observations = value.client.rpc(Observability)
       const location = { location: { directory: value.directory } }
       const transport: ModelComparisonTransport = {
         comparison: (cursor, parent) =>
@@ -366,11 +365,30 @@ export function createModelsController(props: ModelsProps) {
             return { projectDirectory: value.project, tasks: rows.map((row) => summaryOf(row)) }
           }),
         getTask: (taskID, signal) => tasks.get({ taskID }, { ...location, signal }),
-        trajectoryStatus: (taskID, signal) =>
-          observations.trajectoryStatus(
-            { scope: { kind: "project", sessionID: value.session }, taskID },
-            { ...location, signal },
-          ),
+        // The composed effort of the task: the `trajectory.effort` row at window 1.
+        trajectoryStatus: async (taskID, signal) => {
+          const [row] = await readWindow(
+            rpcStreamsTransport(() => value.client.rpc(Streams) as unknown as StreamsRpc, signal, {
+              location: { directory: value.directory },
+            }),
+            trajectoryEffortRef,
+            {
+              filter: {
+                projectDirectory: value.project,
+                scope: { kind: "project", sessionID: value.session },
+                taskID,
+              },
+              order: "effort",
+              window: 1,
+            },
+          )
+          // No row yet: the fold has not computed it, and the comparison says its basis is unavailable.
+          return {
+            projectID: value.projectID,
+            scope: { kind: "project" },
+            report: { task: { id: taskID }, effort: row?.effort },
+          }
+        },
         decisionOverview: (filters, parent) =>
           withReadDeadline(parent, (signal) =>
             decisions.overview(

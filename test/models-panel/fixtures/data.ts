@@ -1,6 +1,5 @@
 import { GetOutput, AgentQueryOutput } from "../../../src/tasks/contract.ts"
 import { TaskSpecSchema } from "../../../src/task.ts"
-import { TrajectoryOutput } from "../../../src/observability/contract.ts"
 import { ModelComparisonOutputSchema } from "../../../src/models/comparison-schema.ts"
 import type { ModelComparisonOutput } from "../../../src/models/comparison-schema.ts"
 import { ModelEvidenceOutputSchema } from "../../../src/models/source-schema.ts"
@@ -314,7 +313,8 @@ export function settings(projectDirectory: string, taskID: string | undefined, r
   })
 }
 
-export function trajectory(projectID: string, taskID: string, tokens: number) {
+/** The composed effort of a task (the `trajectory.effort` detail) with `tokens` observed. */
+export function taskEffort(tokens: number) {
   const observedAt = Date.UTC(2026, 10, 3)
   const category = {
     value: tokens,
@@ -414,18 +414,5 @@ export function trajectory(projectID: string, taskID: string, tokens: number) {
     },
     quality: { status: "not-recorded", value: null, meaning: "Not recorded" },
   })
-  return TrajectoryOutput.parse({
-    schemaVersion: 1,
-    projectID,
-    scope: { kind: "project" },
-    boundary: {
-      repositoryVersion: 1,
-      sourceRevision: 1,
-      sourceFingerprint: "a".repeat(64),
-      nativeRevision: 1,
-      eventSequence: 1,
-      transitionSequence: 1,
-    },
-    report: { task: { id: taskID }, effort: { taskEffortBasis: effort } },
-  })
+  return { taskEffortBasis: effort }
 }
