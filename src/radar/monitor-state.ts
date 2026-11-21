@@ -5,13 +5,14 @@ import type {
   ObservationScope,
 } from "../observability/contract.ts"
 import { createKept } from "./kept.ts"
+import type { RadarLive } from "./live-view.ts"
 import type { RadarMonitorTransport } from "./monitor-transport.ts"
 
 const kept = createKept<{ live: LiveRadarResponse; asOf: number | undefined }>()
 
 export type RadarMonitorData = {
   key: string
-  live?: LiveRadarResponse
+  live?: RadarLive
   loading: boolean
   stale: boolean
   resynchronizing: boolean
@@ -107,7 +108,8 @@ export class RadarMonitorState {
 
   private update(change: Partial<RadarMonitorData>) {
     this.data = { ...this.data, ...change }
-    if (this.data.live) kept.set(this.data.key, { live: this.data.live, asOf: this.data.asOf })
+    if (this.data.live)
+      kept.set(this.data.key, { live: this.data.live as LiveRadarResponse, asOf: this.data.asOf })
     this.changed(this.data)
   }
 
@@ -197,7 +199,7 @@ export class RadarMonitorState {
         if (response.projectID !== this.projectID || !scopeMatches(response, scope))
           throw new Error("The live observation belongs to another project or scope.")
 
-        const priorEpoch = this.data.live?.streamEpoch
+        const priorEpoch = (this.data.live as LiveRadarResponse | undefined)?.streamEpoch
         const epochChanged = priorEpoch !== undefined && priorEpoch !== response.streamEpoch
         const latestSequence = this.latestEventSequence
         const behindEvents =

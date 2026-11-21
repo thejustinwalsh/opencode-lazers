@@ -1,14 +1,11 @@
 import type { IconName } from "@opencode/plugin/gui"
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { LiveCall, LiveFlow, LiveRoute, LiveSession, RadarLive } from "./live-view.ts"
 import type { TaskRingGlyph } from "../tasks/row-presentation.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import { isHeldWorker } from "./worker-hold.ts"
 
-type Live = LiveRadarResponse
-export type LiveSession = Live["sessions"][number]
-export type LiveCall = Live["calls"][number]
-export type LiveFlow = Live["flow"][number]
-type LiveRoute = Live["routes"][number]
+type Live = RadarLive
+export type { LiveCall, LiveFlow, LiveSession }
 
 /** One tool call under a session row. Phases and notes are not rows; history shows them. */
 export type ActivityLine = {

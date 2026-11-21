@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import type { RadarMonitorData } from "./monitor-state.ts"
 import {
   connectionStatus,
@@ -34,7 +34,6 @@ function session(change: Partial<LiveSession> = {}): LiveSession {
   return {
     id: "session:ses-worker",
     sessionID: "ses-worker",
-    projectID: "project",
     classification: "managed",
     isViewSession: false,
     isCurrentArchitect: null,
@@ -52,7 +51,6 @@ function session(change: Partial<LiveSession> = {}): LiveSession {
     selectedRouteID: null,
     configuredRouteID: "route:configured",
     observedRouteID: "route:observed",
-    routeCoverage: { selected: "unavailable", configured: "available", observed: "available" },
     updatedAt: 5_000,
     observedAt: 9_000,
     ...change,
@@ -63,22 +61,16 @@ function call(change: Partial<LiveCall>): LiveCall {
   return {
     id: "call:1",
     sessionID: "ses-worker",
-    attemptID: ATTEMPT,
     messageID: "msg_1",
     callID: "call-1",
     tool: "read",
     status: "succeeded",
-    execution: "executed",
     inputAt: 2_000,
     calledAt: 2_100,
     completedAt: 3_100,
     observedAt: 3_100,
-    sourceProgressSequence: 1,
-    sourceEventID: null,
-    sourceEventType: null,
     result: null,
     error: null,
-    payloadAvailable: false,
     ...change,
   }
 }
@@ -87,28 +79,19 @@ function flow(change: Partial<LiveFlow>): LiveFlow {
   return {
     id: "flow:1",
     kind: "model-request",
-    source: "native-event",
-    from: null,
-    to: null,
     sessionID: "ses-worker",
     messageID: "msg_1",
     callID: null,
     tool: null,
-    agent: null,
     routeID: "route:observed",
-    toolID: null,
     status: "request-started",
     startedAt: 4_000,
     observedAt: 4_000,
-    sourceProgressSequence: null,
-    sourceNativeRevision: 1,
-    sourceEventID: "evt-1",
-    sourceEventType: "session.step.started",
     ...change,
   }
 }
 
-function live(change: Partial<LiveRadarResponse> = {}): LiveRadarResponse {
+function live(change: Partial<RadarLive> = {}): RadarLive {
   const route = (id: string, modelID: string, source: "attempt-policy" | "step-event") => ({
     id,
     providerID: "openai",
@@ -116,49 +99,13 @@ function live(change: Partial<LiveRadarResponse> = {}): LiveRadarResponse {
     variant: "high",
     source,
     sessionID: "ses-worker",
-    attemptID: null,
     messageID: null,
-    eventID: null,
     observedAt: null,
   })
   return {
-    schemaVersion: 1,
-    projectID: "project",
     scope: { kind: "project" },
-    streamEpoch: "7b2e4c1d-9a3f-4e8b-a1c2-3d4e5f6a7b80",
     observedAt: 9_000,
-    boundary: { runnerRevision: 1, nativeRevision: 1, eventSequence: 4 },
-    freshness: { runner: "current", nativeInventory: "complete", nativeEvents: "connected" },
     scheduler: { status: "scheduled", participants: 1 },
-    coverage: {
-      sessionCount: 1,
-      managedSessionCount: 1,
-      includeUnmanagedSessions: false,
-      inventoryTruncated: false,
-      assignmentTruncated: false,
-      progressTruncated: false,
-      payloadTruncated: false,
-      routeTruncated: false,
-      callsTruncated: false,
-      flowTruncated: false,
-      journalTruncated: false,
-      journal: "available",
-      foreignSessionsExcluded: 0,
-      sourceQueries: 1,
-      sourceRowsRead: 1,
-      sourceBytesRead: 1,
-      sourcePayloadBytesRead: 0,
-      nativeInventoryReads: 1,
-      nativeSessionReads: 1,
-      nativeMetadataBytesInspected: 0,
-      nativeMetadataTruncated: false,
-      nativeMetadataBoundary: "raw-selected-fields-after-adapter",
-      nativeContextLoads: 0,
-      retainedStateEntries: 0,
-      retainedStateTruncated: false,
-      responseBytes: 1,
-    },
-    limits: {} as LiveRadarResponse["limits"],
     sessions: [session()],
     routes: [
       route("route:observed", "gpt-6-luna", "step-event"),
@@ -323,11 +270,6 @@ test("summary segments, coverage gaps and the three connection words", () => {
     ],
   })
   expect(monitorSegments(response)).toEqual([{ count: 1, word: "running" }])
-  expect(
-    monitorSegments(
-      live({ ...response, coverage: { ...response.coverage, journalTruncated: true } }),
-    ),
-  ).toEqual([{ count: 1, word: "running" }])
   expect(
     monitorSegments(live({ ...response, workload: { queued: 6, needsYou: 1, failed: 1 } })),
   ).toEqual([

@@ -107,7 +107,11 @@ test("live event updates keep the selected session", async () => {
   const retained = state.data.live
   expect(state.data.selectedSessionID).toBe("ses-worker")
   fake.emit(2)
-  await until(() => fake.liveReads() >= 2 && state.data.live?.boundary.eventSequence === 2)
+  await until(
+    () =>
+      fake.liveReads() >= 2 &&
+      (state.data.live as unknown as LiveRadarResponse | undefined)?.boundary.eventSequence === 2,
+  )
   expect(state.data.selectedSessionID).toBe("ses-worker")
   expect(state.data.live).not.toBe(retained)
   expect(changes.length).toBeGreaterThan(3)
@@ -155,7 +159,10 @@ test("scope changes and disposal fence late live results", async () => {
   )
   state.connect("project-key", "project", projectScope, fake.transport, false)
   newLive.resolve(live(2))
-  await until(() => state.data.live?.boundary.eventSequence === 2)
+  await until(
+    () =>
+      (state.data.live as unknown as LiveRadarResponse | undefined)?.boundary.eventSequence === 2,
+  )
   oldLive.resolve(live(1, { kind: "session", sessionID: "ses-old" }))
   await Bun.sleep(5)
   expect(state.data.live?.scope).toEqual({ kind: "project" })
@@ -176,7 +183,9 @@ test("event gaps are visible and trigger live resynchronization", async () => {
   fake.emit(3, true)
   await until(() => fake.liveReads() > 1)
   expect(state.data.error).not.toContain("[object Object]")
-  expect(state.data.live?.boundary.eventSequence).toBeGreaterThanOrEqual(1)
+  expect(
+    (state.data.live as unknown as LiveRadarResponse | undefined)?.boundary.eventSequence,
+  ).toBeGreaterThanOrEqual(1)
   state.close()
 })
 
@@ -205,7 +214,11 @@ test.each([false, true])(
       expect(state.data.stale).toBe(gap)
       expect(state.data.resynchronizing).toBe(gap)
       catchup.resolve(live(gap ? 4 : 3))
-      await until(() => state.data.live?.boundary.eventSequence === (gap ? 4 : 3))
+      await until(
+        () =>
+          (state.data.live as unknown as LiveRadarResponse | undefined)?.boundary.eventSequence ===
+          (gap ? 4 : 3),
+      )
       expect(state.data.stale).toBe(false)
       expect(state.data.resynchronizing).toBe(false)
     } finally {
@@ -233,7 +246,9 @@ test("a re-mounted panel renders the kept snapshot at once and refreshes in plac
   expect(two.data.connection).toBe("connected")
   expect(updates.at(-1)?.live).toBe(shown)
   gate.resolve(live(9))
-  await until(() => two.data.live?.boundary.eventSequence === 9)
+  await until(
+    () => (two.data.live as unknown as LiveRadarResponse | undefined)?.boundary.eventSequence === 9,
+  )
   two.close()
 })
 

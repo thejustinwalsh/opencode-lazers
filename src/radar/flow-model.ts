@@ -1,4 +1,4 @@
-import type { LiveRadarResponse } from "../observability/contract.ts"
+import type { RadarLive } from "./live-view.ts"
 import {
   scopedWorkload,
   callSummary,
@@ -18,7 +18,7 @@ import type { ActivityLine, LiveSession } from "./monitor-model.ts"
 const FLOW_WINDOW_MS = 120_000
 export const FEED_CAP = 150
 
-type Live = LiveRadarResponse
+type Live = RadarLive
 
 export type DestKind = "model" | "local" | "service" | "you"
 export const DEST_GROUPS = [
