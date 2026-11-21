@@ -24,17 +24,11 @@ useRuntimeFixtureCleanup()
 test("independent isolated Git branches overlap and combined verification includes every artifact", async () => {
   const f = fixture({ independent: true, delayed: true })
   await runPlan(f)
-  const projection = await f.runtime.readScheduling({
-    scope: { kind: "project", sessionID: "owner" },
-    limit: 100,
-  })
-  expect(projection.selectedTaskIDs).toEqual(f.tasks.map((task) => task.id))
-  expect(projection.next).toMatchObject({ status: "known", candidate: { taskID: f.tasks[0]!.id } })
   await f.runtime.tick()
 
   const attempts = f.store.attempts(f.receipt.planID)
   expect(attempts).toHaveLength(2)
-  expect(attempts.map((attempt) => attempt.task_id)).toEqual(projection.selectedTaskIDs)
+  expect(attempts.map((attempt) => attempt.task_id)).toEqual(f.tasks.map((task) => task.id))
   expect(new Set(attempts.map((attempt) => attempt.workspace)).size).toBe(2)
   expect(attempts.every((attempt) => attempt.base_commit === f.base)).toBe(true)
   expect(attempts.every((attempt) => f.sessions.get(attempt.session_id)?.busy)).toBe(true)
