@@ -1207,6 +1207,10 @@ export async function inspectTaskEffort(
 /**
  * Build one project-owned, read-only report. The runner's `detail()` method is
  * deliberately avoided because it calls `audit()` and inserts an audit row.
+ *
+ * Test oracle: production reads the Trajectory through the `trajectory.*` streams and the
+ * `lz-inspect-trajectory` summary (`summary.ts`); the stream and Models tests compare with this
+ * whole-report read. Nothing in the service calls it.
  */
 export async function inspectTrajectory(
   store: RunnerStore,

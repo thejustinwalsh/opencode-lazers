@@ -185,7 +185,13 @@ function createModelsPriceIndexReader(
   }
 }
 
-/** Read-only Models-owned task valuation provider using the same configured cached price path. */
+/**
+ * Read-only Models-owned task valuation provider using the same configured cached price path.
+ *
+ * Test oracle: the service values task effort with `storedPriceProvider` (`trajectory/
+ * effort-compute.ts`), which mirrors this off the main thread; the cost-basis contract test
+ * (`server.test.ts`) reads this one. Nothing in the service calls it.
+ */
 export function createModelsTaskValuationProvider(
   ctx: ModelsContext,
   repository: TaskRepository,
