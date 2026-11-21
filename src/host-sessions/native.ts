@@ -39,6 +39,8 @@ function sessionRecord(info: SessionInfo): HostSessionRecord {
     directory: info.location.directory,
     archived: info.time.archived !== undefined,
     busy: busyAt !== null && busyAt > (idleAt ?? 0),
+    busyAt,
+    idleAt,
     outcome: info.outcome ?? null,
     model: info.model
       ? {

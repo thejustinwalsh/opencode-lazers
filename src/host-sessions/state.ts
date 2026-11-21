@@ -21,7 +21,8 @@ import { privacyStats } from "../trajectory/privacy.ts"
  * ```
  *
  * Only what a panel shows is stored: status, counts, ids, routes, token totals (all five
- * categories of the cumulative snapshot: the effort store prices them), times and the
+ * categories of the cumulative snapshot: the effort store prices them), times (created, and the
+ * last busy and idle: the trajectory's model-activity interval) and the
  * session's own title (the host's short label on its session record, a session attribute like
  * `agent`, redacted and cut to 200 characters as the live monitor showed it). No transcript text
  * (owner decision, 2026-11-21: OpenCode holds transcripts); nothing is derived from messages.
@@ -43,7 +44,8 @@ const TABLES_SQL = `
     project_directory TEXT NOT NULL, session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     agent TEXT, title TEXT, attempt_id TEXT, task_id TEXT, parent_session_id TEXT, directory TEXT,
-    busy INTEGER NOT NULL, pending_input INTEGER NOT NULL,
+    busy INTEGER NOT NULL, last_busy_at INTEGER, last_idle_at INTEGER,
+    pending_input INTEGER NOT NULL,
     pending_permissions INTEGER NOT NULL, pending_forms INTEGER NOT NULL,
     outcome TEXT, archived INTEGER NOT NULL,
     route_provider TEXT, route_model TEXT, route_variant TEXT,
@@ -85,6 +87,9 @@ export type HostSessionRecord = {
   archived: boolean
   /** Started executing after it last went idle (`time.busy > time.idle`). */
   busy: boolean
+  /** The host's `time.busy` and `time.idle`: the last start and end of model activity. */
+  busyAt?: number | null
+  idleAt?: number | null
   outcome: string | null
   model: { providerID: string; id: string; variant: string | null } | null
   tokensIn: number | null
@@ -146,6 +151,8 @@ type Row = {
   parent_session_id: string | null
   directory: string | null
   busy: number
+  last_busy_at: number | null
+  last_idle_at: number | null
   pending_input: number
   pending_permissions: number
   pending_forms: number
@@ -171,6 +178,8 @@ const SHOWN = [
   "parent_session_id",
   "directory",
   "busy",
+  "last_busy_at",
+  "last_idle_at",
   "pending_input",
   "pending_permissions",
   "pending_forms",
@@ -240,6 +249,8 @@ export function writeHostSession(
     parent_session_id: idText(record.parentID),
     directory: idText(record.directory, 4096),
     busy: Number(busy),
+    last_busy_at: record.busyAt ?? null,
+    last_idle_at: record.idleAt ?? null,
     pending_input: pending ? Number(pending.pendingInput) : busy ? (stored?.pending_input ?? 0) : 0,
     pending_permissions: pending
       ? pending.pendingPermissions

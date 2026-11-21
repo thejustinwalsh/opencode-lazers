@@ -32,6 +32,8 @@ type EffortSessionRow = {
   route_variant: string | null
   outcome: string | null
   busy: number
+  last_busy_at: number | null
+  last_idle_at: number | null
   tokens_in: number | null
   tokens_out: number | null
   tokens_reasoning: number | null
@@ -53,8 +55,8 @@ const CONTEXT: Record<TranscriptReadState, TrajectorySession["messageStatus"]> =
 /**
  * A stored session as the trajectory host's read returns it: model, outcome, busy, stamp and the
  * cumulative token snapshot; its context status is the stored transcript's read state (`not-read`
- * before the transcript fold has read it in full). The messages themselves are never here. The
- * host keeps no busy or idle endpoint here; the effort reads neither.
+ * before the transcript fold has read it in full), its busy and idle endpoints the host record's
+ * last `time.busy` / `time.idle`. The messages themselves are never here.
  */
 function trajectorySessionOf(
   row: EffortSessionRow,
@@ -85,7 +87,12 @@ function trajectorySessionOf(
         ? (row.outcome as NonNullable<TrajectorySession["outcome"]>)
         : null,
     busy: row.busy === 1,
-    time: { created: row.created_at ?? 0, updated: row.host_updated_at, busy: null, idle: null },
+    time: {
+      created: row.created_at ?? 0,
+      updated: row.host_updated_at,
+      busy: row.last_busy_at,
+      idle: row.last_idle_at,
+    },
     tokens: tokens.every((value) => value === null)
       ? null
       : {
@@ -102,6 +109,7 @@ function trajectorySessionOf(
 
 const SESSION_COLUMNS =
   "session_id,parent_session_id,route_provider,route_model,route_variant,outcome,busy," +
+  "last_busy_at,last_idle_at," +
   "tokens_in,tokens_out,tokens_reasoning,tokens_cache_read,tokens_cache_write,created_at," +
   "host_updated_at"
 
