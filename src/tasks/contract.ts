@@ -49,7 +49,7 @@ export const GetInput = z
   })
 export const GetInstructionsOutput = z.string()
 /** A task that keeps consuming effort without landing; see `assessConcern`. */
-export const TaskConcern = z.strictObject({
+const TaskConcern = z.strictObject({
   /** The one-line reason(s), e.g. "3 verification rounds; 92M tokens across 2 attempt(s)". */
   line: z.string(),
   reasons: z.array(z.string()),

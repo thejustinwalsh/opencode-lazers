@@ -895,7 +895,7 @@ export const Observability = Rpc.define({
 export type ObservationScope = z.infer<typeof ObservationScope>
 /** The scopes that read one project; every read except the all-projects ones takes this. */
 export type SingleScope = Exclude<ObservationScope, { kind: "all" }>
-export const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
+const ALL_PROJECTS_UNAVAILABLE = "All-projects scope is not available for this read"
 export function singleScope(scope: ObservationScope): SingleScope {
   if (scope.kind === "all") throw new Error(ALL_PROJECTS_UNAVAILABLE)
   return scope
@@ -909,7 +909,6 @@ export type LiveRadarRequestInput = z.input<typeof LiveRadarInput>
 export type LiveRadarResponse = z.infer<typeof LiveRadarOutput>
 export type LiveGroupRequestInput = z.input<typeof LiveGroupInput>
 export type LiveGroupResponse = z.infer<typeof LiveGroupOutput>
-export type LiveAttemptRequest = z.infer<typeof LiveAttemptInput>
 export type LiveAttemptRequestInput = z.input<typeof LiveAttemptInput>
 export type LiveAttemptResponse = z.infer<typeof LiveAttemptOutput>
 export type TrajectoryRequest = z.infer<typeof TrajectoryInput>

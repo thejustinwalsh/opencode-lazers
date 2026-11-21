@@ -63,7 +63,7 @@ export const ArchitectContinuityInput = z
         message: "Architect continuity checkpoint must fit 12 KB",
       })
   })
-export type ArchitectContinuityInput = z.infer<typeof ArchitectContinuityInput>
+type ArchitectContinuityInput = z.infer<typeof ArchitectContinuityInput>
 /** 1 is the top priority; 0 is none; larger integers are lower, up to the maximum integer. */
 const PlanPriority = z.int().min(NO_PRIORITY).max(MAX_PRIORITY)
 const PRIORITY_DESCRIPTION =

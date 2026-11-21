@@ -29,12 +29,6 @@ export type RunnerCandidate = {
   attemptNumber: number
 }
 
-export type DelegatedAgentSchedulingSnapshot = DelegatedAgentStatus & {
-  queuedNative: number
-  queuedRunnerTasks: Array<{ planID: string; taskID: string }>
-  queuedRunnerTasksComplete: boolean
-}
-
 type NativeRequest = {
   parentSessionID: string
   toolCallID: string

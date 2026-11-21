@@ -36,7 +36,7 @@ const fixList = (active: ActiveProfile) => {
 }
 
 /** What the Architect is told once per session: the profile's verification, audit and how to use it. */
-export function profileGuidanceText(active: ActiveProfile): string {
+function profileGuidanceText(active: ActiveProfile): string {
   const { profile } = active
   return [
     `## Project verification (profile revision ${active.revision})`,

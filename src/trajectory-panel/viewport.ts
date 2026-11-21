@@ -33,12 +33,12 @@ const WHEEL_STEP_LIMIT = 40
 /** Zoom per wheel delta unit: a trackpad pinch (deltas of 1 to 5) zooms smoothly. */
 const WHEEL_SENSITIVITY = 0.01
 /** The multiplier a button or key press zooms by. */
-export const ZOOM_STEP = 2
+const ZOOM_STEP = 2
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value))
 
 /** Range of valid scroll offsets: the whole track minus what the viewport already shows. */
-export const scrollRange = (zoom: number, fitPx: number) => Math.max(0, fitPx * (zoom - 1))
+const scrollRange = (zoom: number, fitPx: number) => Math.max(0, fitPx * (zoom - 1))
 
 export const clampScroll = (scrollLeft: number, zoom: number, fitPx: number) =>
   clamp(scrollLeft, 0, scrollRange(zoom, fitPx))
@@ -73,7 +73,7 @@ export function maxZoom(shortestPercent: number | null, fitPx: number): number {
   return Math.max(1, Math.min(wanted, MAX_PLOT_PX / fitPx))
 }
 
-export const clampZoom = (zoom: number, max: number) => clamp(zoom, 1, Math.max(1, max))
+const clampZoom = (zoom: number, max: number) => clamp(zoom, 1, Math.max(1, max))
 
 /** The zoom a button or key press steps to, snapping to fit and to the maximum. */
 export function stepZoom(current: number, direction: 1 | -1, max: number) {

@@ -247,31 +247,6 @@ export const taskPlansSource = defineSource({
   columns: taskPlanColumns,
 })
 
-/** The reservations holding one queued task back, with the blocker's reference. */
-export const taskBlockersSource = defineSource({
-  name: TASK_SOURCES.blockers,
-  table: `(SELECT b.task_id AS task_id, b.blocker_task_id AS blocker_task_id,
-      t.reference AS reference, t.title AS title
-    FROM task_schedule_blockers b LEFT JOIN task_schedule t ON t.task_id=b.blocker_task_id) AS task_schedule_blockers`,
-  tables: ["task_schedule_blockers", "task_schedule"],
-  key: ["task_id", "blocker_task_id"],
-  orders: {
-    blocker: [
-      { column: "task_id", direction: "asc" },
-      { column: "blocker_task_id", direction: "asc" },
-    ],
-  },
-  authorize: (input: TaskChildFilter, context) => scopedChild(input, context, input.task),
-  filter(input: TaskChildFilter) {
-    const scoped = taskInScope("task_schedule_blockers.task_id", input)
-    return {
-      where: `task_schedule_blockers.task_id = ? AND ${scoped.clause}`,
-      params: [input.task!, ...scoped.params],
-    }
-  },
-  columns: taskBlockerColumns,
-})
-
 /** The prerequisite plans one task still waits on. */
 export const taskWaitsSource = defineSource({
   name: TASK_SOURCES.waits,
@@ -340,21 +315,4 @@ export const taskSessionBucketCountsSource = defineSource({
     params: [input.project, input.session!],
   }),
   columns: taskSessionBucketCountColumns,
-})
-
-/** Whether this project's list is indexed yet; false while the owner backfills. */
-export const taskIndexSource = defineSource({
-  name: TASK_SOURCES.index,
-  table: "task_schedule_state",
-  key: ["project_directory"],
-  orders: { project: [{ column: "project_directory", direction: "asc" }] },
-  async authorize(input: TaskIndexFilter, context) {
-    await scopeOf(input, context)
-    return { ...input, project: context.projectDirectory }
-  },
-  filter: (input: TaskIndexFilter) => ({
-    where: "project_directory = ?",
-    params: [input.project],
-  }),
-  columns: taskIndexColumns,
 })

@@ -52,7 +52,7 @@ type Decoded = {
  * The decoding half of a frame message for the transfer and copy tiers, shared with the RPC
  * client: the message's bytes are read in place and stay valid while the message's buffer does.
  */
-export function decodeFrameMessage<C extends Columns>(
+function decodeFrameMessage<C extends Columns>(
   message: Extract<FromReader, { type: "frame" }>,
   columns: C,
 ): Decoded | undefined {

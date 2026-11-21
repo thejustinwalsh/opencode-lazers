@@ -27,7 +27,6 @@ const parsedEndpointSnapshots = sharedByteLru<EndpointPricingSnapshot>(
   "model-endpoint-pricing-snapshots",
   budgetFromEnv("LAZERS_ENDPOINT_CACHE_MIB", 16),
 )
-export const clearParsedEndpointSnapshotCache = () => parsedEndpointSnapshots.clear()
 
 type RefreshRow = {
   product_id: EndpointPricingProductID

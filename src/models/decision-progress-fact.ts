@@ -80,7 +80,7 @@ export function safeRoute(value: unknown, stats: ReturnType<typeof privacyStats>
   return { providerID, modelID, variant }
 }
 
-export function decisionProgressFact(
+function decisionProgressFact(
   row: DecisionProgressSource,
   payload: JsonObject,
   stats: ReturnType<typeof privacyStats>,

@@ -58,7 +58,7 @@ function waiver(findings: readonly FallowFinding[]): string {
   return `To waive any other finding on purpose, only when the Architect says so: ${shown.join(" or ")}.${aheadText}`
 }
 
-export function summaryLine(pkg: FallowPackage): string {
+function summaryLine(pkg: FallowPackage): string {
   const { errors, warnings, inherited } = pkg.summary
   return `Fallow audit verdict ${pkg.verdict}: ${errors} error${errors === 1 ? "" : "s"} and ${warnings} warning${warnings === 1 ? "" : "s"} introduced by this task${inherited ? `, ${inherited} already in the touched files` : ""}.`
 }

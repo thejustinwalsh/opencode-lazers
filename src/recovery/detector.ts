@@ -12,7 +12,7 @@ import {
   type TrajectoryTail,
 } from "./trajectory-facts.ts"
 
-export { readTrajectoryTail, type TrajectoryTail }
+export type { TrajectoryTail }
 
 /**
  * The producer of recovery concerns. Deterministic rules read the recorded trajectory of each
@@ -64,9 +64,9 @@ export const DETECTOR_THRESHOLDS = {
 export type DetectorThresholds = { readonly [K in keyof typeof DETECTOR_THRESHOLDS]: number }
 
 /** A follow-up on a condition cannot be evaluated by the runtime; reassess it after this long. */
-export const CONDITION_REASSESS_MS = 2 * 3_600_000
+const CONDITION_REASSESS_MS = 2 * 3_600_000
 
-export const WORKER_CONCERN_EVENT = "WORKER_CONCERN_RAISED"
+const WORKER_CONCERN_EVENT = "WORKER_CONCERN_RAISED"
 export const DETECTOR_ACTOR = {
   sessionID: "lazers-runtime",
   agent: "lazers-runtime",

@@ -64,7 +64,7 @@ export const RetainedVerificationSchema = z.strictObject({
 })
 export type RetainedVerification = z.infer<typeof RetainedVerificationSchema>
 
-export const RetainedVerificationCheckSchema = z.strictObject({
+const RetainedVerificationCheckSchema = z.strictObject({
   operationID: z.uuid(),
   phase: RetainedVerificationPhase,
   checkID: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),

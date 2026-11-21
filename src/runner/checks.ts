@@ -40,7 +40,7 @@ export function checkEnvironment(
 }
 
 /** Searches PATH, then the toolchain's known homes; `searched` lists every directory tried. */
-export function locateTool(
+function locateTool(
   executable: string,
   homes: readonly string[],
   environment: Record<string, string>,

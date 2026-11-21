@@ -434,7 +434,7 @@ export function digestAccountingFacts(
 }
 
 /** Per-session digests keyed by session id; a session absent from the map has no retained facts. */
-export type AccountingFactDigests = ReadonlyMap<string, { accounting: AccountingFactDigest }>
+type AccountingFactDigests = ReadonlyMap<string, { accounting: AccountingFactDigest }>
 
 const digestsOfArray = new WeakMap<
   readonly unknown[],
@@ -939,7 +939,7 @@ function sessionDerived(
     : compute()
 }
 
-export type EffortFactDigests = ReadonlyMap<string, { accounting: MemoizedAccountingDigest }>
+type EffortFactDigests = ReadonlyMap<string, { accounting: MemoizedAccountingDigest }>
 
 type EffortInput = {
   attempts: AccountingAttempt[]

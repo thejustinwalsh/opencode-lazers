@@ -71,13 +71,6 @@ const parsedSnapshots = sharedByteLru<ModelEvidenceSnapshot>(
   budgetFromEnv("LAZERS_SNAPSHOT_CACHE_MIB", 48),
 )
 
-/** Cache counters for diagnostics and tests. */
-export const parsedSnapshotCacheStats = () => ({
-  hits: parsedSnapshots.stats.hits,
-  misses: parsedSnapshots.stats.misses,
-  size: parsedSnapshots.size,
-  bytes: parsedSnapshots.bytes,
-})
 export const clearParsedSnapshotCache = () => parsedSnapshots.clear()
 
 /**

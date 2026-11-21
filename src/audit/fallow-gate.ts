@@ -3,15 +3,13 @@ import type { TaskRepository } from "../storage.ts"
 import { activeProfile } from "../projects/profile-store.ts"
 import { getLatestFallowConfig, hasFallowConfig } from "./config.ts"
 
-export { FALLOW_CONFIG_REQUIRED, FallowConfigRequired } from "./fallow-refusal.ts"
-
 /**
  * Every project needs a Fallow config: the audit that reviews each task reads its entry points,
  * ignore patterns, rules and limits from it, and nothing is silently skipped without one. With
  * the review on, submitting work to a project that has none is refused with this typed result.
  * It is a validation result of the submit command, not a workflow state.
  */
-export const FALLOW_CONFIG_TOOLS = [
+const FALLOW_CONFIG_TOOLS = [
   "lz-fallow-config (mode suggest)",
   "lz-fallow-config (mode dry-run)",
   "lz-fallow-config-set",

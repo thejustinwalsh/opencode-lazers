@@ -16,7 +16,7 @@
  */
 export const STALE_PROGRESS_CALLS = 50
 
-export const STALE_PROGRESS_REMINDER = (calls: number) =>
+const STALE_PROGRESS_REMINDER = (calls: number) =>
   `Reminder: ${calls} tool calls since your last lz-report-progress. When convenient, record a short note on what is done and what comes next. Advice only; nothing is blocked.`
 
 type Count = { calls: number; reminded: boolean }

@@ -87,24 +87,6 @@ const money = new Intl.NumberFormat("en-US", {
   maximumSignificantDigits: 12,
 })
 
-export function formatMoney(value: number) {
-  return money.format(value)
-}
-
-export function statusText(status: string) {
-  switch (status) {
-    case "observed":
-      return "Observed"
-    case "partial":
-      return "Partial"
-    case "missing":
-      return "Missing"
-    case "unavailable":
-      return "Not reported"
-    default:
-      return status
-  }
-}
 /** Short source name for the summary line; freshness only when it is not current. */
 export function marketSummarySource(context: string) {
   const [source = "", ...details] = context.split(" · ")

@@ -91,7 +91,7 @@ export function profileEntries(db: Database, projectKey: string): NeedsYouEntry[
 }
 
 /** Owners of the checkout's open plans: the sessions that may hold an Architect question. */
-export function planOwners(db: Database, directory: string): string[] {
+function planOwners(db: Database, directory: string): string[] {
   return db
     .query<{ owner: string }, [string]>(
       `SELECT DISTINCT owner FROM runner_plans

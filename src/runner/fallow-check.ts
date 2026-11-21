@@ -31,11 +31,11 @@ export const defaultFallowReview: FallowReview = async (input) =>
   (await import("../audit/review.ts")).fallowReview(input)
 
 /** The package of a review that ran; undefined when it was unavailable. */
-export const packageOf = (result: FallowReviewResult | undefined): FallowPackage | undefined =>
+const packageOf = (result: FallowReviewResult | undefined): FallowPackage | undefined =>
   result?.package
 
 /** Findings the change introduced or worsened (what the worker is asked about). */
-export function liveFindingCount(result: FallowReviewResult | undefined): number {
+function liveFindingCount(result: FallowReviewResult | undefined): number {
   const pkg = packageOf(result)
   return pkg ? pkg.summary.errors + pkg.summary.warnings : 0
 }

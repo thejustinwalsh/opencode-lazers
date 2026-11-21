@@ -218,7 +218,7 @@ const STEP_TOKENS = `coalesce(json_extract(payload,'$.usage.input'),0)
   +coalesce(json_extract(payload,'$.usage.cacheWrite'),0)`
 
 /** Failed calls are counted back from the newest call, never further than this. */
-export const FAILURE_WINDOW = 100
+const FAILURE_WINDOW = 100
 
 /**
  * The newest tool calls of an attempt. Bounded: the failure run reads at most `FAILURE_WINDOW`

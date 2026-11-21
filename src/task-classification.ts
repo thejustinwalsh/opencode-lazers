@@ -71,7 +71,7 @@ export const TaskClassificationRevision = z.strictObject({
 })
 export type TaskClassificationRevision = z.infer<typeof TaskClassificationRevision>
 
-export const TaskClassificationSnapshot = z.strictObject({
+const TaskClassificationSnapshot = z.strictObject({
   current: TaskClassificationRevision,
   history: z.array(TaskClassificationRevision),
 })

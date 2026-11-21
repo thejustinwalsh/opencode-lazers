@@ -67,7 +67,7 @@ function result<T>(
 }
 
 /** What `lz-submit-task` and `lz-plan-task` share: the same checks, the same write, the same receipt. */
-export type TaskSubmitDeps = {
+type TaskSubmitDeps = {
   location: Pick<Plugin.Context["location"], "directory" | "project">
   withRepository: <T>(run: (connection: TaskRepository) => T) => Promise<T>
   timeoutDefaults: VerificationTimeoutDefaults
@@ -75,7 +75,7 @@ export type TaskSubmitDeps = {
   fallowGate?: () => Promise<unknown>
 }
 
-export async function submitTaskReceipt(
+async function submitTaskReceipt(
   deps: TaskSubmitDeps,
   input: unknown,
   sessionID: string,
@@ -136,7 +136,7 @@ export async function submitTaskReceipt(
  * connection, so each execution owns its connection; a write is never retried just because an old
  * connection was disposed.
  */
-export function repositoryRunner(repository: Pick<TaskRepository, "path" | "projectDirectory">) {
+function repositoryRunner(repository: Pick<TaskRepository, "path" | "projectDirectory">) {
   const { path, projectDirectory } = repository
   return async function withRepository<T>(run: (connection: TaskRepository) => T): Promise<T> {
     const connection = new TaskRepository(path, projectDirectory)

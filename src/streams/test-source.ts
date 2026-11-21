@@ -55,15 +55,3 @@ export const itemsStoredCountSource = defineSource({
     },
   },
 })
-
-/** Opening needs the caller's say: group "g0" is refused, and every other read is held to the caller's group. */
-export const itemsGuardedSource = defineSource({
-  ...definition,
-  name: "test.items.guarded",
-  count: "exact",
-  authorize: async (input: { group?: string }, context) => {
-    await context.assertRead(input.group ?? "")
-    if (input.group === "g0") throw new Error("Group g0 is not readable")
-    return { group: "g1" }
-  },
-})

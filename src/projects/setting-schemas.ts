@@ -12,7 +12,7 @@ import { z } from "zod"
  * file imports only zod so the GUI bundle can share it.
  */
 export type SettingDef<T extends z.ZodType = z.ZodType> = { schema: T; builtIn: z.output<T> }
-export const setting = <T extends z.ZodType>(schema: T, builtIn: z.output<T>): SettingDef<T> => ({
+const setting = <T extends z.ZodType>(schema: T, builtIn: z.output<T>): SettingDef<T> => ({
   schema,
   builtIn,
 })

@@ -9,7 +9,7 @@ import type { ProgressRow } from "../runner/store.ts"
  * The helpers here also serve the Radar live read, which owns the same privacy rules.
  */
 export type JsonObject = Record<string, unknown>
-export const TRUNCATION_SUFFIX = "…[truncated]"
+const TRUNCATION_SUFFIX = "…[truncated]"
 
 /**
  * The version of {@link progressDisplay}. Stored rows carry the version that wrote them, and the

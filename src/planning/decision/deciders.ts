@@ -2,7 +2,7 @@ import type { SystemOneInput, SystemOneQuestion } from "../../webgpu/system-one.
 import type { Answers, Decider } from "./procedure.ts"
 
 /** The longest the local model may take on one small request; the procedure's budget is wider. */
-export const LOCAL_REQUEST_TIMEOUT_MS = 10_000
+const LOCAL_REQUEST_TIMEOUT_MS = 10_000
 
 type SystemOneReply =
   | { error: string }
