@@ -139,7 +139,7 @@ const EVENTS = `(${[
 ].join(" UNION ALL ")}) AS trajectory_events`
 
 /** A scope the caller named, authorized for one task. Shared by the events and attempts sources. */
-async function authorizeTask<F extends TrajectoryAttemptsFilter>(
+export async function authorizeTask<F extends TrajectoryAttemptsFilter>(
   input: F,
   context: StreamContext,
 ): Promise<F> {

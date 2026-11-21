@@ -43,7 +43,7 @@ import {
  * - A failed read stays queued with its error and a backoff (1 s to 5 min); the rows already
  *   folded stay. A session the host no longer has leaves the queue and keeps its rows.
  */
-const HINT_EVENT_TYPES = [
+export const HINT_EVENT_TYPES = [
   "session.step.started",
   "session.step.streamed",
   "session.step.ended",
