@@ -38,7 +38,7 @@ type Event = {
   route_provider: string | null
   route_model: string | null
   route_variant: string | null
-  detail: string
+  detail: string | null
 }
 
 const displays = (repository: TaskRepository) =>
@@ -72,14 +72,7 @@ function mirrored(display: Display, plan: string): Event {
     route_provider: display.route_provider,
     route_model: display.route_model,
     route_variant: display.route_variant,
-    detail: JSON.stringify({
-      source: display.source,
-      messageID: display.message_id,
-      callID: display.call_id,
-      agent: display.agent,
-      result: display.result,
-      error: display.error,
-    }),
+    detail: null,
   }
 }
 

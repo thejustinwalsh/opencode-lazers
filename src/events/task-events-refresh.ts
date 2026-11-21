@@ -254,14 +254,8 @@ type DisplayColumns = {
   session_id: string
   at: number
   kind: string
-  source: string
-  message_id: string | null
-  call_id: string | null
   tool: string | null
   status: string | null
-  agent: string | null
-  result: string | null
-  error: string | null
   route_provider: string | null
   route_model: string | null
   route_variant: string | null
@@ -269,15 +263,17 @@ type DisplayColumns = {
 
 /**
  * A progress row of a task's attempt, mirrored from its stored display (`runner_progress_display`,
- * already sanitized and truncated by `progressDisplay`): no payload is read or parsed. The file
- * targets and observations stay in the display row, which the `pg:<seq>` origin names.
+ * already sanitized and truncated by `progressDisplay`): no payload is read or parsed. Only what a
+ * timeline lists and filters is copied; the rest (source, message and call ids, agent, result,
+ * error, file targets, observations) stays in the display row, which `pg:<seq>` names and
+ * `observability.liveHistory` reads (19.6 MB not duplicated on the live-sized copy).
  */
 export function refreshProgress(db: Database, seq: number) {
   const origin = `pg:${seq}`
   const display = db
     .query<DisplayColumns, [number]>(
-      `SELECT project_directory,attempt_id,session_id,at,kind,source,message_id,call_id,tool,status,agent,
-         result,error,route_provider,route_model,route_variant FROM runner_progress_display WHERE seq=?`,
+      `SELECT project_directory,attempt_id,session_id,at,kind,tool,status,route_provider,route_model,
+         route_variant FROM runner_progress_display WHERE seq=?`,
     )
     .get(seq)
   const attempt = display
@@ -309,14 +305,8 @@ export function refreshProgress(db: Database, seq: number) {
     route_provider: display.route_provider,
     route_model: display.route_model,
     route_variant: display.route_variant,
-    detail: JSON.stringify({
-      source: display.source,
-      messageID: display.message_id,
-      callID: display.call_id,
-      agent: display.agent,
-      result: display.result,
-      error: display.error,
-    }),
+    // The display row (`pg:<seq>`) holds source, ids, agent, result and error: not copied.
+    detail: null,
   })
 }
 
