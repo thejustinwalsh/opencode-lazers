@@ -125,7 +125,7 @@ async function eligibleSession(
   return { session, agent: session.agent }
 }
 
-async function authorize(
+export async function authorizeModels(
   ctx: ModelsContext,
   sessionID: string,
   projectID: string,
@@ -222,7 +222,7 @@ async function authorizeDecisionRead(
 ) {
   if (request.scope.projectDirectory !== projectDirectory)
     throw new Error("Models scope is unavailable")
-  await authorize(
+  await authorizeModels(
     ctx,
     request.sessionID,
     projectID,
@@ -373,7 +373,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelSettingsRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -408,7 +408,7 @@ export function registerModelsServer(
             const request = ModelConfigureRPCInputSchema.parse(input)
             const resource =
               request.target.scope === "task" ? request.target.taskID : projectDirectory
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -438,7 +438,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelPriceSourceSettingsRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -472,7 +472,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelPriceSourceConfigureRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -493,7 +493,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelCatalogRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -510,7 +510,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelEvidenceRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -535,7 +535,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelComparisonRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -562,7 +562,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelGroupsRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -589,7 +589,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelConfigurationsRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,
@@ -618,7 +618,7 @@ export function registerModelsServer(
         Effect.tryPromise({
           try: async (signal) => {
             const request = ModelSourceRefreshRPCInputSchema.parse(input)
-            await authorize(
+            await authorizeModels(
               ctx,
               request.sessionID,
               projectID,

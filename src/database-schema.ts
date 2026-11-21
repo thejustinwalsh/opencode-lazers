@@ -198,6 +198,11 @@ export const schemaModules = {
       "model_endpoint_pricing_refreshes",
     ],
   },
+  "model-candidates": {
+    generation: 1,
+    source: "src/models/candidate-store.ts",
+    tables: ["model_candidates", "model_candidate_sets", "model_candidates_dirty"],
+  },
   "model-decision-projection": {
     generation: 3,
     source: "src/models/decision-projection.ts",

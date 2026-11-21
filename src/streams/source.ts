@@ -56,6 +56,12 @@ export type StreamContext = {
   projectIds(id: string): string[]
   /** Rejects unless the caller's session may read this project. */
   assertRead(sessionID: string): Promise<void>
+  /**
+   * Rejects unless the caller's session passes the check of the RPC a source replaces: an
+   * eligible session of this project and the permission `action` on this project. A context
+   * without it rejects every source that needs it.
+   */
+  assertAction?(sessionID: string, action: string): Promise<void>
   /** A point read on the service's own repository: for the checks an `authorize` makes on one row. */
   read?<T>(run: (db: Database) => T): T
 }

@@ -789,7 +789,39 @@ Task 6 deletes that part of the old read.
 
 ### Task 8: Model candidates projection and `models.candidates` (M)
 
-Module `model-sources` generation 2 → 3; tests 3.5.
+Built (`src/models/candidate-store.ts`, `src/streams/sources/models{,-ref}.ts`). ★ Corrections
+against the sketch in 3.2, from the code:
+
+- ★ New module `model-candidates` generation 1 (tables `model_candidates`,
+  `model_candidate_sets`, `model_candidates_dirty`), not `model-sources` 2 → 3: the evidence
+  tables install with `CREATE … IF NOT EXISTS` under a connection `once` key, so a bump there
+  creates nothing. The installer creates the evidence tables first (`installModelEvidenceTables`)
+  so its triggers have their table.
+- ★ Columns as built: `candidate_id` (UNIQUE per project), `variant` NULL for the model's own
+  entry (sorts first, as the old read), `enabled` nullable (records can disagree),
+  `price_input`/`price_output` REAL = the native catalog's unconditional tier, NULL when absent
+  (omit the price UI), `correspondence`, `benchmark_correspondence`, `digest`, `detail`. No
+  per-row `snapshot_set`: every row would be rewritten on any source change. The set, the first
+  page's `publicCatalog` and `publicCoverage` live once per project in `model_candidate_sets`.
+  `public_score`/`benchmark_score` are not stored: the score depends on the chosen basis
+  (`chooseScoreBasis`), so it belongs to the decision view (Task 9).
+- ★ Not written inside `saveSnapshot`: a trigger on `model_evidence_refreshes.latest_snapshot_id`
+  (and snapshot insert/delete) queues the project; only the projection owner drains it (the queue
+  is not enrolled in the writer drain hook). The five saves of one refresh commit in one turn, so
+  one build follows. Measured on the live-sized copy (1,466 candidates, 6.2 MB of detail): build
+  with five body parses 115 ms, plus 30 ms when every row is rewritten (a new native snapshot
+  changes every row's evidence references); unchanged set 3.5 ms, zero writes. Over the 50 ms page
+  guideline; it runs once per snapshot-set change (about hourly), where the old read ran it on a
+  Models open with cold caches. Moving it into the decision worker is the fallback if the
+  `atomic` timing probe flags it.
+- ★ `nativeCatalogAccess` needs no new column: it already accepts a stamp-only read
+  (`price-state.ts` `snapshotFacts`), so `priceSources` stops reading bodies with
+  `stampOnly: true` (Task 10).
+- ★ `authorize` needs the RPC's own permission action, which `assertRead` does not carry:
+  `StreamContext.assertAction(sessionID, action)` (wired in `src/index.ts` to the Models
+  `authorizeModels`); a context without it rejects.
+- Parity on the live-sized copy: all 1,466 stored `detail` values equal the old read's candidates
+  byte for byte, in order.
 
 ### Task 9: Decision views, catalog entries, points, contributors (XL)
 
@@ -865,7 +897,7 @@ registration edits are one line per task and merged in wave order.
 | `task-events`               | new, 1     | T1, T2 | create tables, triggers (plus `projections` new, 1: `projection_state`) | measured: 225 transition pages, 53 effect pages, 318 progress pages; 2.6 s of writer time in pages of at most about 36 ms, spread over the owner's pacing |
 | `projects`                  | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
 | `project-overview`          | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
-| `model-sources`             | 2 → 3      | T8     | create `model_candidates`                                               | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
+| ★ `model-candidates`        | new, 1     | T8     | create `model_candidates`, `model_candidate_sets`, queue, triggers      | measured: 1 build per project, 145 ms (5 body parses, 1,466 rows, 6.2 MB)                                                                                 |
 | ★ `native-call-display`     | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
 | ★ `scheduler-status`        | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
 | `host-sessions`             | new, 1     | T3     | create                                                                  | ≈260 host `get` calls, 20 per page                                                                                                                        |
