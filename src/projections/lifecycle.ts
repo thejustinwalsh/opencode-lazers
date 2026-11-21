@@ -34,7 +34,7 @@ export type ProjectionStatus = {
   last_error: string | null
 }
 
-export function installProjectionStateSchema(db: Database) {
+function installProjectionStateSchema(db: Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS projection_state (
       id INTEGER PRIMARY KEY,

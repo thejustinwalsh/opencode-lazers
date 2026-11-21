@@ -29,7 +29,7 @@ import { drainTaskEvents, TASK_EVENTS } from "./task-events-refresh.ts"
  * for a check, its check view) as JSON: cold, read only at `window: 1`.
  */
 const MODULE = schemaModules["task-events"]
-export const TASK_EVENTS_QUEUE = "task_events_dirty"
+const TASK_EVENTS_QUEUE = "task_events_dirty"
 
 const TABLES_SQL = `
   CREATE TABLE task_events (
@@ -184,7 +184,7 @@ const hasTable = (db: Database, name: string) =>
   Boolean(db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
 
 /** Create the queue triggers on every source table that exists now; safe to run again. */
-export function installTaskEventsTriggers(db: Database) {
+function installTaskEventsTriggers(db: Database) {
   if (!hasTable(db, "task_events")) return
   for (const spec of TASK_EVENTS_TRIGGERS) {
     if (!hasTable(db, spec.on)) continue
@@ -199,7 +199,7 @@ export function installTaskEventsTriggers(db: Database) {
 }
 
 /** The projection's tables and triggers, rebuilt from nothing; the backfill refills them. */
-export function installTaskEventsSchema(db: Database) {
+function installTaskEventsSchema(db: Database) {
   for (const spec of TASK_EVENTS_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${spec.name}`)
   db.exec(`DROP TABLE IF EXISTS task_events; DROP TABLE IF EXISTS ${TASK_EVENTS_QUEUE};`)
   db.exec(TABLES_SQL)

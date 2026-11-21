@@ -57,7 +57,7 @@ export type CheckView = {
   error: string | null
 }
 
-export function checkView(
+function checkView(
   effect: EffectRow,
   planScope: boolean,
   attemptID: string | null,
