@@ -47,6 +47,9 @@ export function installPlanningSchema(repository: TaskRepository): void {
         created_at INTEGER NOT NULL, settled_at INTEGER, returned_at INTEGER, notified_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS planning_reviews_planning ON planning_reviews(planning_id);
+      CREATE INDEX IF NOT EXISTS planning_reviews_unsettled ON planning_reviews(created_at) WHERE settled_at IS NULL;
+      CREATE INDEX IF NOT EXISTS planning_reviews_unreported ON planning_reviews(settled_at)
+        WHERE settled_at IS NOT NULL AND returned_at IS NULL AND notified_at IS NULL;
       CREATE TABLE IF NOT EXISTS planning_runs (
         id TEXT PRIMARY KEY, review_id TEXT NOT NULL, agent TEXT NOT NULL, attempt INTEGER NOT NULL,
         session_id TEXT, state TEXT NOT NULL, prompt_message_id TEXT, started_at INTEGER NOT NULL,
@@ -530,6 +533,24 @@ export class PlanningStore {
   openReview(planningID: string, stage: ReviewStage, revision: number): ReviewRow | undefined {
     return this.reviews(planningID).find(
       (review) => review.stage === stage && review.revision === revision && !review.settledAt,
+    )
+  }
+
+  /**
+   * Whether any review is open or awaits its notice: the one read an idle tick makes. Both
+   * predicates are partial indexes, so it costs the same however many reviews are settled.
+   */
+  hasOpenReviewWork(): boolean {
+    return this.repository.read(
+      (db) =>
+        db
+          .query(
+            `SELECT 1 AS open FROM planning_reviews WHERE settled_at IS NULL
+             UNION ALL
+             SELECT 1 FROM planning_reviews
+             WHERE settled_at IS NOT NULL AND returned_at IS NULL AND notified_at IS NULL LIMIT 1`,
+          )
+          .get() !== null,
     )
   }
 
