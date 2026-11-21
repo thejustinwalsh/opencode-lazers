@@ -26,7 +26,9 @@ import { drainTaskEvents, TASK_EVENTS } from "./task-events-refresh.ts"
  * trajectory read shows it) or `pg:<seq>` (a progress row of one of the task's attempts). A queue `ref` is the origin without the `@<task>` part. `at` is the
  * event time the trajectory read sorts by; NULL when the source has none (an effect with no
  * attempt and no check timing), which that read sorts last. `detail` is the trajectory event (and,
- * for a check, its check view) as JSON: cold, read only at `window: 1`.
+ * for a check, its check view) as JSON: cold, read only at `window: 1`. `payload` is a transition's
+ * own `runner_transitions.payload`, byte for byte (the Tasks activity and `lz-get-task` show it);
+ * NULL for every other kind.
  */
 const MODULE = schemaModules["task-events"]
 const TASK_EVENTS_QUEUE = "task_events_dirty"
@@ -42,7 +44,8 @@ const TABLES_SQL = `
     origin TEXT NOT NULL UNIQUE,
     event TEXT, from_state TEXT, to_state TEXT, status TEXT, tool TEXT, title TEXT,
     route_provider TEXT, route_model TEXT, route_variant TEXT,
-    detail TEXT
+    detail TEXT,
+    payload TEXT
   );
   CREATE INDEX task_events_task ON task_events(project_directory, task_id, sort_at, sort_key, id);
   CREATE INDEX task_events_plan ON task_events(project_directory, plan_id, kind, id);

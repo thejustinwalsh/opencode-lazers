@@ -132,6 +132,45 @@ test("parity: transition, effect and check rows equal the trajectory read's even
   )
 })
 
+test("payload: a transition row stores runner_transitions.payload byte for byte, before and after an update; other kinds store none", async () => {
+  const made = fixture()
+  const lease = startProjection(made.repository.path, made.directory, taskEventsProjection, {
+    pacing: slow,
+  })
+  cleanups.push(() => lease.release())
+  await lease.owner.settle()
+  const pairs = () =>
+    made.repository.read((db) =>
+      db
+        .query<{ kind: string; payload: string | null; source: string | null }, []>(
+          `SELECT e.kind,e.payload,t.payload AS source FROM task_events e
+           LEFT JOIN runner_transitions t ON e.origin='tr:'||t.id ORDER BY e.id`,
+        )
+        .all(),
+    )
+  // Keys out of canonical order, unicode and whitespace: the text is kept, never re-serialized.
+  const odd = '{ "z": 1,  "a": "é — ✓", "reason":"kept as written" }'
+  made.store.atomic((db) =>
+    db
+      .query(
+        "INSERT INTO runner_transitions(plan_id,task_id,version,event,payload,created_at) VALUES(?,?,9,'ODD',?,1800)",
+      )
+      .run(made.receipt.planID, taskID, odd),
+  )
+  for (const row of pairs())
+    if (row.kind === "transition") expect(row.payload).toBe(row.source!)
+    else expect(row.payload).toBeNull()
+  expect(pairs().some((row) => row.payload === odd)).toBe(true)
+  // An update of a watched column rewrites the stored text.
+  const changed = '{"reason":"amended","writeScope":["src/a.ts"]}'
+  made.store.atomic((db) =>
+    db.query("UPDATE runner_transitions SET payload=? WHERE payload=?").run(changed, odd),
+  )
+  for (const row of pairs()) if (row.kind === "transition") expect(row.payload).toBe(row.source!)
+  expect(pairs().some((row) => row.payload === changed)).toBe(true)
+  expect(pairs().some((row) => row.payload === odd)).toBe(false)
+})
+
 test("triggers: one row per task-scoped transition; 10,000 plan-level transitions queue zero dirty entries", async () => {
   const made = fixture()
   const lease = startProjection(made.repository.path, made.directory, taskEventsProjection, {
