@@ -59,7 +59,6 @@ src/progress/recorder.ts:1870 | star | native_tool_calls | one row by identity k
 src/progress/recorder.ts:1887 | star | native_tool_calls | one row by identity key (LIMIT 2 or the key) | SELECT * FROM native_tool_calls WHERE project_directory=? AND session_id=? AND identity_ki
 src/progress/recorder.ts:2417 | all | runner_progress_reconciled | one batch of message ids | SELECT message_id,light,full FROM runner_progress_reconciled WHERE project_directory=? AND
 src/project-key.ts:304 | all | tasks | startup registration scan; json_extract in SQL returns one id per task, runs once per load | SELECT DISTINCT json_extract(body,'$.provenance.projectID') AS id FROM tasks WHERE project
-src/projects/needs-you.ts:100 | all | runner_plans | DISTINCT owners of open plans | SELECT DISTINCT owner FROM runner_plans WHERE project_directory=? AND state NOT IN ('integ
 src/projects/profile-store.ts:190 | all | lazers_profile_proofs | revisions of one project, written by operator action | SELECT command_key,command,effective_command,outcome,exit_code,timed_out,duration_ms,reaso
 src/projects/profile-store.ts:290 | all | lazers_profile_revisions | at most one active revision per project | SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE project_key=? AND state='active'
 src/projects/profile-store.ts:362 | all | lazers_profile_revisions | revisions of one project, written by operator action | SELECT ${COLUMNS} FROM lazers_profile_revisions WHERE project_key=? ORDER BY revision DESC

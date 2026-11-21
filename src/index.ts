@@ -367,9 +367,6 @@ export default Plugin.define({
                   id: session.id,
                   archived: session.archived,
                   ...(session.agent ? { agent: session.agent } : {}),
-                  ...(session.pendingForms !== undefined
-                    ? { pendingForms: session.pendingForms }
-                    : {}),
                 }
               : null
           },
