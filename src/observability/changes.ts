@@ -473,11 +473,7 @@ export class ObservationChangeTracker {
     state.refreshTimer.unref?.()
   }
 
-  trackScopedSessions(
-    sessionIDs: Iterable<string>,
-    preferredSessionID?: string,
-    options: { retainInterests?: boolean } = {},
-  ) {
+  trackScopedSessions(sessionIDs: Iterable<string>, options: { retainInterests?: boolean } = {}) {
     const selected = new Set(options.retainInterests ? this.scopedSessionIDs : [])
     for (const sessionID of sessionIDs) {
       selected.delete(sessionID)
