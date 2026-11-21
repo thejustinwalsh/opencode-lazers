@@ -1004,7 +1004,20 @@ Every bump is a full service restart; four restarts total (one per wave 1–4).
 ## Owner decisions (2026-11-21)
 
 - **Scope:** all four panels ship in v0.2.0.
-- **Question 3, transcripts: not stored.** OpenCode already holds attempt transcripts; LAZERS
+- **Question 3, transcripts, final (2026-11-21, replaces the entry below):** store, at a minimum,
+  the transcript metadata the product requires; skip the line-by-line text. OpenCode owns message
+  text (read on demand by cursor, for display only); LAZERS owns the facts it derives from
+  messages, stored once, small, and queried (data-handling principle 4). A per-message metadata
+  projection of worker sessions, folded by host cursor, feeds effort and route coverage, so the
+  stored effort equals the history capture on every field. No text, tool input or output, or
+  reasoning is stored. Transcript text in the Trajectory panel stays a host-backed stream.
+  ★ Task 7 as built: `trajectory_task_effort` (module `trajectory-effort` 1), computed in the
+  effort worker (`src/trajectory/effort-worker.ts`); the main thread claims and writes (longest
+  step median 0.7 ms, up to about 20 ms when a write meets a WAL checkpoint). Until the metadata
+  projection lands, the route fields (`routes.observedStepRoutes` native-context sources,
+  `routes.assessments`, `routes.coverage`, market `coverage.routeEvidence` and
+  `sessions[].routeAllocation`) equal the status read, not the history capture.
+- **Question 3, transcripts: not stored** (superseded by the entry above). OpenCode already holds attempt transcripts; LAZERS
   does not duplicate them. Task 7 loses the host transcript fold
   (`src/events/host-transcript-fold.ts` is not built, no message text enters `tasks.sqlite`).
   Trajectory text is read from the host on demand, by cursor, a page at a time
