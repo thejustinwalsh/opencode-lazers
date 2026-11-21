@@ -12,7 +12,9 @@ import {
   buildDecisionView,
   decisionViewIdentity,
   readCandidateSet,
-  readSourceDates,
+  readSourceStamps,
+  readSourceSummaries,
+  sourceDatesOf,
   type CandidateSet,
   type DecisionViewCall,
   type DecisionViewResult,
@@ -199,13 +201,13 @@ const view = async (
   )
   const set = candidateSetFor(projectDirectory)
   const inputs = await requestInputs(signal)
-  const sourceDates = readSourceDates(readonlyDatabase(), projectDirectory)
+  const stamps = readSourceStamps(readonlyDatabase(), projectDirectory)
   const identity = decisionViewIdentity({
     parts,
     set,
     call,
     priceSources: inputs.policy.sources,
-    sourceDates,
+    stamps,
   })
   if (identity === call.known) return { unchanged: true, identity }
   return buildDecisionView({
@@ -213,7 +215,8 @@ const view = async (
     set,
     call,
     priceSources: inputs.policy.sources,
-    sourceDates,
+    sourceDates: sourceDatesOf(stamps),
+    sources: readSourceSummaries(readonlyDatabase(), projectDirectory, stamps),
     identity,
   })
 }

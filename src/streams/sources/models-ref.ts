@@ -11,13 +11,18 @@ export const MODELS_SOURCES = {
   points: "models.points",
   contributors: "models.contributors",
   assignments: "models.assignments",
+  benchmark: "models.benchmark",
 } as const
 
 /** Every Models filter: the project is set by the service, whatever the caller sends. */
 type Scoped = { projectDirectory: string; sessionID: string }
 
 /** A project's comparison candidates; the picker reads `enabled: true`. */
-export type ModelCandidatesFilter = Scoped & { enabled?: boolean; providerID?: string }
+export type ModelCandidatesFilter = Scoped & {
+  enabled?: boolean
+  providerID?: string
+  modelID?: string
+}
 
 const candidateColumns = {
   id: "int",
@@ -62,7 +67,16 @@ type ViewScoped = Scoped & { view: DecisionViewSelection; viewID?: number }
 export type ModelViewFilter = ViewScoped
 export type ModelCatalogFilter = ViewScoped
 export type ModelPointsFilter = ViewScoped
-export type ModelContributorsFilter = ViewScoped & { configurationID: string }
+/**
+ * `taskID` reads only that task's contributors, `exceptTaskID` all others: the pane shows the
+ * selected task's first, then the rest, each in the inspection's order.
+ */
+export type ModelContributorsFilter = ViewScoped & {
+  configurationID: string
+  taskID?: string
+  exceptTaskID?: string
+}
+export type ModelBenchmarkFilter = ViewScoped
 
 /** The view's state: `backfilling` until its first build is written (shown as building), then `ready`. */
 export const modelViewColumns = {
@@ -70,15 +84,21 @@ export const modelViewColumns = {
   state: "text",
   entry_count: "int",
   point_count: "int",
+  benchmark_count: "int",
   revision: "int",
   produced_at: "int",
   last_error: "text",
 } as const satisfies Columns
-/** The decision context (price index and its provenance), counts and the catalog's summary. */
+/**
+ * The decision context (price index and its provenance), counts, the catalog's summary, the
+ * sources' record-free summaries and refresh states, and the Benchmark view's basis and options.
+ */
 export const modelViewDetail = {
   context: "json",
   counts: "json",
   summary: "json",
+  sources: "json",
+  benchmark: "json",
 } as const satisfies Columns
 
 /** A ranked catalog row; `price_source` is the source of the price taken, null when unpriced. */
@@ -99,18 +119,37 @@ export const modelCatalogColumns = {
   detail: "json",
 } as const satisfies Columns
 
-/** A chart configuration: a graph point, a reference estimate, or both. */
+/**
+ * A configuration of the view: a graph point, a reference estimate, both or neither, with what the
+ * chart draws for it (`chart`, `chart_reference`), its display label and its inspection facts.
+ */
 export const modelPointColumns = {
   id: "int",
   ord: "int",
   reference_ord: "int",
   configuration_id: "text",
+  group_id: "text",
   label: "text",
+  display_label: "text",
   x: "float",
   y: "float",
   frontier: "bool",
   point: "json",
   reference: "json",
+  chart: "json",
+  chart_reference: "json",
+  inspection: "json",
+} as const satisfies Columns
+
+/** A Benchmark chart row: `point` (scored and priced) or `gap` (left off, with its reason). */
+export const modelBenchmarkColumns = {
+  id: "int",
+  ord: "int",
+  kind: "text",
+  label: "text",
+  score: "float",
+  observed: "bool",
+  detail: "json",
 } as const satisfies Columns
 
 /** A configuration's contributors in the inspection's order (no task selected). */

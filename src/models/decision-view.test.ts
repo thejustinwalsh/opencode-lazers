@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite"
 import { afterAll, beforeAll, expect, test } from "bun:test"
+import { rewriteAttemptFacts } from "../../test/models-observation-ledger/fixtures/attempt-facts.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { openStream } from "../streams/client.ts"
 import { readerPool, type ReaderPool } from "../streams/pool.ts"
 import {
+  modelBenchmarkSource,
   modelCatalogSource,
   modelContributorsSource,
   modelPointsSource,
@@ -13,7 +15,10 @@ import { acquireSharedConnection, TaskRepository } from "../storage.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
 import { seedEvidenceCorpus } from "./candidate.fixture.ts"
 import { ensureModelCandidatesSchema, refreshModelCandidates } from "./candidate-store.ts"
-import { catalogFor } from "./catalog-inputs.ts"
+import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
+import { catalogFor, chartPoints, chartReferences, modelDisplayLabeler } from "./catalog-inputs.ts"
+import { modelDisplayLabel } from "./comparison-presentation.ts"
+import { scoreOptions } from "./public-score.ts"
 import { readModelComparison } from "./comparison-read.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import type { ModelDecisionFilters, ModelDecisionInspect } from "./decision-contract.ts"
@@ -29,7 +34,9 @@ import {
   DecisionViewRequestSchema,
   decisionViewIdentity,
   readCandidateSet,
-  readSourceDates,
+  readSourceStamps,
+  readSourceSummaries,
+  sourceDatesOf,
   type DecisionViewCall,
   type DecisionViewResult,
 } from "./decision-view.ts"
@@ -93,8 +100,15 @@ function observeRoute(
 beforeAll(() => {
   fixture = makeLedgerFixture()
   const gpt = { providerID: "openrouter", modelID: "vendor/model", variant: "high" }
-  observeRoute(fixture.path, fixture.attempts.accepted.id, gpt, 1_000)
-  observeRoute(fixture.path, fixture.attempts.failed.id, gpt, 400)
+  // Complete usage on a route OpenRouter prices: the accepted task is a priced graph point.
+  rewriteAttemptFacts(fixture.path, fixture.projectID, fixture.attempts.failed.id, gpt)
+  rewriteAttemptFacts(
+    fixture.path,
+    fixture.projectID,
+    fixture.attempts.accepted.id,
+    gpt,
+    [1_000, 400],
+  )
   observeRoute(
     fixture.path,
     fixture.attempts.adoption.id,
@@ -147,8 +161,8 @@ const inputOf = (filters: ModelDecisionFilters) =>
     filters,
   })
 
-/** The catalog exactly as the panel builds it today: comparison pages, live catalog, overview. */
-async function panelCatalog(filters: ModelDecisionFilters, basis: string | null) {
+/** Every candidate as the panel paged them in, with the first page (sources, public catalog). */
+function panelCandidates() {
   const candidates = []
   let first: ReturnType<typeof readModelComparison> | undefined
   let cursor: string | undefined
@@ -158,8 +172,14 @@ async function panelCatalog(filters: ModelDecisionFilters, basis: string | null)
     candidates.push(...page.candidates)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
+  return { candidates, first: first! }
+}
+
+/** The catalog exactly as the panel builds it today: comparison pages, live catalog, overview. */
+async function panelCatalog(filters: ModelDecisionFilters, basis: string | null) {
+  const { candidates, first } = panelCandidates()
   const source = (name: string) =>
-    first!.sources.find((entry) => entry.source === name)?.snapshot?.retrievedAt ?? null
+    first.sources.find((entry) => entry.source === name)?.snapshot?.retrievedAt ?? null
   return catalogFor({
     candidates,
     catalog: nativeNames,
@@ -172,7 +192,7 @@ async function panelCatalog(filters: ModelDecisionFilters, basis: string | null)
     },
     routed,
     preferredBasis: basis,
-    external: first!.publicCatalog ?? [],
+    external: first.publicCatalog ?? [],
   })
 }
 
@@ -182,11 +202,13 @@ async function computedView(call: DecisionViewCall): Promise<DecisionViewResult>
   try {
     const parts = await reader.viewParts(inputOf(call.filters))
     const set = readCandidateSet(db.db, fixture.projectDirectory)
-    const sourceDates = readSourceDates(db.db, fixture.projectDirectory)
+    const stamps = readSourceStamps(db.db, fixture.projectDirectory)
+    const sourceDates = sourceDatesOf(stamps)
+    const sources = readSourceSummaries(db.db, fixture.projectDirectory, stamps)
     const priceSources = priceInputs().policy.sources
-    const identity = decisionViewIdentity({ parts, set, call, priceSources, sourceDates })
+    const identity = decisionViewIdentity({ parts, set, call, priceSources, stamps })
     if (identity === call.known) return { unchanged: true, identity }
-    return buildDecisionView({ parts, set, call, priceSources, sourceDates, identity })
+    return buildDecisionView({ parts, set, call, priceSources, sourceDates, sources, identity })
   } finally {
     db.release()
   }
@@ -209,7 +231,7 @@ function storeView(filters: ModelDecisionFilters, basis: string | null, rows: De
 }
 
 async function walk(
-  source: { columns: Record<string, unknown> },
+  source: { columns: Record<string, unknown>; detail?: Record<string, unknown> },
   filter: unknown,
   order: string,
   window: number,
@@ -221,7 +243,11 @@ async function walk(
     for (const row of stream.items as Record<string, unknown>[])
       seen.set(
         row.id as number,
-        Object.fromEntries(Object.keys(source.columns).map((column) => [column, row[column]])),
+        Object.fromEntries(
+          Object.keys({ ...source.columns, ...(window === 1 ? source.detail : {}) }).map(
+            (column) => [column, row[column]],
+          ),
+        ),
       )
   }
   take()
@@ -264,6 +290,7 @@ test("catalog parity: models.catalog for each persona × task kind equals buildC
 
 test("points/contributors parity: equal overview.graph.points and inspect contributor pages", async () => {
   let plotted = 0
+  let priced = 0
   let contributed = 0
   for (const filters of FILTERS) {
     const input = inputOf(filters)
@@ -283,13 +310,51 @@ test("points/contributors parity: equal overview.graph.points and inspect contri
     const frontier = new Set(overview.graph.frontierConfigurationIDs)
     for (const row of points)
       expect(row.frontier).toBe(frontier.has(row.configuration_id as string))
+    // What the panel drew from the overview, the paged candidates and the live catalog names.
+    const { candidates } = panelCandidates()
+    const references = chartReferences(overview.graph, candidates, nativeNames)
+    const chart = chartPoints(overview, references, candidates, nativeNames)
+    expect(points.filter((row) => row.chart !== null).map((row) => row.chart)).toEqual(
+      JSON.parse(JSON.stringify(chart)) as unknown[],
+    )
+    expect(
+      points.filter((row) => row.chart_reference !== null).map((row) => row.chart_reference),
+    ).toEqual(JSON.parse(JSON.stringify(references)) as unknown[])
+    priced += chart.filter((point) => point.currentMarketUSDPerAcceptedTask > 0).length
 
     const configurations = await reader.configurations({
       ...input,
       snapshotID: overview.context.snapshotID,
       limit: 100,
     })
+    const displayRoutes = [
+      ...configurations.configurations.map((item) => ({ ...item.route, variant: null })),
+      ...(overview.graph.referenceEstimates ?? []).map((item) => ({
+        ...item.estimate.route,
+        variant: null,
+      })),
+    ]
     for (const configuration of configurations.configurations) {
+      const row = points.find((item) => item.configuration_id === configuration.configurationID)
+      expect(row?.display_label).toBe(
+        modelDisplayLabel(configuration.route, displayRoutes, candidates, nativeNames),
+      )
+      expect(row?.group_id).toBe(configuration.groupID)
+      const found = (await reader.inspect({
+        ...input,
+        snapshotID: overview.context.snapshotID,
+        configurationID: configuration.configurationID,
+        selectedTaskID: null,
+        contributorLimit: 1,
+      })) as Extract<ModelDecisionInspect, { status: "found" }>
+      const {
+        status: _status,
+        context: _context,
+        selectedTaskID: _selected,
+        contributorPage: _page,
+        ...facts
+      } = found
+      expect(row?.inspection).toEqual(JSON.parse(JSON.stringify(facts)) as unknown)
       const inspected: unknown[] = []
       let cursor: string | undefined
       do {
@@ -313,12 +378,76 @@ test("points/contributors parity: equal overview.graph.points and inspect contri
       expect(stored.map((row) => row.detail)).toEqual(inspected)
       contributed += inspected.length
     }
-    // Graph points and reference estimates: the fixture's partial usage gives references only.
     plotted += overview.graph.points.length
     plotted += overview.graph.referenceEstimates?.length ?? 0
   }
   expect(plotted).toBeGreaterThan(0)
+  // Priced graph points: their values, not only order and frontier, are compared above.
+  expect(priced).toBeGreaterThan(0)
   expect(contributed).toBeGreaterThan(2)
+})
+
+test("benchmark and sources parity: equal benchmarkBaseline, scoreOptions and the comparison's sources", async () => {
+  const { candidates, first } = panelCandidates()
+  const date = (name: string) =>
+    first.sources.find((entry) => entry.source === name)?.snapshot?.retrievedAt ?? null
+  let compared = 0
+  for (const filters of FILTERS)
+    for (const basis of [null, "swe-bench-verified"]) {
+      const input = inputOf(filters)
+      const overview = await reader.overview(input)
+      const configurations = await reader.configurations({
+        ...input,
+        snapshotID: overview.context.snapshotID,
+        limit: 100,
+      })
+      const references = chartReferences(overview.graph, candidates, nativeNames)
+      const label = modelDisplayLabeler(
+        candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
+        candidates,
+        nativeNames,
+      )
+      const expected = benchmarkBaseline({
+        candidates,
+        priceSources: priceInputs().policy.sources,
+        sourceDates: {
+          openrouter: date("openrouter-models"),
+          opencode: date("native-catalog"),
+          modelsDev: date("models-dev"),
+        },
+        observedRoutes: new Set([
+          ...configurations.configurations.map((item) => routeKey(item.route)),
+          ...references.map((item) => routeKey(item.estimate.route)),
+        ]),
+        preferredBasis: basis,
+        external: first.publicCatalog ?? [],
+        label: (route) => label({ ...route, variant: null }),
+      })
+      const rows = await computedView({ filters, basis, taskID: null, routed, known: null })
+      if ("unchanged" in rows) throw new Error("expected rows")
+      const { viewID } = storeView(filters, basis, rows)
+      const streamed = await walk(modelBenchmarkSource, scope(viewID), "chart", 5)
+      expect(streamed.map((row) => row.detail)).toEqual(
+        JSON.parse(JSON.stringify([...expected.points, ...expected.gaps])) as unknown[],
+      )
+      const [view] = await walk(modelViewSource, scope(viewID), "key", 1)
+      expect(view?.benchmark).toEqual(
+        JSON.parse(
+          JSON.stringify({
+            scoreBasis: expected.scoreBasis,
+            scoreOptions: scoreOptions(candidates, first.publicCatalog ?? []),
+            unmatchedRoutes: expected.unmatchedRoutes,
+            ambiguousRoutes: expected.ambiguousRoutes,
+            priceSources: expected.priceSources,
+            publicCoverage: first.publicCoverage ?? null,
+            catalogRoutes: new Set(candidates.map((item) => routeKey(item.identity))).size,
+          }),
+        ) as unknown,
+      )
+      expect(view?.sources).toEqual(JSON.parse(JSON.stringify(first.sources)) as unknown)
+      compared += expected.points.length + expected.gaps.length
+    }
+  expect(compared).toBeGreaterThan(0)
 })
 
 test("missing price: a catalog entry no configured source prices has no price and no price source", async () => {

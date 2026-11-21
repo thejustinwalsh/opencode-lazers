@@ -10,11 +10,13 @@ import {
   modelCandidateDetail,
   modelCatalogColumns,
   modelAssignmentColumns,
+  modelBenchmarkColumns,
   modelContributorColumns,
   modelPointColumns,
   modelViewColumns,
   modelViewDetail,
   type ModelAssignmentsFilter,
+  type ModelBenchmarkFilter,
   type ModelCandidatesFilter,
   type ModelCatalogFilter,
   type ModelContributorsFilter,
@@ -70,6 +72,10 @@ export const modelCandidatesSource = defineSource({
     if (input.providerID !== undefined) {
       clauses.push("model_candidates.provider_id = ?")
       params.push(input.providerID)
+    }
+    if (input.modelID !== undefined) {
+      clauses.push("model_candidates.model_id = ?")
+      params.push(input.modelID)
     }
     return { where: clauses.join(" AND "), params }
   },
@@ -163,6 +169,28 @@ export const modelPointsSource = defineSource({
   columns: modelPointColumns,
 })
 
+/** The Benchmark chart's models: scored and priced points first, then the gaps. */
+export const modelBenchmarkSource = defineSource({
+  name: MODELS_SOURCES.benchmark,
+  table: "model_benchmark_points",
+  key: ["id"],
+  orders: {
+    chart: [
+      { column: "ord", direction: "asc" },
+      { column: "id", direction: "asc" },
+    ],
+  },
+  count: { exact: "scan" },
+  authorize(input: ModelBenchmarkFilter, context) {
+    return viewScoped(input, context, "lz-read-model-comparison")
+  },
+  release: viewReleased,
+  filter(input: ModelBenchmarkFilter) {
+    return { where: "model_benchmark_points.view_id = ?", params: [viewID(input)] }
+  },
+  columns: modelBenchmarkColumns,
+})
+
 /** One configuration's contributors (the pane), in the inspection's order. */
 export const modelContributorsSource = defineSource({
   name: MODELS_SOURCES.contributors,
@@ -179,11 +207,20 @@ export const modelContributorsSource = defineSource({
   },
   release: viewReleased,
   filter(input: ModelContributorsFilter) {
-    return {
-      where:
-        "model_decision_contributors.view_id = ? AND model_decision_contributors.configuration_id = ?",
-      params: [viewID(input), input.configurationID],
+    const clauses = [
+      "model_decision_contributors.view_id = ?",
+      "model_decision_contributors.configuration_id = ?",
+    ]
+    const params: (string | number)[] = [viewID(input), input.configurationID]
+    if (input.taskID !== undefined) {
+      clauses.push("model_decision_contributors.task_id = ?")
+      params.push(input.taskID)
     }
+    if (input.exceptTaskID !== undefined) {
+      clauses.push("model_decision_contributors.task_id <> ?")
+      params.push(input.exceptTaskID)
+    }
+    return { where: clauses.join(" AND "), params }
   },
   columns: modelContributorColumns,
 })

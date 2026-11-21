@@ -1,15 +1,24 @@
 import type { Database } from "bun:sqlite"
 import { z } from "zod"
-import type { BenchmarkRoute, BenchmarkSourceDates } from "./benchmark-baseline.ts"
-import { catalogFor } from "./catalog-inputs.ts"
+import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
+import type {
+  BenchmarkBaselineGap,
+  BenchmarkBaselinePoint,
+  BenchmarkRoute,
+  BenchmarkSourceDates,
+} from "./benchmark-baseline.ts"
+import { catalogFor, chartPoints, chartReferences, modelDisplayLabeler } from "./catalog-inputs.ts"
+import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
 import { entryCost } from "./catalog-projection.ts"
 import type { CatalogEntry, CatalogSummary } from "./catalog-projection.ts"
-import type { PublicCatalogItem } from "./comparison-schema.ts"
+import type { ModelComparisonOutput, PublicCatalogItem } from "./comparison-schema.ts"
 import type { ModelCandidate } from "./comparison-presentation.ts"
 import { ModelDecisionReadInputSchema } from "./decision-contract.ts"
 import type { ModelDecisionFilters } from "./decision-contract.ts"
-import type { DecisionViewParts } from "./decision-read.ts"
+import type { DecisionInspectionFacts, DecisionViewParts } from "./decision-read.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
+import { scoreOptions, type ScoreBasis, type ScoreOption } from "./public-score.ts"
+import { ModelEvidenceSnapshotSummarySchema } from "./source-schema.ts"
 import { readComparisonSourcesFrom } from "./source-store.ts"
 
 /**
@@ -64,6 +73,11 @@ export type DecisionViewEntryRow = {
   detail: CatalogEntry
 }
 
+/**
+ * One configuration of the view: a graph point, a reference estimate, both, or neither (a
+ * configuration with no accepted task and no published reference), with what the chart draws for
+ * it, its display label and what its inspection says (less the contributors, stored apart).
+ */
 export type DecisionViewPointRow = {
   ord: number
   referenceOrd: number | null
@@ -75,6 +89,38 @@ export type DecisionViewPointRow = {
   point: DecisionViewParts["overview"]["graph"]["points"][number] | null
   reference:
     NonNullable<DecisionViewParts["overview"]["graph"]["referenceEstimates"]>[number] | null
+  groupID: string
+  /** The model's full display label among the view's configurations and references. */
+  displayLabel: string
+  chart: ComparisonChartPoint | null
+  chartReference: ComparisonChartReference | null
+  inspection: DecisionInspectionFacts
+}
+
+/** A Benchmark chart row: a scored, priced model (`point`) or one left off it (`gap`). */
+export type DecisionViewBenchmarkRow = {
+  ord: number
+  key: string
+  kind: "point" | "gap"
+  label: string
+  score: number | null
+  observed: boolean
+  detail: BenchmarkBaselinePoint | BenchmarkBaselineGap
+}
+
+/** The comparison's source snapshots and refresh states (record-free summaries). */
+export type DecisionViewSource = ModelComparisonOutput["sources"][number]
+
+/** What the Benchmark view and the score picker show beside the rows. */
+export type DecisionViewBenchmark = {
+  scoreBasis: ScoreBasis
+  scoreOptions: ScoreOption[]
+  unmatchedRoutes: number
+  ambiguousRoutes: number
+  priceSources: ModelPriceSource[]
+  publicCoverage: ModelComparisonOutput["publicCoverage"] | null
+  /** Distinct catalog routes (provider and model) of the candidates. */
+  catalogRoutes: number
 }
 
 export type DecisionViewContributorRow = {
@@ -96,6 +142,9 @@ export type DecisionViewRows = {
   entries: DecisionViewEntryRow[]
   points: DecisionViewPointRow[]
   contributors: DecisionViewContributorRow[]
+  sources: DecisionViewSource[]
+  benchmark: DecisionViewBenchmark
+  benchmarkRows: DecisionViewBenchmarkRow[]
 }
 
 export type DecisionViewResult = { unchanged: true; identity: string } | DecisionViewRows
@@ -105,6 +154,7 @@ export type CandidateSet = {
   snapshotSet: string
   candidates: ModelCandidate[]
   external: PublicCatalogItem[]
+  publicCoverage: ModelComparisonOutput["publicCoverage"] | null
 }
 
 /** Candidate rows read per page: a unit of work for the worker's read-only connection. */
@@ -113,8 +163,9 @@ const CANDIDATE_PAGE_ROWS = 500
 /** The project's candidates in the comparison order, or null before their first build. */
 export function readCandidateSet(db: Database, projectDirectory: string): CandidateSet | null {
   const set = db
-    .query<{ snapshot_set: string; public_catalog: string }, [string]>(
-      "SELECT snapshot_set,public_catalog FROM model_candidate_sets WHERE project_directory=?",
+    .query<{ snapshot_set: string; public_catalog: string; public_coverage: string }, [string]>(
+      `SELECT snapshot_set,public_catalog,public_coverage FROM model_candidate_sets
+       WHERE project_directory=?`,
     )
     .get(projectDirectory)
   if (!set) return null
@@ -147,15 +198,21 @@ export function readCandidateSet(db: Database, projectDirectory: string): Candid
     snapshotSet: set.snapshot_set,
     candidates,
     external: JSON.parse(set.public_catalog) as PublicCatalogItem[],
+    publicCoverage: JSON.parse(set.public_coverage) as CandidateSet["publicCoverage"],
   }
 }
 
+/**
+ * The comparison's sources as stamps: which snapshot each source selects and its refresh state,
+ * with no body read. A view's identity covers them, so a refresh that moves a state rewrites it.
+ */
+export function readSourceStamps(db: Database, projectDirectory: string) {
+  return readComparisonSourcesFrom(db, projectDirectory, undefined, { stampOnly: true })
+}
+export type SourceStamps = ReturnType<typeof readSourceStamps>
+
 /** The retrieval dates the catalog's price provenance carries, from the sources' stamps. */
-export function readSourceDates(db: Database, projectDirectory: string): BenchmarkSourceDates {
-  const stamps = readComparisonSourcesFrom(db, projectDirectory, undefined, {
-    stampOnly: true,
-    sources: ["native-catalog", "openrouter-models", "models-dev"],
-  })
+export function sourceDatesOf(stamps: SourceStamps): BenchmarkSourceDates {
   const date = (source: string) => {
     const read = stamps.find((item) => item.source === source)
     return read?.snapshotState === "available" ? (read.stamp?.retrievedAt ?? null) : null
@@ -167,12 +224,47 @@ export function readSourceDates(db: Database, projectDirectory: string): Benchma
   }
 }
 
+/**
+ * The record-free summary of each source, as the comparison read reported it. SQLite drops the
+ * records in the worker (`json_remove`); measured on the live database (2026-11-21): five bodies of
+ * about 0.93 MB each, under 20 ms in all, and no record reaches JavaScript.
+ */
+export function readSourceSummaries(
+  db: Database,
+  projectDirectory: string,
+  stamps: SourceStamps,
+): DecisionViewSource[] {
+  const meta = db.query<{ meta: string }, [string, string]>(
+    `SELECT json_remove(body,'$.records') AS meta FROM model_evidence_snapshots
+     WHERE project_directory=? AND snapshot_id=?`,
+  )
+  return stamps.map((read) => {
+    const found =
+      read.snapshotState === "available" && read.snapshotID && read.stamp
+        ? meta.get(projectDirectory, read.snapshotID)
+        : null
+    return {
+      source: read.source,
+      storage: read.storage,
+      snapshotState: read.snapshotState,
+      selectedSnapshotID: read.snapshotID,
+      refresh: read.refresh,
+      snapshot: found
+        ? ModelEvidenceSnapshotSummarySchema.parse({
+            ...(JSON.parse(found.meta) as object),
+            recordCount: read.stamp!.recordCount,
+          })
+        : null,
+    }
+  })
+}
+
 export function decisionViewIdentity(input: {
   parts: Pick<DecisionViewParts, "sourceRevision" | "priceIdentity">
   set: CandidateSet | null
   call: DecisionViewCall
   priceSources: readonly ModelPriceSource[]
-  sourceDates: BenchmarkSourceDates
+  stamps: SourceStamps
 }) {
   return Bun.hash(
     JSON.stringify([
@@ -183,7 +275,7 @@ export function decisionViewIdentity(input: {
       input.call.basis,
       input.call.routed,
       input.priceSources,
-      input.sourceDates,
+      input.stamps.map((read) => [read.source, read.snapshotID, read.refresh, read.storage]),
     ]),
   ).toString(36)
 }
@@ -195,11 +287,14 @@ export function buildDecisionView(input: {
   call: DecisionViewCall
   priceSources: readonly ModelPriceSource[]
   sourceDates: BenchmarkSourceDates
+  sources: DecisionViewSource[]
   identity: string
 }): DecisionViewRows {
   const { overview } = input.parts
+  const candidates = input.set?.candidates ?? []
+  const external = input.set?.external ?? []
   const catalog = catalogFor({
-    candidates: input.set?.candidates ?? [],
+    candidates,
     // The native catalog's names are the candidates' own: the same `model.list` records.
     catalog: [],
     overview,
@@ -207,7 +302,7 @@ export function buildDecisionView(input: {
     sourceDates: input.sourceDates,
     routed: input.call.routed,
     preferredBasis: input.call.basis,
-    external: input.set?.external ?? [],
+    external,
   })
   const entries = catalog.entries.map((entry, rank): DecisionViewEntryRow => ({
     rank,
@@ -226,35 +321,85 @@ export function buildDecisionView(input: {
   const frontier = new Set(overview.graph.frontierConfigurationIDs)
   const references = overview.graph.referenceEstimates ?? []
   const referenceAt = new Map(references.map((item, index) => [item.configurationID, index]))
-  const points: DecisionViewPointRow[] = overview.graph.points.map((point, ord) => {
-    const at = referenceAt.get(point.configurationID)
-    return {
-      ord,
-      referenceOrd: at ?? null,
-      configurationID: point.configurationID,
-      label: point.label,
-      x: point.tokensPerAcceptedTask,
-      y: point.currentMarketUSDPerAcceptedTask,
-      frontier: frontier.has(point.configurationID),
-      point,
-      reference: at === undefined ? null : references[at]!,
-    }
-  })
-  const plotted = new Set(overview.graph.points.map((point) => point.configurationID))
-  references.forEach((reference, index) => {
-    if (plotted.has(reference.configurationID)) return
+  // What the chart draws: the panel's own chart inputs, labelled from the candidates' names.
+  const chartRefs = chartReferences(overview.graph, candidates, [])
+  const chartRefByID = new Map(chartRefs.map((item) => [item.configurationID, item]))
+  const chartByID = new Map(
+    chartPoints(overview, chartRefs, candidates, []).map((item) => [item.configurationID, item]),
+  )
+  const facts = new Map(
+    input.parts.inspections.map((item) => [item.configuration.configurationID, item]),
+  )
+  // A configuration's full label among every configuration and reference of the view.
+  const displayLabel = modelDisplayLabeler(
+    [
+      ...input.parts.inspections.map((item) => ({ ...item.configuration.route, variant: null })),
+      ...references.map((item) => ({ ...item.estimate.route, variant: null })),
+    ],
+    candidates,
+    [],
+  )
+  const order = [
+    ...overview.graph.points.map((point) => point.configurationID),
+    ...references.map((reference) => reference.configurationID),
+    ...input.parts.inspections.map((item) => item.configuration.configurationID),
+  ]
+  const pointByID = new Map(overview.graph.points.map((point) => [point.configurationID, point]))
+  const points: DecisionViewPointRow[] = []
+  for (const configurationID of new Set(order)) {
+    const inspection = facts.get(configurationID)
+    // Every graph point and reference is a snapshot row; one without facts is not inspectable.
+    if (!inspection) continue
+    const point = pointByID.get(configurationID) ?? null
+    const at = referenceAt.get(configurationID)
+    const reference = at === undefined ? null : references[at]!
     points.push({
       ord: points.length,
-      referenceOrd: index,
-      configurationID: reference.configurationID,
-      label: reference.label ?? null,
-      x: reference.tokensPerAcceptedTask ?? null,
-      y: null,
-      frontier: frontier.has(reference.configurationID),
-      point: null,
+      referenceOrd: at ?? null,
+      configurationID,
+      label: point?.label ?? reference?.label ?? null,
+      x: point ? point.tokensPerAcceptedTask : (reference?.tokensPerAcceptedTask ?? null),
+      y: point ? point.currentMarketUSDPerAcceptedTask : null,
+      frontier: frontier.has(configurationID),
+      point,
       reference,
+      groupID: inspection.configuration.groupID,
+      displayLabel: displayLabel(inspection.configuration.route),
+      chart: chartByID.get(configurationID) ?? null,
+      chartReference: chartRefByID.get(configurationID) ?? null,
+      inspection,
     })
+  }
+  // The Benchmark view: public score against list price, one point per model.
+  const label = modelDisplayLabeler(
+    candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
+    candidates,
+    [],
+  )
+  const baseline = benchmarkBaseline({
+    candidates,
+    priceSources: input.priceSources,
+    sourceDates: input.sourceDates,
+    observedRoutes: new Set([
+      ...input.parts.inspections.map((item) => routeKey(item.configuration.route)),
+      ...chartRefs.map((reference) => routeKey(reference.estimate.route)),
+    ]),
+    preferredBasis: input.call.basis,
+    external,
+    label: (route) => label({ ...route, variant: null }),
   })
+  const benchmarkRows: DecisionViewBenchmarkRow[] = [
+    ...baseline.points.map((point) => ({ kind: "point" as const, detail: point })),
+    ...baseline.gaps.map((gap) => ({ kind: "gap" as const, detail: gap })),
+  ].map(({ kind, detail }, ord) => ({
+    ord,
+    key: `${kind}\u0000${detail.id}`,
+    kind,
+    label: detail.label,
+    score: detail.benchmark.codingIndex,
+    observed: "observed" in detail ? detail.observed : false,
+    detail,
+  }))
   const contributors = input.parts.contributors.flatMap(({ configurationID, contributors: list }) =>
     list.map((detail, ord) => ({ configurationID, ord, taskID: detail.taskID, detail })),
   )
@@ -272,5 +417,16 @@ export function buildDecisionView(input: {
     entries,
     points,
     contributors,
+    sources: input.sources,
+    benchmark: {
+      scoreBasis: baseline.scoreBasis,
+      scoreOptions: scoreOptions(candidates, external),
+      unmatchedRoutes: baseline.unmatchedRoutes,
+      ambiguousRoutes: baseline.ambiguousRoutes,
+      priceSources: baseline.priceSources,
+      publicCoverage: input.set?.publicCoverage ?? null,
+      catalogRoutes: new Set(candidates.map((candidate) => routeKey(candidate.identity))).size,
+    },
+    benchmarkRows,
   }
 }

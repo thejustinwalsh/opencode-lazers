@@ -1691,7 +1691,41 @@ export type DecisionViewParts = {
   sourceRevision: number | null
   priceIdentity: string
   contributors: Array<{ configurationID: string; contributors: ModelDecisionContributor[] }>
+  /** Every configuration's inspection facts, in the snapshot's row order. */
+  inspections: DecisionInspectionFacts[]
 }
+
+/**
+ * What an inspection says about one configuration, less its context, selection and contributor
+ * page: stored per configuration by a decision view (`decision-view.ts`).
+ */
+function inspectionFacts(snapshot: DecisionSnapshot, row: DecisionSnapshot["rows"][number]) {
+  const configKey = routeID(row.configuration.route)!
+  return {
+    configuration: row.configuration,
+    cohort: row.cohort,
+    efficiency: row.efficiency,
+    nativeReportedCost: row.nativeReportedCost,
+    referenceEstimate: row.referenceEstimate,
+    estimate: snapshot.estimates.get(configKey) ?? {
+      status: "zero-accepted",
+      basis: "no-successful-task-efficiency",
+      observationCount: 0,
+      range: { tokens: null, currentMarketUSD: null },
+      confidenceInterval: null,
+      historyScope: {
+        completeness: "complete-accepted-logical-task-retry-history",
+        routeScope: "unknown",
+      },
+    },
+    knownUsageMarket: snapshot.knownUsageMarkets.get(configKey),
+    ...(snapshot.medianAcceptedDurationMs.has(configKey)
+      ? { medianAcceptedDurationMs: snapshot.medianAcceptedDurationMs.get(configKey)! }
+      : {}),
+  }
+}
+
+export type DecisionInspectionFacts = ReturnType<typeof inspectionFacts>
 
 function inspection(
   snapshot: DecisionSnapshot,
@@ -1727,27 +1761,8 @@ function inspection(
   return ModelDecisionInspectOutputSchema.parse({
     status: "found",
     context: snapshot.context,
-    configuration: row.configuration,
-    cohort: row.cohort,
-    efficiency: row.efficiency,
-    nativeReportedCost: row.nativeReportedCost,
     selectedTaskID: input.selectedTaskID,
-    referenceEstimate: row.referenceEstimate,
-    estimate: snapshot.estimates.get(configKey) ?? {
-      status: "zero-accepted",
-      basis: "no-successful-task-efficiency",
-      observationCount: 0,
-      range: { tokens: null, currentMarketUSD: null },
-      confidenceInterval: null,
-      historyScope: {
-        completeness: "complete-accepted-logical-task-retry-history",
-        routeScope: "unknown",
-      },
-    },
-    knownUsageMarket: snapshot.knownUsageMarkets.get(configKey),
-    ...(snapshot.medianAcceptedDurationMs.has(configKey)
-      ? { medianAcceptedDurationMs: snapshot.medianAcceptedDurationMs.get(configKey)! }
-      : {}),
+    ...inspectionFacts(snapshot, row),
     contributorPage: {
       contributors: page(contributors, offset, input.contributorLimit),
       totalCount: contributors.length,
@@ -1955,6 +1970,7 @@ export function createModelDecisionReader(
           configurationID: row.configuration.configurationID,
           contributors: contributorsInOrder(snapshot, routeID(row.configuration.route)!, null),
         })),
+        inspections: snapshot.rows.map((row) => inspectionFacts(snapshot, row)),
       }
     },
     async overview(input, options) {

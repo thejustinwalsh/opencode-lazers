@@ -26,8 +26,9 @@ const TABLES_SQL = `
     request TEXT NOT NULL,
     state TEXT NOT NULL,
     identity TEXT, revision INTEGER, price_identity TEXT, snapshot_id TEXT,
-    context TEXT, counts TEXT, summary TEXT,
+    context TEXT, counts TEXT, summary TEXT, sources TEXT, benchmark TEXT,
     entry_count INTEGER NOT NULL DEFAULT 0, point_count INTEGER NOT NULL DEFAULT 0,
+    benchmark_count INTEGER NOT NULL DEFAULT 0,
     produced_at INTEGER, last_read_at INTEGER NOT NULL, last_error TEXT,
     UNIQUE(project_directory, filter_key)
   );
@@ -45,6 +46,8 @@ const TABLES_SQL = `
     id INTEGER PRIMARY KEY, view_id INTEGER NOT NULL,
     ord INTEGER NOT NULL, reference_ord INTEGER, configuration_id TEXT NOT NULL, label TEXT,
     x REAL, y REAL, frontier INTEGER NOT NULL, point TEXT, reference TEXT,
+    group_id TEXT NOT NULL, display_label TEXT NOT NULL, chart TEXT, chart_reference TEXT,
+    inspection TEXT NOT NULL,
     digest TEXT NOT NULL,
     UNIQUE(view_id, configuration_id)
   );
@@ -55,12 +58,21 @@ const TABLES_SQL = `
     digest TEXT NOT NULL, detail TEXT NOT NULL,
     UNIQUE(view_id, configuration_id, ord)
   );
+  CREATE TABLE model_benchmark_points (
+    id INTEGER PRIMARY KEY, view_id INTEGER NOT NULL,
+    ord INTEGER NOT NULL, entry_key TEXT NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL,
+    score REAL, observed INTEGER NOT NULL,
+    digest TEXT NOT NULL, detail TEXT NOT NULL,
+    UNIQUE(view_id, entry_key)
+  );
+  CREATE INDEX model_benchmark_points_order ON model_benchmark_points(view_id, ord, id);
 `
 const TABLES = [
   "model_decision_views",
   "model_catalog_entries",
   "model_decision_points",
   "model_decision_contributors",
+  "model_benchmark_points",
 ] as const
 
 function installDecisionViewSchema(db: Database) {
@@ -235,6 +247,23 @@ export function writeDecisionView(
       bool(point.frontier),
       json(point.point),
       json(point.reference),
+      point.groupID,
+      point.displayLabel,
+      json(point.chart),
+      json(point.chartReference),
+      JSON.stringify(point.inspection),
+    ],
+  }))
+  const benchmarkRows: Upsert[] = rows.benchmarkRows.map((row) => ({
+    key: [row.key],
+    digest: digestOf(row),
+    values: [
+      row.ord,
+      row.kind,
+      row.label,
+      row.score,
+      bool(row.observed),
+      JSON.stringify(row.detail),
     ],
   }))
   const pages = <T>(items: readonly T[]) => {
@@ -256,7 +285,21 @@ export function writeDecisionView(
     "price_source",
     "detail",
   ]
-  const pointColumns = ["ord", "reference_ord", "label", "x", "y", "frontier", "point", "reference"]
+  const pointColumns = [
+    "ord",
+    "reference_ord",
+    "label",
+    "x",
+    "y",
+    "frontier",
+    "point",
+    "reference",
+    "group_id",
+    "display_label",
+    "chart",
+    "chart_reference",
+    "inspection",
+  ]
   for (const [index, page] of pages(entries).entries())
     run(() => {
       result.written += upsertRows(
@@ -292,6 +335,24 @@ export function writeDecisionView(
                AND configuration_id NOT IN (SELECT value FROM json_each(?))`,
           )
           .run(viewID, JSON.stringify(rows.points.map((point) => point.configurationID))).changes
+    })
+  for (const [index, page] of pages(benchmarkRows).entries())
+    run(() => {
+      result.written += upsertRows(
+        db,
+        "model_benchmark_points",
+        ["entry_key"],
+        ["ord", "kind", "label", "score", "observed", "detail"],
+        viewID,
+        page,
+      )
+      if (index === 0)
+        result.deleted += db
+          .query(
+            `DELETE FROM model_benchmark_points WHERE view_id=?
+               AND entry_key NOT IN (SELECT value FROM json_each(?))`,
+          )
+          .run(viewID, JSON.stringify(rows.benchmarkRows.map((row) => row.key))).changes
     })
   // Contributors: whole configurations per page, each with the removal of its surplus rows.
   const byConfiguration = Map.groupBy(rows.contributors, (row) => row.configurationID)
@@ -343,7 +404,8 @@ export function writeDecisionView(
     if (!current) return
     db.query(
       `UPDATE model_decision_views SET state=?,identity=?,revision=?,price_identity=?,snapshot_id=?,
-         context=?,counts=?,summary=?,entry_count=?,point_count=?,produced_at=?,last_error=NULL
+         context=?,counts=?,summary=?,sources=?,benchmark=?,entry_count=?,point_count=?,
+         benchmark_count=?,produced_at=?,last_error=NULL
        WHERE id=?`,
     ).run(
       lifecycleTransition("projection", current.state, "ready"),
@@ -354,8 +416,11 @@ export function writeDecisionView(
       JSON.stringify(rows.context),
       JSON.stringify(rows.counts),
       JSON.stringify(rows.summary),
+      JSON.stringify(rows.sources),
+      JSON.stringify(rows.benchmark),
       rows.entries.length,
       rows.points.length,
+      rows.benchmarkRows.length,
       now,
       viewID,
     )
