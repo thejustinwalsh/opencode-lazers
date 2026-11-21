@@ -45,7 +45,7 @@ async function fixture() {
   // Resolved with this service's defaults: new ones per fixture, as a new service would bring.
   const defaults: ProjectsDefaults = {
     project: { spendCeilingTokens: 5000 },
-    global: { historyCacheMB: 64 + ++fixtures },
+    global: { agingMs: 600_000 + ++fixtures },
   }
   setProjectOverviewDefaults(a, defaults)
   const keys: string[] = []

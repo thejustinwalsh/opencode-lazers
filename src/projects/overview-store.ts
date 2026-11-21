@@ -140,8 +140,7 @@ export type ProjectsDefaults = {
 /** The plugin-option defaults of settings never set, from the plugin options. */
 export function projectsDefaultsOf(options: Record<string, unknown>): ProjectsDefaults {
   return {
-    global:
-      typeof options.historyCacheMB === "number" ? { historyCacheMB: options.historyCacheMB } : {},
+    global: {},
     project:
       typeof options.workerSpendCeilingTokens === "number" && options.workerSpendCeilingTokens > 0
         ? { spendCeilingTokens: options.workerSpendCeilingTokens }

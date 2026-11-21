@@ -31,7 +31,6 @@ test("built-in defaults apply when nothing is stored or passed", () => {
   expect(globalSettings(repo)).toMatchObject({
     globalSlots: null,
     agingMs: 600_000,
-    historyCacheMB: 128,
   })
   expect(projectSettings(repo, "k")).toMatchObject({
     limit: null,
@@ -42,12 +41,12 @@ test("built-in defaults apply when nothing is stored or passed", () => {
 
 test("a stored value wins over a passed default; clearing falls back to the default", () => {
   const repo = repository()
-  expect(globalSettings(repo, { historyCacheMB: 64 }).historyCacheMB).toBe(64)
-  setGlobalSetting(repo, "historyCacheMB", 256)
-  expect(globalSettings(repo, { historyCacheMB: 64 }).historyCacheMB).toBe(256)
-  setGlobalSetting(repo, "historyCacheMB", undefined)
-  expect(globalSettings(repo, { historyCacheMB: 64 }).historyCacheMB).toBe(64)
-  expect(globalSettings(repo).historyCacheMB).toBe(128)
+  expect(globalSettings(repo, { agingMs: 64 }).agingMs).toBe(64)
+  setGlobalSetting(repo, "agingMs", 256)
+  expect(globalSettings(repo, { agingMs: 64 }).agingMs).toBe(256)
+  setGlobalSetting(repo, "agingMs", undefined)
+  expect(globalSettings(repo, { agingMs: 64 }).agingMs).toBe(64)
+  expect(globalSettings(repo).agingMs).toBe(600_000)
   setProjectSetting(repo, "k", "spendCeilingTokens", 5_000)
   expect(projectSettings(repo, "k", { spendCeilingTokens: 9_000 }).spendCeilingTokens).toBe(5_000)
   setProjectSetting(repo, "k", "spendCeilingTokens", undefined)
@@ -69,7 +68,6 @@ test("project settings of one key do not leak to another or to global", () => {
   expect(globalSettings(repo)).toMatchObject({
     globalSlots: null,
     agingMs: 600_000,
-    historyCacheMB: 128,
   })
 })
 
@@ -88,7 +86,7 @@ test("invalid values are refused and leave the stored value", () => {
 
 test("an invalid passed default or a corrupt stored value is ignored", () => {
   const repo = repository()
-  expect(globalSettings(repo, { historyCacheMB: -5 }).historyCacheMB).toBe(128)
+  expect(globalSettings(repo, { agingMs: -5 }).agingMs).toBe(600_000)
   repo.atomic((db) =>
     db.query("INSERT INTO lazers_settings VALUES('global','agingMs','\"fast\"',0)").run(),
   )
@@ -153,7 +151,6 @@ test("a database written before structured values reads unchanged", () => {
   expect(globalSettings(repo)).toEqual({
     globalSlots: 4,
     agingMs: 1_200_000,
-    historyCacheMB: 64,
     decisionModel: { kind: "local" },
     decisionSlicer: "windows",
   })

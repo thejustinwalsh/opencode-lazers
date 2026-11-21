@@ -48,7 +48,6 @@ export function harness(
   const settings = {
     globalSlots: null,
     agingMs: 600_000,
-    historyCacheMB: 128,
     decisionModel: { kind: "local" as const },
     decisionSlicer: "windows" as const,
   }
