@@ -257,6 +257,11 @@ export const schemaModules = {
     source: "src/runner/scheduler-status.ts",
     tables: ["scheduler_project_status"],
   },
+  "host-sessions": {
+    generation: 1,
+    source: "src/host-sessions/state.ts",
+    tables: ["host_session_state", "host_session_dirty"],
+  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",

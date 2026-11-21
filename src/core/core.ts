@@ -3,6 +3,8 @@ import { taskEventsProjection } from "../events/task-events-refresh.ts"
 import { startProjection } from "../projections/owner.ts"
 import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
+import { startHostSessionFold } from "../host-sessions/fold.ts"
+import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -242,6 +244,22 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     nativeRunnerHost.messages,
   )
   const radarSessionHost = nativeRadarSessionHost(host)
+  // Live session facts for the Radar and task activity: a fold of host reads, hinted by native
+  // events and resynced by cursor on every subscription attach; idle it holds no timer.
+  const hostSessions = startHostSessionFold(
+    repository.path,
+    info.projectDirectory,
+    projectID,
+    nativeHostSessionSource(host, nativeRunnerHost),
+    {
+      events: host,
+      location: info.directory,
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS host session fold failed", { error: String(error) }),
+        ),
+    },
+  )
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
   // Sized once at load; a value set in Settings wins over the plugin option on the next load.
   const historyBytes = historyCacheBytes(
@@ -339,6 +357,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     displayBackfill.stop()
     taskEventsLease.release()
     nativeCallLease.release()
+    hostSessions.release()
     scheduleLease.release()
     await registration.dispose()
     await schedulerStatus.stop()

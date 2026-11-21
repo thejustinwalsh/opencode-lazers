@@ -752,6 +752,28 @@ transaction as `refreshProgressDisplay`; backfill 79,365 rows. Commit
 the fold), `src/observability/changes.ts` (tracker no longer owns live signals once Task 6
 lands). Tests in 1.5. Commit `feat(events): fold host session state into the database`.
 
+★ As built (`src/host-sessions/{state,fold,native}.ts`, module `host-sessions` generation 1;
+source `radar.sessions` in `src/streams/sources/host-sessions{,-ref}.ts`). Corrections:
+
+- Own directory, not `src/events/` (another lane owns it). `event-hub.ts` is unchanged: the
+  fold joins it with `joinNativeEvents` from the project core; `changes.ts` is Task 6's.
+- An event is a hint, not a fact: the fold re-reads the session (`session.get`, one call) and
+  the inbox/permission/form counts (`RunnerHost.session` without messages) only when the
+  session is busy and unknown or the event can move them. A hint created before the last read
+  began reads nothing. A read older than the stored `host_updated_at` is ignored.
+- Columns added: `agent`, `directory`, `created_at`; `updated_at` is when a shown column last
+  changed (the `recent` order), `host_updated_at` the host's stamp. No `title`: it is derived
+  from the transcript (owner decision on transcripts). Archived sessions keep their row
+  (`archived = 1`; Task 12 shows it); foreign sessions are never stored; deleted ones are.
+- Backfill: the shared owner's pages cannot await a host read, so the `projection` lifecycle
+  covers a seed (attempt and task sessions queued into `host_session_dirty`, the shared queue
+  shape, 6 pages of 200, slowest 0.6 ms) and the fold drains the queue asynchronously.
+  Every subscription attach (start and reattach) resyncs: `session.list` of the project's live
+  sessions by cursor, idle ones written from the listed record, busy ones queued, stored live
+  rows not listed queued. That, not a per-restart re-stamp, is what converges after lost events.
+- One writer: one fold per (database, project) per process; one service process per database
+  (owner decision), so the update hook sees every write.
+
 ### Task 4: Native call display and scheduler status (M)
 
 Built (see 1.2). `native_tool_call_display` (module `native-call-display` 1) and
@@ -868,7 +890,7 @@ registration edits are one line per task and merged in wave order.
 | `model-sources`             | 2 → 3      | T8     | create `model_candidates`                                               | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
 | ★ `native-call-display`     | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
 | ★ `scheduler-status`        | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
-| `host-sessions`             | new, 1     | T3     | create                                                                  | ≈260 host `get` calls, 20 per page                                                                                                                        |
+| `host-sessions`             | new, 1     | T3     | create (★ table + `host_session_dirty` queue)                           | ★ seed: 6 queue pages (slowest 0.6 ms); then one `session.get` per seeded session, async                                                                  |
 | `model-decision-projection` | 3 → 4      | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
 | `trajectory-projection`     | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
 | `model-mappings`            | 1 → 2      | T10    | create view                                                             | 1 transaction per project                                                                                                                                 |
