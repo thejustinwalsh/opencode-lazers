@@ -750,6 +750,28 @@ describe("owned Desktop boundaries", () => {
       await expect(
         resolveNativeInteraction(canonicalRoot, "different-request", "not-delivered"),
       ).rejects.toThrow("does not match")
+      const refusalMessage = "A native interaction is already pending; inspect it without replay"
+      await writeFile(
+        paths.manifest,
+        JSON.stringify({
+          ...manifestValue,
+          nativeInteraction: {
+            state: "ambiguous",
+            requestID: "refusal-request",
+            kind: "key",
+          },
+        }),
+        { mode: 0o600 },
+      )
+      await expect(
+        resolveNativeInteraction(canonicalRoot, "refusal-request", "not-delivered", refusalMessage),
+      ).resolves.toMatchObject({
+        nativeInteraction: {
+          state: "idle",
+          requestID: "refusal-request",
+          message: refusalMessage,
+        },
+      })
 
       process.env.TMPDIR = paths.tempHome
       expect(defaultBaseDirectory()).toBe(stableBase)

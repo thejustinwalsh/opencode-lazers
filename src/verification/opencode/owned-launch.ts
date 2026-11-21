@@ -1561,6 +1561,7 @@ export async function resolveNativeInteraction(
   root: string,
   requestID: string,
   outcome: "delivered" | "not-delivered",
+  message?: string,
 ): Promise<OwnedLaunchManifest> {
   const initial = await readManifest(root)
   if (
@@ -1591,7 +1592,9 @@ export async function resolveNativeInteraction(
       state: "idle",
       requestID,
       updatedAt: new Date().toISOString(),
-      message: `Resolved from the sidecar as ${outcome}; no command was replayed`,
+      message:
+        message?.slice(0, 256) ??
+        `Resolved from the sidecar as ${outcome}; no command was replayed`,
     }
     if (
       manifest.status === "cleanup-blocked" &&

@@ -340,13 +340,20 @@ describe("owned native interaction broker", () => {
       blocked: true,
       adapterID: "adapter-2",
     })
-    expect(() =>
+    expect(
       value.enqueue({
         binding,
         requestID: "bfc30312-7715-4a1a-a12f-2bb8e53f17c5",
         operation: snapshotOperation,
       }),
-    ).toThrow("ambiguous native action")
+    ).toMatchObject({
+      state: "refused",
+      refusal: {
+        delivery: "not-delivered",
+        message: "An ambiguous native action blocks further interaction",
+      },
+    })
+    expect(value.status(binding).blocked).toBe(true)
 
     const observation = {
       requestID,
@@ -448,6 +455,55 @@ describe("owned native interaction broker", () => {
         windows: [windowRef],
         capabilities: { modifiedKeys: false },
       })
+      const refusedOperation: NativeOperation = {
+        kind: "snapshot",
+        window: { ...windowRef, generation: windowRef.generation - 1 },
+      }
+      const refusedRequestID = "cf030312-7715-4a1a-a12f-2bb8e53f17c6"
+      const refusal = await call("enqueue", {
+        binding: registeredBinding,
+        requestID: refusedRequestID,
+        operation: refusedOperation,
+      })
+      const decodedRefusal =
+        await NativeInteraction.methods.enqueue.output["~standard"].validate(refusal)
+      expect("issues" in decodedRefusal).toBe(false)
+      expect(refusal).toMatchObject({
+        state: "refused",
+        refusal: {
+          requestID: refusedRequestID,
+          operation: refusedOperation,
+          delivery: "not-delivered",
+          message: "Native window reference is stale; take a fresh snapshot",
+        },
+      })
+      const refusedResult = await call("result", {
+        binding: registeredBinding,
+        requestID: refusedRequestID,
+      })
+      expect(refusedResult).toMatchObject({
+        state: "completed",
+        result: {
+          delivery: "not-delivered",
+          message: "Native window reference is stale; take a fresh snapshot",
+        },
+        refusal: {
+          requestID: refusedRequestID,
+          operation: refusedOperation,
+          delivery: "not-delivered",
+          message: "Native window reference is stale; take a fresh snapshot",
+        },
+      })
+      await expect(
+        call("enqueue", {
+          binding: registeredBinding,
+          requestID: refusedRequestID,
+          operation: { kind: "capture", window: windowRef },
+        }),
+      ).rejects.toThrow("already used for a different operation")
+      expect(
+        await call("result", { binding: registeredBinding, requestID: refusedRequestID }),
+      ).toEqual(refusedResult)
       await expect(
         call("attach", {
           ...firstAttach,
@@ -693,6 +749,58 @@ describe("owned native interaction broker", () => {
     ).toThrow("already used for a different operation")
   })
 
+  test("refuses a competing operation without replacing or dispatching the active request", () => {
+    const { value } = broker()
+    const adapterID = "adapter-1"
+    value.attach({ binding, adapterID, windows: [windowRef] })
+    const activeID = "8fc30312-7715-4a1a-a12f-2bb8e53f17c2"
+    const refusedID = "9fc30312-7715-4a1a-a12f-2bb8e53f17c3"
+    expect(value.enqueue({ binding, requestID: activeID, operation: snapshotOperation })).toEqual({
+      state: "queued",
+    })
+
+    const refusal = value.enqueue({
+      binding,
+      requestID: refusedID,
+      operation: modifiedKeyOperation,
+    })
+    expect(refusal).toMatchObject({
+      state: "refused",
+      refusal: {
+        requestID: refusedID,
+        operation: modifiedKeyOperation,
+        delivery: "not-delivered",
+        message: "A native interaction is already pending; inspect it without replay",
+      },
+    })
+    expect(value.result(binding, activeID)).toEqual({ state: "queued" })
+    expect(value.result(binding, refusedID)).toMatchObject({
+      state: "completed",
+      result: { delivery: "not-delivered" },
+      refusal: { requestID: refusedID, operation: modifiedKeyOperation },
+    })
+
+    expect(value.poll({ binding, adapterID, windows: [windowRef] })).toEqual({
+      requestID: activeID,
+      operation: snapshotOperation,
+    })
+    expect(value.poll({ binding, adapterID, windows: [windowRef] })).toBeNull()
+    value.complete({ binding, adapterID, requestID: activeID, result: deliveredResult })
+    expect(value.result(binding, refusedID)).toMatchObject({
+      result: { delivery: "not-delivered" },
+      refusal: { operation: modifiedKeyOperation },
+    })
+    expect(value.status(binding).blocked).toBe(false)
+
+    expect(
+      value.enqueue({
+        binding,
+        requestID: "afc30312-7715-4a1a-a12f-2bb8e53f17c4",
+        operation: snapshotOperation,
+      }),
+    ).toEqual({ state: "queued" })
+  })
+
   test("rejects stale window generations, hidden targets and unfocused native input", () => {
     const { value } = broker()
     value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
@@ -703,10 +811,19 @@ describe("owned native interaction broker", () => {
       snapshotID: "snapshot-1",
       elementRef: "e1",
     }
-    expect(value.enqueue({ binding, requestID, operation: stale })).toEqual({ state: "completed" })
+    expect(value.enqueue({ binding, requestID, operation: stale })).toMatchObject({
+      state: "refused",
+      refusal: {
+        requestID,
+        operation: stale,
+        delivery: "not-delivered",
+        message: expect.stringContaining("stale"),
+      },
+    })
     expect(value.result(binding, requestID)).toMatchObject({
       state: "completed",
       result: { delivery: "not-delivered", message: expect.stringContaining("stale") },
+      refusal: { requestID, operation: stale, delivery: "not-delivered" },
     })
     expect(value.poll({ binding, adapterID: "adapter-1", windows: [windowRef] })).toBeNull()
     const unfocused: NativeOperation = {
@@ -717,12 +834,18 @@ describe("owned native interaction broker", () => {
     }
     const unfocusedID = "9fc30312-7715-4a1a-a12f-2bb8e53f17c3"
     value.attach({ binding, adapterID: "adapter-1", windows: [{ ...windowRef, focused: false }] })
-    expect(value.enqueue({ binding, requestID: unfocusedID, operation: unfocused })).toEqual({
-      state: "completed",
+    expect(value.enqueue({ binding, requestID: unfocusedID, operation: unfocused })).toMatchObject({
+      state: "refused",
+      refusal: {
+        requestID: unfocusedID,
+        operation: unfocused,
+        delivery: "not-delivered",
+      },
     })
     expect(value.result(binding, unfocusedID)).toMatchObject({
       state: "completed",
       result: { delivery: "not-delivered", message: expect.stringContaining("Focus the owned") },
+      refusal: { requestID: unfocusedID, operation: unfocused, delivery: "not-delivered" },
     })
     expect(value.enqueue({ binding, requestID: unfocusedID, operation: unfocused })).toEqual({
       state: "existing",
@@ -757,13 +880,25 @@ describe("owned native interaction broker", () => {
       result: { delivery: "ambiguous", message: "Fresh observation was unavailable" },
     })
     expect(value.status(binding).blocked).toBe(true)
-    expect(() =>
-      value.enqueue({
-        binding,
+    const refused = value.enqueue({
+      binding,
+      requestID: "9fc30312-7715-4a1a-a12f-2bb8e53f17c3",
+      operation: snapshotOperation,
+    })
+    expect(refused).toMatchObject({
+      state: "refused",
+      refusal: {
         requestID: "9fc30312-7715-4a1a-a12f-2bb8e53f17c3",
         operation: snapshotOperation,
-      }),
-    ).toThrow("ambiguous native action")
+        delivery: "not-delivered",
+        message: "An ambiguous native action blocks further interaction",
+      },
+    })
+    expect(value.result(binding, "9fc30312-7715-4a1a-a12f-2bb8e53f17c3")).toMatchObject({
+      result: { delivery: "not-delivered" },
+      refusal: { operation: snapshotOperation },
+    })
+    expect(value.status(binding).blocked).toBe(true)
   })
 
   test("turns a delivered request into an ambiguous result when the adapter detaches", () => {
@@ -785,13 +920,19 @@ describe("owned native interaction broker", () => {
     value.attach({ binding, adapterID: "adapter-1", windows: [windowRef] })
     advance(2_001)
     expect(value.status(binding).ready).toBe(false)
-    expect(() =>
+    expect(
       value.enqueue({
         binding,
         requestID: "8fc30312-7715-4a1a-a12f-2bb8e53f17c2",
         operation: snapshotOperation,
       }),
-    ).toThrow("not freshly attached")
+    ).toMatchObject({
+      state: "refused",
+      refusal: {
+        delivery: "not-delivered",
+        message: "Owned Desktop native adapter is not freshly attached",
+      },
+    })
   })
 
   test("refuses modified shortcuts from a legacy adapter without delivering them", () => {
@@ -802,8 +943,14 @@ describe("owned native interaction broker", () => {
       capabilities: { modifiedKeys: false },
     })
     const requestID = "afc30312-7715-4a1a-a12f-2bb8e53f17c4"
-    expect(value.enqueue({ binding, requestID, operation: modifiedKeyOperation })).toEqual({
-      state: "completed",
+    expect(value.enqueue({ binding, requestID, operation: modifiedKeyOperation })).toMatchObject({
+      state: "refused",
+      refusal: {
+        requestID,
+        operation: modifiedKeyOperation,
+        delivery: "not-delivered",
+        message: "Owned native adapter does not support modified key shortcuts",
+      },
     })
     expect(value.poll({ binding, adapterID: "legacy-adapter", windows: [windowRef] })).toBeNull()
     expect(value.result(binding, requestID)).toMatchObject({
@@ -812,6 +959,7 @@ describe("owned native interaction broker", () => {
         delivery: "not-delivered",
         message: expect.stringContaining("does not support modified key"),
       },
+      refusal: { requestID, operation: modifiedKeyOperation, delivery: "not-delivered" },
     })
     expect(value.status(binding).blocked).toBe(false)
   })
