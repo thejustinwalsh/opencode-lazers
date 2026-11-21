@@ -10,14 +10,16 @@ import type { WorkerRequest, WorkerResponse } from "./decision-worker-protocol.t
 import { computeCandidateChanges, pageCandidateRows } from "./candidate-store.ts"
 import {
   buildDecisionView,
+  type CandidateSet,
+  type DecisionViewCall,
+  type DecisionViewResult,
+} from "./decision-view-build.ts"
+import {
   decisionViewIdentity,
   readCandidateSet,
   readSourceStamps,
   readSourceSummaries,
   sourceDatesOf,
-  type CandidateSet,
-  type DecisionViewCall,
-  type DecisionViewResult,
 } from "./decision-view.ts"
 
 /**

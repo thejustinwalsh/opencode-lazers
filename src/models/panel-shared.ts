@@ -150,19 +150,3 @@ export function agentSourceText(
         ? ""
         : source
 }
-
-/**
- * Whether the rest of the model catalog may be read, a page at a time, after the first page.
- * Most views paint from the decision read, so the pages wait for it; Benchmark paints from the
- * first page alone, so it pages at once instead of idling behind the slowest read.
- */
-export function mayPageCatalog(input: {
-  nextCursor: string | null | undefined
-  comparisonLoading: boolean
-  decisionLoaded: boolean
-  benchmark: boolean
-  firstPageLoaded: boolean
-}) {
-  if (!input.nextCursor || input.comparisonLoading) return false
-  return input.decisionLoaded || (input.benchmark && input.firstPageLoaded)
-}

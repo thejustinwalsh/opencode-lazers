@@ -12,7 +12,11 @@ import {
   type ViewWrite,
 } from "./decision-store.ts"
 import { PROJECTION_IDLE_DROP_MS } from "./decision-projection.ts"
-import type { DecisionViewCall, DecisionViewRequest, DecisionViewResult } from "./decision-view.ts"
+import type {
+  DecisionViewCall,
+  DecisionViewRequest,
+  DecisionViewResult,
+} from "./decision-view-build.ts"
 
 /**
  * The main-thread side of the stored decision views of one database: it opens a view when a

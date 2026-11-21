@@ -32,13 +32,15 @@ import {
 import {
   buildDecisionView,
   DecisionViewRequestSchema,
+  type DecisionViewCall,
+  type DecisionViewResult,
+} from "./decision-view-build.ts"
+import {
   decisionViewIdentity,
   readCandidateSet,
   readSourceStamps,
   readSourceSummaries,
   sourceDatesOf,
-  type DecisionViewCall,
-  type DecisionViewResult,
 } from "./decision-view.ts"
 import { DecisionViews } from "./decision-views.ts"
 import { registerDecisionViewOpener } from "./decision-view-registry.ts"

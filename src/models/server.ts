@@ -1,17 +1,14 @@
 import { routedModels } from "./catalog-inputs.ts"
 import { registerDecisionViewOpener } from "./decision-view-registry.ts"
-import { DecisionViewRequestSchema } from "./decision-view.ts"
+import { DecisionViewRequestSchema } from "./decision-view-build.ts"
 import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Integration } from "@opencode/schema/integration"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
-import { nativeWorkerOptions } from "../runner/catalog.ts"
 import { TaskRepository } from "../storage.ts"
 import {
-  ModelCatalogOutputSchema,
-  ModelComparisonRPCInputSchema,
   ModelConfigureRPCInputSchema,
   ModelEvidenceRPCInputSchema,
   ModelPriceSourceConfigureRPCInputSchema,
@@ -19,13 +16,10 @@ import {
   ModelMappingWriteOutputSchema,
   ModelSourceRefreshRPCInputSchema,
   ModelSettingsOutputSchema,
-  ModelSettingsRPCInputSchema,
-  ModelCatalogRPCInputSchema,
   Models,
   ModelConfigurationsRPCInputSchema,
   ModelGroupsRPCInputSchema,
 } from "./contract.ts"
-import { ModelComparisonOutputSchema } from "./comparison-schema.ts"
 import { ModelConfigurationsOutputSchema, ModelGroupsOutputSchema } from "./model-group-schema.ts"
 import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import { readAgentRoutes, readHostAgentFacts } from "./agent-routes.ts"
@@ -36,10 +30,7 @@ import { ModelEvidenceRefresher, createRefreshGate } from "./source-refresh.ts"
 /** A background refresh gives up after this long. */
 const BACKGROUND_REFRESH_TIMEOUT_MS = 120_000
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
-import { readModelComparison } from "./comparison-read.ts"
 import { readModelConfigurations, readModelGroups } from "./model-group-read.ts"
-import { buildCurrentPriceIndex } from "./current-price-index.ts"
-import type { CurrentPriceApplicability } from "./current-price-index.ts"
 import { createTaskValuationReader, currentPriceIndexFreshness } from "./task-valuation.ts"
 import type { TaskValuationIndexReader, TaskValuationProvider } from "./task-valuation.ts"
 import { acquireDecisionWorker } from "./decision-worker-registry.ts"
@@ -49,8 +40,6 @@ import {
   MODELS_DECISION_CONTRACT_VERSION,
   ModelDecisionReadInputSchema,
   ModelsDecision,
-  ModelDecisionConfigurationsOutputSchema,
-  ModelDecisionConfigurationsRPCInputSchema,
   ModelDecisionInspectOutputSchema,
   ModelDecisionInspectRPCInputSchema,
   ModelDecisionOverviewAllOutputSchema,
@@ -59,15 +48,11 @@ import {
   ModelDecisionOverviewRPCInputSchema,
   ModelDecisionRowsAllOutputSchema,
   ModelDecisionRowsAllRPCInputSchema,
-  ModelDecisionRowsOutputSchema,
-  ModelDecisionRowsRPCInputSchema,
 } from "./decision-contract.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 import { canonicalPath, pickUnit, projectUnits, unitToken } from "../projects/scope.ts"
 import type { ProjectUnit } from "../projects/scope.ts"
 import { ModelEvidenceReadStore, ModelEvidenceStore } from "./source-store.ts"
-import type { ModelEvidenceComparisonSourceRead } from "./source-store.ts"
-import { readEndpointPricingEvidence } from "./market-range-evidence.ts"
 import { ModelSettingsService } from "./service.ts"
 import {
   ModelPriceSourceSettingsSchema,
@@ -76,11 +61,7 @@ import {
 } from "./price-source-settings.ts"
 import { createManagedUsagePriceProvider } from "./managed-usage-valuation.ts"
 import type { ManagedUsageIndexReader } from "./managed-usage-valuation.ts"
-import type {
-  ModelPriceSource,
-  ModelPriceSourcePolicy,
-  ModelPriceSourceSettings,
-} from "./price-source-settings.ts"
+import type { ModelPriceSource } from "./price-source-settings.ts"
 
 type ModelsContext = Pick<
   Plugin.Context,
@@ -431,23 +412,6 @@ export function registerModelsServer(
       prewarm.unref()
     }
     yield* timedRpc(ctx.rpc).register(Models, {
-      settings: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelSettingsRPCInputSchema.parse(input)
-            await authorizeModels(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-get-model-settings",
-              [request.taskID ?? projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            return await readSettings(request.taskID, signal)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       configure: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -541,23 +505,6 @@ export function registerModelsServer(
           },
           catch: failure,
         }).pipe(Effect.orDie),
-      catalog: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelCatalogRPCInputSchema.parse(input)
-            await authorizeModels(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-models-catalog",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            return ModelCatalogOutputSchema.parse(await nativeWorkerOptions(ctx))
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       sourceEvidence: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -580,33 +527,6 @@ export function registerModelsServer(
                 }),
               ),
             )
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      comparison: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelComparisonRPCInputSchema.parse(input)
-            await authorizeModels(
-              ctx,
-              request.sessionID,
-              projectID,
-              "lz-read-model-comparison",
-              [projectDirectory],
-              signal,
-            )
-            signal.throwIfAborted()
-            const result = withEvidenceReadStore((store) =>
-              readModelComparison(store, {
-                cursor: request.cursor,
-                filters: request.filters,
-                limit: request.limit,
-              }),
-            )
-            signal.throwIfAborted()
-            const output = ModelComparisonOutputSchema.parse(result)
-            signal.throwIfAborted()
-            return output
           },
           catch: failure,
         }).pipe(Effect.orDie),
@@ -729,27 +649,6 @@ export function registerModelsServer(
           },
           catch: failure,
         }).pipe(Effect.orDie),
-      rows: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionRowsRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.rows(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                cursor: request.cursor,
-                limit: request.limit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionRowsOutputSchema.parse(output)
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
       overviewAll: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -803,27 +702,6 @@ export function registerModelsServer(
               unit: request.unit,
               rows,
             })
-          },
-          catch: failure,
-        }).pipe(Effect.orDie),
-      configurations: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const request = ModelDecisionConfigurationsRPCInputSchema.parse(input)
-            await authorizeDecisionRead(ctx, request, projectDirectory, projectID, signal)
-            const output = await decisionReader.configurations(
-              {
-                schemaVersion: request.schemaVersion,
-                scope: request.scope,
-                filters: request.filters,
-                snapshotID: request.snapshotID,
-                cursor: request.cursor,
-                limit: request.limit,
-              },
-              { signal },
-            )
-            signal.throwIfAborted()
-            return ModelDecisionConfigurationsOutputSchema.parse(output)
           },
           catch: failure,
         }).pipe(Effect.orDie),

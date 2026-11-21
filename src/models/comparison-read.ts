@@ -120,27 +120,9 @@ function summarize(source: ModelEvidenceComparisonSourceRead, snapshot: ModelEvi
   }
 }
 
-/**
- * The record-free metadata of snapshots already read, by immutable snapshot id, so a page or a
- * repeated read of a pinned snapshot set reports its sources without reading a body.
- * Measured 2026-11-20: a summary serializes to about 0.5 KB; 64 entries (more than a dozen
- * snapshot sets of five sources) bound the cache near 32 KB, evicting the oldest.
- */
-const SUMMARY_CACHE_ENTRIES = 64
-const knownSummaries = new Map<string, SnapshotSummary>()
-
 function sourceSummary(source: ModelEvidenceComparisonSourceRead): SourceSummary {
   const snapshot = source.snapshot
-  if (snapshot) {
-    const summary = summarize(source, snapshot)
-    if (source.snapshotID) {
-      knownSummaries.delete(source.snapshotID)
-      knownSummaries.set(source.snapshotID, summary.snapshot)
-      while (knownSummaries.size > SUMMARY_CACHE_ENTRIES)
-        knownSummaries.delete(knownSummaries.keys().next().value!)
-    }
-    return summary
-  }
+  if (snapshot) return summarize(source, snapshot)
   return {
     source: source.source,
     storage: source.storage,
@@ -149,15 +131,6 @@ function sourceSummary(source: ModelEvidenceComparisonSourceRead): SourceSummary
     refresh: source.refresh,
     snapshot: null,
   }
-}
-
-/** A source whose records this read does not need reports its cached summary, if it has one. */
-function cachedSummary(source: ModelEvidenceComparisonSourceRead): SourceSummary | null {
-  if (source.snapshot) return sourceSummary(source)
-  if (source.snapshotState !== "available" || !source.snapshotID) return sourceSummary(source)
-  const snapshot = knownSummaries.get(source.snapshotID)
-  if (!snapshot) return null
-  return { ...sourceSummary(source), snapshot }
 }
 
 function candidateGroups(snapshot: Extract<ModelEvidenceSnapshot, { source: "native-catalog" }>) {
@@ -545,12 +518,11 @@ export function buildComparisonCandidates(sources: readonly ModelEvidenceCompari
   }
 }
 
-/** The last few snapshot sets' joins, oldest first; a page of a read in progress reuses its. */
-const publicJoins = new Map<string, PublicJoin>()
-/** The last two candidate lists, oldest first, keyed by snapshot set and filters. */
-const candidateLists = new Map<string, Candidate[]>()
-
-/** Project a stable, filtered page from pinned source snapshots. */
+/**
+ * One page of the comparison, built from the pinned source snapshots. No RPC serves it since the
+ * Models panel reads `model_candidates` and stored views; it stays as the reference the candidate
+ * and view parity tests compare the stored rows with, and it keeps no cache.
+ */
 export function readModelComparison(
   store: Pick<ModelEvidenceReadStore, "readComparisonSources">,
   input: ModelComparisonReadInput | unknown = {},
@@ -561,46 +533,10 @@ export function readModelComparison(
   if (decoded && request.filters !== undefined && !sameFilters(decoded.filters, request.filters))
     throw new Error("Model comparison cursor filters do not match")
 
-  // Stamps first: which snapshots are pinned, without a body read. Records are read only for the
-  // sources this read has to build from; a page of a pinned snapshot set reads none.
   const stamps = store.readComparisonSources(decoded?.snapshots, { stampOnly: true })
   const selection = decoded?.snapshots ?? snapshotSelection(stamps)
   const offset = decoded?.offset ?? 0
-  const availableID = (name: ModelEvidenceComparisonSourceRead["source"]) => {
-    const read = stamps.find((item) => item.source === name)
-    return read?.snapshotState === "available" ? (read.snapshotID ?? undefined) : undefined
-  }
-  // Every page of one catalog read shares the pinned snapshots, so the indexes (thousands of
-  // parsed names) are built once per snapshot set, not once per page.
-  const joinKey = [
-    availableID("native-catalog"),
-    availableID("openrouter-models"),
-    availableID("models-dev"),
-    availableID("epoch-benchmarks"),
-  ].join("|")
-  // The full candidate list for one pinned snapshot set and filter is the same for every page
-  // of it: build it once, slice it per page.
-  const listKey = JSON.stringify([
-    selection,
-    stableJSON(filters),
-    stamps.map((source) => source.snapshotID),
-  ])
-  const needList = !candidateLists.has(listKey)
-  const needJoin = !publicJoins.has(joinKey) && (needList || offset === 0)
-  const needed = new Set<ModelEvidenceComparisonSourceRead["source"]>()
-  if (needList)
-    for (const name of ["native-catalog", "openrouter-models", "openrouter-benchmarks"] as const)
-      needed.add(name)
-  if (needJoin)
-    for (const name of [
-      "native-catalog",
-      "openrouter-models",
-      "models-dev",
-      "epoch-benchmarks",
-    ] as const)
-      needed.add(name)
-  for (const read of stamps) if (!cachedSummary(read)) needed.add(read.source)
-  const loaded = needed.size ? store.readComparisonSources(selection, { sources: [...needed] }) : []
+  const loaded = store.readComparisonSources(selection)
   const sources = stamps.map((read) => loaded.find((item) => item.source === read.source) ?? read)
   const nativeSource = sources.find((source) => source.source === "native-catalog")?.snapshot
   const modelSource = sources.find((source) => source.source === "openrouter-models")!
@@ -610,25 +546,14 @@ export function readModelComparison(
   const native = nativeSource?.source === "native-catalog" ? nativeSource : null
   const devSnapshot = sources.find((source) => source.source === "models-dev")?.snapshot
   const epochSnapshot = sources.find((source) => source.source === "epoch-benchmarks")?.snapshot
-  const cachedJoin = publicJoins.get(joinKey)
-  if (cachedJoin) publicJoins.delete(joinKey)
-  const join = cachedJoin ?? publicJoinFor(native, modelSource, devSnapshot, epochSnapshot)
-  publicJoins.set(joinKey, join)
-  for (const stale of [...publicJoins.keys()].slice(0, Math.max(0, publicJoins.size - 4)))
-    publicJoins.delete(stale)
-  let allCandidates = candidateLists.get(listKey)
-  if (allCandidates) candidateLists.delete(listKey)
-  else
-    allCandidates = candidatesFor(
-      native,
-      modelSource,
-      benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
-      filters,
-      join,
-    )
-  candidateLists.set(listKey, allCandidates)
-  for (const stale of [...candidateLists.keys()].slice(0, Math.max(0, candidateLists.size - 2)))
-    candidateLists.delete(stale)
+  const join = publicJoinFor(native, modelSource, devSnapshot, epochSnapshot)
+  const allCandidates = candidatesFor(
+    native,
+    modelSource,
+    benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
+    filters,
+    join,
+  )
   if (offset > allCandidates.length) throw new Error("Model comparison cursor is unavailable")
   const candidates = allCandidates.slice(offset, offset + request.limit)
   const nextOffset = offset + candidates.length
@@ -639,7 +564,7 @@ export function readModelComparison(
 
   return ModelComparisonOutputSchema.parse({
     filters,
-    sources: sources.map((source) => cachedSummary(source) ?? sourceSummary(source)),
+    sources: sources.map(sourceSummary),
     candidates,
     totalCandidates: allCandidates.length,
     nextCursor,

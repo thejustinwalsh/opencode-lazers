@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { hasCompareLowerPane, mayPageCatalog, showTaskChip } from "./panel-shared.ts"
+import { hasCompareLowerPane, showTaskChip } from "./panel-shared.ts"
 import { formatPriceRange } from "./comparison-presentation.ts"
 
 test("the task chip shows only when a task was chosen as a filter", () => {
@@ -29,23 +29,4 @@ test("a price range reads as one amount with the dollar sign once", () => {
   expect(formatPriceRange({ minimum: 1.2, maximum: 14 })).toBe("$1.2 – 14")
   // Equal ends are one price, not a range.
   expect(formatPriceRange({ minimum: 0.35, maximum: 0.35 })).toBe("$0.35")
-})
-
-test("the catalog pages after the first paint, and Benchmark does not wait for the decision read", () => {
-  const input = {
-    nextCursor: "next",
-    comparisonLoading: false,
-    decisionLoaded: false,
-    benchmark: false,
-    firstPageLoaded: true,
-  }
-  // Your runs and Projected paint from the decision read: the pages wait for it.
-  expect(mayPageCatalog(input)).toBe(false)
-  expect(mayPageCatalog({ ...input, decisionLoaded: true })).toBe(true)
-  // Benchmark paints from the first page, so the rest follows it directly.
-  expect(mayPageCatalog({ ...input, benchmark: true })).toBe(true)
-  expect(mayPageCatalog({ ...input, benchmark: true, firstPageLoaded: false })).toBe(false)
-  // Nothing left, or a page in flight, never starts another.
-  expect(mayPageCatalog({ ...input, decisionLoaded: true, nextCursor: null })).toBe(false)
-  expect(mayPageCatalog({ ...input, decisionLoaded: true, comparisonLoading: true })).toBe(false)
 })

@@ -5,7 +5,6 @@ import {
   rpcStreamsTransport,
   type GuiStream,
   type StreamsRpc,
-  type StreamsTransport,
 } from "../streams/gui.ts"
 import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
 import {
@@ -25,7 +24,6 @@ import type { PanelProps } from "@opencode/plugin/gui"
 import { createEffect, createMemo, createSignal, on, onCleanup, untrack } from "solid-js"
 import type { Accessor, JSX } from "solid-js"
 import { Models } from "./contract.ts"
-import type { ModelSettingsOutput } from "./contract.ts"
 import type { ModelPolicy } from "../runner/schema.ts"
 import { isAgentSubject } from "./agent-ids.ts"
 import type { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
@@ -71,7 +69,7 @@ import type {
   ModelDecisionStatus,
 } from "./comparison-state.ts"
 import type { DecisionInspectionFacts } from "./decision-read.ts"
-import type { DecisionViewBenchmark, DecisionViewSource } from "./decision-view.ts"
+import type { DecisionViewBenchmark, DecisionViewSource } from "./decision-view-build.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"

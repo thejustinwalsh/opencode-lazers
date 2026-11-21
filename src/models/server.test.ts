@@ -17,6 +17,10 @@ import { ModelEvidenceSnapshotSchema } from "./source-schema.ts"
 import { buildCurrentPriceIndex } from "./current-price-index.ts"
 import { ModelPriceSourceSettingsSchema } from "./price-source-settings.ts"
 import { registerModelsServer } from "./server.ts"
+import { modelAssignmentsSource } from "../streams/sources/models.ts"
+import { assignmentSettingsOf, type AssignmentLayerRow } from "./assignment-settings.ts"
+import { ensureModelAssignmentViewSchema } from "./assignment-view.ts"
+import type { ModelDecisionInspect, ModelDecisionOverview } from "./decision-contract.ts"
 import {
   createModelsManagedUsagePriceProvider,
   createModelsTaskValuationProvider,
@@ -26,7 +30,6 @@ import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
 import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
 import {
-  ModelDecisionConfigurationsOutputSchema,
   ModelDecisionInspectOutputSchema,
   ModelDecisionOverviewAllOutputSchema,
   ModelDecisionOverviewOutputSchema,
@@ -38,20 +41,99 @@ import capturedGo from "../../test/models-identity/fixtures/captured-go-openrout
 
 type RegisteredTool = Parameters<ToolEditor["add"]>[0]
 type ModelRPC = {
+  /** Test-side: the settings the assignments stream composes (`withStreamedReads`). */
   settings(input: unknown): Effect.Effect<unknown, unknown>
   configure(input: unknown): Effect.Effect<unknown, unknown>
-  catalog(input: unknown): Effect.Effect<unknown, unknown>
   sourceEvidence(input: unknown): Effect.Effect<unknown, unknown>
-  comparison(input: unknown): Effect.Effect<unknown, unknown>
   modelGroups(input: unknown): Effect.Effect<unknown, unknown>
   modelConfigurations(input: unknown): Effect.Effect<unknown, unknown>
   priceSources(input: unknown): Effect.Effect<unknown, unknown>
   configurePriceSources(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
   overview(input: unknown): Effect.Effect<unknown, unknown>
+  /** Test-side: every configuration's row, from the overview and each inspection. */
   rows(input: unknown): Effect.Effect<unknown, unknown>
   configurations(input: unknown): Effect.Effect<unknown, unknown>
   inspect(input: unknown): Effect.Effect<unknown, unknown>
+}
+
+/**
+ * The reads the Models panel takes from streams now, rebuilt for these registration tests from
+ * what the service still serves: settings are the assignments stream's composition of the stored
+ * layer rows, and a configuration's row is its inspection's facts, in the overview's order.
+ */
+function withStreamedReads(methods: ModelRPC, repository: TaskRepository): ModelRPC {
+  const { path, projectDirectory: directory } = repository
+  const settings = (input: unknown) =>
+    Effect.promise(async () => {
+      const { taskID } = input as { taskID?: string }
+      const reader = new TaskRepository(path, directory)
+      try {
+        ensureModelAssignmentViewSchema(reader)
+        const { where, params } = modelAssignmentsSource.filter({
+          projectDirectory: directory,
+          sessionID: "",
+          taskID: taskID ?? null,
+        })
+        const rows = reader.read((db) =>
+          db
+            .query<AssignmentLayerRow & { record: string }, string[]>(
+              `SELECT * FROM model_assignment_view WHERE ${where} ORDER BY subject, layer, id`,
+            )
+            .all(...(params as string[]))
+            .map((row) => ({ ...row, record: JSON.parse(row.record) as unknown })),
+        )
+        return assignmentSettingsOf(rows, directory, taskID ?? null)
+      } finally {
+        reader.close()
+      }
+    })
+  const rows = (input: unknown) =>
+    Effect.promise(async () => {
+      const {
+        limit: _limit,
+        cursor: _cursor,
+        snapshotID,
+        ...read
+      } = input as Record<string, unknown>
+      const overview = (await Effect.runPromise(methods.overview(read))) as ModelDecisionOverview
+      const pinned = (snapshotID as string | undefined) ?? overview.context.snapshotID
+      const found = []
+      for (const reference of overview.graph.referenceEstimates ?? []) {
+        const inspected = (await Effect.runPromise(
+          methods.inspect({
+            ...read,
+            snapshotID: pinned,
+            configurationID: reference.configurationID,
+            selectedTaskID: null,
+            contributorLimit: 1,
+          }),
+        )) as Extract<ModelDecisionInspect, { status: "found" }>
+        if (inspected.status !== "found") continue
+        found.push({
+          configuration: inspected.configuration,
+          cohort: inspected.cohort,
+          efficiency: inspected.efficiency,
+          nativeReportedCost: inspected.nativeReportedCost,
+          ...(inspected.referenceEstimate
+            ? { referenceEstimate: inspected.referenceEstimate }
+            : {}),
+        })
+      }
+      return { context: overview.context, rows: found, totalCount: found.length, nextCursor: null }
+    })
+  return {
+    ...methods,
+    settings,
+    rows,
+    configurations: (input) =>
+      Effect.map(rows(input), (page) => ({
+        context: page.context,
+        configurations: page.rows.map((row) => row.configuration),
+        totalCount: page.totalCount,
+        nextCursor: null,
+      })),
+  }
 }
 type NativeSession = {
   id: string
@@ -144,9 +226,7 @@ function modelContext(options: {
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
     configure: () => Effect.die(new Error("RPC not registered")),
-    catalog: () => Effect.die(new Error("RPC not registered")),
     sourceEvidence: () => Effect.die(new Error("RPC not registered")),
-    comparison: () => Effect.die(new Error("RPC not registered")),
     modelGroups: () => Effect.die(new Error("RPC not registered")),
     modelConfigurations: () => Effect.die(new Error("RPC not registered")),
     priceSources: () => Effect.die(new Error("RPC not registered")),
@@ -292,7 +372,11 @@ async function register(
       }),
     ),
   )
-  return { ...native, tools }
+  return {
+    ...native,
+    tools,
+    methods: () => withStreamedReads(native.methods() as unknown as ModelRPC, repository),
+  }
 }
 
 async function rejects(effect: Effect.Effect<unknown, unknown>) {
@@ -606,23 +690,6 @@ function saveLunaEndpointSnapshot(
   })
 }
 
-function writeLunaEndpointSnapshot(
-  path: string,
-  projectDirectory: string,
-  rates?: { prompt: string; overridePrompt: string },
-) {
-  const store = new ModelEvidenceStore(path, projectDirectory)
-  try {
-    const productID = "openai/gpt-6-luna" as const
-    const generation = store.beginEndpointPricingRefresh()[productID]
-    saveLunaEndpointSnapshot(store, projectDirectory, generation, rates)
-    return { store, generation, productID }
-  } catch (error) {
-    store.close()
-    throw error
-  }
-}
-
 function writeCapturedAnthropicAliasEvidence(path: string) {
   const baseNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
   const catalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
@@ -692,10 +759,8 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
   const repository = new TaskRepository(path, projectDirectory)
   const taskID = makeTask(repository)
   const permissionCalls: unknown[] = []
-  let catalogFailure = false
   const harness = await register(repository, {
     permissionCalls,
-    catalogFailure: () => catalogFailure,
   })
   const methods = harness.methods()
   repository.close()
@@ -823,18 +888,9 @@ test("registered tool and Desktop RPC share exact persisted mappings after setup
       current: { revision: 1, route: project },
     })
 
-    expect(await Effect.runPromise(methods.catalog({ sessionID: "ses-native" }))).toMatchObject({
-      source: "Live native OpenCode model catalog",
-      advisoryOnly: true,
-      configuredImplementor: null,
-      options: [],
-    })
     const savedSettings = await Effect.runPromise(
       methods.settings({ sessionID: "ses-native", taskID }),
     )
-    catalogFailure = true
-    const failedCatalog = await rejects(methods.catalog({ sessionID: "ses-native" }))
-    expect(failedCatalog).toBeInstanceOf(Error)
     expect(savedSettings).toMatchObject({ projectDirectory, taskID })
     expect(
       await Effect.runPromise(methods.settings({ sessionID: "ses-native", taskID })),
@@ -1828,79 +1884,6 @@ test("Models evidence denial, foreign and archived sessions do not initialize or
   }
 })
 
-test("Models comparison is an authorized read-only projection with honest missing-source state", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  const permissionCalls: unknown[] = []
-  const sourceAccessCalls = { active: 0, resolve: 0 }
-  let fetchCalls = 0
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    permissionCalls,
-    sourceAccessCalls,
-    fetcher: async () => {
-      fetchCalls += 1
-      return new Response(JSON.stringify({ data: [] }))
-    },
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return new ModelEvidenceReadStore(databasePath, directory)
-    },
-  })
-  repository.close()
-  const methods = harness.methods()
-  try {
-    const output = (await Effect.runPromise(
-      methods.comparison({
-        sessionID: "ses-native",
-        filters: { providerID: "openrouter" },
-        limit: 1,
-      }),
-    )) as {
-      filters: { providerID?: string }
-      sources: Array<{
-        storage: string
-        snapshotState: string
-        refresh: unknown
-        snapshot: unknown
-      }>
-      candidates: unknown[]
-      nextCursor: string | null
-    }
-    expect(output).toMatchObject({
-      filters: { providerID: "openrouter" },
-      candidates: [],
-      nextCursor: null,
-    })
-    expect(output.sources).toHaveLength(5)
-    expect(output.sources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          storage: "missing-both-tables",
-          snapshotState: "missing-table",
-          refresh: null,
-          snapshot: null,
-        }),
-      ]),
-    )
-    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(fetchCalls).toBe(0)
-    expect(readStoreOpens).toBe(1)
-    expect(harness.modelListCalls.count).toBe(0)
-    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
-    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
-    expect(permissionCalls).toEqual([
-      expect.objectContaining({
-        action: "lz-read-model-comparison",
-        resources: [projectDirectory],
-      }),
-    ])
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
 test("registered model group RPCs resolve captured direct routes without credential or catalog access", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
@@ -2227,50 +2210,6 @@ test("registered model group reads do not create a missing database", async () =
   }
 })
 
-test("Models comparison denial, foreign or archived sessions and cancellation avoid source reads", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  let denied = false
-  const sourceAccessCalls = { active: 0, resolve: 0 }
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    denied: () => denied,
-    sourceAccessCalls,
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return new ModelEvidenceReadStore(databasePath, directory)
-    },
-  })
-  repository.close()
-  const methods = harness.methods()
-  try {
-    for (const actor of [
-      null,
-      { id: "ses-native", projectID: "foreign-project", agent: "desktop-settings-user", time: {} },
-      { id: "ses-native", projectID, agent: "desktop-settings-user", time: { archived: 20 } },
-    ]) {
-      harness.setActor(actor)
-      expect(await rejects(methods.comparison({ sessionID: "ses-native" }))).toBeInstanceOf(Error)
-      expect(await rejects(methods.modelGroups({ sessionID: "ses-native" }))).toBeInstanceOf(Error)
-    }
-    harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
-    denied = true
-    expect(await rejects(methods.comparison({ sessionID: "ses-native" }))).toMatchObject({
-      message: "native permission denied",
-    })
-    expect(await rejects(methods.modelGroups({ sessionID: "ses-native" }))).toMatchObject({
-      message: "native permission denied",
-    })
-    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(readStoreOpens).toBe(0)
-    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
-    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
 test("Models group RPC rechecks session archival after awaited permission before opening evidence storage", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
@@ -2396,325 +2335,6 @@ test("Models group RPC cancellation after source reads cannot publish a successf
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
   } finally {
     rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("ModelsDecision registers and serves coherent production overview, rows, configurations and inspect", async () => {
-  const fixture = makeLedgerFixture()
-  const marketRoute = {
-    providerID: "openai",
-    modelID: "gpt-6-luna",
-    variant: "max",
-  }
-  rewriteAttemptForMarket(
-    fixture.path,
-    fixture.projectID,
-    fixture.attempts.failed.id,
-    marketRoute,
-    [100],
-  )
-  rewriteAttemptForMarket(
-    fixture.path,
-    fixture.projectID,
-    fixture.attempts.accepted.id,
-    marketRoute,
-    [20, 30],
-  )
-  rewriteAttemptForMarket(
-    fixture.path,
-    fixture.projectID,
-    fixture.attempts.adoption.id,
-    { ...marketRoute, variant: "high" },
-    [40],
-  )
-  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
-  const endpointEvidence = writeLunaEndpointSnapshot(fixture.path, fixture.projectDirectory)
-  const sourceWriter = new Database(fixture.path, { strict: true })
-  sourceWriter
-    .query("UPDATE runner_progress SET message_id='decision-server-' || seq WHERE kind='step'")
-    .run()
-  sourceWriter.close()
-  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository, {
-    sourceConnections: { openrouter: { status: { status: "connected" } } },
-  })
-  repository.close()
-  try {
-    const input = {
-      sessionID: "ses-native",
-      scope: { projectDirectory: fixture.projectDirectory },
-      filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-    }
-    const overview = ModelDecisionOverviewOutputSchema.parse(
-      await Effect.runPromise(harness.methods().overview(input)),
-    )
-    expect(overview.context.availability).toBe("partial")
-    expect(overview.graph.scope).toBe("global-filtered-snapshot")
-
-    const rows = ModelDecisionRowsOutputSchema.parse(
-      await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 })),
-    )
-    const firstPage = ModelDecisionRowsOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().rows({ ...input, snapshotID: overview.context.snapshotID, limit: 1 }),
-      ),
-    )
-    const configurations = ModelDecisionConfigurationsOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().configurations({
-          ...input,
-          snapshotID: overview.context.snapshotID,
-          limit: 100,
-        }),
-      ),
-    )
-    expect(rows.context.snapshotID).toBe(overview.context.snapshotID)
-    expect(configurations.context.snapshotID).toBe(overview.context.snapshotID)
-    expect(rows.totalCount).toBe(overview.configurationCount)
-    expect(configurations.totalCount).toBe(overview.configurationCount)
-    expect(rows.rows.length).toBeGreaterThan(0)
-    expect(firstPage.rows).toHaveLength(1)
-    const globalReferenceEstimates = overview.graph.referenceEstimates
-    if (!globalReferenceEstimates) throw new Error("Overview reference estimates are absent")
-    expect(globalReferenceEstimates).toHaveLength(overview.configurationCount)
-    expect(globalReferenceEstimates.length).toBeGreaterThan(firstPage.rows.length)
-    const marketRow = rows.rows.find(
-      (row) =>
-        row.configuration.route.providerID === marketRoute.providerID &&
-        row.configuration.route.modelID === marketRoute.modelID &&
-        row.configuration.route.variant === marketRoute.variant,
-    )
-    expect(marketRow).toBeDefined()
-    if (!marketRow) throw new Error("OpenAI market configuration row is absent")
-    expect(marketRow?.efficiency).toBeDefined()
-    expect(marketRow?.nativeReportedCost).toBeDefined()
-    const marketEstimate = marketRow.referenceEstimate
-    if (!marketEstimate) throw new Error("Reference estimate is absent from the market row")
-    expect(marketEstimate).toMatchObject({
-      route: marketRoute,
-      acceptedTaskCount: marketRow?.cohort.acceptedTaskCount,
-      provenance: {
-        source: "openrouter-models",
-        recordID: "openai/gpt-6-luna",
-        freshness: "current",
-      },
-    })
-    expect(marketRow.configuration.referenceEstimate).toEqual(marketEstimate)
-    expect(globalReferenceEstimates).toContainEqual({
-      configurationID: marketRow.configuration.configurationID,
-      label: marketRow.configuration.label,
-      tokensPerAcceptedTask: marketRow.efficiency.tokensPerAcceptedTask,
-      estimate: marketEstimate,
-    })
-    expect(
-      configurations.configurations.find(
-        (configuration) =>
-          configuration.configurationID === marketRow.configuration.configurationID,
-      )?.referenceEstimate,
-    ).toEqual(marketEstimate)
-
-    const inspection = await Effect.runPromise(
-      harness.methods().inspect({
-        ...input,
-        snapshotID: overview.context.snapshotID,
-        configurationID: marketRow.configuration.configurationID,
-        selectedTaskID: fixture.tasks.retry!.id,
-        contributorLimit: 100,
-      }),
-    )
-    const parsedInspection = ModelDecisionInspectOutputSchema.parse(inspection)
-    expect(parsedInspection).toMatchObject({
-      status: "found",
-      knownUsageMarket: {
-        schemaVersion: 1,
-        scope: "known-retained-token-usage-only",
-        route: marketRoute,
-        identity: {
-          status: "exact",
-          productID: "openai/gpt-6-luna",
-          basis: "provider-owner-qualification",
-          rules: [{ id: "provider-owner-qualified-local-id-v1" }],
-        },
-        status: "range",
-        scenarios: [
-          {
-            id: "configured-current-market",
-            status: "range",
-            freshness: "current",
-            tierAttribution: {
-              status: "unresolved",
-              basis: "aggregate-tier-envelope",
-              promptThresholds: [272_000],
-            },
-            provenance: {
-              source: "openrouter-models",
-              productID: "openai/gpt-6-luna",
-              priceBasis: "average",
-              snapshotGeneration: expect.any(Number),
-            },
-            coverage: {
-              scope: "known-route-matched-retained-usage",
-              wholeTaskBound: false,
-              categories: { uncachedInput: { tokens: 150, status: "observed" } },
-              retries: {
-                status: "complete",
-                attemptCount: 2,
-                failedAttemptCount: 1,
-                retryAttemptCount: 1,
-              },
-              route: { matchedRouteSessionCount: 2, includedSessionCount: 2 },
-            },
-          },
-        ],
-      },
-    })
-    if (parsedInspection.status === "found")
-      expect(parsedInspection.referenceEstimate).toEqual(marketEstimate)
-    if (parsedInspection.status === "found") {
-      expect(parsedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.minimum).toBeCloseTo(
-        0.000015,
-        12,
-      )
-      expect(parsedInspection.knownUsageMarket?.scenarios[0]?.rangeUSD?.maximum).toBeCloseTo(
-        0.00003,
-        12,
-      )
-    }
-    expect(harness.permissionCalls).toHaveLength(5)
-    expect(harness.permissionCalls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "lz-read-model-decision",
-          resources: [fixture.projectDirectory],
-        }),
-      ]),
-    )
-  } finally {
-    endpointEvidence.store.close()
-    fixture.close()
-  }
-})
-
-test("registered first-page snapshot pins keep rows, configurations, and reference estimates coherent across usage and catalog updates", async () => {
-  const fixture = makeLedgerFixture()
-  const marketRoute = { providerID: "openai", modelID: "gpt-6-luna", variant: "max" }
-  rewriteAttemptForMarket(
-    fixture.path,
-    fixture.projectID,
-    fixture.attempts.failed.id,
-    marketRoute,
-    [100],
-  )
-  rewriteAttemptForMarket(
-    fixture.path,
-    fixture.projectID,
-    fixture.attempts.accepted.id,
-    marketRoute,
-    [20, 30],
-  )
-  writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory)
-  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const harness = await register(repository, {
-    sourceConnections: { openrouter: { status: { status: "connected" } } },
-  })
-  repository.close()
-  const input = {
-    sessionID: "ses-native",
-    scope: { projectDirectory: fixture.projectDirectory },
-    filters: { persona: null, taskKind: null, period: { from: null, to: null } },
-  }
-  const configurationID = `configuration:${modelConfigurationID(
-    marketRoute.providerID,
-    marketRoute.modelID,
-    marketRoute.variant,
-  )}`
-  try {
-    const overviewA = ModelDecisionOverviewOutputSchema.parse(
-      await Effect.runPromise(harness.methods().overview(input)),
-    )
-    const estimateA = overviewA.graph.referenceEstimates?.find(
-      (item) => item.configurationID === configurationID,
-    )?.estimate
-    expect(estimateA?.status).toBe("conditional")
-    expect(estimateA?.provenance.freshness).toBe("current")
-    const numeratorA = estimateA?.numeratorRangeUSD
-    expect(numeratorA).not.toBeNull()
-
-    // Change relevant retained effort and the published price catalog before any first-page read.
-    rewriteAttemptForMarket(
-      fixture.path,
-      fixture.projectID,
-      fixture.attempts.failed.id,
-      marketRoute,
-      [1_000],
-    )
-    writeMarketIdentityEvidence(fixture.path, fixture.projectDirectory, {
-      promptRate: "0.000001",
-    })
-
-    const pinnedRows = ModelDecisionRowsOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().rows({ ...input, snapshotID: overviewA.context.snapshotID, limit: 100 }),
-      ),
-    )
-    const pinnedConfigurations = ModelDecisionConfigurationsOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().configurations({
-          ...input,
-          snapshotID: overviewA.context.snapshotID,
-          limit: 100,
-        }),
-      ),
-    )
-    const pinnedRow = pinnedRows.rows.find(
-      (row) => row.configuration.configurationID === configurationID,
-    )
-    expect(pinnedRows.context.snapshotID).toBe(overviewA.context.snapshotID)
-    expect(pinnedConfigurations.context.snapshotID).toBe(overviewA.context.snapshotID)
-    expect(pinnedRow?.referenceEstimate).toEqual(estimateA)
-    expect(pinnedRow?.configuration.referenceEstimate).toEqual(estimateA)
-    expect(
-      pinnedConfigurations.configurations.find((item) => item.configurationID === configurationID)
-        ?.referenceEstimate,
-    ).toEqual(estimateA)
-
-    const pinnedInspection = ModelDecisionInspectOutputSchema.parse(
-      await Effect.runPromise(
-        harness.methods().inspect({
-          ...input,
-          snapshotID: overviewA.context.snapshotID,
-          configurationID,
-          selectedTaskID: fixture.tasks.retry!.id,
-          contributorLimit: 100,
-        }),
-      ),
-    )
-    expect(pinnedInspection.status).toBe("found")
-    if (pinnedInspection.status === "found")
-      expect(pinnedInspection.referenceEstimate).toEqual(estimateA)
-
-    const pinnedGlobalEstimate = overviewA.graph.referenceEstimates?.find(
-      (item) => item.configurationID === configurationID,
-    )
-    expect(pinnedGlobalEstimate).toMatchObject({
-      label: expect.any(String),
-      tokensPerAcceptedTask: expect.any(Number),
-      estimate: estimateA,
-    })
-
-    const refreshedRows = ModelDecisionRowsOutputSchema.parse(
-      await Effect.runPromise(harness.methods().rows({ ...input, limit: 100 })),
-    )
-    const refreshedRow = refreshedRows.rows.find(
-      (row) => row.configuration.configurationID === configurationID,
-    )
-    expect(refreshedRows.context.snapshotID).not.toBe(overviewA.context.snapshotID)
-    expect(refreshedRow?.referenceEstimate?.provenance.snapshotID).not.toBe(
-      estimateA?.provenance.snapshotID,
-    )
-    expect(refreshedRow?.referenceEstimate?.numeratorRangeUSD).not.toEqual(numeratorA)
-  } finally {
-    fixture.close()
   }
 })
 

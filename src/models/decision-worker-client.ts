@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { PriceInputs } from "./price-state.ts"
-import type { DecisionViewCall, DecisionViewResult } from "./decision-view.ts"
+import type { DecisionViewCall, DecisionViewResult } from "./decision-view-build.ts"
 import type { CandidateFinish, CandidateRow } from "./candidate-store.ts"
 import type {
   DecisionWorkerMethod,

@@ -2,7 +2,7 @@ import type { Database, SQLQueryBindings } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
 import { lifecycleTransition } from "../runner/lifecycle-machines.ts"
 import type { SharedConnection } from "../storage.ts"
-import type { DecisionViewRequest, DecisionViewRows } from "./decision-view.ts"
+import type { DecisionViewRequest, DecisionViewRows } from "./decision-view-build.ts"
 
 /**
  * The stored decision views (`decision-view.ts`): one `model_decision_views` row per project and

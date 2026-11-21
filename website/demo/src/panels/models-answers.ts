@@ -753,12 +753,9 @@ export function rpc(data: () => ModelsData): Handlers {
   const tasks = tasksRpc(() => tasksOf(data()))
   return {
     [Models.id]: {
-      comparison: () => comparison(data()),
       refreshSources: () => sourceStatus(data()),
       sourceEvidence: () => sourceStatus(data()),
-      settings: (input: { taskID?: string }) => settings(mappings, data(), input.taskID),
       configure: (input: never) => mappings.write(input),
-      catalog: () => catalog(data()),
       priceSources: () => ({
         policy: { ...POLICY, sources: [...POLICY.sources] },
         access: { openrouter: "configured", opencode: "configured" },
@@ -766,30 +763,6 @@ export function rpc(data: () => ModelsData): Handlers {
     },
     [ModelsDecision.id]: {
       overview: (input: { filters: ModelDecisionFilters }) => overview(data(), input.filters),
-      rows: (input: DecisionInput) => {
-        const found = page(
-          observedModels(data()).map((model) => row(data(), model)),
-          input,
-        )
-        return {
-          context: context(data(), input.filters),
-          rows: found.items,
-          totalCount: found.totalCount,
-          nextCursor: found.nextCursor,
-        }
-      },
-      configurations: (input: DecisionInput) => {
-        const found = page(
-          observedModels(data()).map((model) => configuration(data(), model)),
-          input,
-        )
-        return {
-          context: context(data(), input.filters),
-          configurations: found.items,
-          totalCount: found.totalCount,
-          nextCursor: found.nextCursor,
-        }
-      },
       inspect: (input: never) => inspect(data(), input),
     },
     ...tasks,
@@ -810,25 +783,9 @@ export function reads(data: ModelsData): Read[] {
   const mappings = new Mappings(() => data)
   const out: Read[] = [
     {
-      label: "lazers.models.comparison",
-      schema: Models.methods.comparison.output,
-      value: comparison(data),
-    },
-    {
       label: "lazers.models.refreshSources",
       schema: Models.methods.refreshSources.output,
       value: sourceStatus(data),
-    },
-    { label: "lazers.models.catalog", schema: Models.methods.catalog.output, value: catalog(data) },
-    {
-      label: "lazers.models.settings",
-      schema: Models.methods.settings.output,
-      value: settings(mappings, data, undefined),
-    },
-    {
-      label: "lazers.models.settings task",
-      schema: Models.methods.settings.output,
-      value: settings(mappings, data, uid(1, data.tasks[0]?.n ?? 1)),
     },
     {
       label: "lazers.models.priceSources",
@@ -839,26 +796,6 @@ export function reads(data: ModelsData): Read[] {
       label: "lazers.models.decision overview",
       schema: ModelsDecision.methods.overview.output,
       value: overview(data, filters),
-    },
-    {
-      label: "lazers.models.decision rows",
-      schema: ModelsDecision.methods.rows.output,
-      value: {
-        context: context(data, filters),
-        rows: observedModels(data).map((model) => row(data, model)),
-        totalCount: observedModels(data).length,
-        nextCursor: null,
-      },
-    },
-    {
-      label: "lazers.models.decision configurations",
-      schema: ModelsDecision.methods.configurations.output,
-      value: {
-        context: context(data, filters),
-        configurations: observedModels(data).map((model) => configuration(data, model)),
-        totalCount: observedModels(data).length,
-        nextCursor: null,
-      },
     },
   ]
   for (const model of observedModels(data))

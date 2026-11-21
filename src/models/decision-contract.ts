@@ -765,7 +765,6 @@ export const ModelsDecision = Rpc.define({
       input: ModelDecisionOverviewRPCInputSchema,
       output: ModelDecisionOverviewOutputSchema,
     },
-    rows: { input: ModelDecisionRowsRPCInputSchema, output: ModelDecisionRowsOutputSchema },
     overviewAll: {
       input: ModelDecisionOverviewAllRPCInputSchema,
       output: ModelDecisionOverviewAllOutputSchema,
@@ -773,10 +772,6 @@ export const ModelsDecision = Rpc.define({
     rowsAll: {
       input: ModelDecisionRowsAllRPCInputSchema,
       output: ModelDecisionRowsAllOutputSchema,
-    },
-    configurations: {
-      input: ModelDecisionConfigurationsRPCInputSchema,
-      output: ModelDecisionConfigurationsOutputSchema,
     },
     inspect: {
       input: ModelDecisionInspectRPCInputSchema,

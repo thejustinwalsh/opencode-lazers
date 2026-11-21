@@ -7,7 +7,7 @@ import type {
 } from "./decision-worker-client.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { BenchmarkRoute } from "./benchmark-baseline.ts"
-import type { DecisionViewRequest } from "./decision-view.ts"
+import type { DecisionViewRequest } from "./decision-view-build.ts"
 import { DecisionViews } from "./decision-views.ts"
 import { CandidateBuilds } from "./candidate-builds.ts"
 
