@@ -1,8 +1,8 @@
 import { sameProject } from "../project-key.ts"
 import type { Link, LinkHandler, SessionRef } from "@opencode/plugin/gui"
-import { decodeProjectID, encodeProjectID } from "../tasks/links.ts"
+import { decodeProjectID, encodeProjectID, resolveLinkProject } from "../tasks/links.ts"
 
-export const PLAN_LINK_PREFIX = ".lazers/plans/"
+const PLAN_LINK_PREFIX = ".lazers/plans/"
 
 /** `[Full plan](.lazers/plans/<hex(projectID)>/<planningID>)`, distinct per plan and project. */
 export function planMarkdownLink(planningID: string, projectID: string): string {
@@ -52,12 +52,9 @@ export function createPlanLinkHandler(services: PlanLinkServices): LinkHandler {
     const source = link.session
     if (!parsed || !source) return undefined
     try {
-      const session = services.session(source)
-      if (!session?.location) return undefined
-      const signal = services.signal()
-      if (signal.aborted) return undefined
-      const project = await services.project(session, signal)
-      if (signal.aborted || project.id !== parsed.projectID) return undefined
+      const found = await resolveLinkProject(services, source, parsed.projectID)
+      if (!found) return undefined
+      const { session, location, signal, project } = found
       const detail = await services.get(session, parsed.planningID, signal)
       if (
         signal.aborted ||
@@ -69,7 +66,7 @@ export function createPlanLinkHandler(services: PlanLinkServices): LinkHandler {
         return undefined
       return {
         session,
-        sessionDirectory: session.location.directory,
+        sessionDirectory: location.directory,
         projectDirectory: project.canonical,
         planningID: detail.planningID,
       }

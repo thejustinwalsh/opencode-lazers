@@ -13,7 +13,7 @@ import { Cause, DateTime, Effect, Exit } from "effect"
 import type {
   ArchitectInputPage,
   ArchitectSourceResult,
-  HostMessage,
+  RunnerHostMessage,
   RunnerHost,
   WorktreeLocationRetirement,
 } from "./host.ts"
@@ -466,7 +466,7 @@ function nativeTurnState(input: {
 }
 
 /** The host-shaped message list the runner reads; a compacted window may need the retained input first. */
-function hostMessage(message: NativeMessage): HostMessage {
+function hostMessage(message: NativeMessage): RunnerHostMessage {
   return {
     id: message.id,
     ...(message.type === "synthetic" ? { type: "synthetic" } : {}),
@@ -626,7 +626,7 @@ export function nativeHost(
   retainedInputID(sessionID: string): Promise<string | undefined>
   nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
   messages: HostMessageClient
-  message(sessionID: string, messageID: string): Promise<HostMessage | undefined>
+  message(sessionID: string, messageID: string): Promise<RunnerHostMessage | undefined>
 } {
   let connected: NativeInboxClient | undefined
   let connecting: Promise<NativeInboxClient> | undefined
@@ -688,7 +688,7 @@ export function nativeHost(
     retainedInputID(sessionID: string): Promise<string | undefined>
     nativeProjectCanonicalDirectory(projectID: string): Promise<string | undefined>
     messages: HostMessageClient
-    message(sessionID: string, messageID: string): Promise<HostMessage | undefined>
+    message(sessionID: string, messageID: string): Promise<RunnerHostMessage | undefined>
   } = {
     messages,
     retainedInputID,

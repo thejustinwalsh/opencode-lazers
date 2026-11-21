@@ -1,4 +1,4 @@
-import type { ModelCandidate } from "./comparison-state.ts"
+import type { ModelCandidate } from "./comparison-presentation.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
 import { mergeRoutesByIdentity, representativeOf, routeIdentityKey } from "./model-groups.ts"
 import type { PublicCatalogItem } from "./comparison-schema.ts"

@@ -39,10 +39,7 @@ export function holdReasons(report: TaskReport, events: readonly TrajectoryEvent
  * The task row `taskStateView` reads, rebuilt from the report the way Radar rebuilds it from an
  * attempt read: a blocked task, or a blocked plan around a task that is not finished, is held.
  */
-export function reportTaskRow(
-  report: TaskReport,
-  events: readonly TrajectoryEvent[],
-): ExecutionListRow {
+function reportTaskRow(report: TaskReport, events: readonly TrajectoryEvent[]): ExecutionListRow {
   const state = currentTaskState(report)
   const plan = latestPlan(report)
   const held = state === "blocked" || (plan?.state === "blocked" && !terminalNodes.has(state))

@@ -9,6 +9,7 @@ import {
   onMount,
 } from "solid-js"
 import { layoutFlow } from "./flow-layout.ts"
+import { hostWidth } from "./host-width.ts"
 import { browserHost, createPulseLoop } from "./pulse-loop.ts"
 import {
   abbreviateRole,
@@ -46,19 +47,8 @@ export function RadarFlowCanvas(props: {
   selection: FlowSelection
   onSelect: (selection: FlowSelection) => void
 }) {
-  const [width, setWidth] = createSignal(480)
   let host: HTMLDivElement | undefined
-  onMount(() => {
-    if (!host) return
-    setWidth(Math.max(240, Math.floor(host.clientWidth)) || 480)
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver((entries) => {
-      const next = Math.floor(entries[0]?.contentRect.width ?? 0)
-      if (next > 0) setWidth(next)
-    })
-    observer.observe(host)
-    onCleanup(() => observer.disconnect())
-  })
+  const width = hostWidth(() => host)
   const layout = createMemo(() => layoutFlow(props.model, width()))
   const related = createMemo(() => flowRelated(props.model, props.selection))
   const sessionDim = (id: string) => {

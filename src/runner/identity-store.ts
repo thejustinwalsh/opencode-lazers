@@ -22,7 +22,7 @@
  */
 import type { Database } from "bun:sqlite"
 
-export const identitySubjects = [
+const identitySubjects = [
   "attempt",
   "node",
   "plan",

@@ -105,7 +105,7 @@ function at(value: unknown, path: ReadonlyArray<PropertyKey>): unknown {
   return current
 }
 
-export function pathLabel(path: ReadonlyArray<PropertyKey>): string {
+function pathLabel(path: ReadonlyArray<PropertyKey>): string {
   let label = ""
   for (const key of path)
     label += typeof key === "number" ? `[${key}]` : label === "" ? String(key) : `.${String(key)}`
@@ -129,7 +129,7 @@ function allowedAt(json: JsonSchema | undefined, path: ReadonlyArray<PropertyKey
 }
 
 /** What was wrong, one line per problem, in words a model can act on. */
-export function plainIssues(
+function plainIssues(
   issues: ReadonlyArray<z.core.$ZodIssue>,
   input: unknown,
   json?: JsonSchema,
@@ -393,7 +393,7 @@ function sample(node: Node, resolve: (node: Node) => Node, depth: number): unkno
  * test asserts that every example passes the tool's own schema.
  */
 const ID = "123e4567-e89b-42d3-a456-426614174000"
-export const EXAMPLE_OVERRIDES: Record<string, unknown> = {
+const EXAMPLE_OVERRIDES: Record<string, unknown> = {
   "lz-inspect-trajectory": { taskID: ID },
   "lz-submit-plan": {
     requestID: "plan-1",
@@ -411,12 +411,6 @@ export const EXAMPLE_OVERRIDES: Record<string, unknown> = {
       },
     ],
   },
-}
-
-export function rawSample(input: unknown): unknown {
-  const schema = zodInput(input)
-  const json = schema && jsonInput(input, schema)
-  return json ? sample(json as Node, resolver(json), 0) : undefined
 }
 
 export function exampleFor(name: string, input: unknown): unknown {

@@ -165,7 +165,6 @@ export type SetupStartedView = z.infer<typeof SetupStarted>
 export type ProfileView = z.infer<typeof ProfileView>
 export type ProfileRevisionView = z.infer<typeof RevisionView>
 export type ProfileOutcomeView = z.infer<typeof ProfileOutcome>
-export type NeedsYouPageView = z.infer<typeof NeedsYouPage>
 export type ProjectsListing = z.infer<typeof Listing>
 export type ProjectView = z.infer<typeof Project>
 export type ProjectsOutcome = z.infer<typeof Outcome>

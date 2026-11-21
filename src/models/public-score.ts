@@ -1,4 +1,4 @@
-import type { ModelCandidate } from "./comparison-state.ts"
+import type { ModelCandidate } from "./comparison-presentation.ts"
 import { routeIdentityKey } from "./model-groups.ts"
 import { EPOCH_ATTRIBUTION } from "./source-schema.ts"
 

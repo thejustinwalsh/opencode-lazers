@@ -32,9 +32,9 @@ export const plural = (count: number, noun: string) =>
  * Free pages are "large" once they are a tenth of the file or more: the point where a compaction
  * returns a visible share of the disk. Display only; nothing is refused below it.
  */
-export const COMPACTION_FREE_SHARE = 0.1
+const COMPACTION_FREE_SHARE = 0.1
 
-export const COMPACTION_COMMAND = "bun scripts/compact-database.ts --db <path> --yes"
+const COMPACTION_COMMAND = "bun scripts/compact-database.ts --db <path> --yes"
 
 /** The one-time compaction notice: only for a database that never returns free pages by itself. */
 export function compactionNotice(status: RetentionStatusView): string | undefined {

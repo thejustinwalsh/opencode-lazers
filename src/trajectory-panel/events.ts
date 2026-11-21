@@ -1,4 +1,4 @@
-import { Changed } from "../observability/contract.ts"
+import { ObservabilityChanged } from "../observability/contract.ts"
 import type { ObservationChange } from "../observability/contract.ts"
 
 const eventType = "rpc.lazers.observability.changed"
@@ -28,7 +28,7 @@ export async function* trajectoryChanges(
     if (event.type === "server.connected") {
       yield { projectID, sequence: 0, resnapshotRequired: true }
     } else if (event.type === eventType && event.location?.directory === directory) {
-      const change = Changed.safeParse(event.data)
+      const change = ObservabilityChanged.safeParse(event.data)
       if (change.success && change.data.projectID === projectID) yield change.data
     }
   }

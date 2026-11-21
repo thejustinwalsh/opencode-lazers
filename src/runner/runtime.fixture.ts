@@ -38,7 +38,7 @@ import { registerRunnerTools } from "./tools.ts"
 import { settleVerification } from "../../test/runner/verification-driver.ts"
 import { setProjectSetting } from "../projects/settings.ts"
 import { registerProject } from "../project-key.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
 
 export const cleanPackage: FallowPackage = {
@@ -1613,7 +1613,7 @@ export function attemptCheck(
   f: ReturnType<typeof fixture>,
   taskID: string,
   attemptID: string,
-): CheckReceipt {
+): RunnerCheckReceipt {
   const effect = f.store
     .effects(f.receipt.planID)
     .find(
@@ -1624,7 +1624,7 @@ export function attemptCheck(
     )
   if (!effect?.receipt) throw new Error(`Missing verification receipt for ${attemptID}`)
   expect(effect.state).toBe("completed")
-  return (JSON.parse(effect.receipt) as { check: CheckReceipt }).check
+  return (JSON.parse(effect.receipt) as { check: RunnerCheckReceipt }).check
 }
 
 export const skillBodyCanary = "SECRET_SKILL_BODY_CANARY"

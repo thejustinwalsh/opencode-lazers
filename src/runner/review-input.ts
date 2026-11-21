@@ -1,7 +1,7 @@
 import { sameNativeModel } from "./model-route.ts"
 import { isWorkerAgent } from "./worker-agent.ts"
 import { z } from "zod"
-import type { HostMessage, HostSession } from "./host.ts"
+import type { RunnerHostMessage, HostSession } from "./host.ts"
 import { ModelPolicy } from "./schema.ts"
 
 const ReviewInputMetadata = z.object({
@@ -86,7 +86,7 @@ export type ReviewInputBinding = {
 export type ReviewInputEvidence = ReturnType<typeof observeReviewInput>
 
 function reviewMetadata(
-  message: HostMessage,
+  message: RunnerHostMessage,
   binding: Pick<ReviewInputBinding, "taskID" | "attemptID">,
 ) {
   if (message.type !== "synthetic") return undefined

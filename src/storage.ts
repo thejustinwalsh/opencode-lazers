@@ -85,7 +85,7 @@ export const SQLITE_BUSY_TIMEOUT_MS = 250
 const ATOMIC_ASYNC_DEADLINE_MS = 5_000
 
 /** Thrown by `atomicAsync` when a write lock could not be acquired before its deadline. */
-export class StorageBusyError extends Error {
+class StorageBusyError extends Error {
   constructor(
     readonly attempts: number,
     readonly waitedMs: number,

@@ -13,7 +13,7 @@ import type { FallowReviewResult } from "../audit/review.ts"
 import type { FallowDisposition } from "../audit/contract.ts"
 import { lstatSync } from "node:fs"
 import { fingerprint } from "../identity.ts"
-import { checkResourcesSettled, type CheckReceipt } from "./artifacts.ts"
+import { checkResourcesSettled, type RunnerCheckReceipt } from "./artifacts.ts"
 import type { EffectRow } from "./store.ts"
 import type { VerificationActivity } from "./verification-activities.ts"
 
@@ -37,14 +37,14 @@ const verificationCheckIdentity = (check: unknown): unknown =>
 export const sameVerificationCheckIdentity = (left: unknown, right: unknown): boolean =>
   fingerprint(verificationCheckIdentity(left)) === fingerprint(verificationCheckIdentity(right))
 
-export function actualCheckResultFromEffect(effect: EffectRow): CheckReceipt | undefined {
+export function actualCheckResultFromEffect(effect: EffectRow): RunnerCheckReceipt | undefined {
   if (!effect.receipt) return undefined
   try {
     const envelope: unknown = JSON.parse(effect.receipt)
     if (!isRecord(envelope)) return undefined
-    if (isRecord(envelope.check)) return envelope.check as unknown as CheckReceipt
+    if (isRecord(envelope.check)) return envelope.check as unknown as RunnerCheckReceipt
     if (isRecord(envelope.result) && isRecord(envelope.result.check))
-      return envelope.result.check as unknown as CheckReceipt
+      return envelope.result.check as unknown as RunnerCheckReceipt
     return undefined
   } catch {
     return undefined
@@ -63,7 +63,7 @@ export function checkSettlementProblem(activity: VerificationActivity): string |
 /** What a completed check activity keeps: whether its resources settled, not the receipt. */
 export type CheckActivitySummary = { settlementProblem: string | undefined }
 export function summarizeCheckReceipt(
-  receipt: CheckReceipt | undefined,
+  receipt: RunnerCheckReceipt | undefined,
 ): CheckActivitySummary | undefined {
   if (!receipt) return undefined
   return {

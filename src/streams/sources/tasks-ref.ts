@@ -99,7 +99,7 @@ export const taskScheduleColumns = {
   created_at: "text",
 } as const satisfies Columns
 
-export const taskDependencyColumns = {
+const taskDependencyColumns = {
   parent_task_id: "text",
   ord: "int",
   child_task_id: "text",
@@ -118,7 +118,7 @@ const childOf = <C extends Record<string, string>>(columns: C) =>
   Object.fromEntries(Object.entries(columns).map(([name, type]) => [`c_${name}`, type])) as {
     [K in keyof C & string as `c_${K}`]: C[K]
   }
-export const taskDependencyChildColumns = childOf({
+const taskDependencyChildColumns = childOf({
   status: "text",
   reason: "text",
   node_reason: "text",

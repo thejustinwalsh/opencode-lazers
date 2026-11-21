@@ -268,7 +268,7 @@ const CATEGORY_WORDS = {
 } as const
 
 /** Categories with recorded tokens that no price covers, across the priced sessions. */
-export function unpricedCategories(cost: MarketCost | undefined) {
+function unpricedCategories(cost: MarketCost | undefined) {
   const names = new Set<string>()
   for (const session of cost?.sessions ?? [])
     for (const [key, category] of Object.entries(session.categories))

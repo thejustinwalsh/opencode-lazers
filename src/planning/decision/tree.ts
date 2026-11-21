@@ -8,7 +8,7 @@ export const AGENT_ORDER: readonly PlanningAgentId[] = planningAgents.map((entry
 export const SIZE_CHOICES = ["one task", "a few tasks", "a large effort"] as const
 export type SizePick = (typeof SIZE_CHOICES)[number]
 
-export const SIZE_INSTRUCTIONS = "How large is the work this text asks for?"
+const SIZE_INSTRUCTIONS = "How large is the work this text asks for?"
 export const SIZE_CRITERIA: Record<SizePick, string> = {
   "one task": "one small change a single worker can finish",
   "a few tasks": "a few separate changes that depend on each other",
@@ -25,7 +25,7 @@ export function sizeQuestion(): SystemOneQuestion {
   return { type: "choice", instructions: SIZE_INSTRUCTIONS, criteria: { ...SIZE_CRITERIA } }
 }
 
-export const AGENT_INSTRUCTIONS = "Does this planning agent apply to the plan?"
+const AGENT_INSTRUCTIONS = "Does this planning agent apply to the plan?"
 
 /** Default per-agent form: one yes/no question per agent. */
 export function agentQuestion(agent: PlanningAgentId): SystemOneQuestion {

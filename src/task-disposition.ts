@@ -51,14 +51,6 @@ export const TaskDispositionRecord = z.strictObject({
 })
 export type TaskDispositionRecord = z.infer<typeof TaskDispositionRecord>
 
-export const TaskDispositionPayload = z.strictObject({
-  taskID: z.uuid(),
-  disposition: TaskDispositionKind,
-  reason: z.string(),
-  evidence: z.array(TaskDispositionEvidence),
-  relatedTaskIDs: z.array(z.uuid()),
-})
-
 export function dispositionPayload(input: TaskDispositionInput) {
   return {
     taskID: input.taskID,

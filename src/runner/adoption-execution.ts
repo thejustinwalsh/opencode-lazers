@@ -20,7 +20,7 @@ import {
   scopePatternsConflict,
   verificationEnvironmentIdentity,
 } from "./artifacts.ts"
-import type { CheckReceipt } from "./artifacts.ts"
+import type { RunnerCheckReceipt } from "./artifacts.ts"
 import { checkSucceeded } from "./checks.ts"
 import { verificationCheckWithDefaults } from "./verification-timeout.ts"
 import type { VerificationTimeoutDefaults } from "./verification-timeout.ts"
@@ -331,9 +331,9 @@ export class AdoptionExecution {
           try {
             const receipt =
               row.state === "completed" && row.receipt
-                ? (JSON.parse(row.receipt) as CheckReceipt)
+                ? (JSON.parse(row.receipt) as RunnerCheckReceipt)
                 : existsSync(row.receipt_path)
-                  ? (JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt)
+                  ? (JSON.parse(readFileSync(row.receipt_path, "utf8")) as RunnerCheckReceipt)
                   : undefined
             return Boolean(receipt && this.adoptionCheckReceiptMatches(receipt, row, check))
           } catch {
@@ -434,7 +434,7 @@ export class AdoptionExecution {
   }
 
   adoptionCheckReceiptMatches(
-    receipt: CheckReceipt,
+    receipt: RunnerCheckReceipt,
     row: AdoptionCheckRow,
     check: TaskProposal["verification"][number],
   ): boolean {
@@ -501,8 +501,8 @@ export class AdoptionExecution {
     workspace: string,
     artifact: string,
     fence: number,
-  ): Promise<CheckReceipt[] | undefined> {
-    const receipts: CheckReceipt[] = []
+  ): Promise<RunnerCheckReceipt[] | undefined> {
+    const receipts: RunnerCheckReceipt[] = []
     for (const check of checks) {
       if (!this.adoptionIsLive(adoption.id)) return undefined
       const effectiveCheck = verificationCheckWithDefaults(
@@ -558,12 +558,12 @@ export class AdoptionExecution {
           )
           return undefined
         }
-        let previous: CheckReceipt | undefined
+        let previous: RunnerCheckReceipt | undefined
         try {
           if (row.state === "completed" && row.receipt)
-            previous = JSON.parse(row.receipt) as CheckReceipt
+            previous = JSON.parse(row.receipt) as RunnerCheckReceipt
           else if (existsSync(row.receipt_path))
-            previous = JSON.parse(readFileSync(row.receipt_path, "utf8")) as CheckReceipt
+            previous = JSON.parse(readFileSync(row.receipt_path, "utf8")) as RunnerCheckReceipt
         } catch {
           previous = undefined
         }

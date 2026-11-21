@@ -1,4 +1,4 @@
-import { Changed, Observability } from "../../../../src/observability/contract.ts"
+import { ObservabilityChanged, Observability } from "../../../../src/observability/contract.ts"
 import type {
   LiveAttemptResponse,
   LiveGroupResponse,
@@ -422,7 +422,7 @@ export function reads(data: RadarData): Read[] {
     })
   out.push({
     label: "lazers.observability.changed",
-    schema: Changed,
+    schema: ObservabilityChanged,
     value: change(data),
   })
   return out

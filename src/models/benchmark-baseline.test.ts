@@ -5,7 +5,7 @@ import {
   benchmarkPrice,
   routeKey,
 } from "./benchmark-baseline.ts"
-import type { ModelCandidate } from "./comparison-state.ts"
+import type { ModelCandidate } from "./comparison-presentation.ts"
 
 const evidence = { records: [], recordCount: 0, truncated: false }
 const dates = { openrouter: "2026-11-15T10:00:00.000Z", opencode: "2026-11-14T10:00:00.000Z" }

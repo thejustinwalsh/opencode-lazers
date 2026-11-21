@@ -99,11 +99,7 @@ const json = (value: unknown) =>
   value === undefined || value === null ? null : JSON.stringify(value)
 
 /** Active reservations of a project: `RunnerStore.dispatchReservations()` over stored rows. */
-export function activeReservations(
-  db: Database,
-  ctx: RefreshContext,
-  project: string,
-): Reservation[] {
+function activeReservations(db: Database, ctx: RefreshContext, project: string): Reservation[] {
   const cached = ctx.reservations.get(project)
   if (cached) return cached
   const attempts = db
@@ -137,7 +133,7 @@ export function activeReservations(
 }
 
 /** `RunnerStore.effectiveReservationScope`: edit and create scope plus the newest amendment. */
-export function reservationScope(db: Database, taskID: string): string[] {
+function reservationScope(db: Database, taskID: string): string[] {
   const row = db
     .query<{ write_scope: string | null; create_scope: string | null }, [string]>(
       `SELECT json_extract(body,'$.proposal.writeScope') AS write_scope,

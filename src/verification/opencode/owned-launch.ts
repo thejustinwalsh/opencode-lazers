@@ -1966,10 +1966,7 @@ export function processInventoryFromProbe(
   }
 }
 
-export function observeProcessesUsing(
-  root: string,
-  timeoutMs = 2_000,
-): ProcessInventoryObservation {
+function observeProcessesUsing(root: string, timeoutMs = 2_000): ProcessInventoryObservation {
   const result = spawnSync("/bin/ps", ["-axo", "command="], {
     encoding: "utf8",
     timeout: Math.max(1, timeoutMs),

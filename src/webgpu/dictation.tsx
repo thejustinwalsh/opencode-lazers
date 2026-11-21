@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode/plugin/gui"
 import { createEffect, createSignal } from "solid-js"
 import { audioFilePCM16, MAX_AUDIO_SECONDS } from "./audio.ts"
 import type { InferenceRuntime } from "./runtime.ts"
+import { monitorAudioOwnership } from "./audio-ownership.ts"
 import { CaptureResources } from "./capture.ts"
 import { modifierTracker } from "./modifier-keys.ts"
 import { MICROPHONE_PREFIX, pillSelector, pillTooltipCss } from "./pill-tooltip.ts"
@@ -15,26 +16,7 @@ export function registerDictation(ctx: Parameters<Plugin.Setup>[0], runtime: Inf
     controller: AbortController,
     requestID: string,
     sessionID: string,
-  ): (() => void) => {
-    let checking = false
-    const timer = setInterval(() => {
-      if (checking || controller.signal.aborted) return
-      checking = true
-      void audioFixture
-        .enabled(
-          { requestID, sessionID },
-          { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3_000)]) },
-        )
-        .then((enabled) => {
-          if (!enabled) controller.abort(new Error("Owned audio verification was lost"))
-        })
-        .catch((error: unknown) => controller.abort(error))
-        .finally(() => {
-          checking = false
-        })
-    }, 1_000)
-    return () => clearInterval(timer)
-  }
+  ): (() => void) => monitorAudioOwnership(audioFixture, controller, requestID, sessionID)
   const [state, setState] = createSignal<"idle" | "permission" | "recording" | "transcribing">(
     "idle",
   )

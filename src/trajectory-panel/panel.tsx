@@ -58,7 +58,7 @@ import {
   detailedChecks,
   displayTitle,
   durationText,
-  elapsedLabel,
+  elapsedDurationLabel,
   eventPayload,
   settledHistory,
   currentTaskState,
@@ -551,7 +551,7 @@ function PanelView(
     const values = []
     for (let elapsed = 0; elapsed <= line.durationMs + 0.5; elapsed += step)
       if (!inside.some((span) => elapsed > span.startMs && elapsed < span.endMs))
-        values.push({ elapsedMs: elapsed, label: elapsedLabel(elapsed) })
+        values.push({ elapsedMs: elapsed, label: elapsedDurationLabel(elapsed) })
     return values
   })
   const place = (elapsedMs: number) =>
@@ -645,7 +645,7 @@ function PanelView(
   const checkLabel = (check: DetailedCheck) => check.command ?? check.id
   const attemptNumber = (id: string | null) =>
     id ? report()?.attempts.find((attempt) => attempt.id === id)?.number : undefined
-  const at = (value: number) => `+${elapsedLabel(Math.max(0, value - (origin() ?? value)))}`
+  const at = (value: number) => `+${elapsedDurationLabel(Math.max(0, value - (origin() ?? value)))}`
 
   /** Selection follows focus inside a track; focus moves to the newly selected mark. */
   const focusMark = (lane: HTMLElement, id: string) =>

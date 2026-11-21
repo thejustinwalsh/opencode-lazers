@@ -58,7 +58,7 @@ export type StubResult<M extends ContextMessage> = {
 type Part = { type?: unknown } & Record<string, unknown>
 
 /** Tools whose result is a read of current state; a repeat call makes the older result obsolete. */
-export const READ_TOOLS: ReadonlySet<string> = new Set([
+const READ_TOOLS: ReadonlySet<string> = new Set([
   "lz-inspect-plan",
   "lz-get-task",
   "lz-query-tasks",

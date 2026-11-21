@@ -351,9 +351,9 @@ export function registerPlanningTools(
 }
 
 /** The one agent of the final pass (the owner's decision). */
-export const FINAL_PASS_AGENT: AgentID = "readiness"
+const FINAL_PASS_AGENT: AgentID = "readiness"
 
-export const PlanReviewInput = z.strictObject({
+const PlanReviewInput = z.strictObject({
   planningID: z.uuid(),
   stage: z.enum(["review", "final"]).default("review"),
   agents: z
