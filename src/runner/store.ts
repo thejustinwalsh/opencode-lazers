@@ -1049,7 +1049,8 @@ export class RunnerStore {
   }
 
   constructor(readonly repository: TaskRepository) {
-    repository.atomic(registerLifecycleTransitions)
+    // Registering a connection function needs no write lock, so a current database loads without one.
+    repository.read(registerLifecycleTransitions)
     repository.installSchema(
       "runner",
       schemaModules.runner.generation,

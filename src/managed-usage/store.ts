@@ -336,11 +336,18 @@ export class ManagedUsageStore {
     })
     // The schema is shared by every project in this database, but the revision row is not.
     // Initialize it on every project-scoped store construction, not only on first migration.
-    repository.atomic((db) => {
-      db.query(
-        "INSERT OR IGNORE INTO managed_usage_meta(project_directory,revision) VALUES(?,0)",
-      ).run(repository.projectDirectory)
-    })
+    // Present on every start after the first, and then no write lock is taken.
+    const present = repository.read((db) =>
+      db
+        .query("SELECT 1 FROM managed_usage_meta WHERE project_directory=?")
+        .get(repository.projectDirectory),
+    )
+    if (!present)
+      repository.atomic((db) => {
+        db.query(
+          "INSERT OR IGNORE INTO managed_usage_meta(project_directory,revision) VALUES(?,0)",
+        ).run(repository.projectDirectory)
+      })
   }
 
   currentRevision(): number {
