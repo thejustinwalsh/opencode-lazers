@@ -24,17 +24,19 @@ import type {
  *
  * ```
  * stream open ─► authorize ─► open(): view row (point write) ─► build now
- * table change (revision, candidates, evidence, mappings) ─► views a stream holds, or let go of
- *     in the last 10 min ─► build, at most once per 15 s each (the worker's warm cadence)
- * stream closed or lease expired ─► release(): one holder fewer
+ * table change (revision, candidates, evidence, mappings) ─► views a stream holds
+ *     ─► build, at most once per 15 s each (the worker's warm cadence)
+ * stream closed or lease expired ─► release(): one holder fewer; the last holder's release
+ *     aborts a build in flight (nothing written) and the view is not built again until reopened
  * build: routes (host settings) ─► worker.view(identity stored) ─┬─ unchanged ─► nothing written
  *                                                                └─ rows ─► writeDecisionView (paged)
  * hourly, on open: views nobody opened for 7 days are dropped
  * ```
  *
- * With no write to a watched table an open panel costs nothing: no build, no read.
+ * With no write to a watched table an open panel costs nothing: no build, no read. A view nobody
+ * holds is never built; its stored rows stay until the idle sweep, and a reopen builds it at once
+ * (an unchanged identity writes nothing).
  */
-const VIEW_ACTIVE_MS = 10 * 60_000
 const VIEW_REFRESH_MS = 15_000
 const VIEW_DEBOUNCE_MS = 1_000
 const SWEEP_INTERVAL_MS = 60 * 60_000
@@ -62,12 +64,12 @@ type RoutedReader = (
 type Active = {
   project: string
   request: DecisionViewRequest
-  /** When the last holder let go (or, while held, the last open). */
-  openedAt: number
   /** Streams that hold the view now (`open` without its `release`). */
   held: number
   builtAt: number
   running?: Promise<void>
+  /** Aborts the build in flight when the last holder lets go. */
+  abort?: AbortController
   again: boolean
   timer?: ReturnType<typeof setTimeout>
 }
@@ -116,14 +118,11 @@ export class DecisionViews {
       .transaction(() => openDecisionView(db, projectDirectory, request, now))
       .immediate()
     const entry = this.active.get(view.id)
-    if (entry) {
-      entry.openedAt = now
-      entry.held++
-    } else
+    if (entry) entry.held++
+    else
       this.active.set(view.id, {
         project: projectDirectory,
         request,
-        openedAt: now,
         held: 1,
         builtAt: 0,
         again: false,
@@ -149,14 +148,18 @@ export class DecisionViews {
   }
 
   /**
-   * A stream that held the view closed or expired (`release` of the Models sources). The view
-   * stays current for VIEW_ACTIVE_MS more, so a panel that reopens it finds it current.
+   * A stream that held the view closed or expired (`release` of the Models sources). When it was
+   * the last holder the view stops: a build in flight is aborted and writes nothing, a scheduled
+   * one is cancelled, and no table change builds it again until a stream reopens it.
    */
   release(viewID: number) {
     const entry = this.active.get(viewID)
     if (!entry || entry.held === 0) return
     entry.held--
-    if (entry.held === 0) entry.openedAt = this.now()
+    if (entry.held > 0) return
+    clearTimeout(entry.timer)
+    entry.abort?.abort(new Error("Model decision view released"))
+    this.active.delete(viewID)
   }
 
   /** Streams holding a view now; for tests and diagnostics. */
@@ -164,15 +167,10 @@ export class DecisionViews {
     return this.active.get(viewID)?.held ?? 0
   }
 
-  /** A watched table changed: rebuild the views held or let go of recently, each at its cadence. */
+  /** A watched table changed: rebuild the views a stream holds, each at its cadence. */
   private changed() {
     const now = this.now()
     for (const [viewID, entry] of this.active) {
-      if (entry.held === 0 && now - entry.openedAt > VIEW_ACTIVE_MS) {
-        clearTimeout(entry.timer)
-        this.active.delete(viewID)
-        continue
-      }
       if (entry.timer) continue
       const at = Math.max(
         now + (this.options.debounceMs ?? VIEW_DEBOUNCE_MS),
@@ -193,7 +191,7 @@ export class DecisionViews {
   /** Build one view; concurrent calls coalesce into one more pass. Never throws. */
   build(viewID: number): Promise<void> {
     const entry = this.active.get(viewID)
-    if (!entry || this.closed) return Promise.resolve()
+    if (!entry || entry.held === 0 || this.closed) return Promise.resolve()
     if (entry.running) {
       entry.again = true
       return entry.running
@@ -202,7 +200,7 @@ export class DecisionViews {
       do {
         entry.again = false
         await this.buildOnce(viewID, entry)
-      } while (entry.again && !this.closed)
+      } while (entry.again && entry.held > 0 && !this.closed)
     })().finally(() => {
       entry.running = undefined
     })
@@ -211,6 +209,8 @@ export class DecisionViews {
 
   private async buildOnce(viewID: number, entry: Active) {
     const db = this.connection().db
+    const abort = new AbortController()
+    entry.abort = abort
     try {
       const stored = storedView(db, viewID)
       if (!stored) {
@@ -218,16 +218,20 @@ export class DecisionViews {
         this.active.delete(viewID)
         return
       }
-      const routed = await this.routed(entry.project, entry.request.taskID)
-      const result = await this.worker.view(entry.project, {
-        ...entry.request,
-        routed,
-        known: stored.identity,
-      })
+      const routed = await this.routed(entry.project, entry.request.taskID, abort.signal)
+      abort.signal.throwIfAborted()
+      const result = await this.worker.view(
+        entry.project,
+        { ...entry.request, routed, known: stored.identity },
+        abort.signal,
+      )
+      abort.signal.throwIfAborted()
       entry.builtAt = this.now()
       if ("unchanged" in result || this.closed || !storedView(db, viewID)) return
       this.writes.set(viewID, writeDecisionView(db, viewID, result, this.now()))
     } catch (error) {
+      // Released mid-build: nobody holds the view, so there is nothing to report.
+      if (abort.signal.aborted) return
       this.lastError = error instanceof Error ? error : new Error(String(error))
       try {
         db.transaction(() =>
@@ -236,6 +240,8 @@ export class DecisionViews {
       } catch {
         // The database is unavailable; the next change or open retries.
       }
+    } finally {
+      if (entry.abort === abort) entry.abort = undefined
     }
   }
 
@@ -247,7 +253,10 @@ export class DecisionViews {
 
   close() {
     this.closed = true
-    for (const entry of this.active.values()) clearTimeout(entry.timer)
+    for (const entry of this.active.values()) {
+      clearTimeout(entry.timer)
+      entry.abort?.abort(new Error("Model decision views are closed"))
+    }
     this.active.clear()
     this.unsubscribe?.()
     this.unsubscribe = undefined

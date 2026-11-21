@@ -603,7 +603,7 @@ test("idle: an open view with no revision or evidence change asks the worker not
   }
 })
 
-test("a view stays current while a stream holds it, however long; once let go it stops after the active period", async () => {
+test("a view stays current while a stream holds it, however long; once let go it is not built again", async () => {
   const calls: DecisionViewCall[] = []
   let clock = Date.now()
   const views = new DecisionViews(
@@ -662,19 +662,73 @@ test("a view stays current while a stream holds it, however long; once let go it
     const before = calls.length
     await bump()
     expect(calls.length).toBe(before + 1)
-    // Closed: it stays current for the active period after, then stops.
+    // Closed: nobody holds it, so a revision change builds nothing.
     service.close({ stream: "catalog" })
     expect(views.holders(viewID)).toBe(0)
     clock += 60_000
     await bump()
-    expect(calls.length).toBe(before + 2)
-    clock += 11 * 60_000
-    await bump()
-    expect(calls.length).toBe(before + 2)
+    expect(calls.length).toBe(before + 1)
   } finally {
     service.dispose()
     shared.release()
     off()
+    views.close()
+  }
+})
+
+test("a stream closed while its view is building aborts the build: nothing is written, nothing rebuilds until a reopen", async () => {
+  const calls: { call: DecisionViewCall; signal: AbortSignal | undefined }[] = []
+  let gate = Promise.withResolvers<void>()
+  const views = new DecisionViews(
+    fixture.path,
+    {
+      async view(_project, call, signal) {
+        calls.push({ call, signal })
+        await gate.promise
+        signal?.throwIfAborted()
+        return computedView(call)
+      },
+    },
+    async () => routed,
+    { debounceMs: 5, refreshMs: 0 },
+  )
+  const shared = acquireSharedConnection(fixture.path)
+  const request = { filters: filtersOf("systems", "refactoring"), basis: null, taskID: null }
+  const stateOf = (viewID: number) =>
+    shared.db
+      .query<{ produced_at: number | null; last_error: string | null }, [number]>(
+        "SELECT produced_at,last_error FROM model_decision_views WHERE id=?",
+      )
+      .get(viewID)!
+  try {
+    const viewID = views.open(fixture.projectDirectory, request)
+    for (let i = 0; i < 100 && !calls.length; i++) await Bun.sleep(5)
+    expect(calls).toHaveLength(1)
+    // The stream closes mid-build: the worker's call is aborted and its result is never written.
+    views.release(viewID)
+    expect(calls[0]!.signal?.aborted).toBe(true)
+    gate.resolve()
+    await Bun.sleep(20)
+    expect(views.writes.has(viewID)).toBe(false)
+    expect(stateOf(viewID)).toEqual({ produced_at: null, last_error: null })
+    expect(views.lastError).toBeUndefined()
+    // Unheld, a revision change asks the worker nothing.
+    shared.db
+      .query("UPDATE observation_revisions SET revision=revision+1 WHERE project_directory=?")
+      .run(fixture.projectDirectory)
+    await Bun.sleep(50)
+    await views.settle()
+    expect(calls).toHaveLength(1)
+    // A reopen builds it at once and writes its rows.
+    gate = Promise.withResolvers<void>()
+    gate.resolve()
+    expect(views.open(fixture.projectDirectory, request)).toBe(viewID)
+    await views.settle()
+    expect(calls).toHaveLength(2)
+    expect(views.writes.has(viewID)).toBe(true)
+    expect(views.lastError).toBeUndefined()
+  } finally {
+    shared.release()
     views.close()
   }
 })
