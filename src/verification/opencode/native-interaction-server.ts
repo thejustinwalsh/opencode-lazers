@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path"
 import {
   NATIVE_VERIFICATION_BASE_ENV,
   NativeInteraction,
+  type NativeAdmissionRefusal,
   type NativeActionResult,
   type NativeBinding,
   nativeKeyUsesModifiers,
@@ -29,6 +30,7 @@ type RequestRecord = {
   request: NativeRequest
   state: RecordState
   result?: NativeActionResult
+  refusal?: NativeAdmissionRefusal
 }
 
 type HostRecord = {
@@ -156,26 +158,25 @@ export class NativeInteractionBroker {
       }
       return { state: "existing" as const }
     }
-    const host = this.requireFreshHost(input.binding)
-    if (this.ambiguous) throw new Error("An ambiguous native action blocks further interaction")
+    const host = this.freshHost(input.binding)
+    if (host === undefined) {
+      return this.refuse(input, "Owned Desktop native adapter is not freshly attached")
+    }
+    if (this.ambiguous) {
+      return this.refuse(input, "An ambiguous native action blocks further interaction")
+    }
     if (this.activeRequest !== undefined) {
-      throw new Error("A native interaction is already pending; inspect it without replay")
+      return this.refuse(
+        input,
+        "A native interaction is already pending; inspect it without replay",
+      )
     }
     if (
       input.operation.kind === "key" &&
       nativeKeyUsesModifiers(input.operation.key) &&
       !host.capabilities.modifiedKeys
     ) {
-      this.requests.set(input.requestID, {
-        bindingKey: stable(input.binding),
-        request: { requestID: input.requestID, operation: input.operation },
-        state: "completed",
-        result: {
-          delivery: "not-delivered",
-          message: "Owned native adapter does not support modified key shortcuts",
-        },
-      })
-      return { state: "completed" as const }
+      return this.refuse(input, "Owned native adapter does not support modified key shortcuts")
     }
     const currentWindow = host.windows.find(
       (window) => window.windowID === input.operation.window.windowID,
@@ -190,15 +191,7 @@ export class NativeInteractionBroker {
             ? "Focus the owned Desktop window before native input"
             : undefined
     if (rejection !== undefined) {
-      // Retain a conclusive negative receipt even if the enqueue response is lost.
-      // The adapter never receives this operation.
-      this.requests.set(input.requestID, {
-        bindingKey: stable(input.binding),
-        request: { requestID: input.requestID, operation: input.operation },
-        state: "completed",
-        result: { delivery: "not-delivered", message: rejection },
-      })
-      return { state: "completed" as const }
+      return this.refuse(input, rejection)
     }
     this.requests.set(input.requestID, {
       bindingKey: stable(input.binding),
@@ -306,6 +299,7 @@ export class NativeInteractionBroker {
     return {
       state: record.state,
       ...(record.result === undefined ? {} : { result: record.result }),
+      ...(record.refusal === undefined ? {} : { refusal: structuredClone(record.refusal) }),
     }
   }
 
@@ -432,6 +426,14 @@ export class NativeInteractionBroker {
   }
 
   private requireFreshHost(binding: NativeBinding): HostRecord {
+    const host = this.freshHost(binding)
+    if (host === undefined) {
+      throw new Error("Owned Desktop native adapter is not freshly attached")
+    }
+    return host
+  }
+
+  private freshHost(binding: NativeBinding): HostRecord | undefined {
     this.assertBinding(binding)
     const host = this.host
     if (
@@ -439,9 +441,29 @@ export class NativeInteractionBroker {
       !same(host.binding, binding) ||
       this.now() - host.lastSeen > HOST_FRESH_MS
     ) {
-      throw new Error("Owned Desktop native adapter is not freshly attached")
+      return undefined
     }
     return host
+  }
+
+  private refuse(
+    input: { binding: NativeBinding; requestID: string; operation: NativeOperation },
+    message: string,
+  ) {
+    const refusal: NativeAdmissionRefusal = {
+      requestID: input.requestID,
+      operation: structuredClone(input.operation),
+      delivery: "not-delivered",
+      message,
+    }
+    this.requests.set(input.requestID, {
+      bindingKey: stable(input.binding),
+      request: { requestID: input.requestID, operation: refusal.operation },
+      state: "completed",
+      result: { delivery: refusal.delivery, message },
+      refusal,
+    })
+    return { state: "refused" as const, refusal: structuredClone(refusal) }
   }
 
   private settleStaleRequest(): void {

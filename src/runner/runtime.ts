@@ -1,5 +1,10 @@
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import { terminalPlanStates as terminal } from "./plan-control.ts"
+import {
+  assertTaskPersonaForManualStart,
+  taskStartPlanInput,
+  taskStartRequestID,
+} from "./task-start.ts"
 
 import { RetainedVerificationExecution } from "./retained-verification-execution.ts"
 import { checkSettlementProblem, errorText } from "./runtime-helpers.ts"
@@ -94,8 +99,6 @@ import {
 import type { VerificationActivity } from "./verification-activities.ts"
 
 import type { RetainedDependencyInstaller } from "./retained-verification/isolation.ts"
-
-const taskStartRequestID = (taskID: string) => `task-start:${taskID}:1`
 
 // Recheck external/native facts periodically, but don't repeat full safety
 // observations on every ordinary scheduler tick when durable facts are stable.
@@ -894,8 +897,7 @@ export class TaskRuntime {
     if (!existing) {
       workerModel = await this.host.workerModel?.()
       existing = this.store.execution(task.id)
-      if (!existing && !workerModel)
-        throw new Error("Select an implementor model in native OpenCode agent configuration")
+      if (!existing && !workerModel) assertTaskPersonaForManualStart(task)
     }
     let plan: PlanRow
     let created = false
@@ -912,20 +914,8 @@ export class TaskRuntime {
       if (task.status !== "submitted") throw new Error("Task cannot be started")
       if (task.provenance.startingRevision.kind !== "git")
         throw new Error("Task has no committed starting revision")
-      const proposal = task.proposal
       const receipt = this.store.submit(
-        {
-          requestID: taskStartRequestID(task.id),
-          objective: proposal.objective,
-          baseCommit: task.provenance.startingRevision.commit,
-          workspaceMode: "shared",
-          nodes: [{ taskID: task.id, revision: task.revision }],
-          dependencies: [],
-          integrationOrder: [task.id],
-          verification: proposal.verification,
-          acceptance: proposal.acceptance,
-          dispositions: [],
-        },
+        taskStartPlanInput(task, task.provenance.startingRevision.commit),
         task.provenance.sessionID,
         this.verificationTimeoutDefaults,
       )

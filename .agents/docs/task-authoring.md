@@ -171,15 +171,21 @@ behavior and unsupported or repeated obligations. It preserves necessary
 requirements while removing needless instructions; it is not implementation
 approval.
 
-Assign each new task one model-independent persona (`ui`, `systems`, or
-`small-refactoring`). Runtime resolves its current task, project or shared model
-mapping at dispatch, then falls back to the native implementor configuration.
-An explicit user-selected plan `workerModel` overrides that mapping with the exact
-`providerID`, model `id`, and optional native `variant`/effort. Running attempts
-retain their recorded route. LAZERS forwards selections unchanged; the native
-host decides availability. Catalog information informs advice without gating or
-rewriting a selection. Missing prices remain unknown. Legacy plans without a
-persona retain their behavior.
+Optionally assign a task one explicit model-independent persona (`ui`, `systems`,
+or `small-refactoring`) when its guidance is useful. Omit it otherwise; do not
+infer persona from task kind, prose, or authoring context. Manual Start copies an
+explicit saved task persona into its generated plan node. Ordinary plans continue
+to use only their explicitly authored node personas.
+
+At dispatch, runtime resolves the current task, project or shared mapping for the
+selected persona, then falls back to the native implementor configuration. A
+persona does not choose a provider or model. An explicit user-selected plan
+`workerModel` overrides mappings with the exact `providerID`, model `id`, and
+optional native `variant`/effort. Running attempts retain their recorded route.
+LAZERS forwards selections unchanged; the native host decides availability.
+Catalog information informs advice without gating or rewriting a selection.
+Missing prices remain unknown. Legacy plans without a persona retain their
+behavior.
 
 Grade real work by acceptance correctness, regressions, scope, maintainability
 and necessary rework. Retain visible trajectories and failed attempts. Compare

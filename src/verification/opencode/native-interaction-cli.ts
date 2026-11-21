@@ -1,6 +1,7 @@
 import { OpenCode } from "@opencode/client"
 import { lstat, mkdir, open } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { speechSegments } from "../../webgpu/speech.ts"
 import { sha256Text } from "./audio-fixture-contract.ts"
 import {
@@ -15,6 +16,7 @@ import {
   NativeInteraction,
   nativeKeyUsesModifiers,
   parseNativeKey,
+  type NativeAdmissionRefusal,
   type NativeOperation,
   type NativeWindowReference,
 } from "./native-interaction-contract.ts"
@@ -159,6 +161,18 @@ function printResult(value: unknown): void {
   console.log(JSON.stringify(value, null, 2))
 }
 
+function admissionRefusalMatches(
+  refusal: NativeAdmissionRefusal,
+  requestID: string,
+  operation: NativeOperation,
+): boolean {
+  return (
+    refusal.requestID === requestID &&
+    refusal.delivery === "not-delivered" &&
+    isDeepStrictEqual(refusal.operation, operation)
+  )
+}
+
 export async function nativeInteractionStatus(root: string): Promise<void> {
   const proof = await verifyOwnedSidecar(root, { allowInteractionRecovery: true })
   const client = makeClient(proof.registration)
@@ -230,10 +244,19 @@ export async function runNativeInteraction(
       throw new Error("Focus the owned Desktop window before native input")
     }
     mayHaveReachedSidecar = true
-    await rpc.enqueue(
+    const admission = await rpc.enqueue(
       { binding, requestID, operation: command },
       { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
     )
+    if (admission.state === "refused") {
+      const { refusal } = admission
+      if (!admissionRefusalMatches(refusal, requestID, command)) {
+        throw new Error("Owned sidecar returned an admission refusal for a different request")
+      }
+      finishAttempted = true
+      await lease.finish({ state: "idle", message: refusal.message })
+      throw new Error(refusal.message)
+    }
 
     const deadline = Date.now() + REQUEST_TIMEOUT_MS
     let result: Awaited<ReturnType<typeof rpc.result>> | undefined
@@ -244,6 +267,14 @@ export async function runNativeInteraction(
           { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) },
         )
         if (current.state === "completed") {
+          if (
+            current.refusal !== undefined &&
+            (!admissionRefusalMatches(current.refusal, requestID, command) ||
+              current.result?.delivery !== current.refusal.delivery ||
+              current.result.message !== current.refusal.message)
+          ) {
+            throw new Error("Owned sidecar returned a mismatched native admission refusal")
+          }
           result = current
           break
         }
@@ -276,7 +307,13 @@ export async function runNativeInteraction(
       )
     }
     finishAttempted = true
-    await lease.finish({ state: "idle", message: `Completed as ${result.result.delivery}` })
+    await lease.finish({
+      state: "idle",
+      message:
+        result.refusal?.message ??
+        result.result.message ??
+        `Completed as ${result.result.delivery}`,
+    })
     if (
       (input.kind === "dictation-fixture" || input.kind === "playback-plan") &&
       result.result.delivery !== "delivered"
@@ -336,6 +373,14 @@ export async function resolveNativeInteractionResult(
   const result = await client
     .rpc(NativeInteraction)
     .result({ binding, requestID }, { signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
+  if (
+    result.refusal !== undefined &&
+    (result.refusal.requestID !== requestID ||
+      result.result?.delivery !== result.refusal.delivery ||
+      result.result.message !== result.refusal.message)
+  ) {
+    throw new Error("Owned sidecar returned a mismatched native admission refusal")
+  }
   if (result.state !== "completed" || result.result === undefined) {
     printResult({ requestID, state: result.state, resolved: false, replayed: false })
     return
@@ -354,6 +399,7 @@ export async function resolveNativeInteractionResult(
     root,
     requestID,
     result.result.delivery,
+    result.refusal?.message ?? result.result.message,
   )
   printResult({
     requestID,
@@ -362,6 +408,8 @@ export async function resolveNativeInteractionResult(
     resolved: manifest.nativeInteraction?.state === "idle",
     replayed: false,
     snapshot: result.result.snapshot,
+    message: result.refusal?.message ?? result.result.message,
+    ...(result.refusal === undefined ? {} : { admissionRefusal: result.refusal }),
   })
 }
 

@@ -43,7 +43,8 @@ afterEach(() => {
 test("a validated submission survives closing and reopening SQLite with runtime provenance", () => {
   const path = join(directory(), "nested", "tasks.sqlite")
   const repository = new TaskRepository(path, "/repo")
-  const result = submitTask(repository, keyedProposal(), provenance)
+  const proposal = { ...keyedProposal(), persona: "systems" as const }
+  const result = submitTask(repository, proposal, provenance)
   expect(result.status).toBe("submitted")
   if (result.status !== "submitted") throw new Error("Submission failed")
   expect(result.reference).toBe("LZ-1")
@@ -52,7 +53,7 @@ test("a validated submission survives closing and reopening SQLite with runtime 
   const task = reopened.get(result.taskID)!
   expect(task.id).toBe(result.taskID)
   expect(task.provenance).toEqual(provenance())
-  expect(task.proposal).toEqual(validProposal())
+  expect(task.proposal).toEqual({ ...validProposal(), persona: "systems" })
   expect(task.status).toBe("submitted")
   expect(reopened.referenceFor(result.taskID)).toBe("LZ-1")
   expect(reopened.get("LZ-1")).toEqual(task)

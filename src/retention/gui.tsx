@@ -311,7 +311,7 @@ export function setupRetention(ctx: Parameters<Plugin.Setup>[0]) {
           title={
             <SettingLabel
               name="Retire automatically"
-              hint="off by default · only while no worker is running"
+              hint="off by default · also removes audit runs of finished plans · only while no worker is running"
             />
           }
         >

@@ -2,6 +2,10 @@ import { MAX_PRIORITY, NO_PRIORITY } from "./priority.ts"
 import { z } from "zod"
 import { WorkerAgent } from "./worker-agent.ts"
 import { FALLOW_CHECK_IDS, TaskProposalSchema, dropLegacyHumanEvidence } from "../task.ts"
+import { TaskPersonaSchema } from "../personas/schema.ts"
+
+export const WorkerPersona = TaskPersonaSchema
+export type WorkerPersona = z.infer<typeof WorkerPersona>
 
 export const TaskState = z.enum([
   "queued",
@@ -16,8 +20,6 @@ export const TaskState = z.enum([
   "incorporated",
 ])
 export type TaskState = z.infer<typeof TaskState>
-export const WorkerPersona = z.enum(["ui", "systems", "small-refactoring"])
-export type WorkerPersona = z.infer<typeof WorkerPersona>
 export const ModelPolicy = z.strictObject({
   providerID: z.string().min(1).describe("Native OpenCode provider ID, passed through unchanged."),
   id: z.string().min(1).describe("Native OpenCode model ID, passed through unchanged."),
@@ -103,7 +105,7 @@ const StrictPlanInput = z
         z.strictObject({
           taskID: z.uuid(),
           revision: z.literal(1),
-          persona: WorkerPersona.optional().describe(
+          persona: TaskPersonaSchema.optional().describe(
             "Optional model-independent worker guidance for this task.",
           ),
         }),

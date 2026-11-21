@@ -2,6 +2,7 @@ import type { TaskDetail } from "./contract.ts"
 import { TaskProposalSchema } from "../task.ts"
 import { workerVerificationSection } from "../projects/profile-guidance.ts"
 import type { ActiveProfile } from "../projects/profile-store.ts"
+import { taskPersonaInstructions } from "./persona-instructions.ts"
 
 /** Human-readable task instructions for the implementor's readable fetch path. */
 export function taskInstructions(detail: TaskDetail, profile?: ActiveProfile): string {
@@ -68,6 +69,7 @@ export function taskInstructions(detail: TaskDetail, profile?: ActiveProfile): s
     : ""
   return (
     `# Task ${task.id} (${detail.reference}), revision ${task.revision}\n\n${proposal.objective}` +
+    taskPersonaInstructions(proposal.persona) +
     (detail.disposition
       ? `\n\n## Disposition\n${detail.disposition.disposition}: ${detail.disposition.reason}\nEvidence: ${detail.disposition.evidence.map((item) => item.reference).join("; ")}`
       : "") +

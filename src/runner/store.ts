@@ -2691,24 +2691,48 @@ export class RunnerStore {
         decisions: JSON.parse(continuity.decisions) as string[],
         unresolvedQuestions: JSON.parse(continuity.unresolved_questions) as string[],
       })
-      const coverage = db
+      const stored = db
         .query<{ input_count: number; input_fingerprint: string }, [string, string, number]>(
           `SELECT input_count,input_fingerprint FROM runner_architect_continuity_coverage
            WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
         )
         .get(this.repository.projectDirectory, input.previousSessionID, continuity.revision)
-      if (!coverage) return null
-      // The checkpoint's count is checked against its rows by counting them; the fingerprint is the
-      // one the checkpoint stored when it wrote those rows, and is carried to the renewal below.
-      const coveredCount =
-        db
-          .query<{ n: number }, [string, string, number]>(
-            `SELECT COUNT(*) AS n FROM runner_architect_continuity_inputs
+      if (!stored) return null
+      // The checkpoint's rows are the truth and its stored count and fingerprint summarize them.
+      // Only a renewal about to be written pays for the paged recompute; a mismatch rebuilds the
+      // summary from the rows, records the repair and the renewal carries the rebuilt summary.
+      const verifiedCoverage = () => {
+        const rebuilt = fingerprintStrings(
+          pagedMessageIDs(
+            db,
+            `SELECT message_id FROM runner_architect_continuity_inputs
              WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
-          )
-          .get(this.repository.projectDirectory, input.previousSessionID, continuity.revision)?.n ??
-        0
-      if (coverage.input_count !== coveredCount) return null
+            [this.repository.projectDirectory, input.previousSessionID, continuity.revision],
+          ),
+        )
+        if (
+          rebuilt.count === stored.input_count &&
+          rebuilt.fingerprint === stored.input_fingerprint
+        )
+          return stored
+        db.query(
+          `UPDATE runner_architect_continuity_coverage SET input_count=?,input_fingerprint=?
+           WHERE project_directory=? AND session_id=? AND continuity_revision=?`,
+        ).run(
+          rebuilt.count,
+          rebuilt.fingerprint,
+          this.repository.projectDirectory,
+          input.previousSessionID,
+          continuity.revision,
+        )
+        this.record(input.anchorPlanID, null, "ARCHITECT_CONTINUITY_COVERAGE_REPAIRED", {
+          sessionID: input.previousSessionID,
+          continuityRevision: continuity.revision,
+          stored: { count: stored.input_count, fingerprint: stored.input_fingerprint },
+          rebuilt,
+        })
+        return { input_count: rebuilt.count, input_fingerprint: rebuilt.fingerprint }
+      }
       // The renewal's coverage rows are the checkpoint's, copied in SQL.
       const copyCoverage = (renewalID: string) =>
         db
@@ -2782,6 +2806,7 @@ export class RunnerStore {
           })
           return null
         }
+        const coverage = verifiedCoverage()
         db.query(
           `UPDATE runner_architect_renewals SET idle_at=?,state=lz_runner_transition('renewal',state,'creating'),handoff_message_id=?,
              handoff_outbox_id=NULL,input_message_id=NULL,error=NULL,continuity_json=?,started_at=?,
@@ -2834,6 +2859,7 @@ export class RunnerStore {
         return row ? [row.generation] : []
       })
       const generation = Math.max(0, ...continuations) + 1
+      const coverage = verifiedCoverage()
       const id = crypto.randomUUID()
       const successorSessionID = `ses_${crypto.randomUUID().replaceAll("-", "")}`
       db.query(

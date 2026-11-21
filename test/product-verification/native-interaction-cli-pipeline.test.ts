@@ -104,6 +104,7 @@ type PipelineOptions = {
   legacyStatus?: boolean
   failKeyUp?: boolean
   loseEnqueueReply?: boolean
+  mismatchAdmissionRefusal?: boolean
   loadFixture?: (
     verificationBase: string,
     fixtureID: FrozenAudioFixtureID,
@@ -159,6 +160,7 @@ async function pipeline(options: PipelineOptions = {}) {
   let attachCount = 0
   let completeCount = 0
   let rejectHeartbeatAttachments = false
+  let adapterPollingPaused = false
   const failedAttachmentStatuses: Array<ReturnType<typeof broker.status>> = []
   const desktopRPC = {
     attach: async (input: Parameters<NativeInteractionBroker["attach"]>[0]) => {
@@ -172,7 +174,8 @@ async function pipeline(options: PipelineOptions = {}) {
       }
       return {}
     },
-    poll: async (input: Parameters<NativeInteractionBroker["poll"]>[0]) => broker.poll(input),
+    poll: async (input: Parameters<NativeInteractionBroker["poll"]>[0]) =>
+      adapterPollingPaused ? null : broker.poll(input),
     complete: async (input: Parameters<NativeInteractionBroker["complete"]>[0]) => {
       completeCount++
       broker.complete(input)
@@ -227,6 +230,7 @@ async function pipeline(options: PipelineOptions = {}) {
   let leaseState: "idle" | "pending" | "ambiguous" | undefined
   let leaseRequestID: string | undefined
   let leaseFinishes = 0
+  let leaseMessage: string | undefined
   const rpc = {
     status: async ({ binding: requestedBinding }: { binding: NativeBinding }) => {
       const status = broker.status(requestedBinding)
@@ -240,7 +244,13 @@ async function pipeline(options: PipelineOptions = {}) {
       enqueueCount++
       requestIDs.push(input.requestID)
       acceptedOperations.push(validation.value.operation)
-      const result = broker.enqueue(validation.value)
+      let result = broker.enqueue(validation.value)
+      if (options.mismatchAdmissionRefusal && result.state === "refused") {
+        result = {
+          ...result,
+          refusal: { ...result.refusal, requestID: "different-request" },
+        }
+      }
       if (loseEnqueueReply) {
         loseEnqueueReply = false
         throw new Error("fixture lost the enqueue reply")
@@ -271,24 +281,36 @@ async function pipeline(options: PipelineOptions = {}) {
       manifest.nativeInteraction = { state: "pending", requestID, kind: "key" }
       return {
         manifest,
-        finish: async ({ state }) => {
+        finish: async ({ state, message }) => {
           leaseFinishes++
           if (leaseRequestID !== requestID || leaseState !== "pending")
             throw new Error("Native interaction lease changed while a request was pending")
           leaseState = state
-          manifest.nativeInteraction = { state, requestID, kind: "key" }
+          leaseMessage = message
+          manifest.nativeInteraction = {
+            state,
+            requestID,
+            kind: "key",
+            ...(message === undefined ? {} : { message }),
+          }
           if (state === "ambiguous") manifest.status = "cleanup-blocked"
         },
       }
     },
     makeClient: () => client,
     verifyOwnedSidecar: async () => proof as never,
-    resolveNativeInteraction: async (_root, requestID) => {
+    resolveNativeInteraction: async (_root, requestID, _delivery, message) => {
       if (leaseRequestID !== requestID || (leaseState !== "pending" && leaseState !== "ambiguous"))
         throw new Error("Native interaction resolution does not match the pending request")
       leaseState = "idle"
       manifest.status = "ready"
-      manifest.nativeInteraction = { state: "idle", requestID, kind: "key" }
+      leaseMessage = message
+      manifest.nativeInteraction = {
+        state: "idle",
+        requestID,
+        kind: "key",
+        ...(message === undefined ? {} : { message }),
+      }
       return { ...manifest, nativeInteraction: { state: "idle", requestID } }
     },
   }
@@ -309,9 +331,11 @@ async function pipeline(options: PipelineOptions = {}) {
     failedAttachmentStatuses,
     enqueueCount: () => enqueueCount,
     leaseState: () => leaseState,
+    leaseMessage: () => leaseMessage,
     leaseFinishes: () => leaseFinishes,
     advanceBrokerClock: (milliseconds: number) => (brokerTime += milliseconds),
     setHeartbeatAttachmentFailure: (value: boolean) => (rejectHeartbeatAttachments = value),
+    setAdapterPollingPaused: (value: boolean) => (adapterPollingPaused = value),
     setExecute: (
       execute: (operation: NativeOperation, requestID?: string) => Promise<NativeActionResult>,
     ) => Reflect.set(adapter, "execute", execute),
@@ -331,6 +355,8 @@ async function pipeline(options: PipelineOptions = {}) {
       manifest.nativeInteraction = { state: "pending", requestID, kind: "key" }
       return broker.enqueue({ binding, requestID, operation })
     },
+    seedBrokerRequest: (requestID: string, operation: NativeOperation) =>
+      broker.enqueue({ binding, requestID, operation }),
     abandonAdapter: () => {
       // Simulate a process exit: do not invoke detach, which would settle the lease itself.
       Reflect.set(adapter, "stopped", true)
@@ -355,13 +381,46 @@ function nativeArgs(key: string, snapshotID: string): string[] {
   ]
 }
 
+function seedActiveRequest(value: Awaited<ReturnType<typeof pipeline>>, requestID: string): void {
+  value.setAdapterPollingPaused(true)
+  expect(
+    value.seedBrokerRequest(requestID, {
+      kind: "snapshot",
+      window: value.windowReference,
+    }),
+  ).toEqual({ state: "queued" })
+}
+
+function settleActiveRequest(value: Awaited<ReturnType<typeof pipeline>>, requestID: string): void {
+  const status = value.broker.status(binding)
+  if (status.adapterID === undefined) throw new Error("Fixture adapter disappeared")
+  expect(
+    value.broker.poll({
+      binding,
+      adapterID: status.adapterID,
+      windows: [value.windowReference],
+    }),
+  ).toMatchObject({ requestID })
+  value.broker.complete({
+    binding,
+    adapterID: status.adapterID,
+    requestID,
+    result: { delivery: "delivered" },
+  })
+  value.setAdapterPollingPaused(false)
+}
+
 async function runCLI(
   args: string[],
   dependencies: NativeInteractionCliDependencies,
-): Promise<void> {
-  const output = spyOn(console, "log").mockImplementation(() => undefined)
+): Promise<string[]> {
+  const lines: string[] = []
+  const output = spyOn(console, "log").mockImplementation((...values) => {
+    lines.push(values.map(String).join(" "))
+  })
   try {
     await verificationCLI(args, dependencies)
+    return lines
   } finally {
     output.mockRestore()
   }
@@ -582,6 +641,77 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
     }
   })
 
+  test("finishes its matching lease idle after a request-bound admission refusal", async () => {
+    const value = await pipeline()
+    try {
+      const snapshotID = await freshSnapshot(value)
+      const activeRequestID = "8fc30312-7715-4a1a-a12f-2bb8e53f17c2"
+      const refusalMessage = "A native interaction is already pending; inspect it without replay"
+      seedActiveRequest(value, activeRequestID)
+      await expect(runCLI(nativeArgs("Enter", snapshotID), value.dependencies)).rejects.toThrow(
+        refusalMessage,
+      )
+
+      expect(value.events).toEqual([])
+      expect(value.enqueueCount()).toBe(1)
+      expect(value.leaseState()).toBe("idle")
+      expect(value.leaseFinishes()).toBe(1)
+      expect(value.leaseMessage()).toBe(refusalMessage)
+      expect(manifest.nativeInteraction).toMatchObject({
+        state: "idle",
+        requestID: value.requestIDs[0],
+        message: refusalMessage,
+      })
+      expect(value.broker.result(binding, value.requestIDs[0]!)).toMatchObject({
+        state: "completed",
+        result: { delivery: "not-delivered", message: refusalMessage },
+        refusal: {
+          requestID: value.requestIDs[0],
+          operation: value.acceptedOperations[0],
+          delivery: "not-delivered",
+          message: refusalMessage,
+        },
+      })
+      expect(value.broker.status(binding).blocked).toBe(false)
+      expect(value.broker.result(binding, activeRequestID)).toEqual({ state: "queued" })
+      settleActiveRequest(value, activeRequestID)
+      await runCLI(nativeArgs("Enter", await freshSnapshot(value)), value.dependencies)
+      expect(value.enqueueCount()).toBe(2)
+      expect(value.events).toEqual([
+        { type: "keyDown", keyCode: "Enter" },
+        { type: "keyUp", keyCode: "Enter" },
+      ])
+      expect(value.leaseState()).toBe("idle")
+      expect(value.leaseFinishes()).toBe(2)
+    } finally {
+      value.close()
+    }
+  })
+
+  test("keeps a malformed refusal response ambiguous rather than releasing the lease", async () => {
+    const value = await pipeline({
+      mismatchAdmissionRefusal: true,
+    })
+    try {
+      seedActiveRequest(value, "8fc30312-7715-4a1a-a12f-2bb8e53f17c2")
+      await expect(
+        runCLI(nativeArgs("Enter", await freshSnapshot(value)), value.dependencies),
+      ).rejects.toThrow("Native delivery is ambiguous; do not replay")
+      expect(value.events).toEqual([])
+      expect(value.enqueueCount()).toBe(1)
+      expect(value.leaseState()).toBe("ambiguous")
+      expect(value.leaseFinishes()).toBe(1)
+      expect(value.broker.result(binding, value.requestIDs[0]!)).toMatchObject({
+        refusal: {
+          requestID: value.requestIDs[0],
+          delivery: "not-delivered",
+        },
+      })
+    } finally {
+      value.close()
+    }
+  })
+
   test("reports partial modified-key delivery as ambiguous and does not replay it", async () => {
     const value = await pipeline({ failKeyUp: true })
     try {
@@ -641,6 +771,74 @@ describe("owned native interaction CLI-to-Main pipeline", () => {
         { type: "keyUp", keyCode: "Enter" },
       ])
       expect(value.leaseState()).toBe("idle")
+    } finally {
+      value.close()
+    }
+  })
+
+  test("recovers a lost negative admission receipt read-only without re-enqueueing", async () => {
+    const value = await pipeline({ loseEnqueueReply: true })
+    try {
+      const activeRequestID = "8fc30312-7715-4a1a-a12f-2bb8e53f17c2"
+      const refusalMessage = "A native interaction is already pending; inspect it without replay"
+      seedActiveRequest(value, activeRequestID)
+      await expect(
+        runCLI(nativeArgs("Enter", await freshSnapshot(value)), value.dependencies),
+      ).rejects.toThrow("Native delivery is ambiguous; do not replay")
+
+      const requestID = value.requestIDs[0]!
+      expect(value.leaseState()).toBe("ambiguous")
+      expect(value.leaseFinishes()).toBe(1)
+      expect(value.events).toEqual([])
+      expect(value.enqueueCount()).toBe(1)
+      expect(value.broker.result(binding, requestID)).toMatchObject({
+        state: "completed",
+        result: { delivery: "not-delivered", message: refusalMessage },
+        refusal: {
+          requestID,
+          operation: value.acceptedOperations[0],
+          delivery: "not-delivered",
+          message: refusalMessage,
+        },
+      })
+
+      const resolutionOutput = await runCLI(
+        ["native-resolve", "--root", root, "--request", requestID],
+        value.dependencies,
+      )
+      expect(JSON.parse(resolutionOutput.at(-1)!)).toMatchObject({
+        requestID,
+        state: "completed",
+        delivery: "not-delivered",
+        resolved: true,
+        replayed: false,
+        message: refusalMessage,
+        admissionRefusal: {
+          requestID,
+          operation: value.acceptedOperations[0],
+          delivery: "not-delivered",
+          message: refusalMessage,
+        },
+      })
+      expect(value.enqueueCount()).toBe(1)
+      expect(value.leaseState()).toBe("idle")
+      expect(value.leaseFinishes()).toBe(1)
+      expect(value.leaseMessage()).toBe(refusalMessage)
+      expect(manifest.nativeInteraction).toMatchObject({
+        state: "idle",
+        requestID,
+        message: refusalMessage,
+      })
+      expect(value.events).toEqual([])
+
+      expect(value.broker.result(binding, activeRequestID)).toEqual({ state: "queued" })
+      settleActiveRequest(value, activeRequestID)
+      await runCLI(nativeArgs("Enter", await freshSnapshot(value)), value.dependencies)
+      expect(value.enqueueCount()).toBe(2)
+      expect(value.events).toEqual([
+        { type: "keyDown", keyCode: "Enter" },
+        { type: "keyUp", keyCode: "Enter" },
+      ])
     } finally {
       value.close()
     }

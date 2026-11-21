@@ -79,6 +79,26 @@ test("lost receipts and reordered nested objects replay the unchanged original a
   expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
 })
 
+test("task-persona replay preserves the original assignment and changed-persona replay conflicts", () => {
+  const { path, provenance } = fixture()
+  const repository = open(path)
+  const proposal = { ...keyedProposal("task-persona-replay"), persona: "ui" as const }
+  const first = submitTask(repository, proposal, provenance)
+  if (first.status !== "submitted") throw new Error("Expected task submission")
+  const original = repository.get(first.taskID)!
+  expect(original.proposal.persona).toBe("ui")
+
+  repository.close()
+  const reopened = open(path)
+  expect(submitTask(reopened, proposal, noProvenance)).toEqual(first)
+  expect(submitTask(reopened, { ...proposal, persona: "systems" }, noProvenance)).toEqual({
+    status: "conflict",
+    message: "idempotencyKey already identifies different validated content",
+  })
+  expect(reopened.get(first.taskID)).toEqual(original)
+  expect(counts(path)).toEqual({ tasks: 1, keys: 1 })
+})
+
 test("changed values and array order conflict; distinct exact keys and canonical repositories are independent", () => {
   const { path, provenance } = fixture()
   const repository = open(path)

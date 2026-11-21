@@ -120,25 +120,68 @@ function rawFileSize(data: string, id: string) {
   return Bun.file(rawReportPath(data, id, "deadCode")).size
 }
 
-test("the superseded-only default pass keeps the audit runs of finished plans", async () => {
+const DAY = 86_400_000
+
+/** Dates the plan's last activity (its newest transition and attempt) at `at`. */
+function dateActivity(fixture: ReturnType<typeof makeFixture>, at: number) {
+  fixture.store.atomic((db) => {
+    db.query("UPDATE runner_transitions SET created_at=? WHERE plan_id=?").run(
+      at,
+      fixture.receipt.planID,
+    )
+    db.query("UPDATE runner_attempts SET started_at=? WHERE plan_id=?").run(
+      at,
+      fixture.receipt.planID,
+    )
+  })
+}
+
+const slice = (
+  fixture: ReturnType<typeof makeFixture>,
+  data: string,
+  days: number,
+  ageDependent?: boolean,
+) =>
+  retireSlice(
+    (work) => fixture.store.atomic(work),
+    (work) => fixture.repository.read(work),
+    { now: NOW, days, budgetMs: 10_000, batch: 3, dataDirectory: data, ageDependent },
+  )
+
+test("with no age configured (the superseded-only pass) audit runs of finished plans are kept", async () => {
   const { fixture, data, run } = setup()
   run("kept-task", "completed", { task: taskID })
   const before = rows(fixture, "audit_runs")
-  // The default pass runs with days 0 and ageDependent false: at days 0 every finished plan
-  // counts as retired, so without the guard it would remove every audit run.
-  const slice = await retireSlice(
-    (work) => fixture.store.atomic(work),
-    (work) => fixture.repository.read(work),
-    { now: NOW, days: 0, budgetMs: 10_000, batch: 3, dataDirectory: data, ageDependent: false },
-  )
-  expect(slice.removed["audit-runs"]).toBeUndefined()
+  // That pass runs with days 0 and ageDependent false: at days 0 every finished plan counts as
+  // retired, so without the guard it would remove every audit run.
+  const result = await slice(fixture, data, 0, false)
+  expect(result.removed["audit-runs"]).toBeUndefined()
   expect(rows(fixture, "audit_runs")).toBe(before)
   expect(before).toBeGreaterThan(0)
-  // The same call as an age-based pass does retire them, so the guard is what kept them.
-  const aged = await retireSlice(
-    (work) => fixture.store.atomic(work),
-    (work) => fixture.repository.read(work),
-    { now: NOW, days: 0, budgetMs: 10_000, batch: 3, dataDirectory: data },
-  )
-  expect(aged.removed["audit-runs"]?.rows).toBeGreaterThan(0)
+  expect(existsSync(rawReportPath(data, "kept-task", "health"))).toBe(true)
+})
+
+test("the configured finished-plan age governs audit runs: a plan younger than it keeps them", async () => {
+  const { fixture, data, run } = setup()
+  run("young", "completed", { task: taskID })
+  dateActivity(fixture, NOW - 29 * DAY)
+  const result = await slice(fixture, data, 30)
+  expect(result.removed["audit-runs"]).toBeUndefined()
+  expect(rows(fixture, "audit_runs")).toBe(1)
+  expect(rows(fixture, "audit_sections")).toBe(2)
+  expect(existsSync(rawReportPath(data, "young", "health"))).toBe(true)
+  expect(existsSync(join(data, "audits", "young.json"))).toBe(true)
+})
+
+test("the configured finished-plan age governs audit runs: a plan older than it loses them, rows and files", async () => {
+  const { fixture, data, run } = setup()
+  run("old", "completed", { task: taskID })
+  dateActivity(fixture, NOW - 31 * DAY)
+  const result = await slice(fixture, data, 30)
+  expect(result.removed["audit-runs"]!.rows).toBeGreaterThan(0)
+  expect(result.removed["audit-runs"]!.bytes).toBeGreaterThan(0)
+  expect(rows(fixture, "audit_runs")).toBe(0)
+  expect(rows(fixture, "audit_sections")).toBe(0)
+  expect(existsSync(join(data, "audits", "old"))).toBe(false)
+  expect(existsSync(join(data, "audits", "old.json"))).toBe(false)
 })

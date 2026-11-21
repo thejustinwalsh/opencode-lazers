@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { TaskClassification } from "./task-classification.ts"
+import { TaskPersonaSchema } from "./personas/schema.ts"
 import { REFERENCE_EXACT } from "./projects/code.ts"
 
 const text = z.string().min(1).max(8_000).regex(/\S/, "Must contain non-whitespace text")
@@ -42,6 +43,9 @@ export const TaskProposalSchema = z
     // Optional for compatible historical replay and reads. Fresh-key admission
     // requires this explicit, versioned value after checking the replay key.
     classification: TaskClassification.optional(),
+    persona: TaskPersonaSchema.optional().describe(
+      "Optional explicit, model-independent worker guidance. Manual Start copies this value to its generated plan node; omission stays unassigned.",
+    ),
     exclusions: texts.describe("Only material work excluded from this increment; may be empty."),
     constraints: texts.describe(
       "Necessary compatibility or design requirements. Do not repeat repository policy or prescribe routine implementation choices.",
