@@ -267,6 +267,11 @@ export const schemaModules = {
     source: "src/host-sessions/state.ts",
     tables: ["host_session_state", "host_session_dirty"],
   },
+  "trajectory-effort": {
+    generation: 1,
+    source: "src/trajectory/effort-store.ts",
+    tables: ["trajectory_task_effort", "trajectory_effort_dirty"],
+  },
   observability: {
     generation: 1,
     source: "src/observability/source-revision.ts",

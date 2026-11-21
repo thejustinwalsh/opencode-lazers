@@ -4,6 +4,7 @@ import { startProjection } from "../projections/owner.ts"
 import { nativeCallDisplayProjection } from "../progress/native-call-display.ts"
 import { mirrorSchedulerStatus } from "../runner/scheduler-status.ts"
 import { startHostSessionFold } from "../host-sessions/fold.ts"
+import { startTaskEffortFold } from "../trajectory/effort-store.ts"
 import { nativeHostSessionSource } from "../host-sessions/native.ts"
 import {
   ensureProjectOverviewSchema,
@@ -284,6 +285,19 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     },
   )
   const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
+  // Each task's effort and market valuation, recomputed when its facts or the prices change.
+  const taskEffort = startTaskEffortFold(
+    repository.path,
+    info.projectDirectory,
+    projectID,
+    taskValuationProvider,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS task effort fold failed", { error: String(error) }),
+        ),
+    },
+  )
   // Sized once at load; a value set in Settings wins over the plugin option on the next load.
   const historyBytes = historyCacheBytes(
     globalSettings(repository, {
@@ -381,6 +395,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     taskEventsLease.release()
     nativeCallLease.release()
     hostSessions.release()
+    taskEffort.release()
     overviewLease.release()
     presence.release()
     scheduleLease.release()

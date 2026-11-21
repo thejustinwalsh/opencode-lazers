@@ -741,6 +741,22 @@ function modelFromPolicy(policy: string, stats: PrivacyStats) {
   return modelView(data?.model, stats)
 }
 
+function legacyTokenCountView(attempt: AttemptRow) {
+  const value = numberOrNull(attempt.token_count)
+  return {
+    value,
+    source: "runner_attempt.token_count scalar; not added to categorized session totals",
+    status: value === null ? ("missing" as const) : ("legacy-aggregate" as const),
+  }
+}
+
+/** What the effort view reads of an attempt's view: its id, takeover mark and legacy scalar. */
+type EffortAttemptView = {
+  id: string
+  takeover?: { agent: "architect" }
+  legacyTokenCount: ReturnType<typeof legacyTokenCountView>
+}
+
 function attemptView(
   attempt: AttemptRow,
   snapshot: PlanSnapshot,
@@ -758,7 +774,6 @@ function attemptView(
   const uniqueModels = new Map<string, NonNullable<typeof observed>>()
   for (const model of [...messageModels, ...(observed ? [observed] : [])])
     uniqueModels.set(modelKey(model), model)
-  const legacyTokenCount = numberOrNull(attempt.token_count)
   return {
     id: safeText(attempt.id, stats, 128),
     planID: safeText(attempt.plan_id, stats, 128),
@@ -812,11 +827,7 @@ function attemptView(
         ? "mixed models observed; session aggregate cannot be split by model"
         : "session aggregate attributed only to the session snapshot, not individual calls",
     usage: usage(session),
-    legacyTokenCount: {
-      value: legacyTokenCount,
-      source: "runner_attempt.token_count scalar; not added to categorized session totals",
-      status: legacyTokenCount === null ? "missing" : "legacy-aggregate",
-    },
+    legacyTokenCount: legacyTokenCountView(attempt),
     toolCount: {
       value: attempt.tool_count,
       source: "runner_attempt.tool_count; attempt scope",
@@ -1137,7 +1148,7 @@ type TaskEffortBasis = ReturnType<typeof projectTaskEffortBasis>
 function effortTokenUsage(
   allAttempts: AttemptEntry[],
   taskEffortBasis: TaskEffortBasis,
-  attemptViews: ReturnType<typeof attemptView>[],
+  attemptViews: readonly EffortAttemptView[],
   stats: PrivacyStats,
 ) {
   const categories = taskEffortBasis.usage.categories
@@ -1203,8 +1214,8 @@ function effortTiming(rawPlans: PlanSnapshot[], allAttempts: AttemptEntry[]) {
 function effortView(
   rawPlans: PlanSnapshot[],
   allAttempts: AttemptEntry[],
-  reads: SessionReads,
-  attemptViews: ReturnType<typeof attemptView>[],
+  reads: Pick<SessionReads, "sessions">,
+  attemptViews: readonly EffortAttemptView[],
   taskEffortBasis: TaskEffortBasis,
   marketEquivalentCost: TrajectoryMarketEquivalentCost | undefined,
   stats: PrivacyStats,
@@ -1294,8 +1305,8 @@ type ProgressCounts = {
  * dropped, so the raw payloads of the window are never held together. The projected facts are
  * what the report keeps.
  */
-function foldProgress(store: RunnerStore, attemptIDs: readonly string[]) {
-  const window = store.progressReportWindow(attemptIDs)
+function foldProgress(store: RunnerStore, attemptIDs: readonly string[], visible?: number) {
+  const window = store.progressReportWindow(attemptIDs, visible)
   const counts: ProgressCounts = { facts: 0, commentary: 0, gaps: 0, steps: 0, usageSnapshots: 0 }
   const facts: Record<string, unknown>[] = []
   for (const page of window.pages)
@@ -1457,6 +1468,110 @@ function paginateEvents(
 }
 
 /**
+ * The task's effort: usage and routes per unique worker session (`projectTaskEffortBasis`), the
+ * market valuation of the same request (`marketEquivalentCostOf`) and the view the report shows.
+ * The report and the stored effort (`effort-store.ts`) both compose it here, so they agree.
+ */
+async function composeTaskEffort(input: {
+  rawPlans: PlanSnapshot[]
+  allAttempts: AttemptEntry[]
+  reads: SessionReads
+  attemptViews: readonly EffortAttemptView[]
+  progressFacts: Record<string, unknown>[]
+  progressTruncated: boolean
+  truncatedContextSessionIDs: string[]
+  options: InspectOptions
+  stats: PrivacyStats
+}) {
+  const { rawPlans, allAttempts, reads, stats } = input
+  const valuationInput: ProjectTaskValuationRequest = {
+    attempts: allAttempts
+      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
+      .map((entry) =>
+        valuationAttempt(
+          entry,
+          reads.sessions.get(entry.attempt.id) ?? null,
+          reads.folds.get(entry.attempt.id)?.routes ?? [],
+          reads.statuses.get(entry.attempt.id) ?? "missing",
+          stats,
+        ),
+      ),
+    progressFacts: input.progressFacts,
+    progressTruncated: input.progressTruncated,
+    truncatedContextSessionIDs: input.truncatedContextSessionIDs,
+  }
+  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
+  const marketEquivalentCost = await marketEquivalentCostOf(valuationInput, input.options)
+  return effortView(
+    rawPlans,
+    allAttempts,
+    reads,
+    input.attemptViews,
+    taskEffortBasis,
+    marketEquivalentCost,
+    stats,
+  )
+}
+
+export type TaskEffort = Awaited<ReturnType<typeof composeTaskEffort>>["effort"]
+
+/**
+ * The effort of one project-owned task from stored facts only: the attempts and plans, every
+ * retained progress row of its attempts (no window: nothing is truncated) and the live session
+ * facts the host session fold stored (`sessionOf`, one row per session; absent reads as a
+ * missing session). No host read and no transcript: a session's context is `not-read`, as in the
+ * status report. Undefined when the task is gone or not this project's.
+ */
+export async function inspectTaskEffort(
+  store: RunnerStore,
+  projectID: string,
+  taskID: string,
+  sessionOf: (sessionID: string) => TrajectorySession | null,
+  options: { taskValuationProvider: TaskValuationProvider; signal?: AbortSignal },
+): Promise<{ effort: TaskEffort; busy: boolean } | undefined> {
+  const stats = privacyStats()
+  const task = store.repository.get(taskID)
+  if (!task || !ownedByProject(task, store, projectID)) return undefined
+  const rawPlans = snapshots(store, task)
+  const allAttempts = rawPlans.flatMap((snapshot) =>
+    snapshot.attempts.map((attempt) => ({ attempt, snapshot })),
+  )
+  const folded = foldProgress(
+    store,
+    allAttempts.map(({ attempt }) => attempt.id),
+    Number.MAX_SAFE_INTEGER,
+  )
+  const reads: SessionReads = {
+    sessions: new Map(),
+    folds: new Map(),
+    errors: new Map(),
+    statuses: new Map(),
+  }
+  for (const { attempt } of allAttempts) {
+    // An Architect takeover has no native worker session; nothing is missing.
+    if (isTakeoverAttempt(attempt.policy)) continue
+    const session = sessionOf(attempt.session_id)
+    reads.sessions.set(attempt.id, session)
+    reads.statuses.set(attempt.id, session ? "available" : "missing")
+  }
+  return composeTaskEffort({
+    rawPlans,
+    allAttempts,
+    reads,
+    attemptViews: allAttempts.map(({ attempt }) => ({
+      id: safeText(attempt.id, stats, 128),
+      ...(isTakeoverAttempt(attempt.policy) ? { takeover: { agent: "architect" as const } } : {}),
+      legacyTokenCount: legacyTokenCountView(attempt),
+    })),
+    progressFacts: folded.facts,
+    progressTruncated: folded.truncated,
+    truncatedContextSessionIDs: [],
+    options,
+    stats,
+  })
+}
+
+/**
  * Build one project-owned, read-only report. The runner's `detail()` method is
  * deliberately avoided because it calls `audit()` and inserts an audit row.
  */
@@ -1523,37 +1638,20 @@ export async function inspectTrajectory(
       concerns.get(attempt.id),
     ),
   )
-  const truncatedContextSessionIDs = truncatedContextSessions(allAttempts, reads, stats)
-  const valuationInput: ProjectTaskValuationRequest = {
-    attempts: allAttempts
-      .filter((entry) => !isTakeoverAttempt(entry.attempt.policy))
-      .map((entry) =>
-        valuationAttempt(
-          entry,
-          reads.sessions.get(entry.attempt.id) ?? null,
-          reads.folds.get(entry.attempt.id)?.routes ?? [],
-          reads.statuses.get(entry.attempt.id) ?? "missing",
-          stats,
-        ),
-      ),
-    progressFacts: projectedProgressFacts,
-    progressTruncated,
-    truncatedContextSessionIDs,
-  }
-  const taskEffortBasis = projectTaskEffortBasis(valuationInput)
   const focusedAttempts = input.attemptID
     ? attemptViews.filter((attempt) => attempt.id === input.attemptID)
     : attemptViews
-  const marketEquivalentCost = await marketEquivalentCostOf(valuationInput, options)
-  const { effort, busy } = effortView(
+  const { effort, busy } = await composeTaskEffort({
     rawPlans,
     allAttempts,
     reads,
     attemptViews,
-    taskEffortBasis,
-    marketEquivalentCost,
+    progressFacts: projectedProgressFacts,
+    progressTruncated,
+    truncatedContextSessionIDs: truncatedContextSessions(allAttempts, reads, stats),
+    options,
     stats,
-  )
+  })
   const summary = {
     schemaVersion: 1,
     task: taskView(store, task, rawPlans, stats),
