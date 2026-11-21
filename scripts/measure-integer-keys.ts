@@ -1,30 +1,42 @@
 /**
- * Measures integer identity on a generated database shaped like the live history tables:
- * `bun scripts/measure-integer-keys.ts [--transitions 440000] [--progress 117000] [--page 1000]
- * [--dir <scratch directory>]`. It never touches a live database; it writes a fixture under the
- * given directory (default: a fresh temporary directory) and prints one JSON line per phase.
+ * Measures the online integer-key migration on a generated database shaped like the live history
+ * tables: `bun scripts/measure-integer-keys.ts [--transitions 420000] [--progress 80000]
+ * [--plans 1500] [--attempts 6000] [--dir <scratch directory>]`. It never touches a live database;
+ * it writes a fixture under the given directory (default: a fresh temporary directory) and prints
+ * one JSON line per phase, then a table of bytes per history table (rows plus its indexes) and
+ * the file.
  *
- * Phases: `legacy` (rows without key columns, as written before), `columns` (upgrade adds the
- * nullable columns), `backfilled` (every row keyed, one timing per page), then the phases of
- * `scripts/explain-history-statements.ts` fixtures are separate. `projected` removes the text
- * columns the keys replace on a copy and reports the bytes the offline compaction would return.
+ * The fixture is `auto_vacuum=INCREMENTAL`, like a database the compaction script has run on once.
+ *
+ * | Phase       | What happened                                                                   |
+ * | ----------- | ------------------------------------------------------------------------------- |
+ * | `legacy`    | rows as an older build wrote them: text ids, text-id indexes, no key columns    |
+ * | `upgraded`  | the schema install added the nullable key columns, key tables and triggers      |
+ * | `migrated`  | `advanceIdentityKeys` ran to the end: keyed, integer-indexed, text indexes gone |
+ * | `reclaimed` | the retention pass's incremental vacuum handed the free pages back             |
+ * | `vacuumed`  | (on a copy) a full `VACUUM`, what `scripts/compact-database.ts` would give      |
  */
 import { Database } from "bun:sqlite"
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs"
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { backfillPage, BACKFILL_TABLES } from "../src/runner/identity-backfill.ts"
-import { createKeyIndexes } from "../src/runner/transition-indexes.ts"
-import { TaskRepository } from "../src/storage.ts"
+import { incrementalVacuum } from "../src/retention/vacuum.ts"
+import {
+  BACKFILL_PAGE_ROWS,
+  BACKFILL_TABLES,
+  backfillPage,
+} from "../src/runner/identity-backfill.ts"
+import { advanceIdentityKeys } from "../src/runner/identity-migration.ts"
+import { asLegacyHistory } from "../src/runner/identity.fixture.ts"
 import { RunnerStore } from "../src/runner/store.ts"
+import { TaskRepository } from "../src/storage.ts"
 
 const arg = (name: string, fallback: number) => {
   const index = process.argv.indexOf(`--${name}`)
   return index < 0 ? fallback : Number(process.argv[index + 1])
 }
-const transitionRows = arg("transitions", 440_000)
-const progressRows = arg("progress", 117_000)
-const pageRows = arg("page", 1_000)
+const transitionRows = arg("transitions", 420_000)
+const progressRows = arg("progress", 80_000)
 const planCount = arg("plans", 1_500)
 const attemptCount = arg("attempts", 6_000)
 const dirArg = process.argv.indexOf("--dir")
@@ -48,8 +60,8 @@ const uuid = () => `${hex(8)}-${hex(4)}-4${hex(3)}-a${hex(3)}-${hex(12)}`
 const ids = (count: number, make: () => string) => Array.from({ length: count }, make)
 const plans = ids(planCount, uuid)
 const tasks = ids(planCount * 4, uuid)
-const attempts = ids(attemptCount, () => uuid())
-const sessions = ids(attemptCount, () => `ses_${hex(26)}`.slice(0, 30))
+const attempts = ids(attemptCount, uuid)
+const sessions = ids(attemptCount, () => `ses_${hex(26)}`)
 const events = ids(
   40,
   () =>
@@ -57,16 +69,16 @@ const events = ids(
 )
 const pad = (target: number) => JSON.stringify({ note: hex(Math.max(0, target - 12)) })
 
-function bytes(file = path) {
+type Sizes = Record<string, number>
+
+/** Bytes of each history table's rows and of each of its indexes, and of the whole file. */
+function sizes(file = path): Sizes {
   const db = new Database(file, { readonly: true })
   try {
     const page = db.query<{ page_size: number }, []>("PRAGMA page_size").get()!.page_size
     const count = db.query<{ page_count: number }, []>("PRAGMA page_count").get()!.page_count
-    const by = db
-      .query<{ name: string; bytes: number }, []>(
-        "SELECT name,sum(pgsize) AS bytes FROM dbstat GROUP BY name",
-      )
-      .all()
+    const free = db.query<{ freelist_count: number }, []>("PRAGMA freelist_count").get()!
+      .freelist_count
     const owner = new Map(
       db
         .query<{ name: string; tbl_name: string; type: string }, []>(
@@ -75,42 +87,40 @@ function bytes(file = path) {
         .all()
         .map((row) => [row.name, row] as const),
     )
-    const result: Record<string, number> = {}
-    for (const row of by) {
+    const result: Sizes = { file: page * count, free: page * free }
+    for (const row of db
+      .query<{ name: string; bytes: number }, []>(
+        "SELECT name,sum(pgsize) AS bytes FROM dbstat GROUP BY name",
+      )
+      .all()) {
       const entry = owner.get(row.name)
       if (!entry) continue
-      result[`${entry.tbl_name}.${entry.type === "table" ? "table" : row.name}`] = row.bytes
+      const table = entry.tbl_name
+      const part = entry.type === "table" ? "rows" : "indexes"
+      result[`${table}.${part}`] = (result[`${table}.${part}`] ?? 0) + row.bytes
     }
-    // sqlite_autoindex for the UNIQUE constraint belongs to its table by tbl_name.
-    return { fileBytes: page * count, ...result }
+    for (const table of BACKFILL_TABLES)
+      result[`${table}.total`] = (result[`${table}.rows`] ?? 0) + (result[`${table}.indexes`] ?? 0)
+    return result
   } finally {
     db.close()
   }
 }
 
-const report = (phase: string, extra: Record<string, unknown> = {}) =>
-  console.log(JSON.stringify({ phase, ...bytes(), ...extra }))
-
-function dropRowTriggers(db: Database) {
-  for (const { name } of db
-    .query<{ name: string }, []>(
-      "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('runner_transitions','runner_progress')",
-    )
-    .all())
-    db.exec(`DROP TRIGGER ${name}`)
+const phases: Array<[string, Sizes]> = []
+const report = (phase: string, extra: Record<string, unknown> = {}, file = path) => {
+  const measured = sizes(file)
+  phases.push([phase, measured])
+  console.log(JSON.stringify({ phase, ...measured, ...extra }))
 }
 
 function seedLegacy() {
+  const setup = new Database(path)
+  setup.exec("PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL")
+  setup.close()
   const repository = new TaskRepository(path, projectDirectory)
   new RunnerStore(repository)
   repository.atomic((db) => {
-    dropRowTriggers(db)
-    for (const [table, column] of [
-      ["runner_transitions", "plan_n"],
-      ["runner_progress", "plan_n"],
-      ["runner_progress", "attempt_n"],
-    ])
-      db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
     const insertPlan = db.query(
       "INSERT INTO runner_plans(id,project_directory,owner,revision,version,state,body) VALUES(?,?,'o',1,1,'integrated','{}')",
     )
@@ -129,8 +139,8 @@ function seedLegacy() {
       )
     const insertProgress = db.query(
       `INSERT INTO runner_progress(project_directory,project_id,plan_id,task_id,attempt_id,session_id,at,recorded_at,
-         source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload,latest_observed_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         source,sources_json,kind,event_ids_json,call_id,message_id,dedupe_key,payload)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     const projectID = hex(40)
     for (let index = 0; index < progressRows; index++) {
@@ -152,19 +162,27 @@ function seedLegacy() {
         `msg_${hex(26)}`,
         `${attempts[attempt]!}:${index}`,
         pad(2_000),
-        1_700_000_000_000 + index,
       )
     }
   })
+  // As an older build left it: no keys, text-id indexes, every table at `backfilling`.
+  asLegacyHistory(repository)
+  repository.atomic((db) => {
+    for (const trigger of ["runner_transitions_keys", "runner_progress_keys"])
+      db.exec(`DROP TRIGGER IF EXISTS ${trigger}`)
+    for (const [table, column] of [
+      ["runner_transitions", "plan_n"],
+      ["runner_progress", "plan_n"],
+      ["runner_progress", "attempt_n"],
+    ])
+      db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+    db.exec("DELETE FROM schema_modules WHERE module='runner'")
+  })
   repository.close()
-}
-
-function openUpgraded() {
-  const repository = new TaskRepository(path, projectDirectory)
-  repository.atomic((db) => db.exec("DELETE FROM schema_modules WHERE module='runner'"))
-  const started = performance.now()
-  new RunnerStore(repository)
-  return { repository, upgradeMs: performance.now() - started }
+  // Rows from the seed sit at the end of the file; a VACUUM lays the legacy file out compactly.
+  const compact = new Database(path)
+  compact.exec("VACUUM")
+  compact.close()
 }
 
 rmSync(path, { force: true })
@@ -176,92 +194,88 @@ report("legacy", {
   seedMs: Math.round(performance.now() - seedStarted),
 })
 
-const { repository, upgradeMs } = openUpgraded()
-report("columns", { upgradeMs: Math.round(upgradeMs) })
+const repository = new TaskRepository(path, projectDirectory)
+const upgradeStarted = performance.now()
+new RunnerStore(repository)
+report("upgraded", { installMs: Math.round(performance.now() - upgradeStarted) })
 
+// Page cost: one page alone, timed, per table (the writer waits at most this long behind one).
+const pageTimes: Record<string, number[]> = {}
 for (const table of BACKFILL_TABLES) {
   const times: number[] = []
-  let rows = 0
-  for (;;) {
+  for (let page = 0; page < 20; page++) {
     const started = performance.now()
-    const page = repository.atomic((db) => backfillPage(db, table, pageRows))
-    const elapsed = performance.now() - started
-    if (page.done) break
-    times.push(elapsed)
-    rows += page.rows
+    repository.atomic((db) => backfillPage(db, table, BACKFILL_PAGE_ROWS))
+    times.push(performance.now() - started)
   }
   times.sort((a, b) => a - b)
-  const sum = times.reduce((a, b) => a + b, 0)
-  console.log(
-    JSON.stringify({
-      phase: "backfill",
-      table,
-      pageRows,
-      pages: times.length,
-      rows,
-      totalMs: Math.round(sum),
-      p50Ms: +times[Math.floor(times.length / 2)]!.toFixed(1),
-      p95Ms: +times[Math.floor(times.length * 0.95)]!.toFixed(1),
-      maxMs: +times.at(-1)!.toFixed(1),
-    }),
-  )
+  pageTimes[table] = times
 }
-report("backfilled")
-
-// Step 3: the integer indexes beside the text ones, built once per table after its backfill.
-for (const table of BACKFILL_TABLES) {
-  const started = performance.now()
-  repository.atomic((db) => createKeyIndexes(db, table))
-  console.log(
-    JSON.stringify({ phase: "key-indexes", table, ms: Math.round(performance.now() - started) }),
-  )
-}
-report("indexed")
-repository.close()
-
-// Step 4 on a copy: what the offline compaction window would return. DROP COLUMN fails on a
-// column with a foreign key; the error is reported and that table is rebuilt instead.
-const projectedPath = join(directory, "projected.sqlite")
-copyFileSync(path, projectedPath)
-const projected = new Database(projectedPath)
-const started4 = performance.now()
-const steps: Record<string, string> = {}
-for (const { name } of projected
-  .query<{ name: string }, []>(
-    "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('runner_transitions','runner_progress')",
-  )
-  .all())
-  projected.exec(`DROP TRIGGER ${name}`)
-for (const index of [
-  "runner_transitions_lookup",
-  "runner_transitions_plan_id",
-  "runner_transitions_plan_event",
-  "runner_transitions_task_latest",
-  "runner_progress_attempt_seq",
-  "runner_progress_plan_recency",
-])
-  projected.exec(`DROP INDEX IF EXISTS ${index}`)
-for (const [table, column] of [
-  ["runner_transitions", "plan_id"],
-  ["runner_progress", "plan_id"],
-  ["runner_progress", "attempt_id"],
-] as const)
-  try {
-    projected.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
-    steps[`${table}.${column}`] = "dropped"
-  } catch (error) {
-    steps[`${table}.${column}`] = String(error).slice(0, 120)
-  }
-projected.exec("VACUUM")
-projected.close()
 console.log(
   JSON.stringify({
-    phase: "projected",
-    ...bytes(projectedPath),
-    steps,
-    ms: Math.round(performance.now() - started4),
+    phase: "page-cost",
+    pageRows: BACKFILL_PAGE_ROWS,
+    ...Object.fromEntries(
+      Object.entries(pageTimes).map(([table, times]) => [
+        table,
+        { p50Ms: +times[10]!.toFixed(1), maxMs: +times.at(-1)!.toFixed(1) },
+      ]),
+    ),
   }),
 )
-void copyFileSync
-void statSync
+
+const migrationStarted = performance.now()
+let ticks = 0
+let keyed = 0
+const retired: string[] = []
+for (;;) {
+  ticks++
+  // The retention idle step's slice at a quiet point.
+  const progress = await advanceIdentityKeys(repository, 800)
+  keyed += progress.rows
+  retired.push(...progress.retired)
+  if (progress.finished) break
+}
+report("migrated", {
+  ticks,
+  keyedRows: keyed,
+  retired,
+  ms: Math.round(performance.now() - migrationStarted),
+})
+
+const reclaimStarted = performance.now()
+let reclaimed = 0
+for (;;) {
+  const step = repository.atomic((db) => incrementalVacuum(db))
+  if (step === 0) break
+  reclaimed += step
+}
+report("reclaimed", {
+  reclaimedBytes: reclaimed,
+  ms: Math.round(performance.now() - reclaimStarted),
+})
+repository.close()
+
+const copy = join(directory, "vacuumed.sqlite")
+copyFileSync(path, copy)
+const vacuum = new Database(copy)
+const vacuumStarted = performance.now()
+vacuum.exec("VACUUM")
+vacuum.close()
+report("vacuumed", { ms: Math.round(performance.now() - vacuumStarted) }, copy)
+
+const mb = (bytes: number | undefined) => `${((bytes ?? 0) / 1e6).toFixed(1)} MB`
+const rows = [
+  "runner_transitions.rows",
+  "runner_transitions.indexes",
+  "runner_transitions.total",
+  "runner_progress.rows",
+  "runner_progress.indexes",
+  "runner_progress.total",
+  "file",
+]
+console.log(`\n| bytes | ${phases.map(([phase]) => phase).join(" | ")} |`)
+console.log(`| --- | ${phases.map(() => "---").join(" | ")} |`)
+for (const row of rows)
+  console.log(`| ${row} | ${phases.map(([, measured]) => mb(measured[row])).join(" | ")} |`)
 console.error(`fixture: ${path}`)
