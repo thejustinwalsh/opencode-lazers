@@ -26,7 +26,6 @@ import type {
   RecordedCheck,
   TaskChoice,
   TrajectoryAttempt,
-  TrajectoryCheck,
   TrajectoryEvent,
   TrajectoryReport,
 } from "./projection.ts"
@@ -389,9 +388,7 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
     const parsedEffort = (() => {
       const stored = effort?.items()[0]
       if (!stored) return undefined
-      const result = reportEffortSchema.safeParse(
-        (rowOf(stored).effort as { effort?: unknown } | null) ?? undefined,
-      )
+      const result = reportEffortSchema.safeParse(rowOf(stored).effort)
       return result.success ? result.data : undefined
     })()
     const report: TrajectoryReport = {
@@ -557,5 +554,3 @@ export function createTrajectoryModel(input: TrajectoryModelInput): TrajectoryMo
     },
   }
 }
-
-export type { TrajectoryCheck }

@@ -473,7 +473,7 @@ test("an interrupted purge resumes and ends with the same totals; a repeat finds
   expect(await purge(fixture, 30)).toEqual({})
 })
 
-test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot reads", async () => {
+test("a retired task still opens in Tasks, Radar and the snapshot reads", async () => {
   const fixture = setup()
   const secret = new Uint8Array(32).fill(5)
   const tracker = new ObservationChangeTracker(fixture.repository, secret, "project")
@@ -484,19 +484,9 @@ test("a retired task still opens in Tasks, Trajectory, Radar and the snapshot re
     descendants: async () => ({ sessions: [], truncated: false }),
   }
   const reads = new ObservationReads(fixture.store, fixture.host, "project", secret, sessions)
-  const before = await reads.trajectory(
-    { scope: { kind: "session", sessionID: "ses-failed" }, taskID, limit: 20 },
-    tracker,
-  )
   await purge(fixture, 30)
   const snapshot = reads.snapshot({ kind: "session", sessionID: "ses-failed" }, tracker)
   expect(snapshot.plans[0]?.nodes[0]).toMatchObject({ taskID, state: "accepted" })
-  const after = await reads.trajectory(
-    { scope: { kind: "session", sessionID: "ses-failed" }, taskID, limit: 20 },
-    tracker,
-  )
-  expect(before.report).toBeDefined()
-  expect(after.report).toBeDefined()
   const tasks = new AssociationTaskReads(fixture.repository)
   expect(tasks.get({ taskID: "LZ-1", sessionID: "ses-failed" })).toMatchObject({
     status: "found",

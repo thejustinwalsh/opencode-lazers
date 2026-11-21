@@ -1308,32 +1308,3 @@ export async function inspectTrajectory(
   })
   return { ...summary, trajectory }
 }
-
-/** Captures the complete sanitized event projection once for the panel page cache. */
-export function captureTrajectoryHistory(
-  store: RunnerStore,
-  host: TrajectoryHost,
-  projectID: string,
-  input: InspectTrajectoryInput,
-  cursorSecret: Uint8Array,
-  options: { taskValuationProvider?: TaskValuationProvider; signal?: AbortSignal } = {},
-) {
-  return inspectTrajectory(store, host, projectID, input, cursorSecret, {
-    ...options,
-    allEvents: true,
-  })
-}
-
-/** Reads current runner/session facts without reading the native message list. */
-export function inspectTrajectoryStatus(
-  store: RunnerStore,
-  host: TrajectoryHost,
-  projectID: string,
-  taskID: string,
-  cursorSecret: Uint8Array,
-) {
-  return inspectTrajectory(store, host, projectID, { taskID, limit: 50 }, cursorSecret, {
-    allEvents: true,
-    includeMessages: false,
-  })
-}

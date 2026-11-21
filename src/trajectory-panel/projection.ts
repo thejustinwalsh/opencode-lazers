@@ -237,24 +237,6 @@ export type TrajectoryAttempt = TrajectoryReport["attempts"][number]
 export type TrajectoryCheck = z.infer<typeof Check>
 export type TrajectoryEvent = z.infer<typeof Event>
 
-/** Title text; a missing optional status simply drops out. */
-export function eventTitle(event: TrajectoryEvent) {
-  const join = (...parts: Array<string | undefined | null>) => parts.filter(Boolean).join(" · ")
-  if (event.kind === "user") return "User request"
-  if (event.kind === "synthetic") return "Session input"
-  if (event.kind === "tool") return join(event.tool ?? "Tool", event.status)
-  if (event.kind === "worker-tool") return join(event.tool ?? "Worker tool", event.status)
-  if (event.kind === "commentary") return "Worker progress note"
-  if (event.kind === "worker-visible-text") return "Worker message"
-  if (event.kind === "worker-step") return join("Worker step", event.status)
-  if (event.kind === "verification")
-    return join(`Check ${event.checkID ?? ""}`.trim(), event.status)
-  if (event.kind === "runner-transition") return join(event.event ?? "Transition", event.to)
-  if (event.kind === "runner-effect") return join(event.effect ?? "Runner effect", event.state)
-  if (event.kind === "assistant-text") return "Worker message"
-  return event.kind
-}
-
 export type TaskChoice = {
   taskID: string
   reference?: string

@@ -1,3 +1,4 @@
+import { Streams } from "../../../../src/streams/contract.ts"
 import type { Columns } from "../../../../src/streams/frame.ts"
 import {
   TRAJECTORY_SOURCES,
@@ -12,6 +13,7 @@ import { TASK_SOURCES, taskScheduleColumns } from "../../../../src/streams/sourc
 import { streamAnswers, type DemoRow, type Open } from "./stream-answers.ts"
 import { scheduleRows } from "./tasks-streams.ts"
 import {
+  PROJECT,
   attemptID,
   callID,
   markID,
@@ -167,19 +169,17 @@ function effortRows(data: TrajectoryData): DemoRow[] {
       market_status: "unavailable",
       refreshed_at: when(0),
       effort: {
-        effort: {
-          acceptedAt: data.task.state === "accepted" ? when(352) : null,
-          firstAttemptAt: when(data.attempts[0]?.start ?? 0),
-          tokenUsage: {
-            measuredSubtotal: usage,
-            total: null,
-            knownSessions: data.attempts.length,
-            totalSessions: data.attempts.length,
-            unknownAttempts: [],
-          },
-          toolCalls: { count: calls },
-          recordedCost: { apiEquivalentTotalUsd: null },
+        acceptedAt: data.task.state === "accepted" ? when(352) : null,
+        firstAttemptAt: when(data.attempts[0]?.start ?? 0),
+        tokenUsage: {
+          measuredSubtotal: usage,
+          total: null,
+          knownSessions: data.attempts.length,
+          totalSessions: data.attempts.length,
+          unknownAttempts: [],
         },
+        toolCalls: { count: calls },
+        recordedCost: { apiEquivalentTotalUsd: null },
       },
     },
   ]
@@ -279,7 +279,7 @@ function rowsOf(data: TrajectoryData, open: Open, project: string): DemoRow[] {
 
 const held = new Set<string>()
 
-export function trajectoryStreams(data: () => TrajectoryData, project: string) {
+function trajectoryStreams(data: () => TrajectoryData, project: string) {
   const inner = streamAnswers(SOURCES, (stream) => rowsOf(data(), stream, project))
   return {
     ...inner,
@@ -295,4 +295,22 @@ export function trajectoryStreams(data: () => TrajectoryData, project: string) {
 }
 
 /** Streams the panel holds open now; a change pushes each of them a newer frame. */
-export const streamIDs = () => [...held]
+const streamIDs = () => [...held]
+
+export function rpc(data: () => TrajectoryData) {
+  return {
+    [Streams.id]: trajectoryStreams(data, PROJECT.canonical),
+  } as Record<string, Record<string, (input: never) => unknown>>
+}
+
+/** Streams answer by the frame, and have no contract reads of their own to validate. */
+export const reads = () => []
+
+/** What the service emits after a change: every open stream has a newer frame to read. */
+export const trajectoryChanged = (
+  _data: Pick<TrajectoryData, "version">,
+  emit: (type: string, data: unknown) => void,
+) => {
+  for (const stream of streamIDs())
+    emit(`rpc.${Streams.id}.changed`, { stream, seq: Number.MAX_SAFE_INTEGER })
+}

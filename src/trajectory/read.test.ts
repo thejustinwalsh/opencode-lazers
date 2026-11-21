@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Schema } from "effect"
-import { captureTrajectoryHistory, inspectTrajectory, inspectTrajectoryStatus } from "./read.ts"
+import { inspectTrajectory } from "./read.ts"
 import { InspectTrajectoryInput } from "./schema.ts"
 import { makeFixture, cursorSecret, taskID, firstAttemptID } from "../../test/trajectory/fixture.ts"
 import { HandoffStore } from "../recovery/handoff/store.ts"
@@ -15,6 +15,29 @@ import {
   lz137ValuationProvider,
   prepareLz137RetainedData,
 } from "../../test/trajectory-panel/lz137-market-fixture.ts"
+
+/** The whole event projection in one read: `inspectTrajectory` with every event (the old capture). */
+const captureTrajectoryHistory = (
+  store: Parameters<typeof inspectTrajectory>[0],
+  host: Parameters<typeof inspectTrajectory>[1],
+  projectID: string,
+  input: Parameters<typeof inspectTrajectory>[3],
+  cursorSecret: Uint8Array,
+  options: NonNullable<Parameters<typeof inspectTrajectory>[5]> = {},
+) => inspectTrajectory(store, host, projectID, input, cursorSecret, { ...options, allEvents: true })
+
+/** The live status read: every event, no message list. */
+const inspectTrajectoryStatus = (
+  store: Parameters<typeof inspectTrajectory>[0],
+  host: Parameters<typeof inspectTrajectory>[1],
+  projectID: string,
+  taskID: string,
+  cursorSecret: Uint8Array,
+) =>
+  inspectTrajectory(store, host, projectID, { taskID, limit: 50 }, cursorSecret, {
+    allEvents: true,
+    includeMessages: false,
+  })
 
 const pricingRoute = { providerID: "openrouter", modelID: "vendor/model", variant: null }
 const pricingModel = {

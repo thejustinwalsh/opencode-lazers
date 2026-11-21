@@ -5,7 +5,6 @@ import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { Effect } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
-import { TrajectoryHistoryUnavailableError } from "../trajectory/history.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
 import { Observability, type ObservationChange } from "./contract.ts"
@@ -198,75 +197,6 @@ export function registerObservability(
               "read",
             )
             return reads.liveRadar(input, tracker, signal, tracker.streamEpoch)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
-      trajectory: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all") {
-              return reads.trajectoryAll(input, tracker, signal, await accessFor(input.scope))
-            }
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "lz-inspect-trajectory",
-            )
-            signal.throwIfAborted()
-            return reads.trajectory(input, tracker, signal)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
-      trajectoryHistory: (input, context) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all") {
-              return reads.trajectoryHistoryAll(
-                input,
-                tracker,
-                signal,
-                await accessFor(input.scope),
-              )
-            }
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "lz-inspect-trajectory",
-            )
-            signal.throwIfAborted()
-            return reads.trajectoryHistory(input, tracker, signal)
-          },
-          catch: (error) => error,
-        }).pipe(
-          Effect.catch((error) =>
-            error instanceof TrajectoryHistoryUnavailableError
-              ? Effect.fail(
-                  context.error("trajectory_history_unavailable", error.message, {
-                    reason: error.reason,
-                    recovery: "recapture",
-                  }),
-                )
-              : Effect.die(new Error(safeError(error, privacyStats()))),
-          ),
-        ),
-      trajectoryStatus: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            if (input.scope.kind === "all") {
-              return reads.trajectoryStatusAll(input, tracker, await accessFor(input.scope))
-            }
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "lz-inspect-trajectory",
-            )
-            return reads.trajectoryStatus(input, tracker)
           },
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),

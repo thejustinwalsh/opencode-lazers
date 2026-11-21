@@ -7,10 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { Streams } from "../../../src/streams/contract.ts"
 import { TRAJECTORY_SOURCES } from "../../../src/streams/sources/trajectory-ref.ts"
 import { TASK_SOURCES } from "../../../src/streams/sources/tasks-ref.ts"
-import {
-  rpc as demoRpc,
-  taskID as demoTaskID,
-} from "../../../website/demo/src/panels/trajectory-answers.ts"
+import { taskID as demoTaskID } from "../../../website/demo/src/panels/trajectory-answers.ts"
+import { rpc as demoRpc } from "../../../website/demo/src/panels/trajectory-streams.ts"
 import type { TrajectoryData } from "../../../website/demo/src/panels/trajectory-answers.ts"
 
 const projectID = "stream-project"

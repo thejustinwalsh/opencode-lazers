@@ -15,7 +15,17 @@ import { TRANSCRIPT_META_QUEUE } from "../transcript-meta/schema.ts"
 import { computeTaskEffort, computeTaskEffortDetail, effortSummary } from "./effort-compute.ts"
 import { readTaskEffort, TaskEffortFold } from "./effort-store.ts"
 import type { TrajectoryHost } from "./native.ts"
-import { captureTrajectoryHistory } from "./read.ts"
+import { inspectTrajectory } from "./read.ts"
+
+/** The whole event projection in one read: `inspectTrajectory` with every event (the old capture). */
+const captureTrajectoryHistory = (
+  store: Parameters<typeof inspectTrajectory>[0],
+  host: Parameters<typeof inspectTrajectory>[1],
+  projectID: string,
+  input: Parameters<typeof inspectTrajectory>[3],
+  cursorSecret: Uint8Array,
+  options: NonNullable<Parameters<typeof inspectTrajectory>[5]> = {},
+) => inspectTrajectory(store, host, projectID, input, cursorSecret, { ...options, allEvents: true })
 
 type Fixture = ReturnType<typeof makeFixture>
 

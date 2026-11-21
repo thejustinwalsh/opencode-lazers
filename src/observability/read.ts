@@ -5,14 +5,8 @@ import { machineVersion } from "../runner/machine.ts"
 import { taskMachineDefinition } from "../runner/task-machine-config.ts"
 import { TaskSpecSchema } from "../task.ts"
 import type { TrajectoryHost } from "../trajectory/native.ts"
-import {
-  inspectTrajectory,
-  captureTrajectoryHistory,
-  inspectTrajectoryStatus,
-} from "../trajectory/read.ts"
+import { inspectTrajectory } from "../trajectory/read.ts"
 import { StampGate } from "../core/stamp-gate.ts"
-import { TrajectoryHistoryCache } from "../trajectory/history.ts"
-import { TrajectoryLiveCache } from "../trajectory/live.ts"
 import { privacyStats, safeText } from "../trajectory/privacy.ts"
 import { openReadOnlyTrajectoryStore } from "../trajectory/store.ts"
 import { sourceStampFromDatabase } from "./changes.ts"
@@ -26,11 +20,6 @@ import type {
   SingleScope,
   ObservationScopeView,
   SnapshotResponse,
-  TrajectoryRequest,
-  TrajectoryResponse,
-  TrajectoryHistoryRequest,
-  TrajectoryHistoryResponse,
-  TrajectoryStatusRequest,
 } from "./contract.ts"
 import { singleScope } from "./contract.ts"
 import { findOwner } from "../projects/resolve.ts"
@@ -584,8 +573,6 @@ function opencodeProjectIDFor(repository: TaskRepository, key: string): string |
 
 export class ObservationReads {
   private readonly machine = machineDefinition()
-  private readonly history: TrajectoryHistoryCache
-  private readonly live: TrajectoryLiveCache
   private readonly liveRadarReader: LiveRadarReader
 
   constructor(
@@ -595,22 +582,7 @@ export class ObservationReads {
     readonly secret: Uint8Array,
     private readonly nativeSessions?: RadarSessionHost,
     private readonly taskValuationProvider?: TaskValuationProvider,
-    /** `historyCacheMB` plugin option, in bytes. */
-    historyCacheLimitBytes?: number,
-    /** Caches of the reads this one was derived from, so a continuation cursor survives. */
-    shared?: { history: TrajectoryHistoryCache; live: TrajectoryLiveCache },
   ) {
-    this.history =
-      shared?.history ??
-      new TrajectoryHistoryCache(
-        secret,
-        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
-      )
-    this.live =
-      shared?.live ??
-      new TrajectoryLiveCache(
-        historyCacheLimitBytes === undefined ? {} : { maxBytes: historyCacheLimitBytes },
-      )
     this.liveRadarReader = new LiveRadarReader(store, nativeSessions, projectID, secret)
   }
 
@@ -644,8 +616,6 @@ export class ObservationReads {
       this.secret,
       UNAVAILABLE_SESSION_HOST,
       this.taskValuationProvider,
-      undefined,
-      { history: this.history, live: this.live },
     )
     const tracker = new ObservationChangeTracker(repository, this.secret, projectID)
     return {
@@ -707,55 +677,6 @@ export class ObservationReads {
     const owner = findOwner(this.store.repository, access.units, query)
     if (!owner) throw new Error(unavailable)
     return owner
-  }
-
-  async trajectoryAll(
-    input: TrajectoryRequest,
-    tracker: ObservationChangeTracker,
-    signal: AbortSignal | undefined,
-    access: UnitAccess,
-  ): Promise<TrajectoryResponse> {
-    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const query: OwnerQuery = input.reference
-      ? { reference: input.reference }
-      : input.taskID
-        ? { taskID: input.taskID }
-        : { attemptID: input.attemptID! }
-    const owner = this.ownerOf(query, access, "No observation in this scope")
-    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) => {
-      const taskID = owner.taskID ?? input.taskID
-      const { reference: _reference, ...rest } = input
-      return unit.reads.trajectory(
-        { ...rest, scope, ...(taskID ? { taskID } : {}) },
-        unit.tracker,
-        signal,
-      )
-    }) as Promise<TrajectoryResponse>
-  }
-
-  async trajectoryHistoryAll(
-    input: TrajectoryHistoryRequest,
-    tracker: ObservationChangeTracker,
-    signal: AbortSignal | undefined,
-    access: UnitAccess,
-  ): Promise<TrajectoryHistoryResponse> {
-    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
-    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
-      unit.reads.trajectoryHistory({ ...input, scope }, unit.tracker, signal),
-    ) as Promise<TrajectoryHistoryResponse>
-  }
-
-  async trajectoryStatusAll(
-    input: TrajectoryStatusRequest,
-    tracker: ObservationChangeTracker,
-    access: UnitAccess,
-  ): Promise<TrajectoryResponse> {
-    if (input.scope.kind !== "all") throw new Error("Not an all-projects read")
-    const owner = this.ownerOf({ taskID: input.taskID }, access, "No observation in this scope")
-    return this.atUnit(owner.unit, input.scope.sessionID, tracker, (unit, scope) =>
-      unit.reads.trajectoryStatus({ ...input, scope }, unit.tracker),
-    ) as Promise<TrajectoryResponse>
   }
 
   async snapshotAll(
@@ -881,182 +802,6 @@ export class ObservationReads {
         attempts,
         checks,
         coverage: { ...projection.historyCoverage, workTruncated: projection.historyTruncated },
-      }
-    } finally {
-      connection.close()
-    }
-  }
-
-  async trajectory(
-    input: TrajectoryRequest,
-    tracker: ObservationChangeTracker,
-    signal?: AbortSignal,
-  ): Promise<TrajectoryResponse> {
-    const scope = singleScope(input.scope)
-    signal?.throwIfAborted()
-    const connection = openReadOnlyTrajectoryStore(
-      this.store.repository.path,
-      this.store.repository.projectDirectory,
-    )
-    try {
-      const before = connection.store.read((db) =>
-        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
-          taskID: input.taskID,
-          attemptID: input.attemptID,
-        }),
-      )
-      tracker.observeStamp(before.stamp)
-      const nativeRevision = tracker.nativeRevision
-      const report = await inspectTrajectory(
-        connection.store,
-        this.host,
-        this.projectID,
-        {
-          ...(input.taskID ? { taskID: input.taskID } : { attemptID: input.attemptID! }),
-          limit: input.limit,
-          ...(input.cursor ? { cursor: input.cursor } : {}),
-        },
-        this.secret,
-        { taskValuationProvider: this.taskValuationProvider, signal },
-      )
-      signal?.throwIfAborted()
-      const after = connection.store.read((db) =>
-        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
-      )
-      tracker.observeStamp(after)
-      if (
-        before.stamp.repositoryVersion !== after.repositoryVersion ||
-        before.stamp.sourceFingerprint !== after.sourceFingerprint ||
-        nativeRevision !== tracker.nativeRevision
-      )
-        throw new Error("Observation changed while reading; restart from a fresh snapshot")
-      signal?.throwIfAborted()
-      return {
-        schemaVersion: 1,
-        projectID: this.projectID,
-        scope: scopeView(scope),
-        boundary: tracker.boundary(after, before.transitionSequence),
-        report,
-      }
-    } finally {
-      connection.close()
-    }
-  }
-
-  async trajectoryHistory(
-    input: TrajectoryHistoryRequest,
-    tracker: ObservationChangeTracker,
-    signal?: AbortSignal,
-  ): Promise<TrajectoryHistoryResponse> {
-    const scope = singleScope(input.scope)
-    signal?.throwIfAborted()
-    const connection = openReadOnlyTrajectoryStore(
-      this.store.repository.path,
-      this.store.repository.projectDirectory,
-    )
-    try {
-      const source = connection.store.read((db) =>
-        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
-          taskID: input.taskID,
-        }),
-      )
-
-      const identity = {
-        projectID: this.projectID,
-        projectDirectory: this.store.repository.projectDirectory,
-        scope: scope,
-        taskID: input.taskID,
-        limit: input.limit,
-      }
-      if (input.cursor) return this.history.continue(identity, input.cursor)
-
-      tracker.observeStamp(source.stamp)
-      const nativeRevision = tracker.nativeRevision
-      const report = await captureTrajectoryHistory(
-        connection.store,
-        this.host,
-        this.projectID,
-        { taskID: input.taskID, limit: input.limit },
-        this.secret,
-        { taskValuationProvider: this.taskValuationProvider, signal },
-      )
-      signal?.throwIfAborted()
-      const after = connection.store.read((db) =>
-        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
-      )
-      tracker.observeStamp(after)
-      if (
-        source.stamp.repositoryVersion !== after.repositoryVersion ||
-        source.stamp.sourceFingerprint !== after.sourceFingerprint ||
-        nativeRevision !== tracker.nativeRevision
-      )
-        throw new Error("Observation changed while capturing history; recapture explicitly")
-
-      const boundary = tracker.boundary(after, source.transitionSequence)
-      signal?.throwIfAborted()
-      return this.history.capture(identity, report, boundary)
-    } finally {
-      connection.close()
-    }
-  }
-
-  async trajectoryStatus(
-    input: TrajectoryStatusRequest,
-    tracker: ObservationChangeTracker,
-  ): Promise<TrajectoryResponse> {
-    const scope = singleScope(input.scope)
-    const connection = openReadOnlyTrajectoryStore(
-      this.store.repository.path,
-      this.store.repository.projectDirectory,
-    )
-    try {
-      const source = connection.store.read((db) =>
-        loadTaskObservationSource(db, this.store.repository.projectDirectory, scope, this.secret, {
-          taskID: input.taskID,
-        }),
-      )
-      tracker.observeStamp(source.stamp)
-      const nativeRevision = tracker.nativeRevision
-      const report = await inspectTrajectoryStatus(
-        connection.store,
-        this.host,
-        this.projectID,
-        input.taskID,
-        this.secret,
-      )
-      const after = connection.store.read((db) =>
-        sourceStampFromDatabase(db, this.store.repository.projectDirectory, this.secret),
-      )
-      tracker.observeStamp(after)
-      if (
-        source.stamp.repositoryVersion !== after.repositoryVersion ||
-        source.stamp.sourceFingerprint !== after.sourceFingerprint ||
-        nativeRevision !== tracker.nativeRevision
-      )
-        throw new Error("Observation changed while reading status; retry the live update")
-
-      const delta = input.live
-        ? this.live.project(
-            JSON.stringify([
-              this.projectID,
-              this.store.repository.projectDirectory,
-              scope.kind,
-              scope.sessionID,
-              input.taskID,
-            ]),
-            report.trajectory.events,
-            input.live.cursor,
-          )
-        : undefined
-      return {
-        schemaVersion: 1,
-        projectID: this.projectID,
-        scope: scopeView(scope),
-        boundary: tracker.boundary(after, source.transitionSequence),
-        report: delta
-          ? { ...report, trajectory: { ...report.trajectory, events: delta.events } }
-          : report,
-        ...(delta ? { live: delta.live } : {}),
       }
     } finally {
       connection.close()

@@ -1,5 +1,3 @@
-import { Streams } from "../../../../src/streams/contract.ts"
-import { trajectoryStreams, streamIDs } from "./trajectory-streams.ts"
 import type { TaskState } from "../../../../src/runner/schema.ts"
 import { T0 } from "../story.ts"
 
@@ -69,7 +67,7 @@ export interface TrajectoryData {
 export const PROJECT = { canonical: "/workspace/lazers-demo", id: "demo-project" }
 const OWNER_SESSION = "ses-demo"
 const SEC = 1000
-export const WORK_START = T0 - 360 * SEC
+const WORK_START = T0 - 360 * SEC
 export const when = (seconds: number) => WORK_START + Math.round(seconds * SEC)
 export const sessionOf = (attempt: number) => `ses-worker-${attempt}`
 export const callID = (call: Pick<DemoCall, "key">) => `call-${call.key}`
@@ -86,7 +84,7 @@ const planTitles = (data: TrajectoryData) => [
 ]
 export const planID = (data: TrajectoryData, title: string) =>
   uid(3, planTitles(data).indexOf(title) + 1)
-export const ref = (n: number) => `LZ-${n}`
+const ref = (n: number) => `LZ-${n}`
 
 export function transitions(data: TrajectoryData) {
   const list: {
@@ -135,22 +133,4 @@ export function transitions(data: TrajectoryData) {
       })
   }
   return list
-}
-
-export function rpc(data: () => TrajectoryData) {
-  return {
-    [Streams.id]: trajectoryStreams(data, PROJECT.canonical),
-  } as Record<string, Record<string, (input: never) => unknown>>
-}
-
-/** Streams answer by the frame, and have no contract reads of their own to validate. */
-export const reads = () => []
-
-/** What the service emits after a change: every open stream has a newer frame to read. */
-export const trajectoryChanged = (
-  _data: Pick<TrajectoryData, "version">,
-  emit: (type: string, data: unknown) => void,
-) => {
-  for (const stream of streamIDs())
-    emit(`rpc.${Streams.id}.changed`, { stream, seq: Number.MAX_SAFE_INTEGER })
 }
