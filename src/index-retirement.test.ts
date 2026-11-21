@@ -3,6 +3,8 @@ import { makeFixture } from "../test/trajectory/fixture.ts"
 import { ProgressRecorder } from "./progress/recorder.ts"
 import { RecoveryJournal } from "./recovery/journal.ts"
 import { ModelEvidenceStore } from "./models/source-store.ts"
+import { backfillState } from "./runner/identity-backfill.ts"
+import { planIs } from "./runner/identity-read.ts"
 import { RunnerStore } from "./runner/store.ts"
 
 const fixtures: Array<ReturnType<typeof makeFixture>> = []
@@ -62,9 +64,16 @@ test("upgrading a database that has them drops them, and the statements they cou
   new RecoveryJournal(fixture.repository)
   const names = present(fixture)
   for (const name of RETIRED) expect(names).not.toContain(name)
+  // The fixture database was created by this build, so its history tables were keyed at install
+  // and never carried the text-id indexes; a plan read takes the integer key and its index.
+  expect(fixture.store.read((db) => backfillState(db, "runner_progress").state)).toBe(
+    "text-retired",
+  )
+  const planKey = fixture.store.read((db) => planIs(db, "runner_progress"))
+  expect(planKey).toContain("plan_n=")
   expect(
-    plan(fixture, "SELECT seq FROM runner_progress WHERE plan_id=? ORDER BY seq", "p"),
-  ).toContain("runner_progress_plan_recency")
+    plan(fixture, `SELECT seq FROM runner_progress WHERE ${planKey} ORDER BY seq`, "p"),
+  ).toContain("runner_progress_plan_recency_n")
   expect(
     plan(
       fixture,
