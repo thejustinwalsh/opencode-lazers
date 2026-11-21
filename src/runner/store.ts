@@ -1,6 +1,7 @@
 import { installProgressDisplayBackfill } from "../progress/display-backfill.ts"
 import { installProgressDisplaySchema } from "../progress/display-store.ts"
 import { ensureTaskScheduleSchema } from "../tasks/schedule/schema.ts"
+import { ensureTaskEventsSchema } from "../events/task-events-schema.ts"
 import {
   installIdentityKeys,
   installKeyColumns,
@@ -1534,6 +1535,7 @@ export class RunnerStore {
       repository.atomic(retireConflictScans)
     new RecoveryJournal(repository)
     ensureTaskScheduleSchema(repository)
+    ensureTaskEventsSchema(repository)
   }
   atomic<T>(run: (db: Database) => T): T {
     return this.repository.atomic((db) => {

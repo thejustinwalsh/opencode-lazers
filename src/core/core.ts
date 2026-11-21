@@ -1,4 +1,6 @@
 import { acquireScheduleOwner } from "../tasks/schedule/owner.ts"
+import { taskEventsProjection } from "../events/task-events-refresh.ts"
+import { startProjection } from "../projections/owner.ts"
 import { realpathSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { Effect } from "effect"
@@ -164,6 +166,19 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   // retries parked refreshes; idle it holds a table subscription and no timer.
   // One owner per database per process serves every project core that loads it.
   const scheduleLease = acquireScheduleOwner(repository.path, info.projectDirectory)
+  // Backfills `task_events` (database-wide, paced like the display backfill) and drains what other
+  // connections queued; idle it holds a table subscription and no timer.
+  const taskEventsLease = startProjection(
+    repository.path,
+    info.projectDirectory,
+    taskEventsProjection,
+    {
+      onError: (error) =>
+        void Effect.runPromise(
+          Effect.logWarning("LAZERS task events projection failed", { error: String(error) }),
+        ),
+    },
+  )
   const managedUsageStore = new ManagedUsageStore(repository)
   // Non-blocking: aliases hydrate synchronously, git resolution runs in the background.
   void sectionAsync("registerProject", () =>
@@ -294,6 +309,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   const disposeCore = async () => {
     scheduler = undefined
     displayBackfill.stop()
+    taskEventsLease.release()
     scheduleLease.release()
     await registration.dispose()
     await runtime.stop()
