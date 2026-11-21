@@ -28,7 +28,7 @@ import {
  * checks         task_events (kind check, the stored check view in `detail`)
  * attempts       runner_attempts + host_session_state + transcript_steps routes + open concerns
  * effort         trajectory_task_effort (the stored summary; per-call routes are events rows)
- * coverage       transcript_sessions read state, task_events progress counts
+ * coverage       transcript_sessions read state and compactions, task_events progress counts
  * ```
  *
  * The section builders are the old read's (`read.ts`), fed stored rows instead of a host read, so
@@ -176,10 +176,13 @@ export function readTrajectorySummary(store: RunnerStore, taskID: string, attemp
     const checks = storedChecks(db, project, task.id)
     const concerns = concernsOf(db, project, task.id)
     const transcripts = new Map<string, string>()
+    let compactions = 0
     for (const attemptID of sessions.keys()) {
       const { attempt } = allAttempts.find((entry) => entry.attempt.id === attemptID)!
       const transcript = storedTranscriptSession(db, project, attempt.session_id)
       transcripts.set(attempt.id, transcript?.state ?? "not-read")
+      // As the old read: compaction counted over the transcripts it read in full.
+      if (transcript?.state === "available") compactions += transcript.compactions
     }
     const attemptViews = allAttempts.map(({ attempt, snapshot }) => {
       const session = sessions.get(attempt.id) ?? null
@@ -234,8 +237,8 @@ export function readTrajectorySummary(store: RunnerStore, taskID: string, attemp
         unavailableSessionContexts: statuses.filter((state) => state === "unavailable").length,
         fullSessionHistory:
           "not guaranteed; use explicit warnings and do not infer omitted history",
-        /** Compaction is in the host transcript, which this read does not open. */
-        compacted: null,
+        /** A compaction message in a read transcript (`transcript_sessions.compactions`). */
+        compacted: compactions > 0,
         ongoing: busy,
         attemptsWithoutRecordedSessions: attemptViews.filter(
           (attempt) => attempt.sessionStatus !== "available" && !attempt.takeover,

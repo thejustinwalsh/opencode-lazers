@@ -176,7 +176,7 @@ test("task and plans: equal to the old output", async () => {
   expect((after.plans as { checks: unknown[] }[]).flatMap((plan) => plan.checks).length).toBe(3)
 })
 
-test("attempts: equal to the old output but for the host session's busy and idle endpoints", async () => {
+test("attempts: equal to the old output, busy and idle endpoints included", async () => {
   for (const input of [{ taskID }, { attemptID: firstAttemptID }]) {
     const [before, after] = await Promise.all([
       old({ ...input, limit: 5 }),
@@ -187,25 +187,14 @@ test("attempts: equal to the old output but for the host session's busy and idle
       times: Record<string, unknown> | null
       intervals: { modelActivity: Record<string, unknown> }
     }
-    const strip = (attempts: Attempt[]) =>
-      attempts.map((attempt) => ({
-        ...attempt,
-        // Documented: the stored session keeps no busy or idle endpoint (`host_session_state`),
-        // so `times.lastBusyAt`/`lastIdleAt` and the model-activity interval are null here.
-        times: attempt.times && { ...attempt.times, lastBusyAt: null, lastIdleAt: null },
-        intervals: {
-          ...attempt.intervals,
-          modelActivity: { ...attempt.intervals.modelActivity, startedAt: null, endedAt: null },
-        },
-      }))
     expect((after.attempts as Attempt[]).length).toBeGreaterThan(0)
-    expect(strip(after.attempts as Attempt[])).toEqual(strip(before.attempts as Attempt[]))
-    expect(after.attempts).toEqual(
-      (after.attempts as Attempt[]).map((attempt) => ({
-        ...attempt,
-        times: attempt.times && { ...attempt.times, lastBusyAt: null, lastIdleAt: null },
-      })),
-    )
+    expect(after.attempts).toEqual(before.attempts)
+    // The fixture's sessions have both endpoints: the comparison covers real values.
+    for (const attempt of after.attempts as Attempt[]) {
+      expect(attempt.times?.lastBusyAt).toBeNumber()
+      expect(attempt.times?.lastIdleAt).toBeNumber()
+      expect(attempt.intervals.modelActivity.startedAt).toBeNumber()
+    }
   }
 })
 
@@ -241,6 +230,7 @@ test("effort: the stored summary of the old output's effort", async () => {
       .taskEffortBasis.routes.observedStepRouteCount,
   )
   expect(typeof after.effortRefreshedAt).toBe("number")
+  expect(after.effortState).toBe("stored")
 })
 
 test("coverage and privacy: the old fields; reads of the host are stored-fact reads", async () => {
@@ -255,12 +245,13 @@ test("coverage and privacy: the old fields; reads of the host are stored-fact re
     "ongoing",
     "attemptsWithoutRecordedSessions",
     "workerProgress",
+    "compacted",
   ])
     expect([key, now[key]]).toEqual([key, was[key]])
-  // Documented: the source descriptions name the stored tables; compaction is in the host
-  // transcript, which this read does not open, so it is null rather than a guess.
+  // The source descriptions name the stored tables. The fixture's accepted transcript holds a
+  // compaction: the comparison covers a true value.
   expect(now.sessionRead).toContain("host_session_state")
-  expect(now.compacted).toBeNull()
+  expect(now.compacted).toBe(true)
   const privacy = after.privacy as Record<string, unknown>
   expect(Object.keys(privacy).toSorted()).toEqual(Object.keys(before.privacy as object).toSorted())
   expect(privacy.warnings).toEqual((before.privacy as Record<string, unknown>).warnings)
