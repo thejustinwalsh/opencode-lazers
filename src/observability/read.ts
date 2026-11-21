@@ -458,8 +458,7 @@ export class ObservationReads {
     private readonly projectID: string,
     readonly secret: Uint8Array,
     private readonly taskValuationProvider?: TaskValuationProvider,
-  ) {
-  }
+  ) {}
 
   /**
    * The reads of one checkout of one project. The caller's own checkout is this object with the
@@ -582,8 +581,6 @@ export class ObservationReads {
           signal,
         ),
       )
-      const visibleTaskIDs = new Set(projection.tasks.map((task) => task.id))
-      const stats = privacyStats()
       const { plans, unplannedTasks } = projectTopology(projection)
 
       signal?.throwIfAborted()
