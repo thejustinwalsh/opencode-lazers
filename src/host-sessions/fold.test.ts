@@ -36,6 +36,7 @@ const session = (id: string, patch: Partial<HostSessionRecord> = {}): HostSessio
   projectID: "project",
   parentID: null,
   agent: "build",
+  title: null,
   directory: "/work",
   archived: false,
   busy: false,
@@ -385,4 +386,27 @@ test("restart between cursor and rows resumes and ends equal to a fresh backfill
     ["ses-failed", "worker", 0],
     ["ses-owner", "architect", 0],
   ])
+})
+
+test("title: the session record's own title is stored redacted and cut; no title stays null", async () => {
+  const made = fixture()
+  const host = fakeHost([
+    session("ses-a", { title: "  Fix login api_key=sk-live-123  " }),
+    session("ses-b", { title: "x".repeat(300) }),
+    session("ses-c"),
+  ])
+  const { fold } = startFold(made, host.source)
+  for (const id of ["ses-a", "ses-b", "ses-c"]) fold.hint(event("session.created", id, 1))
+  await fold.settle()
+  const titles = made.repository.read((db) =>
+    db
+      .query<{ session_id: string; title: string | null }, []>(
+        "SELECT session_id,title FROM host_session_state ORDER BY session_id",
+      )
+      .all(),
+  )
+  expect(titles[0]!.title).toStartWith("Fix login api_key=")
+  expect(titles[0]!.title).not.toContain("sk-live-123")
+  expect(titles[1]!.title!.length).toBeLessThanOrEqual(200)
+  expect(titles[2]!.title).toBeNull()
 })

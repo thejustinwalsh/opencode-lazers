@@ -27,6 +27,8 @@ export const radarSessionColumns = {
   /** `architect` (agent architect), `worker` (a runner attempt's session) or `unmanaged`. */
   role: "text",
   agent: "text",
+  /** The host's short session label from the session record (redacted, at most 200 characters). */
+  title: "text",
   attempt_id: "text",
   task_id: "text",
   parent_session_id: "text",

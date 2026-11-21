@@ -761,9 +761,10 @@ source `radar.sessions` in `src/streams/sources/host-sessions{,-ref}.ts`). Corre
   the inbox/permission/form counts (`RunnerHost.session` without messages) only when the
   session is busy and unknown or the event can move them. A hint created before the last read
   began reads nothing. A read older than the stored `host_updated_at` is ignored.
-- Columns added: `agent`, `directory`, `created_at`; `updated_at` is when a shown column last
-  changed (the `recent` order), `host_updated_at` the host's stamp. No `title`: it is derived
-  from the transcript (owner decision on transcripts). Archived sessions keep their row
+- Columns added: `agent`, `title`, `directory`, `created_at`; `updated_at` is when a shown
+  column last changed (the `recent` order), `host_updated_at` the host's stamp. ★ `title` is the
+  session record's own label (lead's decision: a session attribute, not transcript text),
+  redacted and cut to 200 characters as the live monitor showed it; never derived from messages. Archived sessions keep their row
   (`archived = 1`; Task 12 shows it); foreign sessions are never stored; deleted ones are.
 - Backfill: the shared owner's pages cannot await a host read, so the `projection` lifecycle
   covers a seed (attempt and task sessions queued into `host_session_dirty`, the shared queue

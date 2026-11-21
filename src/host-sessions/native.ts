@@ -8,7 +8,16 @@ import type { HostSessionRecord, HostSessionSource } from "./state.ts"
 
 type SessionInfo = Pick<
   Session.Info,
-  "id" | "parentID" | "projectID" | "agent" | "model" | "time" | "location" | "tokens" | "outcome"
+  | "id"
+  | "parentID"
+  | "projectID"
+  | "agent"
+  | "title"
+  | "model"
+  | "time"
+  | "location"
+  | "tokens"
+  | "outcome"
 >
 
 /** Sessions per inventory page. */
@@ -17,7 +26,7 @@ const LIST_PAGE = 100
 const millis = (value: DateTime.Utc | undefined) =>
   value === undefined ? null : DateTime.toEpochMillis(value)
 
-/** The stored facts of one host session record; no title, no message text. */
+/** The stored facts of one host session record: its own fields only, no message text. */
 function sessionRecord(info: SessionInfo): HostSessionRecord {
   const busyAt = millis(info.time.busy)
   const idleAt = millis(info.time.idle)
@@ -26,6 +35,7 @@ function sessionRecord(info: SessionInfo): HostSessionRecord {
     projectID: info.projectID,
     parentID: info.parentID ?? null,
     agent: info.agent ?? null,
+    title: info.title ?? null,
     directory: info.location.directory,
     archived: info.time.archived !== undefined,
     busy: busyAt !== null && busyAt > (idleAt ?? 0),

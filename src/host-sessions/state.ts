@@ -3,7 +3,9 @@ import { schemaModules } from "../database-schema.ts"
 import { ensureProjectionStateSchema, resetProjectionState } from "../projections/lifecycle.ts"
 import type { ProjectionSpec } from "../projections/owner.ts"
 import { queueTableSQL } from "../projections/queue.ts"
+import { contractText } from "../progress/display.ts"
 import type { TaskRepository } from "../storage.ts"
+import { privacyStats } from "../trajectory/privacy.ts"
 
 /**
  * `host_session_state`: the live OpenCode facts of each session of a project, one row per
@@ -18,8 +20,10 @@ import type { TaskRepository } from "../storage.ts"
  *                         compare, then write ─► host_session_state
  * ```
  *
- * Only what a panel shows is stored: status, counts, ids, routes, token totals and times. No
- * transcript text and no title (owner decision, 2026-11-21: OpenCode holds transcripts).
+ * Only what a panel shows is stored: status, counts, ids, routes, token totals, times and the
+ * session's own title (the host's short label on its session record, a session attribute like
+ * `agent`, redacted and cut to 200 characters as the live monitor showed it). No transcript text
+ * (owner decision, 2026-11-21: OpenCode holds transcripts); nothing is derived from messages.
  *
  * `host_updated_at` is the host's `time.updated`: a read older than the stored stamp is ignored,
  * so a slow read finishing after a newer one never moves a row back. `updated_at` is when a shown
@@ -37,7 +41,7 @@ const TABLES_SQL = `
     id INTEGER PRIMARY KEY,
     project_directory TEXT NOT NULL, session_id TEXT NOT NULL,
     role TEXT NOT NULL,
-    agent TEXT, attempt_id TEXT, task_id TEXT, parent_session_id TEXT, directory TEXT,
+    agent TEXT, title TEXT, attempt_id TEXT, task_id TEXT, parent_session_id TEXT, directory TEXT,
     busy INTEGER NOT NULL, pending_input INTEGER NOT NULL,
     pending_permissions INTEGER NOT NULL, pending_forms INTEGER NOT NULL,
     outcome TEXT, archived INTEGER NOT NULL,
@@ -73,6 +77,8 @@ export type HostSessionRecord = {
   projectID: string
   parentID: string | null
   agent: string | null
+  /** The session record's own `title`; never read from messages. */
+  title: string | null
   directory: string | null
   archived: boolean
   /** Started executing after it last went idle (`time.busy > time.idle`). */
@@ -117,11 +123,18 @@ const idText = (value: string | null | undefined, maximum = 200) =>
     ? value
     : null
 
+/** The title as the live monitor showed it: trimmed, secrets redacted, at most 200 characters. */
+const titleText = (value: string | null) => {
+  const trimmed = value?.trim()
+  return trimmed ? contractText(trimmed, privacyStats(), 200) : null
+}
+
 export type HostSessionWrite = "written" | "unchanged" | "stale" | "deleted" | "absent"
 
 type Row = {
   role: string
   agent: string | null
+  title: string | null
   attempt_id: string | null
   task_id: string | null
   parent_session_id: string | null
@@ -143,6 +156,7 @@ type Row = {
 const SHOWN = [
   "role",
   "agent",
+  "title",
   "attempt_id",
   "task_id",
   "parent_session_id",
@@ -208,6 +222,7 @@ export function writeHostSession(
   const row: Row = {
     role: attempt ? "worker" : agent === "architect" ? "architect" : "unmanaged",
     agent,
+    title: titleText(record.title),
     attempt_id: attempt?.id ?? null,
     task_id: attempt?.task_id ?? null,
     parent_session_id: idText(record.parentID),

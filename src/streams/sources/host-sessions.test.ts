@@ -25,6 +25,7 @@ const record = (id: string, patch: Partial<HostSessionRecord> = {}): HostSession
   projectID: "project",
   parentID: null,
   agent: "build",
+  title: null,
   directory: "/work",
   archived: false,
   busy: false,
