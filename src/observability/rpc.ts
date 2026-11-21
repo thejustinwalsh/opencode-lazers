@@ -1,5 +1,4 @@
-import { joinNativeEvents } from "../core/event-hub.ts"
-import { section, timedRpc } from "../diagnostics/stall-probe.ts"
+import { timedRpc } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
@@ -7,48 +6,12 @@ import { Effect } from "effect"
 import { privacyStats, safeError } from "../trajectory/privacy.ts"
 import { progressReconstructionDiagnostics } from "../progress/reconstruction.ts"
 import { sharedScheduler } from "../runner/scheduler-coordinator.ts"
-import { Observability, type ObservationChange } from "./contract.ts"
+import { Observability } from "./contract.ts"
 import { allProjectsAccess, callerSession } from "../projects/read-access.ts"
 import { loadedProjectDirectories } from "../core/registry.ts"
 import type { ObservationReads } from "./read.ts"
-import { ObservationChangeTracker } from "./changes.ts"
-import { databaseChanges } from "../database-events.ts"
 
-type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
-
-const NATIVE_EVENT_TYPES = [
-  "session.created",
-  "session.deleted",
-  "session.agent.selected",
-  "session.model.selected",
-  "session.moved",
-  "session.archived",
-  "session.unarchived",
-  "session.inbox.enqueued",
-  "session.inbox.delivered",
-  "session.inbox.cancelled",
-  "session.inbox.delivery.changed",
-  "session.usage.updated",
-  "session.execution.started",
-  "session.execution.succeeded",
-  "session.execution.failed",
-  "session.execution.interrupted",
-  "session.step.started",
-  "session.step.ended",
-  "session.step.failed",
-  "session.text.ended",
-  "session.synthetic",
-  "session.tool.called",
-  "session.tool.input.started",
-  "session.tool.progress",
-  "session.tool.success",
-  "session.tool.failed",
-  "session.retry.scheduled",
-  "session.compaction.ended",
-  "session.compaction.failed",
-  "session.idle",
-  "session.status",
-] as const
+type ObservationContext = Pick<Plugin.Context, "rpc" | "permission" | "session">
 
 function schedulerTotals(agent: string) {
   return agent === "architect"
@@ -106,29 +69,7 @@ export function registerObservability(
       unavailable: "Observation scope is unavailable",
     })
   return Effect.gen(function* () {
-    const tracker = new ObservationChangeTracker(reads.store.repository, reads.secret, projectID)
-    const rpc = yield* timedRpc(ctx.rpc).register(Observability, {
-      snapshot: (input) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            if (input.scope.kind === "all")
-              return reads.snapshotAll(
-                { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
-                tracker,
-                await accessFor(input.scope),
-                signal,
-              )
-            await authorize(
-              ctx,
-              input.scope,
-              projectID,
-              reads.store.repository.projectDirectory,
-              "read",
-            )
-            return reads.snapshot(input.scope, tracker, signal)
-          },
-          catch: (error) => new Error(safeError(error, privacyStats())),
-        }).pipe(Effect.orDie),
+    yield* timedRpc(ctx.rpc).register(Observability, {
       progressDiagnostics: (input) =>
         Effect.tryPromise({
           try: async (signal) => {
@@ -139,7 +80,6 @@ export function registerObservability(
               return reads
                 .allPage(
                   { scope: input.scope, ...(input.cursor ? { cursor: input.cursor } : {}) },
-                  tracker,
                   access,
                   (unit) => ({
                     ...progressReconstructionDiagnostics(
@@ -176,78 +116,5 @@ export function registerObservability(
           catch: (error) => new Error(safeError(error, privacyStats())),
         }).pipe(Effect.orDie),
     })
-
-    let disposed = false
-    let retry: ReturnType<typeof setTimeout> | undefined
-    let retryChange: ObservationChange | undefined
-    const publish = (change: ObservationChange) => {
-      if (disposed) return
-      void Effect.runPromise(rpc.events.emit("changed", change)).then(
-        () => {
-          if (retryChange && retryChange.sequence <= change.sequence) {
-            retryChange = undefined
-            if (retry) clearTimeout(retry)
-            retry = undefined
-          }
-        },
-        () => {
-          if (disposed) return
-          if (!retryChange || retryChange.sequence < change.sequence) retryChange = change
-          if (retry) return
-          retry = setTimeout(() => {
-            retry = undefined
-            const latest = retryChange
-            retryChange = undefined
-            if (latest) publish({ ...latest, cause: "gap", resnapshotRequired: true })
-          }, 1_000)
-          retry.unref()
-        },
-      )
-    }
-    tracker.initialize(publish)
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        disposed = true
-        if (retry) clearTimeout(retry)
-        tracker.close()
-      }),
-    )
-
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        let closed = false
-        const refresh = () => {
-          if (closed) return
-          // Every runner/progress write bumps the revision; coalesce into one trailing read.
-          tracker.scheduleRefresh()
-        }
-        const unsubscribe = databaseChanges.subscribe(reads.store.repository.path, refresh, () =>
-          tracker.streamGap(),
-        )
-        return () => {
-          closed = true
-          unsubscribe()
-        }
-      }),
-      (close) => Effect.sync(close),
-    )
-
-    // The host stream is server-wide: one subscription per process feeds every copy's tracker.
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        joinNativeEvents(
-          ctx,
-          NATIVE_EVENT_TYPES,
-          {
-            attached: () => tracker.streamAttached(),
-            event: (event) =>
-              section(`event:${(event as { type?: string }).type}`, () => tracker.native(event)),
-            gap: () => tracker.streamGap(),
-          },
-          (ctx as { location?: { directory?: string } }).location?.directory,
-        ),
-      ),
-      (leave) => Effect.sync(leave),
-    )
   })
 }

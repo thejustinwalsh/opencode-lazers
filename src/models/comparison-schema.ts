@@ -30,7 +30,7 @@ export const ModelComparisonReadInputSchema = z.strictObject({
 })
 export type ModelComparisonReadInput = z.infer<typeof ModelComparisonReadInputSchema>
 
-export const ModelComparisonEvidenceReferenceSchema = z.strictObject({
+const ModelComparisonEvidenceReferenceSchema = z.strictObject({
   source: ModelEvidenceSourceSchema,
   snapshotID: z.uuid(),
   generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -91,7 +91,7 @@ const VariantCoverageSchema = z.strictObject({
 })
 
 /** The catalog fields every native model record carries, shared by the candidate and the group schemas. */
-export const NativeCatalogFields = {
+const NativeCatalogFields = {
   name: z.string().max(512).nullable(),
   enabled: z.boolean().nullable(),
   type: z.string().max(512).nullable(),

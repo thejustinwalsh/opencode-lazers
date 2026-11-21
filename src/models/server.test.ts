@@ -3,12 +3,11 @@ import { expect, test } from "bun:test"
 import { Agent } from "@opencode/plugin/effect"
 import type { ToolEditor } from "@opencode/plugin/effect/tool"
 import { Effect, Exit, Schema, Scope } from "effect"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { validProposal } from "../../test/proposal.ts"
 import captured from "../../test/models-identity/fixtures/captured-20261103.json" with { type: "json" }
-import capturedAnthropicAliases from "../../test/models-identity/fixtures/captured-anthropic-aliases-20261103.json" with { type: "json" }
 import { TaskRepository } from "../storage.ts"
 import { registerModelTools } from "./tools.ts"
 import type { ModelEvidenceFetcher } from "./source-refresh.ts"
@@ -39,10 +38,6 @@ import type { ProjectTaskValuationRequest } from "./valuation.ts"
 import { makeLedgerFixture } from "../../test/models-observation-ledger/fixtures/ledger.ts"
 import { ENDPOINT_PRICING_PRODUCTS, EndpointPricingRecordSchema } from "./endpoint-pricing.ts"
 import type { EndpointPricingProductID, EndpointPricingRecord } from "./endpoint-pricing.ts"
-import {
-  ModelDecisionOverviewAllOutputSchema,
-  ModelDecisionRowsAllOutputSchema,
-} from "./decision-contract.ts"
 import { modelConfigurationID } from "./model-identity.ts"
 import capturedGo from "../../test/models-identity/fixtures/captured-go-openrouter-20261103.json" with { type: "json" }
 
@@ -51,9 +46,6 @@ type ModelRPC = {
   /** Test-side: the settings the assignments stream composes (`withStreamedReads`). */
   settings(input: unknown): Effect.Effect<unknown, unknown>
   configure(input: unknown): Effect.Effect<unknown, unknown>
-  sourceEvidence(input: unknown): Effect.Effect<unknown, unknown>
-  modelGroups(input: unknown): Effect.Effect<unknown, unknown>
-  modelConfigurations(input: unknown): Effect.Effect<unknown, unknown>
   priceSources(input: unknown): Effect.Effect<unknown, unknown>
   configurePriceSources(input: unknown): Effect.Effect<unknown, unknown>
   refreshSources(input: unknown): Effect.Effect<unknown, unknown>
@@ -182,9 +174,6 @@ function modelContext(options: {
   const server: ModelRPC = {
     settings: () => Effect.die(new Error("RPC not registered")),
     configure: () => Effect.die(new Error("RPC not registered")),
-    sourceEvidence: () => Effect.die(new Error("RPC not registered")),
-    modelGroups: () => Effect.die(new Error("RPC not registered")),
-    modelConfigurations: () => Effect.die(new Error("RPC not registered")),
     priceSources: () => Effect.die(new Error("RPC not registered")),
     configurePriceSources: () => Effect.die(new Error("RPC not registered")),
     refreshSources: () => Effect.die(new Error("RPC not registered")),
@@ -712,69 +701,6 @@ function rewriteAttemptForMarket(
   } finally {
     db.close()
   }
-}
-
-function writeCapturedAnthropicAliasEvidence(path: string) {
-  const baseNative = ModelEvidenceSnapshotSchema.parse(captured.native.snapshot)
-  const catalog = ModelEvidenceSnapshotSchema.parse(captured.openrouter.snapshot)
-  const aliases = ModelEvidenceSnapshotSchema.parse(capturedAnthropicAliases.native.snapshot)
-  if (
-    baseNative.source !== "native-catalog" ||
-    catalog.source !== "openrouter-models" ||
-    aliases.source !== "native-catalog"
-  )
-    throw new Error("Captured model identity fixture has an unexpected source")
-  const store = new ModelEvidenceStore(path, projectDirectory)
-  try {
-    for (let index = 0; index < 5; index += 1) store.beginRefresh()
-    store.saveSnapshot({
-      ...baseNative,
-      projectDirectory,
-      generation: 5,
-      records: [...baseNative.records, ...aliases.records],
-    })
-    store.saveSnapshot({ ...catalog, projectDirectory, generation: 5 })
-  } finally {
-    store.close()
-  }
-}
-
-function capturedReadStoreFactory(path: string, directory: string, includeAliases = false) {
-  return {
-    projectDirectory: directory,
-    readComparisonSources: (
-      selection?: Parameters<ModelEvidenceReadStore["readComparisonSources"]>[0],
-    ) => {
-      const reader = new ModelEvidenceReadStore(path, directory)
-      try {
-        return reader.readComparisonSources(selection).map((source) => {
-          if (source.source === "native-catalog" && source.snapshot?.source === "native-catalog")
-            return {
-              ...source,
-              recordIndexes: includeAliases
-                ? [
-                    ...captured.native.originalRecordIndices,
-                    ...capturedAnthropicAliases.native.originalRecordIndices,
-                  ]
-                : captured.native.originalRecordIndices,
-            }
-          if (
-            source.source === "openrouter-models" &&
-            source.snapshot?.source === "openrouter-models"
-          )
-            return { ...source, recordIndexes: captured.openrouter.originalRecordIndices }
-          return source
-        })
-      } finally {
-        reader.close()
-      }
-    },
-    close: () => {},
-  }
-}
-
-function capturedAliasReadStoreFactory(path: string, directory: string) {
-  return capturedReadStoreFactory(path, directory, true)
 }
 
 test("registered tool and Desktop RPC share exact persisted mappings after setup connection closes", async () => {
@@ -1767,7 +1693,7 @@ test("cancelled Desktop configuration cannot save a route after a late permissio
   }
 })
 
-test("Models evidence RPC reads cached state without credentials and refreshes only after authorization", async () => {
+test("Models source refresh fetches without credentials and only after authorization", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
@@ -1786,18 +1712,6 @@ test("Models evidence RPC reads cached state without credentials and refreshes o
   repository.close()
   const methods = harness.methods()
   try {
-    const empty = (await Effect.runPromise(
-      methods.sourceEvidence({ sessionID: "ses-native" }),
-    )) as { sources: Array<{ source: string; state: string; latestSnapshotID: string | null }> }
-    expect(empty.sources.map(({ state }) => state)).toEqual([
-      "never",
-      "never",
-      "never",
-      "never",
-      "never",
-    ])
-    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-
     const refreshed = (await Effect.runPromise(
       methods.refreshSources({ sessionID: "ses-native", force: true }),
     )) as {
@@ -1829,31 +1743,18 @@ test("Models evidence RPC reads cached state without credentials and refreshes o
       ]),
     )
     expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
-    const nativeSnapshotID = refreshed.sources.find(
-      ({ source }) => source === "native-catalog",
-    )!.latestSnapshotID!
     expect(
-      await Effect.runPromise(
-        methods.sourceEvidence({ sessionID: "ses-native", snapshotID: nativeSnapshotID }),
-      ),
-    ).toMatchObject({
-      snapshot: {
-        snapshot: { snapshotID: nativeSnapshotID, source: "native-catalog", recordCount: 0 },
-        records: [],
-      },
-    })
-    expect(sourceAccessCalls).toEqual({ active: 1, resolve: 0 })
+      refreshed.sources.find(({ source }) => source === "native-catalog")!.latestSnapshotID,
+    ).toEqual(expect.any(String))
     expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
-      "lz-read-model-evidence",
       "lz-refresh-model-evidence",
-      "lz-read-model-evidence",
     ])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("Models evidence denial, foreign and archived sessions do not initialize or access sources", async () => {
+test("Models source refresh denial, foreign and archived sessions do not initialize or access sources", async () => {
   const root = directory()
   const path = join(root, "tasks.sqlite")
   const repository = new TaskRepository(path, projectDirectory)
@@ -1877,9 +1778,6 @@ test("Models evidence denial, foreign and archived sessions do not initialize or
       expect(
         await rejects(methods.refreshSources({ sessionID: "ses-native", force: true })),
       ).toBeInstanceOf(Error)
-      expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toBeInstanceOf(
-        Error,
-      )
     }
     harness.setActor({ id: "ses-native", projectID, agent: "desktop-settings-user", time: {} })
     denied = true
@@ -1888,468 +1786,11 @@ test("Models evidence denial, foreign and archived sessions do not initialize or
     ).toMatchObject({
       message: "native permission denied",
     })
-    expect(await rejects(methods.sourceEvidence({ sessionID: "ses-native" }))).toMatchObject({
-      message: "native permission denied",
-    })
 
     expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
     expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
     expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(permissionCalls).toHaveLength(2)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("registered model group RPCs resolve captured direct routes without credential or catalog access", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  writeCapturedModelEvidence(path)
-  const permissionCalls: unknown[] = []
-  const sourceAccessCalls = { active: 0, resolve: 0 }
-  let fetchCalls = 0
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    permissionCalls,
-    sourceAccessCalls,
-    fetcher: async () => {
-      fetchCalls += 1
-      throw new Error("group reads must not refresh model sources")
-    },
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return capturedReadStoreFactory(databasePath, directory)
-    },
-  })
-  repository.close()
-  try {
-    const groups = (await Effect.runPromise(
-      harness.methods().modelGroups({ sessionID: "ses-native", limit: 100 }),
-    )) as {
-      context: unknown
-      groups: Array<{ groupID: string; configurationCount: number }>
-      totalGroups: number
-    }
-    expect(groups.totalGroups).toBe(4)
-    expect(groups.groups.reduce((count, group) => count + group.configurationCount, 0)).toBe(33)
-
-    const configurations = (await Effect.runPromise(
-      harness.methods().modelConfigurations({
-        sessionID: "ses-native",
-        groupID: "openai/gpt-6-luna",
-        context: groups.context,
-        limit: 100,
-      }),
-    )) as {
-      totalConfigurations: number
-      configurations: Array<{
-        configurationID: string
-        route: { providerID: string; variant: string | null }
-        identity: { status: string; productID: string | null; rules: Array<{ id: string }> } & {
-          evidence: {
-            native: Array<{ recordIndex: number; recordID: string }>
-            catalog: Array<{ recordIndex: number; recordID: string }>
-          }
-        }
-        native: { contextTokens: number | null; prices: unknown }
-        externalCatalog: { source: string; model: { contextLength: number | null } | null }
-      }>
-    }
-    expect(configurations.totalConfigurations).toBe(12)
-    const direct = configurations.configurations.find(
-      ({ route }) => route.providerID === "openai" && route.variant === "none",
-    )!
-    expect(direct).toMatchObject({
-      identity: {
-        status: "exact",
-        productID: "openai/gpt-6-luna",
-        rules: [{ id: "provider-owner-qualified-local-id-v1" }],
-        evidence: {
-          native: [expect.objectContaining({ recordIndex: 67, recordID: "gpt-6-luna" })],
-          catalog: [expect.objectContaining({ recordIndex: 51, recordID: "openai/gpt-6-luna" })],
-        },
-      },
-      native: { contextTokens: 400000, prices: null },
-      externalCatalog: {
-        source: "openrouter-models",
-        model: { contextLength: 1050000 },
-      },
-    })
-    const routed = configurations.configurations.find(
-      ({ route }) => route.providerID === "openrouter" && route.variant === "none",
-    )!
-    expect(direct.configurationID).not.toBe(routed.configurationID)
-    expect(routed.native).toMatchObject({
-      contextTokens: 1050000,
-      prices: { unit: "USD per million tokens" },
-    })
-    expect(routed.identity.evidence).toMatchObject({
-      native: [expect.objectContaining({ recordIndex: 63, recordID: "openai/gpt-6-luna" })],
-      catalog: [expect.objectContaining({ recordIndex: 51, recordID: "openai/gpt-6-luna" })],
-    })
-
-    const fable = (await Effect.runPromise(
-      harness.methods().modelConfigurations({
-        sessionID: "ses-native",
-        groupID: "anthropic/claude-fable-5",
-        context: groups.context,
-        limit: 100,
-      }),
-    )) as {
-      totalConfigurations: number
-      configurations: Array<{
-        route: { providerID: string; variant: string | null }
-        identity: {
-          status: string
-          productID: string | null
-          rules: Array<{ id: string }>
-          evidence: {
-            native: Array<{ recordIndex: number; recordID: string }>
-            catalog: Array<{ recordIndex: number; recordID: string }>
-          }
-        }
-      }>
-    }
-    expect(fable.totalConfigurations).toBe(10)
-    for (const configuration of fable.configurations) {
-      expect(configuration.identity).toMatchObject({
-        status: "exact",
-        productID: "anthropic/claude-fable-5",
-        rules: [
-          {
-            id:
-              configuration.route.providerID === "anthropic"
-                ? "provider-owner-qualified-local-id-v1"
-                : "owner-qualified-catalog-id-v1",
-          },
-        ],
-        evidence: {
-          catalog: [
-            expect.objectContaining({ recordIndex: 166, recordID: "anthropic/claude-fable-5" }),
-          ],
-        },
-      })
-      expect(configuration.identity.evidence.native).toEqual([
-        expect.objectContaining({
-          recordIndex: configuration.route.providerID === "anthropic" ? 202 : 201,
-          recordID:
-            configuration.route.providerID === "anthropic"
-              ? "claude-fable-5"
-              : "anthropic/claude-fable-5",
-        }),
-      ])
-    }
-    expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
-      "lz-read-model-groups",
-      "lz-read-model-configurations",
-      "lz-read-model-configurations",
-    ])
-    expect(readStoreOpens).toBe(3)
-    expect(fetchCalls).toBe(0)
-    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(harness.modelListCalls.count).toBe(0)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("registered model RPCs group captured direct Anthropic aliases with exact OpenRouter products and rule provenance", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  writeCapturedAnthropicAliasEvidence(path)
-  const permissionCalls: unknown[] = []
-  const sourceAccessCalls = { active: 0, resolve: 0 }
-  let fetchCalls = 0
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    permissionCalls,
-    sourceAccessCalls,
-    fetcher: async () => {
-      fetchCalls += 1
-      throw new Error("group reads must not fetch credentials or refresh sources")
-    },
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return capturedAliasReadStoreFactory(databasePath, directory)
-    },
-  })
-  repository.close()
-  try {
-    const groups = (await Effect.runPromise(
-      harness.methods().modelGroups({ sessionID: "ses-native", limit: 100 }),
-    )) as {
-      context: unknown
-      groups: Array<{ groupID: string; configurationCount: number }>
-      totalGroups: number
-    }
-    expect(groups.groups).toEqual([
-      expect.objectContaining({ groupID: "anthropic/claude-fable-5", configurationCount: 10 }),
-      expect.objectContaining({ groupID: "anthropic/claude-haiku-5.5", configurationCount: 12 }),
-      expect.objectContaining({ groupID: "anthropic/claude-sonnet-5.5", configurationCount: 10 }),
-      expect.objectContaining({ groupID: "openai/gpt-6-luna", configurationCount: 12 }),
-    ])
-    expect(groups.totalGroups).toBe(4)
-
-    for (const [groupID, directID, catalogRecordID, nativeIndex, catalogIndex, expectedCount] of [
-      ["anthropic/claude-haiku-5.5", "claude-haiku-5-5", "anthropic/claude-haiku-5.5", 38, 30, 12],
-      [
-        "anthropic/claude-sonnet-5.5",
-        "claude-sonnet-5-5",
-        "anthropic/claude-sonnet-5.5",
-        50,
-        39,
-        10,
-      ],
-    ] as const) {
-      const result = (await Effect.runPromise(
-        harness.methods().modelConfigurations({
-          sessionID: "ses-native",
-          groupID,
-          context: groups.context,
-          limit: 100,
-        }),
-      )) as {
-        totalConfigurations: number
-        configurations: Array<{
-          route: { providerID: string; modelID: string; variant: string | null }
-          identity: {
-            status: string
-            productID: string | null
-            rules: Array<{
-              id: string
-              version: number
-              citations?: Array<{
-                url: string
-                excerpt: string
-                snapshotID: string | null
-                recordID: string | null
-              }>
-            }>
-            evidence: {
-              native: Array<{ recordIndex: number; recordID: string }>
-              catalog: Array<{ recordIndex: number; recordID: string }>
-            }
-          }
-          externalCatalog: { model: { id: string } | null }
-        }>
-      }
-      expect(result.totalConfigurations).toBe(expectedCount)
-      expect(result.configurations).toHaveLength(expectedCount)
-      const direct = result.configurations.filter(({ route }) => route.providerID === "anthropic")
-      const routed = result.configurations.filter(({ route }) => route.providerID === "openrouter")
-      expect(direct).toHaveLength(expectedCount / 2)
-      expect(routed).toHaveLength(expectedCount / 2)
-      expect(new Set(direct.map(({ route }) => route.variant)).size).toBe(expectedCount / 2)
-      expect(new Set(routed.map(({ route }) => route.variant)).size).toBe(expectedCount / 2)
-      for (const configuration of direct) {
-        expect(configuration).toMatchObject({
-          route: { providerID: "anthropic", modelID: directID },
-          identity: {
-            status: "exact",
-            productID: groupID,
-            rules: [
-              {
-                id: `anthropic-${groupID.includes("haiku") ? "haiku" : "sonnet"}-5-5-to-openrouter-${groupID.includes("haiku") ? "haiku" : "sonnet"}-5-5-v1`,
-                version: 1,
-                citations: expect.arrayContaining([
-                  expect.objectContaining({
-                    url: "https://platform.claude.com/docs/en/models/overview",
-                    excerpt: expect.stringContaining(directID),
-                  }),
-                  expect.objectContaining({
-                    url: "https://openrouter.ai/api/v1/models",
-                    snapshotID: captured.openrouter.snapshot.snapshotID,
-                    recordID: catalogRecordID,
-                    excerpt: expect.stringContaining(catalogRecordID),
-                  }),
-                ]),
-              },
-            ],
-            evidence: {
-              native: [expect.objectContaining({ recordIndex: nativeIndex, recordID: directID })],
-              catalog: [
-                expect.objectContaining({ recordIndex: catalogIndex, recordID: catalogRecordID }),
-              ],
-            },
-          },
-          externalCatalog: { model: { id: catalogRecordID } },
-        })
-      }
-      for (const configuration of routed) {
-        expect(configuration.identity).toMatchObject({
-          status: "exact",
-          productID: groupID,
-          rules: [{ id: "owner-qualified-catalog-id-v1", version: 1 }],
-        })
-      }
-    }
-    expect(permissionCalls.map((entry) => (entry as { action: string }).action)).toEqual([
-      "lz-read-model-groups",
-      "lz-read-model-configurations",
-      "lz-read-model-configurations",
-    ])
-    expect(readStoreOpens).toBe(3)
-    expect(fetchCalls).toBe(0)
-    expect(sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(harness.modelListCalls.count).toBe(0)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("registered model group reads do not create a missing database", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  repository.close()
-  expect(existsSync(path)).toBe(true)
-  rmSync(path)
-  const permissionCalls: unknown[] = []
-  const harness = await register(repository, { permissionCalls })
-  try {
-    const exit = await Effect.runPromiseExit(
-      harness.methods().modelGroups({ sessionID: "ses-native", limit: 100 }),
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(existsSync(path)).toBe(false)
-    expect(permissionCalls).toEqual([
-      expect.objectContaining({
-        action: "lz-read-model-groups",
-        resources: [projectDirectory],
-      }),
-    ])
-    expect(harness.sourceAccessCalls).toEqual({ active: 0, resolve: 0 })
-    expect(harness.modelListCalls.count).toBe(0)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("Models group RPC rechecks session archival after awaited permission before opening evidence storage", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  let enter!: () => void
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve
-  })
-  let grant!: () => void
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    permissionWait: () =>
-      Effect.callback<void>((resume) => {
-        grant = () => resume(Effect.void)
-        enter()
-      }),
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return new ModelEvidenceReadStore(databasePath, directory)
-    },
-  })
-  repository.close()
-  try {
-    const pending = Effect.runPromiseExit(
-      harness.methods().modelGroups({ sessionID: "ses-native" }),
-    )
-    await entered
-    harness.setActor({
-      id: "ses-native",
-      projectID,
-      agent: "desktop-settings-user",
-      time: { archived: 30 },
-    })
-    grant()
-    const exit = await pending
-    expect(exit._tag).toBe("Failure")
-    expect(readStoreOpens).toBe(0)
-    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
-    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
-  } finally {
-    grant?.()
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("cancelled Models group RPC cannot open evidence storage after a late permission grant", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  const controller = new AbortController()
-  let enter!: () => void
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve
-  })
-  let grant!: () => void
-  let interrupted = false
-  let readStoreOpens = 0
-  const harness = await register(repository, {
-    permissionWait: () =>
-      Effect.callback<void>((resume) => {
-        grant = () => resume(Effect.void)
-        enter()
-        return Effect.sync(() => {
-          interrupted = true
-        })
-      }),
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      readStoreOpens += 1
-      return new ModelEvidenceReadStore(databasePath, directory)
-    },
-  })
-  repository.close()
-  const pending = Effect.runPromiseExit(
-    harness.methods().modelGroups({ sessionID: "ses-native" }),
-    {
-      signal: controller.signal,
-    },
-  )
-  try {
-    await entered
-    controller.abort()
-    const exit = await pending
-    grant()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(exit._tag).toBe("Failure")
-    expect(interrupted).toBe(true)
-    expect(readStoreOpens).toBe(0)
-    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
-    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
-  } finally {
-    grant?.()
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("Models group RPC cancellation after source reads cannot publish a successful result", async () => {
-  const root = directory()
-  const path = join(root, "tasks.sqlite")
-  const repository = new TaskRepository(path, projectDirectory)
-  const controller = new AbortController()
-  const harness = await register(repository, {
-    evidenceReadStoreFactory: (databasePath, directory) => {
-      const reader = new ModelEvidenceReadStore(databasePath, directory)
-      return {
-        projectDirectory: directory,
-        readComparisonSources: (selection) => {
-          const sources = reader.readComparisonSources(selection)
-          controller.abort()
-          return sources
-        },
-        close: () => reader.close(),
-      }
-    },
-  })
-  repository.close()
-  try {
-    const exit = await Effect.runPromiseExit(
-      harness.methods().modelGroups({ sessionID: "ses-native" }),
-      { signal: controller.signal },
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(tableExists(path, "model_evidence_snapshots")).toBe(false)
-    expect(tableExists(path, "model_evidence_refreshes")).toBe(false)
+    expect(permissionCalls).toHaveLength(1)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -3011,69 +2452,5 @@ test("saving an agent route re-applies the agent transforms and the settings rea
     ).rejects.toThrow()
   } finally {
     rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test("ModelsDecision serves an all-projects overview and rows, a page per project with its stamp", async () => {
-  const fixture = makeLedgerFixture()
-  const repository = new TaskRepository(fixture.path, fixture.projectDirectory)
-  const { registerProject } = await import("../project-key.ts")
-  const first = await registerProject(repository, {
-    directory: fixture.projectDirectory,
-    opencodeProjectID: fixture.projectID,
-  })
-  const otherDirectory = "/other-project"
-  const other = new TaskRepository(fixture.path, otherDirectory)
-  const second = await registerProject(other, {
-    directory: otherDirectory,
-    opencodeProjectID: "other-opencode-project",
-  })
-  other.close()
-  const harness = await register(repository, {
-    sourceConnections: { openrouter: { status: { status: "connected" } } },
-  })
-  repository.close()
-  try {
-    const filters = { persona: null, taskKind: null, period: { from: null, to: null } }
-    const methods = harness.methods() as unknown as {
-      overviewAll(input: unknown): Effect.Effect<unknown, unknown>
-      rowsAll(input: unknown): Effect.Effect<unknown, unknown>
-    }
-    const pages: ReturnType<typeof ModelDecisionOverviewAllOutputSchema.parse>[] = []
-    let cursor: string | undefined
-    do {
-      const page = ModelDecisionOverviewAllOutputSchema.parse(
-        await Effect.runPromise(
-          methods.overviewAll({ sessionID: "ses-native", filters, ...(cursor ? { cursor } : {}) }),
-        ),
-      )
-      pages.push(page)
-      cursor = page.nextCursor ?? undefined
-    } while (cursor)
-    expect([...new Set(pages.map((page) => page.project.key))]).toEqual([first.key, second.key])
-    expect(pages.every((page) => page.project.loaded === false)).toBe(true)
-    expect(pages[0]?.overview.context.scope).toEqual({ projectDirectory: fixture.projectDirectory })
-    expect(JSON.stringify(pages.map((page) => page.nextCursor))).not.toContain("other-project")
-    const rows = ModelDecisionRowsAllOutputSchema.parse(
-      await Effect.runPromise(
-        methods.rowsAll({
-          sessionID: "ses-native",
-          unit: pages[0]!.unit,
-          filters,
-          snapshotID: pages[0]!.overview.context.snapshotID,
-          limit: 10,
-        }),
-      ),
-    )
-    expect(rows.project.key).toBe(first.key)
-    // Looking at one's own projects in a panel never asks for a permission.
-    expect(harness.permissionCalls).toEqual([])
-    await expect(
-      Effect.runPromise(
-        methods.rowsAll({ sessionID: "ses-native", unit: "0".repeat(32), filters, limit: 10 }),
-      ),
-    ).rejects.toThrow("Models scope is unavailable")
-  } finally {
-    fixture.close()
   }
 })

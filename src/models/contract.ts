@@ -7,13 +7,7 @@ import {
   ModelMappingResolutionSchema,
   ModelMappingUpdateSchema,
 } from "./mapping-schema.ts"
-import { ModelEvidenceOutputSchema, ModelEvidenceReadInputSchema } from "./source-schema.ts"
-import {
-  ModelConfigurationsOutputSchema,
-  ModelConfigurationsReadInputSchema,
-  ModelGroupsOutputSchema,
-  ModelGroupsReadInputSchema,
-} from "./model-group-schema.ts"
+import { ModelEvidenceOutputSchema } from "./source-schema.ts"
 import {
   ModelPriceSourceSettingsSchema,
   ModelPriceSourceUpdateSchema,
@@ -32,22 +26,10 @@ export const ModelConfigureRPCInputSchema = z.strictObject({
   ...ModelMappingUpdateSchema.shape,
 })
 
-export const ModelEvidenceRPCInputSchema = z.strictObject({
-  sessionID: SessionID,
-  ...ModelEvidenceReadInputSchema.shape,
-})
 export const ModelSourceRefreshRPCInputSchema = z.strictObject({
   sessionID: SessionID,
   /** The refresh button: fetch every source now, whatever its age. */
   force: z.boolean().optional(),
-})
-export const ModelGroupsRPCInputSchema = z.strictObject({
-  sessionID: SessionID,
-  ...ModelGroupsReadInputSchema.shape,
-})
-export const ModelConfigurationsRPCInputSchema = z.strictObject({
-  sessionID: SessionID,
-  ...ModelConfigurationsReadInputSchema.shape,
 })
 export const ModelPriceSourceSettingsRPCInputSchema = z.strictObject({ sessionID: SessionID })
 export const ModelPriceSourceConfigureRPCInputSchema = z.strictObject({
@@ -109,13 +91,7 @@ export const Models = Rpc.define({
   events: {},
   methods: {
     configure: { input: ModelConfigureRPCInputSchema, output: ModelMappingWriteOutputSchema },
-    sourceEvidence: { input: ModelEvidenceRPCInputSchema, output: ModelEvidenceOutputSchema },
     refreshSources: { input: ModelSourceRefreshRPCInputSchema, output: ModelEvidenceOutputSchema },
-    modelGroups: { input: ModelGroupsRPCInputSchema, output: ModelGroupsOutputSchema },
-    modelConfigurations: {
-      input: ModelConfigurationsRPCInputSchema,
-      output: ModelConfigurationsOutputSchema,
-    },
     priceSources: {
       input: ModelPriceSourceSettingsRPCInputSchema,
       output: ModelPriceSourceSettingsSchema,

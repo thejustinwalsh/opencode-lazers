@@ -1,6 +1,8 @@
-import type { SchedulingNode } from "./scheduling-contract.ts"
 import type { TaskConcern, TaskSummary } from "./contract.ts"
 import type { TaskScheduleRow } from "../streams/sources/tasks-ref.ts"
+
+/** A queued task's scheduling decision, as the task schedule projection stores it. */
+type SchedulingDecision = "eligible" | "waiting" | "unknown" | "not-applicable"
 
 export type ExecutionListRow = {
   taskID: string
@@ -39,7 +41,7 @@ export type ExecutionListRow = {
     waiting: boolean
   }>
   scheduling?: {
-    decision: SchedulingNode["decision"]
+    decision: SchedulingDecision
     reason: string | null
     waitingOn: string[]
     waitingOnPlans?: string[]
@@ -91,7 +93,7 @@ export function listRowOf(
   const stored = f("concern") as { line: string; reasons: string[] } | null
   const recommendation = concernRecommendation(f("concern_action"), f("concern_because"))
   const concern = stored ? { ...stored, ...(recommendation ? { recommendation } : {}) } : null
-  const decision = String(f("decision") ?? "not-applicable") as SchedulingNode["decision"]
+  const decision = String(f("decision") ?? "not-applicable") as SchedulingDecision
   const waitPlans = list<string>(f("wait_plan_ids"))
   const startedAt = f("started_at")
   const sourcePlan = f("source_plan") as ExecutionListRow["sourcePlan"] | null

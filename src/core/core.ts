@@ -26,15 +26,10 @@ import { parseFallowThreads } from "../audit/fallow-threads.ts"
 import { setFallowThreads } from "../audit/wasm-analyzer.ts"
 import { section, sectionAsync } from "../diagnostics/stall-probe.ts"
 import type { Plugin } from "@opencode/plugin/effect"
-import { Session } from "@opencode/schema/session"
 import { UsageCache } from "../budget/server.ts"
 import { ProjectIndex } from "../context/index.ts"
 import { nativeContextPermission } from "../context/tools.ts"
-import {
-  configuredAccess,
-  createModelsTaskValuationProvider,
-  createPriceSourceSettingsStore,
-} from "../models/server.ts"
+import { configuredAccess, createPriceSourceSettingsStore } from "../models/server.ts"
 import { ObservationReads } from "../observability/read.ts"
 import { projectKeyFor, registerProject } from "../project-key.ts"
 import { spendCeilingFor } from "../projects/settings.ts"
@@ -52,8 +47,6 @@ import { RetentionService } from "../retention/service.ts"
 import { verificationTimeoutDefaults } from "../runner/verification-timeout.ts"
 import { TaskRepository, taskDatabasePath } from "../storage.ts"
 import { ManagedUsageStore } from "../managed-usage/store.ts"
-import { nativeTrajectoryHost } from "../trajectory/native.ts"
-import { ownsRecordedWorkspace } from "../runner/workspace-location.ts"
 import { InferenceBroker } from "../webgpu/broker.ts"
 import type { CapabilityHub } from "./capabilities.ts"
 import { moduleGeneration } from "./generation.ts"
@@ -78,8 +71,6 @@ export type LazersCore = {
   readonly runtime: TaskRuntime
   readonly host: ReturnType<typeof nativeHost>
   readonly reads: ObservationReads
-  readonly trajectoryHost: ReturnType<typeof nativeTrajectoryHost>
-  readonly taskValuationProvider: ReturnType<typeof createModelsTaskValuationProvider>
   readonly managedUsageStore: ManagedUsageStore
   readonly usageCache: UsageCache
   readonly retention: RetentionService
@@ -270,12 +261,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
   built("runtime")
   // Lazy, offline-safe backfill of stable change identity; never blocks startup.
   void runtime.stampIdentity(true)
-  const trajectoryHost = nativeTrajectoryHost(
-    host,
-    projectID,
-    (directory) => ownsRecordedWorkspace(directory, repository.projectDirectory),
-    nativeRunnerHost.messages,
-  )
   // Live session facts for the Radar and task activity: a fold of host reads, hinted by native
   // events and resynced by cursor on every subscription attach; idle it holds no timer.
   const hostSessions = startHostSessionFold(
@@ -306,7 +291,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
         ),
     },
   )
-  const taskValuationProvider = createModelsTaskValuationProvider(host, repository)
   // Each task's effort and market valuation, recomputed off the main thread (the effort worker)
   // when its facts or the prices change; only the price-source settings are read here.
   const priceSourceSettings = createPriceSourceSettingsStore(host, repository.projectDirectory)
@@ -342,14 +326,7 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     effortDetail: effortCompute.detail,
     touchEffort: (taskID) => taskEffort.fold.touch(taskID),
   } satisfies TrajectoryHostRuntime)
-  const observationSecret = crypto.getRandomValues(new Uint8Array(32))
-  const reads = new ObservationReads(
-    runnerStore,
-    trajectoryHost,
-    projectID,
-    observationSecret,
-    taskValuationProvider,
-  )
+  const reads = new ObservationReads(runnerStore, projectID)
   built("observationReads")
   const usageCache = new UsageCache()
   const inferenceBroker = new InferenceBroker()
@@ -408,8 +385,6 @@ export function createLazersCore(hub: CapabilityHub<Plugin.Context>, info: Lazer
     runtime,
     host: nativeRunnerHost,
     reads,
-    trajectoryHost,
-    taskValuationProvider,
     managedUsageStore,
     usageCache,
     retention,

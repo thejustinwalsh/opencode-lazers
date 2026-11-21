@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin/effect"
-import { Effect, Stream } from "effect"
-import { ObservationChangeTracker } from "../../src/observability/changes.ts"
+import { Effect } from "effect"
 import { ObservationReads } from "../../src/observability/read.ts"
 import { registerObservability } from "../../src/observability/rpc.ts"
 import { Tasks } from "../../src/tasks/contract.ts"
@@ -14,7 +13,7 @@ import { getTaskDetail } from "../../src/tasks/stream-query.ts"
 import type { TaskRuntime } from "../../src/runner/runtime.ts"
 import { TaskRepository } from "../../src/storage.ts"
 import { validProposal } from "../proposal.ts"
-import { firstAttemptID, makeFixture, taskID } from "../trajectory/fixture.ts"
+import { makeFixture, taskID } from "../trajectory/fixture.ts"
 
 test("registered Tasks reads discover durable worker links without widening project scope", async () => {
   const fixture = makeFixture()
@@ -120,7 +119,7 @@ test("registered observation RPC resolves scope through native sessions and enfo
   let archived = false
   let handlers:
     | {
-        snapshot(input: unknown): Effect.Effect<unknown>
+        progressDiagnostics(input: unknown): Effect.Effect<unknown>
       }
     | undefined
   const ctx = {
@@ -145,35 +144,25 @@ test("registered observation RPC resolves scope through native sessions and enfo
         return denied ? Effect.fail(new Error("native permission denied")) : Effect.void
       },
     },
-    event: { subscribe: () => Stream.empty },
-  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session" | "event">
+  } as unknown as Pick<Plugin.Context, "rpc" | "permission" | "session">
   try {
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           yield* registerObservability(
             ctx,
-            new ObservationReads(
-              fixture.store,
-              fixture.host,
-              "project",
-              new Uint8Array(32).fill(4),
-            ),
+            new ObservationReads(fixture.store, "project"),
             "project",
           )
         }),
       ),
     )
     const scope = { kind: "session" as const, sessionID: "ses-failed" }
-    expect(await Effect.runPromise(handlers!.snapshot({ scope }))).toMatchObject({
-      scope,
-      plans: [{ nodes: [{ taskID }] }],
+    const read = (input: unknown) => Effect.runPromise(handlers!.progressDiagnostics(input))
+    expect(await read({ scope })).toMatchObject({ scope: { kind: "project" } })
+    expect(await read({ scope: { kind: "project", sessionID: "ses-failed" } })).toMatchObject({
+      scope: { kind: "project" },
     })
-    expect(
-      await Effect.runPromise(
-        handlers!.snapshot({ scope: { kind: "project", sessionID: "ses-failed" } }),
-      ),
-    ).toMatchObject({ scope: { kind: "project" }, plans: [{ nodes: [{ taskID }] }] })
     expect(permissionCalls.at(-1)).toMatchObject({
       sessionID: "ses-failed",
       agent: "architect",
@@ -182,39 +171,18 @@ test("registered observation RPC resolves scope through native sessions and enfo
     })
 
     denied = true
-    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow()
+    await expect(read({ scope })).rejects.toThrow()
     denied = false
     foreign = true
-    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow(
-      "Observation scope is unavailable",
-    )
+    await expect(read({ scope })).rejects.toThrow("Observation scope is unavailable")
     foreign = false
     // Archived sessions stay readable (60ba858c); native permission still gates them.
     archived = true
-    expect(await Effect.runPromise(handlers!.snapshot({ scope }))).toMatchObject({ scope })
+    expect(await read({ scope })).toMatchObject({ scope: { kind: "project" } })
     denied = true
-    await expect(Effect.runPromise(handlers!.snapshot({ scope }))).rejects.toThrow()
+    await expect(read({ scope })).rejects.toThrow()
     denied = false
     archived = false
-  } finally {
-    fixture.close()
-  }
-})
-
-test("native event coverage is connected once the subscription is attached, before any event", () => {
-  const fixture = makeFixture()
-  try {
-    const tracker = new ObservationChangeTracker(
-      fixture.repository,
-      new Uint8Array(32).fill(4),
-      "project",
-    )
-    tracker.initialize()
-    expect(tracker.hasConnectedEventStream).toBe(false)
-    tracker.streamAttached()
-    expect(tracker.hasConnectedEventStream).toBe(true)
-    tracker.streamGap()
-    expect(tracker.hasConnectedEventStream).toBe(false)
   } finally {
     fixture.close()
   }

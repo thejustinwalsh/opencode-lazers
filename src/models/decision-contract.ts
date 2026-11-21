@@ -1,14 +1,11 @@
-import { Rpc } from "@opencode/plugin/rpc"
 import { z } from "zod"
 import { ModelPolicy, WorkerPersona } from "../runner/schema.ts"
 import { TaskReferenceSchema } from "../task.ts"
-import { ProjectRef } from "../projects/scope.ts"
 import { ModelPricePinSourceSchema, ModelPriceSourcePolicySchema } from "./price-source-settings.ts"
 import { KnownUsageMarketSchema } from "./market-range.ts"
 import { ModelDecisionReferenceEstimateSchema } from "./reference-estimate.ts"
 
 /** Versioned, producer-owned read contract for the Models decision view. */
-export const MODELS_DECISION_RPC_ID = "lazers.models.decision.v2"
 export const MODELS_DECISION_CONTRACT_VERSION = 2
 export const MODELS_DECISION_ACCOUNTING_BASIS =
   "attributable-cohort-effort-per-accepted-logical-task-v1"
@@ -76,7 +73,6 @@ export const ModelDecisionRowsInputSchema = z.strictObject({
 export type ModelDecisionReadInput = z.input<typeof ModelDecisionReadInputSchema>
 export type ModelDecisionRowsInput = z.input<typeof ModelDecisionRowsInputSchema>
 
-const RPCScope = { sessionID: z.string().min(1).max(200) }
 const ModelDecisionAccountingSchema = z.strictObject({
   id: z.literal(MODELS_DECISION_ACCOUNTING_BASIS),
   numerator: z.literal("all-attributable-cohort-failed-retry-and-accepted-effort"),
@@ -669,49 +665,3 @@ export interface ModelDecisionReader {
     options?: ModelDecisionReadOptions,
   ): Promise<ModelDecisionRows>
 }
-
-/**
- * The all-projects read: one page is one checkout of one readable project, in registry order.
- * `unit` names that checkout (a hash, never a path) so its rows can be read afterwards.
- */
-export const ModelDecisionOverviewAllRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  schemaVersion: ModelDecisionReadInputSchema.shape.schemaVersion,
-  filters: ModelDecisionReadInputSchema.shape.filters,
-  cursor: z.string().min(1).max(2048).optional(),
-})
-export const ModelDecisionOverviewAllOutputSchema = z.strictObject({
-  project: ProjectRef,
-  unit: z.string().min(1).max(64),
-  nextCursor: z.string().nullable(),
-  overview: ModelDecisionOverviewOutputSchema,
-})
-export const ModelDecisionRowsAllRPCInputSchema = z.strictObject({
-  ...RPCScope,
-  unit: z.string().min(1).max(64),
-  schemaVersion: ModelDecisionRowsInputSchema.shape.schemaVersion,
-  filters: ModelDecisionRowsInputSchema.shape.filters,
-  snapshotID: ModelDecisionRowsInputSchema.shape.snapshotID,
-  cursor: ModelDecisionRowsInputSchema.shape.cursor,
-  limit: ModelDecisionRowsInputSchema.shape.limit,
-})
-export const ModelDecisionRowsAllOutputSchema = z.strictObject({
-  project: ProjectRef,
-  unit: z.string().min(1).max(64),
-  rows: ModelDecisionRowsOutputSchema,
-})
-
-export const ModelsDecision = Rpc.define({
-  id: MODELS_DECISION_RPC_ID,
-  events: {},
-  methods: {
-    overviewAll: {
-      input: ModelDecisionOverviewAllRPCInputSchema,
-      output: ModelDecisionOverviewAllOutputSchema,
-    },
-    rowsAll: {
-      input: ModelDecisionRowsAllRPCInputSchema,
-      output: ModelDecisionRowsAllOutputSchema,
-    },
-  },
-})

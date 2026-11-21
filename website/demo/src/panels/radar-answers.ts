@@ -1,4 +1,3 @@
-import { ObservabilityChanged, Observability } from "../../../../src/observability/contract.ts"
 import { Streams } from "../../../../src/streams/contract.ts"
 import { radarStreams } from "./radar-streams.ts"
 import type { Read } from "../adapter.ts"
@@ -98,31 +97,14 @@ export function rpc(data: () => RadarData) {
 }
 
 /** Every distinct read this data answers, with the contract schema that must accept it. */
-export function reads(data: RadarData): Read[] {
-  const out: Read[] = []
-  out.push({
-    label: "lazers.observability.changed",
-    schema: ObservabilityChanged,
-    value: change(data),
-  })
-  return out
+export function reads(_data: RadarData): Read[] {
+  return []
 }
 
-const change = (data: RadarData) => ({
-  projectID: PROJECT.id,
-  sequence: Math.max(1, data.rev),
-  repositoryVersion: data.rev,
-  sourceRevision: data.rev,
-  nativeRevision: data.rev,
-  cause: "runner" as const,
-  resnapshotRequired: false,
-})
-
 /**
- * What the service publishes after a change: the observability change event, and the `changed`
- * event of every open stream, so each re-reads its window over the moved data.
+ * What the service publishes after a change: the `changed` event of every open stream, so each
+ * re-reads its window over the moved data.
  */
-export function radarChanged(emit: (type: string, data: unknown) => void, data: RadarData) {
-  emit(`rpc.${Observability.id}.changed`, change(data))
+export function radarChanged(emit: (type: string, data: unknown) => void, _data: RadarData) {
   for (const event of streams?.changes() ?? []) emit(`rpc.${Streams.id}.changed`, event)
 }

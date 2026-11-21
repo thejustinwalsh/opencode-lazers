@@ -38,20 +38,3 @@ export const samePhysicalWorkspace = (left: string, right: string) => {
     return true
   }
 }
-
-/**
- * A recorded attempt workspace belongs to the project when it is the project
- * checkout or lies under its canonical `.worktrees` parent. Pure path identity:
- * it never asks the host, so it cannot boot a worktree location.
- */
-export function ownsRecordedWorkspace(directory: string, projectDirectory: string): boolean {
-  try {
-    const target = resolve(directory)
-    const parent = canonicalProjectWorktreeParent(projectDirectory)
-    return (
-      target === resolve(projectDirectory) || target === parent || target.startsWith(`${parent}/`)
-    )
-  } catch {
-    return false
-  }
-}

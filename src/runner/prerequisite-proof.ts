@@ -236,7 +236,3 @@ export async function evaluateTaskPrerequisiteIntegration(
   }
   return { status: "ready", baseline }
 }
-
-/** Compatibility names for the read projection, which was the first async caller. */
-export const evaluatePrerequisiteIntegrationAsync = evaluatePrerequisiteIntegration
-export const evaluateTaskPrerequisiteIntegrationAsync = evaluateTaskPrerequisiteIntegration

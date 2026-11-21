@@ -781,7 +781,6 @@ export function rpc(
     ),
     [Models.id]: {
       refreshSources: () => sourceStatus(data()),
-      sourceEvidence: () => sourceStatus(data()),
       configure: (input: never) => mappings.write(input),
       priceSources: () => ({
         policy: { ...POLICY, sources: [...POLICY.sources] },
