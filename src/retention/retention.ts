@@ -732,8 +732,8 @@ export async function retireSlice(
       await turn()
     }
   }
-  // Audit runs follow the owner's chosen age, like other finished-plan detail: the superseded-only
-  // default pass must not retire them.
+  // Audit runs follow the one finished-plan age the owner configured, like other finished-plan
+  // detail. With no age (the superseded-only pass, which runs with days 0) none is retired.
   if (input.dataDirectory !== undefined && input.ageDependent !== false) {
     const dataDirectory = input.dataDirectory
     for (;;) {

@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { realpathSync } from "node:fs"
+import { AuditHistory } from "../audit/history.ts"
 import { ProgressRecorder } from "../progress/recorder.ts"
 import { makeFixture, taskID } from "../../test/trajectory/fixture.ts"
 import { RetentionService } from "./service.ts"
@@ -203,4 +204,33 @@ test("81b1d6ba-3: a refused removal is reported with its reason and recorded on 
     { path: paths.clean, reason: expect.stringContaining("native refused") },
   ])
   expect((await service.status()).lastRun?.skipped).toEqual(slice.skipped)
+})
+
+test("the automatic pass removes audit runs of plans older than the configured age, and none without one", async () => {
+  const { service, fixture, advance } = setup()
+  new AuditHistory(fixture.repository)
+  fixture.store.atomic((db) =>
+    db
+      .query("INSERT INTO audit_runs VALUES(?,?,?,?,?,?,?,?)")
+      .run(
+        "r1",
+        fixture.directory,
+        taskID,
+        null,
+        "ses",
+        "req-r1",
+        1000,
+        JSON.stringify({ runID: "r1", state: "completed" }),
+      ),
+  )
+  const count = () =>
+    fixture.repository.read(
+      (db) => db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM audit_runs").get()!.n,
+    )
+  await service.autoTick()
+  expect(count()).toBe(1)
+  service.setAuto(30)
+  advance(7 * 3_600_000)
+  await service.autoTick()
+  expect(count()).toBe(0)
 })
