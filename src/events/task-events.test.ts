@@ -306,3 +306,29 @@ test("writers: every update of runner_transitions or runner_effects in src/ is w
   expect(seen).toBeGreaterThan(10)
   expect(missed).toEqual([])
 })
+
+test("an upsert on a watched table still queues: the trigger body never conflicts", () => {
+  const made = fixture()
+  // Outside this process's drain hook, so the first upsert's entry is still queued for the second.
+  const raw = new Database(made.repository.path)
+  cleanups.push(() => raw.close())
+  const upsert = raw.query(
+    `INSERT INTO runner_effects VALUES('upserted',?,?,NULL,'session',?,'{}',NULL,1)
+     ON CONFLICT(id) DO UPDATE SET state=excluded.state`,
+  )
+  upsert.run(made.receipt.planID, taskID, "intended")
+  upsert.run(made.receipt.planID, taskID, "failed")
+  // A parked entry is reset by the next change, as a fresh one would be.
+  raw
+    .query("UPDATE task_events_dirty SET attempts=3,next_at=9e15,error='x' WHERE ref='ef:upserted'")
+    .run()
+  upsert.run(made.receipt.planID, taskID, "completed")
+  expect(
+    raw
+      .query("SELECT ref,attempts,next_at,error FROM task_events_dirty WHERE ref='ef:upserted'")
+      .all(),
+  ).toEqual([{ ref: "ef:upserted", attempts: 0, next_at: 0, error: null }])
+  expect(raw.query("SELECT state FROM runner_effects WHERE id='upserted'").get()).toEqual({
+    state: "completed",
+  })
+})

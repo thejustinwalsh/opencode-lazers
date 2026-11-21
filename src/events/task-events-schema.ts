@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite"
 import { schemaModules } from "../database-schema.ts"
 import { enrollProjectionConnection, registerProjectionDrain } from "../projections/hook.ts"
 import { ensureProjectionStateSchema, resetProjectionState } from "../projections/lifecycle.ts"
-import { queueRef, queueTableSQL } from "../projections/queue.ts"
+import { queueRef, queueRefs, queueTableSQL } from "../projections/queue.ts"
 import type { TaskRepository } from "../storage.ts"
 import { drainTaskEvents, TASK_EVENTS } from "./task-events-refresh.ts"
 
@@ -53,14 +53,13 @@ const TABLES_SQL = `
 const REF_OF_ORIGIN =
   "CASE WHEN instr(origin,'@')>0 THEN substr(origin,1,instr(origin,'@')-1) ELSE origin END"
 const queue = (ref: string) => queueRef(TASK_EVENTS_QUEUE, ref)
-const queueSelect = (select: string) =>
-  `INSERT OR REPLACE INTO ${TASK_EVENTS_QUEUE}(ref) ${select};`
+const queueSelect = (select: string) => queueRefs(TASK_EVENTS_QUEUE, select)
 const planProject = (plan: string) =>
   `(SELECT project_directory FROM runner_plans WHERE id=${plan})`
 /** Plan-level effects of a plan: their rows fan out to the plan's tasks. */
 const planEffects = (plan: string) =>
   queueSelect(
-    `SELECT 'ef:'||id FROM runner_effects WHERE plan_id=${plan} AND task_id IS NULL AND attempt_id IS NULL`,
+    `SELECT 'ef:'||id AS ref FROM runner_effects WHERE plan_id=${plan} AND task_id IS NULL AND attempt_id IS NULL`,
   )
 
 type TriggerSpec = { name: string; on: string; event: string; when?: string; body: string }
@@ -117,7 +116,7 @@ export const TASK_EVENTS_TRIGGERS: readonly TriggerSpec[] = [
     on: "runner_attempts",
     event: "INSERT",
     body: queueSelect(
-      `SELECT origin FROM task_events WHERE project_directory=${planProject("NEW.plan_id")}
+      `SELECT origin AS ref FROM task_events WHERE project_directory=${planProject("NEW.plan_id")}
          AND task_id=NEW.task_id AND kind='transition' AND attempt_id IS NULL`,
     ),
   },
@@ -126,7 +125,7 @@ export const TASK_EVENTS_TRIGGERS: readonly TriggerSpec[] = [
     on: "runner_attempts",
     event: "UPDATE OF plan_id,task_id,session_id,started_at",
     body: queueSelect(
-      `SELECT ${REF_OF_ORIGIN} FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
+      `SELECT ${REF_OF_ORIGIN} AS ref FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
          AND attempt_id=OLD.id`,
     ),
   },
@@ -135,7 +134,7 @@ export const TASK_EVENTS_TRIGGERS: readonly TriggerSpec[] = [
     on: "runner_attempts",
     event: "DELETE",
     body: queueSelect(
-      `SELECT ${REF_OF_ORIGIN} FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
+      `SELECT ${REF_OF_ORIGIN} AS ref FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
          AND attempt_id=OLD.id`,
     ),
   },
@@ -174,7 +173,7 @@ export const TASK_EVENTS_TRIGGERS: readonly TriggerSpec[] = [
     event: "DELETE",
     body: `${planEffects("OLD.plan_id")}
       ${queueSelect(
-        `SELECT ${REF_OF_ORIGIN} FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
+        `SELECT ${REF_OF_ORIGIN} AS ref FROM task_events WHERE project_directory=${planProject("OLD.plan_id")}
            AND plan_id=OLD.plan_id AND task_id=OLD.task_id`,
       )}`,
   },

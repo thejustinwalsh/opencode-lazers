@@ -213,3 +213,22 @@ test("backfill: calls from before the table are displayed newest first, resuming
   expect(display(repository)).toEqual(expected)
   expect(lease.owner.idle()).toBe(true)
 })
+
+test("an upsert on native_tool_calls keeps its display row: the trigger body never conflicts", () => {
+  const { repository } = store()
+  const upsert = (status: string) =>
+    repository.atomic((db) =>
+      db
+        .query(
+          `INSERT INTO native_tool_calls(project_directory,project_id,session_id,identity_kind,invocation_id,
+             native_call_id,context_call_id,first_observed_at,last_observed_at,sources_json,event_ids_json,payload)
+           VALUES(?,'project','ses-a','native-call','c1','c1','c1',1,2,'[]','[]',?)
+           ON CONFLICT(project_directory,session_id,identity_kind,invocation_id)
+           DO UPDATE SET payload=excluded.payload,last_observed_at=excluded.last_observed_at`,
+        )
+        .run(repository.projectDirectory, JSON.stringify({ status })),
+    )
+  upsert("running")
+  upsert("succeeded")
+  expect(display(repository).map((row) => [row.call_id, row.status])).toEqual([["c1", "succeeded"]])
+})

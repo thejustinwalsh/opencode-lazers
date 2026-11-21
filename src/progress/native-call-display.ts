@@ -20,7 +20,8 @@ import type { TaskRepository } from "../storage.ts"
  * and a 240-character error, extracted from the payload. Kept by triggers, so every writer of the
  * wide table (the recorder's insert, merge and identity promotion, project-key backfill,
  * retention) keeps it current with no code of its own. The row's `id` is the call's rowid, which
- * an identity promotion keeps, so a stream updates the row in place.
+ * an identity promotion keeps, so a stream updates the row in place. Trigger bodies delete, then
+ * insert (never `INSERT OR REPLACE`, which fails under an outer upsert; see `projections/queue.ts`).
  */
 const MODULE = schemaModules["native-call-display"]
 export const NATIVE_CALL_DISPLAY = "native-call-display"
@@ -59,10 +60,12 @@ const WATCHED =
 
 const TRIGGERS_SQL = `
   CREATE TRIGGER native_tool_call_display_insert AFTER INSERT ON native_tool_calls BEGIN
-    INSERT OR REPLACE INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
+    DELETE FROM native_tool_call_display WHERE id=NEW.rowid;
+    INSERT INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
   END;
   CREATE TRIGGER native_tool_call_display_update AFTER UPDATE OF ${WATCHED} ON native_tool_calls BEGIN
-    INSERT OR REPLACE INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
+    DELETE FROM native_tool_call_display WHERE id=NEW.rowid;
+    INSERT INTO native_tool_call_display(${COLUMNS}) SELECT ${derived("NEW")};
   END;
   CREATE TRIGGER native_tool_call_display_delete AFTER DELETE ON native_tool_calls BEGIN
     DELETE FROM native_tool_call_display WHERE id=OLD.rowid;
