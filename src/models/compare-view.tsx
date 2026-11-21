@@ -686,7 +686,7 @@ function CompareInspector(props: { ctl: ModelsController }) {
                   model={model()}
                   onTrajectory={openContributorTrajectory}
                   moreBusy={visible()?.decisionContributorsLoading}
-                  onMore={() => void state.moreDecisionContributors()}
+                  onMore={ctl.moreContributors}
                 />
               )
             }}

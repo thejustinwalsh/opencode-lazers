@@ -11,10 +11,10 @@ import type { ModelDecisionOverview } from "./decision-contract.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
 
 /**
- * The inputs of the ranked catalog, as pure functions of what the panel holds: the decision
- * overview, the comparison candidates, the native catalog names and the router's routes. The GUI
- * (`models-controller.ts`) and the decision worker (`decision-view.ts`) both build the catalog
- * through these, so a stored view is the panel's own computation, not a port of it.
+ * The inputs of the ranked catalog, as pure functions of the decision overview, the comparison
+ * candidates, the native catalog names and the router's routes. The decision worker
+ * (`decision-view.ts`) builds each stored view through these, the panel's own computation moved
+ * off the GUI; the view tests compare it with the inputs the GUI used to hold.
  */
 type Graph = ModelDecisionOverview["graph"]
 /** The native catalog's names: the live `model.list`, or the native evidence snapshot's records. */
@@ -71,7 +71,7 @@ export function chartPoints(
 }
 
 /** Observed facts by route (provider and model, any effort), from the chart's marks. */
-export function observedFactsByRoute(
+function observedFactsByRoute(
   points: readonly ComparisonChartPoint[],
   references: readonly ComparisonChartReference[],
 ): Map<string, ObservedFacts> {

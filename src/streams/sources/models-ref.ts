@@ -1,4 +1,5 @@
 import type { Columns } from "../frame.ts"
+import { sourceRef, type SourceRef } from "../source.ts"
 
 /**
  * The Models sources, the part a consumer without a database needs: names, columns and filters.
@@ -178,3 +179,26 @@ export const modelAssignmentColumns = {
  * 4 agents' host rows, at most 21; the window is that bound (`ASSIGNMENT_SUBJECTS`).
  */
 export const MODEL_ASSIGNMENTS_WINDOW = 7 + 7 + 3 + 4
+
+export const modelCandidatesRef: SourceRef<ModelCandidatesFilter, typeof candidateColumns> =
+  sourceRef({ name: MODELS_SOURCES.candidates, columns: candidateColumns, detail: candidateDetail })
+export const modelViewRef: SourceRef<ModelViewFilter, typeof modelViewColumns> = sourceRef({
+  name: MODELS_SOURCES.view,
+  columns: modelViewColumns,
+  detail: modelViewDetail,
+})
+export const modelCatalogRef: SourceRef<ModelCatalogFilter, typeof modelCatalogColumns> = sourceRef(
+  { name: MODELS_SOURCES.catalog, columns: modelCatalogColumns },
+)
+export const modelPointsRef: SourceRef<ModelPointsFilter, typeof modelPointColumns> = sourceRef({
+  name: MODELS_SOURCES.points,
+  columns: modelPointColumns,
+})
+export const modelContributorsRef: SourceRef<
+  ModelContributorsFilter,
+  typeof modelContributorColumns
+> = sourceRef({ name: MODELS_SOURCES.contributors, columns: modelContributorColumns })
+export const modelAssignmentsRef: SourceRef<ModelAssignmentsFilter, typeof modelAssignmentColumns> =
+  sourceRef({ name: MODELS_SOURCES.assignments, columns: modelAssignmentColumns })
+export const modelBenchmarkRef: SourceRef<ModelBenchmarkFilter, typeof modelBenchmarkColumns> =
+  sourceRef({ name: MODELS_SOURCES.benchmark, columns: modelBenchmarkColumns })

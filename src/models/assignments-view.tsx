@@ -50,7 +50,8 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
     assignmentVariantChoices,
     assignmentVariantLabel,
     assignmentWrite,
-    catalogOptions,
+    catalogEmpty,
+    retryCatalog,
     disconnected,
     modelSelectionCaption,
     openAssignmentModelPicker,
@@ -240,11 +241,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
           <Show when={visible()?.catalogStatus === "unavailable"}>
             <div class="lazers-models-catalog-status" role="status">
               <span>Model catalog unavailable. Custom routes remain available.</span>
-              <Ui.Button
-                size="small"
-                variant="ghost-muted"
-                onClick={() => void state.refreshCatalog()}
-              >
+              <Ui.Button size="small" variant="ghost-muted" onClick={retryCatalog}>
                 Retry catalog
               </Ui.Button>
               <details class="lazers-models-catalog-error">
@@ -253,7 +250,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
               </details>
             </div>
           </Show>
-          <Show when={visible()?.catalogStatus === "ready" && !catalogOptions().length}>
+          <Show when={catalogEmpty()}>
             <p class="lazers-models-catalog-status" role="status">
               No models are listed. Custom routes remain available.
             </p>
@@ -266,9 +263,7 @@ export function AssignmentsView(props: { ctl: ModelsController; header: JSX.Elem
                 icon="chevron-down"
                 class="lazers-models-form-control"
                 disabled={
-                  assignmentBlocked() ||
-                  visible()?.catalogStatus !== "ready" ||
-                  !catalogOptions().length
+                  assignmentBlocked() || visible()?.catalogStatus !== "ready" || catalogEmpty()
                 }
                 onClick={() => void openAssignmentModelPicker()}
               >

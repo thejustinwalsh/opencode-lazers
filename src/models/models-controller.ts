@@ -1,19 +1,44 @@
 import { Streams } from "../streams/contract.ts"
-import { readWindow, rpcStreamsTransport, type StreamsRpc } from "../streams/gui.ts"
+import {
+  createStream,
+  readWindow,
+  rpcStreamsTransport,
+  type GuiStream,
+  type StreamsRpc,
+  type StreamsTransport,
+} from "../streams/gui.ts"
 import { taskScheduleRef } from "../streams/sources/tasks-ref.ts"
+import {
+  MODEL_ASSIGNMENTS_WINDOW,
+  modelAssignmentsRef,
+  modelBenchmarkRef,
+  modelCandidatesRef,
+  modelCatalogRef,
+  modelContributorsRef,
+  modelPointsRef,
+  modelViewRef,
+} from "../streams/sources/models-ref.ts"
 import { summaryOf } from "../tasks/summary-row.ts"
 import { createKeyed, createLatest, usePanel } from "@opencode/plugin/gui"
 import { createPanelStatus } from "../panel-status.tsx"
 import type { PanelProps } from "@opencode/plugin/gui"
-import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
-import type { JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, untrack } from "solid-js"
+import type { Accessor, JSX } from "solid-js"
 import { Models } from "./contract.ts"
+import type { ModelSettingsOutput } from "./contract.ts"
 import type { ModelPolicy } from "../runner/schema.ts"
 import { isAgentSubject } from "./agent-ids.ts"
 import type { ModelMappingSubject as WorkerPersona } from "./agent-ids.ts"
+import { assignmentSettingsOf, type AssignmentLayerRow } from "./assignment-settings.ts"
 import type { ModelMappingTargetInput } from "./mapping-schema.ts"
-import { ModelsDecision } from "./decision-contract.ts"
-import type { ModelDecisionConfiguration, ModelDecisionFilters } from "./decision-contract.ts"
+import type {
+  ModelDecisionConfiguration,
+  ModelDecisionContext,
+  ModelDecisionContributor,
+  ModelDecisionFilters,
+  ModelDecisionInspect,
+  ModelDecisionOverview,
+} from "./decision-contract.ts"
 import {
   benchmarkChartPoints,
   benchmarkSourceName,
@@ -21,39 +46,40 @@ import {
   observedChartPoints,
   projectedChartPoints,
 } from "./chart-data.ts"
-import { buildCatalog } from "./catalog-projection.ts"
-import type { CatalogEntry } from "./catalog-projection.ts"
-import {
-  chartPoints as chartPointsOf,
-  chartReferences as chartReferencesOf,
-  modelDisplayLabeler,
-  observedFactsByRoute as observedFactsOf,
-  referenceTokenProfile,
-  routedModels,
-} from "./catalog-inputs.ts"
-import { benchmarkBaseline, routeKey } from "./benchmark-baseline.ts"
-import type { BenchmarkRoute } from "./benchmark-baseline.ts"
+import type { CatalogEntry, CatalogSummary } from "./catalog-projection.ts"
+import { referenceTokenProfile } from "./catalog-inputs.ts"
+import { routeKey } from "./benchmark-baseline.ts"
+import type {
+  BenchmarkBaseline,
+  BenchmarkBaselineGap,
+  BenchmarkBaselinePoint,
+  BenchmarkRoute,
+} from "./benchmark-baseline.ts"
 import { MODEL_PRICE_SOURCES } from "./price-source-settings.ts"
 import type { ModelEvidenceSource } from "./source-schema.ts"
-import { AA_BASIS, scoreOptions } from "./public-score.ts"
+import { AA_BASIS } from "./public-score.ts"
 import type { ModelPriceSource } from "./price-source-settings.ts"
 import type { ComparisonChartPoint, ComparisonChartReference } from "./chart-data.ts"
-import { emptyModelDecisionFilters } from "./comparison-state.ts"
+import {
+  ModelComparisonPanelState,
+  decisionStatus as statusOfContext,
+  emptyModelDecisionFilters,
+} from "./comparison-state.ts"
+import type {
+  ModelComparisonPanelData,
+  ModelComparisonTransport,
+  ModelDecisionStatus,
+} from "./comparison-state.ts"
+import type { DecisionInspectionFacts } from "./decision-read.ts"
+import type { DecisionViewBenchmark, DecisionViewSource } from "./decision-view.ts"
 import { Tasks } from "../tasks/contract.ts"
 import { Observability } from "../observability/contract.ts"
 import type { TaskTrajectoryOpener, TaskTrajectoryRequest } from "../tasks/panel.tsx"
-import { ModelComparisonPanelState, isConnectionSeedable } from "./comparison-state.ts"
-import type {
-  ModelCatalogOutput,
-  ModelComparisonPanelData,
-  ModelComparisonTransport,
-} from "./comparison-state.ts"
 import {
   boundedModelLabel,
   currentMarketEstimateSummary,
   formatDate,
   joinSegments,
-  modelDisplayLabel,
   routeLabel,
   selectedModelFacts,
 } from "./comparison-presentation.ts"
@@ -61,70 +87,55 @@ import { READ_DEADLINE_MS, withReadDeadline } from "./read-deadline.ts"
 import { panelClock } from "../panel-status.ts"
 import {
   marketSummarySource,
-  mayPageCatalog,
   modelPersonaLabels,
   modelTaskKindLabels,
   modelsInitialPreference as initial,
 } from "./panel-shared.ts"
 import type { ModelsContext, Tab } from "./panel-shared.ts"
 
-const locationKey = (request: { server: string; session: string; directory: string }) =>
-  JSON.stringify([request.server, request.session, request.directory])
-
 type ModelsProps = PanelProps & { ctx: ModelsContext; openTrajectory: TaskTrajectoryOpener }
 
-/**
- * The last comparison, selection and assignments per project and filter key, kept for the life of
- * the plugin. Switching to another panel tab and back mounts the panel again; it renders this at
- * once and refreshes in place instead of starting from the skeleton.
- */
-const SNAPSHOT_LIMIT = 12
-/**
- * Byte budget over the retained snapshots, estimated as two bytes per character of their JSON
- * (heap strings and numbers cost about that). A snapshot of a project with a long history holds
- * every row of its overview, so a count alone does not bound memory. The newest snapshot always
- * stays; older ones go first. Tune with `modelsSnapshotBudget.bytes`.
- */
-export const modelsSnapshotBudget = { bytes: 32 * 1024 * 1024 }
-const snapshots = new Map<string, ModelComparisonPanelData>()
-const snapshotBytes = new Map<string, number>()
-const assignmentRows = new Map<string, WorkerPersona>()
-const locations = new Map<string, { project: string; projectID: string }>()
+/** A found inspection, as the pane draws it: the stored facts plus the contributor streams. */
+export type ModelInspection = Extract<ModelDecisionInspect, { status: "found" }>
 
-export const modelsSnapshotKey = (key: string, filters: ModelDecisionFilters) =>
-  JSON.stringify([key, filters.persona, filters.taskKind, filters.period])
-
-const dropSnapshot = (key: string) => {
-  snapshots.delete(key)
-  snapshotBytes.delete(key)
+/** A picker option: one native model with its efforts (`models.candidates`, enabled rows). */
+export type ModelCatalogOption = {
+  providerID: string
+  id: string
+  name: string
+  variants: string[]
 }
 
-export function rememberModelsSnapshot(data: ModelComparisonPanelData) {
-  if (!data.key || !isConnectionSeedable(data)) return
-  const key = modelsSnapshotKey(data.key, data.decisionFilters)
-  dropSnapshot(key)
-  snapshots.set(key, data)
-  snapshotBytes.set(key, JSON.stringify(data).length * 2)
-  let total = 0
-  for (const bytes of snapshotBytes.values()) total += bytes
-  for (const oldest of [...snapshots.keys()]) {
-    if (snapshots.size <= 1) break
-    if (snapshots.size <= SNAPSHOT_LIMIT && total <= modelsSnapshotBudget.bytes) break
-    total -= snapshotBytes.get(oldest) ?? 0
-    dropSnapshot(oldest)
+/**
+ * Stream windows of the Models panel, in items. Every window is the rows its view shows plus
+ * slop; where the view draws every row (charts, the ranked table), the window is the stored count
+ * of the view (`entry_count`, `point_count`, `benchmark_count`), which the view row carries.
+ * Measured on the live-sized copy (2026-11-21): a view is 56 entries, 2–3 points and 84–127
+ * contributors per configuration.
+ */
+const CONTRIBUTOR_ROWS = 20
+/** The pane's contributor list: 20 rows in view, 10 of slop each side; "more" grows it by 20. */
+const CONTRIBUTOR_WINDOW = CONTRIBUTOR_ROWS + 10 + 10
+/** The selected task's own contributors, lifted to the top: one task has a few sessions. */
+const SELECTED_TASK_CONTRIBUTORS = 10
+/** The variants of the one model a route names: the window doubles while rows remain. */
+const MODEL_VARIANT_WINDOW = 16
+/** The picker's first read of enabled candidates; it doubles until every row is read. */
+const PICKER_FIRST_WINDOW = 256
+
+/** Picker options from candidate rows (provider, model, then the model's own row before its efforts). */
+function catalogOptionsOf(rows: readonly Record<string, unknown>[]): ModelCatalogOption[] {
+  const options = new Map<string, ModelCatalogOption>()
+  for (const row of rows) {
+    const providerID = String(row.provider_id)
+    const id = String(row.model_id)
+    const key = JSON.stringify([providerID, id])
+    const option = options.get(key) ?? { providerID, id, name: "", variants: [] }
+    if (!option.name && typeof row.name === "string") option.name = row.name
+    if (typeof row.variant === "string") option.variants.push(row.variant)
+    options.set(key, option)
   }
-}
-
-export function recallModelsSnapshot(key: string, filters: ModelDecisionFilters) {
-  return snapshots.get(modelsSnapshotKey(key, filters))
-}
-
-/** Forget everything; for tests. */
-export function resetModelsSnapshots() {
-  snapshots.clear()
-  snapshotBytes.clear()
-  assignmentRows.clear()
-  locations.clear()
+  return [...options.values()]
 }
 
 /** All shared state of the Models panel; the shell and both views read from it. */
@@ -152,8 +163,6 @@ export function createModelsController(props: ModelsProps) {
     summary?: string
   }>()
   let assignmentPickerRequest = 0
-  /** The comparison page already followed by the background catalog paging. */
-  let pagedFor: string | undefined
   const refs: {
     root?: HTMLDivElement
     topPane?: HTMLDivElement
@@ -187,22 +196,11 @@ export function createModelsController(props: ModelsProps) {
       { location: { directory: value.directory } },
       { signal },
     )
-    locations.set(locationKey(value), {
-      project: location.project.canonical,
-      projectID: location.project.id,
-    })
     return {
       ...value,
       project: location.project.canonical,
       projectID: location.project.id,
     }
-  })
-  // A project already resolved once is known at once on a re-mount, so the cached comparison
-  // can render before the location read returns.
-  const knownLocation = createMemo(() => {
-    const request = locationRequest()
-    const hit = request ? locations.get(locationKey(request)) : undefined
-    return request && hit ? { ...request, ...hit } : undefined
   })
   const current = () => {
     const request = locationRequest()
@@ -216,11 +214,8 @@ export function createModelsController(props: ModelsProps) {
       ? value
       : undefined
   }
-  // What to draw while the location is not confirmed yet: the project it resolved to last time.
-  // Reads and writes wait for the confirmed `current()`; only the picture may run ahead of them.
-  const shown = () => current() ?? knownLocation()
   const prefs = () => {
-    const value = shown()
+    const value = current()
     return value
       ? (ctx.stores.modelsView(props.session).value?.projects[value.project] ?? initial)
       : initial
@@ -235,19 +230,14 @@ export function createModelsController(props: ModelsProps) {
       }
     })
   }
-  const state = new ModelComparisonPanelState(
-    (next) => {
-      setData(next)
-      rememberModelsSnapshot(next)
-    },
-    (selection) =>
-      save({
-        selectedTaskID: selection.selectedTaskID,
-        selectedCandidateID: selection.selectedCandidateID,
-        selectedConfigurationID: selection.selectedConfigurationID,
-      }),
+  const state = new ModelComparisonPanelState(setData, (selection) =>
+    save({
+      selectedTaskID: selection.selectedTaskID,
+      selectedCandidateID: selection.selectedCandidateID,
+      selectedConfigurationID: selection.selectedConfigurationID,
+    }),
   )
-  const keyOf = (value: ReturnType<typeof shown>) =>
+  const keyOf = (value: ReturnType<typeof current>) =>
     value
       ? JSON.stringify([
           value.server,
@@ -258,32 +248,56 @@ export function createModelsController(props: ModelsProps) {
         ])
       : ""
   const expectedKey = () => keyOf(current())
-  const visible = () => {
-    const confirmed = expectedKey()
-    if (data().key === confirmed) return data()
-    // On a re-mount the last snapshot for this project shows at once, before the location read
-    // returns and the connection starts. A different project has no snapshot and starts empty.
-    const key = confirmed || keyOf(knownLocation())
-    if (!key) return undefined
-    if (data().key === key) return data()
-    const view = prefs()
-    const snapshot = recallModelsSnapshot(key, {
-      persona: view.persona,
-      taskKind: view.taskKind ?? null,
-      period: { from: null, to: null },
-    })
-    const write = snapshot?.assignmentWrite
-    return write &&
-      (snapshot.selectedTaskID !== view.selectedTaskID ||
-        (write.target?.scope === "task" && write.target.taskID !== view.selectedTaskID))
-      ? { ...snapshot, assignmentWrite: undefined }
-      : snapshot
-  }
 
   onCleanup(() => {
     assignmentPickerRequest++
     state.close()
   })
+
+  // The user's pick between the available score bases; it drives the ranking's score column,
+  // the cost-vs-score scatter and the Benchmark view alike. Not persisted.
+  const [pickedBasis, setScoreBasisKey] = createSignal<string | null>(null)
+  /** Benchmark leads only when observations are sparse and the baseline has data. */
+  const compareMode = (): "observed" | "projected" | "benchmark" => {
+    const chosen = prefs().compareMode
+    if (chosen) return chosen
+    if (!overview()) return "observed"
+    // Projected is a choice, never the default: it is not backed by the user's runs alone.
+    return observedPlottedModels() < 2 && benchmarkPointCount() > 0 ? "benchmark" : "observed"
+  }
+
+  /**
+   * The streams of one connection. A decision view is named by the filters, the score basis and the
+   * selected task (its routes are tagged routed); every view-backed stream reads the same view, so
+   * a new selection reopens them together and the service builds the view once.
+   */
+  type Live = {
+    view: GuiStream<typeof modelViewRef.columns & NonNullable<typeof modelViewRef.detail>>
+    points: GuiStream<typeof modelPointsRef.columns>
+    catalog: GuiStream<typeof modelCatalogRef.columns>
+    benchmark: Accessor<GuiStream<typeof modelBenchmarkRef.columns> | undefined>
+    contributors: Accessor<
+      | {
+          top: GuiStream<typeof modelContributorsRef.columns> | undefined
+          rest: GuiStream<typeof modelContributorsRef.columns>
+        }
+      | undefined
+    >
+    pickerProbe: Accessor<GuiStream<typeof modelCandidatesRef.columns>>
+    variants: Accessor<GuiStream<typeof modelCandidatesRef.columns> | undefined>
+    /** Every enabled candidate, read once when the picker opens. */
+    readOptions(): Promise<ModelCatalogOption[]>
+  }
+  const [live, setLive] = createSignal<Live>()
+  const [contributorWindow, setContributorWindow] = createSignal(CONTRIBUTOR_WINDOW)
+  const [catalogAttempt, setCatalogAttempt] = createSignal(0)
+  /** Read the picker's catalog again after a failure. */
+  const retryCatalog = () => setCatalogAttempt((attempt) => attempt + 1)
+  // Value-equal selections: a state update that leaves them alone reopens no stream.
+  const selectedTaskID = createMemo(() => data().selectedTaskID)
+  const selectedConfigurationID = createMemo(() => data().selectedConfigurationID)
+  const routeProvider = createMemo(() => assignmentRoute().providerID)
+  const routeModel = createMemo(() => assignmentRoute().id)
 
   createKeyed(
     () => {
@@ -292,33 +306,25 @@ export function createModelsController(props: ModelsProps) {
       return { value, key: expectedKey() }
     },
     ({ value, key }) => {
-      // A new connection starts paging afresh.
-      pagedFor = undefined
-      const view = prefs()
+      const view = untrack(prefs)
       const filters: ModelDecisionFilters = {
         persona: view.persona,
         taskKind: view.taskKind ?? null,
         period: { from: null, to: null },
       }
-      const restoredRow = assignmentRows.get(key)
-      if (restoredRow && !assignmentPersona()) setAssignmentPersona(restoredRow)
       const models = value.client.rpc(Models)
-      const decisions = value.client.rpc(ModelsDecision)
       const tasks = value.client.rpc(Tasks)
       const observations = value.client.rpc(Observability)
       const location = { location: { directory: value.directory } }
+      const abort = new AbortController()
+      onCleanup(() => abort.abort())
+      const streams = rpcStreamsTransport(
+        () => value.client.rpc(Streams) as unknown as StreamsRpc,
+        abort.signal,
+        { location: { directory: value.directory } },
+      )
+      const scope = { projectDirectory: value.project, sessionID: value.session }
       const transport: ModelComparisonTransport = {
-        comparison: (cursor, parent) =>
-          withReadDeadline(parent, (signal) =>
-            models.comparison(
-              {
-                sessionID: value.session,
-                limit: 100,
-                ...(cursor ? { cursor } : {}),
-              },
-              { ...location, signal },
-            ),
-          ),
         refreshSources: (parent, force) =>
           withReadDeadline(
             parent,
@@ -329,17 +335,20 @@ export function createModelsController(props: ModelsProps) {
               ),
             2 * READ_DEADLINE_MS,
           ),
+        // The authoritative readback after a mapping write: one window of the assignments.
         settings: (taskID, parent) =>
-          withReadDeadline(parent, (signal) =>
-            models.settings(
-              { sessionID: value.session, ...(taskID ? { taskID } : {}) },
-              { ...location, signal },
-            ),
-          ),
-        catalog: (parent) =>
-          withReadDeadline(parent, (signal) =>
-            models.catalog({ sessionID: value.session }, { ...location, signal }),
-          ),
+          withReadDeadline(parent, async () => {
+            const rows = await readWindow(streams, modelAssignmentsRef, {
+              filter: { ...scope, taskID: taskID ?? null },
+              order: "subject",
+              window: MODEL_ASSIGNMENTS_WINDOW,
+            })
+            return assignmentSettingsOf(
+              rows as unknown as AssignmentLayerRow[],
+              value.project,
+              taskID ?? null,
+            )
+          }),
         configure: (update, signal) =>
           models.configure({ sessionID: value.session, ...update }, { ...location, signal }),
         queryTasks: (parent) =>
@@ -371,58 +380,6 @@ export function createModelsController(props: ModelsProps) {
             { scope: { kind: "project", sessionID: value.session }, taskID },
             { ...location, signal },
           ),
-        decisionOverview: (filters, parent) =>
-          withReadDeadline(parent, (signal) =>
-            decisions.overview(
-              { sessionID: value.session, scope: { projectDirectory: value.project }, filters },
-              { ...location, signal },
-            ),
-          ),
-        decisionRows: (filters, cursor, snapshotID, signal) =>
-          decisions.rows(
-            {
-              sessionID: value.session,
-              scope: { projectDirectory: value.project },
-              filters,
-              limit: 50,
-              snapshotID,
-              ...(cursor ? { cursor } : {}),
-            },
-            { ...location, signal },
-          ),
-        decisionConfigurations: (filters, cursor, snapshotID, signal) =>
-          decisions.configurations(
-            {
-              sessionID: value.session,
-              scope: { projectDirectory: value.project },
-              filters,
-              limit: 50,
-              snapshotID,
-              ...(cursor ? { cursor } : {}),
-            },
-            { ...location, signal },
-          ),
-        decisionInspect: (
-          filters,
-          snapshotID,
-          configurationID,
-          selectedTaskID,
-          contributorCursor,
-          signal,
-        ) =>
-          decisions.inspect(
-            {
-              sessionID: value.session,
-              scope: { projectDirectory: value.project },
-              filters,
-              snapshotID,
-              configurationID,
-              selectedTaskID,
-              contributorLimit: 50,
-              ...(contributorCursor ? { contributorCursor } : {}),
-            },
-            { ...location, signal },
-          ),
         online: () => props.session.server.connected,
       }
       state.connect(
@@ -436,9 +393,136 @@ export function createModelsController(props: ModelsProps) {
           selectedConfigurationID: view.selectedConfigurationID ?? null,
         },
         filters,
-        recallModelsSnapshot(key, filters),
       )
       onCleanup(() => state.close())
+
+      const selection = createMemo(
+        () => ({ filters: data().decisionFilters, basis: pickedBasis(), taskID: selectedTaskID() }),
+        undefined,
+        { equals: (left, right) => JSON.stringify(left) === JSON.stringify(right) },
+      )
+      const viewFilter = () => ({ ...scope, view: selection() })
+      const viewStream = createStream(streams, modelViewRef, () => ({
+        filter: viewFilter(),
+        order: "key",
+        window: 1,
+      }))
+      const stored = (column: "point_count" | "entry_count" | "benchmark_count") =>
+        createMemo(() => Math.max(1, Number(viewStream.items()[0]?.[column] ?? 0)))
+      const pointCount = stored("point_count")
+      const entryCount = stored("entry_count")
+      const benchmarkCount = stored("benchmark_count")
+      const points = createStream(streams, modelPointsRef, () => ({
+        filter: viewFilter(),
+        order: "chart",
+        window: pointCount(),
+      }))
+      const catalog = createStream(streams, modelCatalogRef, () => ({
+        filter: viewFilter(),
+        order: "rank",
+        window: entryCount(),
+      }))
+      // The Benchmark rows are read only while that view is shown.
+      const benchmark = createMemo(
+        on(benchmarkShown, (shown) =>
+          shown
+            ? createStream(streams, modelBenchmarkRef, () => ({
+                filter: viewFilter(),
+                order: "chart",
+                window: benchmarkCount(),
+              }))
+            : undefined,
+        ),
+      )
+      // The selected configuration's contributors: the selected task's first, then the rest.
+      const contributors = createMemo(
+        on([selectedConfigurationID, selectedTaskID], ([configurationID, taskID]) => {
+          if (!configurationID) return undefined
+          setContributorWindow(CONTRIBUTOR_WINDOW)
+          const top = taskID
+            ? createStream(streams, modelContributorsRef, () => ({
+                filter: { ...viewFilter(), configurationID, taskID },
+                order: "inspection",
+                window: SELECTED_TASK_CONTRIBUTORS,
+              }))
+            : undefined
+          const rest = createStream(streams, modelContributorsRef, () => ({
+            filter: {
+              ...viewFilter(),
+              configurationID,
+              ...(taskID ? { exceptTaskID: taskID } : {}),
+            },
+            order: "inspection",
+            window: contributorWindow(),
+          }))
+          return { top, rest }
+        }),
+      )
+      const assignments = createStream(streams, modelAssignmentsRef, () => ({
+        filter: { ...scope, taskID: selectedTaskID() },
+        order: "subject",
+        window: MODEL_ASSIGNMENTS_WINDOW,
+      }))
+      createEffect(() => {
+        const error = assignments.error()
+        if (error) return state.settingsFailed(error.message)
+        if (!assignments.loaded()) return
+        state.applySettings(
+          assignmentSettingsOf(
+            assignments.items() as unknown as AssignmentLayerRow[],
+            value.project,
+            untrack(selectedTaskID),
+          ),
+        )
+      })
+      // Whether the picker has anything to offer: one enabled candidate, or none. Retry opens it anew.
+      const pickerProbe = createMemo(
+        on(catalogAttempt, () =>
+          createStream(streams, modelCandidatesRef, () => ({
+            filter: { ...scope, enabled: true },
+            order: "catalog",
+            window: 1,
+          })),
+        ),
+      )
+      // The efforts of the model the editor's route names.
+      const [variantWindow, setVariantWindow] = createSignal(MODEL_VARIANT_WINDOW)
+      const variants = createMemo(
+        on([routeProvider, routeModel], ([providerID, modelID]) => {
+          if (!providerID || !modelID) return undefined
+          setVariantWindow(MODEL_VARIANT_WINDOW)
+          const stream = createStream(streams, modelCandidatesRef, () => ({
+            filter: { ...scope, providerID, modelID },
+            order: "catalog",
+            window: variantWindow(),
+          }))
+          createEffect(() => {
+            if (stream.loaded() && stream.after() !== 0) setVariantWindow((size) => size * 2)
+          })
+          return stream
+        }),
+      )
+      const readOptions = async () => {
+        for (let window = PICKER_FIRST_WINDOW; ; window *= 2) {
+          const rows = await readWindow(streams, modelCandidatesRef, {
+            filter: { ...scope, enabled: true },
+            order: "catalog",
+            window,
+          })
+          if (rows.length < window) return catalogOptionsOf(rows)
+        }
+      }
+      setLive({
+        view: viewStream as Live["view"],
+        points,
+        catalog,
+        benchmark,
+        contributors,
+        pickerProbe,
+        variants,
+        readOptions,
+      })
+      onCleanup(() => setLive(undefined))
     },
     {
       equals: (left, right) => left.key === right.key && left.value.client === right.value.client,
@@ -446,33 +530,185 @@ export function createModelsController(props: ModelsProps) {
     },
   )
 
-  const selectedCandidate = () => {
-    const configuration = selectedDecisionConfiguration()
-    if (!configuration) return undefined
-    return visible()?.candidates.find(
-      (candidate) =>
-        candidate.identity.providerID === configuration?.route.providerID &&
-        candidate.identity.modelID === configuration.route.modelID &&
-        candidate.identity.variant === configuration.route.variant,
+  // -- What the streams hold, in the shapes the views draw ---------------------------------------
+  const viewRow = () => live()?.view.items()[0]
+  /**
+   * What the panel draws while a new view builds (another task, basis or filter): the last ready
+   * view of this connection stays on screen until the new one is written. Only a first build, with
+   * nothing to keep, shows as building.
+   */
+  const held = <T>(read: () => T, empty: T) =>
+    createMemo<T>((previous) =>
+      viewRow()?.state === "ready" ? read() : live() ? (previous ?? empty) : empty,
     )
+  const viewDetail = held(() => viewRow(), undefined)
+  type PointRow = {
+    configuration_id: string
+    group_id: string
+    display_label: string
+    frontier: boolean
+    point: ModelDecisionOverview["graph"]["points"][number] | null
+    reference: NonNullable<ModelDecisionOverview["graph"]["referenceEstimates"]>[number] | null
+    reference_ord: number | null
+    chart: ComparisonChartPoint | null
+    chart_reference: ComparisonChartReference | null
+    inspection: DecisionInspectionFacts
   }
-  const decisionDisplayRoutes = () => [
-    ...availableConfigurations().map((configuration) => ({
-      ...configuration.route,
-      variant: null,
-    })),
-    ...(visible()?.decisionOverview?.graph.referenceEstimates ?? []).map((reference) => ({
-      ...reference.estimate.route,
-      variant: null,
-    })),
-  ]
+  const pointRows = held(
+    () => (live()?.points.items() ?? []) as unknown as PointRow[],
+    [] as PointRow[],
+  )
+  const decisionContext = () => viewDetail()?.context as ModelDecisionContext | undefined
+  /** The overview the chart and the pane read, rebuilt from the view's configuration rows. */
+  const overview = createMemo((): ModelDecisionOverview | undefined => {
+    const row = viewDetail()
+    if (!row) return undefined
+    const rows = pointRows()
+    const counts = row.counts as { configurationCount: number; groupCount: number }
+    return {
+      context: row.context as ModelDecisionContext,
+      configurationCount: counts.configurationCount,
+      groupCount: counts.groupCount,
+      graph: {
+        scope: "global-filtered-snapshot",
+        points: rows.flatMap((item) => (item.point ? [item.point] : [])),
+        frontierConfigurationIDs: rows
+          .filter((item) => item.frontier)
+          .map((item) => item.configuration_id)
+          .sort((left, right) => left.localeCompare(right)),
+        referenceEstimates: rows
+          .filter((item) => item.reference !== null)
+          .toSorted((left, right) => (left.reference_ord ?? 0) - (right.reference_ord ?? 0))
+          .map((item) => item.reference!),
+      },
+    } as ModelDecisionOverview
+  })
+  const decisionChartPoints = createMemo(() =>
+    pointRows().flatMap((item) => (item.chart ? [item.chart] : [])),
+  )
+  const decisionChartReferences = createMemo(() =>
+    pointRows()
+      .filter((item) => item.chart_reference !== null)
+      .toSorted((left, right) => (left.reference_ord ?? 0) - (right.reference_ord ?? 0))
+      .map((item) => item.chart_reference!),
+  )
+  const availableConfigurations = (): ModelDecisionConfiguration[] =>
+    pointRows().map((item) => item.inspection.configuration)
+  const sources = () => (viewDetail()?.sources ?? []) as DecisionViewSource[]
+  const benchmarkMeta = () => viewDetail()?.benchmark as DecisionViewBenchmark | undefined
+  const benchmarkPointCount = () => Number(viewDetail()?.benchmark_count ?? 0)
+  /** A first build with nothing held to show (first open, or a dropped view opened again). */
+  const building = () => viewRow()?.state === "backfilling" && !viewDetail()
+  const viewError = () => live()?.view.error()?.message ?? live()?.points.error()?.message ?? ""
+  const viewStatus = (): ModelDecisionStatus => {
+    const context = decisionContext()
+    if (context) return statusOfContext(context, props.session.server.connected)
+    return viewError() ? "error" : "loading"
+  }
+  /** The selected configuration's row, when the view holds it. */
+  const selectedRow = () => {
+    const id = selectedConfigurationID()
+    return id ? pointRows().find((item) => item.configuration_id === id) : undefined
+  }
+  // No selection yet: the first configuration is selected, as the decision read did.
+  createEffect(() => {
+    const rows = pointRows()
+    if (rows.length && !selectedConfigurationID())
+      state.selectConfiguration(rows[0]!.configuration_id)
+  })
+  const contributorRows = createMemo(() => {
+    const streams = live()?.contributors()
+    if (!streams) return { rows: [], total: 0, more: false, loading: false }
+    const top = (streams.top?.items() ?? []).map((row) => row.detail)
+    const rest = streams.rest.items().map((row) => row.detail)
+    const after = streams.rest.after()
+    const count = (value: number | "more") => (value === "more" ? 0 : value)
+    return {
+      rows: [...top, ...rest] as ModelDecisionContributor[],
+      total: top.length + count(streams.rest.before()) + rest.length + count(after),
+      more: after !== 0,
+      loading: !streams.rest.loaded() || (streams.top ? !streams.top.loaded() : false),
+    }
+  })
+  /** The selected configuration's inspection: its stored facts and the contributor streams. */
+  const inspection = createMemo((): ModelInspection | undefined => {
+    const row = selectedRow()
+    const context = decisionContext()
+    if (!row || !context) return undefined
+    const contributors = contributorRows()
+    return {
+      status: "found",
+      context,
+      selectedTaskID: selectedTaskID(),
+      ...row.inspection,
+      contributorPage: {
+        contributors: contributors.rows,
+        totalCount: contributors.total,
+        nextCursor: contributors.more ? "more" : null,
+      },
+    } as ModelInspection
+  })
+  const catalogEntries = held(
+    () => (live()?.catalog.items() ?? []).map((row) => row.detail as unknown as CatalogEntry),
+    [] as CatalogEntry[],
+  )
+  const catalogSummary = () => viewDetail()?.summary as CatalogSummary | undefined
+  const baseline = createMemo((): BenchmarkBaseline | undefined => {
+    const meta = benchmarkMeta()
+    if (!meta) return undefined
+    const rows = live()?.benchmark()?.items() ?? []
+    return {
+      points: rows
+        .filter((row) => row.kind === "point")
+        .map((row) => row.detail as unknown as BenchmarkBaselinePoint),
+      gaps: rows
+        .filter((row) => row.kind === "gap")
+        .map((row) => row.detail as unknown as BenchmarkBaselineGap),
+      unmatchedRoutes: meta.unmatchedRoutes,
+      ambiguousRoutes: meta.ambiguousRoutes,
+      priceSources: meta.priceSources,
+      scoreBasis: meta.scoreBasis,
+    }
+  })
+  const catalogStatus = (): "loading" | "ready" | "unavailable" => {
+    const probe = live()?.pickerProbe()
+    if (probe?.error()) return "unavailable"
+    return probe?.loaded() ? "ready" : "loading"
+  }
+  /** What the panel shows: the state's selections and reads, with the streams' data beside them. */
+  const visible = createMemo(() => {
+    const panel = data()
+    if (!panel.key || panel.key !== expectedKey()) return undefined
+    const contributors = contributorRows()
+    return {
+      ...panel,
+      comparison: { sources: sources(), publicCoverage: benchmarkMeta()?.publicCoverage },
+      decisionStatus: viewStatus(),
+      decisionError: viewError() || String(viewRow()?.last_error ?? ""),
+      decisionContext: decisionContext(),
+      decisionOverview: overview(),
+      decisionInspection: inspection(),
+      decisionInspectLoading: false,
+      decisionInspectError:
+        live()?.contributors()?.rest.error()?.message ??
+        live()?.contributors()?.top?.error()?.message ??
+        "",
+      decisionNotFound: Boolean(
+        panel.selectedConfigurationID && viewDetail() && live()?.points.loaded() && !selectedRow(),
+      ),
+      decisionContributorsLoading: contributors.loading,
+      catalogStatus: catalogStatus(),
+      catalogError: live()?.pickerProbe().error()?.message ?? "",
+      comparisonError: viewError(),
+    }
+  })
+  /** More contributors of the selected configuration: the pane's window grows by a screen. */
+  const moreContributors = () => setContributorWindow((size) => size + CONTRIBUTOR_ROWS)
+
+  /** A configuration's full label among the view's configurations and references. */
   const decisionModelFullName = (configuration: ModelDecisionConfiguration) =>
-    modelDisplayLabel(
-      configuration.route,
-      decisionDisplayRoutes(),
-      visible()?.candidates ?? [],
-      visible()?.catalog?.options ?? [],
-    )
+    pointRows().find((item) => item.configuration_id === configuration.configurationID)
+      ?.display_label ?? routeLabel(configuration.route)
   const decisionModelLabel = (configuration: ModelDecisionConfiguration) =>
     boundedModelLabel(decisionModelFullName(configuration))
   const decisionModelChoiceLabel = (configuration: ModelDecisionConfiguration) => {
@@ -481,24 +717,12 @@ export function createModelsController(props: ModelsProps) {
     return friendly.includes(exactRoute) ? friendly : `${friendly} · ${exactRoute}`
   }
   const selectedTask = () => visible()?.task
-  const selectedDecisionConfiguration = () => {
-    const current = visible()
-    if (!current?.selectedConfigurationID) return undefined
-    return (
-      current.decisionInspection?.configuration ??
-      current.decisionConfigurations.find(
-        (configuration) => configuration.configurationID === current.selectedConfigurationID,
-      ) ??
-      current.decisionRows.find(
-        (row) => row.configuration.configurationID === current.selectedConfigurationID,
-      )?.configuration
-    )
-  }
+  const selectedDecisionConfiguration = () => selectedRow()?.inspection.configuration
   /**
    * The last inspection that arrived for this project. A selection or refresh keeps showing it,
    * dimmed, until the next one replaces it, so the pane never blanks and its disclosures stay open.
    */
-  const heldInspection = createMemo<ModelComparisonPanelData["decisionInspection"]>((previous) => {
+  const heldInspection = createMemo<ModelInspection | undefined>((previous) => {
     const panel = visible()
     return panel ? (panel.decisionInspection ?? previous) : undefined
   })
@@ -509,10 +733,7 @@ export function createModelsController(props: ModelsProps) {
     if (!inspection || inspection.status !== "found") return undefined
     const context = inspection.context
     const freshness =
-      visible()?.stale ||
-      visible()?.comparisonStale ||
-      visible()?.decisionStatus === "stale" ||
-      context.freshness === "stale"
+      visible()?.stale || visible()?.decisionStatus === "stale" || context.freshness === "stale"
         ? "stale"
         : context.priceIndex.freshness
     return currentMarketEstimateSummary({
@@ -568,82 +789,6 @@ export function createModelsController(props: ModelsProps) {
     const inspection = heldInspection()
     return inspection?.status === "found" ? inspection.contributorPage.contributors : []
   }
-  type DecisionChartGraph = NonNullable<ModelComparisonPanelData["decisionOverview"]>["graph"]
-  let chartReferencePoints: DecisionChartGraph["points"] | undefined
-  let chartReferenceEstimates: DecisionChartGraph["referenceEstimates"] | undefined
-  let chartReferenceCandidates: ModelComparisonPanelData["candidates"] | undefined
-  let chartReferenceCatalog: ModelCatalogOutput["options"] | undefined
-  let chartReferences: ComparisonChartReference[] = []
-  const decisionChartReferences = createMemo(() => {
-    const current = visible()
-    const graph = current?.decisionOverview?.graph
-    if (!graph) return []
-
-    const candidates = current.candidates
-    const catalogOptions = current.catalog?.options
-    if (
-      chartReferencePoints === graph.points &&
-      chartReferenceEstimates === graph.referenceEstimates &&
-      chartReferenceCandidates === candidates &&
-      chartReferenceCatalog === catalogOptions
-    )
-      return chartReferences
-
-    chartReferencePoints = graph.points
-    chartReferenceEstimates = graph.referenceEstimates
-    chartReferenceCandidates = candidates
-    chartReferenceCatalog = catalogOptions
-    chartReferences = chartReferencesOf(graph, candidates, catalogOptions ?? [])
-    return chartReferences
-  })
-  let chartPointSource: DecisionChartGraph["points"] | undefined
-  let chartPointReferences: ComparisonChartReference[] | undefined
-  let chartPointCandidates: ModelComparisonPanelData["candidates"] | undefined
-  let chartPointCatalog: ModelCatalogOutput["options"] | undefined
-  let chartPointMarketSource:
-    | NonNullable<ModelComparisonPanelData["decisionOverview"]>["context"]["priceIndex"]["source"]
-    | undefined
-  let chartPoints: ComparisonChartPoint[] = []
-  const decisionChartPoints = createMemo(() => {
-    const current = visible()
-    const overview = current?.decisionOverview
-    if (!overview) return []
-    const references = decisionChartReferences()
-    const candidates = current.candidates
-    const catalogOptions = current.catalog?.options
-    const marketSource = overview.context.priceIndex.source
-    if (
-      chartPointSource === overview.graph.points &&
-      chartPointReferences === references &&
-      chartPointCandidates === candidates &&
-      chartPointCatalog === catalogOptions &&
-      chartPointMarketSource === marketSource
-    )
-      return chartPoints
-
-    chartPointSource = overview.graph.points
-    chartPointReferences = references
-    chartPointCandidates = candidates
-    chartPointCatalog = catalogOptions
-    chartPointMarketSource = marketSource
-    chartPoints = chartPointsOf(overview, references, candidates, catalogOptions ?? [])
-    return chartPoints
-  })
-  const availableConfigurations = (): ModelDecisionConfiguration[] => {
-    const current = visible()
-    if (!current) return []
-    const all = [
-      ...current.decisionConfigurations,
-      ...current.decisionRows.map((row) => row.configuration),
-      ...(current.decisionInspection ? [current.decisionInspection.configuration] : []),
-    ]
-    const seen = new Set<string>()
-    return all.filter((configuration) => {
-      if (seen.has(configuration.configurationID)) return false
-      seen.add(configuration.configurationID)
-      return true
-    })
-  }
   const configurationsForGroup = (groupID: string) =>
     availableConfigurations().filter((configuration) => configuration.groupID === groupID)
   const providerChoices = () => {
@@ -695,71 +840,12 @@ export function createModelsController(props: ModelsProps) {
         ...decisionChartReferences().map((reference) => routeKey(reference.estimate.route)),
       ]),
   )
-  // The user's pick between the available score bases; it drives the ranking's score column,
-  // the cost-vs-score scatter and the Benchmark view alike. Not persisted.
-  const [pickedBasis, setScoreBasisKey] = createSignal<string | null>(null)
-  const baseline = createMemo(() => {
-    const panel = visible()
-    if (!panel) return undefined
-    const candidates = panel.candidates
-    const label = modelDisplayLabeler(
-      candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
-      candidates,
-      panel.catalog?.options ?? [],
-    )
-    return benchmarkBaseline({
-      candidates,
-      priceSources: priceSourceOrder().sources,
-      sourceDates: {
-        openrouter: comparisonSource("openrouter-models")?.snapshot?.retrievedAt ?? null,
-        opencode: comparisonSource("native-catalog")?.snapshot?.retrievedAt ?? null,
-        modelsDev: comparisonSource("models-dev")?.snapshot?.retrievedAt ?? null,
-      },
-      observedRoutes: observedRouteKeys(),
-      preferredBasis: pickedBasis(),
-      external: visible()?.comparison?.publicCatalog ?? [],
-      label: (route) => label({ ...route, variant: null }),
-    })
-  })
   const observedPlottedModels = () =>
     comparisonChartKeyboardOrder(decisionChartPoints(), decisionChartReferences()).length
-  // -- The model set: observed, routed and catalog models, projected where unobserved --------
-  /** Routes named by the model router: every persona's resolved route and each layer's route. */
+  /** Median tokens per accepted task by category across our observed configurations. */
+  const profile = createMemo(() => referenceTokenProfile(overview()?.graph))
   /** The LAZERS agents with the model native OpenCode resolves for each (read-only). */
   const agentRoutes = createMemo(() => visible()?.settings?.agents ?? [])
-  const routedRoutes = createMemo(() => routedModels(visible()?.settings))
-  const observedFactsByRoute = createMemo(() =>
-    observedFactsOf(decisionChartPoints(), decisionChartReferences()),
-  )
-  /** Median tokens per accepted task by category across our observed configurations. */
-  const profile = createMemo(() => referenceTokenProfile(visible()?.decisionOverview?.graph))
-  const catalog = createMemo(() => {
-    const panel = visible()
-    if (!panel) return { entries: [], summary: undefined }
-    const candidates = panel.candidates
-    const label = modelDisplayLabeler(
-      candidates.map((candidate) => ({ ...candidate.identity, variant: null })),
-      candidates,
-      panel.catalog?.options ?? [],
-    )
-    return buildCatalog({
-      candidates,
-      priceSources: priceSourceOrder().sources,
-      sourceDates: {
-        openrouter: comparisonSource("openrouter-models")?.snapshot?.retrievedAt ?? null,
-        opencode: comparisonSource("native-catalog")?.snapshot?.retrievedAt ?? null,
-        modelsDev: comparisonSource("models-dev")?.snapshot?.retrievedAt ?? null,
-      },
-      profile: profile(),
-      observed: observedFactsByRoute(),
-      routed: routedRoutes(),
-      preferredBasis: pickedBasis(),
-      external: visible()?.comparison?.publicCatalog ?? [],
-      label: (route) => label({ ...route, variant: null }),
-    })
-  })
-  const catalogEntries = () => catalog().entries
-  const catalogSummary = () => catalog().summary
   const observedPriceSourceName = () =>
     ({ openrouter: "OpenRouter", opencode: "OpenCode", mixed: "Configured" })[
       (visible()?.decisionOverview?.context.priceIndex.source ?? "") as
@@ -777,16 +863,13 @@ export function createModelsController(props: ModelsProps) {
   })
   const projectedPoints = createMemo(() => projectedChartPoints(catalogEntries()))
   const benchmarkPoints = createMemo(() => benchmarkChartPoints(baseline()?.points ?? []))
-  /**
-   * The one catalog line, only on a first-ever run with nothing stored to show. When a snapshot
-   * exists the full set paints at once from it and refreshes in the background, silently.
-   */
+  const benchmarkShown = createMemo(() => compareMode() === "benchmark")
+  /** The one catalog line, while the view is first built: nothing stored to show yet. */
   const catalogLoadingLine = () => {
-    const panel = visible()
-    if (compareMode() === "observed" || !panel || panel.candidates.length > 0) return undefined
-    if (!panel.comparisonLoading && panel.sourceRefresh !== "refreshing") return undefined
+    if (compareMode() === "observed" || catalogEntries().length > 0) return undefined
+    if (!building() && visible()?.sourceRefresh !== "refreshing") return undefined
     const names = priceSourceOrder().sources.map((source) => benchmarkSourceName[source])
-    return `Loading catalog · ${names.join(", ")}`
+    return `Building catalog · ${names.join(", ")}`
   }
   /** One sentence per source that has nothing stored, for "Estimate basis and prices". */
   const catalogNotes = () => {
@@ -797,41 +880,9 @@ export function createModelsController(props: ModelsProps) {
       "models-dev": "models.dev",
       "epoch-benchmarks": "Epoch AI benchmarks",
     } as const
-    return (visible()?.comparison?.sources ?? [])
+    return sources()
       .filter((source) => !source.snapshot && source.refresh?.state !== "refreshing")
       .map((source) => `${names[source.source]} unavailable`)
-  }
-  // The catalog is read a page at a time in the background once the first paint is done.
-  createEffect(() => {
-    const panel = visible()
-    const cursor = panel?.comparison?.nextCursor
-    if (
-      !panel ||
-      !cursor ||
-      !mayPageCatalog({
-        nextCursor: cursor,
-        comparisonLoading: panel.comparisonLoading,
-        decisionLoaded: Boolean(panel.decisionOverview),
-        benchmark: compareMode() === "benchmark",
-        firstPageLoaded: Boolean(panel.comparison),
-      })
-    )
-      return
-    // Each (page, loaded count) is followed once, so a page that does not advance cannot loop.
-    const key = `${cursor}:${panel.candidates.length}`
-    if (key === pagedFor) return
-    pagedFor = key
-    void state.moreCandidates()
-  })
-  /** Benchmark leads only when observations are sparse and the baseline has data. */
-  const compareMode = (): "observed" | "projected" | "benchmark" => {
-    const chosen = prefs().compareMode
-    if (chosen) return chosen
-    if (!visible()?.decisionOverview) return "observed"
-    // Projected is a choice, never the default: it is not backed by the user's runs alone.
-    return observedPlottedModels() < 2 && (baseline()?.points.length ?? 0) > 0
-      ? "benchmark"
-      : "observed"
   }
   /** Epoch ms of the newest price snapshot; absent until one exists. */
   /** The oldest price snapshot among the sources prices are taken from. */
@@ -841,7 +892,7 @@ export function createModelsController(props: ModelsProps) {
         source === "openrouter" ? "openrouter-models" : "native-catalog",
       ),
     )
-    const times = (visible()?.comparison?.sources ?? [])
+    const times = sources()
       .filter((entry) => used.has(entry.source as never))
       .flatMap((entry) => (entry.snapshot ? [Date.parse(entry.snapshot.retrievedAt)] : []))
       .filter((time) => Number.isFinite(time))
@@ -863,7 +914,10 @@ export function createModelsController(props: ModelsProps) {
   const status = createPanelStatus(() => {
     const panel = visible()
     const benchmark = compareMode() === "benchmark"
-    const hasContent = benchmark ? Boolean(panel?.comparison) : Boolean(panel?.decisionOverview)
+    // A view is content once it is built; Benchmark needs its rows too.
+    const hasContent = benchmark
+      ? Boolean(viewDetail() && live()?.benchmark()?.loaded())
+      : Boolean(panel?.decisionOverview)
     const decisionError =
       panel && ["error", "missing-rpc", "stale"].includes(panel.decisionStatus)
         ? panel.decisionError || panel.decisionStatus
@@ -875,11 +929,15 @@ export function createModelsController(props: ModelsProps) {
       !panel ||
       (!error &&
         !hasContent &&
-        (benchmark
-          ? panel.comparisonLoading
-          : panel.decisionStatus === "loading" || panel.decisionStatus === "backend-not-ready"))
+        (panel.decisionStatus === "loading" || panel.decisionStatus === "backend-not-ready"))
     const tasks = panel?.tasks.length ?? 0
     const asOf = pricesAsOfTime()
+    // A view still being built says so; it never shows as empty or unknown.
+    const progress = building()
+      ? "building it from your runs"
+      : tasks
+        ? `${tasks} task${tasks === 1 ? "" : "s"} so far`
+        : undefined
     return {
       subject: "comparison",
       hasContent,
@@ -887,7 +945,7 @@ export function createModelsController(props: ModelsProps) {
       disconnected: disconnected(),
       error,
       ...(asOf === undefined ? {} : { asOf }),
-      ...(tasks ? { progress: `${tasks} task${tasks === 1 ? "" : "s"} so far` } : {}),
+      ...(progress ? { progress } : {}),
     }
   })
   /** The row to mark as selected in "All models": by configuration when observed. */
@@ -900,23 +958,9 @@ export function createModelsController(props: ModelsProps) {
       )
     return selectedEntryID()
   }
-  /** A table row selects its point: the observed configuration, or the candidate in Projected. */
-  // A public-catalog model no route runs has no candidate to select: the pick lives here.
-  const [externalPick, setExternalPick] = createSignal<string | null>(null)
-  createEffect(
-    on(
-      () => visible()?.selectedCandidateID,
-      () => setExternalPick(null),
-      { defer: true },
-    ),
-  )
-  const selectedEntryID = () => externalPick() ?? visible()?.selectedCandidateID ?? null
-  const pickEntryID = (id: string) => {
-    if (visible()?.candidates.some((candidate) => candidate.candidateID === id)) {
-      setExternalPick(null)
-      state.selectCandidate(id)
-    } else setExternalPick(id)
-  }
+  /** A table row selects its point: the observed configuration, or the entry in Projected. */
+  const selectedEntryID = () => visible()?.selectedCandidateID ?? null
+  const pickEntryID = (id: string) => state.selectCandidate(id)
   const selectEntry = (entry: CatalogEntry) => {
     if (compareMode() === "observed" && entry.observed) {
       state.selectConfiguration(entry.observed.configurationID)
@@ -947,9 +991,7 @@ export function createModelsController(props: ModelsProps) {
   }
   /** The public score that ranks the set: the Coding Index, or one Epoch benchmark. */
   const scoreBasis = () => baseline()?.scoreBasis ?? AA_BASIS
-  const scoreOptionsList = createMemo(() =>
-    scoreOptions(visible()?.candidates ?? [], visible()?.comparison?.publicCatalog ?? []),
-  )
+  const scoreOptionsList = () => benchmarkMeta()?.scoreOptions ?? []
   const scoreBasisKey = () => {
     const basis = scoreBasis()
     return basis.source === "epoch" ? basis.benchmarkID : "aa"
@@ -963,7 +1005,7 @@ export function createModelsController(props: ModelsProps) {
   }
   /** The comparison loaded but no benchmark source has delivered anything: none is reachable. */
   const benchmarkNeedsOpenRouter = () =>
-    Boolean(visible()?.comparison) &&
+    Boolean(viewDetail()) &&
     !comparisonSource("openrouter-benchmarks")?.snapshot &&
     !comparisonSource("epoch-benchmarks")?.snapshot &&
     !(baseline()?.points.length || baseline()?.gaps.length)
@@ -984,7 +1026,7 @@ export function createModelsController(props: ModelsProps) {
   const benchmarkEmptyText = () => {
     const current = baseline()
     if (!current || current.points.length + current.gaps.length === 0)
-      return `None of the ${new Set(visible()?.candidates.map((candidate) => routeKey(candidate.identity))).size} loaded catalog models match a public benchmark yet.`
+      return `None of the ${benchmarkMeta()?.catalogRoutes ?? 0} loaded catalog models match a public benchmark yet.`
     return "Benchmarked models have no applicable list price from the configured price sources."
   }
   /** "14 accepted tasks · OpenRouter prices" under the observed chart. */
@@ -1007,8 +1049,8 @@ export function createModelsController(props: ModelsProps) {
     const current = baseline()
     const selectedID = selectedEntryID()
     if (!current || !selectedID) return undefined
-    const candidate = visible()?.candidates.find((entry) => entry.candidateID === selectedID)
-    const key = candidate ? routeKey(candidate.identity) : undefined
+    const entry = catalogEntries().find((item) => item.id === selectedID)
+    const key = entry ? routeKey(entry.route) : undefined
     return (
       current.points.find((point) => point.id === selectedID || routeKey(point.route) === key) ??
       current.gaps.find((gap) => gap.id === selectedID || routeKey(gap.route) === key)
@@ -1033,7 +1075,7 @@ export function createModelsController(props: ModelsProps) {
       period: current.period,
     }
     save({ persona: next.persona, taskKind: next.taskKind })
-    state.setDecisionFilters(next, recallModelsSnapshot(expectedKey(), next))
+    state.setDecisionFilters(next)
   }
   const selectDecisionGroup = (groupID: string) => {
     const configurations = configurationsForGroup(groupID)
@@ -1065,16 +1107,16 @@ export function createModelsController(props: ModelsProps) {
   const assignmentSettings = () =>
     subjects().find((persona) => persona.persona === assignmentPersona())
   const assignmentLayer = () => assignmentSettings()?.layers[assignmentScope()] ?? null
-  const catalogOptions = () =>
-    (visible()?.catalog?.options ?? []).filter((option) => option.enabled !== false)
-  const selectedCatalogModel = () =>
-    catalogOptions().find(
-      (option) =>
-        option.providerID === assignmentRoute().providerID && option.id === assignmentRoute().id,
-    )
-  const catalogOptionKey = (
-    option: Pick<ModelCatalogOutput["options"][number], "providerID" | "id">,
-  ) => JSON.stringify([option.providerID, option.id])
+  /** The picker has no enabled model to offer (its probe read none). */
+  const catalogEmpty = () =>
+    catalogStatus() === "ready" && (live()?.pickerProbe().items().length ?? 0) === 0
+  /** The model the editor's route names, with its efforts, when the catalog lists it. */
+  const selectedCatalogModel = (): ModelCatalogOption | undefined => {
+    const rows = live()?.variants()?.items() ?? []
+    return catalogOptionsOf(rows)[0]
+  }
+  const catalogOptionKey = (option: Pick<ModelCatalogOption, "providerID" | "id">) =>
+    JSON.stringify([option.providerID, option.id])
   const modelSelectionCaption = () => {
     const model = selectedCatalogModel()
     if (model) return `${model.providerID}/${model.id}`
@@ -1102,7 +1144,6 @@ export function createModelsController(props: ModelsProps) {
         : "Task override"
   const clearConfirmedAssignmentWrite = () => state.clearConfirmedAssignmentWrite()
   const selectAssignmentPersona = (persona: WorkerPersona) => {
-    assignmentRows.set(expectedKey(), persona)
     assignmentPickerRequest++
     clearConfirmedAssignmentWrite()
     setAssignmentPrefill(undefined)
@@ -1226,15 +1267,21 @@ export function createModelsController(props: ModelsProps) {
       !persona ||
       assignmentBlocked() ||
       panel.catalogStatus !== "ready" ||
-      !catalogOptions().length
+      catalogEmpty()
     )
       return
 
     const scope = assignmentScope()
     const taskID = panel.selectedTaskID
     const panelKey = panel.key
-    const options = catalogOptions()
     const request = ++assignmentPickerRequest
+    let options: ModelCatalogOption[]
+    try {
+      options = (await live()?.readOptions()) ?? []
+    } catch {
+      return
+    }
+    if (request !== assignmentPickerRequest || !options.length) return
     const selectedOption = selectedCatalogModel()
     let chosenKey: string | undefined
     try {
@@ -1246,7 +1293,7 @@ export function createModelsController(props: ModelsProps) {
           title: option.name || option.id,
           value: catalogOptionKey(option),
           group: option.providerID,
-          description: `${option.providerID} ${option.id}${option.type ? ` · ${option.type}` : ""}`,
+          description: `${option.providerID} ${option.id}`,
         })),
       })
     } catch {
@@ -1382,9 +1429,7 @@ export function createModelsController(props: ModelsProps) {
     props.openTrajectory(props.session, target)
   }
   const openContributorTrajectory = (
-    contributor: NonNullable<
-      ModelComparisonPanelData["decisionInspection"]
-    >["contributorPage"]["contributors"][number],
+    contributor: ModelInspection["contributorPage"]["contributors"][number],
   ) => {
     const value = current()
     if (!value) return
@@ -1439,7 +1484,9 @@ export function createModelsController(props: ModelsProps) {
     observedCaption,
     openProviderSettings,
     benchmarkPriceSourceLabel,
-    catalogOptions,
+    catalogEmpty,
+    retryCatalog,
+    moreContributors,
     categoryRows,
     changeDecisionFilters,
     clearTaskFilter,
@@ -1510,7 +1557,6 @@ export function createModelsController(props: ModelsProps) {
     selectTab,
     selectTask,
     selectedBenchmark,
-    selectedCandidate,
     selectedCatalogModel,
     selectedContributors,
     selectedDecisionConfiguration,
