@@ -153,23 +153,12 @@ type EndpointPricingSnapshotRow = {
   body: string
 }
 
-/** Project-scoped, append-only source snapshots and separately mutable refresh state. */
-export class ModelEvidenceStore {
-  private readonly db: Database
-  private shared: SharedConnection | undefined
-
-  constructor(
-    path: string,
-    readonly projectDirectory: string,
-  ) {
-    // Shares the process-wide write connection (SQLITE_BUSY_TIMEOUT_MS, WAL, change hooks).
-    const shared = acquireSharedConnection(path)
-    this.shared = shared
-    this.db = shared.db
-    try {
-      // Keyed by generation: the connection (and its `once` keys) outlives a plugin reload.
-      shared.once(`model-evidence@${schemaModules["model-sources"].generation}`, (db) =>
-        db.exec(`
+/**
+ * The evidence tables, created when missing. Shared by the evidence store and the candidate
+ * projection (`candidate-store.ts`), whose triggers name `model_evidence_refreshes`.
+ */
+export function installModelEvidenceTables(db: Database) {
+  db.exec(`
         CREATE TABLE IF NOT EXISTS model_evidence_snapshots (
           snapshot_id TEXT PRIMARY KEY,
           project_directory TEXT NOT NULL,
@@ -227,7 +216,26 @@ export class ModelEvidenceStore {
           http_status INTEGER,
           PRIMARY KEY(project_directory, product_id)
         );
-      `),
+  `)
+}
+
+/** Project-scoped, append-only source snapshots and separately mutable refresh state. */
+export class ModelEvidenceStore {
+  private readonly db: Database
+  private shared: SharedConnection | undefined
+
+  constructor(
+    path: string,
+    readonly projectDirectory: string,
+  ) {
+    // Shares the process-wide write connection (SQLITE_BUSY_TIMEOUT_MS, WAL, change hooks).
+    const shared = acquireSharedConnection(path)
+    this.shared = shared
+    this.db = shared.db
+    try {
+      // Keyed by generation: the connection (and its `once` keys) outlives a plugin reload.
+      shared.once(`model-evidence@${schemaModules["model-sources"].generation}`, (db) =>
+        installModelEvidenceTables(db),
       )
     } catch (error) {
       shared.release()
@@ -754,6 +762,160 @@ type CoreEvidenceSource = Exclude<ModelEvidenceSource, "models-dev" | "epoch-ben
 export type ModelEvidenceComparisonSnapshotSelection = Record<CoreEvidenceSource, string | null> &
   Partial<Record<"models-dev" | "epoch-benchmarks", string | null>>
 
+const tableExists = (db: Database, name: string) =>
+  Boolean(
+    db
+      .query<{ name: string }, [string]>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      )
+      .get(name),
+  )
+
+/**
+ * The comparison sources of a project on `db`, in the caller's transaction: the read store's read,
+ * and the candidate projection's read inside its write transaction.
+ */
+export function readComparisonSourcesFrom(
+  db: Database,
+  projectDirectory: string,
+  selection?: ModelEvidenceComparisonSnapshotSelection,
+  options: ModelEvidenceComparisonReadOptions = {},
+): ModelEvidenceComparisonSourceRead[] {
+  const wanted = options.sources ?? MODEL_EVIDENCE_SOURCES
+  const snapshotsTable = tableExists(db, "model_evidence_snapshots")
+  const refreshesTable = tableExists(db, "model_evidence_refreshes")
+  const storage: ModelEvidenceComparisonSourceRead["storage"] = snapshotsTable
+    ? refreshesTable
+      ? "ready"
+      : "missing-refresh-table"
+    : refreshesTable
+      ? "missing-snapshot-table"
+      : "missing-both-tables"
+  const refreshRows = refreshesTable
+    ? db
+        .query<RefreshRow, [string]>(
+          `SELECT r.source, r.state, r.generation, r.started_at, r.completed_at,
+                    r.latest_snapshot_id, r.latest_retrieved_at, r.latest_record_count,
+                    r.error_code, r.http_status
+             FROM model_evidence_refreshes r WHERE r.project_directory=? LIMIT ${MODEL_EVIDENCE_SOURCES.length}`,
+        )
+        .all(projectDirectory)
+    : []
+  const refreshBySource = new Map(refreshRows.map((row) => [row.source, row]))
+
+  return wanted.map((source): ModelEvidenceComparisonSourceRead => {
+    const refreshRow = refreshBySource.get(source)
+    const refresh = refreshesTable
+      ? ModelEvidenceRefreshStatusSchema.parse(
+          refreshRow
+            ? {
+                source,
+                state: refreshRow.state,
+                generation: refreshRow.generation,
+                startedAt: refreshRow.started_at,
+                completedAt: refreshRow.completed_at,
+                latestSnapshotID: refreshRow.latest_snapshot_id,
+                latestRetrievedAt: refreshRow.latest_retrieved_at,
+                latestRecordCount: refreshRow.latest_record_count,
+                errorCode: refreshRow.error_code,
+                httpStatus: refreshRow.http_status,
+              }
+            : {
+                source,
+                state: "never",
+                generation: 0,
+                startedAt: null,
+                completedAt: null,
+                latestSnapshotID: null,
+                latestRetrievedAt: null,
+                latestRecordCount: null,
+                errorCode: null,
+                httpStatus: null,
+              },
+        )
+      : null
+    if (!snapshotsTable)
+      return {
+        source,
+        storage,
+        snapshotState: "missing-table",
+        snapshotID: selection?.[source] ?? null,
+        refresh,
+        snapshot: null,
+      }
+
+    let snapshotID: string | null
+    if (selection && selection[source] !== undefined) {
+      snapshotID = selection[source] ?? null
+    } else if (refreshRow) {
+      snapshotID = refreshRow.latest_snapshot_id
+    } else {
+      snapshotID =
+        db
+          .query<{ snapshot_id: string }, [string, ModelEvidenceSource]>(
+            `SELECT snapshot_id FROM model_evidence_snapshots
+               WHERE project_directory=? AND source=? ORDER BY generation DESC LIMIT 1`,
+          )
+          .get(projectDirectory, source)?.snapshot_id ?? null
+    }
+
+    if (snapshotID === null)
+      return {
+        source,
+        storage,
+        snapshotState: "none",
+        snapshotID: null,
+        refresh,
+        snapshot: null,
+      }
+
+    const meta = db
+      .query<SnapshotMetaRow, [string, string]>(
+        `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
+                  record_count, length(body) AS body_bytes FROM model_evidence_snapshots
+           WHERE project_directory=? AND snapshot_id=?`,
+      )
+      .get(projectDirectory, snapshotID)
+    if (!meta)
+      return {
+        source,
+        storage,
+        snapshotState: "missing-snapshot",
+        snapshotID,
+        refresh,
+        snapshot: null,
+      }
+
+    if (meta.source !== source)
+      throw new Error("Model evidence snapshot source does not match its selection")
+
+    if (options.stampOnly)
+      return {
+        source,
+        storage,
+        snapshotState: "available",
+        snapshotID,
+        refresh,
+        snapshot: null,
+        stamp: {
+          generation: meta.generation,
+          retrievedAt: meta.retrieved_at,
+          recordCount: meta.record_count,
+        },
+      }
+
+    const snapshot = parsedSnapshotFor(db, projectDirectory, meta)
+    return {
+      source,
+      storage,
+      snapshotState: "available",
+      snapshotID,
+      refresh,
+      snapshot,
+    }
+  })
+}
+
 /** Read-only, project-scoped snapshot access for comparison projections. */
 export class ModelEvidenceReadStore {
   private readonly db: Database
@@ -771,152 +933,10 @@ export class ModelEvidenceReadStore {
     selection?: ModelEvidenceComparisonSnapshotSelection,
     options: ModelEvidenceComparisonReadOptions = {},
   ): ModelEvidenceComparisonSourceRead[] {
-    const wanted = options.sources ?? MODEL_EVIDENCE_SOURCES
-    const read = this.db.transaction(() => {
-      const snapshotsTable = this.tableExists("model_evidence_snapshots")
-      const refreshesTable = this.tableExists("model_evidence_refreshes")
-      const storage: ModelEvidenceComparisonSourceRead["storage"] = snapshotsTable
-        ? refreshesTable
-          ? "ready"
-          : "missing-refresh-table"
-        : refreshesTable
-          ? "missing-snapshot-table"
-          : "missing-both-tables"
-      const refreshRows = refreshesTable
-        ? this.db
-            .query<RefreshRow, [string]>(
-              `SELECT r.source, r.state, r.generation, r.started_at, r.completed_at,
-                      r.latest_snapshot_id, r.latest_retrieved_at, r.latest_record_count,
-                      r.error_code, r.http_status
-               FROM model_evidence_refreshes r WHERE r.project_directory=? LIMIT ${MODEL_EVIDENCE_SOURCES.length}`,
-            )
-            .all(this.projectDirectory)
-        : []
-      const refreshBySource = new Map(refreshRows.map((row) => [row.source, row]))
-
-      return wanted.map((source): ModelEvidenceComparisonSourceRead => {
-        const refreshRow = refreshBySource.get(source)
-        const refresh = refreshesTable
-          ? ModelEvidenceRefreshStatusSchema.parse(
-              refreshRow
-                ? {
-                    source,
-                    state: refreshRow.state,
-                    generation: refreshRow.generation,
-                    startedAt: refreshRow.started_at,
-                    completedAt: refreshRow.completed_at,
-                    latestSnapshotID: refreshRow.latest_snapshot_id,
-                    latestRetrievedAt: refreshRow.latest_retrieved_at,
-                    latestRecordCount: refreshRow.latest_record_count,
-                    errorCode: refreshRow.error_code,
-                    httpStatus: refreshRow.http_status,
-                  }
-                : {
-                    source,
-                    state: "never",
-                    generation: 0,
-                    startedAt: null,
-                    completedAt: null,
-                    latestSnapshotID: null,
-                    latestRetrievedAt: null,
-                    latestRecordCount: null,
-                    errorCode: null,
-                    httpStatus: null,
-                  },
-            )
-          : null
-        if (!snapshotsTable)
-          return {
-            source,
-            storage,
-            snapshotState: "missing-table",
-            snapshotID: selection?.[source] ?? null,
-            refresh,
-            snapshot: null,
-          }
-
-        let snapshotID: string | null
-        if (selection && selection[source] !== undefined) {
-          snapshotID = selection[source] ?? null
-        } else if (refreshRow) {
-          snapshotID = refreshRow.latest_snapshot_id
-        } else {
-          snapshotID =
-            this.db
-              .query<{ snapshot_id: string }, [string, ModelEvidenceSource]>(
-                `SELECT snapshot_id FROM model_evidence_snapshots
-                 WHERE project_directory=? AND source=? ORDER BY generation DESC LIMIT 1`,
-              )
-              .get(this.projectDirectory, source)?.snapshot_id ?? null
-        }
-
-        if (snapshotID === null)
-          return {
-            source,
-            storage,
-            snapshotState: "none",
-            snapshotID: null,
-            refresh,
-            snapshot: null,
-          }
-
-        const meta = this.db
-          .query<SnapshotMetaRow, [string, string]>(
-            `SELECT snapshot_id, project_directory, source, generation, retrieved_at,
-                    record_count, length(body) AS body_bytes FROM model_evidence_snapshots
-             WHERE project_directory=? AND snapshot_id=?`,
-          )
-          .get(this.projectDirectory, snapshotID)
-        if (!meta)
-          return {
-            source,
-            storage,
-            snapshotState: "missing-snapshot",
-            snapshotID,
-            refresh,
-            snapshot: null,
-          }
-
-        if (meta.source !== source)
-          throw new Error("Model evidence snapshot source does not match its selection")
-
-        if (options.stampOnly)
-          return {
-            source,
-            storage,
-            snapshotState: "available",
-            snapshotID,
-            refresh,
-            snapshot: null,
-            stamp: {
-              generation: meta.generation,
-              retrievedAt: meta.retrieved_at,
-              recordCount: meta.record_count,
-            },
-          }
-
-        const snapshot = parsedSnapshotFor(this.db, this.projectDirectory, meta)
-        return {
-          source,
-          storage,
-          snapshotState: "available",
-          snapshotID,
-          refresh,
-          snapshot,
-        }
-      })
-    })
-    return read.deferred()
-  }
-
-  private tableExists(name: string): boolean {
-    return Boolean(
-      this.db
-        .query<{ name: string }, [string]>(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        )
-        .get(name),
+    const read = this.db.transaction(() =>
+      readComparisonSourcesFrom(this.db, this.projectDirectory, selection, options),
     )
+    return read.deferred()
   }
 
   close(): void {

@@ -35,6 +35,8 @@ type Entry = {
   busy: number
   lease: ReturnType<typeof setTimeout> | undefined
   off(): void
+  /** The source's `release` for the filter its `authorize` returned; once, when dropped. */
+  release?: () => void
 }
 
 export type StreamsService = ReturnType<typeof createStreamsService>
@@ -60,6 +62,11 @@ export function createStreamsService(options: {
     clearTimeout(entry.lease)
     entry.off()
     entry.stream.close()
+    try {
+      entry.release?.()
+    } catch {
+      // A source's bookkeeping never fails a close.
+    }
     return true
   }
   const renew = (id: string, entry: Entry) => {
@@ -114,14 +121,30 @@ export function createStreamsService(options: {
           )
         }
       }
-      const stream = openStream(options.pool, source, {
-        filter: filter as never,
-        order: input.order,
-        window: input.window,
-        transport: "copy",
-        ...(input.anchor ? { anchor: input.anchor as never } : {}),
-      })
-      const entry: Entry = { stream, seq: 0, busy: 1, lease: undefined, off: () => {} }
+      const admitted = filter
+      const release =
+        source.authorize && source.release ? () => source.release!(admitted as never) : undefined
+      let stream: Stream<Columns>
+      try {
+        stream = openStream(options.pool, source, {
+          filter: filter as never,
+          order: input.order,
+          window: input.window,
+          transport: "copy",
+          ...(input.anchor ? { anchor: input.anchor as never } : {}),
+        })
+      } catch (error) {
+        release?.()
+        throw error
+      }
+      const entry: Entry = {
+        stream,
+        seq: 0,
+        busy: 1,
+        lease: undefined,
+        off: () => {},
+        ...(release ? { release } : {}),
+      }
       entry.off = stream.on("change", () => {
         entry.seq++
         if (entry.busy === 0) options.changed(input.stream, entry.seq)

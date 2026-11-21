@@ -67,3 +67,12 @@ defineSource({
     return { group: "g1" }
   },
 })
+
+/** Held while open: `authorize` admits and stamps the filter; `release` records what it admitted. */
+export const heldReleases: unknown[] = []
+defineSource({
+  ...definition,
+  name: "test.items.held",
+  authorize: async (input: { group?: string }) => ({ ...input, holder: "h" }),
+  release: (filter: { group?: string }) => void heldReleases.push(filter),
+})

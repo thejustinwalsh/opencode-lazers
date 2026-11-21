@@ -46,6 +46,13 @@ export type SourceDefinition<F, C extends Columns> = {
    * trusted code and do not pass through it.
    */
   authorize?(filter: F, context: StreamContext): F | Promise<F>
+  /**
+   * Runs on the main thread once a stream that `authorize` admitted is no longer held: closed,
+   * expired (its lease was not renewed) or disposed with its registration. It receives the filter
+   * `authorize` returned. A source whose rows are kept current only while someone reads them
+   * (a stored view) counts holders with `authorize` and this.
+   */
+  release?(filter: F): void
 }
 
 /** What `authorize` may ask of the service that registered the Streams RPC. */
@@ -56,6 +63,12 @@ export type StreamContext = {
   projectIds(id: string): string[]
   /** Rejects unless the caller's session may read this project. */
   assertRead(sessionID: string): Promise<void>
+  /**
+   * Rejects unless the caller's session passes the check of the RPC a source replaces: an
+   * eligible session of this project and the permission `action` on this project. A context
+   * without it rejects every source that needs it.
+   */
+  assertAction?(sessionID: string, action: string): Promise<void>
   /** A point read on the service's own repository: for the checks an `authorize` makes on one row. */
   read?<T>(run: (db: Database) => T): T
 }

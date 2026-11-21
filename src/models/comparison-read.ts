@@ -482,6 +482,69 @@ function snapshotSelection(
   )
 }
 
+/** The public catalogs joined to the native routes of one snapshot set. */
+function publicJoinFor(
+  native: Extract<ModelEvidenceSnapshot, { source: "native-catalog" }> | null,
+  modelSource: ModelEvidenceComparisonSourceRead,
+  devSnapshot: ModelEvidenceSnapshot | null | undefined,
+  epochSnapshot: ModelEvidenceSnapshot | null | undefined,
+): PublicJoin {
+  return createPublicJoin({
+    modelsDev: devSnapshot?.source === "models-dev" ? devSnapshot.records : [],
+    epoch: epochSnapshot?.source === "epoch-benchmarks" ? epochSnapshot.records : [],
+    openrouter:
+      modelSource.snapshot?.source === "openrouter-models" ? modelSource.snapshot.records : [],
+    routes: native
+      ? [
+          ...new Map(
+            native.records.map((record) => [`${record.providerID}\u0000${record.id}`, record]),
+          ).values(),
+        ].map((record) => ({
+          providerID: record.providerID,
+          modelID: record.id,
+          name: record.name,
+          nativePrice: nativeBasePrice(record),
+        }))
+      : [],
+  })
+}
+
+/**
+ * Every candidate of one snapshot set, unfiltered, in the comparison's order, with the first
+ * page's public catalog and coverage: what `model_candidates` stores (`candidate-store.ts`). A
+ * filtered comparison is this list with groups left out (filters drop whole provider-model groups
+ * and no candidate reads another group), so a stored row equals the old read's candidate.
+ * `sources` must carry the bodies of every source (`readComparisonSourcesFrom` without
+ * `stampOnly`).
+ */
+export function buildComparisonCandidates(sources: readonly ModelEvidenceComparisonSourceRead[]) {
+  const find = (name: ModelEvidenceComparisonSourceRead["source"]) =>
+    sources.find((source) => source.source === name)
+  const nativeSource = find("native-catalog")?.snapshot
+  const native = nativeSource?.source === "native-catalog" ? nativeSource : null
+  const modelSource = find("openrouter-models")
+  if (!modelSource) throw new Error("Model comparison sources must include openrouter-models")
+  const benchmarkSource = find("openrouter-benchmarks")?.snapshot
+  const join = publicJoinFor(
+    native,
+    modelSource,
+    find("models-dev")?.snapshot,
+    find("epoch-benchmarks")?.snapshot,
+  )
+  const candidates = candidatesFor(
+    native,
+    modelSource,
+    benchmarkSource?.source === "openrouter-benchmarks" ? benchmarkSource : null,
+    normalizeFilters(),
+    join,
+  )
+  return {
+    candidates,
+    publicCoverage: { epoch: join.coverage() },
+    publicCatalog: [...join.external(), ...join.scoredRoutes()].slice(0, 200),
+  }
+}
+
 /** The last few snapshot sets' joins, oldest first; a page of a read in progress reuses its. */
 const publicJoins = new Map<string, PublicJoin>()
 /** The last two candidate lists, oldest first, keyed by snapshot set and filters. */
@@ -549,26 +612,7 @@ export function readModelComparison(
   const epochSnapshot = sources.find((source) => source.source === "epoch-benchmarks")?.snapshot
   const cachedJoin = publicJoins.get(joinKey)
   if (cachedJoin) publicJoins.delete(joinKey)
-  const join =
-    cachedJoin ??
-    createPublicJoin({
-      modelsDev: devSnapshot?.source === "models-dev" ? devSnapshot.records : [],
-      epoch: epochSnapshot?.source === "epoch-benchmarks" ? epochSnapshot.records : [],
-      openrouter:
-        modelSource.snapshot?.source === "openrouter-models" ? modelSource.snapshot.records : [],
-      routes: native
-        ? [
-            ...new Map(
-              native.records.map((record) => [`${record.providerID}\u0000${record.id}`, record]),
-            ).values(),
-          ].map((record) => ({
-            providerID: record.providerID,
-            modelID: record.id,
-            name: record.name,
-            nativePrice: nativeBasePrice(record),
-          }))
-        : [],
-    })
+  const join = cachedJoin ?? publicJoinFor(native, modelSource, devSnapshot, epochSnapshot)
   publicJoins.set(joinKey, join)
   for (const stale of [...publicJoins.keys()].slice(0, Math.max(0, publicJoins.size - 4)))
     publicJoins.delete(stale)

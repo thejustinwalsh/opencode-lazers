@@ -7,6 +7,16 @@ import { openReadOnlyObservationLedger } from "./observation-ledger-read.ts"
 import { readDecisionPriceState, readPriceIdentity } from "./price-state.ts"
 import type { PriceInputs } from "./price-state.ts"
 import type { WorkerRequest, WorkerResponse } from "./decision-worker-protocol.ts"
+import { computeCandidateChanges } from "./candidate-store.ts"
+import {
+  buildDecisionView,
+  decisionViewIdentity,
+  readCandidateSet,
+  readSourceDates,
+  type CandidateSet,
+  type DecisionViewCall,
+  type DecisionViewResult,
+} from "./decision-view.ts"
 
 /**
  * Hosts the decision readers (ledger capture + projection + snapshot cache) for every project of
@@ -111,6 +121,7 @@ const warmTick = async () => {
     if (now - entry.lastUsed > WARM_IDLE_MS) {
       entry.reader.close()
       readers.delete(projectDirectory)
+      candidateSets.delete(projectDirectory)
     }
   }
   if (readers.size === 0) {
@@ -151,6 +162,62 @@ const noteRead = (entry: ProjectReader, method: string, input: unknown) => {
   }
 }
 
+/** The last candidate set read per project: a view refresh re-reads rows only when it moved. */
+const candidateSets = new Map<string, CandidateSet>()
+
+const candidateSetFor = (projectDirectory: string): CandidateSet | null => {
+  const db = readonlyDatabase()
+  let stamp: string | undefined
+  try {
+    stamp = db
+      .query<{ snapshot_set: string }, [string]>(
+        "SELECT snapshot_set FROM model_candidate_sets WHERE project_directory=?",
+      )
+      .get(projectDirectory)?.snapshot_set
+  } catch {
+    // No candidate projection in this database yet: the catalog has no candidates.
+    return null
+  }
+  if (stamp === undefined) return null
+  const cached = candidateSets.get(projectDirectory)
+  if (cached?.snapshotSet === stamp) return cached
+  const set = readCandidateSet(db, projectDirectory)
+  if (set) candidateSets.set(projectDirectory, set)
+  return set
+}
+
+/** A stored view's rows (`decision-view.ts`), or `unchanged` when its identity is the stored one. */
+const view = async (
+  entry: ProjectReader,
+  projectDirectory: string,
+  call: DecisionViewCall,
+  signal: AbortSignal,
+): Promise<DecisionViewResult> => {
+  const parts = await entry.reader.viewParts(
+    { scope: { projectDirectory }, filters: call.filters },
+    signal,
+  )
+  const set = candidateSetFor(projectDirectory)
+  const inputs = await requestInputs(signal)
+  const sourceDates = readSourceDates(readonlyDatabase(), projectDirectory)
+  const identity = decisionViewIdentity({
+    parts,
+    set,
+    call,
+    priceSources: inputs.policy.sources,
+    sourceDates,
+  })
+  if (identity === call.known) return { unchanged: true, identity }
+  return buildDecisionView({
+    parts,
+    set,
+    call,
+    priceSources: inputs.policy.sources,
+    sourceDates,
+    identity,
+  })
+}
+
 const run = async (id: number, projectDirectory: string, method: string, input: unknown) => {
   const controller = new AbortController()
   controllers.set(id, controller)
@@ -158,6 +225,23 @@ const run = async (id: number, projectDirectory: string, method: string, input: 
   try {
     const entry = readerFor(projectDirectory)
     const options = { signal: controller.signal }
+    if (method === "candidates") {
+      // The candidate build: the five bodies are parsed here, never on the main thread.
+      send({
+        type: "result",
+        id,
+        value: computeCandidateChanges(readonlyDatabase(), projectDirectory),
+      })
+      return
+    }
+    if (method === "view") {
+      const call = input as DecisionViewCall
+      const value = await view(entry, projectDirectory, call, controller.signal)
+      // A view's snapshot is kept warm like an overview's.
+      noteRead(entry, "overview", { scope: { projectDirectory }, filters: call.filters })
+      send({ type: "result", id, value })
+      return
+    }
     const call = (
       entry.reader as unknown as Record<string, (i: unknown, o: typeof options) => Promise<unknown>>
     )[method]
@@ -187,6 +271,7 @@ port.on("message", (message: WorkerRequest) => {
     clearInterval(warmTimer)
     for (const entry of readers.values()) entry.reader.close()
     readers.clear()
+    candidateSets.clear()
     port.close()
   }
 })

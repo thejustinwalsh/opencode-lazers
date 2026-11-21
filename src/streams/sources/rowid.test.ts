@@ -9,6 +9,9 @@ import { ProgressRecorder } from "../../progress/recorder.ts"
 import { installProgressDisplaySchema } from "../../progress/display-store.ts"
 import { RunnerStore } from "../../runner/store.ts"
 import { ensureTaskScheduleSchema } from "../../tasks/schedule/schema.ts"
+import { ensureModelCandidatesSchema } from "../../models/candidate-store.ts"
+import { ensureDecisionViewSchema } from "../../models/decision-store.ts"
+import { acquireSharedConnection } from "../../storage.ts"
 import { ensureHostSessionStateSchema } from "../../host-sessions/state.ts"
 import { ensureProjectOverviewSchema } from "../../projects/overview-store.ts"
 import "./index.ts"
@@ -39,6 +42,10 @@ function declaredTables() {
   const repository = new TaskRepository(join(directory, "tasks.sqlite"), "/p")
   try {
     ensureTaskScheduleSchema(repository)
+    ensureModelCandidatesSchema(repository)
+    const shared = acquireSharedConnection(repository.path)
+    ensureDecisionViewSchema(shared)
+    shared.release()
     new ProgressRecorder(new RunnerStore(repository), "p")
     repository.atomic((db) => installProgressDisplaySchema(db))
     ensureHostSessionStateSchema(repository)

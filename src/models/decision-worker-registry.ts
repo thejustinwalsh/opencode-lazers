@@ -6,6 +6,10 @@ import type {
   ThreadedDecisionWorkerOptions,
 } from "./decision-worker-client.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
+import type { BenchmarkRoute } from "./benchmark-baseline.ts"
+import type { DecisionViewRequest } from "./decision-view.ts"
+import { DecisionViews } from "./decision-views.ts"
+import { CandidateBuilds } from "./candidate-builds.ts"
 
 /**
  * The decision worker of a database, one per process and code generation. OpenCode loads about
@@ -28,7 +32,14 @@ type Entry = {
   owner: DecisionProjectionOwner
   /** Projects whose default snapshot this process has already built in the background. */
   prewarmed: Set<string>
+  /** The stored decision views of this database; the main thread writes them. */
+  views: DecisionViews
+  /** The candidate projection's writes; the worker builds. */
+  candidates: CandidateBuilds
+  /** Per project, the locations that read its routed models (host settings); newest answers. */
+  routed: Map<string, RoutedProvider[]>
 }
+type RoutedProvider = (taskID: string | null, signal?: AbortSignal) => Promise<BenchmarkRoute[]>
 type Registry = { version: 1; entries: Map<string, Entry> }
 
 const host = globalThis as typeof globalThis & { [registryKey]?: Registry }
@@ -42,6 +53,14 @@ export type DecisionWorkerLease = {
   reader(projectDirectory: string): ModelDecisionReader
   /** True once per process, code generation and project: the caller builds the first snapshot. */
   claimPrewarm(projectDirectory: string): boolean
+  /** The stored view of `request` in `projectDirectory`, created when missing; it builds now. */
+  openView(projectDirectory: string, request: DecisionViewRequest): number
+  /** This process serves the project's candidates: build them now and on every snapshot change. */
+  ensureCandidates(projectDirectory: string): void
+  /** A stream that opened a view no longer holds it. */
+  releaseView(viewID: number): void
+  /** This location answers a project's routed models for its views until release. */
+  provideRouted(projectDirectory: string, provider: RoutedProvider): void
   /** Drops this location's reference; the last release closes the worker. Idempotent. */
   release(): void
 }
@@ -52,26 +71,43 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
   let entry = entries.get(key)
   if (!entry) {
     const providers: Entry["providers"] = []
+    const routed: Entry["routed"] = new Map()
+    const worker = createThreadedDecisionWorker({
+      ...options,
+      async readPriceInputs(signal) {
+        let failure: unknown
+        for (let index = providers.length - 1; index >= 0; index--) {
+          try {
+            return await providers[index]!(signal)
+          } catch (error) {
+            signal?.throwIfAborted()
+            failure = error
+          }
+        }
+        throw failure ?? new Error("No location can read price inputs")
+      },
+    })
     const created: Entry = {
       key,
       providers,
       refs: 0,
       prewarmed: new Set(),
       owner: new DecisionProjectionOwner(options.path),
-      worker: createThreadedDecisionWorker({
-        ...options,
-        async readPriceInputs(signal) {
-          let failure: unknown
-          for (let index = providers.length - 1; index >= 0; index--) {
-            try {
-              return await providers[index]!(signal)
-            } catch (error) {
-              signal?.throwIfAborted()
-              failure = error
-            }
+      worker,
+      routed,
+      candidates: new CandidateBuilds(options.path, worker),
+      views: new DecisionViews(options.path, worker, async (project, taskID, signal) => {
+        const list = routed.get(project) ?? []
+        let failure: unknown
+        for (let index = list.length - 1; index >= 0; index--) {
+          try {
+            return await list[index]!(taskID, signal)
+          } catch (error) {
+            signal?.throwIfAborted()
+            failure = error
           }
-          throw failure ?? new Error("No location can read price inputs")
-        },
+        }
+        throw failure ?? new Error("No location can read the routed models")
       }),
     }
     entries.set(key, created)
@@ -81,6 +117,7 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
   current.refs++
   current.providers.push(options.readPriceInputs)
   let released = false
+  const provided: Array<[string, RoutedProvider]> = []
   let revived: DecisionWorkerLease | undefined
   let reviveTimer: ReturnType<typeof setTimeout> | undefined
   /**
@@ -112,6 +149,22 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
         inspect: (input, opts) => target().inspect(input, opts),
       }
     },
+    openView(projectDirectory, request) {
+      current.owner.touch(projectDirectory)
+      return current.views.open(projectDirectory, request)
+    },
+    ensureCandidates(projectDirectory) {
+      current.candidates.ensure(projectDirectory)
+    },
+    releaseView(viewID) {
+      current.views.release(viewID)
+    },
+    provideRouted(projectDirectory, provider) {
+      const list = current.routed.get(projectDirectory) ?? []
+      list.push(provider)
+      current.routed.set(projectDirectory, list)
+      provided.push([projectDirectory, provider])
+    },
     claimPrewarm(projectDirectory) {
       if (current.prewarmed.has(projectDirectory)) return false
       current.prewarmed.add(projectDirectory)
@@ -122,8 +175,16 @@ export function acquireDecisionWorker(options: ThreadedDecisionWorkerOptions): D
       released = true
       const at = current.providers.indexOf(options.readPriceInputs)
       if (at >= 0) current.providers.splice(at, 1)
+      for (const [project, provider] of provided) {
+        const list = current.routed.get(project) ?? []
+        const index = list.indexOf(provider)
+        if (index >= 0) list.splice(index, 1)
+        if (!list.length) current.routed.delete(project)
+      }
       if (--current.refs > 0) return
       if (entries.get(current.key) === current) entries.delete(current.key)
+      current.views.close()
+      current.candidates.close()
       current.worker.close()
       current.owner.close()
     },

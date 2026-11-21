@@ -851,11 +851,87 @@ Built, except the sessions part (below):
 
 ### Task 8: Model candidates projection and `models.candidates` (M)
 
-Module `model-sources` generation 2 → 3; tests 3.5.
+Built (`src/models/candidate-store.ts`, `src/streams/sources/models{,-ref}.ts`). ★ Corrections
+against the sketch in 3.2, from the code:
+
+- ★ New module `model-candidates` generation 1 (tables `model_candidates`,
+  `model_candidate_sets`, `model_candidates_dirty`), not `model-sources` 2 → 3: the evidence
+  tables install with `CREATE … IF NOT EXISTS` under a connection `once` key, so a bump there
+  creates nothing. The installer creates the evidence tables first (`installModelEvidenceTables`)
+  so its triggers have their table.
+- ★ Columns as built: `candidate_id` (UNIQUE per project), `variant` NULL for the model's own
+  entry (sorts first, as the old read), `enabled` nullable (records can disagree),
+  `price_input`/`price_output` REAL = the native catalog's unconditional tier, NULL when absent
+  (omit the price UI), `correspondence`, `benchmark_correspondence`, `digest`, `detail`. No
+  per-row `snapshot_set`: every row would be rewritten on any source change. The set, the first
+  page's `publicCatalog` and `publicCoverage` live once per project in `model_candidate_sets`.
+  `public_score`/`benchmark_score` are not stored: the score depends on the chosen basis
+  (`chooseScoreBasis`), so it belongs to the decision view (Task 9).
+- ★ Not written inside `saveSnapshot`: a trigger on `model_evidence_refreshes.latest_snapshot_id`
+  (and snapshot insert/delete) queues the project, and `CandidateBuilds` (`candidate-builds.ts`,
+  on the decision worker registry) builds it in the next turn; the queue is not enrolled in the
+  writer drain hook. The decision worker reads the stamps, parses the five bodies and builds on its
+  read-only connection, and returns only rows whose digest moved; the main thread writes them 250
+  per transaction, then deletions and the set stamp. Measured (seeded fixture at the live count,
+  1,467 candidates, 4.9 MB): 7 transactions, slowest 13.7 ms, largest main-loop gap 39 ms
+  (receiving the rows plus one page); before, 115–180 ms of parse and build on the main thread.
+  The project core installs the schema; a database without it is not touched.
+- ★ `nativeCatalogAccess` needs no new column: it already accepts a stamp-only read
+  (`price-state.ts` `snapshotFacts`), so `priceSources` stops reading bodies with
+  `stampOnly: true` (Task 10).
+- ★ `authorize` needs the RPC's own permission action, which `assertRead` does not carry:
+  `StreamContext.assertAction(sessionID, action)` (wired in `src/index.ts` to the Models
+  `authorizeModels`); a context without it rejects.
+- Parity on the live-sized copy: all 1,466 stored `detail` values equal the old read's candidates
+  byte for byte, in order.
 
 ### Task 9: Decision views, catalog entries, points, contributors (XL)
 
-Module `model-decision-projection` generation 3 → 4; worker posts rows; tests 3.5.
+Built (`src/models/decision-view.ts` worker computation, `decision-store.ts` tables and writes,
+`decision-views.ts` main-thread orchestration, `catalog-inputs.ts` shared catalog inputs,
+`decision-view-registry.ts`; sources `models.view`, `models.catalog`, `models.points`,
+`models.contributors`). ★ Corrections against 3.2, from the code:
+
+- ★ New module `model-decision-views` generation 1, not `model-decision-projection` 3 → 4: a bump
+  there reinstalls the progress projection (22,442 rows, triggers) the views do not need.
+- ★ The filter key is persona × task kind × period **plus the score basis and the task id**: the
+  basis picks the score column, the frontier and the rank (`chooseScoreBasis`), and a selected
+  task's layer route is a `routed` tag. Leaving them out would change today's table.
+- ★ `buildCatalog` inputs are no longer computed only in the GUI: the controller's memo bodies
+  (chart references, chart points, observed facts, token profile, routed models) moved verbatim
+  into `catalog-inputs.ts`, which the controller and the worker both call. Catalog labels use the
+  native evidence snapshot's names (the candidates) instead of the live `model.list`: the same
+  `model.list` records as of the last refresh, so `modelDisplayName` gives the same label.
+- ★ Refresh is not the worker's warm pass (the worker cannot write): `DecisionViews` on the main
+  thread subscribes to `observation_revisions`, `model_candidate_sets`,
+  `model_evidence_refreshes`, `model_endpoint_pricing_refreshes` and `model_mappings`, and
+  rebuilds the views opened in the last 10 minutes at most every 15 s (the warm cadence). The worker
+  returns `unchanged` when the view's identity (revision, price identity, candidate set, request,
+  routed models, price-source order, source dates) equals the stored one, so nothing is computed
+  or written. Task 10: a panel open longer than 10 minutes must reopen `models.view` (streams expose
+  no lease to a source), or the streams API gains that.
+- ★ Columns as built: views carry `request`, `identity`, `context`, `counts`, `summary`;
+  entries key on the route (`provider\0model`) with `tags`, `cost_per_task` (`entryCost`), observed
+  `tokens`/`accepted`, `price_source` (NULL when unpriced: the price UI is omitted) and the whole
+  `CatalogEntry` (price with source and retrieval date); points carry the graph point and the
+  reference estimate as JSON with `ord` (graph order) and `reference_ord`; contributors are UNIQUE
+  on (view, configuration, `ord`), since one task can contribute several sessions, and stored in
+  the inspection's order with no task selected (Task 10 lifts the selected task to the top in the
+  GUI).
+- ★ View `state` uses the `projection` machine's values: `backfilling` (shown as building) until the
+  first write, then `ready`. The idle sweep runs hourly from `DecisionViews.open` with the decision
+  projection's 7-day `PROJECTION_IDLE_DROP_MS`, not inside `DecisionProjectionOwner`.
+- Measured on the live-sized copy: a view is 56 entries, 2–3 points and 84–127 contributors; the
+  first write is 142–186 rows in 3 transactions, slowest 2.3 ms; an unchanged rewrite writes 0 rows
+  (0.5 ms). In the worker: candidate read 22 ms, catalog about 20 ms. ★ The catalog took 1.3 s, all
+  but 28 ms of it labels: `modelDisplayLabel` is cubic over a route list; `modelDisplayLabeler`
+  gives the same labels in linear time (equal output on the live catalog, read-only), so no
+  incremental rebuild is needed.
+- Parity (recorded ledger fixture plus evidence corpus): catalog entries and summary equal
+  `buildCatalog` of the old GUI inputs (comparison pages, live catalog names, overview) for four
+  persona × task kind filters and two bases; points and references equal the overview's; every
+  configuration's contributors equal the inspection pages; the worker's rows equal the in-process
+  reader's.
 
 ### Task 10: Models assignments view and GUI on streams (L)
 
@@ -950,19 +1026,19 @@ registration edits are one line per task and merged in wave order.
 
 ## Schema generations and migration cost (418,671 transitions, 79,365 progress rows)
 
-| Module                      | Generation | Task   | Work at install                                                         | Backfill (owner timer, paged)                                                                                                                             |
-| --------------------------- | ---------- | ------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `task-events`               | new, 1     | T1, T2 | create tables, triggers (plus `projections` new, 1: `projection_state`) | measured: 225 transition pages, 53 effect pages, 318 progress pages; 2.6 s of writer time in pages of at most about 36 ms, spread over the owner's pacing |
-| `projects`                  | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
-| `project-overview`          | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
-| `model-sources`             | 2 → 3      | T8     | create `model_candidates`                                               | 1 build per project: 5 body parses (≈0.93 MB each), ≈1,400 rows                                                                                           |
-| ★ `native-call-display`     | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
-| ★ `scheduler-status`        | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
-| `host-sessions`             | new, 1     | T3     | create (★ table + `host_session_dirty` queue)                           | ★ seed: 6 queue pages (slowest 0.6 ms); then one `session.get` per seeded session, async                                                                  |
-| `model-decision-projection` | 3 → 4      | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
-| `trajectory-projection`     | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
-| `model-mappings`            | 1 → 2      | T10    | create view                                                             | 1 transaction per project                                                                                                                                 |
-| `task-schedule`             | 4 → 5      | T12    | drop and recreate projection                                            | 260 tasks re-backfilled (seconds)                                                                                                                         |
+| Module                   | Generation | Task   | Work at install                                                         | Backfill (owner timer, paged)                                                                                                                             |
+| ------------------------ | ---------- | ------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task-events`            | new, 1     | T1, T2 | create tables, triggers (plus `projections` new, 1: `projection_state`) | measured: 225 transition pages, 53 effect pages, 318 progress pages; 2.6 s of writer time in pages of at most about 36 ms, spread over the owner's pacing |
+| `projects`               | 2 → 3      | T11    | `CREATE INDEX lazers_project_paths_key` (3 rows)                        | none                                                                                                                                                      |
+| `project-overview`       | new, 1     | T11    | create                                                                  | 1 transaction (3 rows)                                                                                                                                    |
+| ★ `model-candidates`     | new, 1     | T8     | create `model_candidates`, `model_candidate_sets`, queue, triggers      | 1 build per project in the decision worker; main thread writes changed rows in pages                                                                      |
+| ★ `native-call-display`  | new, 1     | T4     | create display table, index, triggers                                   | measured: 166 pages of 500 over 82,525 calls, median 5.6 ms, slowest 38 ms, 1.3 s                                                                         |
+| ★ `scheduler-status`     | new, 1     | T4     | create one-row-per-project table                                        | none                                                                                                                                                      |
+| `host-sessions`          | new, 1     | T3     | create (★ table + `host_session_dirty` queue)                           | ★ seed: 6 queue pages (slowest 0.6 ms); then one `session.get` per seeded session, async                                                                  |
+| ★ `model-decision-views` | new, 1     | T9     | create view tables                                                      | none (materialized on open)                                                                                                                               |
+| `trajectory-projection`  | new, 1     | T7     | create effort table                                                     | 252 sessions × message pages of 50 (host reads, async); ≈800 pages of 100 progress payloads for effort                                                    |
+| `model-mappings`         | 1 → 2      | T10    | create view                                                             | 1 transaction per project                                                                                                                                 |
+| `task-schedule`          | 4 → 5      | T12    | drop and recreate projection                                            | 260 tasks re-backfilled (seconds)                                                                                                                         |
 
 Every bump is a full service restart; four restarts total (one per wave 1–4).
 

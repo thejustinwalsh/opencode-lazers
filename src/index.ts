@@ -57,7 +57,11 @@ import { registerToolResults } from "./tool-results.ts"
 import { registerToolSignatures } from "./tool-signature.ts"
 import { registerNativeInteraction } from "./verification/opencode/native-interaction-server.ts"
 import { registerModelTools } from "./models/tools.ts"
-import { createModelsManagedUsagePriceProvider, registerModelsServer } from "./models/server.ts"
+import {
+  authorizeModels,
+  createModelsManagedUsagePriceProvider,
+  registerModelsServer,
+} from "./models/server.ts"
 import { registerManagedUsageTools } from "./managed-usage/tools.ts"
 import { startHeapSampler } from "./diagnostics/heap-sampler.ts"
 import { section, sectionEffect, stallProbe, timedHooks } from "./diagnostics/stall-probe.ts"
@@ -230,6 +234,18 @@ export default Plugin.define({
                 projectID,
                 repository.projectDirectory,
                 "read",
+              )
+            },
+            // The Models sources carry over their RPC's check: an eligible session and the
+            // RPC's own permission on this project (`src/models/server.ts`).
+            assertAction: async (sessionID, action) => {
+              await authorizeModels(
+                ctx,
+                sessionID,
+                projectID,
+                action,
+                [repository.projectDirectory],
+                new AbortController().signal,
               )
             },
           },

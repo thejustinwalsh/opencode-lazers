@@ -2,6 +2,8 @@ import { Worker } from "node:worker_threads"
 import { workerURL } from "../worker-url.ts"
 import type { ModelDecisionReader } from "./decision-contract.ts"
 import type { PriceInputs } from "./price-state.ts"
+import type { DecisionViewCall, DecisionViewResult } from "./decision-view.ts"
+import type { CandidateChanges } from "./candidate-store.ts"
 import type {
   DecisionWorkerMethod,
   WorkerRequest,
@@ -20,6 +22,14 @@ export type ThreadedDecisionWorkerOptions = {
 export type ThreadedDecisionWorker = {
   /** A reader for one project of this database; all readers share the worker thread. */
   reader(projectDirectory: string): ModelDecisionReader
+  /** A stored view's rows for one project (`decision-view.ts`), computed on the worker. */
+  view(
+    projectDirectory: string,
+    call: DecisionViewCall,
+    signal?: AbortSignal,
+  ): Promise<DecisionViewResult>
+  /** A project's candidate build (`candidate-store.ts`), parsed and built on the worker. */
+  candidates(projectDirectory: string, signal?: AbortSignal): Promise<CandidateChanges | null>
   close(): void
 }
 
@@ -139,6 +149,8 @@ export function createThreadedDecisionWorker(
         call(projectDirectory, "configurations", input, opts?.signal),
       inspect: (input, opts) => call(projectDirectory, "inspect", input, opts?.signal),
     }),
+    view: (projectDirectory, input, signal) => call(projectDirectory, "view", input, signal),
+    candidates: (projectDirectory, signal) => call(projectDirectory, "candidates", null, signal),
     close() {
       if (closed) return
       closed = true
