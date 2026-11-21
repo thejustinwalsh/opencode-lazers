@@ -49,6 +49,14 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
   const status = text(row.status)
   const tool = text(row.tool)
   const event = text(row.event)
+  // A step's route, and a tool call's (its step's), as the old read's `model`.
+  const model = text(row.route_model)
+    ? {
+        providerID: text(row.route_provider) ?? "",
+        id: String(row.route_model),
+        ...(text(row.route_variant) ? { variant: String(row.route_variant) } : {}),
+      }
+    : undefined
   const shaped =
     kind === "transition"
       ? { kind: "runner-transition", event, from: text(row.from_state), to: text(row.to_state) }
@@ -64,20 +72,10 @@ export function eventFromRow(row: Raw, taskID: string): TrajectoryEvent {
                 text: text(row.title),
               }
             : kind === "assistant-step"
-              ? {
-                  kind,
-                  status,
-                  model: text(row.route_model)
-                    ? {
-                        providerID: text(row.route_provider) ?? "",
-                        id: String(row.route_model),
-                        ...(text(row.route_variant) ? { variant: String(row.route_variant) } : {}),
-                      }
-                    : undefined,
-                }
+              ? { kind, status, model }
               : kind === "provider-retry" || kind === "assistant-error"
                 ? { kind, error: text(row.error_type), status }
-                : { kind, tool, status, completedAt: num(row.completed_at) }
+                : { kind, tool, status, model, completedAt: num(row.completed_at) }
   const parsed = Event.safeParse(defined({ ...base, ...defined(shaped) }))
   return parsed.success ? parsed.data : { id: base.id, kind }
 }

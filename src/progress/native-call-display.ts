@@ -17,7 +17,9 @@ import type { TaskRepository } from "../storage.ts"
  *
  * The display is the SQL the live read ran per read (`LiveReadStore.nativeCalls` and
  * `toolDetails`, `src/observability/live-store.ts`): the call id, status, a 200-character detail
- * and a 240-character error, extracted from the payload. Kept by triggers, so every writer of the
+ * and a 240-character error, extracted from the payload, and the call's own timing endpoints
+ * (`timing.endpoints.calledAt.at`, the host part's `time.ran`, and `completedAt.at`, its
+ * `time.completed`), which the trajectory timeline places a call by. Kept by triggers, so every writer of the
  * wide table (the recorder's insert, merge and identity promotion, project-key backfill,
  * retention) keeps it current with no code of its own. The row's `id` is the call's rowid, which
  * an identity promotion keeps, so a stream updates the row in place. Trigger bodies delete, then
@@ -30,7 +32,7 @@ export const NATIVE_CALL_DISPLAY = "native-call-display"
 const NATIVE_CALL_DISPLAY_GENERATION = 1
 
 const COLUMNS =
-  "id,project_directory,session_id,identity_kind,invocation_id,call_id,detail_call_id,message_id,agent,tool,attempt_id,status,detail,error,first_observed_at,last_observed_at"
+  "id,project_directory,session_id,identity_kind,invocation_id,call_id,detail_call_id,message_id,agent,tool,attempt_id,status,detail,error,first_observed_at,last_observed_at,called_at,completed_at"
 
 /** The display of a `native_tool_calls` row named `row` (NEW in a trigger, the table in a page). */
 const derived = (row: string) => `${row}.rowid,${row}.project_directory,${row}.session_id,
@@ -39,7 +41,9 @@ const derived = (row: string) => `${row}.rowid,${row}.project_directory,${row}.s
   ${row}.agent,${row}.tool,${row}.attempt_id,json_extract(${row}.payload,'$.status'),
   substr(json_extract(${row}.payload,'$.detail'),1,200),
   substr(json_extract(${row}.payload,'$.error.message'),1,240),
-  ${row}.first_observed_at,${row}.last_observed_at`
+  ${row}.first_observed_at,${row}.last_observed_at,
+  json_extract(${row}.payload,'$.timing.endpoints.calledAt.at'),
+  json_extract(${row}.payload,'$.timing.endpoints.completedAt.at')`
 
 const TABLE_SQL = `
   CREATE TABLE native_tool_call_display (
@@ -49,7 +53,8 @@ const TABLE_SQL = `
     call_id TEXT NOT NULL, detail_call_id TEXT NOT NULL,
     message_id TEXT, agent TEXT, tool TEXT, attempt_id TEXT,
     status TEXT, detail TEXT, error TEXT,
-    first_observed_at INTEGER NOT NULL, last_observed_at INTEGER NOT NULL
+    first_observed_at INTEGER NOT NULL, last_observed_at INTEGER NOT NULL,
+    called_at INTEGER, completed_at INTEGER
   );
   CREATE INDEX native_tool_call_display_session
     ON native_tool_call_display(project_directory, session_id, first_observed_at DESC, id);

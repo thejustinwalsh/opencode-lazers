@@ -71,9 +71,18 @@ test("a tool row and its transcript row are one event by id", () => {
     tool: "bash",
     status: "completed",
     at: 7,
+    route_provider: "openai",
+    route_model: "gpt-6",
+    route_variant: "max",
   }
   expect(timelineEventID(row)).toBe("msg:tool:c1")
   const call = eventFromRow(row, "t")
+  // The call carries its step's route and the host part's status word, as the old read did.
+  expect(call).toMatchObject({
+    kind: "tool",
+    status: "completed",
+    model: { providerID: "openai", id: "gpt-6", variant: "max" },
+  })
   const text = eventFromTranscript(
     {
       id: "msg:tool:c1",
